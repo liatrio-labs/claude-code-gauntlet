@@ -1,0 +1,10 @@
+Type: file
+Path: skills/deep-review/SKILL.md
+Contains: "Spawn a fresh Sonnet agent"
+Timestamp: 2026-03-24T20:00:00Z
+Status: PASS
+
+Verification: grep -n "Spawn a fresh Sonnet agent" skills/deep-review/SKILL.md
+Result: Line 589 contains the expected text.
+The blind challenge round mechanism is implemented in Phase 4f with fresh Sonnet agents
+that receive only the finding title/description and raw code, never original reasoning.

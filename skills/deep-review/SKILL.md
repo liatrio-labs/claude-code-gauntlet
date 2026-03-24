@@ -302,7 +302,9 @@ Consider splitting into smaller PRs for better review coverage.
 
 ## Phase 3: Parallel Agent Dispatch
 
-Launch all applicable review agents **in a single message with multiple Agent tool calls**. This is how Claude Code achieves true parallel execution — all agents in one response, not sequential calls or background tasks. Do NOT use `run_in_background` (which requires tracking completions) or Agent Teams (which requires environment variables). Simply include all 5-7 Agent tool invocations in one message and they will execute concurrently.
+Launch all applicable review agents **in a single message with multiple Agent tool calls**. This is how Claude Code achieves true parallel execution — all agents in one response, not sequential calls or background tasks. Simply include all 5-7 Agent tool invocations in one message and they will execute concurrently.
+
+> **Agent deployment note:** These agents are fire-and-forget — once they return their findings, they are terminated. The challenge round in Phase 4e does NOT message back to these agents (which would trigger sycophancy — research shows 18/20 agent configurations exhibit sycophantic confirmation when agents share context). Instead, Phase 4e spawns fresh blind verification agents that never see the original agents' reasoning.
 
 Each agent receives:
 
@@ -475,6 +477,8 @@ If a subagent fails (crashes, times out, or returns an error):
 
 After all agents return, process their findings through a validation pipeline. This is critical — it's what separates useful reviews from noisy ones.
 
+**Pipeline order:** 4a (blame classification) → 4b (deterministic verification) → 4c (threshold filter) → 4d (injection filter) → 4e (disagreement detection) → 4f (blind challenge) → 4g (dedup) → 4h (cap) → 4i (rank)
+
 ### 4a. Classify findings as "New" or "Surfaced" using git blame
 
 Before any other filtering, use the git blame data gathered in Phase 2f to classify each finding:
@@ -552,26 +556,50 @@ Add a filter step that checks agent outputs for signs of successful prompt injec
 
 Any discarded finding should be logged in the methodology section as a potential prompt injection indicator.
 
-### 4e. Challenge round
+### 4e. Disagreement detection
 
-After cross-validation and filtering, if there are **3 or more blocking findings** (critical or high severity):
+Before the challenge round, classify findings by inter-agent agreement. This step treats disagreement as a signal about difficulty and importance, not a problem to resolve through forced consensus.
 
-1. **Broadcast** the findings digest (id, title, severity, file, evidence summary) to all review agents
-2. Each agent responds for each finding with one of:
-   - **AGREE** — the finding is valid as stated
-   - **CHALLENGE** — the finding is wrong or overstated, with justification
-   - **ADD** — a related finding the agent wants to introduce based on seeing the full findings context
-3. If **2 or more agents CHALLENGE** a finding, downgrade it from blocking (critical/high) to advisory (medium)
-4. **ADD** responses introduce new findings, which must also pass the validation pipeline (Steps 4b-4d)
+**Scan all post-filter findings and classify:**
 
-### 4f. Contradiction resolution
+- **Consensus findings** — multiple agents flag the same file + overlapping line range with the same or related concern. Boost confidence by 10 points (capped at 100). Note in the finding: "Corroborated by: [agent list]"
+- **Singleton findings** — only one agent flags this, and it's within their domain of expertise (e.g., security-reviewer finding a security issue). Pass through unchanged — domain specialists don't need corroboration for domain-specific findings.
+- **Contradictions** — agents make conflicting claims about the same code location (e.g., bug-detector says the code is wrong, conventions-and-intent says it's intentional per spec). Route to the blind challenge round (Phase 4f) regardless of the 3+ blocking threshold.
 
-When agents disagree about the same code location:
+**Automatic suppression rules (before challenge):**
+- If **bug-detector** flags something that **conventions-and-intent** confirms is intentional per documented specs → suppress the bug finding
+- If **test-analyzer** flags missing tests for code that **conventions-and-intent** identifies as generated/scaffolding code excluded from test requirements → suppress the test finding
 
-- If **bug-detector** flags something that **conventions-and-intent** confirms is intentional per documented specs, **suppress** the bug finding
-- If **security-reviewer** flags something that another agent considers safe, **escalate** the security finding (security wins ties)
-- If **test-analyzer** flags missing tests for code that **conventions-and-intent** identifies as generated/scaffolding code excluded from test requirements, suppress the test finding
-- Note all contradictions and their resolutions in the report methodology section
+**Security escalation:** If **security-reviewer** flags something that another agent considers safe, always **escalate** the security finding. Security false negatives are costlier than false positives — security wins ties.
+
+Log all contradictions and their resolutions in the report methodology section.
+
+### 4f. Blind challenge round
+
+After disagreement detection, challenge findings that need independent verification. This uses **fresh blind agents** — not the original review agents — because research proves that agents sharing context exhibit sycophantic confirmation in 18/20 tested configurations, and multi-agent debate follows a martingale (expected correctness unchanged across rounds).
+
+**Trigger conditions (ANY of these):**
+- 3 or more blocking findings (critical or high severity) remaining after filtering
+- Any contradictions routed from Phase 4e
+- Findings where deterministic verification (Phase 4b) passed but LLM judgment gave confidence between 70-85 (borderline findings)
+
+**For each finding that needs challenge:**
+
+1. **Read the raw code** at the finding's `file:line_start-line_end` using the Read tool (fresh read, not from cache)
+2. **Spawn a fresh Sonnet agent** with ONLY:
+   - The finding's `title` and `description` (do NOT include the `evidence` field or any original agent reasoning — this prevents sycophancy)
+   - The raw code just read
+   - These instructions: "A code reviewer claims the following about this code. Your job is to attempt to disprove this claim. Examine the code carefully and look for reasons the claim might be wrong — defensive code the reviewer missed, framework guarantees, type system protections, or documented intentional behavior. Return a JSON object: `{\"confidence\": <0-100>, \"justification\": \"<brief explanation>\"}`"
+3. **Apply the blind verifier's result:**
+   - Confidence **< 50** → downgrade finding to advisory (medium severity). The blind verifier found strong reasons to doubt it.
+   - Confidence **≥ 75** → finding survives. Boost the finding's confidence by +10 (capped at 100). Independent verification strengthens it.
+   - Confidence **50-74** → no severity change. Flag as "contested" in the methodology section. The finding is ambiguous — human judgment needed.
+
+**Design rationale:**
+- Blind agents see only the claim and the code, never the original reasoning → prevents sycophancy
+- Fresh agents (not the original reviewers) → provides genuinely independent judgment
+- No ADD mechanism — original agents already had their chance to find issues
+- No voting/debate protocol — research shows majority voting captures the same gains as debate without the sycophancy risk
 
 ### 4g. Deduplicate
 
@@ -642,10 +670,10 @@ Read `references/report-format.md` for the full report template. The report stru
 ## Review Methodology
 IMPORTANT: This section is REQUIRED. Always include it — it provides transparency about review completeness.
 - **Agents dispatched:** [list with completion status]
-- **Model tier:** [Opus for X, Sonnet for Y]
+- **Model tier:** [mode: Optimized/Frontier — list which agents used which model]
 - **Validation:** [N findings verified, M filtered, K failed factual verification]
-- **Challenge round:** [triggered/not triggered, results if triggered]
-- **Contradictions resolved:** [list or "none"]
+- **Disagreement detection:** [N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed]
+- **Blind challenge round:** [triggered/not triggered. If triggered: N findings challenged, M downgraded, K boosted, J contested]
 - **Prompt injection artifacts discarded:** [count or "none"]
 - **Failed/skipped agents:** [list or "none"]
 - **Total review time:** [duration]

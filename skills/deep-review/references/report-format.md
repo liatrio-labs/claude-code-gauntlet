@@ -150,10 +150,10 @@ Severity has been downgraded one level from the original classification (see Pha
 | Aspect | Details |
 |--------|---------|
 | **Agents dispatched** | {list each agent with completion status: completed/failed/skipped} |
-| **Model tier** | {Opus: bug-detector, security-reviewer, cross-file-impact-analyzer; Sonnet: test-analyzer, conventions-and-intent, validators} |
+| **Model tier** | {mode: Optimized/Frontier — list which agents used which model} |
 | **Findings pipeline** | {N raw findings → M after deterministic verification → K after confidence filter → J after dedup} |
-| **Challenge round** | {Triggered/Not triggered (requires 3+ blocking findings). If triggered: N findings challenged, M downgraded} |
-| **Contradictions resolved** | {N contradictions between agents, resolution summary} |
+| **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} |
+| **Blind challenge round** | {Triggered/Not triggered. If triggered: N findings blind-challenged, M downgraded, K boosted, J contested} |
 | **Failed/skipped agents** | {list or "none"} |
 | **Total review time** | {duration from Phase 0 to Phase 5} |
 | **Prompt injection** | {N injection artifacts detected and discarded, or "none detected"} |
