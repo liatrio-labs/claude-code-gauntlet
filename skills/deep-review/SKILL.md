@@ -700,16 +700,35 @@ If AskUserQuestion is not available, fall back to printing the options and askin
 
 **Important: Only comment on files in the diff.** The GitHub/GitLab API will reject inline comments on files that are not part of the PR/MR diff (HTTP 422 "Path could not be resolved"). Before posting each inline comment, verify the file path is in the list of changed files from Phase 1. If a finding references a file outside the diff (e.g., a cross-file impact finding about a caller), post it as part of the top-level summary comment instead, with a note like "This finding references `path/to/file.cs` which is not in this PR's diff."
 
-Post inline review comments using the detected VCS platform:
+Post inline review comments using the detected VCS platform.
 
-**GitHub:**
+**GitHub — use a temp JSON file to avoid escaping issues:**
+
+The `gh api` command with inline `-f comments=` is unreliable for nested JSON (escaping breaks frequently). Always write the review payload to a temp file first:
+
 ```bash
+# Step 1: Build the review JSON payload in a temp file
+cat > /tmp/review-payload.json << 'EOF'
+{
+  "body": "<summary comment>",
+  "event": "COMMENT",
+  "comments": [
+    {"path": "<file1>", "line": <line1>, "body": "<comment1>"},
+    {"path": "<file2>", "line": <line2>, "body": "<comment2>"}
+  ]
+}
+EOF
+
+# Step 2: Post using --input flag
 gh api repos/{owner}/{repo}/pulls/{number}/reviews \
   --method POST \
-  -f body="<summary comment>" \
-  -f event="COMMENT" \
-  -f comments="[{\"path\":\"<file>\",\"line\":<line>,\"body\":\"<comment>\"}]"
+  --input /tmp/review-payload.json
+
+# Step 3: Clean up
+rm /tmp/review-payload.json
 ```
+
+This avoids the bash escaping issues that cause 422 errors with nested JSON in `-f` flags. Always use `--input` with a temp file for review comments.
 
 **GitLab:**
 ```bash
@@ -728,11 +747,11 @@ Use the platform-appropriate permalink format in comment bodies. After posting i
 
 ### Delivery: Create tasks
 
-When the user selects task creation, let them choose which findings become tasks:
+When the user selects task creation, you MUST let them choose which findings become tasks. **Do NOT create tasks automatically — always show the selection list first and wait for the user's choice.** This gives the user control over what goes on their task board.
 
-**Step 1: Display the findings summary for selection**
+**Step 1: Display the findings summary for selection (REQUIRED)**
 
-Show a clean numbered list:
+Show a clean numbered list and WAIT for the user to respond before creating any tasks:
 
 ```
 Findings available for task creation:
