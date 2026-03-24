@@ -302,7 +302,9 @@ Consider splitting into smaller PRs for better review coverage.
 
 ## Phase 3: Parallel Agent Dispatch
 
-Launch all applicable review agents **in parallel** using the Agent tool. Each agent receives:
+Launch all applicable review agents **in a single message with multiple Agent tool calls**. This is how Claude Code achieves true parallel execution — all agents in one response, not sequential calls or background tasks. Do NOT use `run_in_background` (which requires tracking completions) or Agent Teams (which requires environment variables). Simply include all 5-7 Agent tool invocations in one message and they will execute concurrently.
+
+Each agent receives:
 
 1. The **scoped diff** for their domain (see per-agent context scoping below — NOT the full diff to every agent)
 2. The **change summary** from Phase 2c (and summary-of-summaries from Phase 2g if available)

@@ -42,16 +42,17 @@ After agents report findings, a validation pipeline filters false positives:
 
 ## Installation
 
-Install as a Claude Code plugin:
+Add the marketplace and install the plugin:
 
 ```bash
-claude plugin add liatrio-labs/claude-deep-review
+claude plugin marketplace add https://github.com/liatrio-labs/claude-deep-review.git
+claude plugin install claude-deep-review@claude-deep-review
 ```
 
-Or install manually by cloning and adding to your plugins configuration:
+To update later:
 
 ```bash
-git clone https://github.com/liatrio-labs/claude-deep-review.git ~/.claude/plugins/claude-deep-review
+claude plugin update claude-deep-review@claude-deep-review
 ```
 
 ## Usage

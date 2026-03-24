@@ -1,0 +1,18 @@
+{
+  "name": "claude-deep-review",
+  "owner": {
+    "name": "Liatrio"
+  },
+  "metadata": {
+    "description": "Multi-agent code review plugin for Claude Code",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-deep-review",
+      "description": "Multi-agent code review skill. Dispatches 5-7 concern-specialized agents with deterministic verification, prompt injection defense, and flexible delivery (PR/MR comments, markdown, chat). Supports GitHub and GitLab.",
+      "source": "./",
+      "strict": true
+    }
+  ]
+}
