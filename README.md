@@ -18,21 +18,27 @@ Deep Review dispatches 5-7 specialized agents in parallel, each examining your c
 
 After agents report findings, a validation pipeline filters false positives:
 
-1. **Deterministic verification** — confirms findings reference real code at correct locations
-2. **LLM judgment** — attempts to disprove each finding with a calibrated confidence rubric
-3. **Dimension-specific thresholds** — security uses 70 (false negatives are costly), others use 80
-4. **Challenge round** — agents vote on blocking findings to resolve disagreements
-5. **Contradiction resolution** — specs suppress bug findings, security wins ties
+1. **Git blame classification** — labels each finding as "new" (introduced by this PR) or "surfaced" (pre-existing code exposed by this change)
+2. **Deterministic verification** — confirms findings reference real code at correct locations
+3. **LLM judgment** — attempts to disprove each finding with a calibrated confidence rubric
+4. **Dimension-specific thresholds** — security uses 70 (false negatives are costly), others use 80
+5. **Challenge round** — agents vote on blocking findings to resolve disagreements
+6. **Contradiction resolution** — specs suppress bug findings, security wins ties
+7. **Max findings cap** — configurable limit prevents noise in high-debt codebases
 
 ## Key features
 
 - **Concern-parallel, not file-parallel** — each agent sees the full diff with cross-file context, because bugs at module boundaries are invisible to file-scoped reviewers
 - **Full-codebase investigation** — security and cross-file-impact agents trace data flows beyond the diff into the entire repository (matching [Anthropic's own approach](https://docs.anthropic.com/en/docs/claude-code/code-review))
+- **New vs surfaced findings** — git blame classifies whether each finding is new code you wrote or pre-existing code exposed by your changes. Surfaced findings are downgraded and grouped separately so they don't drown out real issues
+- **Incremental review** — when re-reviewing a PR with new commits, offers to review only the changes since the last review instead of starting from scratch
 - **Prompt injection defense** — code under review is untrusted input, wrapped in trust boundary delimiters with output scanning for injection artifacts
 - **Context-pulling** — agents actively investigate using Read/Grep/LSP rather than receiving a passive context dump (51% fewer false positives per research)
 - **GitHub + GitLab** — auto-detects platform from git remote, supports both `gh` and `glab` CLIs
-- **REVIEW.md configuration** — project maintainers can customize focus areas, skip patterns, custom rules, and thresholds
-- **Flexible delivery** — PR/MR comments (inline + summary), markdown file, chat, or all three
+- **REVIEW.md configuration** — hierarchical config mirroring CLAUDE.md locations. The skill scaffolds REVIEW.md files for you and maintains the ignore list as you dismiss findings
+- **Flexible delivery** — PR/MR comments, markdown file, chat, task board, or any combination
+- **Task board integration** — create tasks from findings with user-controlled selection ("all", "1,3,5", "all critical and high", "all except 6")
+- **Graceful degradation** — if an agent fails, the review continues with remaining agents and notes the gap
 
 ## Installation
 
@@ -76,12 +82,43 @@ Or invoke it directly:
 
 The review runs through 7 phases:
 
-1. **Pre-flight** — checks if the PR/MR is eligible (not closed, draft, or already reviewed)
-2. **Triage** — classifies files by risk, detects AI-generated code, discovers related tests, gathers project context, produces a change summary
-3. **Dispatch** — launches 5-7 agents in parallel with scoped context and trust boundary delimiters
-4. **Validate** — deterministic verification, confidence filtering, injection artifact scanning, challenge round, contradiction resolution, deduplication
-5. **Report** — generates a structured report with severity-ranked findings, GitHub/GitLab permalinks, and a methodology section
-6. **Deliver** — asks how you want results: PR/MR comments, markdown file, chat, or all three
+0. **Pre-flight** — checks if the PR/MR is eligible (not closed, draft, or already reviewed). For previously reviewed PRs, offers incremental review of new commits only
+1. **Target** — detects GitHub/GitLab from git remote, fetches PR/MR metadata and diff
+2. **Triage** — classifies files by risk, detects AI-generated code (elevated risk), discovers related tests, gathers CLAUDE.md + REVIEW.md context, runs git blame preprocessing, produces a change summary. For PRs over 500 lines, generates per-file summaries
+3. **Dispatch** — launches 5-7 agents in parallel with scoped context, trust boundary delimiters, and context-pulling instructions
+4. **Validate** — git blame classification (new vs surfaced), deterministic verification, confidence filtering, injection artifact scanning, challenge round, contradiction resolution, deduplication, max findings cap
+5. **Report** — generates a structured report with severity-ranked findings, surfaced findings section, GitHub/GitLab permalinks, and a methodology section documenting what ran
+6. **Deliver** — asks how you want results: PR/MR comments, markdown file, chat, task board, or all. Offers to add dismissed findings to REVIEW.md for future suppression
+
+## REVIEW.md configuration
+
+Deep Review will offer to scaffold a `REVIEW.md` when it doesn't find one. The file mirrors your CLAUDE.md locations — if you have subdirectory CLAUDE.md files, the skill offers to create matching REVIEW.md files at the same levels.
+
+**Root REVIEW.md** sets global defaults. **Subdirectory REVIEW.md** files can set different standards per area (e.g., stricter security for `src/auth/`). Settings (thresholds) override from child to parent; rules and ignore patterns accumulate.
+
+```markdown
+## Rules
+- All database queries must use parameterized statements
+- Public API endpoints must validate request body schema
+
+## Ignore
+# Suppress known findings. Deep Review suggests additions when you dismiss findings.
+- security:"prompt injection via template tokens"  <!-- dismissed 2026-03-24: not exploitable -->
+
+## Skip
+- "vendor/**"
+- "**/*.generated.cs"
+
+## Confidence Threshold
+# Default: 80. Security always uses minimum 70 regardless of this setting.
+80
+
+## Max Findings
+# Cap findings in high-debt codebases. Default: no limit.
+15
+```
+
+See [references/review-md-spec.md](skills/deep-review/references/review-md-spec.md) for the full specification including hierarchy documentation.
 
 ## Research backing
 
@@ -100,6 +137,10 @@ Every architectural decision is grounded in published research:
 | LSP-first navigation | 900x faster than grep (50ms vs 30-60s); eliminates false matches |
 | AI-code risk elevation | CodeRabbit: 75% more logic errors in AI-authored code |
 | 500-line large-PR threshold | Review effectiveness drops sharply above 400 lines |
+| Git blame classification | SonarQube's baseline matching is the gold standard; blame-based new/surfaced is the best approach for AI-native tools |
+| Suggest-not-modify config | Google SRE Workbook: tools should suggest config changes through reviewable mechanisms, not modify automatically |
+| REVIEW.md hierarchy | Nearest-only with explicit inheritance (Ruff, Biome v2) after ESLint's painful cascading lessons |
+| Max findings cap | Qodo defaults to 3 findings per review; configurable cap prevents noise in high-debt repos |
 
 ## Project structure
 
@@ -119,42 +160,14 @@ claude-deep-review/
 │       │   ├── type-design-analyzer.md   # Type design (Sonnet, conditional)
 │       │   └── code-simplifier.md        # Simplification (Opus, conditional)
 │       └── references/
-│           ├── false-positive-exclusions.md  # Unified false positive filter
+│           ├── false-positive-exclusions.md  # Unified false positive filter + injection artifacts
 │           ├── report-format.md          # Report template with permalinks
-│           └── review-md-spec.md         # REVIEW.md configuration spec
+│           └── review-md-spec.md         # REVIEW.md configuration + hierarchy spec
 └── README.md
 ```
-
-## REVIEW.md configuration
-
-Create a `REVIEW.md` in your repository root to customize review behavior:
-
-```markdown
-## Focus
-- bugs
-- security
-- tests
-
-## Skip
-- "vendor/**"
-- "**/*.generated.cs"
-
-## Rules
-- All database queries must use parameterized statements
-- Public API endpoints must validate request body schema
-
-## Severity Threshold
-medium
-
-## Confidence Threshold
-75
-```
-
-See [references/review-md-spec.md](references/review-md-spec.md) for the full specification.
 
 ## Requirements
 
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) with a Max or Team plan (for subagent support)
 - `gh` CLI (for GitHub) or `glab` CLI (for GitLab)
 - Git
-
