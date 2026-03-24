@@ -535,18 +535,21 @@ Before posting results, re-check that the PR is still open and eligible for revi
 
 ### Delivery options
 
-After generating the report, ask the user how they'd like to receive it:
+After generating the report, use the **AskUserQuestion** tool to ask the user how they'd like to receive it. This gives them a clean selection interface instead of requiring them to type an answer.
 
 ```
-Review complete. How would you like the results?
-
-1. **PR comments** — Post findings as inline comments on the PR (requires PR mode)
-2. **Markdown file** — Save the full report as a .md file
-3. **Chat** — Display the report right here
-4. **All of the above** — Post PR comments, save markdown, and show in chat
-
-Choose 1, 2, 3, or 4 (or combine, e.g., "1 and 2"):
+AskUserQuestion(
+  question: "Review complete. How would you like the results?",
+  options: [
+    "PR comments — Post findings as inline comments on the PR",
+    "Markdown file — Save the full report as a .md file",
+    "Chat — Display the report right here",
+    "All of the above"
+  ]
+)
 ```
+
+If AskUserQuestion is not available, fall back to printing the options and asking the user to respond.
 
 ### Delivery: PR/MR comments (platform-aware)
 
