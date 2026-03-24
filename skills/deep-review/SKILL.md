@@ -553,6 +553,8 @@ If AskUserQuestion is not available, fall back to printing the options and askin
 
 ### Delivery: PR/MR comments (platform-aware)
 
+**Important: Only comment on files in the diff.** The GitHub/GitLab API will reject inline comments on files that are not part of the PR/MR diff (HTTP 422 "Path could not be resolved"). Before posting each inline comment, verify the file path is in the list of changed files from Phase 1. If a finding references a file outside the diff (e.g., a cross-file impact finding about a caller), post it as part of the top-level summary comment instead, with a note like "This finding references `path/to/file.cs` which is not in this PR's diff."
+
 Post inline review comments using the detected VCS platform:
 
 **GitHub:**
