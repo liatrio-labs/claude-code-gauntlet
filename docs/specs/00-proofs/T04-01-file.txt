@@ -1,0 +1,11 @@
+Type: file
+Path: skills/deep-review/SKILL.md
+Contains: "```suggestion" and "soft default"
+Timestamp: 2026-03-24T20:45:00Z
+Status: PASS
+
+Verification:
+  R04.1 - Soft default cap of 8 findings: PASS (line 645)
+  R04.2 - Batch PR comments into single review event: PASS (line 762, "Batch ALL inline comments")
+  R04.3 - Committable suggestion blocks: PASS (line 774-775, suggestion block syntax)
+  R04.4 - Severity emoji prefixes: PASS (lines 676-685 in SKILL.md, lines 66/88/94/106 in report-format.md)

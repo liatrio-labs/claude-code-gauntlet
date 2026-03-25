@@ -63,7 +63,7 @@ Example: "This PR adds JWT-based authentication to the API layer. The implementa
 
 ---
 
-## Critical Issues
+## 🔴 Critical Issues
 
 {These MUST be fixed before merge. Include only findings with severity=critical and confidence>=80.}
 
@@ -85,13 +85,13 @@ Example: "This PR adds JWT-based authentication to the API layer. The implementa
 
 ---
 
-## High-Priority Issues
+## 🟠 High-Priority Issues
 
 {Should be fixed. Same format as Critical, but with severity=high.}
 
 ---
 
-## Medium Issues
+## 🟡 Medium Issues
 
 {Worth addressing. Briefer format:}
 
@@ -103,7 +103,7 @@ Example: "This PR adds JWT-based authentication to the API layer. The implementa
 
 ---
 
-## Low-Priority Suggestions
+## 💡 Low-Priority Suggestions
 
 {Nice to have. Bullet list format:}
 
