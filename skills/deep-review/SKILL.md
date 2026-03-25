@@ -52,13 +52,15 @@ Before any review work, check PR eligibility. Use Haiku for these fast checks.
 
 If the PR is ineligible, explain why and stop. Do not proceed to Phase 1.
 
-### Review mode selection
+### Review mode selection — MANDATORY GATE
+
+> **STOP: You MUST complete this step before proceeding to Phase 1.** Do not skip this prompt. Do not assume a default. The review cannot continue until a mode is selected.
 
 After eligibility checks pass, determine the model tier for this review. This check happens here (before full REVIEW.md discovery in Phase 2a) so the user sees the mode prompt early. Only read the **root-level** REVIEW.md for this check — subdirectory REVIEW.md files are discovered later in Phase 2a.
 
-1. **Quick-check root REVIEW.md** — if `REVIEW.md` exists at the repo root, read it and look for a `model_tier` field. If set to `optimized` or `frontier`, use that value and skip the prompt. Note in triage output: "Review mode: [mode] (from REVIEW.md)"
+1. **Quick-check root REVIEW.md** — if `REVIEW.md` exists at the repo root, read it and look for a `model_tier` field under a `## Model Tier` heading. The field must be explicitly set to `optimized` or `frontier` as a value (not as a comment, not as an example). If found, use that value and skip the prompt. Note in triage output: "Review mode: [mode] (from REVIEW.md)"
 
-2. **If root REVIEW.md doesn't exist or doesn't set `model_tier`**, prompt the user:
+2. **If root REVIEW.md doesn't exist, or doesn't have a `model_tier` value**, you MUST call AskUserQuestion. Do not proceed without the user's answer:
 
 ```
 AskUserQuestion(
@@ -70,7 +72,7 @@ AskUserQuestion(
 )
 ```
 
-The selected mode determines which model each agent uses — see the Phase 2i dimension table below.
+**After this step, confirm the selected mode in your output** (e.g., "Review mode: optimized") before continuing. The selected mode determines which model each agent uses — see the Phase 2i dimension table below.
 
 > **Important:** Re-check eligibility again before Phase 6 delivery — the PR could close or merge while the review is running.
 
