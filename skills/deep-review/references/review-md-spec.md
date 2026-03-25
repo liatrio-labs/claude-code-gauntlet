@@ -47,6 +47,11 @@ medium
 <!-- When the cap is hit, highest-severity findings are kept and a note indicates how many were suppressed. -->
 15
 
+## Model Tier
+<!-- Default review mode. When set, skips the mode selection prompt. -->
+<!-- Options: optimized (Sonnet default, Opus for security) or frontier (all Opus) -->
+optimized
+
 ## Ignore
 <!-- Specific finding patterns to suppress. Useful for known false positives. -->
 <!-- Format: dimension:pattern -->
@@ -116,6 +121,15 @@ Default: no limit. Set this in high-debt codebases to prevent review noise:
 
 Suppressed findings are noted at the end of the report: "{N} additional findings were suppressed by the max_findings cap ({cap}). Increase in REVIEW.md or remove to see all findings."
 
+### Model Tier
+
+Controls which LLM models are used for review agents. Two modes are available:
+
+- `optimized` (default) — Sonnet for most agents, Opus only for security-reviewer. Faster and ~40% cheaper. Research shows the SWE-bench Verified gap between Opus and Sonnet is just 1.2 percentage points.
+- `frontier` — Opus for all reasoning-heavy agents (bugs, security, cross-file, simplification). Maximum depth for high-stakes reviews.
+
+When set in REVIEW.md, the mode selection prompt is skipped during Phase 0. When not set, the user is prompted at the start of each review.
+
 ### Ignore
 
 Patterns for suppressing known false positives. Format is `dimension:"pattern"` where:
@@ -142,6 +156,7 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 | `confidence_threshold` | **Override** — subdirectory value replaces root | A module may need stricter or looser thresholds |
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
 | `max_findings` | **Override** — subdirectory value replaces root | High-debt areas may need a cap |
+| `model_tier` | **Override** — subdirectory value replaces root | A security-critical directory might always use frontier |
 | `rules` | **Accumulate** — subdirectory rules add to root rules | Directory-specific conventions supplement project-wide ones |
 | `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |
 | `focus` | **Override** — subdirectory value replaces root | A directory may need only specific dimensions |

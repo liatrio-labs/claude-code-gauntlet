@@ -1,0 +1,17 @@
+Type: file
+Path: skills/deep-review/SKILL.md
+Contains: "Optimized" and "Frontier" mode options
+Timestamp: 2026-03-24T20:15:00Z
+Status: PASS
+
+Verification:
+- Line 67: AskUserQuestion with "Optimized (Recommended)" option
+- Line 68: AskUserQuestion with "Frontier" option
+- Line 294: Two-column dimension table with Optimized and Frontier columns
+- Line 314: Triage announcement includes "Review mode: Optimized"
+
+Requirements verified:
+  R02.1 - Phase 0 prompts user for Optimized vs Frontier: PASS
+  R02.2 - REVIEW.md model_tier checked first: PASS (lines 61-63)
+  R02.3 - Dimension table shows both modes: PASS (line 294)
+  R02.4 - Security-reviewer always Opus in both modes: PASS (line 297, bold **Opus**)

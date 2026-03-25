@@ -52,6 +52,26 @@ Before any review work, check PR eligibility. Use Haiku for these fast checks.
 
 If the PR is ineligible, explain why and stop. Do not proceed to Phase 1.
 
+### Review mode selection
+
+After eligibility checks pass, determine the model tier for this review:
+
+1. **Check REVIEW.md** for a `model_tier` field. If set to `optimized` or `frontier`, use that value and skip the prompt. Note in triage output: "Review mode: [mode] (from REVIEW.md)"
+
+2. **If not set in REVIEW.md**, prompt the user:
+
+```
+AskUserQuestion(
+  question: "Which review mode?",
+  options: [
+    "Optimized (Recommended) — Sonnet for most agents, Opus for security. Faster and ~40% cheaper.",
+    "Frontier — All Opus agents. Maximum depth for high-stakes reviews."
+  ]
+)
+```
+
+The selected mode determines which model each agent uses — see the Phase 2i dimension table below.
+
 > **Important:** Re-check eligibility again before Phase 6 delivery — the PR could close or merge while the review is running.
 
 ---
@@ -271,20 +291,27 @@ Include AI-generation status in the risk classification sent to all agents.
 
 All of these are **on by default** unless REVIEW.md disables them:
 
-| Dimension | Agent | Model | Always? | Condition to skip |
-|-----------|-------|-------|---------|-------------------|
-| Correctness/Bugs + Error Handling | bug-detector | Opus | Yes | — |
-| Security | security-reviewer | Opus | Yes | — |
-| Cross-file impact | cross-file-impact-analyzer | Opus | Yes | — |
-| Test coverage | test-analyzer | Sonnet | Yes | No test files in repo |
-| Conventions + Intent alignment | conventions-and-intent | Sonnet | Yes | No CLAUDE.md found AND no docs/specs |
-| Type design | type-design-analyzer | Sonnet | Conditional | No new types introduced |
-| Code simplification | code-simplifier | Opus | Conditional | Only runs POST-review if no critical/high issues found |
+| Dimension | Agent | Optimized | Frontier | Always? | Condition to skip |
+|-----------|-------|-----------|----------|---------|-------------------|
+| Correctness/Bugs + Error Handling | bug-detector | Sonnet | Opus | Yes | — |
+| Security | security-reviewer | **Opus** | **Opus** | Yes | — |
+| Cross-file impact | cross-file-impact-analyzer | Sonnet | Opus | Yes | — |
+| Test coverage | test-analyzer | Sonnet | Sonnet | Yes | No test files in repo |
+| Conventions + Intent alignment | conventions-and-intent | Sonnet | Sonnet | Yes | No CLAUDE.md found AND no docs/specs |
+| Type design | type-design-analyzer | Sonnet | Sonnet | Conditional | No new types introduced |
+| Code simplification | code-simplifier | Sonnet | Opus | Conditional | Only runs POST-review if no critical/high issues found |
+| Change summarizer (2c) | — | Sonnet | Sonnet | Yes | — |
+| Validation agents (4b) | — | Sonnet | Sonnet | Yes | — |
+| Blind challenge agents (4f) | — | Sonnet | Sonnet | Conditional | Only when challenge triggers |
+| Pre-flight (Phase 0) | — | Haiku | Haiku | Yes | — |
+
+> **Why security always gets Opus:** Research (#12) shows different models have complementary vulnerability-class detection profiles — Claude finds IDOR at 22% but SQLi at 5%, while other models show inverse patterns. Opus provides the deepest reasoning for inter-procedural data-flow analysis. All other agents use Sonnet in Optimized mode because the SWE-bench Verified gap between Opus and Sonnet has compressed to just 1.2 percentage points.
 
 Announce the triage results to the user before proceeding:
 
 ```
 Reviewing: PR #123 — "Add user authentication"
+Review mode: Optimized (Sonnet default, Opus for security)
 Files changed: 14 (3 high-risk, 7 medium, 4 low)
 AI-generated files detected: 2 (elevated risk)
 Review dimensions: bugs, security, cross-file impact, tests, conventions+intent, types
@@ -894,13 +921,14 @@ Quick reference for supported fields:
 - **severity_threshold** — Minimum severity to report (default: low; subdirectory overrides root)
 - **confidence_threshold** — Minimum confidence to report (default: per-dimension, see Phase 4c; subdirectory overrides root)
 - **max_findings** — Maximum number of findings in the report (default: no limit, see Phase 4h; subdirectory overrides root)
+- **model_tier** — Default review mode: `optimized` (Sonnet default, Opus for security) or `frontier` (all Opus). When set, skips the mode selection prompt in Phase 0. (subdirectory overrides root)
 - **ignore** — Patterns to suppress known findings (subdirectory patterns accumulate with root)
 
 ---
 
 ## Notes
 
-- **Model tiering rationale:** Opus is used for agents requiring creative reasoning and deep analysis — bug detection (including error handling), security review, cross-file impact tracing, and code simplification. Sonnet is used for agents performing structured evaluation against known criteria — test analysis, conventions and intent alignment, type design analysis, and cross-validation. Haiku is used for fast pre-flight eligibility checks (Phase 0).
+- **Model tiering rationale:** Two modes are available. **Optimized** (default) uses Sonnet for most agents and Opus only for security-reviewer — research (#12) shows the SWE-bench Verified gap between Opus and Sonnet has compressed to 1.2 percentage points, and Anthropic's own code review plugin uses all-Sonnet. Security gets Opus because different models have complementary vulnerability-class detection profiles (Semgrep data: Claude finds IDOR at 22%/SQLi at 5%, while other models show inverse patterns). **Frontier** mode uses Opus for all reasoning-heavy agents (bugs, security, cross-file, simplification) and Sonnet for structured evaluation agents. Both modes use Haiku for fast pre-flight checks and Sonnet for validation/challenge agents. The DeepMind scaling study finding — "spend on workers, not the manager" — validates keeping the orchestrator and triage steps on cheaper models regardless of mode.
 - **Estimated time:** 5-10 minutes for medium PRs (<500 lines), 10-20 minutes for large PRs (500+ lines). This is comparable to Anthropic's managed code review service and reflects the thoroughness of multi-agent dispatch with cross-validation.
 - **The cross-validation step (Phase 4b) is what keeps false positives under 1%.** Skipping it dramatically increases noise. The two-step process (deterministic verification + LLM judgment with anchored confidence rubric) ensures findings are grounded in reality before human judgment is applied.
 - For large PRs (>500 lines), the triage phase becomes especially important — file-level summarization (Phase 2g) and per-agent context scoping ensure each agent gets focused input rather than being overwhelmed by a massive diff. At 1000+ lines, a split recommendation is shown.
