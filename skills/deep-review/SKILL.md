@@ -318,7 +318,7 @@ Execute each step in order:
 **4f. Blind challenge round — MANDATORY when triggered.** This is the architectural linchpin of the review system. Without blind challenge, multi-agent systems exhibit sycophantic confirmation in 18/20 configurations.
 
 Trigger conditions (if ANY are true, you MUST run the challenge round):
-- 3 or more critical/high severity findings remain after filtering
+- 1 or more critical/high severity findings remain after filtering
 - Any contradictions were routed from step 4e
 - Any findings have post-verification confidence between 70-85
 
