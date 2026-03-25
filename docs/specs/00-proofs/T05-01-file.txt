@@ -1,0 +1,12 @@
+Type: file
+Paths: skills/deep-review/SKILL.md, skills/deep-review/references/report-format.md
+Contains: "deep-review-findings", "Introduced", "Preexisting"
+Timestamp: 2026-03-24T21:00:00Z
+Status: PASS
+
+Requirements verified:
+  R05.1 - Hidden HTML comment with findings metadata in report footer: PASS (report-format.md)
+  R05.2 - Phase 0 parses deep-review-findings on incremental: PASS (SKILL.md line 46)
+  R05.3 - Findings classified as introduced/fixed/preexisting with ±5 line fuzzy matching: PASS (lines 667-669)
+  R05.4 - Only introduced findings surfaced in incremental review: PASS (line 672)
+  R05.5 - Incremental Review Status section in report: PASS (lines 694-703)
