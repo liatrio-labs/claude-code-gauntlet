@@ -370,4 +370,24 @@ Read `references/delivery-guide.md` for implementation details of each method, i
 
 ### After delivery
 
-Offer to dismiss findings for future reviews — see `references/delivery-guide.md` for the dismissed findings flow. This adds ignore entries to REVIEW.md with date-stamped reasons.
+After delivering the report via the selected methods, always offer these two follow-up actions in sequence:
+
+**1. Task creation** — if the user did NOT already select "Create tasks" in the delivery prompt, offer it now:
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "Would you like to create tasks from any of these findings?",
+    header: "Tasks",
+    multiSelect: false,
+    options: [
+      { label: "Yes — show me the findings to pick from", description: "Select which findings become trackable tasks" },
+      { label: "No — skip", description: "Don't create any tasks" }
+    ]
+  }]
+)
+```
+
+If yes, follow the task creation flow in `references/delivery-guide.md`.
+
+**2. Dismissed findings** — offer to suppress findings for future reviews. See `references/delivery-guide.md` for the dismissed findings flow.
