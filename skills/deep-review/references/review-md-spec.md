@@ -52,6 +52,11 @@ medium
 <!-- Options: optimized (Sonnet default, Opus for security) or frontier (all Opus) -->
 optimized
 
+## Default Delivery
+<!-- How to deliver review results. When set, skips the delivery preference prompt. -->
+<!-- Options: chat, pr_comments, markdown (comma-separated) -->
+chat
+
 ## Ignore
 <!-- Specific finding patterns to suppress. Useful for known false positives. -->
 <!-- Format: dimension:pattern -->
@@ -132,6 +137,21 @@ Controls which LLM models are used for review agents. Two modes are available:
 
 When set in REVIEW.md, the mode selection prompt is skipped during Phase 0. When not set, the user is prompted at the start of each review.
 
+### Default Delivery
+
+Controls how review results are delivered. A comma-separated list of delivery methods:
+
+- `chat` — Display the full report in the conversation
+- `pr_comments` — Post findings as inline PR/MR comments
+- `markdown` — Save as `deep-review-{date}.md`
+
+When set in REVIEW.md, the delivery preference prompt is skipped during Phase 0. When not set, the user is prompted at the start of each review. Task creation is always offered separately after delivery, regardless of this setting.
+
+```
+## Default Delivery
+chat,pr_comments
+```
+
 ### Ignore
 
 Patterns for suppressing known false positives. Format is `dimension:"pattern"` where:
@@ -159,6 +179,7 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
 | `max_findings` | **Override** — subdirectory value replaces root | High-debt areas may need a cap |
 | `model_tier` | **Override** — subdirectory value replaces root | A security-critical directory might always use frontier |
+| `default_delivery` | **Override** — subdirectory value replaces root | Unlikely to vary by directory, but supported for consistency |
 | `rules` | **Accumulate** — subdirectory rules add to root rules | Directory-specific conventions supplement project-wide ones |
 | `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |
 | `focus` | **Override** — subdirectory value replaces root | A directory may need only specific dimensions |
@@ -190,6 +211,33 @@ For a file in `legacy/`:
 ### Discovery
 
 REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Deep-review checks each CLAUDE.md location for a matching REVIEW.md during Phase 2a context gathering.
+
+#### Detection flow (Phase 2a)
+
+Find all CLAUDE.md locations, check each for a matching REVIEW.md:
+
+- **No REVIEW.md anywhere:**
+  ```
+  AskUserQuestion(
+    question: "No REVIEW.md found. REVIEW.md lets you customize review behavior — confidence thresholds, ignore patterns, project-specific rules. Would you like to create one?",
+    options: [
+      "Yes — create at repo root",
+      "Not now — continue without it"
+    ]
+  )
+  ```
+  If yes, use the scaffolding template from the Templates section below.
+- **Root exists, subdirectory CLAUDE.md without matching REVIEW.md:**
+  ```
+  AskUserQuestion(
+    question: "Found REVIEW.md at repo root, but {directory} has a CLAUDE.md without a matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
+    options: [
+      "Yes — create it (inherits root settings, adds directory-specific rules)",
+      "Not now — root config applies to all directories"
+    ]
+  )
+  ```
+- **All locations covered** → proceed
 
 ---
 
@@ -243,6 +291,15 @@ When the user opts to create a REVIEW.md during Phase 2a, use these templates. T
 <!-- Minimum confidence (0-100) to include findings. Default: 80.
      Security findings always use a minimum of 70 regardless of this setting.
      Start at 80-85 and lower based on false-positive rates. -->
+
+## Default Delivery
+
+<!-- How to deliver review results. Comma-separated list.
+     Options: chat, pr_comments, markdown
+     When set, skips the delivery preference prompt.
+     Task creation is always offered separately after delivery.
+     Uncomment and adjust to your preference. -->
+<!-- chat,pr_comments -->
 
 ## Skip
 

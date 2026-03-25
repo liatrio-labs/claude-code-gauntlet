@@ -13,15 +13,7 @@ A comprehensive code review system that dispatches parallel concern-specialized 
 - **Context-pulling over context-pushing** — agents pull additional context via Read/Grep/LSP rather than receiving a massive context dump, reducing false positives by 51%
 - **Deterministic grounding before LLM judgment** — findings are verified against tool output before LLM validators judge them
 
-Quality plateaus at 4-6 agents and unstructured parallel systems amplify errors up to 17.2x. This architecture uses 5 always-on agents plus 2 conditional agents, each with scoped context and explicit trust boundaries around untrusted code.
-
 When in doubt about whether something is a real issue, err on the side of not reporting it. A review with 5 real issues is far more valuable than one with 5 real issues buried in 20 false positives.
-
-## When to use this vs simpler review commands
-
-- `/code-review` — fast, focused on bugs + CLAUDE.md. Good for quick checks.
-- `/review-pr` — dispatches specific aspect agents. Good for targeted reviews.
-- **`/deep-review`** — full orchestration: pre-flight, triage, all concern agents in parallel, cross-validation, challenge round, dedup, severity-ranked report, flexible delivery. Use when the stakes are high or the PR is large.
 
 ---
 
@@ -79,6 +71,30 @@ Before any review work, check PR eligibility. Use Haiku for these fast checks.
 
 Confirm the selected mode in output before continuing.
 
+### Delivery preference — MANDATORY GATE
+
+> **STOP: Complete this step before Phase 1.** Do not skip or assume a default.
+
+1. **Quick-check root REVIEW.md** for an explicitly set `default_delivery` value (e.g., `default_delivery: chat,pr_comments`). If found, use it and note: "Delivery: [methods] (from REVIEW.md)"
+2. **If no `default_delivery` set**, prompt the user:
+   ```
+   AskUserQuestion(
+     questions: [{
+       question: "How should I deliver the review results?",
+       header: "Delivery",
+       multiSelect: true,
+       options: [
+         { label: "Chat (Recommended)", description: "Full report in the conversation" },
+         { label: "PR comments", description: "Inline comments on the PR" },
+         { label: "Markdown file", description: "Save as deep-review-{date}.md" }
+       ]
+     }]
+   )
+   ```
+   When the review target is local changes (not a PR/MR), omit the "PR comments" option since there is no PR to comment on.
+
+Store the delivery selection for Phase 6. Confirm in output before continuing.
+
 > Re-check eligibility again before Phase 6 delivery — the PR could close/merge during review.
 
 ---
@@ -87,14 +103,7 @@ Confirm the selected mode in output before continuing.
 
 ### 1a. Detect VCS platform
 
-Auto-detect from `git remote get-url origin`:
-
-| Remote URL pattern | Platform | CLI | Term |
-|---|---|---|---|
-| `github.com` | GitHub | `gh` | PR (Pull Request) |
-| `gitlab.com` or self-hosted | GitLab | `glab` | MR (Merge Request) |
-
-If detection fails, ask the user.
+Auto-detect from `git remote get-url origin`: GitHub → `gh` CLI, "PR"; GitLab (including self-hosted) → `glab` CLI, "MR". If detection fails, ask the user.
 
 ### 1b. Identify review target
 
@@ -119,34 +128,16 @@ Fast triage pass in the main context (not a subagent), under a minute.
 2. **REVIEW.md** — Discover hierarchically. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers customize focus areas, skip patterns, custom rules, thresholds, and ignore patterns.
 3. **AGENTS.md / QODO.md** — Read if present.
 
-#### REVIEW.md detection flow
+#### REVIEW.md detection — MANDATORY GATE
+
+> **STOP: Complete this check before proceeding to 2b.** Do not skip REVIEW.md detection — it controls thresholds, rules, and ignore patterns for the entire review.
 
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
+- **No REVIEW.md anywhere** → ask the user if they want to create one. If yes, use scaffolding template from `references/review-md-spec.md`.
+- **Root exists but subdirectory CLAUDE.md has no matching REVIEW.md** → ask the user if they want a subdirectory config.
+- **All locations covered** → proceed.
 
-- **No REVIEW.md anywhere:**
-  ```
-  AskUserQuestion(
-    question: "No REVIEW.md found. REVIEW.md lets you customize review behavior — confidence thresholds, ignore patterns, project-specific rules. Would you like to create one?",
-    options: [
-      "Yes — create at repo root",
-      "Not now — continue without it"
-    ]
-  )
-  ```
-  If yes, use scaffolding template from `references/review-md-spec.md`.
-- **Root exists, subdirectory CLAUDE.md without matching REVIEW.md:**
-  ```
-  AskUserQuestion(
-    question: "Found REVIEW.md at repo root, but {directory} has a CLAUDE.md without a matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
-    options: [
-      "Yes — create it (inherits root settings, adds directory-specific rules)",
-      "Not now — root config applies to all directories"
-    ]
-  )
-  ```
-- **All locations covered** → proceed
-
-When providing REVIEW.md context to agents, merge applicable configs: root as base, subdirectory overrides/additions layered on top. Settings override, rules and patterns accumulate.
+See `references/review-md-spec.md` § Discovery for the full AskUserQuestion prompts and scaffolding templates. Merge configs hierarchically: settings override, rules and patterns accumulate.
 
 ### 2b. Classify changed files by risk level
 
@@ -225,18 +216,7 @@ All on by default unless REVIEW.md disables them:
 
 > **Why security always gets Opus:** Different models have complementary vulnerability-class detection profiles — Claude finds IDOR at 22% but SQLi at 5%, while other models show inverse patterns. Opus provides the deepest reasoning for inter-procedural data-flow analysis.
 
-Announce triage results before proceeding:
-
-```
-Reviewing: PR #123 — "Add user authentication"
-Review mode: Optimized (Sonnet default, Opus for security)
-Files changed: 14 (3 high-risk, 7 medium, 4 low)
-AI-generated files detected: 2 (elevated risk)
-Review dimensions: bugs, security, cross-file impact, tests, conventions+intent, types
-Estimated time: ~5-10 minutes
-```
-
-For 1000+ line PRs, add: "This PR is [N] lines. Review effectiveness drops sharply above 400 lines. Consider splitting into smaller PRs."
+Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions. For 1000+ line PRs, add: "This PR is [N] lines. Review effectiveness drops sharply above 400 lines. Consider splitting into smaller PRs."
 
 ---
 
@@ -300,6 +280,11 @@ If a subagent fails (crash, timeout, error):
 
 **Pipeline:** 4a → 4b → 4c → 4d → 4e → 4f → 4g → 4h → 4i → 4j
 
+**Announce each step before executing it.** This creates accountability — if you skip a step, the gap is visible in the transcript. Example announcements:
+- "Phase 4a: Classifying findings via git blame..."
+- "Phase 4f: Checking challenge round triggers — 4 critical/high findings → TRIGGERED. Spawning blind challenge agents."
+- "Phase 4f: Checking challenge round triggers — 0 critical/high, no contradictions, no borderline confidence → not triggered."
+
 Execute each step in order:
 
 **4a. Blame classification** — Use git blame to classify each finding as "New" (in this PR) or "Surfaced" (pre-existing). Downgrade surfaced findings one severity level.
@@ -315,7 +300,14 @@ Execute each step in order:
 
 **4e. Disagreement detection** — Boost consensus findings (+10), pass through singletons, route contradictions to challenge. Security wins ties.
 
-**4f. Blind challenge round — MANDATORY when triggered.** This is the architectural linchpin of the review system. Without blind challenge, multi-agent systems exhibit sycophantic confirmation in 18/20 configurations.
+**4f. Blind challenge round**
+
+> **MANDATORY GATE: Do not proceed to 4g until this step completes.**
+> Check the trigger conditions below. If ANY are true, you MUST spawn blind challenge agents NOW.
+>
+> Deterministic verification (4b) checks whether a finding's FACTUAL claims are correct (right file, right line, symbol exists). Blind challenge (4f) checks whether a finding's INTERPRETATION is correct (is this actually a bug, or is there a defense the original agent missed?). These test different things — passing 4b does not make 4f redundant.
+
+This is the architectural linchpin of the review system. Without blind challenge, multi-agent systems exhibit sycophantic confirmation in 18/20 configurations.
 
 Trigger conditions (if ANY are true, you MUST run the challenge round):
 - 1 or more critical/high severity findings remain after filtering
@@ -334,7 +326,9 @@ For each finding that needs challenge, spawn a fresh Sonnet agent with ONLY the 
 
 ---
 
-## Phase 5: Generate Report
+## Phase 5: Generate Report (internal — do not output yet)
+
+> **Do NOT output the report to the user in this phase.** Generate the report data structure internally. Phase 6 delivers it using the method(s) the user selected in Phase 0. Outputting the report here bypasses the user's delivery preference.
 
 Read `references/report-format.md` for the full report template and PR comment format.
 
@@ -352,59 +346,136 @@ Always use the full 40-character SHA from `git rev-parse HEAD`. For self-hosted 
 
 ## Phase 6: Deliver
 
-### Re-check eligibility
+This phase has three stages: **deliver the report**, **offer the task board**, **offer dismissed findings**. Execute them in order. Each stage with a MANDATORY GATE must not be skipped.
 
-Before posting, verify the PR is still open. If closed/merged: still offer the report, but do NOT post PR comments.
+Read `references/delivery-guide.md` for implementation details of PR comment posting (batched review event, platform-specific API, comment body format, findings metadata footer).
 
-### Delivery options
+### Stage 1: Deliver the report
 
-Use AskUserQuestion with `multiSelect: true` so the user can pick multiple delivery methods at once:
+**Re-check eligibility** — verify the PR is still open. If closed/merged: still deliver via chat/markdown, but do NOT post PR comments.
 
-```
-AskUserQuestion(
-  questions: [{
-    question: "Review complete. Which delivery methods do you want?",
-    header: "Delivery",
-    multiSelect: true,
-    options: [
-      { label: "Chat (Recommended)", description: "Display the full report right here in the conversation" },
-      { label: "PR comments", description: "Post findings as inline comments on the PR" },
-      { label: "Markdown file", description: "Save the full report as deep-review-{date}.md" },
-      { label: "Create tasks", description: "Add findings to the task board for tracking" }
-    ]
-  }]
-)
-```
+Deliver using the method(s) the user selected in Phase 0, in this order:
 
-When the review target is local changes (not a PR/MR), omit the "PR comments" option since there is no PR to comment on.
+**Step A. Chat** — if selected, output the full report per `references/report-format.md`.
 
-Read `references/delivery-guide.md` for implementation details of each method, including:
-- PR/MR comment posting (batched single review event, 8-comment inline cap, platform-specific API)
-- Comment body format (severity emoji, suggestion blocks vs prose heuristic)
-- Findings metadata footer for incremental review support
-- Task creation flow (user selection → FIX tasks, see also `references/fix-task-metadata.md`)
-- Dismissed findings flow (suppressing findings in REVIEW.md ignore section)
+**Step B. PR comments** — if selected, run the PR comment selection flow before posting.
 
-### After delivery
-
-After delivering the report via the selected methods, always offer these two follow-up actions in sequence:
-
-**1. Task creation** — if the user did NOT already select "Create tasks" in the delivery prompt, offer it now:
+> **MANDATORY GATE: Do not post PR comments without completing this selection flow.**
 
 ```
 AskUserQuestion(
   questions: [{
-    question: "Would you like to create tasks from any of these findings?",
-    header: "Tasks",
+    question: "Which findings should I post as PR comments?",
+    header: "PR Comments",
     multiSelect: false,
     options: [
-      { label: "Yes — show me the findings to pick from", description: "Select which findings become trackable tasks" },
-      { label: "No — skip", description: "Don't create any tasks" }
+      { label: "Default — top 8 by severity", description: "Post the highest-severity findings as inline comments" },
+      { label: "Let me pick", description: "Walk through each finding and choose" }
     ]
   }]
 )
 ```
 
-If yes, follow the task creation flow in `references/delivery-guide.md`.
+- **"Default — top 8 by severity"** → select the top 8 findings ranked by severity then confidence. Post as inline comments; any remaining findings go in the summary comment.
+- **"Let me pick"** → run the **interactive finding walkthrough** (defined at the end of this phase). Post selected findings as inline comments (capped at 8 inline; if the user selected more than 8, the highest-severity ones get inline comments and the rest go in the summary comment).
 
-**2. Dismissed findings** — offer to suppress findings for future reviews. See `references/delivery-guide.md` for the dismissed findings flow.
+**Track state:** remember which findings were selected for PR comments — call this the **pr_comment_set**. The task board stage uses this to offer a shortcut.
+
+**Step C. Markdown file** — if selected, write the full report to `./deep-review-{date}.md`.
+
+---
+
+### Stage 2: Task board — MANDATORY GATE
+
+> **STOP: You MUST ask the task board question below before finishing the review.** Do not skip this step, even if you think the user is done. The user decides whether to create tasks — you must give them the choice.
+
+The prompt depends on whether PR comments were posted:
+
+**If pr_comment_set exists** (user posted PR comments via default or custom selection):
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "Would you like to add any findings to the task board?",
+    header: "Task Board",
+    multiSelect: false,
+    options: [
+      { label: "Yes — from my PR comments", description: "Create a task for each finding I posted as a PR comment" },
+      { label: "Yes — let me pick from all findings", description: "Walk through the full list and choose" },
+      { label: "No — done", description: "Finish the review" }
+    ]
+  }]
+)
+```
+
+- **"Yes — from my PR comments"** → create FIX tasks for every finding in the pr_comment_set. No additional walkthrough needed.
+- **"Yes — let me pick from all findings"** → run the **interactive finding walkthrough** with all findings.
+- **"No — done"** → skip to Stage 3.
+
+**If no pr_comment_set** (user did not post PR comments):
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "Would you like to add any findings to the task board?",
+    header: "Task Board",
+    multiSelect: false,
+    options: [
+      { label: "Yes — walk me through them", description: "I'll show each finding and you decide" },
+      { label: "No — done", description: "Finish the review" }
+    ]
+  }]
+)
+```
+
+- **"Yes — walk me through them"** → run the **interactive finding walkthrough** with all findings.
+- **"No — done"** → skip to Stage 3.
+
+After the user's selection is complete, create FIX tasks for all included findings using the task creation flow in `references/delivery-guide.md` (full metadata per `references/fix-task-metadata.md`).
+
+After creating: "Created N tasks from review findings."
+
+---
+
+### Stage 3: Dismissed findings
+
+Offer to suppress findings for future reviews. See `references/delivery-guide.md` for the dismissed findings flow.
+
+---
+
+### Interactive finding walkthrough
+
+This is the reusable selection pattern used by both the PR comment selection (Stage 1, Step B) and the task board selection (Stage 2). The flow is identical — only the purpose changes.
+
+Walk the user through findings one at a time, grouped by severity (critical first, then high, medium, low). For each finding, present:
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "🔴 conv-1: Async tests use CancellationToken.None\nFile: ClaudeCoachingLlmTests.cs | 15 async test methods pass CancellationToken.None instead of TestContext.Current.CancellationToken",
+    header: "Critical (1 of 1)",
+    multiSelect: false,
+    options: [
+      { label: "Include" },
+      { label: "Don't include" },
+      { label: "Include all Critical findings" },
+      { label: "Skip remaining Critical findings" }
+    ]
+  }]
+)
+```
+
+**Question format:** The header shows the current severity group and position (e.g., "High (2 of 3)"). The question body includes the severity emoji, finding ID, title, file, and a one-line summary — enough context to decide without scrolling back to the report.
+
+**Options:**
+
+The first two are per-finding. The last two are bulk actions for the current severity level:
+- **"Include all [severity] findings"** — includes the current finding plus all remaining at this severity, then advances to the next severity group.
+- **"Skip remaining [severity] findings"** — skips the current finding plus all remaining at this severity, then advances to the next severity group.
+
+The bulk option labels use the current severity name: "Include all **Critical** findings" / "Skip remaining **Critical** findings" → "Include all **High** findings" / "Skip remaining **High** findings" → etc.
+
+**Early exit:** When transitioning to a new severity group (the first finding at that level), add a fifth option:
+- **"Done — skip everything else"** — stops the walkthrough entirely, returns only what was already included.
+
+This lets users efficiently batch through lower-priority items. A user who wants all critical and high findings can hit "Include all Critical findings" → "Include all High findings" → "Done — skip everything else" in three clicks.

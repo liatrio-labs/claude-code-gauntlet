@@ -114,10 +114,15 @@ Log all contradictions and resolutions in the report methodology section.
 
 ## 4f. Blind challenge round
 
+> **MANDATORY GATE: Do not proceed to 4g until this step completes.**
+> Check the trigger conditions below. If ANY are true, you MUST spawn blind challenge agents NOW.
+>
+> Deterministic verification (4b) checks whether a finding's FACTUAL claims are correct (right file, right line, symbol exists). Blind challenge (4f) checks whether a finding's INTERPRETATION is correct (is this actually a bug, or is there a defense the original agent missed?). These test different things — passing 4b does not make 4f redundant.
+
 Uses **fresh blind agents** — not the original reviewers — because research proves agents sharing context exhibit sycophantic confirmation in 18/20 tested configurations, and multi-agent debate follows a martingale (expected correctness unchanged across rounds).
 
 **Trigger conditions (ANY of these):**
-- 3+ blocking findings (critical or high severity) remaining after filtering
+- 1 or more critical/high severity findings remaining after filtering
 - Any contradictions routed from Phase 4e
 - Findings where deterministic verification passed but LLM judgment gave confidence 70-85 (borderline)
 
