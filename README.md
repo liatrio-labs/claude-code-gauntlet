@@ -11,12 +11,12 @@ Deep Review dispatches 5-7 specialized agents in parallel, each examining your c
 | **bug-detector** | Sonnet | Opus | Logic errors, edge cases, error handling, resource leaks |
 | **security-reviewer** | **Opus** | **Opus** | OWASP top 10, injection, auth, SSRF, deserialization |
 | **cross-file-impact-analyzer** | Sonnet | Opus | How changes affect callers and dependents across the codebase |
-| **test-analyzer** | Sonnet | Sonnet | Test coverage gaps, test quality, missing edge cases |
-| **conventions-and-intent** | Sonnet | Sonnet | CLAUDE.md compliance, spec alignment, comment accuracy |
-| **type-design-analyzer** | Sonnet | Sonnet | Type encapsulation and invariant design (conditional) |
+| **test-analyzer** | Sonnet | Opus | Test coverage gaps, test quality, missing edge cases |
+| **conventions-and-intent** | Sonnet | Opus | CLAUDE.md compliance, spec alignment, comment accuracy |
+| **type-design-analyzer** | Sonnet | Opus | Type encapsulation and invariant design (conditional) |
 | **code-simplifier** | Sonnet | Opus | Simplification opportunities (post-review, conditional) |
 
-Two review modes are available. **Optimized** (default) is ~40% cheaper and faster. **Frontier** uses Opus for reasoning-heavy agents. Security always gets Opus in both modes because different models have complementary vulnerability-class detection profiles.
+Two review modes are available. **Optimized** (default) is ~40% cheaper and faster — Sonnet for most agents, Opus only for security. **Frontier** uses Opus for all agents. Security always gets Opus in both modes because different models have complementary vulnerability-class detection profiles.
 
 After agents report findings, a validation pipeline filters false positives:
 

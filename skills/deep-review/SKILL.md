@@ -214,13 +214,13 @@ All on by default unless REVIEW.md disables them:
 | Correctness/Bugs + Error Handling | bug-detector | Sonnet | Opus | — |
 | Security | security-reviewer | **Opus** | **Opus** | — |
 | Cross-file impact | cross-file-impact-analyzer | Sonnet | Opus | — |
-| Test coverage | test-analyzer | Sonnet | Sonnet | No test files in repo |
-| Conventions + Intent | conventions-and-intent | Sonnet | Sonnet | No CLAUDE.md AND no docs/specs |
-| Type design | type-design-analyzer | Sonnet | Sonnet | No new types introduced |
+| Test coverage | test-analyzer | Sonnet | Opus | No test files in repo |
+| Conventions + Intent | conventions-and-intent | Sonnet | Opus | No CLAUDE.md AND no docs/specs |
+| Type design | type-design-analyzer | Sonnet | Opus | No new types introduced |
 | Code simplification | code-simplifier | Sonnet | Opus | Only POST-review if no critical/high |
-| Change summarizer (2c) | — | Sonnet | Sonnet | — |
-| Validation agents (4b) | — | Sonnet | Sonnet | — |
-| Blind challenge agents (4f) | — | Sonnet | Sonnet | Conditional |
+| Change summarizer (2c) | — | Sonnet | Opus | — |
+| Validation agents (4b) | — | Sonnet | Opus | — |
+| Blind challenge agents (4f) | — | Sonnet | Opus | Conditional |
 | Pre-flight (Phase 0) | — | Haiku | Haiku | — |
 
 > **Why security always gets Opus:** Different models have complementary vulnerability-class detection profiles — Claude finds IDOR at 22% but SQLi at 5%, while other models show inverse patterns. Opus provides the deepest reasoning for inter-procedural data-flow analysis.
