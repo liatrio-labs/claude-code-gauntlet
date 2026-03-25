@@ -32,47 +32,119 @@ Implementation details for each delivery method in Phase 6.
 
 Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 
-### GitHub — temp JSON file for review payload
+### Posting comments — use Python, not shell JSON
 
-The `gh api` command with inline `-f comments=` is unreliable for nested JSON (escaping breaks frequently). Always use a temp file:
+Shell-constructed JSON fails because of the double-escaping trap (JSON escaping + bash metacharacters). Research (#16) shows Python `json.dumps()` to temp file → `gh/glab api --input` is the most reliable pattern. **Always use this approach — never construct JSON payloads in bash.**
+
+Write a Python script using a quoted heredoc (`<< 'PYTHON_EOF'`) to prevent bash from interpreting special characters in the Python code:
+
+#### GitHub — batched PR review
 
 ```bash
-# Step 1: Build the review JSON payload
-cat > /tmp/review-payload.json << 'EOF'
-{
-  "body": "<summary comment>",
-  "event": "COMMENT",
-  "comments": [
-    {"path": "<file1>", "line": <line1>, "body": "<comment1>"},
-    {"path": "<file2>", "line": <line2>, "body": "<comment2>"}
-  ]
+python3 << 'PYTHON_EOF'
+import json, subprocess, tempfile, os, sys
+
+owner = "{owner}"
+repo = "{repo}"
+pr_number = {number}
+
+payload = {
+    "body": "{summary comment with verdict, finding counts, and footer}",
+    "event": "COMMENT",  # or "REQUEST_CHANGES" per verdict criteria
+    "comments": [
+        {
+            "path": "{file_path}",
+            "line": {line_number},
+            "side": "RIGHT",
+            "body": "{comment body with emoji, markdown, code blocks}",
+        },
+        # ... up to 8 inline comments (cap)
+    ],
 }
-EOF
 
-# Step 2: Post using --input flag
-gh api repos/{owner}/{repo}/pulls/{number}/reviews \
-  --method POST \
-  --input /tmp/review-payload.json
-
-# Step 3: Clean up
-rm /tmp/review-payload.json
+fd, tmp = tempfile.mkstemp(suffix=".json")
+try:
+    with os.fdopen(fd, "w") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    result = subprocess.run(
+        ["gh", "api", "--method", "POST",
+         "-H", "Accept: application/vnd.github+json",
+         f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+         "--input", tmp],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        print(f"FAILED: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+    resp = json.loads(result.stdout)
+    print(f"Review posted: {resp.get('html_url', resp.get('id'))}")
+finally:
+    os.unlink(tmp)
+PYTHON_EOF
 ```
 
-### GitLab
+#### GitLab — inline MR discussions
+
+GitLab requires separate API calls per inline comment (no batched review endpoint). Each needs position SHAs from the MR versions endpoint:
 
 ```bash
-glab api projects/{project_id}/merge_requests/{number}/discussions \
-  --method POST \
-  -f body="<comment>" \
-  -f "position[base_sha]=<base_sha>" \
-  -f "position[head_sha]=<head_sha>" \
-  -f "position[start_sha]=<start_sha>" \
-  -f "position[position_type]=text" \
-  -f "position[new_path]=<file>" \
-  -f "position[new_line]=<line>"
+python3 << 'PYTHON_EOF'
+import json, subprocess, tempfile, os, sys
+
+project_id = "{project_id}"  # or URL-encoded path
+mr_iid = {number}
+
+# Step 1: fetch MR version SHAs
+versions_raw = subprocess.run(
+    ["glab", "api", f"projects/{project_id}/merge_requests/{mr_iid}/versions"],
+    capture_output=True, text=True, check=True,
+).stdout
+versions = json.loads(versions_raw)
+latest = versions[0]
+base_sha = latest["base_commit_sha"]
+head_sha = latest["head_commit_sha"]
+start_sha = latest["start_commit_sha"]
+
+# Step 2: post each inline comment as a discussion
+comments = [
+    {"path": "{file}", "line": {line}, "body": "{comment body}"},
+    # ...
+]
+
+for c in comments:
+    payload = {
+        "body": c["body"],
+        "position": {
+            "position_type": "text",
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "start_sha": start_sha,
+            "old_path": c["path"],
+            "new_path": c["path"],
+            "new_line": c["line"],
+        },
+    }
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        result = subprocess.run(
+            ["glab", "api", "--method", "POST",
+             "--header", "Content-Type: application/json",
+             "--input", tmp,
+             f"projects/{project_id}/merge_requests/{mr_iid}/discussions"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            print(f"FAILED for {c['path']}:{c['line']}: {result.stderr}", file=sys.stderr)
+    finally:
+        os.unlink(tmp)
+
+print(f"Posted {len(comments)} inline comments on MR !{mr_iid}")
+PYTHON_EOF
 ```
 
-After inline comments, post the executive summary as a top-level PR/MR comment.
+After inline comments, post the executive summary as a top-level PR/MR comment using the same Python pattern.
 
 ### Findings metadata footer
 

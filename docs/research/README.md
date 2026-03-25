@@ -21,6 +21,7 @@ Research artifacts that informed the design of claude-deep-review. Each document
 | 13 | [Cost and Token Economics](artifacts/13-cost-and-token-economics.md) | Multi-agent review costs $0.05-$25 per PR (500x range). Token duplication rates of 53-86% across frameworks. Quality plateaus at 4 agents. Prompt caching delivers 60-90% savings. Self-hosted optimized systems achieve $0.50-$1.50/PR vs Anthropic's $15-$25 managed service. Model costs falling 10-50x/year. The Faros AI Productivity Paradox: AI review may deliver higher organizational ROI than AI coding assistants. |
 | 14 | [Inter-Agent Debate and Challenge Rounds](artifacts/14-inter-agent-debate-and-challenge-rounds.md) | Majority voting, not debate, drives performance gains (martingale proof). Sycophancy corrupts verification in 18/20 configurations. Production systems favor pipelines over debate. Disagreement itself is the signal — route contradictions to blind challenge, testable claims to deterministic verification, ambiguous cases to human escalation. Challenge agents should see only the finding and code, never the original reasoning. |
 | 15 | [Developer Experience of Review Output](artifacts/15-developer-experience-of-review-output.md) | Engagement decays in ~10 days without tuning. Optimal volume: 5-6 comments per PR. Committable code suggestions see 60-70% implementation rates vs 36-43% for prose. Trust in AI accuracy at 29% (Stack Overflow 2025). Adoption threshold is 75-80% precision. Batch findings into single review events. Silence is a feature — post nothing on 29% of reviews. |
+| 16 | [Reliable API Payload Patterns](artifacts/16-reliable-api-payload-patterns.md) | Why shell-constructed JSON fails for AI agents (double-escaping trap). Python `json.dumps()` to temp file → `gh api --input` is the most reliable pattern. Covers GitHub batched PR reviews, GitLab MR discussions with position data, universal Python helper, `jq --arg` as shell-native alternative. `-f`/`-F` flags cannot construct `comments` arrays. |
 
 ## How these informed the design
 
@@ -56,11 +57,12 @@ Key design decisions and which research artifacts support them:
 | Rich FIX task metadata (cw-plan compatible) | #13, #15 | Self-contained work orders with structured requirements, proof artifacts, and toolchain detection enable autonomous execution via cw-execute |
 | Light review mode for trivial PRs | #13 | 31% of small PRs receive no findings; 2-agent mode cuts cost ~60%; quality plateaus at 4 agents |
 | Soft default cap of 8 findings | #15 | Engagement decays in ~10 days; 5-6 comments optimal; 75-80% precision is the adoption threshold; default cap prevents noise without requiring REVIEW.md setup |
+| Python `json.dumps` for API payloads | #16 | Shell-constructed JSON fails due to double-escaping trap (JSON + bash metacharacters). Python serialization to temp file eliminates all escaping layers; `gh api --input` / `glab api --input` never see raw JSON in shell context |
 
 ## Adding new research
 
 When adding new research artifacts:
-1. Number sequentially (next: `16-`)
+1. Number sequentially (next: `17-`)
 2. Use lowercase-kebab-case for filenames
 3. Place in the `artifacts/` directory
 4. Update this index with a summary row and any new design decision mappings
