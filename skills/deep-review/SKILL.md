@@ -287,12 +287,22 @@ Before posting, verify the PR is still open. If closed/merged: still offer the r
 
 ### Delivery options
 
-Ask via AskUserQuestion:
-- "PR comments — Post findings as inline comments on the PR"
-- "Markdown file — Save the full report as a .md file"
-- "Chat — Display the report right here"
-- "Create tasks — Add findings to the task board for tracking"
-- "All of the above"
+Use AskUserQuestion with ALL of these options (do not omit or combine any):
+
+```
+AskUserQuestion(
+  question: "Review complete. How would you like the results?",
+  options: [
+    "PR comments — Post findings as inline comments on the PR",
+    "Markdown file — Save the full report as a .md file",
+    "Chat — Display the report right here",
+    "Create tasks — Add findings to the task board for tracking",
+    "All of the above"
+  ]
+)
+```
+
+When the review target is local changes (not a PR/MR), omit the "PR comments" option since there is no PR to comment on. When AskUserQuestion is unavailable, print the options and ask the user to choose.
 
 Read `references/delivery-guide.md` for implementation details of each method, including:
 - PR/MR comment posting (batched single review event, 8-comment inline cap, platform-specific API)
