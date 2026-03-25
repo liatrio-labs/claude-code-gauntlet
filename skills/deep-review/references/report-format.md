@@ -2,6 +2,8 @@
 
 Use this template for the unified review report. Adapt section headers based on what was actually found — don't include empty sections.
 
+**Emoji format:** Always use Unicode emoji characters (🔴 🟠 🟡 💡), never GitHub shortcodes (`:red_circle:`, `:orange_circle:`). Shortcodes don't render in terminal/chat output.
+
 ## GitHub Permalink Format
 
 All code references in findings MUST use platform-appropriate permalinks so they remain stable:
