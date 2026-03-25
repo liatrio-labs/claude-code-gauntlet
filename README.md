@@ -6,15 +6,17 @@ A comprehensive, research-backed code review skill for [Claude Code](https://doc
 
 Deep Review dispatches 5-7 specialized agents in parallel, each examining your code changes through a different lens:
 
-| Agent | Model | Focus |
-|-------|-------|-------|
-| **bug-detector** | Opus | Logic errors, edge cases, error handling, resource leaks |
-| **security-reviewer** | Opus | OWASP top 10, injection, auth, SSRF, deserialization |
-| **cross-file-impact-analyzer** | Opus | How changes affect callers and dependents across the codebase |
-| **test-analyzer** | Sonnet | Test coverage gaps, test quality, missing edge cases |
-| **conventions-and-intent** | Sonnet | CLAUDE.md compliance, spec alignment, comment accuracy |
-| **type-design-analyzer** | Sonnet | Type encapsulation and invariant design (conditional) |
-| **code-simplifier** | Opus | Simplification opportunities (post-review, conditional) |
+| Agent | Optimized | Frontier | Focus |
+|-------|-----------|----------|-------|
+| **bug-detector** | Sonnet | Opus | Logic errors, edge cases, error handling, resource leaks |
+| **security-reviewer** | **Opus** | **Opus** | OWASP top 10, injection, auth, SSRF, deserialization |
+| **cross-file-impact-analyzer** | Sonnet | Opus | How changes affect callers and dependents across the codebase |
+| **test-analyzer** | Sonnet | Sonnet | Test coverage gaps, test quality, missing edge cases |
+| **conventions-and-intent** | Sonnet | Sonnet | CLAUDE.md compliance, spec alignment, comment accuracy |
+| **type-design-analyzer** | Sonnet | Sonnet | Type encapsulation and invariant design (conditional) |
+| **code-simplifier** | Sonnet | Opus | Simplification opportunities (post-review, conditional) |
+
+Two review modes are available. **Optimized** (default) is ~40% cheaper and faster. **Frontier** uses Opus for reasoning-heavy agents. Security always gets Opus in both modes because different models have complementary vulnerability-class detection profiles.
 
 After agents report findings, a validation pipeline filters false positives:
 
@@ -22,7 +24,7 @@ After agents report findings, a validation pipeline filters false positives:
 2. **Deterministic verification** — confirms findings reference real code at correct locations
 3. **LLM judgment** — attempts to disprove each finding with a calibrated confidence rubric
 4. **Dimension-specific thresholds** — security uses 70 (false negatives are costly), others use 80
-5. **Challenge round** — agents vote on blocking findings to resolve disagreements
+5. **Blind challenge round** — fresh agents attempt to disprove blocking findings
 6. **Contradiction resolution** — specs suppress bug findings, security wins ties
 7. **Max findings cap** — configurable limit prevents noise in high-debt codebases
 
@@ -104,7 +106,7 @@ Deep Review will offer to scaffold a `REVIEW.md` when it doesn't find one. The f
 
 ## Ignore
 # Suppress known findings. Deep Review suggests additions when you dismiss findings.
-- security:"prompt injection via template tokens"  <!-- dismissed 2026-03-24: not exploitable -->
+- security:"prompt injection via template tokens" (not exploitable in current architecture, 2026-03-24)
 
 ## Skip
 - "vendor/**"
@@ -153,17 +155,21 @@ claude-deep-review/
 │   └── deep-review/
 │       ├── SKILL.md                      # Main orchestration (7 phases)
 │       ├── agents/
-│       │   ├── bug-detector.md           # Correctness + error handling (Opus)
-│       │   ├── security-reviewer.md      # Security vulnerabilities (Opus)
-│       │   ├── cross-file-impact-analyzer.md  # Cross-file impact (Opus)
-│       │   ├── test-analyzer.md          # Test coverage gaps (Sonnet)
-│       │   ├── conventions-and-intent.md # Conventions + intent + comments (Sonnet)
-│       │   ├── type-design-analyzer.md   # Type design (Sonnet, conditional)
-│       │   └── code-simplifier.md        # Simplification (Opus, conditional)
+│       │   ├── bug-detector.md           # Correctness + error handling
+│       │   ├── security-reviewer.md      # Security vulnerabilities (always Opus)
+│       │   ├── cross-file-impact-analyzer.md  # Cross-file impact
+│       │   ├── test-analyzer.md          # Test coverage gaps
+│       │   ├── conventions-and-intent.md # Conventions + intent + comments
+│       │   ├── type-design-analyzer.md   # Type design (conditional)
+│       │   └── code-simplifier.md        # Simplification (conditional, post-review)
 │       └── references/
+│           ├── agent-prompt-template.md      # Agent prompt structure + trust boundaries
+│           ├── delivery-guide.md             # PR comments, task creation, dismissed findings
 │           ├── false-positive-exclusions.md  # Unified false positive filter + injection artifacts
-│           ├── report-format.md          # Report template with permalinks
-│           └── review-md-spec.md         # REVIEW.md configuration + hierarchy spec
+│           ├── fix-task-metadata.md          # FIX task template for task board integration
+│           ├── report-format.md              # Report template with permalinks
+│           ├── review-md-spec.md             # REVIEW.md configuration + hierarchy spec
+│           └── validation-pipeline.md        # 10-step validation pipeline (4a-4j)
 └── README.md
 ```
 

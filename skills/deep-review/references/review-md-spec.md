@@ -190,3 +190,127 @@ For a file in `legacy/`:
 ### Discovery
 
 REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Deep-review checks each CLAUDE.md location for a matching REVIEW.md during Phase 2a context gathering.
+
+---
+
+## Rule-Writing Principles
+
+When helping users add rules to REVIEW.md (during scaffolding or when updating), follow these principles drawn from research on AI reviewer effectiveness:
+
+1. **15-25 rules per file.** Beyond this, LLM adherence degrades for ALL rules, not just new ones. The review system's own prompts consume ~50 instruction slots; each rule competes for the remaining capacity.
+2. **Prescriptive for security/correctness, directional for design.** "All async methods MUST accept CancellationToken" (binary pass/fail) vs "Prefer immutable types where practical" (allows edge cases). Prescriptive rules produce low false-positive rates; directional rules handle nuance.
+3. **Always include rationale.** "Never force push" is a flat instruction. "Never force push — this rewrites shared history and is unrecoverable for collaborators" helps the reviewer generalize to related scenarios (like `git reset --hard` on shared branches).
+4. **Specific and verifiable.** Each rule should have a binary pass/fail condition. "Write clean code" is unverifiable. "All public API endpoints must validate request body schema before processing" is verifiable.
+5. **Never duplicate linters.** If ESLint, mypy, tsc, clippy, or any deterministic tool catches it, don't make it a review rule. Deterministic tools are faster, cheaper, and more reliable for objective checks.
+6. **Place critical rules first.** LLMs exhibit peripheral bias — they attend more strongly to instructions at the beginning and end of the prompt. Put security and correctness rules first.
+7. **Use severity prefixes sparingly.** `CRITICAL:` for rules that are never acceptable to violate (3-4 per file max). Overuse makes the emphasis invisible.
+
+**Effective rules:**
+```
+- CRITICAL: Never commit secrets, API keys, or connection strings in source
+  files. Use environment variables or secret managers.
+- All public API endpoints must enforce authentication and authorization.
+  Missing auth on a single endpoint exposes the entire resource.
+- Prefer composition over inheritance. Deep hierarchies make behavior
+  unpredictable and testing difficult.
+```
+
+**Ineffective rules:**
+```
+- Write clean code
+- Follow best practices
+- Check for security issues
+```
+
+---
+
+## Scaffolding Templates
+
+When the user opts to create a REVIEW.md during Phase 2a, use these templates. The templates set sensible defaults and provide structural guidance without guessing at repo-specific content.
+
+### Root REVIEW.md template
+
+```markdown
+# Review Configuration
+
+<!-- Customizes how deep-review analyzes this repository.
+     See references/review-md-spec.md in the deep-review skill for all options. -->
+
+## Confidence Threshold
+
+80
+
+<!-- Minimum confidence (0-100) to include findings. Default: 80.
+     Security findings always use a minimum of 70 regardless of this setting.
+     Start at 80-85 and lower based on false-positive rates. -->
+
+## Skip
+
+<!-- Files where AI review adds no value. Uncomment patterns that apply. -->
+<!-- **/dist/** -->
+<!-- **/build/** -->
+<!-- **/node_modules/** -->
+<!-- **/*.generated.* -->
+<!-- **/vendor/** -->
+<!-- package-lock.json -->
+<!-- yarn.lock -->
+<!-- pnpm-lock.yaml -->
+
+## Rules
+
+<!-- Add 15-25 project-specific rules. Each rule should be:
+     - Specific and verifiable (pass/fail, not vague)
+     - Include rationale (why this matters — helps the reviewer generalize)
+     - Use CRITICAL: prefix only for security/correctness rules (3-4 max)
+     - Don't duplicate what linters or type checkers already catch
+
+     Organize by category. Place security and correctness rules first.
+
+     Examples of well-written rules:
+
+     ### Security
+     - CRITICAL: Never commit secrets, API keys, or connection strings.
+       Use environment variables or secret managers.
+     - All API endpoints must enforce authentication and authorization.
+       Missing auth on a single endpoint exposes the entire resource.
+
+     ### Error Handling
+     - Public API endpoints must return structured error responses.
+       Never expose stack traces or internal details to clients.
+
+     ### Architecture
+     - Changes to shared API contracts require review of all consumers.
+       Flag PRs that modify contract types without corresponding updates.
+-->
+
+## Ignore
+
+<!-- Suppress known false positives. Date-stamp for audit trail.
+     Format: dimension:"pattern" (reason, date)
+
+     Example:
+     - security:"hardcoded string" in test fixtures (test data not secrets, 2026-01-15)
+     - conventions:"file naming" for migration files (generated, 2026-01-15)
+-->
+```
+
+### Subdirectory REVIEW.md template
+
+```markdown
+# Review Configuration — [directory name]
+
+<!-- Settings here override root REVIEW.md. Rules and ignore patterns
+     accumulate (add to root), settings (thresholds, model tier) replace root.
+     Only create subdirectory configs when this area needs DIFFERENT standards
+     than the root — e.g., stricter security for an API directory. -->
+
+## Rules
+
+<!-- Directory-specific rules (these ADD to root REVIEW.md rules).
+     Aim for 5-10 rules covering technology or domain-specific patterns.
+     Don't contradict root rules — extend them. -->
+
+## Ignore
+
+<!-- Directory-specific suppressions (these ADD to root ignores). -->
+```
