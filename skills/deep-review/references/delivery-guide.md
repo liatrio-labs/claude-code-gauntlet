@@ -165,6 +165,17 @@ Each entry: dimension, pattern matching finding title, parenthesized reason with
 
 ### Confirm via AskUserQuestion before writing
 
+```
+AskUserQuestion(
+  question: "Add these to REVIEW.md?",
+  options: [
+    "Yes — add to REVIEW.md",
+    "No — skip"
+  ]
+)
+```
+
+If confirmed:
 - If no REVIEW.md exists → offer to create using scaffolding template from `references/review-md-spec.md`
 - If REVIEW.md exists without `## Ignore` → append the section
 - If `## Ignore` exists → append new entries
