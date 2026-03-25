@@ -119,7 +119,7 @@ Maximum number of findings to include in the report. When the cap is hit, the hi
 
 Default: no limit — all findings that survive the validation pipeline appear in the report. Set this in high-debt codebases to prevent review noise. Use `0` to explicitly mean "no limit" (same as omitting the setting).
 
-Note: this controls findings in the **report**. PR inline comments have a separate cap of 8 (applied in Phase 7 delivery) to prevent notification fatigue — remaining findings appear in the summary comment.
+Note: this controls findings in the **report**. PR inline comments have a separate default cap of 8 when the user selects "Default" mode (applied in Phase 7 delivery). When the user manually selects findings via the walkthrough, all selected findings are posted with no cap.
 
 ```
 ## Max Findings

@@ -154,7 +154,7 @@ Findings from different agents often overlap. Group findings that reference the 
 
 ## Post-challenge finalization — step 2: Apply findings cap
 
-Check REVIEW.md for `max_findings`. **Default: no limit** — all findings that survive the pipeline appear in the report. The inline PR comment cap (8 comments) is applied separately in Phase 7 delivery.
+Check REVIEW.md for `max_findings`. **Default: no limit** — all findings that survive the pipeline appear in the report. The inline PR comment default cap (8 comments for "Default" mode, no cap for user-selected findings) is applied separately in Phase 7 delivery.
 
 If `max_findings` is set and total findings exceed it:
 1. Sort by severity (critical > high > medium > low), then by confidence (higher first)

@@ -10,7 +10,7 @@ Implementation details for each delivery method in Phase 7.
 
 **Batch ALL inline comments into a single review event** — one GitHub notification instead of N separate ones. Notification fatigue causes teams to auto-dismiss AI review within ~10 days.
 
-**Inline comment cap: 8.** Research shows 5-6 comments is optimal for engagement and 75-80% precision is the adoption threshold. Post at most 8 findings as inline comments (highest severity first). Remaining findings go in condensed format in the executive summary comment. This cap applies only to inline PR comments — full reports (markdown, chat, tasks) show all findings.
+**Inline comment default cap: 8.** When the user selects "Default — top 8 by severity," post the top 8 findings as inline comments (highest severity first); remaining findings go in condensed format in the executive summary comment. When the user selects "Let me pick" and chooses findings via the interactive walkthrough, post **all selected findings** as inline comments — no cap applies. The user made a deliberate selection; respect it.
 
 ### Comment body format
 

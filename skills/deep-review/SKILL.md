@@ -392,7 +392,7 @@ AskUserQuestion(
 ```
 
 - **"Default — top 8 by severity"** → select the top 8 findings ranked by severity then confidence. Post as inline comments; any remaining findings go in the summary comment.
-- **"Let me pick"** → run the **interactive finding walkthrough** (defined at the end of this phase). Post selected findings as inline comments (capped at 8 inline; if the user selected more than 8, the highest-severity ones get inline comments and the rest go in the summary comment).
+- **"Let me pick"** → run the **interactive finding walkthrough** (defined at the end of this phase). Post **all selected findings** as inline comments — no cap. The user made a deliberate selection; respect it.
 
 **Track state:** remember which findings were selected for PR comments — call this the **pr_comment_set**. The task board stage uses this to offer a shortcut.
 
