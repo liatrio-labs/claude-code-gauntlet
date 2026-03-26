@@ -1,0 +1,18 @@
+Type: file
+Path: skills/deep-review/references/validation-pipeline.md
+Check: Phase 5 confidence rubric contains triggerability step and cap note
+Timestamp: 2026-03-26T00:00:00Z
+
+Verification: grep -n "triggers this today" skills/deep-review/references/validation-pipeline.md
+Result:
+  Line 70: 3. Ask: **"Can you find a code path that actually triggers this today?"** Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes (e.g., a new caller is added, a config value changes, a new code path is introduced), **cap confidence at 70**.
+
+Verification: grep -n "cap at 70" skills/deep-review/references/validation-pipeline.md
+Result:
+  Line 82: Note: If the only path to this issue requires a hypothetical future change (new
+  Line 83: caller, changed config, new code path), cap at 70 regardless of the anchor above.
+
+Requirements verified:
+  R03.4 - validation-pipeline.md Phase 5 includes triggerability as step 3: PASS (line 70)
+  R03.5 - Rubric note for hypothetical-future cap at 70: PASS (lines 82-83)
+Status: PASS

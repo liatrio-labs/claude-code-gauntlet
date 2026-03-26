@@ -1,0 +1,18 @@
+Type: file
+Path: skills/deep-review/SKILL.md
+Check: Phase 5 "Each agent must" contains triggerability question with confidence cap
+Timestamp: 2026-03-26T00:00:00Z
+
+Verification: grep -n "triggers this today" skills/deep-review/SKILL.md
+Result:
+  Line 285: 3. Ask: **"Can you find a code path that actually triggers this today?"** If the issue is only reachable under hypothetical future changes, cap confidence at 70 (below the non-security threshold)
+
+Verification: grep -n "current codebase that triggers" skills/deep-review/SKILL.md
+Result:
+  Line 338: - Is there a code path in the current codebase that triggers this? If the issue is only reachable under hypothetical future changes (a new caller, a changed config, a new code path), note that — it makes the claim weaker.
+
+Requirements verified:
+  R03.1 - Phase 5 agent must list includes triggerability question: PASS (line 285)
+  R03.2 - Triggerability cap at 70 for non-triggerable findings: PASS (line 285)
+  R03.3 - Phase 7 challenge disproval checklist includes triggerability: PASS (line 338)
+Status: PASS

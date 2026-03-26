@@ -67,7 +67,8 @@ Each agent receives:
 Each agent must:
 1. Read each finding's description and evidence
 2. Attempt to **disprove** the finding — look for reasons it might be a false positive
-3. Score using this verbatim confidence rubric:
+3. Ask: **"Can you find a code path that actually triggers this today?"** Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes (e.g., a new caller is added, a config value changes, a new code path is introduced), **cap confidence at 70**. This keeps the issue below the non-security threshold of 80 and prevents latent/theoretical concerns from appearing as high-confidence findings.
+4. Score using this verbatim confidence rubric:
 
 ```
 Confidence Rubric (use these anchors):
@@ -80,9 +81,12 @@ Confidence Rubric (use these anchors):
       and no obvious mitigating factor is visible in surrounding context.
 100  — Certain. The bug/issue is directly observable in the code with no
       reasonable alternative interpretation.
+
+Note: If the only path to this issue requires a hypothetical future change (new
+caller, changed config, new code path), cap at 70 regardless of the anchor above.
 ```
 
-4. Return an adjusted confidence score and brief justification per finding
+5. Return an adjusted confidence score and brief justification per finding
 
 Update each finding's confidence based on the validator's assessment.
 

@@ -1,0 +1,22 @@
+Type: file
+Path: skills/deep-review/references/false-positive-exclusions.md
+Check: Category #13 "Latent issues not triggerable by current code paths" added
+Timestamp: 2026-03-26T00:00:00Z
+
+Verification: grep -n "## 13" skills/deep-review/references/false-positive-exclusions.md
+Result:
+  Line 127: ## 13. Latent issues not triggerable by current code paths
+
+Verification: grep -c "^## [0-9]" skills/deep-review/references/false-positive-exclusions.md
+Result: 13 (categories 1-13 present)
+
+Category content verified:
+  - Definition: "If a finding describes a problem that cannot be reached by any current code path..."
+  - Examples: contract violations with no current caller, error paths with no current trigger, pattern deviations with no current behavioral impact
+  - Rationale: "Latent issues have zero probability of causing a bug until someone adds a caller or changes surrounding code."
+
+Requirements verified:
+  R03.6 - false-positive-exclusions.md has category #13: PASS (line 127)
+  R03.7 - Category includes examples matching task description: PASS
+  R03.8 - Rationale explains why latent issues should not be reported: PASS
+Status: PASS

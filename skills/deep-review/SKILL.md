@@ -282,8 +282,9 @@ Each agent receives:
 Each agent must:
 1. Read each finding's description and evidence
 2. Attempt to **disprove** the finding — look for reasons it might be a false positive
-3. Score using the confidence rubric (0/25/50/75/100 anchors)
-4. Return an adjusted confidence score and brief justification per finding
+3. Ask: **"Can you find a code path that actually triggers this today?"** If the issue is only reachable under hypothetical future changes, cap confidence at 70 (below the non-security threshold)
+4. Score using the confidence rubric (0/25/50/75/100 anchors) from `references/validation-pipeline.md`
+5. Return an adjusted confidence score and brief justification per finding
 
 Update each finding's confidence based on the validator's assessment.
 
@@ -300,8 +301,9 @@ Main orchestrator, rules-based — no LLM agents. Apply filters and route findin
 **6c. Disagreement detection** — Boost consensus findings (+10), pass through singletons. Security wins ties. All surviving findings proceed to Phase 7 challenge.
 
 **6d. Route findings** — Classify each surviving finding into its report destination:
-- **Main report** — most findings, grouped by severity
-- **Improvement Suggestions** — test-analyzer, conventions-and-intent comment accuracy, and code-simplifier findings (per T01 report restructure when implemented)
+- **Main report** — findings from bug-detector, security-reviewer, cross-file-impact-analyzer, conventions-and-intent (intent and convention checks only), and type-design-analyzer. Grouped by severity and counted in the executive summary.
+- **Improvement Suggestions** — findings from test-analyzer, conventions-and-intent comment accuracy pass (pass 3), and code-simplifier. These do NOT count toward the finding totals in the executive summary and are NOT posted as PR inline comments in the default flow. They appear in the Improvement Suggestions section of the report and are available via the "Let me pick" walkthrough if the user wants to include them.
+- **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins and stays in the main report. The test-analyzer finding is dropped to avoid duplication.
 
 Read `references/validation-pipeline.md` for the detailed implementation of each filter step.
 
@@ -334,6 +336,7 @@ Your job is to try to DISPROVE this claim. Look for reasons it might be wrong:
 - Framework guarantees that make it impossible
 - Type system protections
 - Documented intentional behavior
+- Is there a code path in the current codebase that triggers this? If the issue is only reachable under hypothetical future changes (a new caller, a changed config, a new code path), note that — it makes the claim weaker.
 
 If you found some evidence against the claim but it is not conclusive, that is valuable — report it. If you found no evidence against the claim despite thorough analysis, say so.
 
@@ -380,7 +383,7 @@ This phase generates the report and delivers it. It has four stages: **generate 
 
 Read `references/report-format.md` for the full report template and PR comment format.
 
-The report includes: executive summary with verdict, severity-grouped findings (critical/high/medium/low), surfaced findings section, positive observations, per-dimension summary, and a **required** Review Methodology section documenting agents dispatched, model tier, validation stats, challenge results, and failures.
+The report includes: executive summary with finding counts (no verdict), severity-grouped findings (critical/high/medium/low), surfaced findings section, improvement suggestions section, per-dimension summary, and a **required** Review Methodology section documenting agents dispatched, model tier, validation stats, challenge results, and failures.
 
 #### Permalinks
 
@@ -418,8 +421,8 @@ AskUserQuestion(
 )
 ```
 
-- **"Default — top 6 by severity"** → select the top 6 findings ranked by severity then confidence. Post as inline comments; any remaining findings go in the summary comment.
-- **"Let me pick"** → run the **interactive finding walkthrough** (defined at the end of this phase). Post **all selected findings** as inline comments — no cap. The user made a deliberate selection; respect it.
+- **"Default — top 6 by severity"** → select the top 6 main-report findings ranked by severity then confidence. Post as inline comments; any remaining findings go in the summary comment. Improvement Suggestions are excluded from the default set.
+- **"Let me pick"** → run the **interactive finding walkthrough** (defined at the end of this phase). Include Improvement Suggestions in the walkthrough so the user can opt them in. Post **all selected findings** as inline comments — no cap. The user made a deliberate selection; respect it.
 
 **Track state:** remember which findings were selected for PR comments — call this the **pr_comment_set**. The task board stage uses this to offer a shortcut.
 
