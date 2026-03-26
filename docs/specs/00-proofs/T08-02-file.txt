@@ -1,0 +1,11 @@
+Type: file
+Path: skills/deep-review/SKILL.md
+Check: code-simplifier timing note added to Phase 6
+Timestamp: 2026-03-26T00:00:00Z
+Status: PASS
+
+Verification: grep -n "code-simplifier timing" skills/deep-review/SKILL.md
+Result: Line 386: "**code-simplifier timing:** After steps 6a-6d complete, check whether any
+critical/high findings survived. If none did, dispatch code-simplifier now — this is the point
+where we know it is safe to run it. Its findings route to Improvement Suggestions (per 6d above)
+and still go through Phase 7 challenge along with all other surviving findings."

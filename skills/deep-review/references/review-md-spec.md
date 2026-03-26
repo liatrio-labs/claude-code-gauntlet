@@ -133,7 +133,7 @@ Suppressed findings are noted at the end of the report: "{N} additional findings
 Controls which LLM models are used for review agents. Two modes are available:
 
 - `optimized` (default) — Sonnet for most agents, Opus only for security-reviewer. Faster and ~40% cheaper. Research shows the SWE-bench Verified gap between Opus and Sonnet is just 1.2 percentage points.
-- `frontier` — Opus for all reasoning-heavy agents (bugs, security, cross-file, simplification). Maximum depth for high-stakes reviews.
+- `frontier` — All agents use Opus. Maximum depth for high-stakes reviews.
 
 When set in REVIEW.md, the mode selection prompt is skipped during Phase 1. When not set, the user is prompted at the start of each review.
 
@@ -291,6 +291,14 @@ When the user opts to create a REVIEW.md during Phase 2c, use these templates. T
 <!-- Minimum confidence (0-100) to include findings. Default: 80.
      Security findings always use a minimum of 70 regardless of this setting.
      Start at 80-85 and lower based on false-positive rates. -->
+
+## Severity Threshold
+
+<!-- Minimum severity to include in the report. Default: low (show everything).
+     Options: critical, high, medium, low
+     Uncomment and set to filter out lower-severity findings.
+     Useful for high-debt codebases where low/medium noise drowns out critical issues. -->
+<!-- medium -->
 
 ## Default Delivery
 

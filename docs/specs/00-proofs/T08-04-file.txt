@@ -1,0 +1,14 @@
+Type: file
+Path: skills/deep-review/references/review-md-spec.md
+Check: Severity Threshold section added to Root REVIEW.md scaffolding template
+Timestamp: 2026-03-26T00:00:00Z
+Status: PASS
+
+Verification: grep -n "Severity Threshold" skills/deep-review/references/review-md-spec.md
+Result:
+  Line 37: "## Severity Threshold" (existing section in Format block)
+  Line 295: "## Severity Threshold" (new section in scaffolding template)
+
+The scaffolding template now includes a commented-out Severity Threshold section
+after Confidence Threshold, with explanation comment and an example value
+"<!-- medium -->" to keep it opt-in.

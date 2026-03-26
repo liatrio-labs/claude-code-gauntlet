@@ -1,0 +1,11 @@
+Type: file
+Path: skills/deep-review/references/review-md-spec.md
+Check: Frontier mode description says "All agents use Opus"
+Timestamp: 2026-03-26T00:00:00Z
+Status: PASS
+
+Verification: grep -n "frontier" skills/deep-review/references/review-md-spec.md | grep -i "all agents"
+Result: Line 136: "- `frontier` — All agents use Opus. Maximum depth for high-stakes reviews."
+
+Change applied: Replaced "Opus for all reasoning-heavy agents (bugs, security, cross-file, simplification)"
+with "All agents use Opus" to match SKILL.md line ~195 which is authoritative.

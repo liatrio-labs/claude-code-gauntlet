@@ -1,0 +1,12 @@
+Type: file
+Path: skills/deep-review/SKILL.md
+Check: Context scoping added for type-design-analyzer and code-simplifier
+Timestamp: 2026-03-26T00:00:00Z
+Status: PASS
+
+Verification: grep -n "type-design-analyzer\|code-simplifier" skills/deep-review/SKILL.md | grep -i "files"
+Result:
+  Line 270: "- **type-design-analyzer**: files with new type definitions (only dispatched when new types are introduced)"
+  Line 271: "- **code-simplifier**: **all changed files** (same scope as conventions-and-intent; dispatched after Phase 6 filtering — see Phase 6 note below)"
+
+Both conditional agents now have explicit context scoping in the Per-agent context scoping section.
