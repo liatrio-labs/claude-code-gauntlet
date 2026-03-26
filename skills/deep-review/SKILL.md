@@ -415,7 +415,7 @@ Read `references/validation-pipeline.md` for the detailed implementation of each
 
 ### Challenge dispatch
 
-Challenge **every finding** that survived Phase 6 (up to 50). The challenge round runs every time, on every finding. Spawn all challenge agents in parallel in a single message with multiple Agent tool calls. Use Sonnet in Optimized mode, Opus in Frontier mode.
+Challenge **every finding** that survived Phase 6 (up to 50). The challenge round runs every time, on every finding. Spawn all challenge agents in parallel in a single message with multiple Agent tool calls. Use Sonnet in Optimized mode, Opus in Frontier mode. If more than 50 findings survive, challenge the top 50 by severity then confidence. Remaining findings pass to post-challenge finalization unchallenged but are flagged in Review Methodology as "not blind-challenged due to volume cap."
 
 **Exact Agent tool call format — use this template for each finding:**
 

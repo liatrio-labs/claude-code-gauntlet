@@ -57,7 +57,7 @@ Example: "This PR adds JWT-based authentication to the API layer. The token vali
 
 **Blocking issues:** {N} (critical + high-security)
 **Action items:** {N} (high + medium)
-**Suggestions:** {N} (low — see Improvement Suggestions section)
+**Suggestions:** {N} (see Improvement Suggestions section)
 
 ---
 
