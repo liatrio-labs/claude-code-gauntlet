@@ -1,0 +1,17 @@
+Type: file
+Path: skills/deep-review/SKILL.md
+Check: Phase 6d route findings updated; Stage 0 description updated; PR comment default excludes suggestions
+Timestamp: 2026-03-26T00:00:00Z
+Status: PASS
+
+Verification: grep for "Route findings|Improvement Suggestions|Dedup rule|verdict" in SKILL.md
+
+Line 303: **6d. Route findings** — Classify each surviving finding into its report destination:
+Line 304: - **Main report** — findings from bug-detector, security-reviewer, cross-file-impact-analyzer, conventions-and-intent (intent and convention checks only), and type-design-analyzer. Grouped by severity and counted in the executive summary.
+Line 305: - **Improvement Suggestions** — findings from test-analyzer, conventions-and-intent comment accuracy pass (pass 3), and code-simplifier. These do NOT count toward the finding totals in the executive summary and are NOT posted as PR inline comments in the default flow.
+Line 306: - **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins and stays in the main report.
+Line 386: The report includes: executive summary with finding counts (no verdict), severity-grouped findings...
+Line 424: - **"Default — top 6 by severity"** → ...Improvement Suggestions are excluded from the default set.
+Line 425: - **"Let me pick"** → ...Include Improvement Suggestions in the walkthrough so the user can opt them in.
+
+No remaining "verdict" or "positive observations" references in SKILL.md.

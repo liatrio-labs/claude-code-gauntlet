@@ -1,0 +1,16 @@
+Type: file
+Path: skills/deep-review/references/report-format.md
+Check: Verdict section removed; Improvement Suggestions section added
+Timestamp: 2026-03-26T00:00:00Z
+Status: PASS
+
+Verification: grep for "Verdict|APPROVE|REQUEST_CHANGES|Positive Observations" in report-format.md → no matches (exit 1)
+Verification: grep for "Improvement Suggestions" in report-format.md → matches at lines 60 and 124
+
+Line 60: **Suggestions:** {N} (low — see Improvement Suggestions section)
+Line 124: ## Improvement Suggestions
+
+The Verdict sub-section (previously lines 58-70 with REQUEST_CHANGES/APPROVE WITH SUGGESTIONS/APPROVE criteria)
+has been removed from the Executive Summary. The Positive Observations section has been removed.
+The new Improvement Suggestions section appears after Surfaced Findings with three sub-groups:
+Test Coverage (test-analyzer), Documentation (comment accuracy), Code Quality (code-simplifier).

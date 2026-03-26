@@ -1,0 +1,12 @@
+Type: file
+Path: skills/deep-review/references/delivery-guide.md
+Check: GitHub PR review event always uses COMMENT, never REQUEST_CHANGES or APPROVE
+Timestamp: 2026-03-26T00:00:00Z
+Status: PASS
+
+Verification: grep for 'event.*COMMENT|REQUEST_CHANGES|verdict' in delivery-guide.md
+
+Line 60: "event": "COMMENT",  # always COMMENT — never REQUEST_CHANGES or APPROVE
+
+The Python reference implementation now hardcodes COMMENT as the event type.
+No references to REQUEST_CHANGES or verdict-conditional event selection remain.

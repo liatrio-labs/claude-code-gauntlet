@@ -56,8 +56,8 @@ repo = "{repo}"
 pr_number = {number}
 
 payload = {
-    "body": "{summary comment with verdict, finding counts, and footer}",
-    "event": "COMMENT",  # or "REQUEST_CHANGES" per verdict criteria
+    "body": "{summary comment with finding counts and footer}",
+    "event": "COMMENT",  # always COMMENT — never REQUEST_CHANGES or APPROVE
     "comments": [
         {
             "path": "{file_path}",

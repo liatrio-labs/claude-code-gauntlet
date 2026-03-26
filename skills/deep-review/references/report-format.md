@@ -52,22 +52,12 @@ For self-hosted instances, replace the hostname with the one detected from the g
 
 ## Executive Summary
 
-{2-3 sentences: what was reviewed, key finding themes, overall assessment.
-Example: "This PR adds JWT-based authentication to the API layer. The implementation is solid overall, but the token validation has a critical bypass path and the error handling in the auth middleware silently swallows connection failures. 3 findings require attention before merge."}
+{2-3 sentences: what was reviewed, key finding themes, and the finding count.
+Example: "This PR adds JWT-based authentication to the API layer. The token validation has a critical bypass path and the error handling in the auth middleware silently swallows connection failures. 3 findings require attention before merge."}
 
-### Verdict
-
-Determine the verdict using these criteria. Advisory-first tools sustain adoption while overly blocking tools get disabled within a month. AI approval should never count toward required review thresholds — the verdict signals priority to human reviewers, not a gate.
-
-- **REQUEST CHANGES** — Any critical findings, OR high-severity security findings. These represent bugs or vulnerabilities that would cause real harm in production. Reserve this verdict for issues a senior engineer would block a merge over.
-- **APPROVE WITH SUGGESTIONS** — High or medium findings exist, but none are critical or security-blocking. The code is functional but has significant improvement opportunities that the author should address.
-- **APPROVE** — Only low-severity findings or no findings. The code is ready to merge.
-
-{One of: APPROVE | APPROVE WITH SUGGESTIONS | REQUEST CHANGES}
-
-**Blocking issues:** {N} (critical + high-security — these trigger REQUEST CHANGES)
-**Action items:** {N} (high + medium — should be addressed but not merge-blocking)
-**Suggestions:** {N} (low)
+**Blocking issues:** {N} (critical + high-security)
+**Action items:** {N} (high + medium)
+**Suggestions:** {N} (low — see Improvement Suggestions section)
 
 ---
 
@@ -131,11 +121,27 @@ Severity has been downgraded one level from the original classification (see Pha
 
 ---
 
-## Positive Observations
+## Improvement Suggestions
 
-{What the code does well. This section matters — it signals what patterns to keep and provides balanced feedback. 3-5 bullet points.}
+{Findings from test-analyzer, conventions-and-intent comment accuracy pass, and code-simplifier. These are not included in the finding totals above and are not posted as PR inline comments by default. They are available via the "Let me pick" walkthrough in Phase 8 Stage 1.}
 
-- {Positive observation with specific example}
+### Test Coverage
+
+{Findings from test-analyzer, if any. Omit sub-section if empty.}
+
+- **{id}**: [`{file}:{line}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line-1}-L{line+1}) — {title} ({confidence}%)
+
+### Documentation
+
+{Findings from conventions-and-intent comment accuracy pass, if any. Omit sub-section if empty.}
+
+- **{id}**: [`{file}:{line}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line-1}-L{line+1}) — {title} ({confidence}%)
+
+### Code Quality
+
+{Findings from code-simplifier, if any. Omit sub-section if empty.}
+
+- **{id}**: [`{file}:{line}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line-1}-L{line+1}) — {title} ({confidence}%)
 
 ---
 
@@ -175,8 +181,6 @@ When posting as a PR comment, use this shorter format:
 
 ```markdown
 ### Deep Review
-
-**Verdict:** {APPROVE | APPROVE WITH SUGGESTIONS | REQUEST CHANGES}
 
 Found {N} issues ({critical} critical, {high} high, {medium} medium):
 
