@@ -1,21 +1,21 @@
 Type: file
-Description: Verify stale reference removed and dedup rule added to validation-pipeline.md line 150-155
-File: skills/deep-review/references/validation-pipeline.md
-Expected: Line 154 should no longer reference "(per T01 report restructure when implemented)" and should include the dedup rule from SKILL.md line 306
+Description: Verify C1 fix — code-simplifier now routes through Phases 4-6 in SKILL.md
+File: skills/deep-review/SKILL.md
+Expected: code-simplifier timing note references "Phases 4-6" instead of "Phase 4"
 Timestamp: 2026-03-26T00:00:00Z
 
 PROOF OUTPUT:
 =============
 
-## 6d. Route findings
+Searching SKILL.md for code-simplifier timing note:
 
-Classify each surviving finding into its report destination:
-- **Main report** — most findings, grouped by severity
-- **Improvement Suggestions** — test-analyzer, conventions-and-intent comment accuracy, and code-simplifier findings
-- **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins and stays in the main report.
+**code-simplifier timing:** After steps 6a-6d complete, check whether any critical/high
+findings survived. If none did, dispatch code-simplifier now. Its findings must go through
+Phases 4-6 (blame classification, factual verification, validation, and filtering) before
+joining the Phase 7 challenge. Tag them as "improvement suggestion."
 
 Status: PASS
 Verification:
-  ✓ Stale reference "(per T01 report restructure when implemented)" removed
-  ✓ Dedup rule added exactly as written in SKILL.md line 306
-  ✓ No other changes to surrounding content
+  PASS — "Phases 4-6" present (was "Phase 4")
+  PASS — validation and filtering explicitly named in the parenthetical
+  PASS — no other changes to surrounding code-simplifier timing content

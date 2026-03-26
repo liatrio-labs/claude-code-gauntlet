@@ -1,41 +1,40 @@
 # T06 Proof Summary
 
-Task: Fix stale references and missing rules in validation-pipeline.md and report-format.md
+Task: Pipeline correctness fixes — code-simplifier path, REVIEW.md thresholds, trust boundary tags
+
+## Fixes Implemented
+
+### C1: code-simplifier bypasses Phases 5-6
+SKILL.md line ~422: changed "must go through Phase 4 (blame classification + factual verification)"
+to "must go through Phases 4-6 (blame classification, factual verification, validation, and filtering)"
+
+### C2: REVIEW.md confidence_threshold and severity_threshold not consumed
+Phase 6a in SKILL.md: updated 6a threshold filter to reference REVIEW.md `confidence_threshold`
+(default 80, security minimum 70 regardless) and `severity_threshold` (default low).
+Phase 6a in validation-pipeline.md: replaced hardcoded "security: 70, all others: 80" list
+with REVIEW.md override language matching SKILL.md.
+
+### I1: Trust boundary tags missing in Phases 5 and 7 (and 2i)
+Added `<untrusted-code-content>...</untrusted-code-content>` wrapping to:
+- Phase 2i file summarizer agent prompt template (diff section)
+- Phase 5 validation agent prompt template (relevant code sections)
+- Phase 7 challenge agent prompt template (raw code section)
+Updated validation-pipeline.md Phase 5 description to mention the wrapping.
 
 ## Proof Results
 
-### Proof 1: validation-pipeline.md update
-**Status:** PASS
-**File:** T06-01-file.txt
-**Description:** Stale reference removed and dedup rule added
+| Proof | File | Status | Description |
+|-------|------|--------|-------------|
+| C1 | T06-01-file.txt | PASS | code-simplifier now routes through Phases 4-6 |
+| C2 | T06-02-file.txt | PASS | REVIEW.md threshold overrides wired in both files |
+| I1 | T06-03-file.txt | PASS | untrusted-code-content tags added to 3 agent templates |
 
-Change made to section 6d "Route findings":
-- Removed: "(per T01 report restructure when implemented)" from Improvement Suggestions bullet
-- Added: "Dedup rule: If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins and stays in the main report."
+## Files Modified
 
-The dedup rule text is taken exactly from SKILL.md line 306, ensuring consistency across documentation.
-
-### Proof 2: report-format.md update
-**Status:** PASS
-**File:** T06-02-file.txt
-**Description:** Conditional language removed from blind challenge round metrics
-
-Change made to section "Review Methodology" line 170:
-- Removed: "Triggered/Not triggered. If triggered: N findings blind-challenged..."
-- Changed to: "{N findings blind-challenged, M downgraded, K boosted, J contested}"
-
-This reflects the current behavior where blind challenge always runs (per SKILL.md Phase 7: "Challenge **every finding** that survived Phase 6"), making the conditional language obsolete.
+- `skills/deep-review/SKILL.md` — C1, C2, I1 fixes
+- `skills/deep-review/references/validation-pipeline.md` — C2, I1 fixes
 
 ## Verification
 
-✓ Both files successfully edited
-✓ Changes align with referenced documentation (SKILL.md)
-✓ No unintended side effects
-✓ All changes are targeted to task scope
-
-## Completed Tasks
-- [x] Remove stale reference from validation-pipeline.md line 154
-- [x] Add dedup rule to validation-pipeline.md line 154-155
-- [x] Update report-format.md line 170 metrics format
-- [x] Create proof artifacts
-- [x] Create proof summary
+All three correctness fixes applied and verified against the task specification.
+No unintended side effects — changes are targeted to the specific lines described in the task.

@@ -59,9 +59,11 @@ Parallel validation agents assess findings that need LLM judgment. **Always use 
 
 **Dispatch:** Spawn one Sonnet agent per batch from Phase 4c. Launch all agents in a single message with multiple Agent tool calls for true parallel execution.
 
+> **You cannot validate findings yourself.** Re-reading batches in your own reasoning anchors to the original agent framing and does not constitute independent assessment. Validation agents start fresh. Correlated errors occur ~60% of the time when the same context does discovery and validation.
+
 Each agent receives:
 1. A batch of 3-5 findings with their descriptions, evidence, and blame tags
-2. The relevant code sections for the batch (read fresh from files)
+2. The relevant code sections for the batch (read fresh from files), wrapped in `<untrusted-code-content>...</untrusted-code-content>` tags
 3. The confidence rubric below
 
 Each agent must:
@@ -73,14 +75,11 @@ Each agent must:
 ```
 Confidence Rubric (use these anchors):
 
-  0  — Pure hallucination or completely incorrect understanding of the code
- 25  — Plausible concern but likely wrong; the code probably handles this correctly
-      through a mechanism the agent missed
- 50  — Genuine ambiguity; could go either way. Needs human judgment.
- 75  — Likely a real issue. The code does not appear to handle this case,
-      and no obvious mitigating factor is visible in surrounding context.
-100  — Certain. The bug/issue is directly observable in the code with no
-      reasonable alternative interpretation.
+  0  = definitely a false positive — clear evidence the issue does not exist
+ 25  = probably false positive — code likely handles this correctly
+ 50  = uncertain — could go either way
+ 75  = probably real — no meaningful counter-evidence found
+100  = definitely real — issue is clearly present with no mitigating factors
 
 Note: If the only path to this issue requires a hypothetical future change (new
 caller, changed config, new code path), cap at 70 regardless of the anchor above.
@@ -99,10 +98,8 @@ Rules-based steps run by the main orchestrator — no LLM agents.
 ## 6a. Filter with dimension-specific thresholds
 
 Remove findings where:
-- Post-validation confidence is below the **dimension-specific threshold**:
-  - **Security**: threshold **70** (security false negatives are costlier than false positives)
-  - **Bug/correctness**: threshold **80**
-  - **All other dimensions**: threshold **80**
+- Post-validation confidence is below the **dimension-specific threshold**: use REVIEW.md `confidence_threshold` if set (default: 80). Security minimum of 70 applies regardless — security false negatives are costlier than false positives.
+- Severity is below the configured severity floor: apply REVIEW.md `severity_threshold` if set (default: low — suppress nothing). Suppress findings whose severity is below the configured minimum.
 - The finding is about a pre-existing issue that does not interact with this diff (not a "Surfaced" finding classified in Phase 4a — those survive with downgraded severity into their own report section)
 - A linter, typechecker, or compiler would catch it (these run separately in CI)
 - It's a pedantic nitpick a senior engineer wouldn't flag
@@ -152,9 +149,7 @@ Log all contradictions and resolutions in the report methodology section.
 Classify each surviving finding into its report destination:
 - **Main report** — most findings, grouped by severity
 - **Improvement Suggestions** — test-analyzer, conventions-and-intent comment accuracy, and code-simplifier findings
-- **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins and stays in the main report.
-
----
+- **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins — keep it in the main report and drop the test-analyzer duplicate.
 
 ---
 

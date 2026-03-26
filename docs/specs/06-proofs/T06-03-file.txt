@@ -1,0 +1,30 @@
+Type: file
+Description: Verify I1 fix — untrusted-code-content tags added to Phase 2i, Phase 5, and Phase 7 agent prompt templates in SKILL.md; Phase 5 description in validation-pipeline.md updated
+Files: skills/deep-review/SKILL.md, skills/deep-review/references/validation-pipeline.md
+Expected: All three agent prompt templates that paste raw code now wrap it in untrusted-code-content tags
+Timestamp: 2026-03-26T00:00:00Z
+
+PROOF OUTPUT:
+=============
+
+grep for "untrusted-code-content" in SKILL.md returned lines:
+
+Line 227: <untrusted-code-content>   [Phase 2i file summarizer — opening tag]
+Line 229: </untrusted-code-content>  [Phase 2i file summarizer — closing tag]
+Line 316:     8. Scoped diff wrapped in <untrusted-code-content>...</untrusted-code-content> tags}"  [Phase 3 — already present]
+Line 380: <untrusted-code-content>   [Phase 5 validation agent — opening tag]
+Line 382: </untrusted-code-content>  [Phase 5 validation agent — closing tag]
+Line 452: <untrusted-code-content>   [Phase 7 challenge agent — opening tag]
+Line 454: </untrusted-code-content>  [Phase 7 challenge agent — closing tag]
+
+validation-pipeline.md Phase 5 description now reads:
+"2. The relevant code sections for the batch (read fresh from files), wrapped in
+`<untrusted-code-content>...</untrusted-code-content>` tags"
+
+Status: PASS
+Verification:
+  PASS — Phase 2i file summarizer: diff wrapped in untrusted-code-content tags (lines 227-229)
+  PASS — Phase 5 validation agent: code sections wrapped in untrusted-code-content tags (lines 380-382)
+  PASS — Phase 7 challenge agent: raw code wrapped in untrusted-code-content tags (lines 452-454)
+  PASS — validation-pipeline.md Phase 5 description updated to mention untrusted-code-content wrapping
+  PASS — Phase 3 review agent template already had untrusted-code-content tags (unchanged)

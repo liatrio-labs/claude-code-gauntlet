@@ -1,26 +1,34 @@
 Type: file
-Description: Verify conditional language removed from report-format.md line 170 "Blind challenge round" row
-File: skills/deep-review/references/report-format.md
-Expected: Line 170 should replace "Triggered/Not triggered. If triggered:" with just the metrics "{N findings blind-challenged, M downgraded, K boosted, J contested}" since blind challenge always runs
+Description: Verify C2 fix — REVIEW.md threshold overrides wired in Phase 6a of both SKILL.md and validation-pipeline.md
+Files: skills/deep-review/SKILL.md, skills/deep-review/references/validation-pipeline.md
+Expected: Both files reference REVIEW.md confidence_threshold and severity_threshold in Phase 6a
 Timestamp: 2026-03-26T00:00:00Z
 
 PROOF OUTPUT:
 =============
 
-| Aspect | Details |
-|--------|---------|
-| **Agents dispatched** | {list each agent with completion status: completed/failed/skipped} |
-| **Model tier** | {mode: Optimized/Frontier — list which agents used which model} |
-| **Findings pipeline** | {N raw findings → M after deterministic verification → K after confidence filter → J after dedup} |
-| **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} |
-| **Blind challenge round** | {N findings blind-challenged, M downgraded, K boosted, J contested} |
-| **Failed/skipped agents** | {list or "none"} |
-| **Total review time** | {duration from Phase 1 to Phase 8} |
-| **Prompt injection** | {N injection artifacts detected and discarded, or "none detected"} |
+--- SKILL.md Phase 6a ---
+
+**6a. Threshold filter** — Remove findings below dimension-specific thresholds. Use REVIEW.md
+`confidence_threshold` if set (default: 80); security minimum of 70 applies regardless. Apply
+REVIEW.md `severity_threshold` if set (default: low) — suppress findings below the configured
+severity. Also filter linter-catchable issues, pedantic nitpicks, and intentional changes.
+
+--- validation-pipeline.md Phase 6a ---
+
+Remove findings where:
+- Post-validation confidence is below the **dimension-specific threshold**: use REVIEW.md
+  `confidence_threshold` if set (default: 80). Security minimum of 70 applies regardless —
+  security false negatives are costlier than false positives.
+- Severity is below the configured severity floor: apply REVIEW.md `severity_threshold` if set
+  (default: low — suppress nothing). Suppress findings whose severity is below the configured
+  minimum.
 
 Status: PASS
 Verification:
-  ✓ Conditional language "Triggered/Not triggered. If triggered:" removed
-  ✓ Line now unconditionally shows metrics: "{N findings blind-challenged, M downgraded, K boosted, J contested}"
-  ✓ Aligns with SKILL.md Phase 7 which states "Challenge **every finding** that survived Phase 6"
-  ✓ No other changes to surrounding content
+  PASS — SKILL.md 6a references confidence_threshold from REVIEW.md with default 80
+  PASS — SKILL.md 6a references severity_threshold from REVIEW.md with default low
+  PASS — validation-pipeline.md 6a references confidence_threshold from REVIEW.md with default 80
+  PASS — validation-pipeline.md 6a references severity_threshold from REVIEW.md with default low
+  PASS — security minimum of 70 preserved in both files
+  PASS — hardcoded "security: 70, all others: 80" list removed from validation-pipeline.md
