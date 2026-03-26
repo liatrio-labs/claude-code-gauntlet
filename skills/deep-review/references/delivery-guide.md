@@ -36,7 +36,14 @@ Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 
 Shell-constructed JSON fails because of the double-escaping trap (JSON escaping + bash metacharacters). Python `json.dumps()` to temp file → `gh/glab api --input` is the most reliable pattern. **Always use this approach — never construct JSON payloads in bash.**
 
-Write a Python script using a quoted heredoc (`<< 'PYTHON_EOF'`) to prevent bash from interpreting special characters in the Python code:
+Write a Python script to a temp file and execute it. Do NOT use heredocs (`<< 'EOF'`) — they cause escaping issues where `!=` becomes `\!=` (invalid Python). Instead, use the Write tool to create the script file, then run it with Bash:
+
+```
+Write the script to $TMPDIR/post_review.py, then:
+python3 $TMPDIR/post_review.py
+```
+
+Reference implementation below (adapt, don't paste into a heredoc):
 
 #### GitHub — batched PR review
 
