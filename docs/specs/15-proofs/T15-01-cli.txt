@@ -1,0 +1,16 @@
+Type: cli
+Command: grep -n "model_tier" skills/deep-review/SKILL.md
+Expected: MANDATORY GATE wording updated to distinguish REVIEW.md config from remembered preferences
+Timestamp: 2026-03-26T00:00:00Z
+
+--- OUTPUT ---
+30:Check REVIEW.md for `model_tier`; if not set, ask Optimized vs Frontier (template in `references/phase1-preflight.md`). Confirm in output before continuing.
+28:> **STOP: Complete this step before Phase 2.** If REVIEW.md sets `model_tier`, use it — that is explicit user configuration, not a remembered preference. Otherwise, always ask — never assume a default from remembered preferences.
+
+--- VERIFICATION ---
+Line 28 now reads: "If REVIEW.md sets `model_tier`, use it — that is explicit user configuration, not a remembered preference. Otherwise, always ask — never assume a default from remembered preferences."
+
+Old text was: "Always ask — never assume a default, even with remembered preferences."
+New text correctly distinguishes REVIEW.md (explicit config) from remembered preferences.
+
+Status: PASS

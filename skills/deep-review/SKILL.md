@@ -25,7 +25,7 @@ Inline checks before any review work — no subagent dispatch. Read `references/
 
 ### Review mode selection — MANDATORY GATE
 
-> **STOP: Complete this step before Phase 2.** Always ask — never assume a default, even with remembered preferences.
+> **STOP: Complete this step before Phase 2.** If REVIEW.md sets `model_tier`, use it — that is explicit user configuration, not a remembered preference. Otherwise, always ask — never assume a default from remembered preferences.
 
 Check REVIEW.md for `model_tier`; if not set, ask Optimized vs Frontier (template in `references/phase1-preflight.md`). Confirm in output before continuing.
 
@@ -133,7 +133,7 @@ Main orchestrator, rules-based — no LLM agents. Apply filters and tag findings
 
 All tagged findings proceed to Phase 7 regardless of tag.
 
-**code-simplifier timing:** After 6a-6d, check if any critical/high findings survived. If none, dispatch code-simplifier now using the same Agent tool call pattern from Phase 3 (`model: "sonnet"`, `effort: "high"`, `tools: [Read, Grep, Glob, LSP]`, `description: "Review: code-simplifier"`, prompt assembled from `agents/code-simplifier.md` and `references/agent-prompt-template.md`). Its findings go through Phases 4-6 before joining Phase 7. Tag as "improvement suggestion."
+**code-simplifier timing:** After 6a-6d, check if any critical/high findings survived. If none, dispatch code-simplifier now using the same Agent tool call pattern from Phase 3 (`model: "sonnet"`, `effort: "high"`, `tools: [Read, Grep, Glob, LSP]`, `description: "Review: code-simplifier"`, prompt assembled from `agents/code-simplifier.md` and `references/agent-prompt-template.md`). Its findings are processed as a second pass through the same Phase 4-6 pipeline — blame classification (4a), factual verification (4b), batch (4c), Sonnet validation agents (Phase 5), filter (6a-6c), and tag as "improvement suggestion" (6d). This is not a separate pipeline; it is the same orchestrator running a mini-batch. The validated, tagged code-simplifier findings then merge into the Phase 7 challenge pool alongside the main findings.
 
 Read `references/validation-pipeline.md` for detailed filter/reconciliation rules.
 
@@ -210,7 +210,7 @@ Read `references/delivery-guide.md` for PR comment API implementation (batched r
 These are the rules most likely to be violated. Re-read before each phase transition:
 
 1. **Precision over recall.** 5 real issues beat 5 real + 20 false positives. When uncertain, do not report.
-2. **Subagent delegation is non-negotiable.** Phases 2e, 3, 5, and 7 MUST use Agent tool calls. Writing analysis yourself instead of spawning agents is the single most common failure mode.
+2. **Subagent delegation is non-negotiable.** Phases 2e, 2i (for PRs >500 lines), 3, 5, and 7 MUST use Agent tool calls. Writing analysis yourself instead of spawning agents is the single most common failure mode.
 3. **Security boundary.** Phases 3-7 agents get `tools: [Read, Grep, Glob, LSP]` only. No Write, Edit, Bash, or MCP tools.
 4. **Every MANDATORY GATE requires a STOP.** Do not batch past them. Each gate exists because skipping it caused a real failure.
 5. **No phase skipping.** Especially Phase 7 (blind challenge). Cost and time do not justify it.

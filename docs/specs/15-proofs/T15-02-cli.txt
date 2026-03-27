@@ -1,0 +1,13 @@
+Type: cli
+Command: grep -n "code-simplifier timing" skills/deep-review/SKILL.md
+Expected: code-simplifier timing line clarifies it is a second pass through the same Phase 4-6 pipeline, not a separate pipeline
+Timestamp: 2026-03-26T00:00:00Z
+
+--- OUTPUT ---
+Line 136: **code-simplifier timing:** After 6a-6d, check if any critical/high findings survived. If none, dispatch code-simplifier now using the same Agent tool call pattern from Phase 3 (...). Its findings are processed as a second pass through the same Phase 4-6 pipeline — blame classification (4a), factual verification (4b), batch (4c), Sonnet validation agents (Phase 5), filter (6a-6c), and tag as "improvement suggestion" (6d). This is not a separate pipeline; it is the same orchestrator running a mini-batch. The validated, tagged code-simplifier findings then merge into the Phase 7 challenge pool alongside the main findings.
+
+--- VERIFICATION ---
+Old text was: "Its findings go through Phases 4-6 before joining Phase 7."
+New text enumerates each sub-step, confirms Phase 5 Sonnet agents DO run, clarifies it is the same pipeline (not a separate one), and explains merging into Phase 7 challenge pool.
+
+Status: PASS

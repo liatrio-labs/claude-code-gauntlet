@@ -1,0 +1,13 @@
+Type: cli
+Command: grep -n "2i" skills/deep-review/SKILL.md
+Expected: Critical Rule #2 now includes Phase 2i (for PRs >500 lines) in the list of phases requiring Agent tool calls
+Timestamp: 2026-03-26T00:00:00Z
+
+--- OUTPUT ---
+Line 213: 2. **Subagent delegation is non-negotiable.** Phases 2e, 2i (for PRs >500 lines), 3, 5, and 7 MUST use Agent tool calls. Writing analysis yourself instead of spawning agents is the single most common failure mode.
+
+--- VERIFICATION ---
+Old text was: "Phases 2e, 3, 5, and 7 MUST use Agent tool calls."
+New text adds "2i (for PRs >500 lines)" to the list, matching the phase 2i definition in phase2-triage.md which dispatches a U-shaped attention subagent for large PRs.
+
+Status: PASS
