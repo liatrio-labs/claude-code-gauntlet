@@ -1,11 +1,37 @@
 Type: file
-Path: skills/deep-review/references/review-md-spec.md
-Check: Frontier mode description says "All agents use Opus"
+Command: grep effort/tools in skills/deep-review/SKILL.md Agent call templates
+Expected: All 5 Agent() call sites have both effort and tools parameters
 Timestamp: 2026-03-26T00:00:00Z
+
+--- OUTPUT ---
+Line 219:  effort: "medium",
+Line 220:  tools: [],
+(Phase 2e change summarizer)
+
+Line 259:  effort: "medium",
+Line 260:  tools: [],
+(Phase 2i file summarizers)
+
+Line 340:  effort: "high",
+Line 341:  tools: [Read, Grep, Glob, LSP],
+(Phase 3 review agents)
+
+Line 399:  effort: "medium",
+Line 400:  tools: [Read, Grep, Glob, LSP],
+(Phase 5 validation agents)
+
+Line 452:  effort: "high",
+Line 453:  tools: [Read, Grep, Glob, LSP],
+(Phase 7 challenge agents)
+
+Phase 6 code-simplifier dispatch text also updated with effort: "high", tools: [Read, Grep, Glob, LSP]
+
+--- VERIFICATION ---
+Phase 2e (Change summarizer): tools: [], effort: "medium" - PASS
+Phase 2i (File summarizers): tools: [], effort: "medium" - PASS
+Phase 3 (Review agents): tools: [Read, Grep, Glob, LSP], effort: "high" - PASS
+Phase 5 (Validation agents): tools: [Read, Grep, Glob, LSP], effort: "medium" - PASS
+Phase 7 (Challenge agents): tools: [Read, Grep, Glob, LSP], effort: "high" - PASS
+Phase 6 (code-simplifier text): effort: "high", tools: [Read, Grep, Glob, LSP] - PASS
+
 Status: PASS
-
-Verification: grep -n "frontier" skills/deep-review/references/review-md-spec.md | grep -i "all agents"
-Result: Line 136: "- `frontier` — All agents use Opus. Maximum depth for high-stakes reviews."
-
-Change applied: Replaced "Opus for all reasoning-heavy agents (bugs, security, cross-file, simplification)"
-with "All agents use Opus" to match SKILL.md line ~195 which is authoritative.

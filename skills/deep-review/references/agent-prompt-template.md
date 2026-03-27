@@ -2,6 +2,21 @@
 
 Agent prompts are structured with **static content first and dynamic content last** to maximize prompt cache hit rates. Anthropic's prompt caching charges 10% of base input price for cached tokens — with 70-80% of tokens cacheable across reviews of the same repo, this reduces per-review cost by 60-70%.
 
+## Required Agent() call fields
+
+Every Agent() call MUST include `tools` and `effort` fields:
+
+| Phase | tools | effort |
+|-------|-------|--------|
+| 2e change summarizer | `[]` | `"medium"` |
+| 2i file summarizers | `[]` | `"medium"` |
+| 3 review agents | `[Read, Grep, Glob, LSP]` | `"high"` |
+| 5 validation agents | `[Read, Grep, Glob, LSP]` | `"medium"` |
+| 6 code-simplifier | `[Read, Grep, Glob, LSP]` | `"high"` |
+| 7 challenge agents | `[Read, Grep, Glob, LSP]` | `"high"` |
+
+No review agent (Phases 3-7) gets Write, Edit, Bash, or any MCP tool. Summarizer agents (Phases 2e/2i) receive an empty tool list because they only need to read the diff provided in the prompt.
+
 For each agent, provide a prompt structured as:
 
 ```

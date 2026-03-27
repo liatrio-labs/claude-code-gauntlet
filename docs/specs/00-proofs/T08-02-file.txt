@@ -1,11 +1,26 @@
 Type: file
-Path: skills/deep-review/SKILL.md
-Check: code-simplifier timing note added to Phase 6
+Command: grep "model:" in skills/deep-review/agents/*.md
+Expected: security-reviewer has model: opus; all other 6 agents have model: sonnet
 Timestamp: 2026-03-26T00:00:00Z
-Status: PASS
 
-Verification: grep -n "code-simplifier timing" skills/deep-review/SKILL.md
-Result: Line 386: "**code-simplifier timing:** After steps 6a-6d complete, check whether any
-critical/high findings survived. If none did, dispatch code-simplifier now — this is the point
-where we know it is safe to run it. Its findings route to Improvement Suggestions (per 6d above)
-and still go through Phase 7 challenge along with all other surviving findings."
+--- OUTPUT ---
+skills/deep-review/agents/bug-detector.md:model: sonnet
+skills/deep-review/agents/code-simplifier.md:model: sonnet
+skills/deep-review/agents/conventions-and-intent.md:model: sonnet
+skills/deep-review/agents/cross-file-impact-analyzer.md:model: sonnet
+skills/deep-review/agents/security-reviewer.md:model: opus
+skills/deep-review/agents/test-analyzer.md:model: sonnet
+skills/deep-review/agents/type-design-analyzer.md:model: sonnet
+
+--- VERIFICATION ---
+security-reviewer: model: opus - PASS (correct — always Opus)
+bug-detector: model: sonnet - PASS
+cross-file-impact-analyzer: model: sonnet - PASS
+test-analyzer: model: sonnet - PASS
+conventions-and-intent: model: sonnet - PASS
+type-design-analyzer: model: sonnet - PASS
+code-simplifier: model: sonnet - PASS
+
+All 7 agent files updated with model defaults in frontmatter.
+
+Status: PASS
