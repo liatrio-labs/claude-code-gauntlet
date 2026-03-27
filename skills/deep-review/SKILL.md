@@ -35,8 +35,6 @@ Check REVIEW.md for `model_tier`; if not set, ask Optimized vs Frontier (templat
 
 Check REVIEW.md for `default_delivery`; if not set, ask Chat / PR comments / Markdown (template in `references/phase1-preflight.md`). Omit PR comments for local changes. Store selection for Phase 8. Confirm in output before continuing.
 
-> Re-check eligibility again before Phase 8 delivery — the PR could close/merge during review.
-
 ---
 
 ## Phase 2: Target & Triage
@@ -97,7 +95,7 @@ Parallel validation agents assess findings needing LLM judgment. **Always use So
 
 Each agent receives: batch of findings with descriptions/evidence/blame tags, relevant code in `<untrusted-code-content>` tags, and the confidence rubric. Each must attempt to **disprove** the finding and ask: "Can you find a code path that actually triggers this today?" Cap confidence at 70 for issues only reachable under hypothetical future changes. Score using the 0/25/50/75/100 rubric from `references/validation-pipeline.md`.
 
-**Agent tool call template (per batch):** See SKILL.md Phase 5 in `references/validation-pipeline.md` for the detailed rubric. Use:
+**Agent tool call template (per batch):** See `references/validation-pipeline.md` Phase 5 for the detailed rubric. Use:
 ```
 Agent(
   model: "sonnet",
@@ -204,3 +202,15 @@ Read `references/delivery-guide.md` for PR comment API implementation (batched r
 > **MANDATORY GATE: Do not post PR comments without completing the PR comment selection flow (Stage 1 Step B) in `references/phase8-delivery.md`.**
 
 > **MANDATORY GATE: Do not finish without completing the task board offer (Stage 2) in `references/phase8-delivery.md`.**
+
+---
+
+## Critical Rules (end-of-file reinforcement)
+
+These are the rules most likely to be violated. Re-read before each phase transition:
+
+1. **Precision over recall.** 5 real issues beat 5 real + 20 false positives. When uncertain, do not report.
+2. **Subagent delegation is non-negotiable.** Phases 2e, 3, 5, and 7 MUST use Agent tool calls. Writing analysis yourself instead of spawning agents is the single most common failure mode.
+3. **Security boundary.** Phases 3-7 agents get `tools: [Read, Grep, Glob, LSP]` only. No Write, Edit, Bash, or MCP tools.
+4. **Every MANDATORY GATE requires a STOP.** Do not batch past them. Each gate exists because skipping it caused a real failure.
+5. **No phase skipping.** Especially Phase 7 (blind challenge). Cost and time do not justify it.
