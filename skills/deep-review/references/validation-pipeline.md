@@ -106,8 +106,6 @@ Remove findings where:
 - It's about code the author didn't modify (unless it's a cross-file impact issue)
 - The change in functionality is likely intentional (refactoring, API migration, deliberate behavior change)
 - The issue is explicitly silenced in code via lint-ignore, nolint, @SuppressWarnings, or equivalent
-- CI linters or typecheckers would catch it (eslint, mypy, tsc --strict, clippy, etc.)
-
 Also apply exclusion patterns from `references/false-positive-exclusions.md` and the REVIEW.md `ignore` section.
 
 ---
@@ -144,9 +142,9 @@ Log all contradictions and resolutions in the report methodology section.
 
 ---
 
-## 6d. Route findings
+## 6d. Tag findings
 
-Classify each surviving finding into its report destination:
+Tag each surviving finding by its eventual report destination. This is a tagging step only — actual separation into report sections happens during post-challenge finalization (Phase 7, step 2):
 - **Main report** — most findings, grouped by severity
 - **Improvement Suggestions** — test-analyzer, conventions-and-intent comment accuracy, and code-simplifier findings
 - **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins — keep it in the main report and drop the test-analyzer duplicate.
@@ -191,7 +189,15 @@ Findings from different agents often overlap. Group findings that reference the 
 
 ---
 
-## Post-challenge finalization — step 2: Apply findings cap
+## Post-challenge finalization — step 2: Route
+
+Materialize the routing tags from Phase 6d. Separate findings into:
+- **Main report** — grouped by severity, counted in executive summary
+- **Improvement Suggestions** — not counted in executive summary, not posted as PR inline comments by default, available via "Let me pick" walkthrough in Phase 8
+
+---
+
+## Post-challenge finalization — step 3: Apply findings cap
 
 Check REVIEW.md for `max_findings`. **Default: no limit** — all findings that survive the pipeline appear in the report. The inline PR comment default cap (6 comments for "Default" mode, no cap for user-selected findings) is applied separately in Phase 8 delivery.
 
@@ -203,7 +209,7 @@ If `max_findings` is set and total findings exceed it:
 
 ---
 
-## Post-challenge finalization — step 3: Rank
+## Post-challenge finalization — step 4: Rank
 
 Sort findings by:
 1. Severity (critical > high > medium > low)
@@ -212,7 +218,7 @@ Sort findings by:
 
 ---
 
-## Post-challenge finalization — step 4: Incremental report diffing (incremental reviews only)
+## Post-challenge finalization — step 5: Incremental report diffing (incremental reviews only)
 
 Runs ONLY when the review is incremental (user selected "Incremental" in Phase 1) AND a previous `deep-review-findings` comment was successfully parsed.
 

@@ -1,0 +1,39 @@
+Type: file
+Command: wc -l skills/deep-review/SKILL.md && grep checks
+Expected: SKILL.md under 500 lines, all I2-I6 and M1-M5 fixes applied
+Timestamp: 2026-03-26T12:00:00Z
+
+=== Line count verification ===
+SKILL.md: 470 lines (was 651, target: <=500) -- PASS
+
+=== I2: Phase 1 "Use Haiku" reworded ===
+Before: "Before any review work, check PR eligibility. Use Haiku for these fast checks."
+After: "Inline checks before any review work -- no subagent dispatch."
+Verification: grep "Use Haiku" returns no matches in SKILL.md -- PASS
+
+=== I3: code-simplifier dispatch template ===
+Before: "dispatch code-simplifier now" with no model/template
+After: "dispatch code-simplifier now using the same Agent tool call pattern from Phase 3 (model: sonnet, description: Review: code-simplifier, prompt assembled from agents/code-simplifier.md and references/agent-prompt-template.md)"
+Verification: line 322 contains Agent tool call reference -- PASS
+
+=== I4: "aggregation phases" replaced ===
+Before: "Send only to conventions-and-intent agent and aggregation phases"
+After: "Send only to conventions-and-intent agent and Phase 8 report generation"
+Verification: grep "aggregation" returns no matches -- PASS
+
+=== I5: 2e/2i parallel dispatch note ===
+Before: No mention of dispatching 2e and 2i together
+After: "For large PRs, launch 2e and 2i agents in the same message with multiple Agent tool calls"
+Verification: line 148 contains the note -- PASS
+
+=== I6: Phase 5 context-pulling policy ===
+Before: No explicit statement about validation agent context access
+After: "Validation agents CAN and SHOULD pull surrounding context via Read/Grep to check for defensive patterns, framework guarantees, or type protections. Unlike Phase 7 challengers who are intentionally blind, validators need full codebase access to assess whether findings are real."
+Verification: line 282 contains the statement -- PASS
+
+=== M1: Phase 6a filter list reference ===
+Before: Abbreviated filter list in SKILL.md with no reference to complete list
+After: "See references/validation-pipeline.md Phase 6a for the complete filter list (linter-catchable, pedantic, intentional changes, lint-suppressed, etc.)"
+Verification: line 309 contains reference -- PASS
+
+Status: PASS

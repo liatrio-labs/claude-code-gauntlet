@@ -1,0 +1,36 @@
+Type: file
+Command: grep and diff verification of reference file fixes
+Expected: M2-M5 fixes applied in validation-pipeline.md and report-format.md
+Timestamp: 2026-03-26T12:00:00Z
+
+=== M2: Duplicate "CI linters" line removed ===
+Before (validation-pipeline.md lines 104 and 109):
+  Line 104: "- A linter, typechecker, or compiler would catch it (these run separately in CI)"
+  Line 109: "- CI linters or typecheckers would catch it (eslint, mypy, tsc --strict, clippy, etc.)"
+After: Line 109 removed, line 104 retained.
+Verification: grep "CI linters" validation-pipeline.md returns no matches -- PASS
+
+=== M3: Post-challenge step numbering aligned ===
+Before (validation-pipeline.md): step 1 Dedup, step 2 Cap, step 3 Rank, step 4 Incremental
+After (validation-pipeline.md): step 1 Dedup, step 2 Route, step 3 Cap, step 4 Rank, step 5 Incremental
+SKILL.md already had: 1 Dedup, 2 Route, 3 Cap, 4 Rank, 5 Incremental
+Verification: grep "Post-challenge finalization.*step" shows 5 steps in both files -- PASS
+
+=== M4: report-format.md Phase 1 vs Phase 7 classification ===
+Before: "Phase 1 parses this comment to classify findings as introduced/fixed/preexisting"
+After: "Phase 1 parses the sha to scope the incremental diff, and Phase 7 post-challenge finalization uses the findings array to classify each finding as introduced/fixed/preexisting"
+Verification: line 206 of report-format.md contains corrected text -- PASS
+
+=== M5: Phase 6d "Tag" vs "Route" naming ===
+Before (validation-pipeline.md): "6d. Route findings"
+After (validation-pipeline.md): "6d. Tag findings" with "This is a tagging step only"
+Both files now use "Tag" for 6d and "Route" for post-challenge step 2.
+Verification: grep "6d." in both files shows "Tag" -- PASS
+
+=== Diff stats ===
+skills/deep-review/SKILL.md                        | 415 ++++++---------------
+skills/deep-review/references/report-format.md     |   2 +-
+skills/deep-review/references/validation-pipeline.md  |  20 +-
+3 files changed, 131 insertions(+), 306 deletions(-)
+
+Status: PASS
