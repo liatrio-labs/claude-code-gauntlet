@@ -1,0 +1,23 @@
+Type: file
+Command: grep -n "phase1-preflight" skills/deep-review/SKILL.md
+Expected: SKILL.md Phase 1 and Phase 2d light review section contain pointers to references/phase1-preflight.md; inline templates removed
+Timestamp: 2026-03-26T10:00:00Z
+
+--- OUTPUT ---
+17: Inline checks before any review work — no subagent dispatch. Read `references/phase1-preflight.md` for full templates.
+22: 2. **Draft?** → Ask user (template in `references/phase1-preflight.md`).
+30: Check REVIEW.md for `model_tier`; if not set, ask Optimized vs Frontier (template in `references/phase1-preflight.md`). Confirm in output before continuing.
+36: Check REVIEW.md for `default_delivery`; if not set, ask Chat / PR comments / Markdown (template in `references/phase1-preflight.md`). Omit PR comments for local changes. Store selection for Phase 8. Confirm in output before continuing.
+112: If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
+
+--- VERIFICATION ---
+5 references to phase1-preflight.md in SKILL.md:
+- Line 17: Phase 1 intro pointer
+- Line 22: Draft PR eligibility pointer
+- Line 30: Review mode MANDATORY GATE pointer
+- Line 36: Delivery preference MANDATORY GATE pointer
+- Line 112: Phase 2d light review pointer
+
+All inline AskUserQuestion templates removed from SKILL.md Phase 1. MANDATORY GATE stop labels retained.
+
+Status: PASS

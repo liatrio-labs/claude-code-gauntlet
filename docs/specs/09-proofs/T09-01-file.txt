@@ -1,0 +1,18 @@
+Type: file
+Command: grep -c "AskUserQuestion" skills/deep-review/references/phase1-preflight.md
+Expected: 6 AskUserQuestion templates present in new reference file
+Timestamp: 2026-03-26T10:00:00Z
+
+--- OUTPUT ---
+6
+
+--- VERIFICATION ---
+6 AskUserQuestion templates present in references/phase1-preflight.md:
+1. Draft PR prompt (eligibility check #2)
+2. Previously reviewed + new commits (incremental/full/skip)
+3. Previously reviewed + no new commits (review again / skip)
+4. Review Mode selection (Optimized vs Frontier) — MANDATORY GATE
+5. Delivery preference (Chat / PR comments / Markdown) — MANDATORY GATE
+6. Light review for trivial PRs (Light review vs Full review)
+
+Status: PASS
