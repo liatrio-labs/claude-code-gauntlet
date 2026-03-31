@@ -1,0 +1,15 @@
+Type: cli
+Command: python3 functional_tests_verify_factual (inline)
+Expected: All tests PASS
+Timestamp: 2026-03-31T00:00:00Z
+
+--- Output ---
+T1 (no line_start): result=True, reason=no line reference — verification skipped
+T2 (file not found): result=False, confidence=0, reason=file not found: 'nonexistent_file.py'
+T3 (out-of-range): result=False, confidence=0, reason=line_start 999999 out of range (file has 691 line(s))
+T4 (valid): result=True, verified=True
+T5 (missing symbol): result=True, confidence=0, reason=referenced symbol(s) not found in codebase: totally_nonexistent_xyz_function_abc
+
+All tests PASS
+
+Status: PASS

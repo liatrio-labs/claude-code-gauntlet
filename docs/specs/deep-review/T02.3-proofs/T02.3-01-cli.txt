@@ -1,0 +1,9 @@
+Type: cli
+Command: cd scripts && python3 -c 'from verify_findings import verify_factual; print("ok")'
+Expected: ok
+Timestamp: 2026-03-31T00:00:00Z
+
+--- Output ---
+ok
+
+Status: PASS

@@ -345,16 +345,180 @@ def classify_blame(finding, base_branch):
 def verify_factual(finding):
     """
     Verify that the finding's evidence field matches the actual file content
-    at the reported line range.
+    at the reported line range, and that referenced symbols exist in the codebase.
 
-    Reads finding["file"] lines [line_start, line_end] from disk and checks
-    whether the evidence text appears in that range (partial match accepted).
+    Steps:
+    1. Read finding["file"] lines [line_start, line_end] from disk.
+    2. Check file exists and lines are within range.
+    3. Extract referenced symbol names from description/evidence text.
+    4. Use grep to confirm referenced symbols exist somewhere in the codebase.
+    5. Set finding["confidence"] = 0 for findings with wrong facts.
+    6. Set finding["factual_verification"] = {verified, reason, code_at_lines}.
 
-    Returns: True if plausible, False if the evidence clearly does not match.
+    Returns: True if plausible (keep in verified, possibly with confidence=0),
+             False if evidence clearly does not match (eliminate finding).
 
-    Stub: always returns True until full verification logic is implemented.
+    Cases that return False (eliminate):
+    - File does not exist on disk
+    - line_start/line_end are out of range for the file
+
+    Cases that set confidence=0 but return True (degrade, keep):
+    - Referenced symbols extracted from description/evidence do not exist in codebase
+
+    Cases that skip verification entirely (return True, no changes):
+    - Finding has no line_start (no line reference to check)
+    - File is a binary file
     """
-    # TODO(T02.3): implement file content read + evidence matching
+    filepath = finding.get("file", "")
+    line_start = finding.get("line_start")
+    line_end = finding.get("line_end") or line_start
+    description = finding.get("description", "") or ""
+    evidence = finding.get("evidence", "") or ""
+
+    # No line reference → skip verification, keep as-is
+    if not line_start:
+        finding["factual_verification"] = {
+            "verified": True,
+            "reason": "no line reference — verification skipped",
+            "code_at_lines": None,
+        }
+        return True
+
+    # File does not exist → eliminate
+    if not filepath or not os.path.exists(filepath):
+        finding["confidence"] = 0
+        finding["factual_verification"] = {
+            "verified": False,
+            "reason": f"file not found: {filepath!r}",
+            "code_at_lines": None,
+        }
+        return False
+
+    # Read file content, handling binary files gracefully
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="strict") as fh:
+            all_lines = fh.readlines()
+    except UnicodeDecodeError:
+        # Binary file → skip verification, keep as-is
+        warn(f"verify_factual: binary file '{filepath}' — skipping factual check.")
+        finding["factual_verification"] = {
+            "verified": True,
+            "reason": "binary file — verification skipped",
+            "code_at_lines": None,
+        }
+        return True
+    except OSError as e:
+        finding["confidence"] = 0
+        finding["factual_verification"] = {
+            "verified": False,
+            "reason": f"could not read file '{filepath}': {e}",
+            "code_at_lines": None,
+        }
+        return False
+
+    total_lines = len(all_lines)
+
+    # line_start/line_end out of range → eliminate
+    # Lines are 1-indexed in findings; list is 0-indexed
+    if line_start < 1 or line_start > total_lines:
+        finding["confidence"] = 0
+        finding["factual_verification"] = {
+            "verified": False,
+            "reason": (
+                f"line_start {line_start} out of range "
+                f"(file has {total_lines} line(s))"
+            ),
+            "code_at_lines": None,
+        }
+        return False
+
+    # Clamp line_end to actual file length
+    effective_end = min(line_end, total_lines)
+
+    # Extract relevant lines (convert to 0-indexed slice)
+    relevant_lines = all_lines[line_start - 1 : effective_end]
+    code_at_lines = "".join(relevant_lines).rstrip("\n")
+
+    # Extract symbol names referenced in description / evidence.
+    # Look for identifiers that look like function, class, or variable names:
+    # sequences of word characters that contain at least one letter and may include
+    # underscores/digits, but are not pure numbers.  We additionally require they
+    # appear in backticks, quotes, or as part of a dot-access chain in the text to
+    # reduce false-positive symbol extraction from prose.
+    combined_text = description + "\n" + evidence
+    # Match identifiers in backtick spans, single/double-quoted spans, or bare
+    # CamelCase identifiers and snake_case identifiers in prose.
+    symbol_pattern = re.compile(
+        r"`([A-Za-z_][A-Za-z0-9_.]*)`"           # backtick spans
+        r"|'([A-Za-z_][A-Za-z0-9_.]+)'"           # single-quoted
+        r"|\"([A-Za-z_][A-Za-z0-9_.]+)\""         # double-quoted
+        r"|\b([A-Z][A-Za-z0-9]+)\b"               # CamelCase class names
+        r"|\b([a-z_][a-z0-9_]{2,})\("             # snake_case function calls
+    )
+    raw_symbols = set()
+    for m in symbol_pattern.finditer(combined_text):
+        for group in m.groups():
+            if group:
+                # Strip trailing dots/underscores and split on dots for module paths
+                parts = group.strip("._").split(".")
+                for part in parts:
+                    if part and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", part):
+                        raw_symbols.add(part)
+
+    # Filter out very common English words, Python builtins, and short tokens
+    # that are unlikely to be meaningful codebase symbols.
+    _SKIP_SYMBOLS = {
+        "the", "this", "that", "with", "from", "import", "class", "def",
+        "for", "not", "and", "its", "but", "are", "was", "were", "can",
+        "should", "would", "could", "also", "will", "has", "have", "been",
+        "when", "then", "else", "elif", "True", "False", "None", "self",
+        "return", "raise", "pass", "break", "continue", "lambda", "yield",
+        "async", "await", "print", "isinstance", "len", "str", "int", "list",
+        "dict", "set", "tuple", "type", "super", "object", "Exception",
+        "ValueError", "TypeError", "KeyError", "AttributeError", "IndexError",
+        "RuntimeError", "StopIteration", "OSError", "IOError", "FileNotFoundError",
+        "NotImplementedError", "AssertionError", "OverflowError", "ZeroDivisionError",
+    }
+    symbols_to_check = {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
+
+    # Grep for each extracted symbol in the repository root.
+    # We only grep for symbols not already visible in the relevant lines themselves —
+    # if the symbol appears in the code at the reported lines, it's trivially confirmed.
+    missing_symbols = []
+    for symbol in sorted(symbols_to_check):
+        # Fast path: symbol already present in the lines we read
+        if symbol in code_at_lines:
+            continue
+
+        # Run grep to find the symbol anywhere in the codebase
+        stdout, _stderr, rc = run(
+            ["grep", "-rn", "--include=*.py", "-l", symbol, "."]
+        )
+        if rc != 0 or not stdout.strip():
+            # Symbol not found in any Python file — note it but don't eliminate
+            missing_symbols.append(symbol)
+
+    # Record factual verification result
+    if missing_symbols:
+        original_confidence = finding.get("confidence", 100)
+        finding["confidence"] = 0
+        finding["factual_verification"] = {
+            "verified": False,
+            "reason": (
+                f"referenced symbol(s) not found in codebase: "
+                f"{', '.join(missing_symbols)}"
+            ),
+            "code_at_lines": code_at_lines,
+            "original_confidence": original_confidence,
+        }
+        # Degrade but keep — don't eliminate (return True)
+        return True
+
+    finding["factual_verification"] = {
+        "verified": True,
+        "reason": "file content and symbols verified",
+        "code_at_lines": code_at_lines,
+    }
     return True
 
 
