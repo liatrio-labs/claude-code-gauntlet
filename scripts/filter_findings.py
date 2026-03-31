@@ -33,14 +33,20 @@ Output JSON schema:
         "filtered": [...],    # findings that passed all filters, tagged for output
         "eliminated": [...],  # findings removed by any filter, with "eliminated_by" field
         "stats": {
-            "total":               N,   # total input findings
-            "passed_threshold":    N,   # passed confidence + severity threshold
-            "injections_removed":  N,   # removed by injection filter
-            "consensus_boosted":   N,   # confidence boosted due to multi-agent consensus
-            "tagged_main":         N,   # tagged for main report
-            "tagged_suggestion":   N    # tagged as improvement suggestions
+            "total":                   N,   # total input findings
+            "passed_threshold":        N,   # passed confidence + severity threshold
+            "injections_removed":      N,   # removed by injection filter
+            "consensus_boosted":       N,   # confidence boosted due to multi-agent consensus
+            "test_analyzer_deduped":   N,   # test-analyzer duplicates dropped (another agent wins)
+            "test_analyzer_promoted":  N,   # test-analyzer findings promoted to main report
+            "tagged_main":             N,   # tagged for main report
+            "tagged_suggestion":       N    # tagged as improvement suggestions
         }
     }
+
+Each filtered finding includes:
+    "report_destination":  "main" | "suggestion"  # routing destination for Phase 8
+    "report_tag":          "main" | "suggestion"  # backward-compatible alias for report_destination
 
 REVIEW.md parsing:
     Looks for a fenced code block or YAML-style section containing:
@@ -653,48 +659,238 @@ def detect_disagreement(findings):
 # Tagging
 # ---------------------------------------------------------------------------
 
-# Dimensions that route to the main code-correctness report
-MAIN_REPORT_DIMENSIONS = {"security", "logic", "null-handling", "data-integrity", "error-handling"}
+# Agents whose findings default to the main code-correctness report
+_MAIN_REPORT_AGENTS = {
+    "bug-detector",
+    "security-reviewer",
+    "cross-file-impact",
+    "cross-file-impact-analyzer",  # alternate name seen in some configs
+    "type-design-analyzer",
+}
 
-# Dimensions that route to improvement suggestions
-SUGGESTION_DIMENSIONS = {"test-coverage", "code-quality", "conventions", "performance"}
+# Agents whose findings default to improvement suggestions
+_SUGGESTION_AGENTS = {
+    "test-analyzer",
+    "code-simplifier",
+}
+
+# For conventions-and-intent: pass-3 is comment accuracy -> suggestion.
+# Passes 1-2 (intent/convention checks) -> main.
+# Detection: finding has dimension "comment-accuracy" or "documentation"
+# or the finding's category/subcategory field contains "comment".
+_CONVENTIONS_AGENT = "conventions-and-intent"
+_COMMENT_ACCURACY_DIMENSIONS = {"comment-accuracy", "documentation", "doc-accuracy"}
+
+# Keyword patterns in test-analyzer finding titles/bodies that indicate
+# a functional correctness issue today (→ promote to main report).
+# These describe bugs that EXIST NOW, not tests that should be written.
+_TEST_CORRECTNESS_PATTERNS = [
+    re.compile(r"\brace\s+condition\b", re.IGNORECASE),
+    re.compile(r"\balways\s+pass(?:es)?\b", re.IGNORECASE),
+    re.compile(r"\balways[-\s]pass(?:es)?\b", re.IGNORECASE),
+    re.compile(r"\bnever\s+fail(?:s)?\b", re.IGNORECASE),
+    re.compile(r"\bvacuous(?:ly)?\b", re.IGNORECASE),
+    re.compile(r"\btautolog(?:y|ical)\b", re.IGNORECASE),
+    re.compile(r"\bassert(?:ion)?\s+(?:is\s+)?never\s+reached\b", re.IGNORECASE),
+    re.compile(r"\bdeadlock\b", re.IGNORECASE),
+    re.compile(r"\bdata\s+race\b", re.IGNORECASE),
+    re.compile(r"\bthread\s+(?:safety|unsafe|race)\b", re.IGNORECASE),
+    re.compile(r"\btest\s+(?:never\s+)?(?:actually\s+)?(?:verif|test|check)(?:s|ies)?\s+nothing\b", re.IGNORECASE),
+    re.compile(r"\bfalse\s+positive\s+(?:test|assertion)\b", re.IGNORECASE),
+    re.compile(r"\bincorrect(?:ly)?\s+(?:assert|verify|test)\b", re.IGNORECASE),
+    re.compile(r"\bwrong\s+(?:value|result|output)\b", re.IGNORECASE),
+    re.compile(r"\blocal\s+variable\s+(?:is\s+)?never\s+(?:used|read)\b", re.IGNORECASE),
+    re.compile(r"\bassert(?:s|ion)?\s+(?:on\s+)?(?:a\s+)?(?:local|copy|snapshot)\b", re.IGNORECASE),
+    re.compile(r"\bcompares?\s+(?:wrong|incorrect|different)\s+object\b", re.IGNORECASE),
+    re.compile(r"\btest\s+(?:does\s+not|doesn'?t)\s+(?:wait|join|block)\b", re.IGNORECASE),
+    re.compile(r"\breader\s+thread\s+not\s+waited\b", re.IGNORECASE),
+    re.compile(r"\bflaky\s+test\b", re.IGNORECASE),
+    re.compile(r"\bassertion\s+always\s+(?:true|passes?|succeed)\b", re.IGNORECASE),
+    re.compile(r"\bassert(?:s|ion)?\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE),
+    re.compile(r"\btest\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE),
+    re.compile(r"\blogic\s+error\b", re.IGNORECASE),
+    re.compile(r"\bincorrect\s+(?:logic|behavior|behaviour|result)\b", re.IGNORECASE),
+]
+
+
+def _is_test_correctness_finding(finding):
+    """
+    Return True if a test-analyzer finding describes a functional correctness bug
+    that exists today (race condition, logic error, always-pass assertion, etc.)
+    rather than a coverage gap ("should add tests for X").
+
+    Decision test: "Does this finding describe a bug that exists today,
+    or a test that should be written?"
+    """
+    title = finding.get("title", "")
+    body = finding.get("body", "")
+    combined = f"{title}\n{body}"
+
+    for pattern in _TEST_CORRECTNESS_PATTERNS:
+        if pattern.search(combined):
+            return True
+    return False
+
+
+def _dedup_test_analyzer(findings):
+    """
+    Apply the dedup rule: if a test-analyzer finding overlaps with another
+    agent's finding at the same file and line range, the non-test-analyzer
+    finding wins and the test-analyzer duplicate is dropped.
+
+    Line overlap is defined as: both findings reference the same file and
+    their line numbers are within 5 lines of each other.
+
+    Returns (deduplicated_findings, dropped_duplicates) where dropped_duplicates
+    is a list of test-analyzer findings that were removed, each with
+    eliminated_by="dedup:test-analyzer" and an elimination_reason.
+    """
+    LINE_PROXIMITY = 5
+
+    # Separate test-analyzer findings from others
+    test_findings = []
+    other_findings = []
+    for f in findings:
+        agent = f.get("agent", "").lower()
+        if agent == _AGENT_TEST_ANALYZER:
+            test_findings.append(f)
+        else:
+            other_findings.append(f)
+
+    # Build a lookup of (file, line) for non-test-analyzer findings
+    # Key: file path; value: set of line numbers
+    other_location_map = {}
+    for f in other_findings:
+        fpath = f.get("file", "")
+        line = f.get("line", 0)
+        try:
+            line = int(line)
+        except (TypeError, ValueError):
+            line = 0
+        other_location_map.setdefault(fpath, []).append(line)
+
+    kept = list(other_findings)
+    dropped = []
+
+    for tf in test_findings:
+        fpath = tf.get("file", "")
+        line = tf.get("line", 0)
+        try:
+            line = int(line)
+        except (TypeError, ValueError):
+            line = 0
+
+        # Check if any non-test-analyzer finding covers the same location
+        overlapping = False
+        if fpath in other_location_map:
+            for other_line in other_location_map[fpath]:
+                if abs(other_line - line) <= LINE_PROXIMITY:
+                    overlapping = True
+                    break
+
+        if overlapping:
+            dup = dict(tf)
+            dup["eliminated_by"] = "dedup:test-analyzer"
+            dup["elimination_reason"] = (
+                f"test-analyzer finding at {fpath}:{line} overlaps with another "
+                f"agent's finding within {LINE_PROXIMITY} lines; non-test-analyzer wins"
+            )
+            dropped.append(dup)
+            warn(
+                f"[dedup] Dropped test-analyzer finding {tf.get('id', '?')!r} "
+                f"at {fpath}:{line} (overlaps with another agent)"
+            )
+        else:
+            kept.append(tf)
+
+    return kept, dropped
 
 
 def tag_findings(findings):
     """
-    Tag each finding as "main" (main report) or "suggestion" (improvement suggestions).
+    Tag each finding as "main" (main report) or "suggestion" (improvement suggestions)
+    and apply the test-analyzer dedup rule.
 
-    Tagging rules (in priority order):
-      1. severity=critical or high -> "main" regardless of dimension
-      2. dimension in MAIN_REPORT_DIMENSIONS -> "main"
-      3. dimension in SUGGESTION_DIMENSIONS -> "suggestion"
-      4. Default: "main"
+    Step 1 — Dedup: If a test-analyzer finding overlaps with another agent's finding
+    at the same file/line range, the non-test-analyzer finding wins and the
+    test-analyzer duplicate is dropped.
 
-    Adds a "report_tag" field to each finding. Returns (tagged, main_count, suggestion_count).
+    Step 2 — Tag each surviving finding using agent-based routing rules:
+
+      Agent routing (primary):
+        Main report:        bug-detector, security-reviewer, cross-file-impact[-analyzer],
+                            type-design-analyzer, conventions-and-intent (passes 1-2)
+        Improvement suggestion: test-analyzer, code-simplifier,
+                            conventions-and-intent (pass 3: comment accuracy)
+
+      Promotion rule (test-analyzer only):
+        If a test-analyzer finding describes a functional correctness issue that exists
+        TODAY (race condition, logic error, always-pass assertion, flaky test due to
+        synchronization) rather than a coverage gap, promote it to main report.
+        Decision: "Does this describe a bug today, or a test to write?"
+
+      Conventions-and-intent disambiguation:
+        Pass 3 (comment accuracy) is identified by the presence of a dimension in
+        _COMMENT_ACCURACY_DIMENSIONS.  All other conventions-and-intent findings
+        (passes 1-2: intent and convention checks) → main report.
+
+      Fallback (unknown agent):
+        severity critical/high → main; otherwise → main.
+        (Unknown agents are conservatively routed to main to avoid suppressing real bugs.)
+
+    Each finding gains a "report_destination" field ("main" | "suggestion").
+    The legacy "report_tag" alias is also written for backward compatibility.
+
+    Returns (tagged_findings, eliminated_duplicates, main_count, suggestion_count).
     """
+    # Step 1: Dedup test-analyzer overlaps
+    findings, dedup_dropped = _dedup_test_analyzer(findings)
+
+    # Step 2: Tag remaining findings
     main_count = 0
     suggestion_count = 0
 
     for finding in findings:
-        severity = finding.get("severity", "low").lower()
+        agent = finding.get("agent", "").lower()
         dimensions = {d.lower() for d in finding.get("dimensions", [])}
 
-        if severity in ("critical", "high"):
-            tag = "main"
-        elif dimensions & MAIN_REPORT_DIMENSIONS:
-            tag = "main"
-        elif dimensions & SUGGESTION_DIMENSIONS:
-            tag = "suggestion"
-        else:
-            tag = "main"
+        if agent in _MAIN_REPORT_AGENTS:
+            destination = "main"
 
-        finding["report_tag"] = tag
-        if tag == "main":
+        elif agent == _CONVENTIONS_AGENT:
+            # Pass 3 (comment accuracy) → suggestion; passes 1-2 → main
+            if dimensions & _COMMENT_ACCURACY_DIMENSIONS:
+                destination = "suggestion"
+            else:
+                destination = "main"
+
+        elif agent in _SUGGESTION_AGENTS:
+            if agent == _AGENT_TEST_ANALYZER:
+                # Promotion rule: functional correctness bugs → main report
+                if _is_test_correctness_finding(finding):
+                    destination = "main"
+                    finding["promoted_from"] = "test-analyzer"
+                    finding["promotion_reason"] = (
+                        "test-analyzer finding describes a functional correctness issue "
+                        "that exists today (not a missing-coverage gap)"
+                    )
+                else:
+                    destination = "suggestion"
+            else:
+                destination = "suggestion"
+
+        else:
+            # Unknown agent — conservative fallback: route to main
+            destination = "main"
+
+        finding["report_destination"] = destination
+        finding["report_tag"] = destination  # backward-compat alias
+        if destination == "main":
             main_count += 1
         else:
             suggestion_count += 1
 
-    return findings, main_count, suggestion_count
+    return findings, dedup_dropped, main_count, suggestion_count
 
 
 # ---------------------------------------------------------------------------
@@ -874,8 +1070,12 @@ def main():
     findings, elim_suppressed, consensus_boosted = detect_disagreement(findings)
     all_eliminated.extend(elim_suppressed)
 
-    # Step 5: tag for output routing
-    findings, tagged_main, tagged_suggestion = tag_findings(findings)
+    # Step 5: tag for output routing (also applies test-analyzer dedup)
+    findings, elim_dedup, tagged_main, tagged_suggestion = tag_findings(findings)
+    all_eliminated.extend(elim_dedup)
+
+    # Count promotions (test-analyzer findings promoted to main report)
+    promoted_count = sum(1 for f in findings if f.get("promoted_from") == "test-analyzer")
 
     # ------------------------------------------------------------------
     # Compose output
@@ -888,6 +1088,8 @@ def main():
             "passed_threshold": passed_threshold,
             "injections_removed": injections_removed,
             "consensus_boosted": consensus_boosted,
+            "test_analyzer_deduped": len(elim_dedup),
+            "test_analyzer_promoted": promoted_count,
             "tagged_main": tagged_main,
             "tagged_suggestion": tagged_suggestion,
         },

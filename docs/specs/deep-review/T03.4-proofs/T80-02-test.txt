@@ -1,0 +1,35 @@
+Type: test
+Command: python3 -c "[unit tests for tag_findings(), _is_test_correctness_finding(), _dedup_test_analyzer()]"
+Expected: All 4 requirements pass
+Timestamp: 2026-03-31T00:00:00Z
+Status: PASS
+
+--- Output ---
+R03.4.1 — Agent-based tagging:
+  1 (bug-detector) -> main
+  2 (security-reviewer) -> main
+  3 (test-analyzer) -> suggestion
+  4 (code-simplifier) -> suggestion
+  5 (conventions-and-intent) -> main
+  6 (conventions-and-intent) -> suggestion
+  7 (cross-file-impact) -> main
+  8 (type-design-analyzer) -> main
+  main=5, suggestion=3
+  Result: PASS
+
+R03.4.2 — Promotion rule:
+  ta-race (race condition) -> main [promoted_from=test-analyzer]
+  ta-miss (missing tests)  -> suggestion
+  Result: PASS
+
+R03.4.3 — Dedup rule:
+  kept: ['bd-1', 'ta-nooverlap']
+  dropped: ['ta-overlap'] (eliminated_by=['dedup:test-analyzer'])
+  Result: PASS
+
+R03.4.4 — Complete pipeline JSON output:
+  Stats: {"total": 4, "passed_threshold": 4, "injections_removed": 0, "consensus_boosted": 0, "test_analyzer_deduped": 0, "test_analyzer_promoted": 1, "tagged_main": 3, "tagged_suggestion": 1}
+  Filtered findings: ['f1:main', 'f4:main', 'f2:suggestion', 'f3:main']
+  Result: PASS
+
+ALL PASS
