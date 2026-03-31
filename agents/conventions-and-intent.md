@@ -1,7 +1,7 @@
 ---
 name: conventions-and-intent
 description: Verifies code changes comply with project conventions, match documented intent, and maintain comment accuracy
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: blue

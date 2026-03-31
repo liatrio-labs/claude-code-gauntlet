@@ -1,7 +1,7 @@
 ---
 name: security-reviewer
 description: Reviews code changes for security vulnerabilities, focusing on OWASP top 10, auth issues, data exposure, and cryptographic problems
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: opus
 color: red

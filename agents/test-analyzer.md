@@ -1,7 +1,7 @@
 ---
 name: test-analyzer
 description: Analyzes test coverage quality and identifies critical gaps in the test suite relative to code changes
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: cyan

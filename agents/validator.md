@@ -1,7 +1,7 @@
 ---
 name: validator
 description: Validates review findings by attempting to disprove them — assesses whether each finding is real, reachable, and correctly described
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: medium
 model: sonnet
 color: yellow

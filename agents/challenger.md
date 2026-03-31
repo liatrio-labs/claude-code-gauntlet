@@ -1,7 +1,7 @@
 ---
 name: challenger
 description: Blindly challenges a single review finding — attempts to disprove the claim using only the finding title, description, and raw code (no original reasoning or evidence)
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: orange

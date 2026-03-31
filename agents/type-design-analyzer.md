@@ -1,7 +1,7 @@
 ---
 name: type-design-analyzer
 description: Analyzes type design for encapsulation quality, invariant expression, enforcement, and usefulness
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: pink

@@ -1,7 +1,7 @@
 ---
 name: bug-detector
 description: Detects correctness bugs, logic errors, edge cases, API misuse, and error handling issues in code changes
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: red

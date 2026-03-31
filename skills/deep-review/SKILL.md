@@ -33,7 +33,7 @@ Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUser
 
 ## Phase 2: Target & Triage
 
-Identify the review target and gather all context needed for agent dispatch. Fast pass in the main context (not a subagent). Read `references/phase2-triage.md` for all 11 sub-steps (2a–2k), Agent templates, and detection logic.
+Identify the review target and gather all context needed for agent dispatch. Fast pass in the main context (not a subagent). Read `references/phase2-triage.md` for all 12 sub-steps (2a–2l), Agent templates, and detection logic.
 
 ### REVIEW.md detection — MANDATORY GATE
 

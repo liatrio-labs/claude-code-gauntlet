@@ -1,7 +1,7 @@
 ---
 name: cross-file-impact
 description: Analyzes how changes in one file affect consumers across the codebase, catching cross-file breakage from signature changes, interface violations, and broken references
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: orange

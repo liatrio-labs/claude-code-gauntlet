@@ -1,7 +1,7 @@
 ---
 name: code-simplifier
 description: Simplifies complex code for clarity and maintainability while preserving functionality, running as a post-review polish step
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: blue
