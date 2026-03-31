@@ -1,0 +1,10 @@
+Type: file
+Check: Agent tool call template section added to Phase 7 in validation-pipeline.md
+Command: grep -n "Agent tool call template (per finding)" skills/deep-review/references/validation-pipeline.md
+Expected: Line 188 "**Agent tool call template (per finding):**" in Phase 7 section
+Timestamp: 2026-03-30T00:00:00Z
+
+Result:
+188:**Agent tool call template (per finding):**
+
+Status: PASS

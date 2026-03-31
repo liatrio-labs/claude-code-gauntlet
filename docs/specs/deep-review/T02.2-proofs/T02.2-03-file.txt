@@ -1,0 +1,16 @@
+Type: file
+Check: Design rationale updated with inline code provision and challenger tool access rationale
+Command: sed -n '211,218p' skills/deep-review/references/validation-pipeline.md
+Expected: Design rationale containing "Inline code provision" and "Challengers retain Read/Grep/Glob" bullets
+Timestamp: 2026-03-30T00:00:00Z
+
+Result:
+211: **Design rationale:**
+212: - Blind agents see only the claim and the code, never the original reasoning → prevents sycophancy
+213: - Fresh agents (not the original reviewers) → genuinely independent judgment
+214: - Inline code provision (orchestrator reads and pastes) removes tool round-trips and anchors challengers to the exact lines under review — deterministic grounding beats LLM-on-LLM verification
+215: - Challengers retain Read/Grep/Glob tools for surrounding context exploration — agents that can explore outperform agents given only pre-loaded context
+216: - No ADD mechanism — original agents already had their chance
+217: - No voting/debate protocol — majority voting captures the same gains as debate without sycophancy risk
+
+Status: PASS

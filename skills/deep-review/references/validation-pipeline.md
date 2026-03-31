@@ -174,10 +174,10 @@ See **SKILL.md Phase 7** for the primary instructions, MANDATORY GATE, Agent too
 
 **For each surviving finding:**
 
-1. **Read the raw code** at `file:line_start-line_end` (fresh read, not from cache)
-2. **Spawn a fresh agent via the Agent tool** (Sonnet in Optimized mode, Opus in Frontier mode). See SKILL.md Phase 7 for the exact Agent tool call template. The agent receives ONLY:
+1. **Read the raw code** at `file:line_start-line_end` (fresh read, not from cache) — the orchestrator reads the code and pastes it inline into the challenger's prompt
+2. **Spawn a fresh agent via the Agent tool** (Sonnet in Optimized mode, Opus in Frontier mode). The agent receives ONLY:
    - The finding's `title` and `description` (never `evidence` or original reasoning)
-   - The raw code just read
+   - The raw code pasted inline in `<untrusted-code-content>` tags
    - Instructions to try to disprove the claim, then return `{"confidence_claim_is_correct": <0-100>, "justification": "..."}` using 5-point anchors (0/25/50/75/100) rating how likely the claim is CORRECT
 3. **Apply the blind verifier's result** (based on `confidence_claim_is_correct`):
    - **< 25** → challenger found evidence the claim is wrong. Non-security findings: **remove entirely**. Security findings: downgrade one severity level.
@@ -185,9 +185,34 @@ See **SKILL.md Phase 7** for the primary instructions, MANDATORY GATE, Agent too
    - **50-74** → genuinely uncertain. No severity change, flag as "contested" in methodology.
    - **≥ 75** → challenger couldn't disprove it. Finding survives, boost confidence +15 (capped at 100).
 
+**Agent tool call template (per finding):**
+```
+Agent(
+  description: "Blind challenge: {finding_id}",
+  model: "sonnet",  // or "opus" in Frontier mode
+  effort: "high",
+  tools: [Read, Grep, Glob, LSP],
+  prompt: "The following claim has been made about this code. Analyze whether the code actually contains the described issue.
+    Claim: {finding.title}
+    Details: {finding.description}
+    <untrusted-code-content file="{finding.file}" lines="{finding.line_start}-{finding.line_end}">
+{actual code content read by orchestrator}
+    </untrusted-code-content>
+    Try to DISPROVE this claim. You also have Read, Grep, Glob, LSP tools to explore surrounding context.
+    Look for: defensive code, framework guarantees, type protections, documented intentional behavior. Is there a code path that triggers this today, or only under hypothetical future changes?
+    Rate how likely the claim is CORRECT:
+    0=definitely wrong, 25=probably wrong, 50=uncertain, 75=probably correct, 100=definitely correct
+    Return ONLY JSON: {\"confidence_claim_is_correct\": <0-100>, \"justification\": \"<paragraph>\"}"
+)
+```
+
+Do NOT include original reasoning or evidence — only title, description, and raw code.
+
 **Design rationale:**
 - Blind agents see only the claim and the code, never the original reasoning → prevents sycophancy
 - Fresh agents (not the original reviewers) → genuinely independent judgment
+- Inline code provision (orchestrator reads and pastes) removes tool round-trips and anchors challengers to the exact lines under review — deterministic grounding beats LLM-on-LLM verification
+- Challengers retain Read/Grep/Glob tools for surrounding context exploration — agents that can explore outperform agents given only pre-loaded context
 - No ADD mechanism — original agents already had their chance
 - No voting/debate protocol — majority voting captures the same gains as debate without sycophancy risk
 

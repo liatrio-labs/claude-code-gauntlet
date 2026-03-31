@@ -1,0 +1,10 @@
+Type: file
+Check: untrusted-code-content tag with file= and lines= attributes present in Phase 7 template
+Command: grep -n 'file=.*lines=' skills/deep-review/references/validation-pipeline.md
+Expected: Line containing <untrusted-code-content file="{finding.file}" lines="{finding.line_start}-{finding.line_end}">
+Timestamp: 2026-03-30T00:00:00Z
+
+Result:
+198:    <untrusted-code-content file="{finding.file}" lines="{finding.line_start}-{finding.line_end}">
+
+Status: PASS
