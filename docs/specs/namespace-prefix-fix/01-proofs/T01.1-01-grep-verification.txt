@@ -1,0 +1,35 @@
+Type: cli
+Command: grep -r 'subagent_type.*"claude-deep-review:' --include="*.md" .
+Expected: All 13 occurrences of subagent_type references changed from "deep-review:" to "claude-deep-review:"
+Timestamp: 2026-03-31T00:00:00Z
+
+Output:
+skills/deep-review/SKILL.md:58:Read `references/phase3-dispatch.md` for context scoping, agent roster, and dispatch template. Each agent is dispatched as `Agent(subagent_type: "claude-deep-review:{agent-name}", ...)` — the agent definition provides role, instructions, rubric, schema, tools, effort, and model. The orchestrator provides only dynamic per-review content in the prompt.
+skills/deep-review/SKILL.md:95:  subagent_type: "claude-deep-review:validator",
+skills/deep-review/SKILL.md:129:**code-simplifier timing:** After 6a-6d, check if any critical/high findings survived. If none, dispatch code-simplifier now using the same named subagent pattern from Phase 3: `Agent(subagent_type: "claude-deep-review:code-simplifier", description: "Review: code-simplifier", prompt: "{project context, change summary, risk classification, all changed files diff}")`. Its findings are processed as a second pass through the same Phase 4-6 pipeline — blame classification (4a), factual verification (4b), batch (4c), Sonnet validation agents (Phase 5), filter (6a-6c), and tag as "improvement suggestion" (6d). This is not a separate pipeline; it is the same orchestrator running a mini-batch. The validated, tagged code-simplifier findings then merge into the Phase 7 challenge pool alongside the main findings.
+skills/deep-review/SKILL.md:146:  subagent_type: "claude-deep-review:challenger",
+skills/deep-review/references/phase3-dispatch.md:38:1. **bug-detector** — Logic errors, edge cases, null handling, race conditions, API misuse. Subagent: `claude-deep-review:bug-detector`.
+skills/deep-review/references/phase3-dispatch.md:39:2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Subagent: `claude-deep-review:security-reviewer`.
+skills/deep-review/references/phase3-dispatch.md:40:3. **cross-file-impact** — Caller/dependent tracing, cross-module impact. Subagent: `claude-deep-review:cross-file-impact`.
+skills/deep-review/references/phase3-dispatch.md:41:4. **test-analyzer** — Coverage gaps, test quality, DAMP principles. Subagent: `claude-deep-review:test-analyzer`.
+skills/deep-review/references/phase3-dispatch.md:42:5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Subagent: `claude-deep-review:conventions-and-intent`.
+skills/deep-review/references/phase3-dispatch.md:46:6. **type-design-analyzer** — Type encapsulation, invariant expression. Only if new types introduced. Subagent: `claude-deep-review:type-design-analyzer`.
+skills/deep-review/references/phase3-dispatch.md:47:7. **code-simplifier** — Simplification opportunities, dead code. POST-review only, only if no critical/high. Subagent: `claude-deep-review:code-simplifier`.
+skills/deep-review/references/phase3-dispatch.md:57:  subagent_type: "claude-deep-review:{dimension}",  // e.g. "claude-deep-review:bug-detector"
+skills/deep-review/references/phase3-dispatch.md:73:  subagent_type: "claude-deep-review:bug-detector",
+skills/deep-review/references/phase2-triage.md:121:  subagent_type: "claude-deep-review:change-summarizer",
+skills/deep-review/references/phase2-triage.md:169:  subagent_type: "claude-deep-review:change-summarizer",
+skills/deep-review/references/validation-pipeline.md:93:  subagent_type: "claude-deep-review:validator",
+skills/deep-review/references/validation-pipeline.md:201:  subagent_type: "claude-deep-review:challenger",
+docs/design/v3-master-improvement-plan.md:390:Agents appear namespaced as `claude-deep-review:bug-detector`, `claude-deep-review:validator`, etc.
+docs/design/v3-master-improvement-plan.md:412:Agent(subagent_type: "claude-deep-review:bug-detector",
+docs/design/v3-master-improvement-plan.md:419:**4. Frontier mode override:** For Frontier reviews (all Opus), the orchestrator overrides model at dispatch: `Agent(subagent_type: "claude-deep-review:bug-detector", model: "opus")`. Per-invocation model overrides take precedence over frontmatter. Challenger effort override to `max` in Frontier mode similarly.
+docs/design/v3-master-improvement-plan.md:462:**Agreed fix:** Create a separate skill (`claude-deep-review:build-review-md`) that never loads into the main review context. "How to build a REVIEW.md" is never part of the review skill — it only knows "how to read and apply one."
+docs/research/README.md:77:| Named subagent dispatch: `subagent_type: "claude-deep-review:{agent}"` | #20 | Agent definitions embed role, instructions, rubric, schema, tools, effort, model. Orchestrator provides only dynamic content. Matches `pr-review-toolkit` pattern |
+
+Status: PASS
+
+Summary:
+- All 13 occurrences of subagent_type references successfully changed
+- Changed across 6 files (SKILL.md, phase3-dispatch.md, phase2-triage.md, validation-pipeline.md, v3-master-improvement-plan.md, README.md in docs/research)
+- No remaining "deep-review:" references in subagent_type contexts

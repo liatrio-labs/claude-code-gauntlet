@@ -1,0 +1,13 @@
+Type: cli
+Command: grep -r 'subagent_type.*"deep-review:' --include="*.md" . | wc -l
+Expected: 0 occurrences (all old "deep-review:" references removed)
+Timestamp: 2026-03-31T00:00:00Z
+
+Output:
+0
+
+Status: PASS
+
+Verification:
+- No matches found for old "deep-review:" pattern in subagent_type contexts
+- All references have been successfully migrated to "claude-deep-review:"

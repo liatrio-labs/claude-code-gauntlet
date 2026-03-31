@@ -118,7 +118,7 @@ Dispatch a **Sonnet agent** for a 3-5 sentence semantic summary describing what 
 **Agent tool call template:**
 ```
 Agent(
-  subagent_type: "deep-review:change-summarizer",
+  subagent_type: "claude-deep-review:change-summarizer",
   description: "Change summarizer",
   prompt: "PR title: {title}
     PR description: {body}
@@ -166,7 +166,7 @@ Dispatch parallel **Sonnet agents** (one per file) for 2-3 sentence summaries. F
 **Agent tool call template (repeat per changed file):**
 ```
 Agent(
-  subagent_type: "deep-review:change-summarizer",
+  subagent_type: "claude-deep-review:change-summarizer",
   description: "Summarize {filename}",
   prompt: "File: {filename}
     Mode: per-file summary (2-3 sentences)

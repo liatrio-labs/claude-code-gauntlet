@@ -74,7 +74,7 @@ Key design decisions and which research artifacts support them:
 | REVIEW.md placement decision test for subdirectory configs | #19 | "Would this rule generate FPs in the other stack?" prevents miscategorization while keeping rule sets focused |
 | Separate REVIEW.md builder skill (not embedded in review flow) | #19 | "How to build a REVIEW.md" is never in the review context; keeps review skill focused on execution |
 | Named subagent definitions with system-enforced tool restrictions | #20 | Plugin `agents/` is first-class; `tools:` is a hard sandbox; eliminates the prompt-compliance failure mode observed in 5/5 benchmark sessions |
-| Named subagent dispatch: `subagent_type: "deep-review:{agent}"` | #20 | Agent definitions embed role, instructions, rubric, schema, tools, effort, model. Orchestrator provides only dynamic content. Matches `pr-review-toolkit` pattern |
+| Named subagent dispatch: `subagent_type: "claude-deep-review:{agent}"` | #20 | Agent definitions embed role, instructions, rubric, schema, tools, effort, model. Orchestrator provides only dynamic content. Matches `pr-review-toolkit` pattern |
 | Private marketplace for org deployment | #20 | Lightest-weight for 10+ developers: one install command, updates via marketplace update. Project-level `.claude/agents/` as fallback |
 
 ## Adding new research

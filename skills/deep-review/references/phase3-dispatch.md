@@ -35,16 +35,16 @@ All agents can still **pull** additional context — scoping controls what is pr
 
 **Always-on (5)** — default model per agent is defined in each agent's frontmatter; Frontier mode overrides to `opus` at dispatch:
 
-1. **bug-detector** — Logic errors, edge cases, null handling, race conditions, API misuse. Subagent: `deep-review:bug-detector`.
-2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Subagent: `deep-review:security-reviewer`.
-3. **cross-file-impact** — Caller/dependent tracing, cross-module impact. Subagent: `deep-review:cross-file-impact`.
-4. **test-analyzer** — Coverage gaps, test quality, DAMP principles. Subagent: `deep-review:test-analyzer`.
-5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Subagent: `deep-review:conventions-and-intent`.
+1. **bug-detector** — Logic errors, edge cases, null handling, race conditions, API misuse. Subagent: `claude-deep-review:bug-detector`.
+2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Subagent: `claude-deep-review:security-reviewer`.
+3. **cross-file-impact** — Caller/dependent tracing, cross-module impact. Subagent: `claude-deep-review:cross-file-impact`.
+4. **test-analyzer** — Coverage gaps, test quality, DAMP principles. Subagent: `claude-deep-review:test-analyzer`.
+5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Subagent: `claude-deep-review:conventions-and-intent`.
 
 **Conditional (2):**
 
-6. **type-design-analyzer** — Type encapsulation, invariant expression. Only if new types introduced. Subagent: `deep-review:type-design-analyzer`.
-7. **code-simplifier** — Simplification opportunities, dead code. POST-review only, only if no critical/high. Subagent: `deep-review:code-simplifier`.
+6. **type-design-analyzer** — Type encapsulation, invariant expression. Only if new types introduced. Subagent: `claude-deep-review:type-design-analyzer`.
+7. **code-simplifier** — Simplification opportunities, dead code. POST-review only, only if no critical/high. Subagent: `claude-deep-review:code-simplifier`.
 
 ---
 
@@ -54,7 +54,7 @@ Dispatch all applicable agents in a **single message**. Each agent definition al
 
 ```
 Agent(
-  subagent_type: "deep-review:{dimension}",  // e.g. "deep-review:bug-detector"
+  subagent_type: "claude-deep-review:{dimension}",  // e.g. "claude-deep-review:bug-detector"
   description: "Review: {dimension}",
   prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
     Change summary: {from Phase 2f}
@@ -70,7 +70,7 @@ Agent(
 
 ```
 Agent(
-  subagent_type: "deep-review:bug-detector",
+  subagent_type: "claude-deep-review:bug-detector",
   model: "opus",  // Frontier mode override
   description: "Review: bug-detector",
   prompt: "..."
