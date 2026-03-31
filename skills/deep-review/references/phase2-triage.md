@@ -69,19 +69,8 @@ Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
 - **No REVIEW.md anywhere:**
   ```
-  AskUserQuestion(
-    questions: [{
-      question: "No REVIEW.md found. REVIEW.md lets you customize review behavior — confidence thresholds, ignore patterns, project-specific rules. Would you like to create one?",
-      header: "REVIEW.md Setup",
-      multiSelect: false,
-      options: [
-        { label: "Yes — create at repo root", description: "Scaffold a REVIEW.md with sensible defaults" },
-        { label: "Not now — continue without it", description: "Use default settings for this review" }
-      ]
-    }]
-  )
+  No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one.
   ```
-  If yes, use scaffolding template from `references/review-md-spec.md`.
 
 - **Root exists but subdirectory CLAUDE.md has no matching REVIEW.md:**
   ```

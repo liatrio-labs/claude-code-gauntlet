@@ -1,0 +1,46 @@
+Type: file
+Task: T16.3 - Update Phase 2c connection point to reference builder skill
+File Modified: skills/deep-review/references/phase2-triage.md
+Expected: Replace inline REVIEW.md scaffolding prompt with message referencing build-review-md skill
+Timestamp: 2026-03-30T00:00:00Z
+Status: PASS
+
+Description:
+Updated Phase 2d (formerly Phase 2c) in phase2-triage.md to remove the inline AskUserQuestion prompt for REVIEW.md scaffolding. Replaced with a simple message: "No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one."
+
+This change delegates REVIEW.md generation to the dedicated build-review-md skill instead of handling it inline within the deep-review skill.
+
+Diff Applied:
+================================================================================
+diff --git a/skills/deep-review/references/phase2-triage.md b/skills/deep-review/references/phase2-triage.md
+index e1f4562..03f840c 100644
+--- a/skills/deep-review/references/phase2-triage.md
++++ b/skills/deep-review/references/phase2-triage.md
+@@ -69,19 +69,8 @@ Find all CLAUDE.md locations, check each for a matching REVIEW.md:
+
+ - **No REVIEW.md anywhere:**
+   ```
+-  AskUserQuestion(
+-    questions: [{
+-      question: "No REVIEW.md found. REVIEW.md lets you customize review behavior — confidence thresholds, ignore patterns, project-specific rules. Would you like to create one?",
+-      header: "REVIEW.md Setup",
+-      multiSelect: false,
+-      options: [
+-        { label: "Yes — create at repo root", description: "Scaffold a REVIEW.md with sensible defaults" },
+-        { label: "Not now — continue without it", description: "Use default settings for this review" }
+-      ]
+-    }]
+-  )
++  No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one.
+   ```
+-  If yes, use scaffolding template from `references/review-md-spec.md`.
+
+ - **Root exists but subdirectory CLAUDE.md has no matching REVIEW.md:**
+   ```
+================================================================================
+
+Changes:
+- Removed 12 lines of AskUserQuestion scaffolding prompt
+- Replaced with single-line message directing users to run build-review-md skill
+- Removed post-prompt instruction about using scaffolding template
+- Total: 11 lines removed, 1 line added

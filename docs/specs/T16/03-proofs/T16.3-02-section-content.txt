@@ -1,0 +1,49 @@
+Type: file
+Task: T16.3 - Update Phase 2c connection point to reference builder skill
+File: skills/deep-review/references/phase2-triage.md
+Section: 2d. Gather Project Context (REVIEW.md Detection — MANDATORY GATE)
+Expected: Section 2d should reference build-review-md skill instead of inline scaffolding
+Timestamp: 2026-03-30T00:00:00Z
+Status: PASS
+
+Updated Section Content:
+================================================================================
+
+### REVIEW.md Detection — MANDATORY GATE
+
+> **STOP: Complete this check before proceeding to 2e.** Do not skip REVIEW.md detection — it controls thresholds, rules, and ignore patterns for the entire review.
+
+Find all CLAUDE.md locations, check each for a matching REVIEW.md:
+
+- **No REVIEW.md anywhere:**
+  ```
+  No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one.
+  ```
+
+- **Root exists but subdirectory CLAUDE.md has no matching REVIEW.md:**
+  ```
+  AskUserQuestion(
+    questions: [{
+      question: "Found REVIEW.md at repo root, but {directory} has a CLAUDE.md without a matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
+      header: "Subdirectory REVIEW.md",
+      multiSelect: false,
+      options: [
+        { label: "Yes — create it", description: "Inherits root settings, adds directory-specific rules" },
+        { label: "Not now — root config applies", description: "Use root REVIEW.md settings for all directories" }
+      ]
+    }]
+  )
+  ```
+
+- **All locations covered** → proceed.
+
+See `references/review-md-spec.md` section Discovery for the full prompts and scaffolding templates. Merge configs hierarchically: settings override, rules and patterns accumulate.
+
+================================================================================
+
+Verification:
+- Phase 2d (originally labeled 2c) now correctly references the separate build-review-md skill
+- Message aligns with task requirement: "No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one."
+- Inline scaffolding removed completely
+- All other sections (subdirectory REVIEW.md logic) remain unchanged as required
+- File is syntactically valid markdown
