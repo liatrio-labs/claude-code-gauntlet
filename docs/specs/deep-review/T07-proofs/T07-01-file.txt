@@ -1,0 +1,26 @@
+Type: file
+File: skills/deep-review/references/validation-pipeline.md
+Section: Phase 5 (Validate) - new "Validation Failure Protocol" subsection
+Timestamp: 2026-03-30T22:45:00Z
+Expected: Three-rule validation failure protocol added to Phase 5
+Status: PASS
+
+Verification:
+- Added "Validation Failure Protocol" subsection at end of Phase 5
+- Rule 1: Detect systemic working tree mismatch (>50% validators return confidence 0
+  with "code doesn't exist" reasoning). STOP and attempt checkout fix, re-dispatch.
+- Rule 2: Individual agent timeout/error -- continue with completed agents, log failure,
+  warn user about degraded dimensions.
+- Rule 3: Never self-validate -- orchestrator must not substitute own judgment for
+  failed validators. Re-dispatch or degrade transparently.
+- Key principle stated: "Re-dispatch or degrade transparently. Never silently substitute
+  orchestrator judgment for the pipeline."
+- Addresses evidence from all 5 v2 sessions where orchestrator overrode all validation
+  results with ad-hoc self-validation.
+
+Diff:
++ ## Validation Failure Protocol
++ Re-dispatch or degrade transparently. Never silently substitute orchestrator judgment for the pipeline.
++ 1. Working tree mismatch (systemic failure): ...
++ 2. Individual agent failure: ...
++ 3. Never self-validate: ...

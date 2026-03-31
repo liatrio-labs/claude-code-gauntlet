@@ -105,6 +105,14 @@ The validator agent definition already contains the confidence rubric, trust bou
 
 Update each finding's confidence based on the validator's assessment.
 
+## Validation Failure Protocol
+
+Re-dispatch or degrade transparently. Never silently substitute orchestrator judgment for the pipeline.
+
+1. **Working tree mismatch (systemic failure):** If >50% of Phase 5 validators return confidence 0 with "code doesn't exist" or "file not found" reasoning, the working tree is likely wrong. STOP validation. Attempt checkout fix per Phase 2b branch checkout. Re-dispatch failed validators against the corrected working tree.
+2. **Individual agent failure:** If a validator times out or errors, continue with completed agents. Log the failure in Review Methodology. Warn the user if security or bugs dimensions are affected: "Validation pipeline partially degraded -- {N} findings in {dimensions} were not independently validated."
+3. **Never self-validate:** The orchestrator must not substitute its own judgment for a failed validator. Either fix the input and re-dispatch, or acknowledge degradation with a prominent methodology warning.
+
 ---
 
 # Phase 6: Filter & Reconcile
