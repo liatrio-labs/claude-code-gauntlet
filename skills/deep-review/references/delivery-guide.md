@@ -82,26 +82,32 @@ python3 {skill_base}/scripts/post_review.py <findings_json_path>
 **Example workflow:**
 
 ```bash
-# 1. Build findings JSON (Write tool)
-Write(file_path="$TMPDIR/deep-review-findings.json", content={
-  "review_body": "Found 3 issues: 1 critical, 2 medium.",
-  "findings": [
-    {
-      "file": "app.js",
-      "line": 42,
-      "severity": "critical",
-      "title": "SQL injection in query builder",
-      "body": "User input concatenated into SQL without parameterization.",
-      "suggested_fix_code": "const query = db.prepare('SELECT * FROM users WHERE id = ?').get(id);"
-    }
-  ],
-  "owner": "myorg",
-  "repo": "myapp",
-  "pr_number": 42
-})
+# 1. Build findings JSON using Python (handles all escaping; no heredoc/Write tool issues)
+Bash(command="""python3 -c "
+import json, sys
+findings = {
+    'review_body': 'Found 3 issues: 1 critical, 2 medium.',
+    'findings': [
+        {
+            'file': 'app.js',
+            'line': 42,
+            'severity': 'critical',
+            'title': 'SQL injection in query builder',
+            'body': 'User input concatenated into SQL without parameterization.',
+            'suggested_fix_code': 'const query = db.prepare(\'SELECT * FROM users WHERE id = ?\').get(id);'
+        }
+    ],
+    'owner': 'myorg',
+    'repo': 'myapp',
+    'pr_number': 42
+}
+with open(sys.argv[1], 'w') as f:
+    json.dump(findings, f, ensure_ascii=False, indent=2)
+" "$TMPDIR/deep-review-findings.json"
 
 # 2. Run script
-Bash(command="python3 {skill_base}/scripts/post_review.py $TMPDIR/deep-review-findings.json")
+python3 {skill_base}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
+""")
 ```
 
 **Script behavior:**

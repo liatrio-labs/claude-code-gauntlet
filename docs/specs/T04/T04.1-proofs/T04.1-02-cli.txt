@@ -1,0 +1,10 @@
+Type: cli
+Command: grep -c 'json.dump' skills/deep-review/references/delivery-guide.md
+Expected: >=1
+Timestamp: 2026-03-31T00:00:00Z
+
+Output:
+1
+
+Result: 1 >= 1
+Status: PASS

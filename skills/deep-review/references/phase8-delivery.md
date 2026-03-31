@@ -55,28 +55,36 @@ Track which findings were selected (**pr_comment_set**) for Stage 2 shortcut.
 
 **Step B.1. Write findings JSON and run post_review.py**
 
-Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script:
+Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script.
+
+Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures:
 
 ```bash
-# Write findings JSON
-Write(file_path="$TMPDIR/deep-review-findings.json", content={
-  "review_body": "{summary comment}",
-  "findings": [{
-    "file": "src/foo.py",
-    "line": 42,
-    "end_line": 45,          # optional
-    "severity": "high",
-    "title": "...",
-    "body": "...",
-    "suggested_fix_code": "..." # optional
-  }, ...],
-  "owner": "{owner}",
-  "repo": "{repo}",
-  "pr_number": {number}
-})
+Bash(command="""python3 -c "
+import json, sys
+findings = {
+    'review_body': '''REVIEW_BODY_HERE''',
+    'findings': [
+        {
+            'file': 'src/foo.py',
+            'line': 42,
+            'end_line': 45,
+            'severity': 'high',
+            'title': '...',
+            'body': '...',
+            'suggested_fix_code': '...'
+        }
+    ],
+    'owner': 'OWNER',
+    'repo': 'REPO',
+    'pr_number': PR_NUMBER
+}
+with open(sys.argv[1], 'w') as f:
+    json.dump(findings, f, ensure_ascii=False, indent=2)
+" "$TMPDIR/deep-review-findings.json"
 
-# Run the script
-Bash(command="python3 {skill_base}/scripts/post_review.py $TMPDIR/deep-review-findings.json")
+python3 {skill_base}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
+""")
 ```
 
 Do NOT post PR comments via direct `gh api` or `glab api` calls — use `post_review.py` instead. See `references/delivery-guide.md` for the findings JSON schema and validation details.

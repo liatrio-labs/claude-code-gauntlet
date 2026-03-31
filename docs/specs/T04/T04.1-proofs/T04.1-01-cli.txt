@@ -1,0 +1,10 @@
+Type: cli
+Command: grep -c 'json.dump' skills/deep-review/references/phase8-delivery.md
+Expected: >=1
+Timestamp: 2026-03-31T00:00:00Z
+
+Output:
+2
+
+Result: 2 >= 1
+Status: PASS

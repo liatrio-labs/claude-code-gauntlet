@@ -1,0 +1,26 @@
+Type: cli
+Command: python3 scripts/filter_findings.py --help
+Expected: Usage information showing all arguments
+Timestamp: 2026-03-31T19:01:50Z
+Status: PASS
+
+--- Output ---
+usage: filter_findings.py [-h] [--review-md PATH] [--exclusions-md PATH]
+                          [--output PATH]
+                          findings_json
+
+Deterministic Phase 6 filter for deep-review findings. Applies
+confidence/severity thresholds, injection detection, disagreement scoring, and
+output tagging.
+
+positional arguments:
+  findings_json         Path to verified findings JSON (from
+                        verify_findings.py or Phase 5 output).
+
+options:
+  -h, --help            show this help message and exit
+  --review-md PATH      Path to REVIEW.md for custom confidence_threshold,
+                        severity_threshold, and ignore patterns.
+  --exclusions-md PATH  Path to false-positive-exclusions.md. Omit to skip
+                        exclusion filtering.
+  --output PATH         Write output JSON to this file instead of stdout.

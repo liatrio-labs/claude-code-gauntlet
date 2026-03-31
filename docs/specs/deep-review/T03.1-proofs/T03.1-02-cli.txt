@@ -1,0 +1,38 @@
+Type: cli
+Command: python3 scripts/filter_findings.py /tmp/test_ff.json  (3-finding smoke test)
+Expected: JSON output with filtered/eliminated/stats keys; f2 (conf=55) eliminated by threshold
+Timestamp: 2026-03-31T19:01:55Z
+Status: PASS
+
+--- Input (3 findings) ---
+[
+  {"id":"f1","file":"src/auth.py","line":42,"severity":"high","confidence":90,"title":"SQL injection risk","dimensions":["security"]},
+  {"id":"f2","file":"src/util.py","line":10,"severity":"low","confidence":55,"title":"Minor style","dimensions":["code-quality"]},
+  {"id":"f3","file":"src/foo.py","line":20,"severity":"medium","confidence":85,"title":"Null pointer","dimensions":["null-handling"]}
+]
+
+--- Output (truncated stats) ---
+{
+  "filtered": [
+    { "id": "f1", "title": "SQL injection risk", "confidence": 90, "report_tag": "main" },
+    { "id": "f3", "title": "Null pointer", "confidence": 85, "report_tag": "main" }
+  ],
+  "eliminated": [
+    { "id": "f2", "title": "Minor style", "eliminated_by": "threshold",
+      "elimination_reason": "confidence 55 < threshold 80" }
+  ],
+  "stats": {
+    "total": 3,
+    "passed_threshold": 2,
+    "injections_removed": 0,
+    "consensus_boosted": 0,
+    "tagged_main": 2,
+    "tagged_suggestion": 0
+  }
+}
+
+--- Verification ---
+- f2 (confidence 55) eliminated by threshold filter (< 80 default): PASS
+- f1 and f3 passed with report_tag "main": PASS
+- Stats totals are correct (total=3, passed=2, elim=1): PASS
+- All stub functions present and exercised: PASS
