@@ -134,6 +134,8 @@ If dismissed_set is non-empty, ask whether to suppress those findings in future 
 
 See `references/delivery-guide.md` for the full dismissed findings flow (AskUserQuestion template, proposed entries preview, REVIEW.md write logic).
 
+**Stage 3 self-check:** After delivery and task board, verify Stage 3 (dismissed findings -> REVIEW.md suppression offer) was offered to the user. If dismissed_set is non-empty and you did not present the suppression prompt, go back and present it now before finishing the review.
+
 ---
 
 ## Interactive Finding Walkthrough

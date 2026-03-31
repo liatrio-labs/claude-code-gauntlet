@@ -1,0 +1,12 @@
+Type: file
+Check: Self-check line present in phase8-delivery.md
+Expected: One "Stage 3 self-check" bold paragraph in Stage 3 section
+Timestamp: 2026-03-31T03:47:45Z
+
+Command: grep -n "Stage 3 self-check" skills/deep-review/references/phase8-delivery.md
+Output:
+137:**Stage 3 self-check:** After delivery and task board, verify Stage 3 (dismissed findings -> REVIEW.md suppression offer) was offered to the user. If dismissed_set is non-empty and you did not present the suppression prompt, go back and present it now before finishing the review.
+
+Occurrence count: 1 (expected exactly 1)
+
+Status: PASS

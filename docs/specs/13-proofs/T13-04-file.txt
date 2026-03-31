@@ -1,0 +1,20 @@
+Type: file
+Check: Self-check placement within Stage 3 section
+Expected: Self-check appears after Stage 3 content, before the --- separator to Interactive Finding Walkthrough
+Timestamp: 2026-03-31T03:47:45Z
+
+Context (lines 129-141 of phase8-delivery.md):
+  129: ## Stage 3: Dismissed Findings
+  131: **Only run this stage if dismissed_set is non-empty** ...
+  133: If dismissed_set is non-empty, ask whether to suppress ...
+  135: See `references/delivery-guide.md` for the full dismissed findings flow ...
+  137: **Stage 3 self-check:** After delivery and task board, verify Stage 3 ...
+  139: ---
+  141: ## Interactive Finding Walkthrough
+
+The self-check is correctly placed:
+- After the Stage 3 instructions (line 135)
+- Before the section separator (line 139)
+- Within the Stage 3 section scope
+
+Status: PASS

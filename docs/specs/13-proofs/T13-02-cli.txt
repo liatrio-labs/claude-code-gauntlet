@@ -1,0 +1,17 @@
+Type: cli
+Check: Self-check pattern consistency with codebase conventions
+Expected: Bold-prefixed self-check pattern (**Name self-check:**) matching existing self-checks
+Timestamp: 2026-03-31T03:47:45Z
+
+Command: grep "self-check" skills/deep-review/references/*.md
+Output:
+skills/deep-review/references/phase2-triage.md:134:**Large PR self-check:** If the PR exceeds 500 lines, ...
+skills/deep-review/references/validation-pipeline.md:226:**Challenge coverage self-check:** After dispatching all challengers, ...
+skills/deep-review/references/phase8-delivery.md:137:**Stage 3 self-check:** After delivery and task board, ...
+
+All three self-checks follow the same pattern:
+1. Bold prefix: **{Name} self-check:**
+2. Verification instruction (what to check)
+3. Remediation action (what to do if check fails)
+
+Status: PASS
