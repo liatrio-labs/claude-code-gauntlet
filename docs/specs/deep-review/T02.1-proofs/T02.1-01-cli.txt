@@ -1,0 +1,26 @@
+Type: cli
+Command: python3 scripts/verify_findings.py --help
+Expected: Usage information showing all arguments
+Timestamp: 2026-03-31T19:00:36Z
+Status: PASS
+
+--- OUTPUT ---
+usage: verify_findings.py [-h] [--base-branch BRANCH] [--diff-file PATH]
+                          findings_json
+
+Deterministic finding verification for deep-review Phase 4. Takes Phase 3
+agent findings JSON, classifies new vs. surfaced via git blame, verifies
+factual accuracy against file content, validates line references against the
+diff, and batches results for Phase 5.
+
+positional arguments:
+  findings_json         Path to input findings JSON (Phase 3 agent outputs
+                        merged).
+
+options:
+  -h, --help            show this help message and exit
+  --base-branch BRANCH  Base branch for blame comparison. Default: main.
+                        Override with the PR base branch name (e.g.
+                        'develop').
+  --diff-file PATH      Path to a pre-fetched unified diff file. If omitted,
+                        the script runs 'git diff <base-branch>...HEAD'.

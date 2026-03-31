@@ -1,0 +1,13 @@
+Type: cli
+Command: python3 scripts/verify_findings.py <input.json> --diff-file /dev/null
+Expected: JSON output with verified/eliminated/batches/stats keys
+Timestamp: 2026-03-31T19:01:07Z
+Status: PASS
+
+--- OUTPUT ---
+verified count: 1
+eliminated count: 0
+batches count: 1
+stats: {"total": 1, "new": 1, "surfaced": 0, "eliminated": 0}
+origin field: new
+PASS: all required output keys present

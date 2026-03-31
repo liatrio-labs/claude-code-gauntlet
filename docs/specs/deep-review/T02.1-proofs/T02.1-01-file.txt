@@ -1,10 +1,2 @@
-Type: file
-Description: Verify new 2b section heading exists in phase2-triage.md
-Command: grep -n "2b\. Ensure Working Tree" skills/deep-review/references/phase2-triage.md
-Expected: Line with "## 2b. Ensure Working Tree Reflects Review Target"
-Timestamp: 2026-03-30T00:00:00Z
-
---- OUTPUT ---
-17:## 2b. Ensure Working Tree Reflects Review Target
-
-Status: PASS
+SUPERSEDED — this file was from a prior T02.1 implementation (phase2-triage.md changes).
+The current T02.1 (#73) proofs are T02.1-01-cli.txt, T02.1-02-file.txt, T02.1-03-cli.txt.

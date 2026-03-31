@@ -1,14 +1,2 @@
-Type: file
-Description: Verify 2b section contains all 4 required sub-steps (SHA resolution, comparison, checkout, stop-on-failure)
-Command: grep -n "Resolve\|Compare against\|mismatch.*checkout\|checkout fails.*STOP\|No fallback" skills/deep-review/references/phase2-triage.md
-Expected: Lines covering all 4 logical steps of the checkout flow
-Timestamp: 2026-03-30T00:00:00Z
-
---- OUTPUT ---
-21:**1. Resolve the target's head SHA:**
-26:**2. Compare against current HEAD:**
-32:**3. If mismatch → checkout:**
-39:**4. If checkout fails → STOP immediately:**
-44:No fallback or workaround — a silently wrong working tree produces unreliable review results.
-
-Status: PASS
+SUPERSEDED — this file was from a prior T02.1 implementation (phase2-triage.md changes).
+The current T02.1 (#73) proofs are T02.1-01-cli.txt, T02.1-02-file.txt, T02.1-03-cli.txt.
