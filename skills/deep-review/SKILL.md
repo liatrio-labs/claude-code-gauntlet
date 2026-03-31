@@ -160,7 +160,7 @@ Do NOT include original reasoning or evidence — only title, description, and r
 - **< 25** → Non-security: remove. Security: downgrade one severity level.
 - **25-49** → Downgrade one severity level.
 - **50-74** → Flag as "contested," no severity change.
-- **>= 75** → Survives, boost confidence +15 (capped at 100).
+- **>= 75** → Survives.
 
 **Self-verification checkpoint:** Confirm you emitted Agent tool_use blocks for the challenge round.
 

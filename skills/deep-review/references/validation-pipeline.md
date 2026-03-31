@@ -193,7 +193,7 @@ See **SKILL.md Phase 7** for the primary instructions, MANDATORY GATE, Agent too
    - **< 25** → challenger found evidence the claim is wrong. Non-security findings: **remove entirely**. Security findings: downgrade one severity level.
    - **25-49** → challenger suspects the claim is wrong. Downgrade one severity level (critical→high, high→medium, medium→low).
    - **50-74** → genuinely uncertain. No severity change, flag as "contested" in methodology.
-   - **≥ 75** → challenger couldn't disprove it. Finding survives, boost confidence +15 (capped at 100).
+   - **≥ 75** → challenger couldn't disprove it. Finding survives.
 
 **Agent tool call template (per finding):**
 ```

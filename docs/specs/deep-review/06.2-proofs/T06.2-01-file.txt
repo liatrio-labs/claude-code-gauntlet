@@ -1,0 +1,11 @@
+Type: file
+Description: Verify "+15" confidence boost text removed from SKILL.md Phase 7
+File: skills/deep-review/SKILL.md
+Expected: ">= 75" line should read "Survives." without "boost confidence +15" text
+Timestamp: 2026-03-31T00:00:00Z
+
+--- OUTPUT ---
+Line 163 (Phase 7 Apply results section):
+- **>= 75** → Survives.
+
+Status: PASS

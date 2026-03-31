@@ -1,0 +1,11 @@
+Type: cli
+Description: Verify no remaining "+15" text in both modified files
+Command: grep -c "boost confidence +15" skills/deep-review/SKILL.md skills/deep-review/references/validation-pipeline.md || echo "No matches found"
+Expected: 0 matches or "No matches found"
+Timestamp: 2026-03-31T00:00:00Z
+
+--- OUTPUT ---
+skills/deep-review/SKILL.md:0
+skills/deep-review/references/validation-pipeline.md:0
+
+Status: PASS
