@@ -1,0 +1,43 @@
+Type: file
+Description: AskUserQuestion option count audit for build-review-md SKILL.md
+Expected: All AskUserQuestion calls must have <= 4 options (API limit)
+Timestamp: 2026-03-31T00:00:00Z
+
+AUDIT RESULTS
+=============
+
+File: skills/build-review-md/SKILL.md
+
+AskUserQuestion Call 1 (Step 1: Existing REVIEW.md)
+----------------------------------------------------
+Location: Lines 44-51
+Question: "A REVIEW.md already exists at the repo root. What would you like to do?"
+Option Count: 3
+Options:
+  1. "Start fresh — replace it with a new one"
+  2. "Extend it — add rules to what's already there"
+  3. "Cancel — keep what I have"
+Status: PASS (3 <= 4)
+
+AskUserQuestion Call 2 (Step 2: Ask priorities)
+------------------------------------------------
+Location: Lines 63-71
+Question: "What matters most for this review configuration?"
+Option Count: 4
+Options:
+  1. "Security & Correctness — catch secrets, auth gaps, bugs, async errors, type misuse"
+  2. "Code Quality & Performance — complexity, duplication, naming, N+1 queries, resource leaks"
+  3. "Test Coverage & Conventions — flag missing tests, enforce commit messages, PR size, naming patterns"
+  4. "All of the above"
+Status: PASS (4 <= 4)
+
+SUMMARY
+=======
+Total AskUserQuestion calls: 2
+Compliant calls (<=4 options): 2
+Non-compliant calls (>4 options): 0
+Overall Status: PASS
+
+The build-review-md skill has been audited and verified to comply with the
+AskUserQuestion API limit of 4 options maximum. The priority selection was
+consolidated from 7 options to 4 by combining related concerns.

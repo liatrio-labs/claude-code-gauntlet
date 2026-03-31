@@ -61,20 +61,17 @@ Announce your detection findings in one sentence (e.g., "I found a TypeScript/Re
 
 ```
 AskUserQuestion({
-  "question": "What matters most for this review configuration? Select all that apply.",
+  "question": "What matters most for this review configuration?",
   "options": [
-    "Security — catch secrets, auth gaps, injection risks (non-negotiable rules)",
-    "Correctness — catch bugs, async errors, type misuse (non-negotiable rules)",
-    "Code quality — catch complexity, duplication, naming issues (directional rules)",
-    "Performance — catch N+1 queries, unnecessary re-renders, resource leaks",
-    "Test coverage — flag missing or weak tests",
-    "Conventions — enforce commit messages, PR size, naming patterns",
+    "Security & Correctness — catch secrets, auth gaps, bugs, async errors, type misuse",
+    "Code Quality & Performance — complexity, duplication, naming, N+1 queries, resource leaks",
+    "Test Coverage & Conventions — flag missing tests, enforce commit messages, PR size, naming patterns",
     "All of the above"
   ]
 })
 ```
 
-Record the selected priorities. Security and Correctness always produce **prescriptive rules** ("MUST", "NEVER", "CRITICAL") because violations are always wrong. Code quality, performance, and conventions produce **directional rules** ("prefer", "consider", "flag when") that allow judgment.
+Record the selected priorities. Security and Correctness always produce **prescriptive rules** ("MUST", "NEVER", "CRITICAL") because violations are always wrong. Code quality, performance, test coverage, and conventions produce **directional rules** ("prefer", "consider", "flag when") that allow judgment.
 
 ---
 

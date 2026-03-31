@@ -1,0 +1,60 @@
+Type: file
+Description: Priority selection consolidation from 7 to 4 options
+Expected: Consolidation reduces from 7 to 4 options while preserving intent
+Timestamp: 2026-03-31T00:00:00Z
+
+CONSOLIDATION ANALYSIS
+=====================
+
+Original AskUserQuestion (7 options)
+-----------------------------------
+Question: "What matters most for this review configuration? Select all that apply."
+
+1. "Security — catch secrets, auth gaps, injection risks (non-negotiable rules)"
+2. "Correctness — catch bugs, async errors, type misuse (non-negotiable rules)"
+3. "Code quality — catch complexity, duplication, naming issues (directional rules)"
+4. "Performance — catch N+1 queries, unnecessary re-renders, resource leaks"
+5. "Test coverage — flag missing or weak tests"
+6. "Conventions — enforce commit messages, PR size, naming patterns"
+7. "All of the above"
+
+Problem: 7 options exceeds API limit of 4.
+
+Consolidation Strategy
+---------------------
+Group related concerns while preserving semantic meaning:
+- Options 1+2 → Security & Correctness (both non-negotiable rules)
+- Options 3+4 → Code Quality & Performance (both quality/performance concerns)
+- Options 5+6 → Test Coverage & Conventions (both structural/process concerns)
+- Option 7 → All of the above (keep as-is)
+
+New AskUserQuestion (4 options)
+------------------------------
+Question: "What matters most for this review configuration?"
+
+1. "Security & Correctness — catch secrets, auth gaps, bugs, async errors, type misuse"
+2. "Code Quality & Performance — complexity, duplication, naming, N+1 queries, resource leaks"
+3. "Test Coverage & Conventions — flag missing tests, enforce commit messages, PR size, naming patterns"
+4. "All of the above"
+
+Result: 4 options - API compliant (4 <= 4)
+
+Updated Guidance Text
+---------------------
+Old: "Security and Correctness always produce **prescriptive rules**... Code quality, performance,
+      and conventions produce **directional rules**..."
+
+New: "Security and Correctness always produce **prescriptive rules**... Code quality, performance,
+      test coverage, and conventions produce **directional rules**..."
+
+(Added "test coverage" to directives list to match consolidation)
+
+Verification
+-----------
+✓ Option count reduced: 7 → 4
+✓ API limit compliance: 4 <= 4
+✓ Semantic intent preserved: All original concerns represented
+✓ Guidance text updated: Reflects new grouping
+✓ No functional behavior change: User can still select all priority categories
+
+Status: PASS
