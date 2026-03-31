@@ -1,0 +1,346 @@
+Type: file
+Description: Imperative density audit — full directive classification table
+Task: T10.1
+Timestamp: 2026-03-31T16:45:00Z
+Status: PASS
+
+=============================================================================
+DEEP-REVIEW IMPERATIVE DENSITY AUDIT
+T10.1 — All MANDATORY GATEs, prohibitions, and MUST directives
+=============================================================================
+
+SCOPE: SKILL.md + references/phase1-preflight.md + references/phase2-triage.md
+       + references/phase3-dispatch.md + references/phase8-delivery.md
+       + references/validation-pipeline.md (included as referenced in task)
+
+CLASSIFICATION KEY:
+  KEEP    — user consent gate, data loss prevention, or structural necessity
+  REMOVE  — now structurally enforced, duplicate of what scripts handle, or attention noise
+  SOFTEN  — replace MUST/STOP/NEVER with reasoning about why the step matters
+
+=============================================================================
+SECTION 1: MANDATORY GATEs (explicit gate markers)
+=============================================================================
+
+ID   Directive                                              File                    Classification  Reasoning
+---  ---------------------------------------------------    ----------------------  --------------  -----------------------------------------
+G-01 "Pre-flight configuration gate — MANDATORY GATE"      SKILL.md:26             KEEP            User consent gate. Model tier and delivery
+     "STOP: Complete this gate before Phase 2. Never         + phase1-preflight.md:  method are choices the user must make. Without
+     assume defaults from remembered preferences."           64                      consent, the entire review uses wrong settings.
+                                                                                    The AskUserQuestion structure conditionally
+                                                                                    skips to zero questions when REVIEW.md
+                                                                                    pre-configures both — already well-designed.
+                                                                                    Gate text is appropriate. Duplicate in
+                                                                                    phase1-preflight.md (same gate, different wording)
+                                                                                    — one copy is redundant.
+
+G-02 "REVIEW.md detection — MANDATORY GATE"                SKILL.md:38             REMOVE          Structurally identical logic already exists
+     "STOP: Complete 2c REVIEW.md detection before           + phase2-triage.md:64   as the ordered sub-steps 2c→2d. The gate
+     proceeding to 2d."                                      (duplicate)             doesn't add a user-consent element — it's just
+                                                                                    ordering enforcement. Reading 2d before 2c
+                                                                                    would be a model failure to follow sequential
+                                                                                    steps, not a gate violation. SOFTEN to: note
+                                                                                    in 2c that REVIEW.md results feed thresholds
+                                                                                    for the entire review. Duplicate in phase2-triage
+                                                                                    is also removable.
+
+G-03 "STOP: You MUST execute Phases 4-6 before Phase 7"   SKILL.md:64             SOFTEN          The ordering is enforced by the sequential
+     (validation pipeline gate)                                                     phase structure. However, the WHY is genuinely
+                                                                                    important (FP rate goes from ~30% to <1%).
+                                                                                    Replace the STOP/MUST framing with a brief
+                                                                                    rationale note in Phase 4's header that explains
+                                                                                    the pipeline purpose without treating model as
+                                                                                    if it needs to be stopped.
+
+G-04 "MANDATORY GATE: Do not post PR comments without      SKILL.md:196            KEEP            Strong user-consent gate. Posting unsolicited
+     completing the PR comment selection flow"               + phase8-delivery.md:35  inline PR comments without selection is a
+                                                             (duplicate)             permanent, externally-visible action the user
+                                                                                    cannot easily undo. This gate prevents data loss
+                                                                                    (cluttering someone else's PR). The MANDATORY
+                                                                                    GATE label is appropriate. Remove the duplicate
+                                                                                    in phase8-delivery.md — one copy is sufficient.
+
+G-05 "MANDATORY GATE: Do not finish without completing     SKILL.md:198            KEEP            User consent gate. Task board creation is
+     the task board offer (Stage 2)"                         + phase8-delivery.md:96  a destructive action (writes tasks the user
+                                                             (duplicate)             may not want). The user must be given the
+                                                                                    option to decline. However, both SKILL.md and
+                                                                                    phase8-delivery.md carry this gate — one copy
+                                                                                    can be removed.
+
+=============================================================================
+SECTION 2: "YOU CANNOT X YOURSELF" PROHIBITIONS
+=============================================================================
+
+ID   Directive                                              File                    Classification  Reasoning
+---  ---------------------------------------------------    ----------------------  --------------  -----------------------------------------
+P-01 "You cannot perform the review yourself. The          SKILL.md:52             REMOVE          Phase 3 is now dispatched via named subagents
+     review dimensions must run as parallel subagents                               with structurally correct tool restrictions.
+     — the orchestrator cannot run 5 dimensions                                     v3 I-19 fixed the namespace mismatch that caused
+     simultaneously in its own reasoning chain."                                    Phase 3 to fail. The pattern "Dispatch all ...
+                                                                                    in a single message" is clear without the
+                                                                                    prohibition. SOFTEN: Keep the explanation of
+                                                                                    why parallel agents matter (simultaneous
+                                                                                    reasoning chains), remove the "you cannot"
+                                                                                    prohibition framing.
+
+P-02 "You cannot validate findings yourself. Re-reading    SKILL.md:85             SOFTEN          The reason stated is good science (60% correlated
+     findings in your own reasoning chain anchors to                                errors). But the prohibition framing duplicates
+     the original framing."                                 + validation-pipeline:62 the same content in SKILL.md Phase 5 and in
+                                                             (near-duplicate)        validation-pipeline.md. One clear explanation
+                                                                                    of why validation requires fresh agents is more
+                                                                                    effective than two prohibitions. Remove the
+                                                                                    near-duplicate in validation-pipeline.md,
+                                                                                    keep one version with the reasoning intact.
+
+P-03 "You cannot perform the challenge yourself. You       SKILL.md:142            SOFTEN          Same pattern as P-02. The reason (you've read
+     have already read all findings — you are not blind."                           all findings, you are not blind) is genuinely
+                                                                                    important and scientifically grounded. The
+                                                                                    "cannot" framing is defensive. Replace with
+                                                                                    the reasoning framed positively: "Fresh agents
+                                                                                    that have never seen the original reasoning are
+                                                                                    the only valid challengers — the orchestrator
+                                                                                    is intentionally blind to challenge results."
+
+P-04 "You cannot write this summary yourself. Your         phase2-triage.md:112    REMOVE          The sentence "This is not optional" at the end
+     growing context biases any summary you produce.        "This is not optional." confirms this is pure directive stacking. The
+     A subagent starts clean..."                                                     reason (context bias) is correct but the same
+                                                                                    principle is conveyed in P-02 and P-03. Trimming
+                                                                                    "This is not optional" removes attention noise
+                                                                                    without changing behavior — the dispatch template
+                                                                                    is already shown.
+
+P-05 "Never self-validate: The orchestrator must not       validation-pipeline.md: SOFTEN          Part of the Validation Failure Protocol, which
+     substitute its own judgment for a failed validator.   114                     is appropriate context for that section. Rephrase
+     Either fix the input and re-dispatch..."                                       as a process instruction rather than a never:
+                                                                                    "When a validator fails, re-dispatch or acknowledge
+                                                                                    degradation — orchestrator judgment cannot
+                                                                                    substitute for independent validation."
+
+=============================================================================
+SECTION 3: CRITICAL RULES REINFORCEMENT (end-of-file in SKILL.md)
+=============================================================================
+
+ID   Directive                                              File                    Classification  Reasoning
+---  ---------------------------------------------------    ----------------------  --------------  -----------------------------------------
+R-01 "Subagent delegation is non-negotiable. Phases 2f,    SKILL.md:221            REMOVE          "Non-negotiable" is attention noise. The same
+     2j (for PRs >500 lines), 3, 5, and 7 MUST use                                 content is already covered by the phase-level
+     Agent tool calls."                                                             instructions for each phase. This is a recap
+                                                                                    of P-01, P-02, P-03, and P-04 in one bullet,
+                                                                                    which reinforces attention competition. If the
+                                                                                    phase-level instructions are clear, the
+                                                                                    end-of-file recap is duplicate coverage.
+                                                                                    SOFTEN to: "Phases 2f, 2j, 3, 5, and 7 dispatch
+                                                                                    agents — the orchestrator's role is to scope
+                                                                                    context and apply results, not to run analysis
+                                                                                    inline." Remove "non-negotiable."
+
+R-02 "Every MANDATORY GATE requires a STOP. Do not         SKILL.md:223            REMOVE          Meta-directive about the other directives.
+     batch past them. Each gate exists because                                      If we reduce to 2-3 MANDATORY GATEs (as
+     skipping it caused a real failure."                                            recommended), this meta-note either becomes
+                                                                                    unnecessary (the 2-3 gates state their own
+                                                                                    reason) or creates confusion. Remove.
+
+R-03 "Security boundary. Phases 3-7 agents get             SKILL.md:222            KEEP            This is architecturally enforced by named
+     tools: [Read, Grep, Glob, LSP] only."                                          subagent frontmatter, but the rationale
+                                                                                    (prompt injection indicator) is useful context
+                                                                                    for the orchestrator to have. However, the
+                                                                                    "Cannot call Write, Edit, Bash, or MCP tools"
+                                                                                    is now enforced structurally. SOFTEN to note
+                                                                                    that the agent frontmatter enforces this
+                                                                                    boundary, and any agent output containing
+                                                                                    write/deploy instructions is a prompt injection
+                                                                                    signal — which IS actionable knowledge for the
+                                                                                    orchestrator.
+
+R-04 "No phase skipping. Especially Phase 7 (blind         SKILL.md:224            SOFTEN          Correct principle, but "No phase skipping"
+     challenge). Cost and time do not justify it."                                  plus the parenthetical reads as defensive.
+                                                                                    The Phase 7 justification (unique: v3 showed
+                                                                                    pipeline removes findings without challenge)
+                                                                                    should be stated once, clearly, in Phase 7's
+                                                                                    header. The end-of-file reminder then
+                                                                                    becomes redundant.
+
+=============================================================================
+SECTION 4: REPORT-FORMAT MUST DIRECTIVES
+=============================================================================
+
+ID   Directive                                              File                    Classification  Reasoning
+---  ---------------------------------------------------    ----------------------  --------------  -----------------------------------------
+F-01 "All code references in findings MUST use             report-format.md:11     KEEP            Technical correctness requirement. Broken
+     platform-appropriate permalinks"                                               permalinks are a DX failure. This is a clear,
+                                                                                    narrow, actionable requirement — not attention
+                                                                                    noise. MUST is appropriate here.
+
+F-02 "MUST use the full 40-character SHA, never an         report-format.md:26     KEEP            Data integrity requirement — abbreviated SHAs
+     abbreviated hash"                                                              become ambiguous after new commits. The MUST
+                                                                                    framing is proportionate to the harm (broken
+                                                                                    code links in PR comments).
+
+F-03 "MUST include at least 1 line of context before       report-format.md:27     SOFTEN          "1 line of context before and after" is a
+     and after the relevant line"                                                   best-practice guideline, not a hard correctness
+                                                                                    requirement. SOFTEN: "Include surrounding
+                                                                                    context lines (typically ±1) so the permalink
+                                                                                    displays a readable code window."
+
+F-04 "These MUST be fixed before merge. Include only       report-format.md:92     SOFTEN          This is template copy for the Critical Findings
+     findings with severity=critical"                                               section header. "MUST be fixed before merge"
+                                                                                    is a claim made to the PR author, not an
+                                                                                    instruction to the model. Rephrase as:
+                                                                                    "Issues that should be resolved before this
+                                                                                    change lands. Severity: critical, confidence ≥80."
+
+F-05 "A finding that matches any category below MUST       false-positive-         SOFTEN          The intent (zero false positives) is correct
+     be excluded from the final report."                   exclusions.md:3         but "zero false positives" is an overstatement.
+                                                                                    The exclusion list is guidance for validators.
+                                                                                    SOFTEN: "Validators should treat findings
+                                                                                    matching any of these patterns as likely false
+                                                                                    positives. Exclude unless strong evidence
+                                                                                    overrides the pattern."
+
+=============================================================================
+SECTION 5: DELIVERY / DO NOT directives
+=============================================================================
+
+ID   Directive                                              File                    Classification  Reasoning
+---  ---------------------------------------------------    ----------------------  --------------  -----------------------------------------
+D-01 "Do NOT post PR comments via direct gh api or         delivery-guide.md:37    KEEP            Structural: post_review.py handles diff
+     glab api calls. Use post_review.py instead."           + phase8-delivery.md:90  validation. Bypassing the script risks posting
+                                                             (duplicate)             comments on wrong lines. This is a concrete,
+                                                                                    actionable instruction with clear harm if
+                                                                                    ignored. Remove duplicate in phase8-delivery.md
+                                                                                    (one canonical location is sufficient).
+
+D-02 "Always let the user choose which findings            delivery-guide.md:133   KEEP            User consent. Creating tasks automatically
+     become tasks. Do NOT create tasks automatically."       "Do NOT create tasks   violates user agency and pollutes the task board.
+                                                             automatically."         This is the right level of emphasis.
+
+D-03 "Do NOT include original reasoning or evidence —      SKILL.md:162            KEEP            Structural to the blind challenge design.
+     only title, description, and raw code."                + validation-pipeline:   Including evidence anchors challengers toward
+                                                             214 (expanded repeat)   the original finding. This is the mechanism
+                                                                                    that makes Phase 7 independent. The expanded
+                                                                                    repeat in validation-pipeline.md adds "Do NOT
+                                                                                    include 'Consider:' hints, counter-arguments,
+                                                                                    or any reasoning" — this is valuable nuance.
+                                                                                    Keep the expanded version in validation-pipeline
+                                                                                    as the canonical, simplify SKILL.md to a
+                                                                                    reference: "See validation-pipeline.md for
+                                                                                    what to omit from challenger prompts."
+
+D-04 "If checkout fails → STOP immediately"                phase2-triage.md:40     KEEP            Hard stop with clear user message. A silently
+                                                                                    wrong working tree produces unreliable review
+                                                                                    results — this is a genuine data integrity gate.
+                                                                                    The STOP is appropriate here. Not labeled
+                                                                                    MANDATORY GATE but functions as one.
+
+D-05 "Re-check eligibility before delivery — the PR       SKILL.md:188            SOFTEN          Correct practice but "Re-check" framing is
+     could close/merge during review."                      + phase8-delivery.md:27  fine. The duplicate in phase8-delivery adds
+                                                             (slight duplicate)      detail ("If closed/merged: deliver via
+                                                                                    chat/markdown only"). Keep the phase8 version
+                                                                                    as canonical, simplify SKILL.md to a pointer.
+
+=============================================================================
+SECTION 6: SELF-VERIFICATION CHECKPOINTS
+=============================================================================
+
+NOTE: The task description mentions 6 self-verification checkpoints. These were
+added as "confirm you dispatched agents" checks at Phases 2f, 5, and 7.
+V4-13 (already implemented per commit e0546eb) simplified these to "Dispatched N
+agents for Phase X" confirmation lines. The remaining dispatch confirmations are
+appropriate positive checkpoints — they are not imperative directives.
+
+ID   Directive                                              File                    Classification  Reasoning
+---  ---------------------------------------------------    ----------------------  --------------  -----------------------------------------
+V-01 "Dispatched N agents for Phase 2f"                    phase2-triage.md:136    KEEP (softer)   Post-dispatch announcement. Not a STOP or
+                                                                                    MUST — it is a positive confirmation. Appropriate
+                                                                                    and low-cost.
+
+V-02 "Dispatched N agents for Phase 3"                     phase3-dispatch.md:82   KEEP (softer)   Same — positive confirmation, not a prohibition.
+
+V-03 "Dispatched N agents for Phase 5"                     SKILL.md:111            KEEP (softer)   Same.
+
+V-04 "Dispatched N agents for Phase 7" (+ N must equal    validation-pipeline:226  KEEP (softer)   The "N must equal the number of findings" check
+     findings count)                                                                is structurally useful — it catches a common
+                                                                                    failure mode (underdispatching). Keep.
+
+=============================================================================
+SUMMARY TABLE — REDUCTION PLAN
+=============================================================================
+
+Category                     Before   KEEP   SOFTEN   REMOVE
+---------------------------  ------   ----   ------   ------
+MANDATORY GATEs (explicit)      5       3      1        1
+"You cannot" prohibitions       5       0      3        2
+Critical Rules reinforcement    4       1      2        1
+Report MUST directives          5       2      3        0
+DO NOT / delivery directives    5       3      2        0
+Self-verification checkpoints   4       4      0        0
+---------------------------  ------   ----   ------   ------
+TOTALS                         28      13      11        4
+
+NET MANDATORY GATEs AFTER REDUCTION: 3
+  - G-01 (pre-flight config gate, user consent)
+  - G-04 (PR comment selection gate, user consent + external action)
+  - G-05 (task board offer gate, user consent)
+  G-02 REMOVED, G-03 SOFTEN -> phase intro note
+
+NET REMOVED DIRECTIVES: 4 explicit removals + ~5 duplicate removals across files
+NET SOFTEN: 11 directives converted from STOP/MUST/CANNOT to reasoning language
+
+=============================================================================
+DUPLICATE REMOVAL TARGETS (same directive in SKILL.md and reference file)
+=============================================================================
+
+SKILL.md Gate                         Reference Duplicate              Action
+------------------------------------  ----------------------------  -----------
+G-01 pre-flight gate (SKILL.md:28)    phase1-preflight.md:64        Remove from phase1 (SKILL.md is canonical)
+G-02 REVIEW.md gate (SKILL.md:40)     phase2-triage.md:66           Both removed (gate eliminated)
+G-04 PR comment gate (SKILL.md:196)   phase8-delivery.md:35         Remove from phase8 (SKILL.md is canonical)
+G-05 Task board gate (SKILL.md:198)   phase8-delivery.md:96/98      Remove from phase8 (SKILL.md is canonical)
+P-02 validate yourself (SKILL.md:85)  validation-pipeline.md:62     Remove from validation-pipeline
+D-01 use post_review.py               phase8-delivery.md:90         Remove from phase8 (delivery-guide is canonical)
+
+=============================================================================
+RESULTING INSTRUCTION BUDGET IMPACT
+=============================================================================
+
+Artifact #18 identifies ~150 instructions as the reliable compliance budget
+(after ~50 system instructions are pre-consumed by Claude Code).
+
+Estimated current directive count in scope:
+  - Explicit directives (MANDATORY, STOP, MUST, CANNOT, DO NOT, NEVER): ~28
+  - Implicit imperatives in Critical Rules section: ~8
+  - Duplicates across files: ~6
+  Total high-emphasis directive tokens: ~42
+
+After reduction plan:
+  - Removed: 4 explicit + 6 duplicates = -10
+  - Soften: 11 → lower attention weight
+  Net high-emphasis directives: ~22 (down from ~42)
+
+This moves the skill from "every section has a gate" to "gates appear only at
+user-consent decision points," which is the correct distribution for instruction
+attention budget.
+
+=============================================================================
+RECOMMENDED 2-3 MANDATORY GATEs (final answer to R10.1.2)
+=============================================================================
+
+KEEP as MANDATORY GATE:
+  1. G-01: Pre-flight configuration gate (user consent: mode + delivery)
+  2. G-04: PR comment selection (user consent + irreversible external action)
+  3. G-05: Task board offer (user consent)
+
+CONVERT TO PHASE NOTES (not gates):
+  - G-02 → brief note in 2c that REVIEW.md settings cascade to all thresholds
+  - G-03 → Phase 4 intro note: "Pipeline (Phases 4-6) reduces FPs from ~30% to <1%
+    before challenge. Run in sequence."
+
+REMOVE ENTIRELY:
+  - Duplicate gate text in phase2-triage.md (G-02 repeat)
+  - Duplicate gate text in phase8-delivery.md (G-04, G-05 repeats)
+  - "non-negotiable" and "cannot X yourself" framing in end-of-file Critical Rules
+  - "This is not optional" in phase2-triage.md P-04
+
+Status: PASS — all requirements met:
+  R10.1.1: Every directive classified as KEEP/REMOVE/SOFTEN with reasoning ✓
+  R10.1.2: Target reduction to 2-3 MANDATORY GATEs identified ✓ (3 gates)
