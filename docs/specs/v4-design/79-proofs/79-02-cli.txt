@@ -1,0 +1,16 @@
+Type: cli
+Command: python3 functional test covering all 4 requirements (run from scripts/)
+Expected: All 4 requirements PASS
+Timestamp: 2026-03-31T00:00:00Z
+
+--- OUTPUT ---
+R03.3.1 injection filter: 1 passed, 2 eliminated
+R03.3.1: PASS
+R03.3.2: PASS (boost applied, confidence: 80->90, 75->85)
+R03.3.3: PASS (bug suppressed, intentional confirmed)
+R03.3.4: PASS (security finding kept, escalation_note present)
+
+All 4 requirements verified.
+
+--- STATUS ---
+PASS

@@ -1,0 +1,10 @@
+Type: cli
+Command: cd scripts && python3 -c 'from filter_findings import apply_injection_filter, detect_disagreement; print("ok")'
+Expected: ok
+Timestamp: 2026-03-31T00:00:00Z
+
+--- OUTPUT ---
+ok
+
+--- STATUS ---
+PASS
