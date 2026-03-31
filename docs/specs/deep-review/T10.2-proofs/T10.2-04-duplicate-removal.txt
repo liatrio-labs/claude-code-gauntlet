@@ -1,0 +1,33 @@
+Type: file
+Description: Verify duplicate gate text removed from reference files (SKILL.md is canonical)
+Command: diff inspection of reference files
+Expected: No MANDATORY GATE labels in phase2-triage.md, phase8-delivery.md, or validation-pipeline.md
+Timestamp: 2026-03-31T17:15:00Z
+
+--- DUPLICATES REMOVED ---
+
+phase2-triage.md:
+  BEFORE: "### REVIEW.md Detection -- MANDATORY GATE" + "STOP: Complete this check before proceeding to 2e."
+  AFTER:  "### REVIEW.md Detection" + "Complete this check before proceeding to 2e. REVIEW.md settings cascade..."
+
+phase8-delivery.md:
+  BEFORE (Stage 1 Step B): "> **MANDATORY GATE: Do not post PR comments without completing this selection flow.**"
+  AFTER:  "Complete the selection flow below before posting any PR comments."
+
+  BEFORE (Stage 2): "## Stage 2: Task Board -- MANDATORY GATE" + "STOP: You MUST ask this before finishing."
+  AFTER:  "## Stage 2: Task Board" + "The user decides whether to create tasks -- always ask before finishing."
+
+  BEFORE (Step B.1): "Do NOT post PR comments via direct gh api or glab api calls -- use post_review.py instead."
+  AFTER:  (removed -- delivery-guide.md is the canonical location for this instruction per audit D-01)
+
+validation-pipeline.md:
+  BEFORE: "You cannot validate findings yourself." (near-duplicate of SKILL.md Phase 5)
+  AFTER:  "Validation requires fresh agents. Correlated errors occur ~60% of the time..."
+
+  BEFORE: "Never self-validate: The orchestrator must not substitute..."
+  AFTER:  "Self-validation is not a substitute: When a validator fails, re-dispatch..."
+
+  BEFORE: "See SKILL.md Phase 7 for the primary instructions, MANDATORY GATE, and Agent tool call template."
+  AFTER:  "See SKILL.md Phase 7 for the primary instructions and Agent tool call template."
+
+Status: PASS

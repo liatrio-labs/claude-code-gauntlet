@@ -108,7 +108,7 @@ Parallel validation agents assess findings that need LLM judgment. **Always use 
 
 **Dispatch:** Spawn one Sonnet agent per batch from Phase 4c. Launch all agents in a single message with multiple Agent tool calls for true parallel execution.
 
-> **You cannot validate findings yourself.** Re-reading batches in your own reasoning anchors to the original agent framing and does not constitute independent assessment. Validation agents start fresh. Correlated errors occur ~60% of the time when the same context does discovery and validation.
+> Validation requires fresh agents. Correlated errors occur ~60% of the time when the same context does discovery and validation — re-reading batches in the orchestrator's reasoning anchors to the original framing and does not constitute independent assessment.
 
 Each agent receives:
 1. A batch of 3-5 findings with their descriptions, evidence, and blame tags
@@ -156,11 +156,11 @@ Update each finding's confidence based on the validator's assessment.
 
 ## Validation Failure Protocol
 
-Re-dispatch or degrade transparently. Never silently substitute orchestrator judgment for the pipeline.
+Re-dispatch or degrade transparently. Orchestrator judgment is not a substitute for the pipeline.
 
 1. **Working tree mismatch (systemic failure):** If >50% of Phase 5 validators return confidence 0 with "code doesn't exist" or "file not found" reasoning, the working tree is likely wrong. STOP validation. Attempt checkout fix per Phase 2b branch checkout. Re-dispatch failed validators against the corrected working tree.
 2. **Individual agent failure:** If a validator times out or errors, continue with completed agents. Log the failure in Review Methodology. Warn the user if security or bugs dimensions are affected: "Validation pipeline partially degraded -- {N} findings in {dimensions} were not independently validated."
-3. **Never self-validate:** The orchestrator must not substitute its own judgment for a failed validator. Either fix the input and re-dispatch, or acknowledge degradation with a prominent methodology warning.
+3. **Self-validation is not a substitute:** When a validator fails, re-dispatch against corrected input or acknowledge degradation with a prominent methodology warning — orchestrator judgment cannot replace independent validation.
 
 ---
 
@@ -276,7 +276,7 @@ The script tags each surviving finding by its eventual report destination. This 
 
 # Phase 7: Blind Challenge + Post-Challenge Finalization
 
-See **SKILL.md Phase 7** for the primary instructions, MANDATORY GATE, and Agent tool call template. The challenge round runs on **every finding** that survived Phase 6 — no trigger conditions, no threshold check. This section provides supplementary detail.
+See **SKILL.md Phase 7** for the primary instructions and Agent tool call template. The challenge round runs on **every finding** that survived Phase 6 — no trigger conditions, no threshold check. This section provides supplementary detail.
 
 ## Blind challenge — supplementary detail
 

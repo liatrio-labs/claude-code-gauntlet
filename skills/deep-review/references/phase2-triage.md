@@ -61,9 +61,9 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 2. **REVIEW.md** — Discover hierarchically. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers customize focus areas, skip patterns, custom rules, thresholds, and ignore patterns.
 3. **AGENTS.md / QODO.md** — Read if present.
 
-### REVIEW.md Detection — MANDATORY GATE
+### REVIEW.md Detection
 
-> **STOP: Complete this check before proceeding to 2e.** Do not skip REVIEW.md detection — it controls thresholds, rules, and ignore patterns for the entire review.
+Complete this check before proceeding to 2e. REVIEW.md settings cascade to all thresholds, rules, and ignore patterns for the entire review.
 
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
@@ -109,7 +109,7 @@ If ALL files are low-risk AND total lines <50, ask Light review vs Full review (
 
 ## 2f. Change Summarizer
 
-> **You cannot write this summary yourself.** Your growing context biases any summary you produce. A subagent starts clean and produces an uncontaminated summary. This is not optional.
+> A subagent produces a cleaner summary than the orchestrator can at this point — your growing context biases any summary you produce. Dispatching a fresh agent avoids contaminating the summary that all review agents will rely on.
 
 > **Dispatch ordering:** 2f is independent of 2e (risk classification). Dispatch the change summarizer concurrent with 2e — launch both in the same message for parallel execution. The summarizer result is needed by Phase 3 agents, so earlier dispatch reduces latency.
 

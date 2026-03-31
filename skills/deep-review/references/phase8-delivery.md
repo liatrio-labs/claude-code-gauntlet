@@ -32,7 +32,7 @@ Deliver using the method(s) selected in Phase 1, in this order:
 
 **Step B. PR comments** — if selected, run the PR comment selection flow before posting.
 
-> **MANDATORY GATE: Do not post PR comments without completing this selection flow.**
+Complete the selection flow below before posting any PR comments.
 
 ```
 AskUserQuestion(
@@ -87,15 +87,15 @@ python3 {skill_base}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
 """)
 ```
 
-Do NOT post PR comments via direct `gh api` or `glab api` calls — use `post_review.py` instead. See `references/delivery-guide.md` for the findings JSON schema and validation details.
+See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
 **Step C. Markdown file** — if selected, write to `./deep-review-{date}.md`.
 
 ---
 
-## Stage 2: Task Board — MANDATORY GATE
+## Stage 2: Task Board
 
-> **STOP: You MUST ask this before finishing.** The user decides whether to create tasks.
+The user decides whether to create tasks — always ask before finishing.
 
 **If pr_comment_set exists:**
 ```

@@ -1,0 +1,24 @@
+Type: cli
+Description: Verify MANDATORY GATE count reduced from 5 to 3, all in SKILL.md only
+Command: grep -rn "MANDATORY GATE" skills/deep-review/
+Expected: Exactly 3 matches, all in SKILL.md (G-01, G-04, G-05)
+Timestamp: 2026-03-31T17:15:00Z
+
+--- OUTPUT ---
+
+skills/deep-review/SKILL.md:26:### Pre-flight configuration gate -- MANDATORY GATE
+skills/deep-review/SKILL.md:194:> **MANDATORY GATE: Do not post PR comments without completing the PR comment selection flow (Stage 1 Step B) in `references/phase8-delivery.md`.**
+skills/deep-review/SKILL.md:196:> **MANDATORY GATE: Do not finish without completing the task board offer (Stage 2) in `references/phase8-delivery.md`.**
+
+Total: 3 matches (was 5+duplicates before reduction)
+
+MANDATORY GATEs removed:
+  G-02 (REVIEW.md detection) -- removed from SKILL.md:38 and phase2-triage.md:64
+  G-03 (validation pipeline) -- softened to "Pipeline note" in SKILL.md:62
+
+Duplicate gates removed from reference files:
+  phase8-delivery.md:35 (was G-04 duplicate)
+  phase8-delivery.md:96-98 (was G-05 duplicate)
+  phase2-triage.md:64-66 (was G-02 duplicate)
+
+Status: PASS

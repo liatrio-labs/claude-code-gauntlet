@@ -1,0 +1,27 @@
+Type: cli
+Description: Verify "You cannot" prohibitions and "non-negotiable" framing removed
+Command: grep -rn "You cannot\|non-negotiable\|This is not optional\|Every MANDATORY GATE requires" skills/deep-review/
+Expected: Zero matches
+Timestamp: 2026-03-31T17:15:00Z
+
+--- OUTPUT ---
+
+(no matches found)
+
+Prohibitions converted to reasoning language:
+  P-01 "You cannot perform the review yourself" (SKILL.md Phase 3)
+      -> "Parallel subagents are essential here -- the orchestrator cannot run 5 dimensions simultaneously..."
+  P-02 "You cannot validate findings yourself" (SKILL.md Phase 5)
+      -> "Validation requires fresh agents, not orchestrator re-reading. ~60% correlated errors..."
+  P-03 "You cannot perform the challenge yourself" (SKILL.md Phase 7)
+      -> "Fresh agents that have never seen the original reasoning are the only valid challengers..."
+  P-04 "You cannot write this summary yourself... This is not optional" (phase2-triage.md 2f)
+      -> "A subagent produces a cleaner summary... Dispatching a fresh agent avoids contaminating..."
+  P-05 "Never self-validate" (validation-pipeline.md)
+      -> "Self-validation is not a substitute: When a validator fails, re-dispatch..."
+
+Meta-directives removed:
+  R-01 "non-negotiable" -> removed from Critical Rules
+  R-02 "Every MANDATORY GATE requires a STOP" -> removed entirely from Critical Rules
+
+Status: PASS
