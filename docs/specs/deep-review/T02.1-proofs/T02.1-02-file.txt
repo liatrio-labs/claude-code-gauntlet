@@ -1,0 +1,21 @@
+Type: file
+Description: Verify all 12 sub-steps 2a–2l are correctly numbered in phase2-triage.md
+Command: grep -n "^## 2[a-l]\." skills/deep-review/references/phase2-triage.md
+Expected: 12 sections from 2a through 2l, with new 2b as "Ensure Working Tree Reflects Review Target"
+Timestamp: 2026-03-30T00:00:00Z
+
+--- OUTPUT ---
+7:## 2a. Detect VCS Platform
+17:## 2b. Ensure Working Tree Reflects Review Target
+48:## 2c. Identify Review Target
+58:## 2d. Gather Project Context
+107:## 2e. Classify Changed Files by Risk Level
+121:## 2f. Change Summarizer
+149:## 2g. Related Test Discovery
+155:## 2h. Docs/Specs Context
+161:## 2i. History Context Preprocessing
+173:## 2j. File-Level Summarization (PRs > 500 Lines)
+195:## 2k. AI-Generated Code Detection
+201:## 2l. Determine Review Dimensions
+
+Status: PASS

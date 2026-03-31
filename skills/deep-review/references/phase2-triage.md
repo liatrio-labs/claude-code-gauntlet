@@ -1,6 +1,6 @@
 # Phase 2 Triage Reference
 
-Full sub-steps 2a–2k, Agent templates, and detection logic for Phase 2: Target & Triage.
+Full sub-steps 2a–2l, Agent templates, and detection logic for Phase 2: Target & Triage.
 
 ---
 
@@ -14,7 +14,38 @@ If detection fails, ask the user.
 
 ---
 
-## 2b. Identify Review Target
+## 2b. Ensure Working Tree Reflects Review Target
+
+Before running any diff commands, confirm the local working tree matches the review target.
+
+**1. Resolve the target's head SHA:**
+- **PR/MR number or URL:** `gh pr view <number> --json headRefOid --jq '.headRefOid'` (GitHub) / `glab mr view <number> --output json | jq '.sha'` (GitLab)
+- **Branch name:** `git rev-parse <branch>`
+- **Local changes:** HEAD — no-op, already on correct state
+
+**2. Compare against current HEAD:**
+```
+git rev-parse HEAD
+```
+If the SHA matches → proceed to 2c.
+
+**3. If mismatch → checkout:**
+| Target type | Command |
+|---|---|
+| PR/MR number or URL | `gh pr checkout <number>` (GitHub) / `glab mr checkout <number>` (GitLab) |
+| Branch name | `git checkout <branch>` |
+| Local changes | no-op |
+
+**4. If checkout fails → STOP immediately:**
+```
+Unable to checkout [branch/PR]. The review requires the target code to be accessible locally.
+You can checkout the branch manually and re-run the review.
+```
+No fallback or workaround — a silently wrong working tree produces unreliable review results.
+
+---
+
+## 2c. Identify Review Target
 
 1. **PR/MR mode** — user provides a number/URL. Use `gh pr view`/`glab mr view` + diff commands. Get full SHA: `git rev-parse HEAD`
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
@@ -24,7 +55,7 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 
 ---
 
-## 2c. Gather Project Context
+## 2d. Gather Project Context
 
 1. **CLAUDE.md** — Read from repo root and directories with changed files.
 2. **REVIEW.md** — Discover hierarchically. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers customize focus areas, skip patterns, custom rules, thresholds, and ignore patterns.
@@ -32,7 +63,7 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 
 ### REVIEW.md Detection — MANDATORY GATE
 
-> **STOP: Complete this check before proceeding to 2d.** Do not skip REVIEW.md detection — it controls thresholds, rules, and ignore patterns for the entire review.
+> **STOP: Complete this check before proceeding to 2e.** Do not skip REVIEW.md detection — it controls thresholds, rules, and ignore patterns for the entire review.
 
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
@@ -73,7 +104,7 @@ See `references/review-md-spec.md` section Discovery for the full prompts and sc
 
 ---
 
-## 2d. Classify Changed Files by Risk Level
+## 2e. Classify Changed Files by Risk Level
 
 - **High risk** — auth, security, payment, data access, public APIs, DB migrations, crypto, infra/deploy, permission/RBAC. Also >200 lines changed.
 - **Medium risk** — business logic, services, controllers, middleware, state management. 50-200 lines changed.
@@ -87,7 +118,7 @@ If ALL files are low-risk AND total lines <50, ask Light review vs Full review (
 
 ---
 
-## 2e. Change Summarizer
+## 2f. Change Summarizer
 
 > **You cannot write this summary yourself.** Your growing context biases any summary you produce. A subagent starts clean and produces an uncontaminated summary. This is not optional.
 
@@ -115,19 +146,19 @@ Agent(
 
 ---
 
-## 2f. Related Test Discovery
+## 2g. Related Test Discovery
 
 For each changed production file, find test files by convention (`Tests`, `.test`, `.spec`, `_test`, `_spec` patterns; `tests/`, `__tests__/`, `spec/` directories). Include in context for bug-detector and test-analyzer.
 
 ---
 
-## 2g. Docs/Specs Context
+## 2h. Docs/Specs Context
 
 If `docs/`, `specs/`, `research/` exist, read relevant files. Send only to conventions-and-intent agent and Phase 8 report generation — NOT all agents (avoids biasing toward confirming intent rather than finding bugs).
 
 ---
 
-## 2h. History Context Preprocessing
+## 2i. History Context Preprocessing
 
 **Deterministic preprocessing, not an LLM agent.** For each changed file:
 1. `git log --oneline -10 -- <file>` for recent history
@@ -139,9 +170,9 @@ Distribute: bug-detector gets history/blame/co-change; conventions-and-intent ge
 
 ---
 
-## 2i. File-Level Summarization (PRs > 500 Lines)
+## 2j. File-Level Summarization (PRs > 500 Lines)
 
-Dispatch parallel **Sonnet agents** (one per file) for 2-3 sentence summaries. For large PRs, launch 2e and 2i agents **in the same message with multiple Agent tool calls** for true parallel execution. Concatenate into a summary-of-summaries for architectural awareness.
+Dispatch parallel **Sonnet agents** (one per file) for 2-3 sentence summaries. For large PRs, launch 2f and 2j agents **in the same message with multiple Agent tool calls** for true parallel execution. Concatenate into a summary-of-summaries for architectural awareness.
 
 **Agent tool call template (repeat per changed file):**
 ```
@@ -161,13 +192,13 @@ Agent(
 
 ---
 
-## 2j. AI-Generated Code Detection
+## 2k. AI-Generated Code Detection
 
 Scan for AI co-author trailers, attribution comments, AI tool metadata. **Elevate AI-generated files one risk level** (research shows 75% more logic errors in AI-authored code). Include AI-generation status in risk classification sent to all agents.
 
 ---
 
-## 2k. Determine Review Dimensions
+## 2l. Determine Review Dimensions
 
 All on by default unless REVIEW.md disables them. In **Optimized** mode, all agents use Sonnet except security-reviewer (always Opus). In **Frontier** mode, all agents use Opus.
 

@@ -1,0 +1,10 @@
+Type: file
+Description: Verify new 2b section heading exists in phase2-triage.md
+Command: grep -n "2b\. Ensure Working Tree" skills/deep-review/references/phase2-triage.md
+Expected: Line with "## 2b. Ensure Working Tree Reflects Review Target"
+Timestamp: 2026-03-30T00:00:00Z
+
+--- OUTPUT ---
+17:## 2b. Ensure Working Tree Reflects Review Target
+
+Status: PASS
