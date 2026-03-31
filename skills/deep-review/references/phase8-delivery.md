@@ -57,35 +57,44 @@ Track which findings were selected (**pr_comment_set**) for Stage 2 shortcut.
 
 Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script.
 
-Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures:
+Use a two-step approach: write a small Python script to `$TMPDIR`, then run it. This avoids all quoting and escaping issues — the orchestrator constructs a real `.py` file using the Write tool, and Python's `json.dump` handles serialization correctly regardless of what characters appear in finding bodies or suggested_fix_code.
+
+**Step 1:** Write `$TMPDIR/build_findings.py` using the Write tool:
+
+```python
+import json
+
+findings = {
+    "review_body": "...",  # executive summary with finding counts
+    "findings": [
+        {
+            "file": "src/foo.py",
+            "line": 42,
+            "end_line": 45,
+            "severity": "high",
+            "title": "...",
+            "body": "...",
+            "suggested_fix_code": "..."  # or None if no fix
+        }
+        # ... one entry per selected finding
+    ],
+    "owner": "OWNER",
+    "repo": "REPO",
+    "pr_number": 123
+}
+
+with open("/tmp/deep-review-findings.json", "w") as f:
+    json.dump(findings, f, ensure_ascii=False, indent=2)
+print("Wrote findings JSON")
+```
+
+**Step 2:** Run it and invoke post_review.py:
 
 ```bash
-Bash(command="""python3 -c "
-import json, sys
-findings = {
-    'review_body': '''REVIEW_BODY_HERE''',
-    'findings': [
-        {
-            'file': 'src/foo.py',
-            'line': 42,
-            'end_line': 45,
-            'severity': 'high',
-            'title': '...',
-            'body': '...',
-            'suggested_fix_code': '...'
-        }
-    ],
-    'owner': 'OWNER',
-    'repo': 'REPO',
-    'pr_number': PR_NUMBER
-}
-with open(sys.argv[1], 'w') as f:
-    json.dump(findings, f, ensure_ascii=False, indent=2)
-" "$TMPDIR/deep-review-findings.json"
-
-python3 {skill_base}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
-""")
+python3 "$TMPDIR/build_findings.py" && python3 {plugin_base}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
 ```
+
+The Write tool requires reading the file first — since `$TMPDIR/build_findings.py` won't exist yet, use `Bash(command="touch $TMPDIR/build_findings.py")` then Read it, then Write the content. Alternatively, use Bash with a heredoc: `cat > "$TMPDIR/build_findings.py" << 'PYEOF' ... PYEOF` — the `'PYEOF'` quoting prevents shell expansion.
 
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 

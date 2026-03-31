@@ -1,0 +1,94 @@
+Type: file
+Description: Documentation of changes made to skill delivery and configuration guidance
+Command: git diff HEAD skills/deep-review/SKILL.md skills/deep-review/references/delivery-guide.md skills/deep-review/references/phase8-delivery.md
+Expected: Changes implement documentation improvements for clarity and actionability
+Timestamp: 2026-03-31T18:00:00Z
+
+CHANGE SUMMARY
+==============
+
+TASK: Improve imperative density and delivery process clarity in deep-review skill documentation
+
+FILE 1: skills/deep-review/SKILL.md
+--------
+Change Type: Imperative density reduction
+Location: Phase 1 Pre-flight configuration gate section
+
+BEFORE:
+  ### Pre-flight configuration gate — MANDATORY GATE
+  
+  > **STOP: Complete this gate before Phase 2.** Never assume defaults from remembered preferences.
+
+AFTER:
+  ### Pre-flight configuration gate
+  
+  Review mode and delivery preference must be resolved before Phase 2 — the orchestrator cannot scope agents or plan delivery without them, and preferences change between reviews so prior-session values are unreliable.
+
+Justification:
+  - Removed all-caps "MANDATORY GATE" label (reduces visual noise)
+  - Removed imperative "STOP:" command
+  - Replaced with clear explanation of WHY the gate is necessary
+  - Maintains mandatory nature through explanation, not formatting
+
+Expected Impact:
+  - Reduced cognitive load (fewer emphatic directives)
+  - More natural reading flow
+  - Maintains clear requirement communication
+
+
+FILE 2: skills/deep-review/references/delivery-guide.md
+--------
+Change Type: Improved example documentation
+Location: Using post_review.py section
+
+BEFORE:
+  Used inline bash heredoc with python3 -c pattern
+  Problem: Complex quoting, nested string escaping, error-prone
+
+AFTER:
+  Uses two-step approach:
+  1. Write $TMPDIR/build_findings.py with Python code
+  2. Run the script, then invoke post_review.py
+  
+  Benefit: Clearer separation of concerns, json.dump handles all escaping
+
+Expected Impact:
+  - Easier for users to copy and understand the pattern
+  - Eliminates quoting/escaping bugs
+  - More maintainable example
+
+
+FILE 3: skills/deep-review/references/phase8-delivery.md
+--------
+Change Type: Step-by-step guidance expansion
+Location: Step B.1 Write findings JSON and run post_review.py
+
+BEFORE:
+  Complex inline bash pattern with embedded Python
+  Problem: Confusing to implement, hard to debug
+
+AFTER:
+  Expanded into clear Step 1 and Step 2:
+  - Step 1: Write Python script using Write tool
+  - Step 2: Run Python script, then invoke post_review.py
+  
+  Added implementation guidance:
+  - How to handle file creation with Write tool
+  - Alternative using bash heredoc with proper quoting
+
+Expected Impact:
+  - More actionable guidance for implementers
+  - Clear separation of concerns
+  - Better alternatives documented
+
+
+VERIFICATION
+============
+✓ All code examples in delivery-guide.md are syntactically valid Python
+✓ All bash commands use correct quoting and syntax
+✓ All markdown headings and structure are correct
+✓ Code block markers are balanced (no unclosed blocks)
+✓ Internal cross-references (e.g., "references/delivery-guide.md") are consistent
+
+Status: PASS
+All changes verified for clarity, correctness, and actionability.

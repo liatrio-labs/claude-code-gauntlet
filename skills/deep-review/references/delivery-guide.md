@@ -38,7 +38,7 @@ Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 
 **Usage:**
 ```bash
-python3 {skill_base}/scripts/post_review.py <findings_json_path>
+python3 {plugin_base}/scripts/post_review.py <findings_json_path>
 ```
 
 **Findings JSON schema:**
@@ -81,33 +81,36 @@ python3 {skill_base}/scripts/post_review.py <findings_json_path>
 
 **Example workflow:**
 
-```bash
-# 1. Build findings JSON using Python (handles all escaping; no heredoc/Write tool issues)
-Bash(command="""python3 -c "
-import json, sys
+Write a temp Python script that builds the findings JSON, then run it. This avoids all quoting/escaping issues — `json.dump` handles serialization regardless of characters in finding content.
+
+```python
+# Step 1: Write $TMPDIR/build_findings.py (via Write tool or heredoc)
+import json
+
 findings = {
-    'review_body': 'Found 3 issues: 1 critical, 2 medium.',
-    'findings': [
+    "review_body": "Found 3 issues: 1 critical, 2 medium.",
+    "findings": [
         {
-            'file': 'app.js',
-            'line': 42,
-            'severity': 'critical',
-            'title': 'SQL injection in query builder',
-            'body': 'User input concatenated into SQL without parameterization.',
-            'suggested_fix_code': 'const query = db.prepare(\'SELECT * FROM users WHERE id = ?\').get(id);'
+            "file": "app.js",
+            "line": 42,
+            "severity": "critical",
+            "title": "SQL injection in query builder",
+            "body": "User input concatenated into SQL without parameterization.",
+            "suggested_fix_code": "const query = db.prepare('SELECT * FROM users WHERE id = ?').get(id);"
         }
     ],
-    'owner': 'myorg',
-    'repo': 'myapp',
-    'pr_number': 42
+    "owner": "myorg",
+    "repo": "myapp",
+    "pr_number": 42
 }
-with open(sys.argv[1], 'w') as f:
-    json.dump(findings, f, ensure_ascii=False, indent=2)
-" "$TMPDIR/deep-review-findings.json"
 
-# 2. Run script
-python3 {skill_base}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
-""")
+with open("/tmp/deep-review-findings.json", "w") as f:
+    json.dump(findings, f, ensure_ascii=False, indent=2)
+```
+
+```bash
+# Step 2: Run build script then post_review.py
+python3 "$TMPDIR/build_findings.py" && python3 {plugin_base}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
 ```
 
 **Script behavior:**
