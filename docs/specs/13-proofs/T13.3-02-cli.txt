@@ -1,0 +1,19 @@
+Type: cli
+Command: git diff skills/deep-review/references/phase2-triage.md
+Expected: Shows addition of Opus note to Phase 2f section
+Timestamp: 2026-03-31T00:00:00Z
+
+Output:
+diff --git a/skills/deep-review/references/phase2-triage.md b/skills/deep-review/references/phase2-triage.md
+index b79c61d..cfdf995 100644
+--- a/skills/deep-review/references/phase2-triage.md
++++ b/skills/deep-review/references/phase2-triage.md
+@@ -113,6 +113,8 @@ If ALL files are low-risk AND total lines <50, ask Light review vs Full review (
+ 
+ Dispatch a **Sonnet agent** for a 3-5 sentence semantic summary describing what the PR *claims* to do, why, and the risk profile. Provided to ALL review agents as shared context.
+ 
++In **Frontier mode**, use an **Opus agent** instead of Sonnet for the summarizer to leverage extended reasoning capabilities.
++
+ **Critical framing rule:** Frame all statements as claims: "The PR claims to reorganize X by extracting from A into B." Never use "clean", "correct", "safe", "straightforward", "simple", "trivial", or "verbatim" — these pre-judge quality. The summary must never conclude that a refactoring is correct.
+ 
+ **Agent tool call template:**

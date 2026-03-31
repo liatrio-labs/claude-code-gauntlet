@@ -1,0 +1,7 @@
+Type: cli
+Command: grep -n "Frontier mode" skills/deep-review/references/phase2-triage.md
+Expected: Shows line containing note about Opus agent in Frontier mode
+Timestamp: 2026-03-31T00:00:00Z
+
+Output:
+116:In **Frontier mode**, use an **Opus agent** instead of Sonnet for the summarizer to leverage extended reasoning capabilities.

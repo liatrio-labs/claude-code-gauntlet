@@ -1,0 +1,18 @@
+Type: file
+Description: Verify Phase 2f section modified with Opus note for Frontier mode
+File: skills/deep-review/references/phase2-triage.md
+Expected: Line 116 contains note about using Opus agent in Frontier mode
+Timestamp: 2026-03-31T00:00:00Z
+
+Content verification:
+## 2f. Change Summarizer
+
+> **You cannot write this summary yourself.** Your growing context biases any summary you produce. A subagent starts clean and produces an uncontaminated summary. This is not optional.
+
+Dispatch a **Sonnet agent** for a 3-5 sentence semantic summary describing what the PR *claims* to do, why, and the risk profile. Provided to ALL review agents as shared context.
+
+In **Frontier mode**, use an **Opus agent** instead of Sonnet for the summarizer to leverage extended reasoning capabilities.
+
+**Critical framing rule:** Frame all statements as claims: "The PR claims to reorganize X by extracting from A into B." Never use "clean", "correct", "safe", "straightforward", "simple", "trivial", or "verbatim" — these pre-judge quality. The summary must never conclude that a refactoring is correct.
+
+**Agent tool call template:**
