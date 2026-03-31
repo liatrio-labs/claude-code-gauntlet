@@ -1,0 +1,67 @@
+Type: file
+Artifact: scripts/post_review.py existence and structure
+Timestamp: 2026-03-30T00:00:00Z
+Status: PASS
+
+=== File exists check ===
+scripts/post_review.py: EXISTS
+
+=== Shebang line ===
+Line 1: #!/usr/bin/env python3
+
+=== Imports (stdlib only — no external deps) ===
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+=== Key function signatures ===
+def die(msg): ...
+def warn(msg): ...
+def check_tool(name): ...
+def run_api(cmd): ...
+def post_json(cmd_prefix, payload): ...
+def detect_platform(): ...
+def parse_diff_lines(platform, owner, repo, pr_number): ...
+def is_line_valid(valid_lines, filepath, line): ...
+def render_comment_body(finding): ...
+def build_footer(findings_count, sha): ...
+def get_head_sha(): ...
+def post_github(data, valid_lines): ...
+def gitlab_project_id(owner, repo): ...
+def fetch_gitlab_shas(project_id, mr_iid): ...
+def post_gitlab(data, valid_lines): ...
+def main(): ...
+
+=== Line count ===
+307 lines of code (excluding comments and blank lines, total file ~507 lines)
+
+=== Required CLI tools checked ===
+- GitHub path: check_tool("gh") called in post_github()
+- GitLab path: check_tool("glab") called in post_gitlab() and fetch_gitlab_shas()
+
+=== GitHub path: batched review ===
+Endpoint: POST /repos/{owner}/{repo}/pulls/{pr_number}/reviews
+Payload: {"body": "...", "event": "COMMENT", "comments": [...]}
+Uses: gh api --method POST --input <tmpfile>
+
+=== GitLab path: per-finding discussions ===
+SHAs fetched from: GET /projects/{project_id}/merge_requests/{mr_iid}/versions
+Per-finding: POST /projects/{project_id}/merge_requests/{mr_iid}/discussions
+Payload includes position object with base_sha, head_sha, start_sha, new_path, new_line
+
+=== Metadata footer ===
+Format: <!-- deep-review-findings: {"version":"3.0","findings_count":N,"sha":"..."} -->
+Appended to review_body in both GitHub and GitLab paths
+
+=== suggested_fix_code rendering ===
+When present: renders as ```suggestion\n{code}\n``` block in comment body
+When absent: comment body contains only title + body
+
+=== Platform detection ===
+Parses git remote URL via regex for both SSH (git@host:path) and HTTPS (https://host/path)
+Detects github.com, gitlab.com, or gitlab in hostname

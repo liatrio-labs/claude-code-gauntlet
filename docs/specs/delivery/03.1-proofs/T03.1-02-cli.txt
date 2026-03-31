@@ -1,0 +1,78 @@
+Type: cli
+Command: python3 scripts/post_review.py (unit tests + error handling)
+Timestamp: 2026-03-30T00:00:00Z
+Status: PASS
+
+=== Unit Tests (9/9 PASSED) ===
+
+PASS: render_comment_body with suggestion
+  output: **🟠 [HIGH] SQL injection**
+
+Direct concatenation.
+
+```suggestion
+cursor.execute(query, (uid,))
+```
+
+PASS: render_comment_body no suggestion
+  output: **💡 [LOW] Nit**
+
+Minor.
+
+PASS: build_footer metadata
+  output: <!-- deep-review-findings: {"version":"3.0","findings_count":5,"sha":"abc123def456abc123def456abc123def456abc1"} -->
+
+PASS: is_line_valid None passthrough
+  output: returned True
+
+PASS: is_line_valid valid line
+  output: returned True for line 42
+
+PASS: is_line_valid invalid line
+  output: returned False for line 999
+
+PASS: gitlab_project_id encoding
+  output: myorg%2Fmyrepo
+
+PASS: detect_platform SSH github.com
+  output: host=github.com
+
+PASS: detect_platform HTTPS gitlab.com
+  output: host=gitlab.com
+
+Result: 9/9 tests PASSED
+
+=== Error Handling Tests (3/3 PASSED) ===
+
+Test: missing required field 'pr_number'
+  Command: python3 scripts/post_review.py <file with owner+repo but no pr_number>
+  Exit code: 1
+  stderr: ERROR: Missing required field in findings JSON: 'pr_number'
+  Status: PASS
+
+Test: invalid JSON input
+  Command: python3 scripts/post_review.py <file with "not valid json{{{">
+  Exit code: 1
+  stderr: ERROR: Invalid JSON in findings file: Expecting value: line 1 column 1 (char 0)
+  Status: PASS
+
+Test: file not found
+  Command: python3 scripts/post_review.py /tmp/nonexistent-99999.json
+  Exit code: 1
+  stderr: ERROR: Findings file not found: /tmp/nonexistent-99999.json
+  Status: PASS
+
+=== --help output ===
+usage: post_review.py [-h] findings_json
+
+Post deep-review findings as PR/MR comments.
+
+positional arguments:
+  findings_json  Path to the findings JSON file.
+
+options:
+  -h, --help     show this help message and exit
+
+=== Python syntax check ===
+Command: python3 -m py_compile scripts/post_review.py
+Result: Syntax OK (exit 0)

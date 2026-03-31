@@ -1,0 +1,507 @@
+#!/usr/bin/env python3
+"""
+post_review.py — Deterministic PR/MR comment delivery for deep-review.
+
+Usage:
+    python3 post_review.py <findings_json_path>
+
+Input JSON schema:
+    {
+        "review_body": "...",
+        "findings": [
+            {
+                "file": "src/foo.py",
+                "line": 42,
+                "end_line": 45,          # optional
+                "severity": "high",
+                "title": "SQL injection risk",
+                "body": "...",
+                "suggested_fix_code": "..."  # optional — renders as suggestion block
+            }
+        ],
+        "platform": "github",            # optional — auto-detected from git remote
+        "owner": "myorg",
+        "repo": "myrepo",
+        "pr_number": 7
+    }
+
+Platform detection:
+    Parses git remote URL to detect github.com vs gitlab.com vs self-hosted.
+    Override with "platform" field: "github" or "gitlab".
+
+GitHub path:
+    Single POST /repos/{owner}/{repo}/pulls/{n}/reviews with comments array,
+    event: "COMMENT", via gh api --input.
+
+GitLab path:
+    Fetches MR version SHAs (GET /projects/{id}/merge_requests/{iid}/versions).
+    Posts per-finding discussion with position object, via glab api --input.
+
+Line validation:
+    Parses diff to validate each finding line is in the diff.
+    Skips findings with invalid lines with a warning.
+
+No external Python dependencies — stdlib only.
+"""
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def die(msg):
+    print(f"ERROR: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
+def warn(msg):
+    print(f"WARNING: {msg}", file=sys.stderr)
+
+
+def check_tool(name):
+    """Exit with clear error if CLI tool is not available."""
+    result = subprocess.run(
+        ["which", name], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        die(
+            f"'{name}' CLI tool not found. "
+            f"Install it and ensure it is authenticated before running this script."
+        )
+
+
+def run_api(cmd):
+    """Run a CLI API command. Returns (stdout, stderr, returncode)."""
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.stdout, result.stderr, result.returncode
+
+
+def post_json(cmd_prefix, payload):
+    """Write payload to a temp file and pass via --input. Returns parsed response."""
+    fd, tmppath = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        cmd = cmd_prefix + ["--input", tmppath]
+        stdout, stderr, rc = run_api(cmd)
+        if rc != 0:
+            die(
+                f"API call failed (exit {rc}).\n"
+                f"Command: {' '.join(cmd)}\n"
+                f"stderr: {stderr.strip()}"
+            )
+        if not stdout.strip():
+            return {}
+        try:
+            return json.loads(stdout)
+        except json.JSONDecodeError:
+            warn(f"Could not parse API response as JSON: {stdout[:200]}")
+            return {"raw": stdout}
+    finally:
+        if os.path.exists(tmppath):
+            os.unlink(tmppath)
+
+
+# ---------------------------------------------------------------------------
+# Platform detection
+# ---------------------------------------------------------------------------
+
+def detect_platform():
+    """Parse git remote URL to detect github.com vs gitlab.com vs self-hosted."""
+    stdout, _, rc = run_api(["git", "remote", "get-url", "origin"])
+    if rc != 0:
+        return None, None
+    url = stdout.strip()
+
+    # Normalize SSH git@host:path to https-style for parsing
+    # git@github.com:owner/repo.git  ->  github.com/owner/repo
+    ssh_match = re.match(r"git@([^:]+):(.+?)(?:\.git)?$", url)
+    if ssh_match:
+        host = ssh_match.group(1)
+        path = ssh_match.group(2)
+    else:
+        # https://host/path or http://host/path
+        https_match = re.match(r"https?://([^/]+)/(.+?)(?:\.git)?$", url)
+        if not https_match:
+            return None, None
+        host = https_match.group(1)
+        path = https_match.group(2)
+
+    if "github.com" in host:
+        return "github", host
+    if "gitlab.com" in host or "gitlab" in host:
+        return "gitlab", host
+    # Unknown host — return host so caller can decide
+    return None, host
+
+
+# ---------------------------------------------------------------------------
+# Diff parsing — line validation
+# ---------------------------------------------------------------------------
+
+def parse_diff_lines(platform, owner, repo, pr_number):
+    """
+    Return a set of (filepath, line_number) tuples for lines present in the diff.
+    Line numbers are relative to the new (head) version of each file.
+    """
+    if platform == "github":
+        stdout, stderr, rc = run_api(
+            ["gh", "pr", "diff", str(pr_number), "--repo", f"{owner}/{repo}"]
+        )
+    elif platform == "gitlab":
+        # For GitLab, use glab mr diff
+        stdout, stderr, rc = run_api(
+            ["glab", "mr", "diff", str(pr_number)]
+        )
+    else:
+        warn("Unknown platform — skipping diff validation. All findings will be posted.")
+        return None
+
+    if rc != 0:
+        warn(
+            f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
+            "Skipping line validation — all findings will be posted."
+        )
+        return None
+
+    valid_lines = set()
+    current_file = None
+    new_line = 0
+
+    for raw_line in stdout.splitlines():
+        # New file header: +++ b/path/to/file
+        file_match = re.match(r"^\+\+\+ b/(.+)$", raw_line)
+        if file_match:
+            current_file = file_match.group(1)
+            new_line = 0
+            continue
+
+        # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
+        hunk_match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", raw_line)
+        if hunk_match:
+            new_line = int(hunk_match.group(1))
+            continue
+
+        if current_file is None:
+            continue
+
+        if raw_line.startswith("+") and not raw_line.startswith("+++"):
+            # Added line — valid for inline comment
+            valid_lines.add((current_file, new_line))
+            new_line += 1
+        elif raw_line.startswith("-") and not raw_line.startswith("---"):
+            # Removed line — does not advance new_line
+            pass
+        elif not raw_line.startswith("\\"):
+            # Context line (no prefix or space prefix)
+            valid_lines.add((current_file, new_line))
+            new_line += 1
+
+    return valid_lines
+
+
+def is_line_valid(valid_lines, filepath, line):
+    """Check whether (filepath, line) appears in the diff."""
+    if valid_lines is None:
+        return True  # validation skipped
+    # Try exact path and also path without leading component
+    if (filepath, line) in valid_lines:
+        return True
+    # Strip leading "a/" or "b/" if present
+    stripped = re.sub(r"^[ab]/", "", filepath)
+    return (stripped, line) in valid_lines
+
+
+# ---------------------------------------------------------------------------
+# Comment body rendering
+# ---------------------------------------------------------------------------
+
+def render_comment_body(finding):
+    """Build the markdown comment body for a finding."""
+    severity = finding.get("severity", "medium").lower()
+    emoji_map = {
+        "critical": "🔴",
+        "high": "🟠",
+        "medium": "🟡",
+        "low": "💡",
+    }
+    emoji = emoji_map.get(severity, "💡")
+
+    title = finding.get("title", "Finding")
+    body = finding.get("body", "")
+    suggested_fix = finding.get("suggested_fix_code", "")
+
+    parts = [f"**{emoji} [{severity.upper()}] {title}**", "", body]
+
+    if suggested_fix:
+        parts += [
+            "",
+            "```suggestion",
+            suggested_fix.rstrip("\n"),
+            "```",
+        ]
+
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
+# Metadata footer
+# ---------------------------------------------------------------------------
+
+def build_footer(findings_count, sha):
+    metadata = {
+        "version": "3.0",
+        "findings_count": findings_count,
+        "sha": sha,
+    }
+    return f"\n\n<!-- deep-review-findings: {json.dumps(metadata, separators=(',', ':'))} -->"
+
+
+def get_head_sha():
+    stdout, _, rc = run_api(["git", "rev-parse", "HEAD"])
+    return stdout.strip() if rc == 0 else "unknown"
+
+
+# ---------------------------------------------------------------------------
+# GitHub delivery
+# ---------------------------------------------------------------------------
+
+def post_github(data, valid_lines):
+    owner = data["owner"]
+    repo = data["repo"]
+    pr_number = data["pr_number"]
+    findings = data.get("findings", [])
+
+    check_tool("gh")
+
+    comments = []
+    skipped = []
+    for f in findings:
+        filepath = f["file"]
+        line = f["line"]
+        if not is_line_valid(valid_lines, filepath, line):
+            warn(
+                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+                "— line not found in diff."
+            )
+            skipped.append(f)
+            continue
+
+        comment = {
+            "path": filepath,
+            "line": line,
+            "side": "RIGHT",
+            "body": render_comment_body(f),
+        }
+        # Add start_line for multi-line comments
+        end_line = f.get("end_line")
+        if end_line and end_line != line:
+            comment["start_line"] = line
+            comment["start_side"] = "RIGHT"
+            comment["line"] = end_line
+
+        comments.append(comment)
+
+    sha = get_head_sha()
+    review_body = data.get("review_body", "")
+    review_body += build_footer(len(findings), sha)
+
+    payload = {
+        "body": review_body,
+        "event": "COMMENT",
+        "comments": comments,
+    }
+
+    cmd_prefix = [
+        "gh", "api",
+        "--method", "POST",
+        "-H", "Accept: application/vnd.github+json",
+        f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
+    ]
+
+    resp = post_json(cmd_prefix, payload)
+    url = resp.get("html_url", resp.get("id", "posted"))
+    print(f"Review posted: {url}")
+    print(f"  {len(comments)} inline comment(s) posted.")
+    if skipped:
+        print(f"  {len(skipped)} finding(s) skipped (lines not in diff).")
+
+
+# ---------------------------------------------------------------------------
+# GitLab delivery
+# ---------------------------------------------------------------------------
+
+def gitlab_project_id(owner, repo):
+    """Return URL-encoded project path for use in GitLab API."""
+    path = f"{owner}/{repo}"
+    return path.replace("/", "%2F")
+
+
+def fetch_gitlab_shas(project_id, mr_iid):
+    """Fetch latest MR version SHAs from GitLab."""
+    check_tool("glab")
+    stdout, stderr, rc = run_api(
+        ["glab", "api", f"projects/{project_id}/merge_requests/{mr_iid}/versions"]
+    )
+    if rc != 0:
+        die(
+            f"Failed to fetch MR versions (exit {rc}): {stderr.strip()}\n"
+            "Ensure glab is authenticated and the MR IID is correct."
+        )
+    try:
+        versions = json.loads(stdout)
+    except json.JSONDecodeError:
+        die(f"Could not parse MR versions response: {stdout[:200]}")
+
+    if not versions:
+        die("MR versions endpoint returned an empty list.")
+
+    latest = versions[0]
+    return (
+        latest["base_commit_sha"],
+        latest["head_commit_sha"],
+        latest["start_commit_sha"],
+    )
+
+
+def post_gitlab(data, valid_lines):
+    owner = data["owner"]
+    repo = data["repo"]
+    mr_iid = data["pr_number"]
+    findings = data.get("findings", [])
+
+    check_tool("glab")
+
+    project_id = gitlab_project_id(owner, repo)
+    base_sha, head_sha, start_sha = fetch_gitlab_shas(project_id, mr_iid)
+
+    sha = get_head_sha()
+    review_body = data.get("review_body", "")
+    review_body += build_footer(len(findings), sha)
+
+    # Post the review summary as a top-level MR note first
+    summary_payload = {"body": review_body}
+    cmd_prefix = [
+        "glab", "api",
+        "--method", "POST",
+        "--header", "Content-Type: application/json",
+        f"projects/{project_id}/merge_requests/{mr_iid}/notes",
+    ]
+    post_json(cmd_prefix, summary_payload)
+    print("MR summary note posted.")
+
+    # Post each finding as an inline discussion
+    posted = 0
+    skipped = 0
+    for f in findings:
+        filepath = f["file"]
+        line = f.get("line")
+        if line is None:
+            warn(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
+            skipped += 1
+            continue
+
+        if not is_line_valid(valid_lines, filepath, line):
+            warn(
+                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+                "— line not found in diff."
+            )
+            skipped += 1
+            continue
+
+        payload = {
+            "body": render_comment_body(f),
+            "position": {
+                "position_type": "text",
+                "base_sha": base_sha,
+                "head_sha": head_sha,
+                "start_sha": start_sha,
+                "old_path": filepath,
+                "new_path": filepath,
+                "new_line": line,
+            },
+        }
+
+        cmd_prefix = [
+            "glab", "api",
+            "--method", "POST",
+            "--header", "Content-Type: application/json",
+            f"projects/{project_id}/merge_requests/{mr_iid}/discussions",
+        ]
+        resp = post_json(cmd_prefix, payload)
+        posted += 1
+
+    print(f"  {posted} inline discussion(s) posted.")
+    if skipped:
+        print(f"  {skipped} finding(s) skipped.")
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Post deep-review findings as PR/MR comments."
+    )
+    parser.add_argument(
+        "findings_json",
+        help="Path to the findings JSON file.",
+    )
+    args = parser.parse_args()
+
+    # Load input
+    try:
+        with open(args.findings_json) as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        die(f"Findings file not found: {args.findings_json}")
+    except json.JSONDecodeError as e:
+        die(f"Invalid JSON in findings file: {e}")
+
+    # Validate required fields
+    for field in ("owner", "repo", "pr_number"):
+        if field not in data:
+            die(f"Missing required field in findings JSON: '{field}'")
+
+    # Determine platform
+    platform = data.get("platform")
+    if platform:
+        platform = platform.lower()
+    else:
+        detected, host = detect_platform()
+        if detected:
+            platform = detected
+            print(f"Detected platform: {platform} (from git remote: {host})")
+        else:
+            die(
+                "Could not detect platform from git remote. "
+                "Set 'platform' field in findings JSON to 'github' or 'gitlab'."
+            )
+
+    if platform not in ("github", "gitlab"):
+        die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
+
+    # Validate diff lines
+    valid_lines = parse_diff_lines(
+        platform, data["owner"], data["repo"], data["pr_number"]
+    )
+
+    # Deliver
+    if platform == "github":
+        post_github(data, valid_lines)
+    else:
+        post_gitlab(data, valid_lines)
+
+
+if __name__ == "__main__":
+    main()
