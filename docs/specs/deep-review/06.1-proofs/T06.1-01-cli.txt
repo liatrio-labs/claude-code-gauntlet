@@ -1,0 +1,15 @@
+Type: cli
+Command: grep -c 'call chain' agents/challenger.md
+Expected: >=2
+Timestamp: 2026-03-31T00:00:00Z
+Status: PASS
+
+Output:
+3
+
+The command found 3 occurrences of 'call chain' in agents/challenger.md, satisfying the >= 2 requirement.
+
+Locations:
+1. Line 38: "You MUST attempt to construct a concrete call chain from an entry point..."
+2. Line 57: "25 = probably wrong — code likely handles this correctly, issue is unreachable, or issue requires a call chain you cannot construct"
+3. Line 59: "75 = probably correct — no meaningful counter-evidence found and you can trace a plausible call chain to the finding"

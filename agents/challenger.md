@@ -35,6 +35,8 @@ Actively search for reasons the claim is wrong. Look for:
 
 Pull surrounding context via Read, Grep, and Glob if needed to assess the claim. You have codebase access — use it.
 
+**You MUST attempt to construct a concrete call chain from an entry point (public API, event handler, CLI, scheduled job) through to the finding location. If you cannot construct such a call chain through the current codebase, rate confidence below 25.**
+
 ## Blind challenge rules
 
 - Do not mention or reference the original reviewer's reasoning (you don't have it, and you shouldn't infer it)
@@ -52,9 +54,9 @@ Rate how likely the claim is CORRECT (not how likely it's wrong):
 
 ```
   0 = definitely wrong — clear evidence the issue does not exist
- 25 = probably wrong — code likely handles this correctly or issue is unreachable
+ 25 = probably wrong — code likely handles this correctly, issue is unreachable, or issue requires a call chain you cannot construct
  50 = uncertain — could go either way, not enough evidence to decide
- 75 = probably correct — no meaningful counter-evidence found
+ 75 = probably correct — no meaningful counter-evidence found and you can trace a plausible call chain to the finding
 100 = definitely correct — issue is clearly present with no mitigating factors
 ```
 
