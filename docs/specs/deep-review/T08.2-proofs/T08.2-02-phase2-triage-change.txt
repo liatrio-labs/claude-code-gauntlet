@@ -1,0 +1,33 @@
+Type: file
+File: skills/deep-review/references/phase2-triage.md
+Expected: Delegation/proxy/cache pattern flagged as high-risk in section 2e
+Timestamp: 2026-03-31T18:00:00Z
+
+Verification:
+
+--- Change: High-risk file classification updated (2e) ---
+Section "2e. Classify Changed Files by Risk Level" high-risk line now reads:
+  "High risk — auth, security, payment, data access, public APIs, DB migrations, crypto,
+   infra/deploy, permission/RBAC. Also >200 lines changed. Also: files implementing a
+   cache, proxy, decorator, or delegation pattern (caching proxies are a common source of
+   recursive delegation and stale-data bugs — flag these even if the diff appears
+   mechanical)."
+
+Root cause addressed: RC-1 (keycloak-PR32918 — the orchestrator classified
+InfinispanIdentityProviderStorageProvider.java with no explicit high-risk flag for caching
+proxy patterns; expanding the high-risk definition ensures such files get expanded context
+with callers, callees, and related tests)
+
+Impact: When triage encounters a file that implements a caching layer, proxy, or delegation
+wrapper, it will now be classified as high-risk regardless of other criteria. This triggers
+expanded context gathering (callers, callees, related tests) and ensures the bug-detector
+receives the full class hierarchy for delegation tracing.
+
+Consistency check:
+- The 2e high-risk bullet now consistently covers both "why" (auth, security) and
+  "what patterns" (cache, proxy, delegation) as risk dimensions
+- The note "(flag these even if the diff appears mechanical)" directly addresses the
+  keycloak scenario where the diff was small (+268 lines) but the class hierarchy
+  interaction was the bug vector
+
+Status: PASS

@@ -95,7 +95,7 @@ See `references/review-md-spec.md` section Discovery for the full prompts and sc
 
 ## 2e. Classify Changed Files by Risk Level
 
-- **High risk** — auth, security, payment, data access, public APIs, DB migrations, crypto, infra/deploy, permission/RBAC. Also >200 lines changed.
+- **High risk** — auth, security, payment, data access, public APIs, DB migrations, crypto, infra/deploy, permission/RBAC. Also >200 lines changed. Also: files implementing a cache, proxy, decorator, or delegation pattern (caching proxies are a common source of recursive delegation and stale-data bugs — flag these even if the diff appears mechanical).
 - **Medium risk** — business logic, services, controllers, middleware, state management. 50-200 lines changed.
 - **Low risk** — tests, docs, config, generated code, lockfiles, formatting-only. <50 lines changed.
 

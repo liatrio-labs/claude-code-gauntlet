@@ -1,0 +1,71 @@
+Type: file
+File: agents/bug-detector.md
+Expected: Delegation/proxy tracing guidance (RC-1), auth-context null-handling (RC-2/V4-06), test code logic bug scope clarification (RC-2), anti-anchoring note (RC-5)
+Timestamp: 2026-03-31T18:00:00Z
+
+Verification:
+
+--- Change 1: Anti-anchoring note added to step 1 (RC-5) ---
+Step 1 now contains:
+  "Anti-anchoring: The change summary describes what the author intended to change,
+   not every path that can go wrong. If the summary emphasizes one aspect (e.g., 'adds
+   invalidation logic'), do not limit your analysis to that aspect — also analyze the
+   paths not mentioned (e.g., the read/retrieval path of a cache, the pass-through
+   methods of a proxy, the non-happy auth paths). The most critical bugs are often on
+   paths the author did not focus on."
+
+Root cause addressed: RC-5 (change summary anchored bug-detector toward invalidation
+logic, preventing analysis of retrieval/delegation path)
+
+--- Change 2: New step 10 — delegation/proxy tracing (RC-1) ---
+After step 9 (timeout handling), new step 10:
+  "Trace delegation/proxy/wrapper patterns. When code implements a cache, proxy,
+   decorator, or wrapper pattern, explicitly verify three things: (a) does the wrapper
+   delegate to the underlying implementation, not back to itself? (recursive delegation
+   is a common silent failure — a cache calling this.method() instead of delegate.method()
+   loops forever or returns stale data without error); (b) does the wrapper use the correct
+   delegate reference (delegate vs this vs session vs handler)? (c) does every method that
+   should pass through actually call the underlying layer, or does some path call the
+   wrapper's own method instead? Read the full class hierarchy — the delegation bug is
+   usually in a method the diff didn't directly change but whose behavior is affected by
+   the changed wiring."
+
+Root cause addressed: RC-1 (bug-detector had no guidance to check whether caching proxy
+delegates correctly; missed CRITICAL recursive caching bug in InfinispanIdentityProviderStorageProvider)
+
+--- Change 3: New step 11 — auth-context null-handling (V4-06) ---
+After step 10, new step 11:
+  "Check auth-context null-handling. In authentication/authorization code, verify that
+   every code path that dereferences a user, member, or organization object guards against
+   None/null. Special attention to: (a) API key authentication paths where
+   organization_context.member may be None (API keys have no associated membership
+   record); (b) service account / system-level auth where the user object may be None or
+   lack standard attributes; (c) expressions that combine an is_superuser/is_admin check
+   with a member attribute access using or — Python and JS short-circuit or, but if the
+   left side is False the right side still executes and crashes if member is None. Do not
+   assume that auth middleware guarantees a non-None member — check the specific permission
+   class's has_permission() method to verify which auth methods it admits."
+
+Root cause addressed: V4-06 (sentry-PR1 missed HIGH finding: organization_context.member
+is None for API key auth causing AttributeError)
+
+--- Change 4: Auth-context bullet in Null/undefined handling section ---
+Added to "Null/undefined handling" bullet list:
+  "Auth-context objects (member, user, organization) assumed non-null when certain auth
+   paths (API key, service account, anonymous) leave them as None/null — check the type
+   signature of context objects"
+
+--- Change 5: Test code logic bug scope clarification (RC-2) ---
+In "What you do NOT report" section, changed:
+  OLD: "Error handling in test code (test assertions are expected to throw)"
+  NEW: "Error handling style in test code (test assertions are expected to throw)"
+       "Note: Logic bugs in test code ARE in scope when the test file is part of this PR.
+       Wrong assertions, incorrect fixture setup, mismatched cleanup values (e.g., cleanup
+       deleting the wrong ID), and incorrect test data that make the test pass vacuously —
+       these are real bugs introduced by this diff and should be reported."
+
+Root cause addressed: RC-2 (no agent analyzed test file for logic bugs; test-analyzer
+focuses on coverage gaps, bug-detector exclusion language may have deprioritized test
+file analysis)
+
+Status: PASS
