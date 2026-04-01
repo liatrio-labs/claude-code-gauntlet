@@ -20,6 +20,9 @@ Thumbs.db
 __pycache__/
 *.pyc
 
+# Claude Code local settings
+.claude/
+
 # AI Artifacts
 docs/specs/
 docs/temp/
