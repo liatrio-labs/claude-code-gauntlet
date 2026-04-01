@@ -1,0 +1,18 @@
+Type: file
+Description: Verify phase3-dispatch.md now contains embedded scoping rules for all agents
+Command: grep -n "Scoped diff" /Users/lee/personal/claude-deep-review/skills/deep-review/references/phase3-dispatch.md
+Expected: Multiple scoped diff comments showing per-agent scoping rules
+Timestamp: 2026-03-31T21:15:00Z
+
+=== OUTPUT ===
+63:    Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
+78:    Scoped diff (ALL changed files — do not filter by risk level):
+93:    Scoped diff (ALL changed files + entire codebase for symbol search):
+108:    Scoped diff (changed production files plus all test files):
+123:    Scoped diff (ALL changed files for full convention and intent checking):
+138:    Scoped diff (files with new type definitions only):
+153:    Scoped diff (all changed files for simplification opportunities):
+169:    Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
+
+Status: PASS
+Notes: All 7 agent dispatch templates (including Frontier mode example) now have explicit scoping rules embedded in the prompt template. The scoping reminders are parenthetical comments that prevent the orchestrator from applying risk-based filtering to agents that should receive all files (security-reviewer, cross-file-impact, conventions-and-intent, code-simplifier).

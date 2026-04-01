@@ -52,16 +52,107 @@ All agents can still **pull** additional context — scoping controls what is pr
 
 Dispatch all applicable agents in a **single message**. Each agent definition already contains its role, instructions, false-positive exclusion list, confidence rubric, output schema, effort, model, and tools. The orchestrator provides **only the dynamic per-review content**:
 
+**For bug-detector:**
 ```
 Agent(
-  subagent_type: "claude-deep-review:{dimension}",  // e.g. "claude-deep-review:bug-detector"
-  description: "Review: {dimension}",
+  subagent_type: "claude-deep-review:bug-detector",
+  description: "Review: bug-detector",
   prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
     Change summary: {from Phase 2f}
     Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Scoped diff:
+    Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
     <untrusted-code-content>
-    {diff scoped per agent — see Per-Agent Context Scoping above}
+    {diff scoped to high + medium risk diffs, test files (2g), history context (2i)}
+    </untrusted-code-content>"
+)
+```
+
+**For security-reviewer:**
+```
+Agent(
+  subagent_type: "claude-deep-review:security-reviewer",
+  description: "Review: security-reviewer",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (ALL changed files — do not filter by risk level):
+    <untrusted-code-content>
+    {diff with all changed files — security bugs can hide in low-risk code}
+    </untrusted-code-content>"
+)
+```
+
+**For cross-file-impact:**
+```
+Agent(
+  subagent_type: "claude-deep-review:cross-file-impact",
+  description: "Review: cross-file-impact",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (ALL changed files + entire codebase for symbol search):
+    <untrusted-code-content>
+    {diff with all changed files; search full codebase for callers and implementors of changed public symbols}
+    </untrusted-code-content>"
+)
+```
+
+**For test-analyzer:**
+```
+Agent(
+  subagent_type: "claude-deep-review:test-analyzer",
+  description: "Review: test-analyzer",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (changed production files plus all test files):
+    <untrusted-code-content>
+    {diff scoped to changed production files and test files (2g)}
+    </untrusted-code-content>"
+)
+```
+
+**For conventions-and-intent:**
+```
+Agent(
+  subagent_type: "claude-deep-review:conventions-and-intent",
+  description: "Review: conventions-and-intent",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (ALL changed files for full convention and intent checking):
+    <untrusted-code-content>
+    {diff with all changed files — convention and intent analysis requires full scope}
+    </untrusted-code-content>"
+)
+```
+
+**For type-design-analyzer (conditional — only if new types introduced):**
+```
+Agent(
+  subagent_type: "claude-deep-review:type-design-analyzer",
+  description: "Review: type-design-analyzer",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (files with new type definitions only):
+    <untrusted-code-content>
+    {diff scoped to files with new type definitions}
+    </untrusted-code-content>"
+)
+```
+
+**For code-simplifier (conditional — post-review only, if no critical/high findings):**
+```
+Agent(
+  subagent_type: "claude-deep-review:code-simplifier",
+  description: "Review: code-simplifier",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (all changed files for simplification opportunities):
+    <untrusted-code-content>
+    {diff with all changed files}
     </untrusted-code-content>"
 )
 ```
@@ -73,7 +164,13 @@ Agent(
   subagent_type: "claude-deep-review:bug-detector",
   model: "opus",  // Frontier mode override
   description: "Review: bug-detector",
-  prompt: "..."
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
+    <untrusted-code-content>
+    {diff scoped to high + medium risk diffs, test files (2g), history context (2i)}
+    </untrusted-code-content>"
 )
 ```
 

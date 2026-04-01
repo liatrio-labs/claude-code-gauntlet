@@ -1,0 +1,24 @@
+Type: file
+Description: Verify security-reviewer agent has "ALL changed files" scoping rule embedded
+Command: sed -n '70,83p' /Users/lee/personal/claude-deep-review/skills/deep-review/references/phase3-dispatch.md
+Expected: Security-reviewer template should explicitly state "ALL changed files — do not filter by risk level"
+Timestamp: 2026-03-31T21:15:00Z
+
+=== OUTPUT ===
+**For security-reviewer:**
+```
+Agent(
+  subagent_type: "claude-deep-review:security-reviewer",
+  description: "Review: security-reviewer",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (ALL changed files — do not filter by risk level):
+    <untrusted-code-content>
+    {diff with all changed files — security bugs can hide in low-risk code}
+    </untrusted-code-content>"
+)
+```
+
+Status: PASS
+Notes: The security-reviewer template now explicitly states "ALL changed files — do not filter by risk level" with the parenthetical reminder about security bugs hiding in low-risk code. This prevents the orchestrator from applying risk-based filtering that would be dangerous for security review.

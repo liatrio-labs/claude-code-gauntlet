@@ -1,0 +1,24 @@
+Type: file
+Description: Verify cross-file-impact agent has "ALL changed files" and codebase search scoping rule
+Command: sed -n '85,98p' /Users/lee/personal/claude-deep-review/skills/deep-review/references/phase3-dispatch.md
+Expected: cross-file-impact template should state "ALL changed files + entire codebase for symbol search"
+Timestamp: 2026-03-31T21:15:00Z
+
+=== OUTPUT ===
+**For cross-file-impact:**
+```
+Agent(
+  subagent_type: "claude-deep-review:cross-file-impact",
+  description: "Review: cross-file-impact",
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+    Change summary: {from Phase 2f}
+    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Scoped diff (ALL changed files + entire codebase for symbol search):
+    <untrusted-code-content>
+    {diff with all changed files; search full codebase for callers and implementors of changed public symbols}
+    </untrusted-code-content>"
+)
+```
+
+Status: PASS
+Notes: The cross-file-impact template now explicitly states "ALL changed files + entire codebase for symbol search" with the parenthetical instruction to search the full codebase. This prevents filtering and ensures the agent can perform comprehensive caller/implementor tracing.
