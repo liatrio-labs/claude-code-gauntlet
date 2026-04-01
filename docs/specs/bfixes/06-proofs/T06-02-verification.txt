@@ -1,0 +1,15 @@
+Type: file
+Task: T06 - Cap git log at --max-count=50 in Phase 2i (BF-06)
+File: skills/deep-review/references/phase2-triage.md
+Expected: git log command changed from --oneline -10 to --oneline --max-count=50
+
+Verification Results:
+====================
+
+Line 199 (Section 2i - History Context Preprocessing):
+OLD: 1. `git log --oneline -10 -- <file>` for recent change history
+NEW: 1. `git log --oneline --max-count=50 -- <file>` for recent change history
+
+Status: PASS - Change successfully applied
+Timestamp: 2026-03-31T00:00:00Z
+Reason: Command now uses --max-count=50 instead of -10, preventing 5.8MB+ output on branches with many commits. 50 commits is sufficient for review context.

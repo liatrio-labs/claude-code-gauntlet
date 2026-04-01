@@ -196,7 +196,7 @@ Then use **Read** to load relevant files for each changed file's directory. Neve
 ## 2i. History Context Preprocessing
 
 **Deterministic preprocessing, not an LLM agent.** For each changed file:
-1. `git log --oneline -10 -- <file>` for recent change history
+1. `git log --oneline --max-count=50 -- <file>` for recent change history
 2. `git blame` on changed line ranges (used by verify_findings.py in Phase 4)
 
 Distribute: bug-detector gets history context; conventions-and-intent gets pattern drift context.
