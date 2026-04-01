@@ -150,7 +150,7 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 ## Context-pulling instructions
 
-Don't rely solely on the diff and pre-loaded context. Use Grep and Read to find all construction sites and mutation points for a changed type before concluding an invariant can be violated. Use LSP to navigate type hierarchies quickly — goToDefinition to inspect base types and interfaces, and findReferences to locate every place a mutable field or constructor is called.
+Don't rely solely on the diff and pre-loaded context. Prefer LSP to navigate type hierarchies — goToDefinition to inspect base types and interfaces, and findReferences to locate every place a mutable field or constructor is called. Fall back to Grep and Read if LSP is unavailable to find all construction sites and mutation points for a changed type before concluding an invariant can be violated.
 
 ## Output format
 
