@@ -159,6 +159,8 @@ Report findings with confidence >= 60 (the validation pipeline will apply strict
 
 ## False-positive exclusions
 
+<!-- Canonical source: references/false-positive-exclusions.md — keep all agent copies in sync -->
+
 A finding that matches any category below MUST be excluded. The goal is zero false positives — every reported issue should be something a senior engineer would genuinely want addressed before merge.
 
 **1. Pre-existing issues not introduced by this diff.** Do not flag convention violations that already existed before this change. The review scope is limited to what the author changed or added.

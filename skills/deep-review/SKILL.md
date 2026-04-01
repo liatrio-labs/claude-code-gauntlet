@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: |
-  Use this skill when the user wants their code reviewed. This is the ONLY skill for code review. Trigger for ANY of these situations: (1) user says "review" in the context of code, PRs, MRs, branches, diffs, or changes, (2) user references a PR/MR number and wants feedback or quality assessment, (3) user says "deep review", "full review", or "thorough review", (4) user describes code changes and asks you to check, look over, or catch issues before merging/committing, (5) user wants to find bugs, security issues, or problems in their changes. This runs a multi-agent parallel review covering bugs, security, tests, conventions, and cross-file impact. Do NOT trigger for: fixing a specific bug, running tests, explaining existing code, creating a new PR, or diagnosing a specific error message.
+  Use this skill when the user wants their code reviewed. This is the ONLY skill for code review. Trigger for ANY of these situations: (1) user says "review" in the context of code, PRs, MRs, branches, diffs, or changes, (2) user references a PR/MR number and wants feedback or quality assessment, (3) user says "deep review", "full review", or "thorough review", (4) user describes code changes and asks you to check, look over, or catch issues before merging/committing, (5) user wants to find bugs, security issues, or problems in their changes, (6) user wants to review uncommitted changes, local changes, staged changes, or a working tree diff. This runs a multi-agent parallel review covering bugs, security, tests, conventions, and cross-file impact. Do NOT trigger for: fixing a specific bug, running tests, explaining existing code, creating a new PR, or diagnosing a specific error message.
 ---
 
 # Deep Review

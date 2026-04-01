@@ -240,6 +240,43 @@ class TestRenderCommentBody(unittest.TestCase):
         self.assertIn("[LOW]", body)
         self.assertIn("Nit", body)
 
+    def test_unknown_severity_falls_back_to_bulb(self):
+        finding = {"severity": "unknown", "title": "Thing", "body": "desc"}
+        body = render_comment_body(finding)
+        self.assertIn("\U0001f4a1", body)  # 💡 fallback
+        self.assertIn("[UNKNOWN]", body)
+
+    def test_empty_suggested_fix_code_treated_as_absent(self):
+        finding = {
+            "severity": "high",
+            "title": "Bug",
+            "body": "desc",
+            "suggested_fix_code": "",
+        }
+        body = render_comment_body(finding)
+        self.assertNotIn("```suggestion", body)
+
+    def test_suggested_fix_code_none_treated_as_absent(self):
+        finding = {
+            "severity": "high",
+            "title": "Bug",
+            "body": "desc",
+            "suggested_fix_code": None,
+        }
+        body = render_comment_body(finding)
+        self.assertNotIn("```suggestion", body)
+
+    def test_multiline_suggested_fix_code(self):
+        finding = {
+            "severity": "medium",
+            "title": "Fix",
+            "body": "desc",
+            "suggested_fix_code": "line1\nline2\nline3",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("```suggestion", body)
+        self.assertIn("line1\nline2\nline3", body)
+
 
 # ---------------------------------------------------------------------------
 # build_footer
