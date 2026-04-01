@@ -1,0 +1,16 @@
+Type: file
+Path: skills/deep-review/references/validation-pipeline.md
+Check: Phase 4 Step 4.0 python3 JSON writing block present
+Timestamp: 2026-03-31T00:00:00Z
+Status: PASS
+
+Verification:
+Phase 4 now contains a "Step 4.0 - Write merged findings to JSON" section with:
+- Explanation: "Use the Python json.dumps pattern - it handles all escaping and avoids Write tool file not read failures and zsh heredoc corruption"
+- Bash block using: python3 -c "import json, sys ..."
+- Writes to: $TMPDIR/deep-review-phase4-input.json
+- Invokes: python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-input.json" --base-branch main
+- Follows same pattern as Phase 8 Step B.1 (ensure_ascii=False, indent=2)
+
+BF-02 requirement: Phase 4 must specify the python3 json.dump pattern for writing findings JSON before calling verify_findings.py.
+Result: PASS

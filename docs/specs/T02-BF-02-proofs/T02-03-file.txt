@@ -1,0 +1,18 @@
+Type: file
+Path: skills/deep-review/references/phase8-delivery.md
+Check: Phase 8 already uses python3 JSON writing pattern (audit)
+Timestamp: 2026-03-31T00:00:00Z
+Status: PASS
+
+Verification:
+Phase 8 Step B.1 "Write findings JSON and run post_review.py" already contains:
+- Explanation: "Use the Python json.dumps pattern - it handles all escaping and avoids Write tool file not read failures"
+- Bash block using: python3 -c "import json, sys ..."
+- Writes to: $TMPDIR/deep-review-findings.json
+- Invokes: python3 {plugin_root}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
+- Uses: json.dump(findings, f, ensure_ascii=False, indent=2)
+
+Phase 8 is fully consistent with Phases 4 and 6. No changes required.
+
+BF-02 requirement: Audit Phase 8 for consistency with the python3 pattern.
+Result: PASS (already consistent, no change needed)

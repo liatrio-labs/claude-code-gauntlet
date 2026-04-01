@@ -10,8 +10,29 @@ After all agents return, process their findings through the validation pipeline 
 
 Handled by `scripts/verify_findings.py`. Run it against the merged Phase 3 agent output before dispatching Phase 5 validators.
 
-```
-python3 {plugin_root}/scripts/verify_findings.py <findings_json> [--base-branch main] [--diff-file path]
+**Step 4.0 — Write merged findings to JSON (required before running the script)**
+
+Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures and zsh heredoc corruption:
+
+```bash
+Bash(command="""python3 -c "
+import json, sys
+findings = {
+    'findings': [
+        # paste merged finding objects from Phase 3 here
+    ],
+    'base_branch': 'BASE_BRANCH',
+    'head_sha': 'HEAD_SHA',
+    'pr_number': PR_NUMBER,
+    'owner': 'OWNER',
+    'repo': 'REPO'
+}
+with open(sys.argv[1], 'w') as f:
+    json.dump(findings, f, ensure_ascii=False, indent=2)
+" "$TMPDIR/deep-review-phase4-input.json"
+
+python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-input.json" --base-branch main
+""")
 ```
 
 **Input JSON schema:**
@@ -168,8 +189,24 @@ Re-dispatch or degrade transparently. Orchestrator judgment is not a substitute 
 
 Handled by `scripts/filter_findings.py`. Run it against the Phase 5 validated findings before the Phase 7 blind challenge.
 
-```
-python3 {plugin_root}/scripts/filter_findings.py <findings_json> [--review-md path] [--exclusions-md path]
+**Step 6.0 — Write validated findings to JSON (required before running the script)**
+
+Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures and zsh heredoc corruption:
+
+```bash
+Bash(command="""python3 -c "
+import json, sys
+findings = {
+    'findings': [
+        # paste Phase 5 validated finding objects here
+    ]
+}
+with open(sys.argv[1], 'w') as f:
+    json.dump(findings, f, ensure_ascii=False, indent=2)
+" "$TMPDIR/deep-review-phase6-input.json"
+
+python3 {plugin_root}/scripts/filter_findings.py "$TMPDIR/deep-review-phase6-input.json" --review-md REVIEW.md
+""")
 ```
 
 **Input JSON schema:**
