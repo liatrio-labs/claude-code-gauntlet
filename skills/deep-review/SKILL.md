@@ -49,6 +49,25 @@ The user's input determines the review target. Parse it before eligibility check
 3. **User said "review" with no number/URL** and a PR/MR exists for the current branch → **PR/MR mode**. Use `gh pr view --json number --jq '.number'` to get the number for the current branch.
 4. **No PR/MR found** → **Local changes mode**. Review uncommitted changes or branch diff.
 
+**Validation:** After resolving to PR/MR mode, verify the PR/MR exists by running `gh pr view {pr_number}` (or `glab mr view`). If the command fails, do NOT silently fall back to local mode — ask the user:
+
+```
+AskUserQuestion(
+  questions: [{
+    question: "Could not find PR #{pr_number} on this repository. The PR may not exist, or the number may be wrong. How should I proceed?",
+    header: "PR Not Found",
+    multiSelect: false,
+    options: [
+      { label: "Proceed as local review", description: "Review the branch diff without PR integration (no PR comments)" },
+      { label: "Try a different number", description: "I'll provide the correct PR number" },
+      { label: "Cancel", description: "Stop the review" }
+    ]
+  }]
+)
+```
+
+If the user provides a different number, re-resolve with the corrected value. If they choose local review, set `target_type` to `local` and clear `pr_number`.
+
 Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable) for use in all subsequent phases.
 
 ### Eligibility checks
