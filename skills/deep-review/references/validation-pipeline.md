@@ -42,6 +42,7 @@ python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-inp
         {
             "id": "bug-1",
             "dimension": "bug",
+            "agent": "bug-detector",
             "severity": "high",
             "confidence": 75,
             "file": "src/foo.py",
@@ -62,6 +63,11 @@ python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-inp
     "repo": "name"
 }
 ```
+
+**Field notes for the merged input:**
+- `dimension`: short name from the agent's output schema (`"bug"`, `"security"`, `"cross_file_impact"`, `"test_coverage"`, `"type_design"`, or the pass-specific string for conventions-and-intent). Do NOT use the agent name here.
+- `agent`: injected by the orchestrator during the Merge Phase 3 Outputs step — agents do NOT emit this field themselves. Required for `filter_findings.py` suppression rules and report routing. Use the exact agent name strings: `"bug-detector"`, `"security-reviewer"`, `"cross-file-impact"`, `"test-analyzer"`, `"conventions-and-intent"`, `"type-design-analyzer"`.
+- `cross_file_refs`: preserve exactly as returned by the agent. Used by Phase 4a to classify cross-file findings as "surfaced" — do not drop or rename.
 
 **Output JSON schema:**
 ```json

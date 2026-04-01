@@ -1,0 +1,21 @@
+Type: file
+Description: Verify validation-pipeline.md Phase 4 input schema updated with agent field and field notes
+Command: grep -n '"agent"' skills/deep-review/references/validation-pipeline.md
+Expected: "agent" field present in Phase 4 input schema, plus field notes clarifying orchestrator injection
+Timestamp: 2026-03-31T00:00:00Z
+
+--- OUTPUT ---
+Line 45:     "agent": "bug-detector",
+Line 232:    "agent": "bug-detector"
+
+--- FIELD NOTES SECTION PRESENT ---
+Line 67: **Field notes for the merged input:**
+- dimension: short name from the agent's output schema. Do NOT use the agent name here.
+- agent: injected by the orchestrator during the Merge Phase 3 Outputs step — agents do NOT emit this field themselves.
+- cross_file_refs: preserve exactly as returned by the agent. Used by Phase 4a to classify cross-file findings as "surfaced"
+
+--- AGENT FIELD NOTE CONTENT ---
+"Required for filter_findings.py suppression rules and report routing."
+"Use the exact agent name strings: 'bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer', 'conventions-and-intent', 'type-design-analyzer'."
+
+Status: PASS

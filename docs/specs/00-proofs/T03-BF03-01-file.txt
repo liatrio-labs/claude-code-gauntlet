@@ -1,0 +1,38 @@
+Type: file
+Description: Verify "Merge Phase 3 Outputs" section added to SKILL.md between Phase 3 and Phase 4
+Command: grep -n "Merge Phase 3 Outputs" skills/deep-review/SKILL.md
+Expected: Line found in SKILL.md containing the section header
+Timestamp: 2026-03-31T00:00:00Z
+
+--- OUTPUT ---
+84:## Merge Phase 3 Outputs
+
+--- DIMENSION MAPPING TABLE PRESENT ---
+Found "dimension" mapping table:
+   - `bug-detector` → `"bug"`
+   - `security-reviewer` → `"security"`
+   - `cross-file-impact` → `"cross_file_impact"`
+   - `test-analyzer` → `"test_coverage"`
+   - `conventions-and-intent` → `"convention"` / `"intent"` / `"comment_accuracy"` (as set by the agent)
+   - `type-design-analyzer` → `"type_design"`
+
+--- AGENT FIELD INSTRUCTION PRESENT ---
+Found "agent" field injection instruction:
+   "Agents do NOT emit this field — the orchestrator must inject it during merge."
+
+--- CROSS_FILE_REFS INSTRUCTION PRESENT ---
+Found "cross_file_refs" preservation instruction:
+   "`verify_findings.py` uses this field to classify cross-file findings as 'surfaced' in Phase 4a."
+
+--- EXAMPLE JSON PRESENT ---
+Found example JSON with all three required agents:
+   - "agent": "bug-detector" with "dimension": "bug"
+   - "agent": "security-reviewer" with "dimension": "security"
+   - "agent": "cross-file-impact" with "dimension": "cross_file_impact" and non-empty cross_file_refs
+
+--- SECTION POSITIONING CORRECT ---
+Section appears at line 84, which is:
+   - AFTER Phase 3 ends (line 82: "---")
+   - BEFORE Phase 4 begins (line 169: "## Phase 4: Classify & Verify")
+
+Status: PASS

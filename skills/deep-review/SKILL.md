@@ -81,6 +81,91 @@ Read `references/phase3-dispatch.md` for context scoping, agent roster, and disp
 
 ---
 
+## Merge Phase 3 Outputs
+
+After all Phase 3 agents return, merge their findings arrays into a single JSON object before passing to Phase 4. This is an orchestrator step — no agents involved.
+
+**Two fields must be set correctly or the Phase 4-6 pipeline breaks:**
+
+1. **`dimension`** — use the short name from the agent's output schema, NOT the agent name:
+   - `bug-detector` → `"bug"`
+   - `security-reviewer` → `"security"`
+   - `cross-file-impact` → `"cross_file_impact"`
+   - `test-analyzer` → `"test_coverage"`
+   - `conventions-and-intent` → `"convention"` / `"intent"` / `"comment_accuracy"` (as set by the agent)
+   - `type-design-analyzer` → `"type_design"`
+
+2. **`agent`** — the agent name string used by `filter_findings.py` for report routing and suppression rules. Agents do NOT emit this field — the orchestrator must inject it during merge. Use the exact strings below:
+   - `"bug-detector"`, `"security-reviewer"`, `"cross-file-impact"`, `"test-analyzer"`, `"conventions-and-intent"`, `"type-design-analyzer"`
+
+3. **`cross_file_refs`** — preserve exactly as returned by the agent. `verify_findings.py` uses this field to classify cross-file findings as "surfaced" in Phase 4a. Do not drop or rename it.
+
+**Example merged JSON (one finding per source agent):**
+
+```json
+{
+  "findings": [
+    {
+      "id": "bug-1",
+      "dimension": "bug",
+      "agent": "bug-detector",
+      "severity": "high",
+      "confidence": 80,
+      "file": "src/auth.py",
+      "line_start": 42,
+      "line_end": 45,
+      "title": "Token not invalidated on logout",
+      "description": "...",
+      "evidence": "...",
+      "suggestion": "...",
+      "suggested_fix_code": null,
+      "cross_file_refs": []
+    },
+    {
+      "id": "security-1",
+      "dimension": "security",
+      "agent": "security-reviewer",
+      "severity": "critical",
+      "confidence": 90,
+      "file": "src/auth.py",
+      "line_start": 88,
+      "line_end": 92,
+      "title": "SQL injection via unsanitized user input",
+      "description": "...",
+      "evidence": "...",
+      "suggestion": "...",
+      "suggested_fix_code": null,
+      "cross_file_refs": []
+    },
+    {
+      "id": "cross-file-1",
+      "dimension": "cross_file_impact",
+      "agent": "cross-file-impact",
+      "severity": "high",
+      "confidence": 75,
+      "file": "src/api.py",
+      "line_start": 10,
+      "line_end": 12,
+      "title": "Removed function still called by billing module",
+      "description": "...",
+      "evidence": "...",
+      "suggestion": "...",
+      "suggested_fix_code": null,
+      "cross_file_refs": ["src/billing.py"]
+    }
+  ],
+  "base_branch": "main",
+  "head_sha": "abc123",
+  "pr_number": 42,
+  "owner": "org",
+  "repo": "name"
+}
+```
+
+Pass this merged object to `verify_findings.py` via the Step 4.0 python3 pattern in `references/validation-pipeline.md`.
+
+---
+
 ## Phase 4: Classify & Verify
 
 > **Pipeline note:** Phases 4-6 run in sequence before Phase 7 (Blind Challenge). This pipeline reduces false positives from ~30% to under 1% — skipping it means the challenge round operates on unverified findings. Read `references/validation-pipeline.md` for detailed implementation.

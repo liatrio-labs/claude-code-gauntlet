@@ -1,0 +1,13 @@
+Type: test
+Description: Verify all 149 tests still pass after changes (no regressions)
+Command: python3 -m pytest tests/ -q
+Expected: 149 passed
+Timestamp: 2026-03-31T00:00:00Z
+
+--- OUTPUT ---
+........................................................................ [ 48%]
+........................................................................ [ 96%]
+.....                                                                    [100%]
+149 passed in 0.05s
+
+Status: PASS
