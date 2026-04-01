@@ -48,6 +48,8 @@ No fallback or workaround — a silently wrong working tree produces unreliable 
 ## 2c. Identify Review Target
 
 1. **PR/MR mode** — user provides a number/URL. Use `gh pr view`/`glab mr view` + diff commands. Get full SHA: `git rev-parse HEAD`
+   - **GitHub (PR):** Gather the file list with `gh pr diff {number} --name-only`. Gather the full diff with `gh pr diff {number}`.
+   - **GitLab (MR):** Gather the file list with `glab mr diff {number} --name-only`. Gather the full diff with `glab mr diff {number}`.
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
 

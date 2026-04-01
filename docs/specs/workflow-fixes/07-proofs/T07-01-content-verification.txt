@@ -1,0 +1,27 @@
+Type: file
+Description: Verification that gh pr diff commands were explicitly specified
+Command: grep -A 3 "GitHub (PR):" /Users/lee/personal/claude-deep-review/skills/deep-review/references/phase2-triage.md
+Expected: Lines showing both "gh pr diff {number} --name-only" and "gh pr diff {number}" commands
+Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+=== VERIFICATION RESULTS ===
+
+Extracted section showing explicit commands:
+
+   - **GitHub (PR):** Gather the file list with `gh pr diff {number} --name-only`. Gather the full diff with `gh pr diff {number}`.
+   - **GitLab (MR):** Gather the file list with `glab mr diff {number} --name-only`. Gather the full diff with `glab mr diff {number}`.
+
+ANALYSIS:
+1. GitHub (PR) - PASS: Both commands explicitly specified
+   ✓ gh pr diff {number} --name-only (for file list)
+   ✓ gh pr diff {number} (for full diff)
+
+2. GitLab (MR) - PASS: Both commands explicitly specified
+   ✓ glab mr diff {number} --name-only (for file list)
+   ✓ glab mr diff {number} (for full diff)
+
+3. Prevention of --stat hallucination - PASS
+   ✓ No --stat flag in the specified commands
+   ✓ Orchestrator will use exact commands as written
+
+Status: PASS
