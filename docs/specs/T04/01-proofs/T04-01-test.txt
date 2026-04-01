@@ -1,0 +1,25 @@
+Type: test
+Command: python3 -m pytest tests/ -v
+Expected: 145 tests pass (140 baseline + 5 new)
+Timestamp: 2026-03-31T00:00:00Z
+Status: PASS
+
+Test run output:
+  platform darwin -- Python 3.14.3, pytest-9.0.2
+  rootdir: /Users/lee/personal/claude-deep-review
+  collected 145 items
+
+  tests/test_filter_findings.py .......................................... [ 28%]
+  .......................                                                  [ 44%]
+  tests/test_post_review.py .............................                  [ 64%]
+  tests/test_verify_findings.py .......................................... [ 93%]
+  .........                                                                [100%]
+
+  145 passed in 0.06s
+
+New tests added (5 methods):
+  RF-09: TestParseDiffLinesPostReview::test_github_dispatches_to_gh_pr_diff  PASS
+  RF-09: TestParseDiffLinesPostReview::test_gitlab_dispatches_to_glab_mr_diff PASS
+  RF-09: TestParseDiffLinesPostReview::test_nonzero_rc_returns_none           PASS
+  RF-09: TestParseDiffLinesPostReview::test_unknown_platform_returns_none     PASS
+  RF-13: TestTagFindings::test_code_simplifier_report_tag_is_suggestion       PASS

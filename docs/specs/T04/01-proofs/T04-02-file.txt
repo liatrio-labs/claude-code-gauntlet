@@ -1,0 +1,47 @@
+Type: file
+Paths modified:
+  - tests/test_post_review.py
+  - tests/test_filter_findings.py
+  - tests/test_verify_findings.py
+Timestamp: 2026-03-31T00:00:00Z
+Status: PASS
+
+Verification of each RF requirement:
+
+RF-09: parse_diff_lines untested in test_post_review
+  Change: Added TestParseDiffLinesPostReview class (4 tests) and imported parse_diff_lines
+  Tests:
+    test_github_dispatches_to_gh_pr_diff  — verifies platform='github' calls gh pr diff
+    test_gitlab_dispatches_to_glab_mr_diff — verifies platform='gitlab' calls glab mr diff
+    test_nonzero_rc_returns_none          — verifies rc!=0 returns None
+    test_unknown_platform_returns_none    — verifies unknown platform returns None
+  Status: PASS
+
+RF-10: Emoji assertions missing
+  Change: Added assertIn for emoji codepoints in 4 existing severity tests
+    test_critical_severity_emoji — assertIn('\U0001f534', body)  # red circle
+    test_high_severity_emoji     — assertIn('\U0001f7e0', body)  # orange circle
+    test_medium_severity_emoji   — assertIn('\U0001f7e1', body)  # yellow circle
+    test_low_severity_emoji      — assertIn('\U0001f4a1', body)  # light bulb
+  Status: PASS
+
+RF-11: Suppression tests missing assertNotIn
+  Change: Added assertNotIn('bug-1', active_ids) to test_suppression_intentional
+          Added assertNotIn('test-1', active_ids) to test_suppression_generated
+  Status: PASS
+
+RF-12: test_no_double_downgrade wrong starting severity
+  Change: Changed severity='high' to severity='medium' (post-blame state)
+          Assert changed to assertEqual(finding["severity"], "medium")
+  Status: PASS
+
+RF-13: report_tag suggestion path untested
+  Change: Added test_code_simplifier_report_tag_is_suggestion to TestTagFindings
+          _make_finding(agent='code-simplifier') -> assert report_tag == 'suggestion'
+  Status: PASS
+
+RF-14: corroborated_by assertion missing
+  Change: Added assertions in test_consensus_boost:
+    assertIn("security-reviewer", bug_findings[0]["corroborated_by"])
+    assertIn("bug-detector", sec_findings[0]["corroborated_by"])
+  Status: PASS

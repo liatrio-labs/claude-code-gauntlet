@@ -22,6 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scripts.post_review import (
     detect_platform,
     is_line_valid,
+    parse_diff_lines,
     render_comment_body,
     build_footer,
     gitlab_project_id,
@@ -102,6 +103,61 @@ class TestDetectPlatform(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# parse_diff_lines (post_review version)
+# ---------------------------------------------------------------------------
+
+class TestParseDiffLinesPostReview(unittest.TestCase):
+    """Tests for parse_diff_lines in post_review, which dispatches via run_api."""
+
+    @patch("scripts.post_review.run_api")
+    def test_github_dispatches_to_gh_pr_diff(self, mock_run):
+        """platform='github' must call gh pr diff."""
+        diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " existing\n"
+            "+added\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        result = parse_diff_lines("github", "myorg", "myrepo", 42)
+        self.assertIsNotNone(result)
+        call_args = mock_run.call_args[0][0]
+        self.assertEqual(call_args[0], "gh")
+        self.assertEqual(call_args[1], "pr")
+        self.assertEqual(call_args[2], "diff")
+
+    @patch("scripts.post_review.run_api")
+    def test_gitlab_dispatches_to_glab_mr_diff(self, mock_run):
+        """platform='gitlab' must call glab mr diff."""
+        diff = (
+            "+++ b/bar.py\n"
+            "@@ -5,1 +5,2 @@\n"
+            " ctx\n"
+            "+new_line\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        result = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
+        self.assertIsNotNone(result)
+        call_args = mock_run.call_args[0][0]
+        self.assertEqual(call_args[0], "glab")
+        self.assertEqual(call_args[1], "mr")
+        self.assertEqual(call_args[2], "diff")
+
+    @patch("scripts.post_review.run_api")
+    def test_nonzero_rc_returns_none(self, mock_run):
+        """A non-zero exit code from the CLI tool must return None."""
+        mock_run.return_value = ("", "fatal: not a git repository", 128)
+        result = parse_diff_lines("github", "myorg", "myrepo", 1)
+        self.assertIsNone(result)
+
+    def test_unknown_platform_returns_none(self):
+        """An unknown platform must return None without calling run_api."""
+        result = parse_diff_lines("bitbucket", "myorg", "myrepo", 1)
+        self.assertIsNone(result)
+
+
+# ---------------------------------------------------------------------------
 # is_line_valid
 # ---------------------------------------------------------------------------
 
@@ -138,21 +194,25 @@ class TestRenderCommentBody(unittest.TestCase):
         }
         body = render_comment_body(finding)
         self.assertIn("[CRITICAL]", body)
+        self.assertIn("\U0001f534", body)  # 🔴
 
     def test_high_severity_emoji(self):
         finding = {"severity": "high", "title": "Bug", "body": "Description of the bug."}
         body = render_comment_body(finding)
         self.assertIn("[HIGH]", body)
+        self.assertIn("\U0001f7e0", body)  # 🟠
 
     def test_medium_severity_emoji(self):
         finding = {"severity": "medium", "title": "Issue", "body": "Description of the issue."}
         body = render_comment_body(finding)
         self.assertIn("[MEDIUM]", body)
+        self.assertIn("\U0001f7e1", body)  # 🟡
 
     def test_low_severity_emoji(self):
         finding = {"severity": "low", "title": "Nit", "body": "Minor issue."}
         body = render_comment_body(finding)
         self.assertIn("[LOW]", body)
+        self.assertIn("\U0001f4a1", body)  # 💡
 
     def test_with_suggestion_block(self):
         finding = {

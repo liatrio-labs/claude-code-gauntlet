@@ -520,12 +520,12 @@ class TestValidateDiffLines(unittest.TestCase):
             "line_start": 50,
             "line_end": 55,
             "origin": "new",
-            "severity": "high",
+            "severity": "medium",  # already downgraded by blame (post-blame state)
             "blame_metadata": {"classification": "surfaced"},
         }
         validate_diff_lines(finding, valid)
         # Blame already classified as surfaced, so no additional downgrade
-        self.assertEqual(finding["severity"], "high")
+        self.assertEqual(finding["severity"], "medium")
 
 
 # ---------------------------------------------------------------------------

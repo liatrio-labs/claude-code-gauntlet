@@ -396,6 +396,13 @@ class TestDetectDisagreement(unittest.TestCase):
         for f in active:
             self.assertEqual(f["confidence"], 90)  # 80 + 10
             self.assertEqual(f["consensus_count"], 2)
+        # Each finding should list the other agent in corroborated_by
+        bug_findings = [f for f in active if f["agent"] == "bug-detector"]
+        sec_findings = [f for f in active if f["agent"] == "security-reviewer"]
+        self.assertEqual(len(bug_findings), 1)
+        self.assertEqual(len(sec_findings), 1)
+        self.assertIn("security-reviewer", bug_findings[0]["corroborated_by"])
+        self.assertIn("bug-detector", sec_findings[0]["corroborated_by"])
 
     def test_consensus_capped_at_100(self):
         f1 = _make_finding(
@@ -429,6 +436,7 @@ class TestDetectDisagreement(unittest.TestCase):
         # conventions finding should remain active
         active_ids = [a["id"] for a in active]
         self.assertIn("conv-1", active_ids)
+        self.assertNotIn("bug-1", active_ids)
 
     def test_suppression_generated(self):
         test_f = _make_finding(
@@ -443,6 +451,8 @@ class TestDetectDisagreement(unittest.TestCase):
         active, suppressed, _ = detect_disagreement([test_f, conv])
         suppressed_ids = [s["id"] for s in suppressed]
         self.assertIn("test-1", suppressed_ids)
+        active_ids = [a["id"] for a in active]
+        self.assertNotIn("test-1", active_ids)
 
     def test_security_escalation(self):
         sec = _make_finding(
@@ -516,6 +526,11 @@ class TestTagFindings(unittest.TestCase):
         findings = [_make_finding(agent="bug-detector")]
         tagged, _, _, _ = tag_findings(findings)
         self.assertEqual(tagged[0]["report_tag"], "main")
+
+    def test_code_simplifier_report_tag_is_suggestion(self):
+        findings = [_make_finding(agent="code-simplifier")]
+        tagged, _, _, _ = tag_findings(findings)
+        self.assertEqual(tagged[0]["report_tag"], "suggestion")
 
 
 class TestIsTestCorrectnessFinding(unittest.TestCase):
