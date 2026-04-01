@@ -1,0 +1,14 @@
+Type: file
+Description: RF-07 fix - bug-detector.md step 2 updated to LSP-first framing
+Command: grep -n "Prefer LSP" agents/bug-detector.md
+Expected: Line 16 contains LSP-first framing for step 2
+Timestamp: 2026-04-01T01:54:51Z
+
+--- OUTPUT ---
+16:2. **Cross-file investigation.** Prefer LSP `findReferences` to find all callers of changed functions, or Grep if LSP is unavailable. Read calling code to check for argument mismatches, missing error handling of new return types, or broken assumptions. If a function's signature, return type, or error behavior changed, every caller is a potential bug site.
+
+--- VERIFICATION ---
+Expected pattern found at line 16: "Prefer LSP `findReferences` to find all callers of changed functions, or Grep if LSP is unavailable"
+Previous text was: "Use Grep to find all callers of changed functions"
+
+Status: PASS

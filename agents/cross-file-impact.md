@@ -15,7 +15,7 @@ The diff shows what changed. Your job is to find what ELSE is affected by those 
 
 ## How to investigate
 
-1. **For each changed function signature**, use Grep to identify all callers across the codebase. Check each caller for:
+1. **For each changed function signature**, prefer LSP `findReferences` to identify all callers across the codebase, or Grep if LSP is unavailable. Check each caller for:
    - Argument mismatches (wrong count, wrong types, wrong order)
    - Missing error handling of new return types or newly thrown exceptions
    - Broken assumptions about behavior that the signature change implies

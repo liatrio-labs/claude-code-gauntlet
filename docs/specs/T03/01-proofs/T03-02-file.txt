@@ -1,0 +1,17 @@
+Type: file
+Description: RF-07 audit - cross-file-impact.md step 1 updated to LSP-first framing
+Command: grep -n "LSP" agents/cross-file-impact.md
+Expected: Step 1 now has "prefer LSP findReferences" framing
+Timestamp: 2026-04-01T01:54:51Z
+
+--- OUTPUT ---
+4:tools: Read, Grep, Glob, LSP
+18:1. **For each changed function signature**, prefer LSP `findReferences` to identify all callers across the codebase, or Grep if LSP is unavailable. Check each caller for:
+44:6. **Use LSP-first symbol resolution.** Prefer LSP `findReferences` to find all callers and implementors of changed public symbols — this catches renamed imports, aliased references, and interface implementations that grep misses. Use `goToDefinition` to verify that changed function signatures match their callers' expectations. Fall back to Grep if LSP is unavailable.
+146:...Use LSP for fast semantic resolution: findReferences to locate every consumer of a changed symbol...
+
+--- VERIFICATION ---
+Step 1 (line 18) updated from "use Grep to identify all callers" to "prefer LSP `findReferences` to identify all callers across the codebase, or Grep if LSP is unavailable"
+Step 6 (line 44) already had LSP-first framing (pre-existing from V4.5-04)
+
+Status: PASS

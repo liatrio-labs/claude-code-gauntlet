@@ -1,0 +1,29 @@
+Type: file
+Description: RF-08 fix - type-design-analyzer.md "How to investigate" section moved to immediately after opening paragraph
+Command: grep -n "^##" agents/type-design-analyzer.md
+Expected: "How to investigate" at line ~12 (before Analysis framework), not after False-positive exclusions
+Timestamp: 2026-04-01T01:54:51Z
+
+--- OUTPUT ---
+12:## How to investigate
+16:## Analysis framework
+20:### 1. Encapsulation (1-10)
+27:## Invariant Expression (1-10)
+34:### 3. Invariant Usefulness (1-10)
+41:### 4. Invariant Enforcement (1-10)
+48:## Anti-patterns to flag
+76:## Key design principles
+83:## What you do NOT report
+91:## Severity calibration
+98:## Confidence calibration
+109:## False-positive exclusions
+151:## Context-pulling instructions
+155:## Output format
+
+--- VERIFICATION ---
+"How to investigate" is now at line 12 (immediately after opening paragraph on line 10)
+"How to investigate" is now BEFORE "Analysis framework" (line 16)
+"How to investigate" no longer appears after "False-positive exclusions" (old location was ~line 147)
+Matches structure of bug-detector, security-reviewer, and cross-file-impact agents
+
+Status: PASS
