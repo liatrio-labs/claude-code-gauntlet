@@ -16,5 +16,11 @@ Thumbs.db
 .idea/
 .vscode/
 
-# AI Artifacts 
+# Python cache
+__pycache__/
+*.pyc
+
+# AI Artifacts
 docs/specs/
+docs/temp/
+docs/design/
