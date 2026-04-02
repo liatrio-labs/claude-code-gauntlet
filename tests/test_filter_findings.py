@@ -32,11 +32,14 @@ from scripts.filter_findings import (
     apply_exclusions,
     _is_test_correctness_finding,
     _dedup_test_analyzer,
+    _route_by_dimension,
     _count_words,
     SEVERITY_ORDER,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
     DEFAULT_SEVERITY_THRESHOLD,
+    _SINGLETON_PENALTY,
+    _CORE_DIMENSIONS,
 )
 
 
@@ -685,6 +688,363 @@ class TestCountWords(unittest.TestCase):
 
     def test_whitespace_only(self):
         self.assertEqual(_count_words("   "), 0)
+
+
+# ---------------------------------------------------------------------------
+# _route_by_dimension (BF-15a)
+# ---------------------------------------------------------------------------
+
+class TestRouteByDimension(unittest.TestCase):
+
+    # --- Core dimensions always route to main ---
+
+    def test_bug_dimension_routes_main(self):
+        f = _make_finding(dimension="bug")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_security_dimension_routes_main(self):
+        f = _make_finding(dimension="security")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_cross_file_impact_routes_main(self):
+        f = _make_finding(dimension="cross_file_impact")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_intent_dimension_routes_main(self):
+        f = _make_finding(dimension="intent")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    # --- Always-suggestion dimensions ---
+
+    def test_comment_accuracy_routes_suggestion(self):
+        f = _make_finding(dimension="comment_accuracy")
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
+    def test_comment_accuracy_hyphen_routes_suggestion(self):
+        f = _make_finding(dimension="comment-accuracy")
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
+    # --- Conditional suggestion dimensions ---
+
+    def test_test_coverage_routes_suggestion_by_default(self):
+        f = _make_finding(dimension="test_coverage", title="Missing test coverage",
+                          description="No tests exist for the data processing module")
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
+    def test_test_coverage_promotes_to_main_for_correctness_bug(self):
+        f = _make_finding(dimension="test_coverage", title="Race condition in test",
+                          description="The test has a race condition that makes it always pass")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_convention_routes_suggestion_by_default(self):
+        f = _make_finding(dimension="convention", title="Naming convention violation",
+                          description="Variable names do not follow camelCase convention")
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
+    def test_convention_promotes_to_main_for_functional_violation(self):
+        f = _make_finding(dimension="convention", title="Error handling convention violation",
+                          description="Violates error handling convention, causing silent data loss in production")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_convention_promotes_for_crash_keyword(self):
+        f = _make_finding(dimension="convention", title="Missing null check",
+                          description="This will crash when input is null")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_convention_promotes_for_wrong_keyword(self):
+        f = _make_finding(dimension="convention", title="Incorrect return value",
+                          description="The function returns wrong result for edge cases")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_type_design_routes_suggestion_by_default(self):
+        f = _make_finding(dimension="type_design", title="Unused type parameter",
+                          description="The generic type parameter T is never used")
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
+    def test_type_design_promotes_to_main_for_runtime_error(self):
+        f = _make_finding(dimension="type_design", title="Type cast error",
+                          description="ClassCastException at runtime when processing polymorphic types")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_type_design_promotes_for_null_pointer(self):
+        f = _make_finding(dimension="type_design", title="Nullable type issue",
+                          description="Null pointer dereference when optional field is absent")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    # --- Missing / unknown dimension falls through ---
+
+    def test_no_dimension_returns_none(self):
+        f = _make_finding()
+        # No dimension field at all
+        f.pop("dimension", None)
+        self.assertIsNone(_route_by_dimension(f))
+
+    def test_empty_dimension_returns_none(self):
+        f = _make_finding(dimension="")
+        self.assertIsNone(_route_by_dimension(f))
+
+    def test_unknown_dimension_returns_none(self):
+        f = _make_finding(dimension="some_new_dimension")
+        self.assertIsNone(_route_by_dimension(f))
+
+    # --- Case insensitivity ---
+
+    def test_dimension_case_insensitive(self):
+        f = _make_finding(dimension="BUG")
+        self.assertEqual(_route_by_dimension(f), "main")
+
+    def test_convention_case_insensitive(self):
+        f = _make_finding(dimension="Convention", title="Style issue",
+                          description="Does not follow naming convention")
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
+
+# ---------------------------------------------------------------------------
+# Singleton penalty in detect_disagreement (BF-15b)
+# ---------------------------------------------------------------------------
+
+class TestSingletonPenalty(unittest.TestCase):
+
+    def test_singleton_non_core_dimension_penalized(self):
+        """Singleton finding in convention dimension gets -15 confidence."""
+        f = _make_finding(
+            id="s1", confidence=85, dimension="convention",
+            agent="conventions-and-intent"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 85 - _SINGLETON_PENALTY)
+        self.assertTrue(active[0].get("singleton_penalty"))
+
+    def test_singleton_core_dimension_not_penalized(self):
+        """Singleton finding in bug dimension is NOT penalized."""
+        f = _make_finding(id="s2", confidence=85, dimension="bug", agent="bug-detector")
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 85)
+        self.assertFalse(active[0].get("singleton_penalty", False))
+
+    def test_singleton_security_dimension_not_penalized(self):
+        """Singleton finding in security dimension is NOT penalized."""
+        f = _make_finding(
+            id="s3", confidence=80, dimension="security",
+            agent="security-reviewer"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 80)
+        self.assertFalse(active[0].get("singleton_penalty", False))
+
+    def test_singleton_cross_file_impact_not_penalized(self):
+        """Singleton finding in cross_file_impact dimension is NOT penalized."""
+        f = _make_finding(
+            id="s4", confidence=80, dimension="cross_file_impact",
+            agent="cross-file-impact"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 80)
+        self.assertFalse(active[0].get("singleton_penalty", False))
+
+    def test_singleton_no_dimension_not_penalized(self):
+        """Singleton finding with no dimension is NOT penalized (needs a dimension)."""
+        f = _make_finding(id="s5", confidence=85, agent="bug-detector")
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 85)
+        self.assertFalse(active[0].get("singleton_penalty", False))
+
+    def test_singleton_penalty_floors_at_zero(self):
+        """Confidence cannot go below zero."""
+        f = _make_finding(
+            id="s6", confidence=5, dimension="convention",
+            agent="conventions-and-intent"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 0)
+
+    def test_consensus_findings_not_penalized(self):
+        """Multi-agent findings get boosted, not penalized, even in non-core dimensions."""
+        f1 = _make_finding(
+            id="c1", confidence=80, dimension="convention",
+            agent="conventions-and-intent", file="src/foo.py",
+            line_start=42, title="Naming issue detected"
+        )
+        f2 = _make_finding(
+            id="c2", confidence=80, dimension="convention",
+            agent="code-simplifier", file="src/foo.py",
+            line_start=42, title="Naming issue detected"
+        )
+        active, _, boosted = detect_disagreement([f1, f2])
+        self.assertEqual(len(active), 2)
+        # Both should be boosted, not penalized
+        for f in active:
+            self.assertFalse(f.get("singleton_penalty", False))
+            self.assertEqual(f["confidence"], 90)  # 80 + 10 consensus boost
+
+    def test_singleton_comment_accuracy_penalized(self):
+        """comment_accuracy dimension singleton gets penalized."""
+        f = _make_finding(
+            id="s7", confidence=80, dimension="comment_accuracy",
+            agent="conventions-and-intent"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 80 - _SINGLETON_PENALTY)
+        self.assertTrue(active[0].get("singleton_penalty"))
+
+    def test_singleton_type_design_penalized(self):
+        """type_design dimension singleton gets penalized."""
+        f = _make_finding(
+            id="s8", confidence=90, dimension="type_design",
+            agent="type-design-analyzer"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 90 - _SINGLETON_PENALTY)
+        self.assertTrue(active[0].get("singleton_penalty"))
+
+
+# ---------------------------------------------------------------------------
+# tag_findings with dimension routing integration (BF-15a)
+# ---------------------------------------------------------------------------
+
+class TestTagFindingsWithDimensionRouting(unittest.TestCase):
+
+    def test_dimension_routes_convention_to_suggestion(self):
+        """Convention dimension finding is routed to suggestion by dimension routing."""
+        f = _make_finding(
+            id="dr1", dimension="convention", agent="conventions-and-intent",
+            title="Style issue", description="Does not follow naming convention"
+        )
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "suggestion")
+        self.assertEqual(tagged[0].get("routed_by"), "dimension")
+        self.assertEqual(main_ct, 0)
+        self.assertEqual(sugg_ct, 1)
+
+    def test_dimension_routes_bug_to_main(self):
+        """Bug dimension finding is routed to main by dimension routing."""
+        f = _make_finding(id="dr2", dimension="bug", agent="bug-detector")
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "main")
+        self.assertEqual(main_ct, 1)
+        self.assertEqual(sugg_ct, 0)
+
+    def test_dimension_routes_test_coverage_to_suggestion(self):
+        """test_coverage dimension routes to suggestion (no correctness keywords)."""
+        f = _make_finding(
+            id="dr3", dimension="test_coverage", agent="test-analyzer",
+            title="Missing tests", description="No unit tests for the data module"
+        )
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "suggestion")
+        self.assertEqual(tagged[0].get("routed_by"), "dimension")
+
+    def test_dimension_overrides_main_agent_for_convention(self):
+        """Even if agent is a main-report agent, dimension routing takes precedence."""
+        # type-design-analyzer is in _MAIN_REPORT_AGENTS, but dimension=convention
+        # should route to suggestion
+        f = _make_finding(
+            id="dr4", dimension="convention", agent="type-design-analyzer",
+            title="Style concern", description="Naming does not follow project convention"
+        )
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "suggestion")
+        self.assertEqual(tagged[0].get("routed_by"), "dimension")
+
+    def test_no_dimension_falls_through_to_agent_routing(self):
+        """Finding without dimension uses agent-based routing as fallback."""
+        f = _make_finding(id="dr5", agent="bug-detector")
+        f.pop("dimension", None)
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "main")
+        # Should NOT have routed_by since agent routing was used
+        self.assertNotIn("routed_by", tagged[0])
+
+    def test_unknown_dimension_falls_through_to_agent_routing(self):
+        """Finding with unknown dimension uses agent-based routing."""
+        f = _make_finding(id="dr6", dimension="some_new_thing", agent="code-simplifier")
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "suggestion")
+        # Routed by agent, not dimension
+        self.assertNotIn("routed_by", tagged[0])
+
+    def test_convention_with_crash_keyword_routes_main(self):
+        """Convention finding with crash keyword is promoted to main."""
+        f = _make_finding(
+            id="dr7", dimension="convention", agent="conventions-and-intent",
+            title="Missing null check", description="This will crash in production"
+        )
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "main")
+        self.assertEqual(main_ct, 1)
+
+    def test_intent_dimension_routes_main(self):
+        """Intent dimension always routes to main (intent mismatch = real bug)."""
+        f = _make_finding(
+            id="dr8", dimension="intent", agent="conventions-and-intent",
+            title="Intent mismatch", description="Code does not do what the author intended"
+        )
+        tagged, _, main_ct, sugg_ct = tag_findings([f])
+        self.assertEqual(len(tagged), 1)
+        self.assertEqual(tagged[0]["report_destination"], "main")
+
+
+# ---------------------------------------------------------------------------
+# Integration: singleton penalty + threshold filter (BF-15b interaction)
+# ---------------------------------------------------------------------------
+
+class TestSingletonPenaltyThresholdInteraction(unittest.TestCase):
+
+    def test_singleton_penalty_drops_below_threshold(self):
+        """A singleton at exactly 80 confidence drops to 65 after penalty,
+        which is below the default threshold of 80. When the pipeline is run
+        in order (threshold -> disagreement), this won't happen because threshold
+        runs first. But if re-filtered, the reduced confidence matters."""
+        f = _make_finding(
+            id="int1", confidence=80, dimension="convention",
+            agent="conventions-and-intent"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(active[0]["confidence"], 65)
+        # If we run threshold filter on this result:
+        config = {
+            "confidence_threshold": 80,
+            "security_min_confidence": 70,
+            "severity_threshold": "low",
+            "ignore": [],
+        }
+        passed, eliminated = apply_threshold_filter(active, config)
+        self.assertEqual(len(passed), 0)
+        self.assertEqual(len(eliminated), 1)
+
+    def test_high_confidence_singleton_survives_penalty(self):
+        """A singleton at confidence 95 drops to 80 after penalty,
+        which still passes the default threshold."""
+        f = _make_finding(
+            id="int2", confidence=95, dimension="type_design",
+            agent="type-design-analyzer"
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(active[0]["confidence"], 80)
+        config = {
+            "confidence_threshold": 80,
+            "security_min_confidence": 70,
+            "severity_threshold": "low",
+            "ignore": [],
+        }
+        passed, eliminated = apply_threshold_filter(active, config)
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
 
 
 if __name__ == "__main__":

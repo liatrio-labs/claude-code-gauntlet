@@ -38,6 +38,8 @@ Output JSON schema:
             "passed_threshold":        N,   # passed confidence + severity threshold
             "injections_removed":      N,   # removed by injection filter
             "consensus_boosted":       N,   # confidence boosted due to multi-agent consensus
+            "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
+            "dimension_routed":        N,   # findings routed to suggestion by dimension (BF-15a)
             "test_analyzer_deduped":   N,   # test-analyzer duplicates dropped (another agent wins)
             "test_analyzer_promoted":  N,   # test-analyzer findings promoted to main report
             "tagged_main":             N,   # tagged for main report
@@ -467,6 +469,12 @@ _AGENT_SECURITY_REVIEWER = "security-reviewer"
 # Flat confidence boost applied to consensus findings (spec: +10, capped at 100)
 _CONSENSUS_BOOST = 10
 
+# Flat confidence penalty for singleton findings in non-core dimensions (BF-15b)
+_SINGLETON_PENALTY = 15
+
+# Core dimensions exempt from singleton penalty (real bugs trigger multiple agents)
+_CORE_DIMENSIONS = {"bug", "security", "cross_file_impact"}
+
 
 def detect_disagreement(findings):
     """
@@ -602,10 +610,17 @@ def detect_disagreement(findings):
                 original_conf = finding.get("confidence", 0)
                 finding["confidence"] = min(original_conf + _CONSENSUS_BOOST, 100)
         else:
-            # Singleton
-            group[0]["consensus_count"] = 1
-            group[0]["consensus_boost"] = 0
-            group[0].setdefault("corroborated_by", [])
+            # Singleton — apply confidence penalty for non-core dimensions (BF-15b)
+            finding = group[0]
+            finding["consensus_count"] = 1
+            finding["consensus_boost"] = 0
+            finding.setdefault("corroborated_by", [])
+
+            dimension = finding.get("dimension", "").lower()
+            if dimension and dimension not in _CORE_DIMENSIONS:
+                original_conf = finding.get("confidence", 0)
+                finding["confidence"] = max(0, original_conf - _SINGLETON_PENALTY)
+                finding["singleton_penalty"] = True
 
     # -----------------------------------------------------------------------
     # Phase 4: Contradiction and security escalation detection
@@ -682,6 +697,89 @@ _SUGGESTION_AGENTS = {
 # or the finding's category/subcategory field contains "comment".
 _CONVENTIONS_AGENT = "conventions-and-intent"
 _COMMENT_ACCURACY_DIMENSIONS = {"comment-accuracy", "documentation", "doc-accuracy"}
+
+# ---------------------------------------------------------------------------
+# Dimension-based routing (BF-15a)
+# ---------------------------------------------------------------------------
+
+# Dimensions that always route to "suggestion" (never real defects)
+_SUGGESTION_DIMENSIONS = {"comment_accuracy", "comment-accuracy"}
+
+# Dimensions that always route to "main" (core defect categories)
+_MAIN_DIMENSIONS = {"bug", "security", "cross_file_impact", "intent"}
+
+# Dimensions routed to "suggestion" UNLESS functional-violation keywords present
+_CONDITIONAL_SUGGESTION_DIMENSIONS = {"test_coverage", "convention", "type_design"}
+
+# Keywords that promote convention/type_design findings from suggestion to main
+# These indicate the finding describes a FUNCTIONAL violation, not just style
+_FUNCTIONAL_VIOLATION_KEYWORDS = re.compile(
+    r"\bcrash\b|\bdata\s+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b"
+    r"|\bruntime\s+error\b|\bexception\b|\bpanic\b|\bundefined\s+behavio(?:u)?r\b",
+    re.IGNORECASE,
+)
+
+# Keywords that promote type_design findings from suggestion to main
+# These indicate a type safety bug that could cause runtime errors
+_TYPE_SAFETY_BUG_KEYWORDS = re.compile(
+    r"\bruntime\b|\bcastexception\b|\btype\s+error\b|\bclasscastexception\b"
+    r"|\bnull\s+pointer\b|\bnullpointer\b|\btype\s+mismatch\b",
+    re.IGNORECASE,
+)
+
+
+def _route_by_dimension(finding):
+    """
+    Determine routing based on the finding's dimension field (BF-15a).
+
+    Returns "main", "suggestion", or None (if dimension doesn't determine routing,
+    fall through to agent-based routing).
+
+    Routing rules:
+      - bug, security, cross_file_impact, intent -> main (always)
+      - comment_accuracy -> suggestion (always)
+      - test_coverage -> suggestion (unless functional correctness keywords)
+      - convention -> suggestion (unless functional violation keywords)
+      - type_design -> suggestion (unless type safety bug keywords)
+      - unknown/missing dimension -> None (fall through to agent-based routing)
+    """
+    dimension = finding.get("dimension", "").lower()
+    if not dimension:
+        return None
+
+    # Core defect dimensions -> always main
+    if dimension in _MAIN_DIMENSIONS:
+        return "main"
+
+    # Always-suggestion dimensions
+    if dimension in _SUGGESTION_DIMENSIONS:
+        return "suggestion"
+
+    # Conditional suggestion dimensions with keyword-based promotion
+    if dimension in _CONDITIONAL_SUGGESTION_DIMENSIONS:
+        title = finding.get("title", "")
+        description = finding.get("description", "")
+        combined = f"{title}\n{description}"
+
+        if dimension == "test_coverage":
+            # Same promotion logic as _is_test_correctness_finding
+            for pattern in _TEST_CORRECTNESS_PATTERNS:
+                if pattern.search(combined):
+                    return "main"
+            return "suggestion"
+
+        if dimension == "convention":
+            if _FUNCTIONAL_VIOLATION_KEYWORDS.search(combined):
+                return "main"
+            return "suggestion"
+
+        if dimension == "type_design":
+            if _TYPE_SAFETY_BUG_KEYWORDS.search(combined):
+                return "main"
+            return "suggestion"
+
+    # Unknown dimension -> fall through to agent-based routing
+    return None
 
 # Keyword patterns in test-analyzer finding titles/bodies that indicate
 # a functional correctness issue today (→ promote to main report).
@@ -817,9 +915,16 @@ def tag_findings(findings):
     at the same file/line range, the non-test-analyzer finding wins and the
     test-analyzer duplicate is dropped.
 
-    Step 2 — Tag each surviving finding using agent-based routing rules:
+    Step 2 — Dimension-based routing (BF-15a): Check the finding's dimension field
+    first. Dimensions like bug/security/cross_file_impact/intent always route to main.
+    Dimensions like comment_accuracy always route to suggestion. Conditional dimensions
+    (test_coverage, convention, type_design) route to suggestion unless functional-
+    violation keywords are present.
 
-      Agent routing (primary):
+    Step 3 — Agent-based routing (fallback): If dimension routing returned None
+    (unknown or missing dimension), fall back to agent-based rules:
+
+      Agent routing:
         Main report:        bug-detector, security-reviewer, cross-file-impact[-analyzer],
                             type-design-analyzer, conventions-and-intent (passes 1-2)
         Improvement suggestion: test-analyzer, code-simplifier,
@@ -848,7 +953,7 @@ def tag_findings(findings):
     # Step 1: Dedup test-analyzer overlaps
     findings, dedup_dropped = _dedup_test_analyzer(findings)
 
-    # Step 2: Tag remaining findings
+    # Step 2 & 3: Dimension-based routing, then agent-based fallback
     main_count = 0
     suggestion_count = 0
 
@@ -856,34 +961,42 @@ def tag_findings(findings):
         agent = finding.get("agent", "").lower()
         dimensions = {finding.get("dimension", "").lower()} if finding.get("dimension") else set()
 
-        if agent in _MAIN_REPORT_AGENTS:
-            destination = "main"
-
-        elif agent == _CONVENTIONS_AGENT:
-            # Pass 3 (comment accuracy) → suggestion; passes 1-2 → main
-            if dimensions & _COMMENT_ACCURACY_DIMENSIONS:
-                destination = "suggestion"
-            else:
+        # Step 2: Try dimension-based routing first (BF-15a)
+        dim_route = _route_by_dimension(finding)
+        if dim_route is not None:
+            destination = dim_route
+            if dim_route == "suggestion":
+                finding["routed_by"] = "dimension"
+        else:
+            # Step 3: Fall back to agent-based routing
+            if agent in _MAIN_REPORT_AGENTS:
                 destination = "main"
 
-        elif agent in _SUGGESTION_AGENTS:
-            if agent == _AGENT_TEST_ANALYZER:
-                # Promotion rule: functional correctness bugs → main report
-                if _is_test_correctness_finding(finding):
+            elif agent == _CONVENTIONS_AGENT:
+                # Pass 3 (comment accuracy) → suggestion; passes 1-2 → main
+                if dimensions & _COMMENT_ACCURACY_DIMENSIONS:
+                    destination = "suggestion"
+                else:
                     destination = "main"
-                    finding["promoted_from"] = "test-analyzer"
-                    finding["promotion_reason"] = (
-                        "test-analyzer finding describes a functional correctness issue "
-                        "that exists today (not a missing-coverage gap)"
-                    )
+
+            elif agent in _SUGGESTION_AGENTS:
+                if agent == _AGENT_TEST_ANALYZER:
+                    # Promotion rule: functional correctness bugs → main report
+                    if _is_test_correctness_finding(finding):
+                        destination = "main"
+                        finding["promoted_from"] = "test-analyzer"
+                        finding["promotion_reason"] = (
+                            "test-analyzer finding describes a functional correctness issue "
+                            "that exists today (not a missing-coverage gap)"
+                        )
+                    else:
+                        destination = "suggestion"
                 else:
                     destination = "suggestion"
-            else:
-                destination = "suggestion"
 
-        else:
-            # Unknown agent — conservative fallback: route to main
-            destination = "main"
+            else:
+                # Unknown agent — conservative fallback: route to main
+                destination = "main"
 
         finding["report_destination"] = destination
         finding["report_tag"] = destination  # backward-compat alias
@@ -1079,6 +1192,12 @@ def main():
     # Count promotions (test-analyzer findings promoted to main report)
     promoted_count = sum(1 for f in findings if f.get("promoted_from") == "test-analyzer")
 
+    # Count dimension-routed and singleton-penalized findings (BF-15)
+    dimension_routed = sum(1 for f in findings if f.get("routed_by") == "dimension")
+    singleton_penalized = sum(
+        1 for f in findings + all_eliminated if f.get("singleton_penalty")
+    )
+
     # ------------------------------------------------------------------
     # Compose output
     # ------------------------------------------------------------------
@@ -1090,6 +1209,8 @@ def main():
             "passed_threshold": passed_threshold,
             "injections_removed": injections_removed,
             "consensus_boosted": consensus_boosted,
+            "singleton_penalized": singleton_penalized,
+            "dimension_routed": dimension_routed,
             "test_analyzer_deduped": len(elim_dedup),
             "test_analyzer_promoted": promoted_count,
             "tagged_main": tagged_main,

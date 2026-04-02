@@ -238,7 +238,13 @@ python3 {plugin_root}/scripts/filter_findings.py phase5_output.json \
 
 Input: Phase 5 validated findings JSON (object with a `"findings"` array, or raw array). Optionally pass `--review-md` to apply repo-specific `confidence_threshold`, `severity_threshold`, and `ignore` patterns.
 
-Output: `{ "filtered": [...], "eliminated": [...], "stats": { ... } }`. Each filtered finding gains a `"report_destination"` field (`"main"` or `"suggestion"`) for Phase 8 routing. Tagging logic: bug-detector, security-reviewer, cross-file-impact-analyzer, conventions-and-intent (intent checks), and type-design-analyzer findings → `"main"`; test-analyzer, conventions-and-intent comment accuracy pass, and code-simplifier findings → `"suggestion"`. If a test-analyzer finding overlaps with another agent's finding at the same file/line range, the non-test-analyzer finding wins and the duplicate is dropped.
+Output: `{ "filtered": [...], "eliminated": [...], "stats": { ... } }`. Each filtered finding gains a `"report_destination"` field (`"main"` or `"suggestion"`) for Phase 8 routing.
+
+Routing uses dimension-based rules first, then agent-based fallback. Dimension routing: `bug`, `security`, `cross_file_impact`, `intent` dimensions always route to `"main"`; `comment_accuracy` always routes to `"suggestion"`; `test_coverage`, `convention`, `type_design` route to `"suggestion"` unless functional-violation keywords are present (crash, data loss, runtime error, etc.). When dimension routing does not apply (unknown or missing dimension), agent-based routing takes over: bug-detector, security-reviewer, cross-file-impact-analyzer, conventions-and-intent (intent checks), and type-design-analyzer findings route to `"main"`; test-analyzer, conventions-and-intent comment accuracy pass, and code-simplifier findings route to `"suggestion"`. If a test-analyzer finding overlaps with another agent's finding at the same file/line range, the non-test-analyzer finding wins and the duplicate is dropped.
+
+Singleton findings (flagged by only one agent) in non-core dimensions (not bug, security, or cross_file_impact) receive a -15 confidence penalty during disagreement detection. This selectively removes the weakest singleton observations without affecting high-confidence singletons or any core-dimension findings.
+
+Findings routed to `"suggestion"` are NOT removed — they appear in the Improvement Suggestions section of the report, available via the "Let me pick" walkthrough. The executive summary finding count excludes suggestions.
 
 All tagged findings proceed to Phase 7 regardless of tag.
 

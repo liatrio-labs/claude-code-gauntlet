@@ -1,0 +1,7 @@
+Type: file
+Command: grep -n "_route_by_dimension\|_SINGLETON_PENALTY\|_CORE_DIMENSIONS\|singleton_penalty\|routed_by" scripts/filter_findings.py
+Expected: dimension routing function, singleton penalty constant, core dimensions set
+Timestamp: 2026-04-01T17:30:00Z
+Status: PASS
+
+--- Output ---
