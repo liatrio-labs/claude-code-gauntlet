@@ -182,7 +182,7 @@ Pass this merged object to `verify_findings.py` via the Step 4.0 python3 pattern
 
 Phase 4 is deterministic — main orchestrator, no LLM agents. It classifies each finding as "new" (introduced by this PR) or "surfaced" (pre-existing code exposed by the change), verifies that evidence matches actual file content, validates line references against the diff, and groups surviving findings into batches for Phase 5 validators.
 
-Run `scripts/verify_findings.py` with the Phase 3 findings JSON. The script handles blame classification, factual verification, diff-line validation, and batching deterministically.
+Run `scripts/verify_findings.py` with the Phase 3 findings JSON. The script handles blame classification, factual verification, diff-line validation, and batching deterministically. Write the input JSON using the `python3 -c "import json; json.dump(...)"` pattern (see validation-pipeline.md Step 4.0). Do not use heredocs, `cat <<EOF`, or the Write tool — zsh corrupts `!` as `\!` in heredocs, and Write requires a prior Read.
 
 ```
 python3 {plugin_root}/scripts/verify_findings.py findings.json \
@@ -235,9 +235,9 @@ Update each finding's confidence based on the validator's assessment.
 
 ## Phase 6: Filter & Reconcile
 
-Main orchestrator, rules-based — no LLM agents. Apply threshold filtering, injection detection, disagreement resolution, and route-tagging to the Phase 5 output findings.
+Main orchestrator, rules-based — no LLM agents. Pass ALL Phase 5 validated findings to filter_findings.py — do not drop, exclude, or pre-filter any findings regardless of confidence score. The script applies its own confidence/severity thresholds, disagreement detection, consensus boosting, promotion rules, and REVIEW.md overrides. Orchestrator-side filtering bypasses these mechanisms and has caused real findings to be lost.
 
-Run `scripts/filter_findings.py` with the Phase 5 output. The script handles threshold filtering, injection detection, disagreement resolution, and tagging.
+Write the input JSON using the `python3 -c "import json; json.dump(...)"` pattern (see validation-pipeline.md Step 6.0). Do not use heredocs, `cat <<EOF`, or the Write tool — zsh corrupts `!` as `\!` in heredocs, and Write requires a prior Read.
 
 ```
 python3 {plugin_root}/scripts/filter_findings.py phase5_output.json \
