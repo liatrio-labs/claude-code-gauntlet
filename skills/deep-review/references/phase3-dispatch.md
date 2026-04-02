@@ -180,6 +180,19 @@ After dispatch, announce: "Dispatched N agents for Phase 3."
 
 ---
 
+## Parsing Agent Output
+
+Agents emit findings incrementally — one JSON block per finding, interspersed with investigation prose and `SKIP: <reason>` lines. The orchestrator must parse each agent's text output to extract findings:
+
+1. Scan the agent's output for top-level JSON objects (delimited by `{` ... `}` at the outermost nesting level).
+2. For each extracted JSON block, validate it has an `"id"` field matching the agent's prefix (e.g., `"bug-1"`, `"security-2"`).
+3. Discard `SKIP:` lines and non-JSON text — these are investigation notes.
+4. If an agent's output appears truncated (ends mid-JSON or mid-sentence), collect all complete JSON blocks emitted before the truncation point. Log the truncation in Review Methodology but do not discard the partial results.
+
+This replaces the previous expectation of a single JSON array per agent. The merge step (in SKILL.md) combines parsed findings from all agents into the unified findings object for Phase 4.
+
+---
+
 ## Agent Failure Handling
 
 If a subagent fails (crash, timeout, error): continue with completed agents, log the failure in Review Methodology, warn the user if the failed agent covered security or bugs. Never silently skip a failed agent.

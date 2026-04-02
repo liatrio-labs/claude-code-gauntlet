@@ -129,9 +129,19 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Grep to search for test files that may not be in the diff, and Read production code to understand what behaviors need coverage. Use LSP to quickly check whether a function or branch is exercised elsewhere — findReferences can show if a code path is covered through an integration test you haven't seen yet.
 
-## Output format
+## Output format — incremental emission
 
-Return a JSON array of findings. Each finding must conform to this schema:
+Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+
+**Workflow per issue:**
+1. Investigate the issue (brief notes in plain text are fine)
+2. If a real issue is found, emit a fenced JSON block immediately
+3. If no issue is found, emit an explicit SKIP with a one-line reason
+4. Move to the next issue
+
+This structure means output truncation only loses the last in-progress investigation, not all findings.
+
+Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
 ```json
 {
@@ -152,10 +162,27 @@ Return a JSON array of findings. Each finding must conform to this schema:
 }
 ```
 
+**Example output structure:**
+
+```
+[investigation of missing error path test for processPayment()]
+```json
+{"id": "test-1", "dimension": "test_coverage", "criticality": 9, "confidence": 90, ...}
+```
+
+[investigation of missing boundary test for pagination — covered by integration test]
+SKIP: pagination boundary — integration test in tests/api/test_list.py covers empty-page and last-page scenarios.
+
+[investigation of missing test for concurrent access to shared cache]
+```json
+{"id": "test-2", "dimension": "test_coverage", "criticality": 7, "confidence": 82, ...}
+```
+```
+
 For each finding, include:
 1. The specific untested behavior and its location
 2. The **failure scenario** — a concrete example of a bug this gap would fail to catch
 3. A **concrete test suggestion** showing what to test (with a brief example if helpful)
 4. Criticality and confidence ratings
 
-Only report findings with confidence >= 60 and criticality >= 5. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty array `[]`.
+Only report findings with confidence >= 60 and criticality >= 5. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.

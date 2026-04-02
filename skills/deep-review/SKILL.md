@@ -38,6 +38,20 @@ If the listing succeeds, `plugin_root` is correct. All subsequent `python3` invo
 - Phase 6: `python3 {plugin_root}/scripts/filter_findings.py`
 - Phase 8: `python3 {plugin_root}/scripts/post_review.py`
 
+### Resolve head SHA short — unique temp filenames
+
+Resolve a short commit SHA once and use it as a suffix on all `$TMPDIR` filenames to prevent cross-session collisions (concurrent reviews or sessions spanning long gaps can overwrite generic temp files):
+
+```bash
+Bash(command="git rev-parse --short=8 HEAD")
+```
+
+Store the result as `head_sha_short`. All subsequent temp file references use this suffix:
+- `$TMPDIR/deep-review-diff-{head_sha_short}.patch`
+- `$TMPDIR/deep-review-findings-{head_sha_short}.json` (Phase 4 input)
+- `$TMPDIR/deep-review-phase6-input-{head_sha_short}.json` (Phase 6 input)
+- `$TMPDIR/deep-review-pr-comments-{head_sha_short}.json` (Phase 8 delivery)
+
 ### Resolve review target
 
 Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template.
@@ -65,7 +79,7 @@ Identify the review target and gather all context needed for agent dispatch. Fas
 
 ### Diff persistence for Phase 4 (PR/MR mode)
 
-In PR/MR mode, save the full diff from `gh pr diff` / `glab mr diff` to `$TMPDIR/deep-review-diff.patch` during step 2c. Phase 4 uses this via `--diff-file` to avoid redundant git diff calls and merge-base failures. See `references/phase2-triage.md` section 2c for validation rules. For branch comparison and local changes, skip this step.
+In PR/MR mode, save the full diff from `gh pr diff` / `glab mr diff` to `$TMPDIR/deep-review-diff-{head_sha_short}.patch` during step 2c. Phase 4 uses this via `--diff-file` to avoid redundant git diff calls and merge-base failures. See `references/phase2-triage.md` section 2c for validation rules. For branch comparison and local changes, skip this step.
 
 ### REVIEW.md detection
 
@@ -91,7 +105,9 @@ Read `references/phase3-dispatch.md` for context scoping, agent roster, and disp
 
 ## Merge Phase 3 Outputs
 
-After all Phase 3 agents return, merge their findings arrays into a single JSON object before passing to Phase 4. This is an orchestrator step — no agents involved.
+After all Phase 3 agents return, parse and merge their findings into a single JSON object before passing to Phase 4. This is an orchestrator step — no agents involved.
+
+**Parsing incremental output.** Agents emit individual JSON blocks (one per finding) rather than a single array. Each agent's output contains zero or more JSON objects interspersed with `SKIP: ...` lines and investigation prose. To parse: extract all top-level JSON objects from each agent's text output (look for `{` ... `}` blocks that parse as valid JSON with an `"id"` field). Ignore SKIP lines and non-JSON text — these are investigation notes, not findings.
 
 **Four fields must be set correctly or the Phase 4-6 pipeline breaks:**
 
@@ -186,7 +202,7 @@ Run `scripts/verify_findings.py` with the Phase 3 findings JSON. The script hand
 
 ```
 python3 {plugin_root}/scripts/verify_findings.py findings.json \
-  --base-branch {base_branch} --diff-file "$TMPDIR/deep-review-diff.patch"
+  --base-branch {base_branch} --diff-file "$TMPDIR/deep-review-diff-{head_sha_short}.patch"
 ```
 
 Pass `--diff-file` when the diff was saved during Phase 2c (PR/MR mode). The `--diff-file` flag tells the script to read the pre-fetched API diff instead of running its own `git diff`, avoiding merge-base failures in fork-based repos and shallow clones. For **branch comparison** and **local changes** target types (no saved diff file), omit `--diff-file` — the script falls back to its own git diff chain (three-dot, two-dot, skip).

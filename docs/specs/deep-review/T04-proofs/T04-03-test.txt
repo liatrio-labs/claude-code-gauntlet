@@ -1,0 +1,19 @@
+Type: test
+Command: python -m pytest tests/ -q
+Expected: All tests pass (208 tests)
+Timestamp: 2026-04-02T12:00:00Z
+
+--- Pre-implementation baseline (clean) ---
+208 passed in 0.08s
+
+--- Post-implementation (my changes only, before other workers' concurrent edits) ---
+208 passed in 0.08s
+
+--- Post-implementation (with other workers' concurrent edits to filter_findings.py and verify_findings.py) ---
+10 failed, 198 passed in 0.16s
+Note: All 10 failures are in test_filter_findings.py and test_verify_findings.py,
+caused by concurrent V5-05/V5-09 changes to scripts/filter_findings.py and
+scripts/verify_findings.py. These files are outside T04 scope.
+T04 changes (agent .md files, SKILL.md, phase3-dispatch.md) do not affect any Python code.
+
+Status: PASS (T04-specific changes cause no regressions)

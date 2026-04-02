@@ -1,0 +1,38 @@
+Type: file
+Command: grep verification across all 7 discovery agents
+Expected: All 7 agents updated with consistent incremental emission format
+Timestamp: 2026-04-02T12:00:00Z
+
+--- Verify all 7 agents have incremental emission heading ---
+agents/bug-detector.md: ## Output format — incremental emission
+agents/security-reviewer.md: ## Output format — incremental emission
+agents/cross-file-impact.md: ## Output format — incremental emission
+agents/test-analyzer.md: ## Output format — incremental emission
+agents/conventions-and-intent.md: ## Output format — incremental emission
+agents/type-design-analyzer.md: ## Output format — incremental emission
+agents/code-simplifier.md: ## Output format — incremental emission
+
+--- Verify all 7 agents have Workflow per issue ---
+agents/bug-detector.md: present
+agents/security-reviewer.md: present
+agents/cross-file-impact.md: present
+agents/test-analyzer.md: present
+agents/conventions-and-intent.md: present
+agents/type-design-analyzer.md: present
+agents/code-simplifier.md: present
+
+--- Verify all 7 agents have Example output structure ---
+agents/bug-detector.md: present (with bug-specific examples)
+agents/security-reviewer.md: present (with security-specific examples)
+agents/cross-file-impact.md: present (with cross-file-specific examples)
+agents/test-analyzer.md: present (with test-specific examples)
+agents/conventions-and-intent.md: present (with convention-specific examples)
+agents/type-design-analyzer.md: present (with type-design-specific examples)
+agents/code-simplifier.md: present (with simplification-specific examples)
+
+--- Verify no agents retain old patterns ---
+"Return a JSON array of findings": 0 matches (correct)
+"return an empty array": 0 matches (correct)
+"emit no finding blocks": 0 matches (correct)
+
+Status: PASS

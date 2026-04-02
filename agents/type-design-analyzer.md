@@ -154,9 +154,19 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Prefer LSP to navigate type hierarchies — goToDefinition to inspect base types and interfaces, and findReferences to locate every place a mutable field or constructor is called. Fall back to Grep and Read if LSP is unavailable to find all construction sites and mutation points for a changed type before concluding an invariant can be violated.
 
-## Output format
+## Output format — incremental emission
 
-Return a JSON array of findings. Each finding must conform to this schema:
+Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+
+**Workflow per issue:**
+1. Investigate the issue (brief notes in plain text are fine)
+2. If a real issue is found, emit a fenced JSON block immediately
+3. If no issue is found, emit an explicit SKIP with a one-line reason
+4. Move to the next issue
+
+This structure means output truncation only loses the last in-progress investigation, not all findings.
+
+Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
 ```json
 {
@@ -177,6 +187,23 @@ Return a JSON array of findings. Each finding must conform to this schema:
 }
 ```
 
+**Example output structure:**
+
+```
+[investigation of mutable field exposed on UserConfig — checking all construction sites]
+```json
+{"id": "type-1", "dimension": "type_design", "severity": "high", "confidence": 85, ...}
+```
+
+[investigation of enum variant exhaustiveness — switch has default case covering new variants]
+SKIP: OrderStatus enum — switch in processOrder() has exhaustive matching with compile-time check; no invariant gap.
+
+[investigation of builder pattern missing validation on required fields]
+```json
+{"id": "type-2", "dimension": "type_design", "severity": "medium", "confidence": 78, ...}
+```
+```
+
 For each finding, include the four dimension ratings (Encapsulation, Invariant Expression, Invariant Usefulness, Invariant Enforcement) in the description field. Format them as a brief summary, e.g., "Encapsulation: 4/10, Expression: 6/10, Usefulness: 8/10, Enforcement: 3/10" followed by the specific issue and recommendation.
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty array `[]`.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.

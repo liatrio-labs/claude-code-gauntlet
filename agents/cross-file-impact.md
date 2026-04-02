@@ -147,9 +147,19 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context — cross-file impact analysis demands active codebase exploration. Prefer LSP for semantic resolution: findReferences to locate every consumer of a changed symbol, and goToDefinition to trace interface hierarchies and check whether implementors still satisfy the contract. Fall back to Grep if LSP is unavailable, then Read each caller site to verify compatibility.
 
-## Output format
+## Output format — incremental emission
 
-Return a JSON array of findings. Each finding must conform to this schema:
+Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+
+**Workflow per issue:**
+1. Investigate the issue (brief notes in plain text are fine)
+2. If a real issue is found, emit a fenced JSON block immediately
+3. If no issue is found, emit an explicit SKIP with a one-line reason
+4. Move to the next issue
+
+This structure means output truncation only loses the last in-progress investigation, not all findings.
+
+Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
 ```json
 {
@@ -170,10 +180,27 @@ Return a JSON array of findings. Each finding must conform to this schema:
 }
 ```
 
+**Example output structure:**
+
+```
+[investigation of changed return type on getUserById — tracing callers]
+```json
+{"id": "cross-file-1", "dimension": "cross_file_impact", "severity": "high", "confidence": 88, ...}
+```
+
+[investigation of renamed config key DATABASE_URL — no issue found]
+SKIP: DATABASE_URL rename — all 3 consumers in src/config/ updated in same PR; verified with grep.
+
+[investigation of new required parameter on validate() — caller in billing module not updated]
+```json
+{"id": "cross-file-2", "dimension": "cross_file_impact", "severity": "critical", "confidence": 95, ...}
+```
+```
+
 For each finding, include:
 1. The specific change that causes the impact and its location
 2. The **affected consumers** — list each file/line that breaks as a result
 3. A **concrete fix** for both the changed code and the affected consumers
 4. Severity and confidence ratings
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty array `[]`.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.

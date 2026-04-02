@@ -144,9 +144,19 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Read to load CLAUDE.md before suggesting simplifications, ensuring they follow project patterns. Use LSP to check how a function is actually used before suggesting extraction or inlining — findReferences shows whether a helper would be reused or only called once, which changes whether extraction helps or hurts readability.
 
-## Output format
+## Output format — incremental emission
 
-Return a JSON array of findings. Each finding must conform to this schema:
+Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+
+**Workflow per issue:**
+1. Investigate the issue (brief notes in plain text are fine)
+2. If a real issue is found, emit a fenced JSON block immediately
+3. If no issue is found, emit an explicit SKIP with a one-line reason
+4. Move to the next issue
+
+This structure means output truncation only loses the last in-progress investigation, not all findings.
+
+Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
 ```json
 {
@@ -167,6 +177,23 @@ Return a JSON array of findings. Each finding must conform to this schema:
 }
 ```
 
+**Example output structure:**
+
+```
+[investigation of nested ternary in renderStatus — readability issue]
+```json
+{"id": "simplify-1", "dimension": "simplification", "severity": "medium", "confidence": 82, ...}
+```
+
+[investigation of repeated null checks — actually needed for different code paths]
+SKIP: repeated null checks in processOrder — each guard protects a different downstream call; collapsing them would change error granularity.
+
+[investigation of manual array filtering that could use built-in method]
+```json
+{"id": "simplify-2", "dimension": "simplification", "severity": "low", "confidence": 75, ...}
+```
+```
+
 For each finding, include **before and after code snippets** in the description or suggestion field showing the specific simplification. The author needs to see both versions to evaluate whether the change is an improvement. Keep snippets focused — show only the relevant lines, not entire functions.
 
 Format the snippets clearly:
@@ -183,4 +210,4 @@ Format the snippets clearly:
 
 Explain briefly why the simplified version is clearer.
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty array `[]`.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.

@@ -82,7 +82,7 @@ Regardless of the PR size or how many other agents are running, you MUST check A
 - Mass assignment / over-posting — user input bound directly to internal models without an explicit allowlist of permitted fields, allowing attackers to set admin flags, ownership fields, or internal state
 
 **Unsafe deserialization**
-- Use of unsafe deserialization functions on untrusted data (Python's unsafe pickle, PHP unserialize, Java ObjectInputStream, .NET BinaryFormatter)
+- Use of unsafe deserialization functions on untrusted data (Python's unsafe deserialization modules, PHP unserialize, Java ObjectInputStream, .NET BinaryFormatter)
 - Use of YAML.load without SafeLoader on external data
 - JSON.parse combined with class instantiation or prototype assignment from user input
 - Any deserialization format that can trigger constructors or callbacks
@@ -187,9 +187,19 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Read and Grep to trace data flows beyond the diff — follow inputs from entry points to sinks across file boundaries. Use LSP for fast semantic symbol resolution (~50ms) when checking whether a sanitization function exists upstream, whether an auth check is present, or whether a sink is reachable from user input.
 
-## Output format
+## Output format — incremental emission
 
-Return a JSON array of findings. Each finding must conform to this schema:
+Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+
+**Workflow per issue:**
+1. Investigate the issue (brief notes in plain text are fine)
+2. If a real issue is found, emit a fenced JSON block immediately
+3. If no issue is found, emit an explicit SKIP with a one-line reason
+4. Move to the next issue
+
+This structure means output truncation only loses the last in-progress investigation, not all findings.
+
+Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
 ```json
 {
@@ -210,10 +220,27 @@ Return a JSON array of findings. Each finding must conform to this schema:
 }
 ```
 
+**Example output structure:**
+
+```
+[investigation of SQL injection in user search endpoint]
+```json
+{"id": "security-1", "dimension": "security", "severity": "critical", "confidence": 92, ...}
+```
+
+[investigation of missing CSRF token on settings page — no issue found]
+SKIP: CSRF on settings page — framework middleware applies CSRF protection globally; verified in middleware config.
+
+[investigation of path traversal in file upload handler]
+```json
+{"id": "security-2", "dimension": "security", "severity": "high", "confidence": 85, ...}
+```
+```
+
 For each finding, include:
 1. The specific vulnerability and its location
 2. The **attack vector** — how an attacker actually exploits this step by step
 3. A **concrete fix** showing how to remediate (use the project's conventions if CLAUDE.md specified them)
 4. Severity and confidence ratings
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty array `[]`.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.

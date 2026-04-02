@@ -205,9 +205,19 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Read and Grep to examine surrounding code, callers, and error paths before concluding an issue exists. Use LSP for fast semantic symbol resolution — hover to check types, findReferences to confirm a function has no other callers, goToDefinition to inspect what a dependency actually does.
 
-## Output format
+## Output format — incremental emission
 
-Return a JSON array of findings. Each finding must conform to this schema:
+Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+
+**Workflow per issue:**
+1. Investigate the issue (brief notes in plain text are fine)
+2. If a real issue is found, emit a fenced JSON block immediately
+3. If no issue is found, emit an explicit SKIP with a one-line reason
+4. Move to the next issue
+
+This structure means output truncation only loses the last in-progress investigation, not all findings.
+
+Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
 ```json
 {
@@ -228,10 +238,27 @@ Return a JSON array of findings. Each finding must conform to this schema:
 }
 ```
 
+**Example output structure:**
+
+```
+[investigation of potential null dereference in auth handler]
+```json
+{"id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 85, ...}
+```
+
+[investigation of off-by-one in pagination — no issue found]
+SKIP: off-by-one in pagination — the boundary check at line 42 correctly uses < instead of <=; verified against callers.
+
+[investigation of missing error handling in retry logic]
+```json
+{"id": "bug-2", "dimension": "bug", "severity": "medium", "confidence": 78, ...}
+```
+```
+
 For error handling findings, include:
 1. The specific problem and its location
 2. The **hidden error types** — list the specific unexpected exceptions the current code could catch/mask
 3. A **corrected code example** showing how to fix the issue (use the project's conventions if CLAUDE.md specified them, otherwise use idiomatic patterns for the language)
 4. Severity and confidence ratings
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty array `[]`.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.

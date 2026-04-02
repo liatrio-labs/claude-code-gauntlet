@@ -205,9 +205,19 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Read to load CLAUDE.md, REVIEW.md, and spec documents before evaluating compliance. Use LSP to verify factual claims in comment accuracy checks — goToDefinition to confirm a referenced type exists, and hover to check whether documented parameter types match the actual signature.
 
-## Output format
+## Output format — incremental emission
 
-Return a JSON array of findings. Each finding must conform to this schema:
+Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+
+**Workflow per issue:**
+1. Investigate the issue (brief notes in plain text are fine)
+2. If a real issue is found, emit a fenced JSON block immediately
+3. If no issue is found, emit an explicit SKIP with a one-line reason
+4. Move to the next issue
+
+This structure means output truncation only loses the last in-progress investigation, not all findings.
+
+Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
 ```json
 {
@@ -228,8 +238,25 @@ Return a JSON array of findings. Each finding must conform to this schema:
 }
 ```
 
+**Example output structure:**
+
+```
+[investigation of missing error logging convention from CLAUDE.md]
+```json
+{"id": "conv-1", "dimension": "convention", "severity": "medium", "confidence": 88, ...}
+```
+
+[investigation of function naming convention — follows project pattern correctly]
+SKIP: function naming in utils.py — uses snake_case per CLAUDE.md section 3; no violation.
+
+[investigation of comment accuracy on deprecated API handler]
+```json
+{"id": "conv-2", "dimension": "comment_accuracy", "severity": "low", "confidence": 72, ...}
+```
+```
+
 For convention findings: the `claude_md_rule` field MUST be non-null and MUST quote the specific rule. Findings without a cited rule will be rejected.
 
 For intent findings: the `spec_text` field MUST be non-null and MUST quote the specific spec text. Findings without a cited spec will be rejected.
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty array `[]`.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.
