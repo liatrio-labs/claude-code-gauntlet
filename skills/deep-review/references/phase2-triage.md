@@ -55,6 +55,19 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
 
+**Save the diff for Phase 4 (PR/MR mode only):** After collecting the full diff in PR/MR mode, save it to `$TMPDIR/deep-review-diff.patch` for use by `verify_findings.py` via `--diff-file`. The `gh pr diff` / `glab mr diff` output is server-computed and fork-safe, avoiding local merge-base failures that can occur with `git diff`.
+
+```bash
+# Save the PR diff to a file (only in PR/MR mode)
+gh pr diff {pr_number} > "$TMPDIR/deep-review-diff.patch"
+```
+
+Validate the saved diff before relying on it:
+- Non-empty (file size > 0)
+- Starts with `diff --git` (confirms it is a valid unified diff, not an error message)
+
+If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), omit `--diff-file` in Phase 4 and let `verify_findings.py` use its own git diff fallback chain. For **branch comparison** and **local changes** target types, do not save a diff file — `verify_findings.py` will compute the diff locally.
+
 Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, `QODO.md` at repo root and in directories with changed files.
 
 ---

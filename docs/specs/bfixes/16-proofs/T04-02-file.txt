@@ -1,0 +1,12 @@
+Type: file
+Description: Verify validation-pipeline.md Step 4.0 includes --diff-file in example invocation
+Command: grep -c "diff-file" skills/deep-review/references/validation-pipeline.md
+Expected: >= 2 (invocation + explanation)
+Timestamp: 2026-04-01T22:00:00Z
+Status: PASS
+
+Verification:
+The file skills/deep-review/references/validation-pipeline.md Step 4.0 now includes:
+- Updated example invocation: --base-branch main --diff-file "$TMPDIR/deep-review-diff.patch"
+- Explanation paragraph about when to pass --diff-file (PR/MR mode) vs omit it (branch/local)
+- Correct fallback description: three-dot, two-dot, skip

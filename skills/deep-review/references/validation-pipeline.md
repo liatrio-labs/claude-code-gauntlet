@@ -31,9 +31,11 @@ with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)
 " "$TMPDIR/deep-review-phase4-input.json"
 
-python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-input.json" --base-branch main
+python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-input.json" --base-branch main --diff-file "$TMPDIR/deep-review-diff.patch"
 """)
 ```
+
+When the review target is a PR/MR, pass `--diff-file` pointing to the diff saved during Phase 2c. This uses the server-computed API diff (`gh pr diff` / `glab mr diff`), which is fork-safe and avoids local merge-base failures. For branch comparison or local changes (no saved diff), omit `--diff-file` — the script falls back to its own git diff chain (three-dot, two-dot, skip).
 
 **Input JSON schema:**
 ```json

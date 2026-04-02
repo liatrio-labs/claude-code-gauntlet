@@ -1,0 +1,14 @@
+Type: file
+Description: Verify SKILL.md contains diff persistence section and --diff-file in Phase 4
+Command: grep -c "diff-file\|Diff persistence" skills/deep-review/SKILL.md
+Expected: >= 3 (section header + invocation + explanation)
+Timestamp: 2026-04-01T22:00:00Z
+Status: PASS
+
+Verification:
+The file skills/deep-review/SKILL.md contains (committed in 492876d by BF-14 worker):
+- "Diff persistence for Phase 4 (PR/MR mode)" section header in Phase 2
+- --diff-file in the Phase 4 verify_findings.py invocation template
+- Explanation paragraph for when to use/omit --diff-file
+Note: These SKILL.md changes were committed alongside BF-14 by another worker.
+This task (BF-16) adds the reference file changes that complete the instruction set.

@@ -1,0 +1,15 @@
+Type: file
+Description: Verify phase2-triage.md contains diff-save instruction in section 2c
+Command: grep -c "Save the diff for Phase 4" skills/deep-review/references/phase2-triage.md
+Expected: 1 (instruction present)
+Timestamp: 2026-04-01T22:00:00Z
+Status: PASS
+
+Verification:
+The file skills/deep-review/references/phase2-triage.md now contains the diff-save instruction
+block in section 2c. Key elements present:
+- "Save the diff for Phase 4 (PR/MR mode only)" instruction paragraph
+- gh pr diff command example saving to $TMPDIR/deep-review-diff.patch
+- Validation rules (non-empty, starts with "diff --git")
+- Fallback behavior when gh pr diff fails
+- Explicit note that branch comparison and local changes skip this step
