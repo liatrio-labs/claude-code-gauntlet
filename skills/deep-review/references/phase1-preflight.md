@@ -6,11 +6,11 @@ Review target resolution, eligibility logic, AskUserQuestion templates, and cons
 
 ## Resolve Review Target
 
-The user's input determines the review target. Resolve it before eligibility checks — the target type affects every subsequent step.
+The user's input determines the review target. Resolve it before eligibility checks — the target type affects every subsequent step. The ARGUMENTS value from the skill invocation is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number and must be resolved via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR.
 
 **Input → target resolution (check in this order):**
 
-1. **User passed a PR/MR number** (e.g., `/deep-review 42`, `review PR 42`, `review #42`) → **PR/MR mode**. Store the number as `pr_number`. Use this number for all `gh pr` / `glab mr` commands. Do NOT extract numbers from branch names — the branch name may contain the upstream PR number which differs from the PR number in the current repo.
+1. **User passed a PR/MR number** (e.g., `/deep-review 42`, `review PR 42`, `review #42`, or ARGUMENTS: `1`) → **PR/MR mode**. Store the number as `pr_number`. Use this number for all `gh pr` / `glab mr` commands. Do NOT extract numbers from branch names — the branch name may contain the upstream PR number which differs from the PR number in the current repo.
 2. **User passed a URL** (e.g., `github.com/.../pull/42`) → **PR/MR mode**. Extract `pr_number` from the URL path.
 3. **User said "review" with no number/URL** and a PR/MR exists for the current branch → **PR/MR mode**. Use `gh pr view --json number --jq '.number'` to get the number for the current branch.
 4. **No PR/MR found** → **Local changes mode**. Review uncommitted changes or branch diff.

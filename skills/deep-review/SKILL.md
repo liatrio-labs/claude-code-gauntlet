@@ -40,7 +40,7 @@ If the listing succeeds, `plugin_root` is correct. All subsequent `python3` invo
 
 ### Resolve review target
 
-Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). Do NOT extract PR numbers from branch names — use only the user's explicit input. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template.
+Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template.
 
 ### Eligibility checks
 
