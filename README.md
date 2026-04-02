@@ -14,7 +14,7 @@ Deep Review dispatches 5-7 specialized agents in parallel, each examining your c
 | **test-analyzer** | Sonnet | Opus | Test coverage gaps, test quality, missing edge cases |
 | **conventions-and-intent** | Sonnet | Opus | CLAUDE.md compliance, spec alignment, comment accuracy |
 | **type-design-analyzer** | Sonnet | Opus | Type encapsulation and invariant design (conditional) |
-| **code-simplifier** | Sonnet | Opus | Simplification opportunities (post-review, conditional) |
+| **code-simplifier** | Sonnet | Opus | Simplification opportunities |
 
 Two review modes are available. **Optimized** (default) is ~40% cheaper and faster — Sonnet for most agents, Opus only for security. **Frontier** uses Opus for all agents. Security always gets Opus in both modes because different models have complementary vulnerability-class detection profiles.
 
@@ -23,7 +23,7 @@ After agents report findings, a validation pipeline filters false positives:
 1. **Git blame classification** — labels each finding as "new" (introduced by this PR) or "surfaced" (pre-existing code exposed by this change)
 2. **Deterministic verification** — confirms findings reference real code at correct locations
 3. **LLM judgment** — attempts to disprove each finding with a calibrated confidence rubric
-4. **Dimension-specific thresholds** — security uses 70 (false negatives are costly), others use 80
+4. **Confidence thresholds** — default 70 (security: 60), configurable per-dimension via REVIEW.md
 5. **Blind challenge round** — fresh agents attempt to disprove blocking findings
 6. **Contradiction resolution** — specs suppress bug findings, security wins ties
 7. **Max findings cap** — configurable limit prevents noise in high-debt codebases
@@ -113,8 +113,8 @@ Deep Review will offer to scaffold a `REVIEW.md` when it doesn't find one. The f
 - "**/*.generated.cs"
 
 ## Confidence Threshold
-# Default: 80. Security always uses minimum 70 regardless of this setting.
-80
+# Default: 70. Security uses minimum 60 regardless of this setting.
+70
 
 ## Max Findings
 # Cap findings in high-debt codebases. Default: no limit.
@@ -133,7 +133,7 @@ Every architectural decision is grounded in published research:
 | Concern decomposition | Anthropic, Ellipsis, Qodo all use concern-parallel, not file-parallel |
 | Deterministic verification | LLM-on-LLM verification shares correlated errors ~60% of the time; deterministic grounding is essential |
 | Context-pulling | cubic achieved 51% fewer false positives switching from push to pull |
-| Security threshold 70 | Anthropic's own judge filtered 7/8 security findings at threshold 80, including real ones |
+| Security threshold 60 | Anthropic's own judge filtered 7/8 security findings at threshold 80, including real ones |
 | Overconfidence calibration | Xiong et al. (ICLR 2024): LLMs cluster confidence in 80-100 range |
 | Full-codebase security | Cat Wu (Anthropic): "agents often take the entire codebase into account" |
 | Prompt injection defense | Every major AI review tool has been exploited; 5-layer defense recommended |

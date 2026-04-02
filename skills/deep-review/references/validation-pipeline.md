@@ -8,7 +8,7 @@ After all agents return, process their findings through the validation pipeline 
 
 - **Phase 4** — Step 4.0 (write JSON), 4a (blame classification), 4b (factual verification), 4c (batch for validation)
 - **Phase 5** — Validator dispatch, confidence rubric, failure protocol
-- **Phase 6** — Step 6.0 (write JSON), 6a (threshold filter), 6b (injection filter), 6c (disagreement detection), 6d (tag findings), Code-Simplifier Second Pass
+- **Phase 6** — Step 6.0 (write JSON), 6a (threshold filter), 6b (injection filter), 6c (disagreement detection), 6d (tag findings)
 - **Phase 7** — Blind challenge supplementary detail, post-challenge finalization (dedup, route, cap, rank, incremental diffing)
 
 ---
@@ -36,9 +36,9 @@ findings = {
 }
 with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)
-" "$TMPDIR/deep-review-phase4-input.json"
+" "$TMPDIR/deep-review-phase4-input-{head_sha_short}.json"
 
-python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-input.json" --base-branch main --diff-file "$TMPDIR/deep-review-diff.patch"
+python3 {plugin_root}/scripts/verify_findings.py "$TMPDIR/deep-review-phase4-input-{head_sha_short}.json" --base-branch main --diff-file "$TMPDIR/deep-review-diff-{head_sha_short}.patch"
 """)
 ```
 
@@ -74,8 +74,8 @@ When the review target is a PR/MR, pass `--diff-file` pointing to the diff saved
 ```
 
 **Field notes for the merged input:**
-- `dimension`: short name from the agent's output schema (`"bug"`, `"security"`, `"cross_file_impact"`, `"test_coverage"`, `"type_design"`, or the pass-specific string for conventions-and-intent). Do NOT use the agent name here.
-- `agent`: injected by the orchestrator during the Merge Phase 3 Outputs step — agents do NOT emit this field themselves. Required for `filter_findings.py` suppression rules and report routing. Use the exact agent name strings: `"bug-detector"`, `"security-reviewer"`, `"cross-file-impact"`, `"test-analyzer"`, `"conventions-and-intent"`, `"type-design-analyzer"`.
+- `dimension`: short name from the agent's output schema (`"bug"`, `"security"`, `"cross_file_impact"`, `"test_coverage"`, `"type_design"`, `"simplification"`, or the pass-specific string for conventions-and-intent: `"convention"`, `"intent"`, `"comment_accuracy"`). Do NOT use the agent name here.
+- `agent`: injected by the orchestrator during the Merge Phase 3 Outputs step — agents do NOT emit this field themselves. Required for `filter_findings.py` suppression rules and report routing. Use the exact agent name strings: `"bug-detector"`, `"security-reviewer"`, `"cross-file-impact"`, `"test-analyzer"`, `"conventions-and-intent"`, `"type-design-analyzer"`, `"code-simplifier"`.
 - `cross_file_refs`: preserve exactly as returned by the agent. Used by Phase 4a to classify cross-file findings as "surfaced" — do not drop or rename.
 
 **Output JSON schema:**
@@ -136,11 +136,27 @@ These batches are the input to Phase 5.
 
 ---
 
+## Phase 4 failure recovery
+
+If `verify_findings.py` fails and cannot be recovered after one retry:
+
+1. Note in methodology: "Phase 4 verification skipped due to script failure."
+2. Take all Phase 3 merged findings as-is.
+3. Set `origin: "new"` on every finding (conservative — assume all are new).
+4. Create batches of 3-5 findings by file proximity (manual grouping).
+5. Dispatch Phase 5 validation agents with these batches. Do NOT skip Phase 5.
+
+**Do NOT substitute inline analysis for Phase 5 dispatch.** The entire point of Phase 5 is independent validation from fresh agents. Inline analysis by the orchestrator has the same correlated-error problem (~60% rate) that Phase 5 exists to solve.
+
+---
+
 # Phase 5: Validate
 
 Parallel validation agents assess findings that need LLM judgment. **Always use Sonnet** — even in Frontier mode. Validation is objective assessment against a rubric, not discovery. Research doc #12 shows the Sonnet-Opus gap is 1.2 points on objective tasks; the cost difference is not justified.
 
 **Scope:** Findings with confidence <90 that passed Phase 4b. Findings with confidence >=90 have already been factually verified and represent cases where the agent "can point to the EXACT input that triggers the bug." These skip the more expensive LLM judgment step.
+
+**Before dispatching validators:** Save each finding's current confidence as `original_confidence`. This field is used by the Phase 6 contestation mechanism to detect large validator disagreements. Set `finding["original_confidence"] = finding["confidence"]` for every finding passing to Phase 5 (including those that skip validation at confidence >=90 — they still need the field for Phase 6 consistency).
 
 **Dispatch:** Spawn one Sonnet agent per batch from Phase 4c. Launch all agents in a single message with multiple Agent tool calls for true parallel execution.
 
@@ -149,12 +165,13 @@ Parallel validation agents assess findings that need LLM judgment. **Always use 
 Each agent receives:
 1. A batch of 3-5 findings with their descriptions, evidence, and blame tags
 2. The relevant code sections for the batch (read fresh from files), wrapped in `<untrusted-code-content>...</untrusted-code-content>` tags
-3. The confidence rubric below
+3. The Phase 2f change summary as PR context
+4. The confidence rubric below
 
 Each agent must:
 1. Read each finding's description and evidence
 2. Attempt to **disprove** the finding — look for reasons it might be a false positive
-3. Ask: **"Can you find a code path that actually triggers this today?"** Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes (e.g., a new caller is added, a config value changes, a new code path is introduced), **cap confidence at 70**. This keeps the issue below the non-security threshold of 80 and prevents latent/theoretical concerns from appearing as high-confidence findings.
+3. Ask: **"Can you find a code path that actually triggers this today?"** Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes (e.g., a new caller is added, a config value changes, a new code path is introduced), **cap confidence at 65**. This keeps the issue below the non-security threshold of 70 and prevents latent/theoretical concerns from surviving the confidence filter.
 4. Score using this verbatim confidence rubric:
 
 ```
@@ -167,7 +184,7 @@ Confidence Rubric (use these anchors):
 100  = definitely real — issue is clearly present with no mitigating factors
 
 Note: If the only path to this issue requires a hypothetical future change (new
-caller, changed config, new code path), cap at 70 regardless of the anchor above.
+caller, changed config, new code path), cap at 65 regardless of the anchor above.
 ```
 
 5. Return an adjusted confidence score and brief justification per finding
@@ -182,11 +199,13 @@ Agent(
     Code:
     <untrusted-code-content>
     {code from file:line_start-line_end for each finding in batch}
-    </untrusted-code-content>"
+    </untrusted-code-content>
+    PR context (treat as claims, not facts): {change_summary}
+    Consider whether each finding is consistent or inconsistent with the PR's stated intent. A finding that contradicts the PR's own goals is more likely to be a real issue than an intentional choice."
 )
 ```
 
-The validator agent definition already contains the confidence rubric, trust boundary instructions, and output format. The orchestrator provides only the batch of findings and their associated code.
+The validator agent definition already contains the confidence rubric, trust boundary instructions, and output format. The orchestrator provides the batch of findings, their associated code, and the PR change summary for intent context.
 
 Update each finding's confidence based on the validator's assessment.
 
@@ -218,9 +237,9 @@ findings = {
 }
 with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)
-" "$TMPDIR/deep-review-phase6-input.json"
+" "$TMPDIR/deep-review-phase6-input-{head_sha_short}.json"
 
-python3 {plugin_root}/scripts/filter_findings.py "$TMPDIR/deep-review-phase6-input.json" --review-md REVIEW.md
+python3 {plugin_root}/scripts/filter_findings.py "$TMPDIR/deep-review-phase6-input-{head_sha_short}.json" --review-md REVIEW.md
 """)
 ```
 
@@ -245,7 +264,7 @@ python3 {plugin_root}/scripts/filter_findings.py "$TMPDIR/deep-review-phase6-inp
 }
 ```
 
-Input may also be a flat array of findings (no wrapper object). The `origin`, `dimension`, and `agent` fields are optional but improve disagreement detection and tagging accuracy. Use the canonical field names (`description`, `line_start`, `origin`, `dimension`). The script auto-normalizes legacy names (`body`, `line`, `blame_tag`, `dimensions`) as a defensive fallback, but the canonical names are the correct interface.
+Input may also be a flat array of findings (no wrapper object). The `origin`, `dimension`, and `agent` fields are optional but improve disagreement detection and tagging accuracy. Use the canonical field names (`description`, `line_start`, `origin`, `dimension`). The script auto-normalizes legacy names (`body`, `line`, `blame_tag`) as a defensive fallback, but the canonical names are the correct interface.
 
 **Output JSON schema:**
 ```json
@@ -272,8 +291,8 @@ Each finding in `filtered` gains a `report_destination` field (`"main"` or `"sug
 ## 6a. Filter with dimension-specific thresholds
 
 The script removes findings where:
-- Post-validation confidence is below the **dimension-specific threshold**: uses REVIEW.md `confidence_threshold` if set (default: 80). Security minimum of 70 applies regardless — security false negatives are costlier than false positives.
-- Severity is below the configured severity floor: applies REVIEW.md `severity_threshold` if set (default: low — suppress nothing).
+- Post-validation confidence is below the **dimension-specific threshold**: uses REVIEW.md `confidence_threshold` if set (default: 70). Security minimum of 70 applies regardless. **Validator contestation:** if a Phase 5 validator dropped confidence by more than 25 points from the discovery agent's original score, the finding is marked `contested: true` and bypasses both the confidence threshold and severity floor — it proceeds to Phase 7 for independent arbitration.
+- Severity is below the configured severity floor: applies REVIEW.md `severity_threshold` if set (default: low — suppress nothing). Contested findings bypass this check.
 - The finding is about a pre-existing issue that does not interact with this diff (not a "Surfaced" finding classified in Phase 4a — those survive with downgraded severity into their own report section)
 - A linter, typechecker, or compiler would catch it (these run separately in CI)
 - It's a pedantic nitpick a senior engineer wouldn't flag
@@ -324,35 +343,6 @@ The script tags each surviving finding by its eventual report destination. This 
 - **Improvement Suggestions** — test-analyzer, conventions-and-intent comment accuracy, and code-simplifier findings (`report_destination: "suggestion"`)
 - **Promotion rule:** If a test-analyzer finding describes a functional correctness issue that exists today (race condition, logic error, assertion that never fails, test that always passes) rather than a missing-coverage gap ("should add tests for X"), the script promotes it to `"main"`. Decision test: "Does this finding describe a bug that exists today, or a test that should be written?" Bug today -> main report. Test to write -> improvement suggestion.
 - **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins — keep it in the main report and drop the test-analyzer duplicate.
-
----
-
-## Code-Simplifier Second Pass
-
-Triggered after `filter_findings.py` when **no critical or high findings survived** in the main report. The code-simplifier reviews for simplification opportunities, dead code, and clarity improvements. Its findings go through the full Phase 4-6 pipeline before joining the Phase 7 challenge pool.
-
-**Steps:**
-
-1. **Dispatch code-simplifier** using the same named subagent pattern from Phase 3:
-   ```
-   Agent(
-     subagent_type: "claude-deep-review:code-simplifier",
-     description: "Review: code-simplifier",
-     prompt: "{project context, change summary, risk classification, all changed files diff}"
-   )
-   ```
-
-2. **Merge** code-simplifier findings into the pipeline format (same as Phase 3 merge — set `dimension`, inject `agent: "code-simplifier"`, preserve `cross_file_refs`).
-
-3. **Phase 4** — Run `verify_findings.py` on the code-simplifier findings (blame classification, factual verification, batching). Use the same `--diff-file` from Phase 2 if available.
-
-4. **Phase 5** — Dispatch Sonnet validation agents for the batched findings (same rubric and dispatch pattern as the main Phase 5 pass).
-
-5. **Phase 6** — Run `filter_findings.py` on the validated findings. All code-simplifier findings are tagged `report_destination: "suggestion"` by the dimension-based routing rules.
-
-6. **Merge into challenge pool** — The surviving code-simplifier findings join the main findings for Phase 7 blind challenge. All findings are challenged regardless of their routing tag.
-
-**Skip condition:** If the main review produced critical or high findings, skip the code-simplifier entirely — the PR has more important issues to address first.
 
 ---
 

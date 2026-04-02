@@ -155,6 +155,10 @@ WARNING: LLMs are systematically overconfident. Calibrate carefully:
 - **70-79**: The rule is vaguely worded and the code might or might not violate the spirit. Or the comment is stale but a careful reader could figure out the truth from context.
 - **60-69**: Plausible issue but significant uncertainty remains.
 
+**Confidence measures certainty the issue exists, not its impact.** A verified CLAUDE.md rule violation where you can quote the rule and show the violating code is still confidence 90+ (you verified it). A comment that seems stale but might have been left intentionally is confidence 60-70. Use severity for impact, confidence for certainty.
+
+Calibration check: "Could I show another engineer the rule and the code, and they'd agree the violation exists?" If yes → 80+. If "probably but they might disagree" → 60-79. If "I'm extrapolating" → below 60.
+
 Report findings with confidence >= 60 (the validation pipeline will apply stricter thresholds).
 
 ## False-positive exclusions

@@ -95,6 +95,10 @@ WARNING: LLMs are systematically overconfident. Calibrate carefully:
 - **70-79**: The change is to a shared surface and some consumers may break, but you'd need to trace further to confirm
 - **60-69**: Plausible cross-file impact but significant uncertainty remains
 
+**Confidence measures certainty the issue exists, not its impact.** A verified interface mismatch that may never cause a runtime crash is still confidence 90+ (you verified it exists). A plausible race condition you can't prove is reachable is confidence 60-70. Use severity for impact, confidence for certainty.
+
+Calibration check: "Could I show another engineer the evidence and they'd agree the issue exists?" If yes → 80+. If "probably but they might disagree" → 60-79. If "I'm extrapolating" → below 60.
+
 Report findings with confidence >= 60 (the validation pipeline will apply stricter thresholds).
 
 Think like the person who has to debug the production incident caused by "I only changed one file, how did this break everything?" — trace the connections the author missed.

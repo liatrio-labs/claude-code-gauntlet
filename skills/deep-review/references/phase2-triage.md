@@ -64,11 +64,11 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
 
-**Save the diff for Phase 4 (PR/MR mode only):** After collecting the full diff in PR/MR mode, save it to `$TMPDIR/deep-review-diff.patch` for use by `verify_findings.py` via `--diff-file`. The `gh pr diff` / `glab mr diff` output is server-computed and fork-safe, avoiding local merge-base failures that can occur with `git diff`.
+**Save the diff for Phase 4 (PR/MR mode only):** After collecting the full diff in PR/MR mode, save it to `$TMPDIR/deep-review-diff-{head_sha_short}.patch` for use by `verify_findings.py` via `--diff-file`. The `gh pr diff` / `glab mr diff` output is server-computed and fork-safe, avoiding local merge-base failures that can occur with `git diff`.
 
 ```bash
 # Save the PR diff to a file (only in PR/MR mode)
-gh pr diff {pr_number} > "$TMPDIR/deep-review-diff.patch"
+gh pr diff {pr_number} > "$TMPDIR/deep-review-diff-{head_sha_short}.patch"
 ```
 
 Validate the saved diff before relying on it:
@@ -138,6 +138,11 @@ See `references/review-md-spec.md` section Discovery for the full prompts and sc
 - **Low risk** — tests, docs, config, generated code, lockfiles, formatting-only. <50 lines changed.
 
 High-risk files get expanded context (callers, callees, related tests); low-risk get lighter review.
+
+**Content-change promotion.** After initial classification, check LOW-risk files for substantive content changes — any diff line that changes a string value, numeric value, or identifier (not just formatting, whitespace, markup, or delimiters). Files with substantive content changes get promoted to MEDIUM. This is type-agnostic.
+
+Promotion triggers: i18n text changes, config value changes, CSS/SCSS numeric changes, changed string literals or identifiers.
+Stay LOW: lock files, whitespace-only changes, generated code updates, tag case changes (`<br/>` → `<br />`).
 
 ### Light Review for Trivial PRs
 
@@ -279,7 +284,7 @@ Never use `grep` or `find` from Bash for AI detection.
 
 All on by default unless REVIEW.md disables them. In **Optimized** mode, all agents use Sonnet except security-reviewer (always Opus). In **Frontier** mode, all agents use Opus.
 
-Skip conditions: test-analyzer (no test files in repo), conventions-and-intent (no CLAUDE.md AND no docs/specs), type-design-analyzer (no new types), code-simplifier (POST-review only, only if no critical/high).
+Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no new types).
 
 ---
 

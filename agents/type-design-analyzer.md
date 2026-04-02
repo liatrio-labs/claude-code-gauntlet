@@ -104,6 +104,10 @@ WARNING: LLMs are systematically overconfident. Calibrate carefully:
 - **70-79**: The type design could be improved and the current design creates maintenance risk, but it's not immediately dangerous
 - **60-69**: Plausible type design issue but significant uncertainty remains
 
+**Confidence measures certainty the issue exists, not its impact.** A verified exposed mutable field or interface contract violation is still confidence 90+ (you verified it exists via LSP). A type that seems under-encapsulated but might have design reasons you can't see is confidence 60-70. Use severity for impact, confidence for certainty.
+
+Calibration check: "Could I show another engineer the type definition and they'd agree the design issue exists?" If yes → 80+. If "probably but they might disagree" → 60-79. If "I'm extrapolating" → below 60.
+
 Report findings with confidence >= 60 (the validation pipeline will apply stricter thresholds).
 
 ## False-positive exclusions

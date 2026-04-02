@@ -81,9 +81,9 @@ findings = {
 }
 with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)
-" "$TMPDIR/deep-review-findings.json"
+" "$TMPDIR/deep-review-delivery-{head_sha_short}.json"
 
-python3 {plugin_root}/scripts/post_review.py "$TMPDIR/deep-review-findings.json"
+python3 {plugin_root}/scripts/post_review.py "$TMPDIR/deep-review-delivery-{head_sha_short}.json"
 """)
 ```
 

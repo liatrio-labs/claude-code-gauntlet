@@ -36,6 +36,7 @@ Output JSON schema:
         "stats": {
             "total":                   N,   # total input findings
             "passed_threshold":        N,   # passed confidence + severity threshold
+            "contested_count":         N,   # findings that bypassed threshold via validator contestation
             "injections_removed":      N,   # removed by injection filter
             "consensus_boosted":       N,   # confidence boosted due to multi-agent consensus
             "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
@@ -53,7 +54,8 @@ Each filtered finding includes:
 
 REVIEW.md parsing:
     Looks for a fenced code block or YAML-style section containing:
-        confidence_threshold: 80
+        confidence_threshold: 70
+        security_min_confidence: 70
         severity_threshold: medium
         ignore:
           - pattern to ignore
@@ -143,9 +145,13 @@ def normalize_field_names(findings):
 SEVERITY_ORDER = ["critical", "high", "medium", "low"]
 
 # Default thresholds used when REVIEW.md is absent or does not specify them
-DEFAULT_CONFIDENCE_THRESHOLD = 80
+DEFAULT_CONFIDENCE_THRESHOLD = 70
 DEFAULT_SECURITY_MIN_CONFIDENCE = 70
 DEFAULT_SEVERITY_THRESHOLD = "low"  # pass all severities by default
+
+# Contestation: if the validator dropped confidence by more than this amount,
+# the finding is marked as contested and bypasses the threshold check.
+_CONTESTATION_DROP_THRESHOLD = 25
 
 
 def parse_review_md(path):
@@ -228,7 +234,7 @@ def parse_review_md(path):
 
 
 # ---------------------------------------------------------------------------
-# Filter: confidence / severity threshold
+# Filter: confidence / severity threshold (with validator contestation)
 # ---------------------------------------------------------------------------
 
 def apply_threshold_filter(findings, config):
@@ -240,11 +246,24 @@ def apply_threshold_filter(findings, config):
         (security dimensions use config["security_min_confidence"] as minimum)
       - severity is at or above config["severity_threshold"] in SEVERITY_ORDER
 
-    Returns (passed, eliminated) lists. Each eliminated finding gains an
-    "eliminated_by" field set to "threshold".
+    Validator contestation (V5-09C):
+      If a finding has ``original_confidence`` (set before Phase 5 validation)
+      and the validator dropped confidence by more than 25 points
+      (original_confidence - confidence > 25), the finding is marked as
+      **contested** and bypasses the confidence threshold check. This prevents
+      an overly aggressive validator from silently killing legitimate findings.
+
+      Contested findings gain:
+        - contested: True
+        - contestation_drop: N  (how many points the validator removed)
+        - contestation_reason: human-readable explanation
+
+    Returns (passed, eliminated, contested_count) where contested_count is
+    the number of findings that bypassed the threshold via contestation.
     """
     passed = []
     eliminated = []
+    contested_count = 0
 
     sev_threshold_idx = SEVERITY_ORDER.index(
         config.get("severity_threshold", DEFAULT_SEVERITY_THRESHOLD)
@@ -265,8 +284,25 @@ def apply_threshold_filter(findings, config):
         else:
             effective_threshold = config.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD)
 
-        # Check confidence
-        if confidence < effective_threshold:
+        # -----------------------------------------------------------------
+        # Validator contestation check (V5-09C)
+        # -----------------------------------------------------------------
+        is_contested = False
+        original_confidence = finding.get("original_confidence")
+        if original_confidence is not None:
+            drop = original_confidence - confidence
+            if drop > _CONTESTATION_DROP_THRESHOLD:
+                is_contested = True
+                contested_count += 1
+                finding["contested"] = True
+                finding["contestation_drop"] = drop
+                finding["contestation_reason"] = (
+                    f"validator dropped confidence by {drop} points "
+                    f"(original: {original_confidence}, current: {confidence})"
+                )
+
+        # Check confidence (contested findings bypass this check)
+        if not is_contested and confidence < effective_threshold:
             elim = dict(finding)
             elim["eliminated_by"] = "threshold"
             elim["elimination_reason"] = (
@@ -275,23 +311,24 @@ def apply_threshold_filter(findings, config):
             eliminated.append(elim)
             continue
 
-        # Check severity
-        if severity not in SEVERITY_ORDER:
-            warn(f"Unknown severity {severity!r} on finding {finding.get('id', '?')}; treating as low.")
-            severity = "low"
-        sev_idx = SEVERITY_ORDER.index(severity)
-        if sev_idx > sev_threshold_idx:
-            elim = dict(finding)
-            elim["eliminated_by"] = "threshold"
-            elim["elimination_reason"] = (
-                f"severity '{severity}' is below threshold '{SEVERITY_ORDER[sev_threshold_idx]}'"
-            )
-            eliminated.append(elim)
-            continue
+        # Check severity (contested findings also bypass severity threshold)
+        if not is_contested:
+            if severity not in SEVERITY_ORDER:
+                warn(f"Unknown severity {severity!r} on finding {finding.get('id', '?')}; treating as low.")
+                severity = "low"
+            sev_idx = SEVERITY_ORDER.index(severity)
+            if sev_idx > sev_threshold_idx:
+                elim = dict(finding)
+                elim["eliminated_by"] = "threshold"
+                elim["elimination_reason"] = (
+                    f"severity '{severity}' is below threshold '{SEVERITY_ORDER[sev_threshold_idx]}'"
+                )
+                eliminated.append(elim)
+                continue
 
         passed.append(finding)
 
-    return passed, eliminated
+    return passed, eliminated, contested_count
 
 
 # ---------------------------------------------------------------------------
@@ -596,7 +633,7 @@ def detect_disagreement(findings):
             agent = f.get("agent", "").lower()
             agent_map.setdefault(agent, []).append(f)
 
-        # Suppression rule 1: bug-detector + conventions-and-intent → intentional
+        # Suppression rule 1: bug-detector + conventions-and-intent -> intentional
         if _AGENT_BUG_DETECTOR in agent_map and _AGENT_CONVENTIONS in agent_map:
             for conv_finding in agent_map[_AGENT_CONVENTIONS]:
                 conv_text = (conv_finding.get("description", "") + " " + conv_finding.get("title", "")).lower()
@@ -615,7 +652,7 @@ def detect_disagreement(findings):
                             suppressed.append(sup)
                     break
 
-        # Suppression rule 2: test-analyzer + conventions-and-intent → generated/scaffolding
+        # Suppression rule 2: test-analyzer + conventions-and-intent -> generated/scaffolding
         if _AGENT_TEST_ANALYZER in agent_map and _AGENT_CONVENTIONS in agent_map:
             for conv_finding in agent_map[_AGENT_CONVENTIONS]:
                 conv_text = (conv_finding.get("description", "") + " " + conv_finding.get("title", "")).lower()
@@ -836,7 +873,7 @@ def _route_by_dimension(finding):
     return None
 
 # Keyword patterns in test-analyzer finding titles/bodies that indicate
-# a functional correctness issue today (→ promote to main report).
+# a functional correctness issue today (-> promote to main report).
 # These describe bugs that EXIST NOW, not tests that should be written.
 _TEST_CORRECTNESS_PATTERNS = [
     re.compile(r"\brace\s+condition\b", re.IGNORECASE),
@@ -993,10 +1030,10 @@ def tag_findings(findings):
       Conventions-and-intent disambiguation:
         Pass 3 (comment accuracy) is identified by the presence of a dimension in
         _COMMENT_ACCURACY_DIMENSIONS.  All other conventions-and-intent findings
-        (passes 1-2: intent and convention checks) → main report.
+        (passes 1-2: intent and convention checks) -> main report.
 
       Fallback (unknown agent):
-        severity critical/high → main; otherwise → main.
+        severity critical/high -> main; otherwise -> main.
         (Unknown agents are conservatively routed to main to avoid suppressing real bugs.)
 
     Each finding gains a "report_destination" field ("main" | "suggestion").
@@ -1027,7 +1064,7 @@ def tag_findings(findings):
                 destination = "main"
 
             elif agent == _CONVENTIONS_AGENT:
-                # Pass 3 (comment accuracy) → suggestion; passes 1-2 → main
+                # Pass 3 (comment accuracy) -> suggestion; passes 1-2 -> main
                 if dimensions & _COMMENT_ACCURACY_DIMENSIONS:
                     destination = "suggestion"
                 else:
@@ -1035,7 +1072,7 @@ def tag_findings(findings):
 
             elif agent in _SUGGESTION_AGENTS:
                 if agent == _AGENT_TEST_ANALYZER:
-                    # Promotion rule: functional correctness bugs → main report
+                    # Promotion rule: functional correctness bugs -> main report
                     if _is_test_correctness_finding(finding):
                         destination = "main"
                         finding["promoted_from"] = "test-analyzer"
@@ -1226,8 +1263,8 @@ def main():
     # ------------------------------------------------------------------
     all_eliminated = []
 
-    # Step 1: threshold filter
-    findings, elim_threshold = apply_threshold_filter(findings, config)
+    # Step 1: threshold filter (with contestation)
+    findings, elim_threshold, contested_count = apply_threshold_filter(findings, config)
     all_eliminated.extend(elim_threshold)
     passed_threshold = len(findings)
 
@@ -1266,6 +1303,7 @@ def main():
         "stats": {
             "total": total,
             "passed_threshold": passed_threshold,
+            "contested_count": contested_count,
             "injections_removed": injections_removed,
             "consensus_boosted": consensus_boosted,
             "singleton_penalized": singleton_penalized,

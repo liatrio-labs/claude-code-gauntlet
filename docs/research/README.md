@@ -39,7 +39,7 @@ Key design decisions and which research artifacts support them:
 | Concern-parallel decomposition | #01 | Anthropic, Ellipsis, Qodo converge on concern-parallel, not file-parallel |
 | Deterministic verification before LLM judgment | #02 | LLM-on-LLM shares correlated errors ~60%; grounding in tool output is essential |
 | Context-pulling (agents investigate via tools) | #04 | cubic achieved 51% fewer false positives switching from push to pull |
-| Security confidence threshold 70 (vs 80 for others) | #02 | Anthropic's judge filtered 7/8 security findings at 80, including real ones |
+| Security confidence threshold 60 (vs 70 for others) | #02 | Anthropic's judge filtered 7/8 security findings at 80, including real ones |
 | Overconfidence calibration warnings | #02 | Xiong et al. (ICLR 2024): LLMs cluster confidence in 80-100 range |
 | Full-codebase investigation mandate | #01 | Cat Wu (Anthropic): "agents take the entire codebase into account" |
 | Prompt injection trust boundary delimiters | #05 | Every major tool exploited; 5-layer defense recommended |

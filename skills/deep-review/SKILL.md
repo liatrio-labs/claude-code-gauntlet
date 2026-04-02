@@ -48,9 +48,9 @@ Bash(command="git rev-parse --short=8 HEAD")
 
 Store the result as `head_sha_short`. All subsequent temp file references use this suffix:
 - `$TMPDIR/deep-review-diff-{head_sha_short}.patch`
-- `$TMPDIR/deep-review-findings-{head_sha_short}.json` (Phase 4 input)
+- `$TMPDIR/deep-review-phase4-input-{head_sha_short}.json` (Phase 4 input)
 - `$TMPDIR/deep-review-phase6-input-{head_sha_short}.json` (Phase 6 input)
-- `$TMPDIR/deep-review-pr-comments-{head_sha_short}.json` (Phase 8 delivery)
+- `$TMPDIR/deep-review-delivery-{head_sha_short}.json` (Phase 8 delivery)
 
 ### Resolve review target
 
@@ -118,9 +118,10 @@ After all Phase 3 agents return, parse and merge their findings into a single JS
    - `test-analyzer` → `"test_coverage"`
    - `conventions-and-intent` → `"convention"` / `"intent"` / `"comment_accuracy"` (as set by the agent)
    - `type-design-analyzer` → `"type_design"`
+   - `code-simplifier` → `"simplification"`
 
 2. **`agent`** — the agent name string used by `filter_findings.py` for report routing and suppression rules. Agents do NOT emit this field — the orchestrator must inject it during merge. Use the exact strings below:
-   - `"bug-detector"`, `"security-reviewer"`, `"cross-file-impact"`, `"test-analyzer"`, `"conventions-and-intent"`, `"type-design-analyzer"`
+   - `"bug-detector"`, `"security-reviewer"`, `"cross-file-impact"`, `"test-analyzer"`, `"conventions-and-intent"`, `"type-design-analyzer"`, `"code-simplifier"`
 
 3. **`cross_file_refs`** — preserve exactly as returned by the agent. `verify_findings.py` uses this field to classify cross-file findings as "surfaced" in Phase 4a. Do not drop or rename it.
 
@@ -223,7 +224,7 @@ Parallel Sonnet validation agents assess findings needing LLM judgment. **Always
 
 Dispatch one Sonnet agent per batch from the `verify_findings.py` `"batches"` output. Launch all in a single message. Validators CAN and SHOULD pull surrounding context via Read/Grep — unlike Phase 7 challengers, validators need full codebase access.
 
-Read `references/validation-pipeline.md` Phase 5 for the confidence rubric, dispatch template, triggerability cap (70 for hypothetical-only issues), and failure protocol.
+Read `references/validation-pipeline.md` Phase 5 for the confidence rubric, dispatch template, triggerability cap (65 for hypothetical-only issues), and failure protocol.
 
 After dispatch, announce: "Dispatched N agents for Phase 5." Update each finding's confidence based on the validator's assessment.
 
@@ -251,8 +252,6 @@ Singleton findings (flagged by only one agent) in non-core dimensions (not bug, 
 Findings routed to `"suggestion"` are NOT removed — they appear in the Improvement Suggestions section of the report, available via the "Let me pick" walkthrough. The executive summary finding count excludes suggestions.
 
 All tagged findings proceed to Phase 7 regardless of tag.
-
-**code-simplifier timing:** After running `filter_findings.py`, if no critical/high findings survived, dispatch the code-simplifier agent and run its findings through a second pipeline pass. Read `references/validation-pipeline.md` "Code-Simplifier Second Pass" for the full step-by-step sequence.
 
 Read `references/validation-pipeline.md` for detailed filter/reconciliation rules.
 
@@ -342,7 +341,7 @@ When `verify_findings.py` (Phase 4), `filter_findings.py` (Phase 6), or `post_re
 2. **Fix the most common cause.** Malformed input JSON is the #1 failure mode — re-write using the `python3 -c "import json; json.dump(...)"` pattern and retry.
 3. **Retry once.** If the same script fails twice on the same input, do not retry further.
 4. **Degrade gracefully.** If the script cannot be recovered:
-   - Phase 4 failure: skip blame classification and diff validation. Pass all findings to Phase 5 as-is with `origin: "new"` (conservative). Note in methodology: "Phase 4 verification skipped due to script failure."
+   - Phase 4 failure: Follow the numbered recovery checklist in `references/validation-pipeline.md`. Do NOT skip Phase 5 or substitute inline analysis — dispatch validation agents with all findings set to `origin: "new"`.
    - Phase 6 failure: pass all Phase 5 findings directly to Phase 7 without filtering. Note in methodology: "Phase 6 filtering skipped due to script failure."
    - Phase 8 failure: deliver the report via chat only (no PR comments). Note in methodology: "PR comment delivery failed."
 5. **Never run analysis inline as a substitute.** The scripts exist because LLM-inline analysis has correlated error rates of ~60%. A skipped script with a methodology note is better than fabricated results.

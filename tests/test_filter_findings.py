@@ -4,7 +4,8 @@ Tests for scripts/filter_findings.py
 Covers:
   - parse_review_md: fenced YAML block, HTML comment block, bare key:value
     fallback, malformed YAML, empty file, ignore list parsing, missing file
-  - apply_threshold_filter: confidence, severity, security dimension lower threshold
+  - apply_threshold_filter: confidence, severity, security dimension lower threshold,
+    validator contestation (V5-09C)
   - apply_injection_filter: all 10 injection categories (shell, URL, encoded,
     bypass, short+high-confidence, instructional, vuln-intro, placeholder title,
     body markers, empty filepath, duplicate signature)
@@ -41,6 +42,7 @@ from scripts.filter_findings import (
     DEFAULT_SEVERITY_THRESHOLD,
     _SINGLETON_PENALTY,
     _CORE_DIMENSIONS,
+    _CONTESTATION_DROP_THRESHOLD,
 )
 
 
@@ -81,7 +83,7 @@ class TestParseReviewMd(unittest.TestCase):
             "# deep-review\n"
             "confidence_threshold: 70\n"
             "severity_threshold: high\n"
-            "security_min_confidence: 60\n"
+            "security_min_confidence: 70\n"
             "ignore:\n"
             "  - pattern one\n"
             "  - pattern two\n"
@@ -94,7 +96,7 @@ class TestParseReviewMd(unittest.TestCase):
             config = parse_review_md(path)
             self.assertEqual(config["confidence_threshold"], 70)
             self.assertEqual(config["severity_threshold"], "high")
-            self.assertEqual(config["security_min_confidence"], 60)
+            self.assertEqual(config["security_min_confidence"], 70)
             self.assertEqual(config["ignore"], ["pattern one", "pattern two"])
         finally:
             os.unlink(path)
@@ -197,7 +199,7 @@ class TestParseReviewMd(unittest.TestCase):
 
 class TestApplyThresholdFilter(unittest.TestCase):
 
-    def _config(self, confidence=80, severity="low", sec_min=70):
+    def _config(self, confidence=70, severity="low", sec_min=70):
         return {
             "confidence_threshold": confidence,
             "severity_threshold": severity,
@@ -206,50 +208,179 @@ class TestApplyThresholdFilter(unittest.TestCase):
 
     def test_passes_above_threshold(self):
         findings = [_make_finding(confidence=90, severity="high")]
-        passed, eliminated = apply_threshold_filter(findings, self._config())
+        passed, eliminated, contested = apply_threshold_filter(findings, self._config())
         self.assertEqual(len(passed), 1)
         self.assertEqual(len(eliminated), 0)
+        self.assertEqual(contested, 0)
 
     def test_eliminates_below_confidence(self):
         findings = [_make_finding(confidence=50)]
-        passed, eliminated = apply_threshold_filter(findings, self._config(confidence=80))
+        passed, eliminated, contested = apply_threshold_filter(findings, self._config(confidence=70))
         self.assertEqual(len(passed), 0)
         self.assertEqual(len(eliminated), 1)
         self.assertEqual(eliminated[0]["eliminated_by"], "threshold")
+        self.assertEqual(contested, 0)
 
     def test_eliminates_below_severity(self):
         findings = [_make_finding(severity="low")]
-        passed, eliminated = apply_threshold_filter(findings, self._config(severity="medium"))
+        passed, eliminated, contested = apply_threshold_filter(findings, self._config(severity="medium"))
         self.assertEqual(len(passed), 0)
         self.assertEqual(len(eliminated), 1)
 
-    def test_security_dimension_uses_lower_threshold(self):
-        """Security findings should use min(confidence_threshold, security_min_confidence)."""
-        findings = [_make_finding(confidence=75, dimension="security")]
-        config = self._config(confidence=80, sec_min=70)
-        passed, eliminated = apply_threshold_filter(findings, config)
-        # effective threshold = min(80, 70) = 70; 75 >= 70 -> passes
+    def test_security_dimension_uses_security_min_threshold(self):
+        """Security findings use min(confidence_threshold, security_min_confidence).
+        With defaults both are 70, so they're unified. But REVIEW.md can set
+        security_min_confidence lower to give security findings a lower bar."""
+        # With explicit lower security threshold
+        findings = [_make_finding(confidence=55, dimension="security")]
+        config = self._config(sec_min=50)
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # effective threshold = min(70, 50) = 50; 55 >= 50 -> passes
         self.assertEqual(len(passed), 1)
+        # Same confidence without the override -> eliminated
+        findings2 = [_make_finding(confidence=55, dimension="security")]
+        config2 = self._config()  # defaults: confidence=70, sec_min=70
+        passed2, eliminated2, contested2 = apply_threshold_filter(findings2, config2)
+        # effective threshold = min(70, 70) = 70; 55 < 70 -> eliminated
+        self.assertEqual(len(passed2), 0)
 
-    def test_non_security_uses_regular_threshold(self):
-        findings = [_make_finding(confidence=75, dimension="bug")]
-        config = self._config(confidence=80, sec_min=70)
-        passed, eliminated = apply_threshold_filter(findings, config)
-        # effective threshold = 80; 75 < 80 -> eliminated
+    def test_security_and_general_unified_by_default(self):
+        """With default config, security and general thresholds are both 70."""
+        # A security finding at 65 is eliminated just like a non-security finding
+        findings = [_make_finding(confidence=65, dimension="security")]
+        config = self._config()  # defaults: confidence=70, sec_min=70
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # effective threshold = min(70, 70) = 70; 65 < 70 -> eliminated
+        self.assertEqual(len(passed), 0)
+        # Same for non-security
+        findings2 = [_make_finding(confidence=65, dimension="bug")]
+        passed2, eliminated2, contested2 = apply_threshold_filter(findings2, config)
+        # effective threshold = 70; 65 < 70 -> eliminated
+        self.assertEqual(len(passed2), 0)
+
+    def test_non_security_unaffected_by_security_min(self):
+        """Lowering security_min_confidence does not affect non-security findings."""
+        findings = [_make_finding(confidence=55, dimension="bug")]
+        config = self._config(sec_min=50)  # lower security min
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # effective threshold = 70 (not 50 — security min doesn't apply to bugs); 55 < 70 -> eliminated
         self.assertEqual(len(passed), 0)
 
     def test_severity_ordering(self):
         """critical > high > medium > low."""
         config = self._config(severity="high")
         # critical passes (index 0 <= 1)
-        passed, _ = apply_threshold_filter([_make_finding(severity="critical")], config)
+        passed, _, _ = apply_threshold_filter([_make_finding(severity="critical")], config)
         self.assertEqual(len(passed), 1)
         # high passes (index 1 <= 1)
-        passed, _ = apply_threshold_filter([_make_finding(severity="high")], config)
+        passed, _, _ = apply_threshold_filter([_make_finding(severity="high")], config)
         self.assertEqual(len(passed), 1)
         # medium fails (index 2 > 1)
-        passed, _ = apply_threshold_filter([_make_finding(severity="medium")], config)
+        passed, _, _ = apply_threshold_filter([_make_finding(severity="medium")], config)
         self.assertEqual(len(passed), 0)
+
+    # --- Validator contestation (V5-09C) ---
+
+    def test_contestation_large_drop_bypasses_threshold(self):
+        """Finding with original_confidence=85, confidence=55 -> contested, bypasses threshold."""
+        findings = [_make_finding(confidence=55, original_confidence=85)]
+        config = self._config(confidence=70)
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # 55 < 70 would normally be eliminated, but drop = 85 - 55 = 30 > 25 -> contested
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(contested, 1)
+        self.assertTrue(passed[0]["contested"])
+        self.assertEqual(passed[0]["contestation_drop"], 30)
+        self.assertIn("validator dropped confidence by 30 points", passed[0]["contestation_reason"])
+        self.assertIn("original: 85", passed[0]["contestation_reason"])
+        self.assertIn("current: 55", passed[0]["contestation_reason"])
+
+    def test_contestation_small_drop_not_contested(self):
+        """original_confidence=85, confidence=70 -> drop=15, not contested, normal threshold."""
+        findings = [_make_finding(confidence=70, original_confidence=85)]
+        config = self._config(confidence=70)
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # drop = 85 - 70 = 15, not > 25, so not contested. 70 >= 70 -> passes normally.
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(contested, 0)
+        self.assertFalse(passed[0].get("contested", False))
+
+    def test_contestation_missing_original_confidence_skipped(self):
+        """Finding without original_confidence -> contestation check skipped."""
+        findings = [_make_finding(confidence=55)]
+        config = self._config(confidence=70)
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # No original_confidence -> no contestation. 55 < 70 -> eliminated.
+        self.assertEqual(len(passed), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(contested, 0)
+
+    def test_contestation_drop_exactly_at_threshold_not_contested(self):
+        """Drop of exactly 25 is NOT contested (must be > 25)."""
+        findings = [_make_finding(confidence=55, original_confidence=80)]
+        config = self._config(confidence=70)
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # drop = 80 - 55 = 25, not > 25. 55 < 70 -> eliminated.
+        self.assertEqual(len(passed), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(contested, 0)
+
+    def test_contestation_above_threshold_still_passes_normally(self):
+        """Finding above threshold with large drop passes normally (contested but still above)."""
+        findings = [_make_finding(confidence=75, original_confidence=100)]
+        config = self._config(confidence=70)
+        # drop = 25, not > 25 -> not contested. But 75 >= 70 -> passes normally.
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(contested, 0)
+        # Now with drop > 25
+        findings2 = [_make_finding(confidence=74, original_confidence=100)]
+        passed2, eliminated2, contested2 = apply_threshold_filter(findings2, config)
+        # drop = 26 > 25 -> contested. Also 74 >= 70 so would pass anyway.
+        self.assertEqual(len(passed2), 1)
+        self.assertEqual(contested2, 1)
+        self.assertTrue(passed2[0]["contested"])
+
+    def test_contested_bypasses_severity_threshold(self):
+        """Contested findings bypass severity threshold too, not just confidence."""
+        findings = [_make_finding(
+            confidence=40, original_confidence=90, severity="low",
+        )]
+        config = self._config(confidence=70, severity="high")
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # drop=50>25 -> contested, bypasses both confidence AND severity thresholds
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(contested, 1)
+        self.assertTrue(passed[0]["contested"])
+
+    def test_non_contested_still_eliminated_by_severity(self):
+        """Non-contested findings are still eliminated by severity threshold."""
+        findings = [_make_finding(confidence=75, severity="low")]
+        config = self._config(confidence=70, severity="high")
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # 75>=70 passes confidence, but severity "low" < "high" -> eliminated
+        self.assertEqual(len(passed), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(eliminated[0]["eliminated_by"], "threshold")
+
+    def test_contested_count_in_return_value(self):
+        """Multiple contested findings are counted correctly."""
+        findings = [
+            _make_finding(id="c1", confidence=40, original_confidence=90),
+            _make_finding(id="c2", confidence=30, original_confidence=80),
+            _make_finding(id="c3", confidence=75),  # no original_confidence
+        ]
+        config = self._config(confidence=70)
+        passed, eliminated, contested = apply_threshold_filter(findings, config)
+        # c1: drop=50>25 -> contested, bypasses threshold
+        # c2: drop=50>25 -> contested, bypasses threshold
+        # c3: no original_confidence, 75>=70 -> passes normally
+        self.assertEqual(contested, 2)
+        self.assertEqual(len(passed), 3)
+        self.assertEqual(len(eliminated), 0)
 
 
 # ---------------------------------------------------------------------------
@@ -1007,43 +1138,43 @@ class TestTagFindingsWithDimensionRouting(unittest.TestCase):
 class TestSingletonPenaltyThresholdInteraction(unittest.TestCase):
 
     def test_singleton_penalty_drops_below_threshold(self):
-        """A singleton at exactly 80 confidence drops to 65 after penalty,
-        which is below the default threshold of 80. When the pipeline is run
+        """A singleton at exactly 70 confidence drops to 55 after penalty,
+        which is below the default threshold of 70. When the pipeline is run
         in order (threshold -> disagreement), this won't happen because threshold
         runs first. But if re-filtered, the reduced confidence matters."""
         f = _make_finding(
-            id="int1", confidence=80, dimension="convention",
+            id="int1", confidence=70, dimension="convention",
             agent="conventions-and-intent"
         )
         active, _, _ = detect_disagreement([f])
-        self.assertEqual(active[0]["confidence"], 65)
+        self.assertEqual(active[0]["confidence"], 55)
         # If we run threshold filter on this result:
         config = {
-            "confidence_threshold": 80,
+            "confidence_threshold": 70,
             "security_min_confidence": 70,
             "severity_threshold": "low",
             "ignore": [],
         }
-        passed, eliminated = apply_threshold_filter(active, config)
+        passed, eliminated, contested = apply_threshold_filter(active, config)
         self.assertEqual(len(passed), 0)
         self.assertEqual(len(eliminated), 1)
 
     def test_high_confidence_singleton_survives_penalty(self):
-        """A singleton at confidence 95 drops to 80 after penalty,
-        which still passes the default threshold."""
+        """A singleton at confidence 85 drops to 70 after penalty,
+        which still passes the default threshold of 70."""
         f = _make_finding(
-            id="int2", confidence=95, dimension="type_design",
+            id="int2", confidence=85, dimension="type_design",
             agent="type-design-analyzer"
         )
         active, _, _ = detect_disagreement([f])
-        self.assertEqual(active[0]["confidence"], 80)
+        self.assertEqual(active[0]["confidence"], 70)
         config = {
-            "confidence_threshold": 80,
+            "confidence_threshold": 70,
             "security_min_confidence": 70,
             "severity_threshold": "low",
             "ignore": [],
         }
-        passed, eliminated = apply_threshold_filter(active, config)
+        passed, eliminated, contested = apply_threshold_filter(active, config)
         self.assertEqual(len(passed), 1)
         self.assertEqual(len(eliminated), 0)
 
@@ -1155,6 +1286,22 @@ class TestNormalizeFieldNames(unittest.TestCase):
         self.assertIn("WARNING", output)
         self.assertIn("normalize", output.lower())
         self.assertIn("body->description", output)
+
+
+# ---------------------------------------------------------------------------
+# Default constants verification
+# ---------------------------------------------------------------------------
+
+class TestDefaultConstants(unittest.TestCase):
+
+    def test_default_confidence_threshold_is_70(self):
+        self.assertEqual(DEFAULT_CONFIDENCE_THRESHOLD, 70)
+
+    def test_default_security_min_confidence_is_70(self):
+        self.assertEqual(DEFAULT_SECURITY_MIN_CONFIDENCE, 70)
+
+    def test_contestation_drop_threshold_is_25(self):
+        self.assertEqual(_CONTESTATION_DROP_THRESHOLD, 25)
 
 
 if __name__ == "__main__":

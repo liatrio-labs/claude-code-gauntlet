@@ -13,7 +13,7 @@ All pipeline stages use the **canonical agent schema**. These field names are no
 - `description` (not `body`)
 - `line_start` / `line_end` (not `line`)
 - `origin` (not `blame_tag`)
-- `dimension` — short name from agent output: `"bug"`, `"security"`, `"cross_file_impact"`, `"test"`, `"conventions"`. Never the agent name.
+- `dimension` — short name from agent output: `"bug"`, `"security"`, `"cross_file_impact"`, `"test_coverage"`, `"convention"`, `"intent"`, `"comment_accuracy"`, `"type_design"`, `"simplification"`. Never the agent name.
 - `agent` — injected by the orchestrator during merge: `"bug-detector"`, `"security-reviewer"`, etc. Agents do not emit this field themselves.
 - `cross_file_refs` — preserve from agent output. Used by `verify_findings.py` for automatic "surfaced" classification.
 
@@ -41,7 +41,7 @@ SKILL.md derives `{plugin_root}` as two levels above the skill base directory. A
 ## Tests
 
 - pytest with `unittest.TestCase` style. Run: `python -m pytest tests/ -q`
-- 149 tests covering `verify_findings.py`, `filter_findings.py`, `post_review.py`.
+- 238 tests covering `verify_findings.py`, `filter_findings.py`, `post_review.py`.
 
 ## Writing pipeline JSON
 

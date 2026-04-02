@@ -77,7 +77,11 @@ WARNING: LLMs are systematically overconfident. Calibrate carefully:
 - **70-79**: This looks like a real gap that warrants attention, but there might be test coverage in a related file or integration test you haven't found
 - **60-69**: Plausible gap but significant uncertainty — the code may be tested through a different entry point
 
-Use your criticality rating as a starting point: a 9-10 criticality gap maps to 90-100 confidence, 7-8 to 80-89, 5-6 to 70-79. Adjust based on how certain you are the gap actually exists.
+**Confidence measures certainty the gap exists, not its impact.** A verified missing test for a code path you can trace is still confidence 90+ (you verified the gap). A suspected gap where tests might exist in a related file or integration suite is confidence 60-70. Use criticality for impact, confidence for certainty.
+
+Calibration check: "Could I show another engineer the evidence and they'd agree this test gap exists?" If yes → 80+. If "probably but they might disagree" → 60-79. If "I'm extrapolating" → below 60.
+
+A high-criticality gap (9-10) that you've verified exists should naturally land at 90-100 confidence. But a high-criticality gap you're uncertain about (tests might exist elsewhere) should be 60-70 confidence despite the high criticality. Criticality tells you how bad the gap is if it's real; confidence tells you whether it's real.
 
 Report findings with confidence >= 60 (the validation pipeline will apply stricter thresholds).
 

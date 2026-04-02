@@ -47,14 +47,14 @@ REVIEW.md is a markdown file with specific sections. Each section is optional.
 medium
 
 ## Confidence Threshold
-<!-- Minimum confidence score (0-100) to include in the report. Default: 80 -->
+<!-- Minimum confidence score (0-100) to include in the report. Default: 70 -->
 <!-- Use a plain number for all dimensions, or key:value pairs for per-dimension control: -->
 <!-- bugs: 75 -->
 <!-- security: 70 -->
-<!-- cross-file-impact: 80 -->
-<!-- conventions: 85 -->
-<!-- tests: 80 -->
-<!-- types: 80 -->
+<!-- cross-file-impact: 75 -->
+<!-- conventions: 80 -->
+<!-- tests: 75 -->
+<!-- types: 75 -->
 <!-- simplification: 80 -->
 75
 
@@ -91,7 +91,7 @@ Controls which review dimensions run. Valid values map to agents:
 - `tests` — Test coverage gap analysis (test-analyzer agent)
 - `conventions` — Convention compliance, intent alignment, and comment accuracy (conventions-and-intent agent)
 - `types` — Type design analysis (type-design-analyzer agent)
-- `simplification` — Code simplification (code-simplifier agent, runs post-review)
+- `simplification` — Code simplification (code-simplifier agent)
 
 When omitted, all applicable dimensions run (the skill auto-detects which are relevant based on the changes).
 
@@ -127,9 +127,9 @@ The minimum severity level to include in the report:
 
 ### Confidence Threshold
 
-An integer from 0-100. Findings below this confidence score are filtered out before the report. Default is 80. Lower values (e.g., 70) surface more findings but may include more false positives. Higher values (e.g., 90) are stricter but may miss some real issues.
+An integer from 0-100. Findings below this confidence score are filtered out before the report. Default is 70. Higher values (e.g., 85) are stricter but may miss some real issues. Lower values surface more findings but may include more false positives.
 
-**Important:** The `confidence_threshold` field sets the default for non-security dimensions. Security findings always use a minimum threshold of 70, regardless of this setting. Setting `confidence_threshold: 90` would raise the bar for bugs, tests, conventions, and other dimensions to 90, but security findings would still be included at confidence 70+. This is by design — security false negatives are costlier than false positives.
+**Important:** By default, security findings use the same threshold as other dimensions (70). You can set `security_min_confidence` in REVIEW.md to give security a lower bar — security false negatives are costlier than false positives. Setting `confidence_threshold: 90` raises the bar for all dimensions to 90, but if `security_min_confidence` is set lower (e.g., 60), security findings would still be included at that level.
 
 **Per-dimension thresholds:** You can override the threshold for individual dimensions using a YAML-like key:value format. This is useful when some dimensions (e.g., conventions) generate more noise than others (e.g., bugs).
 
@@ -148,8 +148,8 @@ Rules for per-dimension thresholds:
 - Dimension names must match Focus section values: `bugs`, `security`, `cross-file-impact`, `tests`, `conventions`, `types`, `simplification`
 - If a plain number is provided (current format), it applies as the default for all non-security dimensions
 - If per-dimension values are provided, they override the plain number default for that dimension
-- Dimensions not listed use the plain number default (or 80 if no default is set)
-- The security minimum of 70 always applies regardless of setting — you cannot set `security` below 70
+- Dimensions not listed use the plain number default (or 70 if no default is set)
+- If `security_min_confidence` is set in REVIEW.md, it provides a lower floor for security findings — useful for repos that want to surface more borderline security issues
 - Per-dimension settings in subdirectory REVIEW.md files override the inherited value for that dimension only
 
 ### Max Findings
@@ -243,7 +243,7 @@ In short: **settings override, rules and patterns accumulate.**
 
 ```
 repo/
-  REVIEW.md              # confidence_threshold: 80, rules: [rule-A, rule-B]
+  REVIEW.md              # confidence_threshold: 70, rules: [rule-A, rule-B]
   CLAUDE.md
   api/
     CLAUDE.md
@@ -257,7 +257,7 @@ For a file in `api/`:
 - rules = **[rule-A, rule-B, rule-C]** (accumulated)
 
 For a file in `legacy/`:
-- confidence_threshold = **80** (root applies)
+- confidence_threshold = **70** (root applies)
 - rules = **[rule-A, rule-B]** (root only)
 
 ### Discovery
@@ -346,22 +346,22 @@ When the user opts to create a REVIEW.md during Phase 2c, use these templates. T
 
 ## Confidence Threshold
 
-80
+70
 
-<!-- Minimum confidence (0-100) to include findings. Default: 80.
-     Security findings always use a minimum of 70 regardless of this setting.
-     Start at 80-85 and lower based on false-positive rates.
+<!-- Minimum confidence (0-100) to include findings. Default: 70.
+     Security findings always use a minimum of 60 regardless of this setting.
+     Start at 70-80 and adjust based on false-positive rates.
 
      To set per-dimension thresholds, replace the plain number with key:value pairs:
      bugs: 75
      security: 70
-     cross-file-impact: 80
-     conventions: 85
-     tests: 80
-     types: 80
-     simplification: 80
-     Omitted dimensions use the plain number default (or 80 if no default is set).
-     Security cannot be set below 70. -->
+     cross-file-impact: 75
+     conventions: 80
+     tests: 75
+     types: 75
+     simplification: 75
+     Omitted dimensions use the plain number default (or 70 if no default is set).
+     Security cannot be set below 60. -->
 
 ## Severity Threshold
 

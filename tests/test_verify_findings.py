@@ -7,6 +7,7 @@ Covers:
     blame failures, short SHA matching, severity downgrade
   - verify_factual: file exists, file missing, binary file, no lines, out-of-range,
     symbol found/missing
+  - _extract_symbols: tiered extraction (V5-05)
   - validate_diff_lines: in-diff, out-of-diff, skipped, no line reference
   - is_line_in_diff: exact match, stripped path match, None valid_lines
   - batch_findings: grouping by file, min/max bounds, tail merging, empty input
@@ -29,6 +30,7 @@ from scripts.verify_findings import (
     validate_diff_lines,
     batch_findings,
     get_diff,
+    _extract_symbols,
     REPO_ROOT,
 )
 
@@ -331,6 +333,119 @@ class TestClassifyBlame(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _extract_symbols (V5-05 tiered extraction)
+# ---------------------------------------------------------------------------
+
+class TestExtractSymbols(unittest.TestCase):
+    """V5-05: Tiered symbol extraction tests."""
+
+    def test_backtick_symbols_extracted(self):
+        """Tier 1: backtick-delimited identifiers are extracted."""
+        symbols = _extract_symbols(
+            "The `calculate_total` function calls `process_item`",
+            "",
+        )
+        self.assertIn("calculate_total", symbols)
+        self.assertIn("process_item", symbols)
+
+    def test_triple_backtick_code_block_extracted(self):
+        """Tier 1: identifiers inside triple-backtick code blocks are extracted."""
+        desc = (
+            "The code does:\n"
+            "```python\n"
+            "result = my_function(arg_value)\n"
+            "```\n"
+        )
+        symbols = _extract_symbols(desc, "")
+        self.assertIn("my_function", symbols)
+        self.assertIn("arg_value", symbols)
+
+    def test_dotted_backtick_path_split(self):
+        """Tier 1: dotted paths in backticks are split and each part extracted."""
+        symbols = _extract_symbols("Uses `os.path.join` to build paths", "")
+        self.assertIn("path", symbols)
+        self.assertIn("join", symbols)
+
+    def test_snake_case_extracted(self):
+        """Tier 2: snake_case tokens are extracted (contain underscore)."""
+        symbols = _extract_symbols(
+            "The get_user_data function is called",
+            "",
+        )
+        self.assertIn("get_user_data", symbols)
+
+    def test_code_punctuation_extracted(self):
+        """Tier 2: tokens with code punctuation (., (), ::) are extracted."""
+        symbols = _extract_symbols(
+            "Calling obj.method() and Foo::bar are common patterns",
+            "",
+        )
+        self.assertIn("obj", symbols)
+        self.assertIn("method", symbols)
+        self.assertIn("Foo", symbols)
+        self.assertIn("bar", symbols)
+
+    def test_camelcase_only_english_words_skipped(self):
+        """Tier 3: pure CamelCase English words (no code punctuation) are NOT extracted."""
+        symbols = _extract_symbols(
+            "Concrete evidence shows that Between the lines However "
+            "the Implementation seems fine. Additionally the Response "
+            "was unexpected.",
+            "",
+        )
+        # None of these pure CamelCase words should be extracted
+        self.assertNotIn("Concrete", symbols)
+        self.assertNotIn("Between", symbols)
+        self.assertNotIn("However", symbols)
+        self.assertNotIn("Implementation", symbols)
+        self.assertNotIn("Additionally", symbols)
+        self.assertNotIn("Response", symbols)
+
+    def test_camelcase_in_backticks_extracted(self):
+        """Tier 1 overrides Tier 3: CamelCase in backticks IS extracted."""
+        symbols = _extract_symbols(
+            "The `MyClass` handles requests",
+            "",
+        )
+        self.assertIn("MyClass", symbols)
+
+    def test_camelcase_in_triple_backticks_extracted(self):
+        """Tier 1: CamelCase inside fenced code blocks IS extracted."""
+        symbols = _extract_symbols(
+            "Example:\n```\nMyHandler handler = new MyHandler();\n```",
+            "",
+        )
+        self.assertIn("MyHandler", symbols)
+
+    def test_skip_symbols_filtered(self):
+        """Common English/Python words in backticks are still filtered out."""
+        symbols = _extract_symbols("Uses `self` and `None` values", "")
+        self.assertNotIn("self", symbols)
+        self.assertNotIn("None", symbols)
+
+    def test_short_tokens_filtered(self):
+        """Tokens with 2 or fewer characters are filtered out."""
+        symbols = _extract_symbols("The `x` and `ab` values", "")
+        self.assertNotIn("x", symbols)
+        self.assertNotIn("ab", symbols)
+
+    def test_empty_text_returns_empty(self):
+        """No text produces no symbols."""
+        symbols = _extract_symbols("", "")
+        self.assertEqual(symbols, set())
+
+    def test_none_inputs_return_empty(self):
+        """None description and evidence should return empty set without error."""
+        symbols = _extract_symbols(None, None)
+        self.assertEqual(symbols, set())
+
+    def test_evidence_field_also_scanned(self):
+        """Evidence field is included in symbol extraction."""
+        symbols = _extract_symbols("", "see `important_func` at line 5")
+        self.assertIn("important_func", symbols)
+
+
+# ---------------------------------------------------------------------------
 # verify_factual
 # ---------------------------------------------------------------------------
 
@@ -422,7 +537,8 @@ class TestVerifyFactual(unittest.TestCase):
         finally:
             os.unlink(tmppath)
 
-    def test_missing_symbol_sets_confidence_zero(self):
+    def test_missing_symbol_reduces_confidence_proportionally(self):
+        """V5-05: Missing symbols reduce confidence proportionally, not to zero."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def hello():\n    pass\n")
             tmppath = f.name
@@ -440,7 +556,9 @@ class TestVerifyFactual(unittest.TestCase):
                 }
                 result = verify_factual(finding)
                 self.assertTrue(result)  # kept but degraded
-                self.assertEqual(finding["confidence"], 0)
+                # V5-05: confidence reduced proportionally, not zeroed
+                self.assertGreater(finding["confidence"], 0)
+                self.assertGreaterEqual(finding["confidence"], 30)  # floor
                 self.assertFalse(finding["factual_verification"]["verified"])
                 self.assertIn(
                     "not found in codebase",
@@ -462,6 +580,134 @@ class TestVerifyFactual(unittest.TestCase):
             result = verify_factual(finding)
             self.assertTrue(result)
             self.assertIn("binary", finding["factual_verification"]["reason"])
+        finally:
+            os.unlink(tmppath)
+
+    def test_no_extractable_symbols_skips_verification(self):
+        """V5-05: When no symbols can be extracted, skip symbol verification entirely."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("x = 1\ny = 2\n")
+            tmppath = f.name
+        try:
+            finding = {
+                "file": tmppath,
+                "line_start": 1,
+                "line_end": 2,
+                "description": "This code has a problem",
+                "evidence": "The values are wrong",
+                "confidence": 80,
+            }
+            result = verify_factual(finding)
+            self.assertTrue(result)
+            # Confidence unchanged — no symbols to check
+            self.assertEqual(finding["confidence"], 80)
+            self.assertTrue(finding["factual_verification"]["verified"])
+            self.assertIn(
+                "no extractable symbols",
+                finding["factual_verification"]["reason"],
+            )
+        finally:
+            os.unlink(tmppath)
+
+    def test_proportional_reduction_partial_match(self):
+        """V5-05: 3 of 4 symbols found → small reduction; 1 of 4 found → large reduction."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            # File contains func_a, func_b, func_c but NOT func_d
+            f.write("def func_a():\n    pass\n")
+            tmppath = f.name
+        try:
+            # Case: 1 of 2 symbols missing → 50% miss ratio → reduction ~35
+            with patch("scripts.verify_findings.run") as mock_run:
+                def grep_side_effect(cmd, check=False):
+                    # func_a is in the code_at_lines (fast path), so only func_d is grepped
+                    # func_d not found
+                    return ("", "", 1)
+
+                mock_run.side_effect = grep_side_effect
+                finding = {
+                    "file": tmppath,
+                    "line_start": 1,
+                    "line_end": 2,
+                    "description": "The `func_a` and `func_d` functions conflict",
+                    "evidence": "",
+                    "confidence": 80,
+                }
+                result = verify_factual(finding)
+                self.assertTrue(result)
+                # 1 of 2 symbols missing → miss_ratio=0.5 → reduction=round(0.5*70)=35
+                # 80 - 35 = 45
+                self.assertEqual(finding["confidence"], 45)
+        finally:
+            os.unlink(tmppath)
+
+    def test_confidence_floor_at_30(self):
+        """V5-05: Confidence never goes below 30 on symbol check alone."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("x = 1\n")
+            tmppath = f.name
+        try:
+            with patch("scripts.verify_findings.run") as mock_run:
+                mock_run.return_value = ("", "", 1)
+                finding = {
+                    "file": tmppath,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "description": "The `totally_fake_symbol` is broken",
+                    "evidence": "",
+                    "confidence": 40,
+                }
+                result = verify_factual(finding)
+                self.assertTrue(result)
+                # Even with 100% miss ratio and low starting confidence, floor at 30
+                self.assertEqual(finding["confidence"], 30)
+        finally:
+            os.unlink(tmppath)
+
+    def test_confidence_floor_at_30_high_starting_confidence(self):
+        """V5-05: 100% miss ratio from high confidence still floors at 30."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("x = 1\n")
+            tmppath = f.name
+        try:
+            with patch("scripts.verify_findings.run") as mock_run:
+                mock_run.return_value = ("", "", 1)
+                finding = {
+                    "file": tmppath,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "description": "The `totally_fake_symbol` is broken",
+                    "evidence": "",
+                    "confidence": 90,
+                }
+                result = verify_factual(finding)
+                self.assertTrue(result)
+                # 100% miss ratio → reduction=round(1.0*70)=70 → max(30, 90-70)=30
+                self.assertEqual(finding["confidence"], 30)
+        finally:
+            os.unlink(tmppath)
+
+    def test_all_symbols_found_no_confidence_change(self):
+        """V5-05: When all symbols are found, confidence stays unchanged."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def real_function():\n    return real_value\n")
+            tmppath = f.name
+        try:
+            with patch("scripts.verify_findings.run") as mock_run:
+                # grep finds the symbol
+                mock_run.return_value = ("found.py:1:match\n", "", 0)
+                finding = {
+                    "file": tmppath,
+                    "line_start": 1,
+                    "line_end": 2,
+                    "description": "The `real_function` returns `real_value`",
+                    "evidence": "",
+                    "confidence": 75,
+                }
+                result = verify_factual(finding)
+                self.assertTrue(result)
+                # All symbols found in code_at_lines or via grep
+                self.assertEqual(finding["confidence"], 75)
+                self.assertTrue(finding["factual_verification"]["verified"])
         finally:
             os.unlink(tmppath)
 
@@ -724,9 +970,11 @@ class TestVerifyFactualGrepError(unittest.TestCase):
                     "confidence": 75,
                 }
                 result = verify_factual(finding)
-                # rc=1 must still zero confidence (symbol not found)
+                # V5-05: rc=1 still reduces confidence (symbol not found)
+                # but proportionally, not to zero
                 self.assertTrue(result)  # kept but degraded
-                self.assertEqual(finding["confidence"], 0)
+                self.assertLess(finding["confidence"], 75)
+                self.assertGreaterEqual(finding["confidence"], 30)
                 self.assertFalse(finding["factual_verification"]["verified"])
         finally:
             os.unlink(tmppath)

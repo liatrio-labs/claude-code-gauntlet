@@ -402,6 +402,93 @@ def classify_blame(finding, base_branch):
     return classification
 
 
+def _extract_symbols(description, evidence):
+    """
+    V5-05: Tiered symbol extraction from description/evidence text.
+
+    Returns a set of symbol strings to verify against the codebase.
+
+    Tier 1 (definite code): backtick-delimited spans and triple-backtick
+        code blocks — extract and verify.
+    Tier 2 (very likely code): bare tokens containing code-punctuation
+        indicators (_, (), ., ::, ->, [], #) that don't appear in English
+        prose — extract and verify.
+    Tier 3 (ambiguous, skip): pure CamelCase with no code-punctuation —
+        do NOT extract. This eliminates false symbol extraction for English
+        words like "Concrete", "Between", "However".
+    """
+    combined_text = (description or "") + "\n" + (evidence or "")
+
+    # Shared identifier pattern
+    _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+    raw_symbols = set()
+
+    # --- Tier 1: backtick-delimited symbols (definite code) ---
+
+    # Triple-backtick code blocks: extract identifiers from content
+    _CODE_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+    for block_m in _CODE_BLOCK_RE.finditer(combined_text):
+        block_content = block_m.group(1)
+        for ident_m in _IDENT_RE.finditer(block_content):
+            raw_symbols.add(ident_m.group(0))
+
+    # Single-backtick inline code spans (split on dots for module paths)
+    _BACKTICK_SPAN_RE = re.compile(r"`([^`]+)`")
+    for span_m in _BACKTICK_SPAN_RE.finditer(combined_text):
+        span = span_m.group(1).strip()
+        parts = span.strip("._").split(".")
+        for part in parts:
+            clean = re.sub(r"[^A-Za-z0-9_]", "", part)
+            if clean and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", clean):
+                raw_symbols.add(clean)
+
+    # --- Tier 2: bare tokens with code-punctuation indicators ---
+    # Matches tokens that contain at least one code-punctuation char:
+    #   _ (snake_case), (), ., ::, ->, [], #
+    # These patterns don't appear in normal English prose.
+
+    _CODE_PUNCTUATION_RE = re.compile(
+        r"\b([A-Za-z_][A-Za-z0-9_]*"          # identifier start
+        r"(?:[.()\[\]#]|::|->)"                # must contain code punctuation
+        r"[A-Za-z0-9_.()#\[\]:>-]*)"           # rest of token
+    )
+    _SNAKE_CASE_RE = re.compile(
+        r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b"  # snake_case: at least one underscore
+    )
+
+    for m in _CODE_PUNCTUATION_RE.finditer(combined_text):
+        token = m.group(1)
+        for ident_m in _IDENT_RE.finditer(token):
+            ident = ident_m.group(0)
+            if len(ident) > 2:
+                raw_symbols.add(ident)
+
+    for m in _SNAKE_CASE_RE.finditer(combined_text):
+        raw_symbols.add(m.group(1))
+
+    # --- Tier 3: pure CamelCase with no code punctuation → SKIP ---
+    # We intentionally do NOT extract bare CamelCase words like
+    # "Concrete", "Between", "However" — these are ambiguous and
+    # cause false-positive symbol misses that kill true positives.
+
+    # Filter out very common English words, Python builtins, and short tokens
+    _SKIP_SYMBOLS = {
+        "the", "this", "that", "with", "from", "import", "class", "def",
+        "for", "not", "and", "its", "but", "are", "was", "were", "can",
+        "should", "would", "could", "also", "will", "has", "have", "been",
+        "when", "then", "else", "elif", "True", "False", "None", "self",
+        "return", "raise", "pass", "break", "continue", "lambda", "yield",
+        "async", "await", "print", "isinstance", "len", "str", "int", "list",
+        "dict", "set", "tuple", "type", "super", "object", "Exception",
+        "ValueError", "TypeError", "KeyError", "AttributeError", "IndexError",
+        "RuntimeError", "StopIteration", "OSError", "IOError", "FileNotFoundError",
+        "NotImplementedError", "AssertionError", "OverflowError", "ZeroDivisionError",
+    }
+
+    return {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
+
+
 def verify_factual(finding):
     """
     Verify that the finding's evidence field matches the actual file content
@@ -410,24 +497,29 @@ def verify_factual(finding):
     Steps:
     1. Read finding["file"] lines [line_start, line_end] from disk.
     2. Check file exists and lines are within range.
-    3. Extract referenced symbol names from description/evidence text.
+    3. Extract referenced symbol names from description/evidence text using
+       tiered extraction (V5-05).
     4. Use grep to confirm referenced symbols exist somewhere in the codebase.
-    5. Set finding["confidence"] = 0 for findings with wrong facts.
+    5. Apply proportional confidence reduction for missing symbols (V5-05):
+       - All found → no change
+       - Some missing → proportional reduction (floor 30)
+       - No extractable symbols → skip symbol verification
     6. Set finding["factual_verification"] = {verified, reason, code_at_lines}.
 
-    Returns: True if plausible (keep in verified, possibly with confidence=0),
+    Returns: True if plausible (keep in verified, possibly with reduced confidence),
              False if evidence clearly does not match (eliminate finding).
 
     Cases that return False (eliminate):
     - File does not exist on disk
     - line_start/line_end are out of range for the file
 
-    Cases that set confidence=0 but return True (degrade, keep):
+    Cases that reduce confidence but return True (degrade, keep):
     - Referenced symbols extracted from description/evidence do not exist in codebase
 
     Cases that skip verification entirely (return True, no changes):
     - Finding has no line_start (no line reference to check)
     - File is a binary file
+    - No extractable symbols found in description/evidence
     """
     filepath = finding.get("file", "")
     line_start = finding.get("line_start")
@@ -499,51 +591,22 @@ def verify_factual(finding):
     relevant_lines = all_lines[line_start - 1 : effective_end]
     code_at_lines = "".join(relevant_lines).rstrip("\n")
 
-    # Extract symbol names referenced in description / evidence.
-    # Look for identifiers that look like function, class, or variable names:
-    # sequences of word characters that contain at least one letter and may include
-    # underscores/digits, but are not pure numbers.  We additionally require they
-    # appear in backticks, quotes, or as part of a dot-access chain in the text to
-    # reduce false-positive symbol extraction from prose.
-    combined_text = description + "\n" + evidence
-    # Match identifiers in backtick spans, single/double-quoted spans, or bare
-    # CamelCase identifiers and snake_case identifiers in prose.
-    symbol_pattern = re.compile(
-        r"`([A-Za-z_][A-Za-z0-9_.]*)`"           # backtick spans
-        r"|'([A-Za-z_][A-Za-z0-9_.]+)'"           # single-quoted
-        r"|\"([A-Za-z_][A-Za-z0-9_.]+)\""         # double-quoted
-        r"|\b([A-Z][A-Za-z0-9]+)\b"               # CamelCase class names
-        r"|\b([a-z_][a-z0-9_]{2,})\("             # snake_case function calls
-    )
-    raw_symbols = set()
-    for m in symbol_pattern.finditer(combined_text):
-        for group in m.groups():
-            if group:
-                # Strip trailing dots/underscores and split on dots for module paths
-                parts = group.strip("._").split(".")
-                for part in parts:
-                    if part and re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", part):
-                        raw_symbols.add(part)
+    # V5-05: Tiered symbol extraction
+    symbols_to_check = _extract_symbols(description, evidence)
 
-    # Filter out very common English words, Python builtins, and short tokens
-    # that are unlikely to be meaningful codebase symbols.
-    _SKIP_SYMBOLS = {
-        "the", "this", "that", "with", "from", "import", "class", "def",
-        "for", "not", "and", "its", "but", "are", "was", "were", "can",
-        "should", "would", "could", "also", "will", "has", "have", "been",
-        "when", "then", "else", "elif", "True", "False", "None", "self",
-        "return", "raise", "pass", "break", "continue", "lambda", "yield",
-        "async", "await", "print", "isinstance", "len", "str", "int", "list",
-        "dict", "set", "tuple", "type", "super", "object", "Exception",
-        "ValueError", "TypeError", "KeyError", "AttributeError", "IndexError",
-        "RuntimeError", "StopIteration", "OSError", "IOError", "FileNotFoundError",
-        "NotImplementedError", "AssertionError", "OverflowError", "ZeroDivisionError",
-    }
-    symbols_to_check = {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
+    # No extractable symbols → skip symbol verification entirely (V5-05)
+    if not symbols_to_check:
+        finding["factual_verification"] = {
+            "verified": True,
+            "reason": "no extractable symbols — verification skipped",
+            "code_at_lines": code_at_lines,
+        }
+        return True
 
     # Grep for each extracted symbol in the repository root.
     # We only grep for symbols not already visible in the relevant lines themselves —
     # if the symbol appears in the code at the reported lines, it's trivially confirmed.
+    total_symbols = len(symbols_to_check)
     missing_symbols = []
     for symbol in sorted(symbols_to_check):
         # Fast path: symbol already present in the lines we read
@@ -573,10 +636,16 @@ def verify_factual(finding):
             # Symbol not found in codebase — note it but don't eliminate
             missing_symbols.append(symbol)
 
-    # Record factual verification result
+    # V5-05: Proportional confidence reduction
     if missing_symbols:
         original_confidence = finding.get("confidence", 100)
-        finding["confidence"] = 0
+        miss_ratio = len(missing_symbols) / total_symbols
+        # Proportional penalty: scale reduction by fraction of symbols missing
+        # e.g., 1 of 4 found → miss_ratio=0.75 → reduction of ~52
+        # e.g., 3 of 4 found → miss_ratio=0.25 → reduction of ~18
+        reduction = int(round(miss_ratio * 70))
+        new_confidence = max(30, original_confidence - reduction)
+        finding["confidence"] = new_confidence
         finding["factual_verification"] = {
             "verified": False,
             "reason": (
@@ -585,6 +654,8 @@ def verify_factual(finding):
             ),
             "code_at_lines": code_at_lines,
             "original_confidence": original_confidence,
+            "symbols_checked": total_symbols,
+            "symbols_missing": len(missing_symbols),
         }
         # Degrade but keep — don't eliminate (return True)
         return True

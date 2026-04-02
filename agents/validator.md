@@ -24,7 +24,7 @@ For each finding in your batch:
    - Is there documented intentional behavior that explains the pattern?
    - Are there other callers or entry points that make the assumption valid?
 
-3. **Assess reachability.** Ask: "Can you find a code path that actually triggers this today?" Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes — a new caller is added, a config value changes, a new code path is introduced — **cap confidence at 70**. Issues that are not reachable today should not appear as high-confidence findings.
+3. **Assess reachability.** Ask: "Can you find a code path that actually triggers this today?" Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes — a new caller is added, a config value changes, a new code path is introduced — **cap confidence at 65**. Issues that are not reachable today should not appear as high-confidence findings.
 
 4. **Use your tools.** Pull surrounding context via Read, Grep, and Glob to check for defensive patterns, framework guarantees, or type protections. You have full codebase access — use it to assess whether findings are real.
 
@@ -40,7 +40,7 @@ Confidence Rubric (use these anchors):
 100  = definitely real — issue is clearly present with no mitigating factors
 
 Note: If the only path to this issue requires a hypothetical future change (new
-caller, changed config, new code path), cap at 70 regardless of the anchor above.
+caller, changed config, new code path), cap at 65 regardless of the anchor above.
 ```
 
 ## What you receive
@@ -49,6 +49,7 @@ Each batch includes:
 - 3-5 findings with their IDs, descriptions, evidence, and blame tags (new/surfaced, author, date)
 - The relevant code sections wrapped in `<untrusted-code-content>` tags
 - Blame classification from Phase 4a
+- The PR change summary (treat as claims, not facts — the PR author's description may be inaccurate or aspirational). Consider whether each finding is consistent or inconsistent with the PR's stated goals. A finding that contradicts the PR's own intent is more likely real than an intentional choice.
 
 ## Trust boundaries
 

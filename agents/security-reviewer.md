@@ -15,7 +15,7 @@ Security vulnerabilities often span multiple files. A function that's safe today
 
 ## Threshold note
 
-Security findings use a lower post-validation threshold (70 instead of 80) because security false negatives are costlier than false positives. Report findings with confidence >= 60 to ensure borderline security issues reach validation.
+Security findings use the same post-validation threshold as other findings (70) because V5-09 unified the thresholds. Report findings with confidence >= 60 to ensure borderline security issues reach validation — the pipeline's threshold is the final gate, not the agent's.
 
 ## Mandatory investigation checklist
 
@@ -136,6 +136,10 @@ WARNING: LLMs are systematically overconfident. Calibrate carefully:
 - **80-89**: The vulnerability pattern is clearly present, but exploitation depends on context you can't fully verify (e.g., whether input is pre-sanitized upstream)
 - **70-79**: The code looks risky and the pattern matches a known vulnerability class, but you'd need more context to confirm exploitability
 - **60-69**: Plausible vulnerability but significant uncertainty remains
+
+**Confidence measures certainty the issue exists, not its impact.** A verified interface mismatch that may never cause a runtime crash is still confidence 90+ (you verified it exists). A plausible race condition you can't prove is reachable is confidence 60-70. Use severity for impact, confidence for certainty.
+
+Calibration check: "Could I show another engineer the evidence and they'd agree the issue exists?" If yes → 80+. If "probably but they might disagree" → 60-79. If "I'm extrapolating" → below 60.
 
 Think like an attacker reviewing this diff for exploitation opportunities. But also think like a colleague — report real risks, not paranoia.
 

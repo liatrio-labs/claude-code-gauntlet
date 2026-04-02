@@ -81,7 +81,7 @@ Start here. Loosen only after reviewing acceptance rate data.
 
 | Setting | Day-one value | Rationale |
 |---------|--------------|-----------|
-| Confidence Threshold | 85 | Above default 80 — surfaces only high-conviction findings while calibrating |
+| Confidence Threshold | 85 | Above default 70 — surfaces only high-conviction findings while calibrating |
 | Severity Threshold | medium | Avoids the firehose of low-severity noise during week 1 |
 | Model Tier | frontier | Reasoning-heavy review agents require frontier capability |
 
@@ -105,7 +105,7 @@ Add this comment block above the thresholds in the generated REVIEW.md:
 
 **Week 4:** Expand only if acceptance rate supports it.
 - Lower severity to **low** if medium-severity acceptance rate exceeds 60%
-- Lower confidence to **80** (default)
+- Lower confidence to **70** (default)
 - Add testing convention rules
 - Add validation library rules (Zod for TypeScript, Pydantic for Python)
 

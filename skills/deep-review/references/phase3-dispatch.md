@@ -25,26 +25,32 @@ The orchestrator provides only the **dynamic per-review content** in the prompt:
 - **test-analyzer**: changed production files + test files (2g)
 - **conventions-and-intent**: **all files** (needs full scope for convention and intent checking)
 - **type-design-analyzer**: files with new type definitions (only dispatched when new types introduced)
-- **code-simplifier**: **all changed files** (dispatched after Phase 6 filtering — see Phase 6)
+- **code-simplifier**: **all changed files**
 
 All agents can still **pull** additional context — scoping controls what is pre-loaded, not what is accessible.
+
+**Raw diff rule.** The orchestrator passes raw diff lines for files in an agent's scope. It may add structural annotations (risk level, file role, location in the project) alongside the diff, but must never substitute its own summary for actual changed content. Evidence destroyed during summarization cannot be recovered by agents.
+
+**Context scoping tiers:**
+- **HIGH + MEDIUM files:** full raw diff to all applicable agents
+- **LOW files (after content-change promotion):** compact raw diff (changed lines only, no context lines) delivered to bug-detector as a clearly-delimited "Sweep appendix" section at the end of its prompt. Other agents receive the file list only.
 
 ---
 
 ## Agent Roster
 
-**Always-on (5)** — default model per agent is defined in each agent's frontmatter; Frontier mode overrides to `opus` at dispatch:
+**Always-on (6)** — default model per agent is defined in each agent's frontmatter; Frontier mode overrides to `opus` at dispatch:
 
 1. **bug-detector** — Logic errors, edge cases, null handling, race conditions, API misuse. Subagent: `claude-deep-review:bug-detector`.
 2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Subagent: `claude-deep-review:security-reviewer`.
 3. **cross-file-impact** — Caller/dependent tracing, cross-module impact. Subagent: `claude-deep-review:cross-file-impact`.
 4. **test-analyzer** — Coverage gaps, test quality, DAMP principles. Subagent: `claude-deep-review:test-analyzer`.
-5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Subagent: `claude-deep-review:conventions-and-intent`.
+5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Always dispatched. When no CLAUDE.md or project convention files exist, the dispatch prompt notes: "No CLAUDE.md found — skip pass 1 (convention compliance), execute passes 2 and 3 only." Subagent: `claude-deep-review:conventions-and-intent`.
+6. **code-simplifier** — Simplification opportunities, dead code, redundancy. Subagent: `claude-deep-review:code-simplifier`.
 
-**Conditional (2):**
+**Conditional (1):**
 
-6. **type-design-analyzer** — Type encapsulation, invariant expression. Only if new types introduced. Subagent: `claude-deep-review:type-design-analyzer`.
-7. **code-simplifier** — Simplification opportunities, dead code. POST-review only, only if no critical/high. Subagent: `claude-deep-review:code-simplifier`.
+7. **type-design-analyzer** — Type encapsulation, invariant expression. Only if new types introduced. Subagent: `claude-deep-review:type-design-analyzer`.
 
 ---
 
@@ -63,6 +69,11 @@ Agent(
     Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
     <untrusted-code-content>
     {diff scoped to high + medium risk diffs, test files (2g), history context (2i)}
+    </untrusted-code-content>
+
+    Sweep appendix — LOW-risk files (changed lines only, no context):
+    <untrusted-code-content>
+    {compact diff of remaining LOW files — changed lines only, no context lines}
     </untrusted-code-content>"
 )
 ```
@@ -117,7 +128,7 @@ Agent(
 Agent(
   subagent_type: "claude-deep-review:conventions-and-intent",
   description: "Review: conventions-and-intent",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
+  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules, or 'No CLAUDE.md found — skip pass 1 (convention compliance), execute passes 2 and 3 only' if no project convention files}
     Change summary: {from Phase 2f}
     Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
     Scoped diff (ALL changed files for full convention and intent checking):
@@ -142,7 +153,7 @@ Agent(
 )
 ```
 
-**For code-simplifier (conditional — post-review only, if no critical/high findings):**
+**For code-simplifier:**
 ```
 Agent(
   subagent_type: "claude-deep-review:code-simplifier",
