@@ -22,7 +22,9 @@ Handled by `scripts/verify_findings.py`. Run it against the merged Phase 3 agent
 Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures and zsh heredoc corruption:
 
 ```bash
-Bash(command="""python3 -c "
+Bash(
+  description="Fact-checking findings against the codebase — verifying line numbers, confirming symbols exist, classifying new vs pre-existing",
+  command="""python3 -c "
 import json, sys
 findings = {
     'findings': [
@@ -228,7 +230,9 @@ Handled by `scripts/filter_findings.py`. Run it against the Phase 5 validated fi
 Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures and zsh heredoc corruption:
 
 ```bash
-Bash(command="""python3 -c "
+Bash(
+  description="Filtering for high-confidence findings — applying thresholds, removing false positives, routing to report sections",
+  command="""python3 -c "
 import json, sys
 findings = {
     'findings': [

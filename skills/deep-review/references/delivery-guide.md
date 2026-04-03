@@ -83,7 +83,10 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 ```bash
 # 1. Build findings JSON using Python (handles all escaping; no heredoc/Write tool issues)
-Bash(command="""python3 -c "
+# 2. Post review comments to PR
+Bash(
+  description="Posting {N} review comments to PR #{pr_number}",
+  command="""python3 -c "
 import json, sys
 findings = {
     'review_body': 'Found 3 issues: 1 critical, 2 medium.',
@@ -105,7 +108,6 @@ with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)
 " "$TMPDIR/deep-review-delivery-{head_sha_short}.json"
 
-# 2. Run script
 python3 {plugin_root}/scripts/post_review.py "$TMPDIR/deep-review-delivery-{head_sha_short}.json"
 """)
 ```

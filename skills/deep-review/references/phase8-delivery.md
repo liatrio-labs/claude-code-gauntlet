@@ -60,7 +60,9 @@ Write the selected findings to a JSON file in the findings format specified in `
 Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures:
 
 ```bash
-Bash(command="""python3 -c "
+Bash(
+  description="Posting {N} review comments to PR #{pr_number}",
+  command="""python3 -c "
 import json, sys
 findings = {
     'review_body': '''REVIEW_BODY_HERE''',
