@@ -675,14 +675,13 @@ def detect_disagreement(findings):
     active = [f for f in findings if f.get("id", id(f)) not in suppressed_ids]
 
     # -----------------------------------------------------------------------
-    # Phase 3: Consensus grouping (file + line_bucket + title prefix)
+    # Phase 3: Consensus grouping (file + line_bucket)
     # -----------------------------------------------------------------------
     consensus_groups = {}
     for finding in active:
         file_ = finding.get("file", "")
         line = _line_bucket(finding.get("line_start", 0))
-        title_key = re.sub(r"\s+", " ", finding.get("title", "")).lower()[:40]
-        group_key = (file_, line, title_key)
+        group_key = (file_, line)
         consensus_groups.setdefault(group_key, []).append(finding)
 
     boosted_count = 0

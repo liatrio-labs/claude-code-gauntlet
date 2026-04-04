@@ -214,15 +214,13 @@ Don't rely solely on the diff and pre-loaded context. Use Read and Grep to exami
 
 ## Output format — incremental emission
 
-Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+**Output protocol.** After investigating each potential issue, immediately emit exactly one of:
+- A complete JSON finding object on its own line (if real)
+- `SKIP: [one-line reason]` (if not worth reporting)
 
-**Workflow per issue:**
-1. Investigate the issue (brief notes in plain text are fine)
-2. If a real issue is found, emit a fenced JSON block immediately
-3. If no issue is found, emit an explicit SKIP with a one-line reason
-4. Move to the next issue
+Each JSON block must be independently valid — do not wrap findings in an outer array or object. This ensures truncation loses at most the finding under active investigation.
 
-This structure means output truncation only loses the last in-progress investigation, not all findings.
+**Do not** write trailing summaries, file lists, investigation recaps, or methodology notes after your findings. The orchestrator parses only JSON blocks and SKIP lines. Everything else is ignored and wastes output budget.
 
 Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 

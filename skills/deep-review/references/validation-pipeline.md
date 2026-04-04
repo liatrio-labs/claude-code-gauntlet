@@ -156,9 +156,9 @@ If `verify_findings.py` fails and cannot be recovered after one retry:
 
 Parallel validation agents assess findings that need LLM judgment. **Always use Sonnet** — even in Frontier mode. Validation is objective assessment against a rubric, not discovery. Research doc #12 shows the Sonnet-Opus gap is 1.2 points on objective tasks; the cost difference is not justified.
 
-**Scope:** Findings with confidence <90 that passed Phase 4b. Findings with confidence >=90 have already been factually verified and represent cases where the agent "can point to the EXACT input that triggers the bug." These skip the more expensive LLM judgment step.
+**Scope:** All findings that passed Phase 4 verification. No findings skip validation regardless of confidence — high-confidence findings benefit from independent assessment because LLM self-assessed confidence clusters in the 80-100% range and may mask reasoning errors.
 
-**Before dispatching validators:** Save each finding's current confidence as `original_confidence`. This field is used by the Phase 6 contestation mechanism to detect large validator disagreements. Set `finding["original_confidence"] = finding["confidence"]` for every finding passing to Phase 5 (including those that skip validation at confidence >=90 — they still need the field for Phase 6 consistency).
+**Before dispatching validators:** Save each finding's current confidence as `original_confidence`. This field is used by the Phase 6 contestation mechanism to detect large validator disagreements. Set `finding["original_confidence"] = finding["confidence"]` for every finding passing to Phase 5.
 
 **Dispatch:** Spawn one Sonnet agent per batch from Phase 4c. Launch all agents in a single message with multiple Agent tool calls for true parallel execution.
 
@@ -387,6 +387,14 @@ The challenger agent definition already contains the blind challenge instruction
 
 Do NOT include original reasoning or evidence — only title, description, and raw code. Include ONLY: title, description, and raw code in `<untrusted-code-content>` tags. Do NOT include "Consider:" hints, counter-arguments, or any reasoning about the finding — these anchor challengers toward specific conclusions and defeat the blind challenge design.
 
+**Surfaced findings get additional context.** When `origin == "surfaced"`, append to the challenger prompt:
+
+> Context: This code PRE-DATES the current PR — it was not written or modified by the changes under review. The finding was surfaced because the code is adjacent to or affected by the PR's changes.
+>
+> Assess two things: (1) Is the claimed issue real in the code? (2) Given that this code pre-dates the PR, does the PR make this pre-existing issue materially worse, newly reachable, or newly consequential? If the code was like this before the PR and the PR doesn't change its risk profile, rate confidence low.
+
+This does not break challenger blindness — the sycophancy concern is about seeing the original agent's reasoning, not factual context about the code's age. For findings with `origin == "new"`, the challenger prompt is unchanged.
+
 **Triggerability bar:** The challenger's prompt must include this line: "Can you construct a specific code path through the current codebase that triggers this? If you cannot, rate confidence below 25."
 
 **Design rationale:**
@@ -414,7 +422,7 @@ Findings from different agents often overlap. Group findings that reference the 
 
 ## Post-challenge finalization — step 2: Route
 
-Materialize the routing tags from Phase 6d. Separate findings into:
+Materialize the routing tags from Phase 6d. Then apply the surfaced-finding re-route: surfaced findings whose challenger scored below 50 are re-routed to `"suggestion"` — the issue is real but not PR-relevant. Separate findings into:
 - **Main report** — grouped by severity, counted in executive summary
 - **Improvement Suggestions** — not counted in executive summary, not posted as PR inline comments by default, available via "Let me pick" walkthrough in Phase 8
 

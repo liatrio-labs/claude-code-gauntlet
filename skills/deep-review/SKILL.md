@@ -93,7 +93,9 @@ After 2k, announce triage results before proceeding to Phase 3: PR title, review
 
 ## Phase 3: Review Agents
 
-Launch all applicable review agents **in a single message with multiple Agent tool calls** for true parallel execution. Parallel subagents are essential here — the orchestrator cannot run 5 dimensions simultaneously in its own reasoning chain, and simultaneous dispatch is what makes deep-review faster than serial analysis.
+**MANDATORY: Single-message parallel dispatch.** Prepare context for ALL applicable agents first (scoped diffs, risk classifications, summaries). Then dispatch ALL agents in ONE response containing multiple Agent tool calls. Do not dispatch agents across separate messages — serial dispatch adds 5-10 minutes of unnecessary latency.
+
+If you find yourself about to send an Agent tool call for just one agent, STOP. Prepare all remaining agents and include them in the same message.
 
 > **Fire-and-forget:** Agents are terminated after returning findings. Phase 7 spawns fresh blind agents — NOT these originals — to prevent sycophantic confirmation.
 
@@ -108,6 +110,8 @@ Read `references/phase3-dispatch.md` for context scoping, agent roster, and disp
 After all Phase 3 agents return, parse and merge their findings into a single JSON object before passing to Phase 4. This is an orchestrator step — no agents involved.
 
 **Parsing incremental output.** Agents emit individual JSON blocks (one per finding) rather than a single array. Each agent's output contains zero or more JSON objects interspersed with `SKIP: ...` lines and investigation prose. To parse: extract all top-level JSON objects from each agent's text output (look for `{` ... `}` blocks that parse as valid JSON with an `"id"` field). Ignore SKIP lines and non-JSON text — these are investigation notes, not findings.
+
+**Truncation detection.** If an agent's output ends mid-sentence or mid-JSON, or contains investigation prose but zero JSON findings and zero SKIP lines, note in methodology: "{agent-name} output truncated — findings lost." Do not re-dispatch — multi-agent redundancy covers the gap.
 
 **Four fields must be set correctly or the Phase 4-6 pipeline breaks:**
 
@@ -150,7 +154,7 @@ Output: `{ "verified": [...], "eliminated": [...], "batches": [[id, ...], ...], 
 
 > Validation requires fresh agents, not orchestrator re-reading. When the same context does discovery and validation, correlated errors occur ~60% of the time. Validation agents start clean and assess findings independently.
 
-Parallel Sonnet validation agents assess findings needing LLM judgment. **Always use Sonnet** — even in Frontier mode. Findings with confidence >=90 skip validation (already factually verified with exact trigger path).
+Parallel Sonnet validation agents assess all Phase 4 verified findings. **Always use Sonnet** — even in Frontier mode. No findings skip validation regardless of confidence — high-confidence findings benefit from independent assessment (LLM self-assessed confidence clusters in the 80-100% range and may mask reasoning errors).
 
 Dispatch one Sonnet agent per batch from the `verify_findings.py` `"batches"` output. Launch all in a single message. Validators CAN and SHOULD pull surrounding context via Read/Grep — unlike Phase 7 challengers, validators need full codebase access.
 
@@ -211,6 +215,14 @@ Agent(
 
 Do NOT include original reasoning or evidence — only title, description, and raw code. See `references/validation-pipeline.md` Phase 7 for the full list of what to omit from challenger prompts.
 
+**Surfaced findings get additional context.** When `origin == "surfaced"`, append to the challenger prompt:
+
+> Context: This code PRE-DATES the current PR — it was not written or modified by the changes under review. The finding was surfaced because the code is adjacent to or affected by the PR's changes.
+>
+> Assess two things: (1) Is the claimed issue real in the code? (2) Given that this code pre-dates the PR, does the PR make this pre-existing issue materially worse, newly reachable, or newly consequential? If the code was like this before the PR and the PR doesn't change its risk profile, rate confidence low.
+
+This does not break challenger blindness — the sycophancy concern is about seeing the original agent's reasoning, not factual context about the code's age. For findings with `origin == "new"`, the challenger prompt is unchanged.
+
 **Apply results** based on `confidence_claim_is_correct`:
 - **< 25** → Non-security: remove. Security: downgrade one severity level.
 - **25-49** → Downgrade one severity level.
@@ -224,7 +236,7 @@ After dispatch, announce: "Dispatched N agents for Phase 7."
 After challenge results are applied:
 
 1. **Dedup** — Merge overlapping findings (same file + line range + issue). Keep highest confidence, most specific description.
-2. **Route** — Materialize routing tags from Phase 6d. Main report findings grouped by severity, counted in executive summary. Improvement Suggestions not counted, not posted as PR inline comments by default, available via "Let me pick" walkthrough.
+2. **Route** — Materialize routing tags from Phase 6d. Surfaced findings whose challenger scored below 50 are re-routed to `"suggestion"` — the issue is real but not PR-relevant. Main report findings grouped by severity, counted in executive summary. Improvement Suggestions not counted, not posted as PR inline comments by default, available via "Let me pick" walkthrough.
 3. **Cap** — Apply REVIEW.md `max_findings` if configured (default: no limit). Main report only.
 4. **Rank** — Sort by severity → confidence → file risk level.
 5. **Incremental diff** — (Incremental reviews only) Classify vs previous findings as introduced/fixed/preexisting. Suppress preexisting.

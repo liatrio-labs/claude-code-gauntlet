@@ -28,6 +28,7 @@ Research artifacts that informed the design of claude-deep-review. Each document
 | 20 | [Named Subagent Definitions for Claude Code Skills](artifacts/20-named-subagent-definitions.md) | Plugin `agents/` directory is first-class and auto-discovered. `tools:` in frontmatter is a hard system sandbox, not advisory. Anthropic's `pr-review-toolkit` uses this pattern (6 named agents). Plugin agents cannot define hooks or permissionMode (security restriction). Plugin agents cannot reliably cross-reference co-bundled skills (bug #11955). Three deployment strategies: private marketplace (recommended), project-level `.claude/agents/`, enterprise managed settings. `memory: project` scope is git-shareable for accumulating codebase knowledge across reviews. |
 | 21 | [Robust PR Diff Strategies](artifacts/21-robust-pr-diff-strategies.md) | API-first diff acquisition (`gh pr diff`) is more robust than local git. Git 2.28 broke silent three-dot fallback in shallow clones. `git diff HEAD` fallback is fundamentally wrong (compares working tree, always empty in CI). Recommended chain: API diff → three-dot → two-dot → skip. `gh pr diff` has 20K line / 300 file hard limit. reviewdog and Danger.js converge on API-first with local fallback. Pass diff via `--diff-file`, never env vars (`ARG_MAX` limit). |
 | 22 | [Actionability Filtering in Code Review](artifacts/22-actionability-filtering.md) | 75% of code review findings are evolvability concerns, not functional defects (Mantyla & Lassenius 2009). Google's "effective false positive" = technically correct finding developers don't act on. HubSpot's Sidekick is the only published system with separate Accuracy + Actionability criteria (80%+ thumbs-up rate). OpenAI Codex uses expected utility formula `P(correct) × C_saved`. `min()` aggregation is too aggressive — multiplicative (`accuracy × defect_confidence`) preferred. Blind challenge design helps accuracy but structurally hurts significance assessment (needs MORE context, not less). Semgrep Memories: 2.8× FP improvement from feedback loops. |
+| 23 | [Agent Output Truncation and Recovery](artifacts/23-agent-output-truncation-and-recovery.md) | Most agent frameworks don't manage output token budgets — silent truncation is the dominant failure mode. Only PR-Agent reserves output tokens; only Aider has continuation logic. Claude Code subagents have a hardcoded 32K output limit. SWE-Bench Pro: context overflow is 35.6% of failures. NDJSON (one valid JSON per line) is the proven pattern for truncation-robust incremental emission. No constrained decoding engine can force a valid terminal state at token limits. Practical mitigations: tool calls as separate structured channel, NDJSON, finish_reason checking, separate structuring steps. |
 
 ## How these informed the design
 
@@ -81,11 +82,13 @@ Key design decisions and which research artifacts support them:
 | API-first diff acquisition via `--diff-file` (BF-16) | #21 | `gh pr diff` is server-computed and fork-safe. Eliminates merge-base failures, shallow clone issues, and redundant git diff. Industry convergence (reviewdog, Danger.js) on API-first with local fallback |
 | Diff fallback chain: API → three-dot → two-dot → skip (BF-11) | #21 | `git diff HEAD` fallback is fundamentally wrong (always empty in CI). Two-dot is noisier but never fails if refs exist. `None` (skip validation) is better than false "surfaced" tagging |
 | Actionability-based finding routing (BF-15) | #22 | 13/17 FPs are "effective false positives" (Google Tricorder term). Dual-score (accuracy × actionability) with constitutional criteria. Significance assessor needs more context than accuracy verifier — cannot reuse blind challenge design directly |
+| NDJSON incremental emission with trailing-prose prohibition (V6-01) | #23 | Silent truncation is the dominant agent failure mode; NDJSON ensures truncation loses at most one finding; no framework solves proactive budget monitoring, so output format design is the practical mitigation |
+| No re-dispatch on agent truncation (V6-01) | #23 | Output length prediction has Pearson's r < 0.15; re-dispatch doubles cost with unpredictable results; multi-agent redundancy (5.5% performance loss from single-agent failure) is the designed safety net |
 
 ## Adding new research
 
 When adding new research artifacts:
-1. Number sequentially (next: `23-`)
+1. Number sequentially (next: `24-`)
 2. Use lowercase-kebab-case for filenames
 3. Place in the `artifacts/` directory
 4. Update this index with a summary row and any new design decision mappings

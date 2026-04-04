@@ -539,6 +539,29 @@ class TestDetectDisagreement(unittest.TestCase):
         self.assertIn("security-reviewer", bug_findings[0]["corroborated_by"])
         self.assertIn("bug-detector", sec_findings[0]["corroborated_by"])
 
+    def test_consensus_different_titles_same_location(self):
+        """Cross-agent findings with different titles at same file+line get consensus boost."""
+        f1 = _make_finding(
+            id="c1", file="a.py", line_start=42,
+            title="Tautological fallback in updateEvent",
+            agent="bug-detector", confidence=80,
+        )
+        f2 = _make_finding(
+            id="c2", file="a.py", line_start=44,
+            title="Dead fallback creates PII risk",
+            agent="security-reviewer", confidence=85,
+        )
+        f3 = _make_finding(
+            id="c3", file="a.py", line_start=43,
+            title="Calendar lookup contradicts PR intent",
+            agent="conventions-and-intent", confidence=75,
+        )
+        active, suppressed, boosted = detect_disagreement([f1, f2, f3])
+        self.assertEqual(boosted, 3)
+        for f in active:
+            self.assertEqual(f["consensus_count"], 3)
+            self.assertEqual(len(f["corroborated_by"]), 2)
+
     def test_consensus_capped_at_100(self):
         f1 = _make_finding(
             id="c1", file="a.py", line_start=40,

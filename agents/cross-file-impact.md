@@ -19,6 +19,7 @@ The diff shows what changed. Your job is to find what ELSE is affected by those 
    - Argument mismatches (wrong count, wrong types, wrong order)
    - Missing error handling of new return types or newly thrown exceptions
    - Broken assumptions about behavior that the signature change implies
+   - When a function changes from swallowing errors to propagating them (or vice versa), trace each caller to identify whether the changed error behavior creates a new failure mode for end users — even if the caller handles the error correctly. A caller that correctly handles a new error by returning it may itself change the behavioral contract for *its* callers, propagating the impact up the call chain.
 
 2. **For each changed interface or abstract class**, find all implementors. Check if they still satisfy the contract:
    - Missing new required methods
@@ -153,15 +154,13 @@ Don't rely solely on the diff and pre-loaded context — cross-file impact analy
 
 ## Output format — incremental emission
 
-Emit findings **incrementally**: one JSON block per finding, immediately after investigating each issue. Do NOT accumulate findings into a single array at the end.
+**Output protocol.** After investigating each potential issue, immediately emit exactly one of:
+- A complete JSON finding object on its own line (if real)
+- `SKIP: [one-line reason]` (if not worth reporting)
 
-**Workflow per issue:**
-1. Investigate the issue (brief notes in plain text are fine)
-2. If a real issue is found, emit a fenced JSON block immediately
-3. If no issue is found, emit an explicit SKIP with a one-line reason
-4. Move to the next issue
+Each JSON block must be independently valid — do not wrap findings in an outer array or object. This ensures truncation loses at most the finding under active investigation.
 
-This structure means output truncation only loses the last in-progress investigation, not all findings.
+**Do not** write trailing summaries, file lists, investigation recaps, or methodology notes after your findings. The orchestrator parses only JSON blocks and SKIP lines. Everything else is ignored and wastes output budget.
 
 Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
 
