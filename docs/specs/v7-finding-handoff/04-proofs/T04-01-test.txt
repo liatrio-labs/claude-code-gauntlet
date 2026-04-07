@@ -1,0 +1,17 @@
+Type: test
+Command: python -m pytest tests/test_merge_findings.py -q
+Expected: all pass
+Timestamp: 2026-04-05T00:00:00Z
+
+Output:
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+collected 67 items
+
+...................................................................      [100%]
+67 passed in 0.03s
+
+Status: PASS
+Notes: 67 tests pass (up from 63 baseline). 4 new tests added for M4/M5 false
+       positive scenarios (2 unit tests in TestDetectTruncation, 2 integration
+       tests in TestMerge).

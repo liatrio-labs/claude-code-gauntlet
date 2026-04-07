@@ -48,7 +48,6 @@ import json
 import os
 import re
 import sys
-import warnings
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -67,9 +66,6 @@ KNOWN_DIMENSIONS = {
 }
 
 REQUIRED_FIELDS = {"id", "file", "line_start", "title", "description", "severity", "confidence"}
-
-# Regex to find top-level JSON objects in text (greedy, handles nested braces)
-_JSON_BLOCK_RE = re.compile(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}', re.DOTALL)
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +365,8 @@ def validate_findings(findings: list[dict]) -> tuple[list[dict], list[str]]:
 
 def detect_truncation(
     agents: list[str],
-    ndjson_findings: dict[str, list[dict]],
+    ndjson_raw_counts: dict[str, int],
+    text_findings: dict[str, list[dict]],
     text_has_prose: dict[str, bool],
     text_has_skip: dict[str, bool],
     ndjson_paths: dict[str, str],
@@ -377,18 +374,25 @@ def detect_truncation(
     """Detect agents whose output may have been truncated.
 
     Truncation suspected when:
-      - NDJSON file missing or empty (no structured findings)
+      - NDJSON file missing or empty (no raw lines parsed, pre-validation)
+      - Text fallback also has no valid JSON findings
       - Text has prose content (agent investigated something)
       - Text has no SKIP: lines (agent didn't explicitly skip)
+
+    Using pre-validation NDJSON counts avoids false positives when findings
+    exist in the NDJSON file but are rejected by validation.  Checking that
+    the text channel also produced no findings avoids false positives when the
+    text fallback successfully parsed valid JSON blocks.
     """
     truncation_warnings = []
 
     for agent in agents:
-        ndjson_empty = len(ndjson_findings.get(agent, [])) == 0
+        ndjson_empty = ndjson_raw_counts.get(agent, 0) == 0
+        text_empty = len(text_findings.get(agent, [])) == 0
         has_prose = text_has_prose.get(agent, False)
         has_skip = text_has_skip.get(agent, False)
 
-        if ndjson_empty and has_prose and not has_skip:
+        if ndjson_empty and text_empty and has_prose and not has_skip:
             truncation_warnings.append(
                 f"[{agent}] Possible truncation: no structured findings, "
                 f"prose present in text output, no SKIP lines detected"
@@ -476,9 +480,9 @@ def merge(
         text_has_skip[agent] = has_skip
         all_warnings.extend(warns)
 
-    # --- Count before dedup ---
+    # --- Count before dedup (pre-validation raw counts for truncation detection) ---
     ndjson_count = sum(len(v) for v in ndjson_findings.values())
-    text_count_raw = sum(len(v) for v in text_findings.values())
+    ndjson_raw_counts = {agent: len(findings) for agent, findings in ndjson_findings.items()}
 
     # --- Inject agent fields ---
     inject_agent_field(ndjson_findings, text_findings)
@@ -497,6 +501,8 @@ def merge(
         return out
 
     ndjson_findings = _filter_valid(ndjson_findings)
+    # Preserve pre-validation text findings for truncation detection before filtering
+    text_findings_pre_validation = {agent: list(findings) for agent, findings in text_findings.items()}
     text_findings = _filter_valid(text_findings)
 
     # --- Deduplicate ---
@@ -515,8 +521,12 @@ def merge(
     val_warnings = pre_val_warnings
 
     # --- Truncation detection ---
+    # Use pre-validation counts and pre-validation text findings to avoid false positives:
+    # M4: findings that fail validation shouldn't make NDJSON appear empty
+    # M5: text fallback with valid JSON blocks shouldn't trigger truncation warning
     truncation_warnings = detect_truncation(
-        agents, ndjson_findings, text_has_prose, text_has_skip, ndjson_paths
+        agents, ndjson_raw_counts, text_findings_pre_validation,
+        text_has_prose, text_has_skip, ndjson_paths
     )
 
     # Aggregate all warnings into categories

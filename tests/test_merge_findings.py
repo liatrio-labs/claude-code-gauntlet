@@ -16,6 +16,7 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -469,11 +470,15 @@ class TestValidateFindings(unittest.TestCase):
 
 class TestDetectTruncation(unittest.TestCase):
 
-    def _run(self, ndjson_findings, text_has_prose, text_has_skip):
-        agents = list(ndjson_findings.keys()) or list(text_has_prose.keys())
+    def _run(self, ndjson_raw_counts, text_findings, text_has_prose, text_has_skip):
+        agents = (
+            list(ndjson_raw_counts.keys())
+            or list(text_has_prose.keys())
+        )
         return detect_truncation(
             agents=agents,
-            ndjson_findings=ndjson_findings,
+            ndjson_raw_counts=ndjson_raw_counts,
+            text_findings=text_findings,
             text_has_prose=text_has_prose,
             text_has_skip=text_has_skip,
             ndjson_paths={a: f"/tmp/{a}.ndjson" for a in agents},
@@ -481,7 +486,8 @@ class TestDetectTruncation(unittest.TestCase):
 
     def test_empty_ndjson_and_prose_triggers_warning(self):
         warns = self._run(
-            ndjson_findings={"bug-detector": []},
+            ndjson_raw_counts={"bug-detector": 0},
+            text_findings={"bug-detector": []},
             text_has_prose={"bug-detector": True},
             text_has_skip={"bug-detector": False},
         )
@@ -491,7 +497,8 @@ class TestDetectTruncation(unittest.TestCase):
 
     def test_empty_ndjson_with_skip_lines_no_warning(self):
         warns = self._run(
-            ndjson_findings={"bug-detector": []},
+            ndjson_raw_counts={"bug-detector": 0},
+            text_findings={"bug-detector": []},
             text_has_prose={"bug-detector": True},
             text_has_skip={"bug-detector": True},
         )
@@ -499,7 +506,8 @@ class TestDetectTruncation(unittest.TestCase):
 
     def test_populated_ndjson_no_warning(self):
         warns = self._run(
-            ndjson_findings={"bug-detector": [_make_finding()]},
+            ndjson_raw_counts={"bug-detector": 1},
+            text_findings={"bug-detector": []},
             text_has_prose={"bug-detector": True},
             text_has_skip={"bug-detector": False},
         )
@@ -507,7 +515,8 @@ class TestDetectTruncation(unittest.TestCase):
 
     def test_empty_ndjson_no_prose_no_warning(self):
         warns = self._run(
-            ndjson_findings={"bug-detector": []},
+            ndjson_raw_counts={"bug-detector": 0},
+            text_findings={"bug-detector": []},
             text_has_prose={"bug-detector": False},
             text_has_skip={"bug-detector": False},
         )
@@ -517,13 +526,42 @@ class TestDetectTruncation(unittest.TestCase):
         agents = ["bug-detector", "security-reviewer"]
         warns = detect_truncation(
             agents=agents,
-            ndjson_findings={"bug-detector": [], "security-reviewer": [_make_finding()]},
+            ndjson_raw_counts={"bug-detector": 0, "security-reviewer": 1},
+            text_findings={"bug-detector": [], "security-reviewer": []},
             text_has_prose={"bug-detector": True, "security-reviewer": True},
             text_has_skip={"bug-detector": False, "security-reviewer": False},
             ndjson_paths={a: f"/tmp/{a}.ndjson" for a in agents},
         )
         self.assertEqual(len(warns), 1)
         self.assertIn("bug-detector", warns[0])
+
+    def test_m4_no_false_positive_when_ndjson_has_invalid_findings(self):
+        """M4: findings that fail validation must not make NDJSON appear empty.
+
+        Pre-validation raw count is 1 (NDJSON had content), so no truncation
+        warning should be emitted even though post-validation count is 0.
+        """
+        warns = self._run(
+            ndjson_raw_counts={"bug-detector": 1},  # raw count: file had content
+            text_findings={"bug-detector": []},
+            text_has_prose={"bug-detector": True},
+            text_has_skip={"bug-detector": False},
+        )
+        self.assertEqual(warns, [])
+
+    def test_m5_no_false_positive_when_text_has_valid_json_blocks(self):
+        """M5: text fallback with valid JSON blocks must not trigger truncation.
+
+        Even though NDJSON is empty, the text channel has valid findings, so
+        there is no truncation — the agent delivered its output via text.
+        """
+        warns = self._run(
+            ndjson_raw_counts={"bug-detector": 0},
+            text_findings={"bug-detector": [_make_finding()]},  # text has findings
+            text_has_prose={"bug-detector": True},
+            text_has_skip={"bug-detector": False},
+        )
+        self.assertEqual(warns, [])
 
 
 # ---------------------------------------------------------------------------
@@ -536,6 +574,9 @@ class TestMerge(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self.session_sha = "abc12345"
         self.agents = ["bug-detector", "security-reviewer"]
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _ndjson_path(self, agent):
         return os.path.join(self.tmpdir, f"deep-review-{agent}-{self.session_sha}.ndjson")
@@ -637,6 +678,40 @@ class TestMerge(unittest.TestCase):
         result = self._run_merge()
         self.assertEqual(result["methodology"]["truncation_warnings"], [])
 
+    def test_m4_no_false_positive_when_ndjson_findings_fail_validation(self):
+        """M4: NDJSON findings that fail validation must not produce a truncation warning.
+
+        The NDJSON file has content (one finding), but that finding lacks required
+        fields and is rejected during validation.  Before the M4 fix, truncation
+        detection used the post-validation ndjson_findings dict (now empty after
+        filtering), which incorrectly triggered a truncation warning.
+        With the fix, the pre-validation raw count (1) is used, so no warning fires.
+        """
+        # Write an NDJSON finding missing required fields (id, file, line_start, …)
+        bad_finding = {"dimension": "bug", "severity": "high"}
+        _write_ndjson(self._ndjson_path("bug-detector"), [bad_finding])
+        # Also write prose text so the old code would have flagged truncation
+        _write_text(self._text_path("bug-detector"),
+                    "I investigated the handler and found a potential issue.")
+        result = self._run_merge()
+        self.assertEqual(result["methodology"]["truncation_warnings"], [])
+
+    def test_m5_no_false_positive_when_text_has_valid_json_blocks(self):
+        """M5: text fallback with valid JSON blocks must not trigger truncation.
+
+        NDJSON is absent (empty), but the text file contains a valid finding as a
+        JSON block.  The agent delivered its output via the text channel, so
+        truncation should not be reported.
+        """
+        f = _make_finding(id="bug-1")
+        # No NDJSON file — only text fallback with a valid JSON finding
+        _write_text(
+            self._text_path("bug-detector"),
+            "I investigated the handler.\n" + json.dumps(f) + "\nLooks serious.",
+        )
+        result = self._run_merge()
+        self.assertEqual(result["methodology"]["truncation_warnings"], [])
+
     def test_ndjson_count_in_methodology(self):
         _write_ndjson(self._ndjson_path("bug-detector"), [
             _make_finding(id="bug-1"),
@@ -668,6 +743,9 @@ class TestMain(unittest.TestCase):
         )
         _write_ndjson(ndjson_path, [_make_finding(id="bug-1")])
         self.output_path = os.path.join(self.tmpdir, "output.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _argv(self, **kwargs):
         defaults = {
