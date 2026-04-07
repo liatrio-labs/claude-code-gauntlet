@@ -1,0 +1,24 @@
+Type: cli
+Command: grep -A4 "apply_validations.py.*Phase 5" docs/design/v7-master-improvement-plan.md
+Expected: positional args (no --findings or --validations flags)
+Timestamp: 2026-04-05T00:00:00Z
+
+Output (apply_validations.py):
+  python3 {plugin_root}/scripts/apply_validations.py \
+    $TMPDIR/deep-review-phase4-output-{sha}.json \
+    $TMPDIR/deep-review-validations-{sha}.json \
+    --output $TMPDIR/deep-review-phase5-output-{sha}.json
+
+Output (apply_challenges.py):
+  python3 {plugin_root}/scripts/apply_challenges.py \
+    $TMPDIR/deep-review-phase6-output-{sha}.json \
+    $TMPDIR/deep-review-challenges-{sha}.json \
+    --output $TMPDIR/deep-review-delivery-{sha}.json
+
+Verification: PASS — CLI examples updated to match actual positional argument interface (R05.5).
+  Old (incorrect): --findings <path> --validations <path>  / --findings <path> --challenges <path>
+  New (correct):   positional <findings_json> <validations_json> / positional <filtered_json> <challenges_json>
+  Output file name also corrected: phase6-input → phase5-output (matches actual script output name)
+  apply_challenges.py: --max-findings 0 removed (0 is default, not needed in doc example)
+
+Status: PASS

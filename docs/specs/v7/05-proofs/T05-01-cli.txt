@@ -1,0 +1,19 @@
+Type: cli
+Command: grep -c 'Bash' skills/deep-review/SKILL.md
+Expected: non-zero (Bash mentioned in security boundary at lines 111 and 294)
+Timestamp: 2026-04-05T00:00:00Z
+
+Output: 5
+
+Verification: PASS — SKILL.md security boundary text at lines 111 and 294 now
+references Bash for Phase 3 discovery agents and distinguishes from Phase 5/7
+quality-gate agents (no Bash). The PreToolUse hook restriction is documented.
+
+Matched lines:
+  32: Bash(command="ls {plugin_root}/scripts/ {plugin_root}/agents/")
+  49: Bash(command="git rev-parse --short=8 HEAD")
+  111: Security boundary — Phase 3: [Read, Grep, Glob, LSP, Bash] restricted by hook
+  141: merge script handles NDJSON files written by agents via Bash
+  294: Critical Rules #3 — Phase 3 discovery vs Phase 5/7 quality-gate distinction
+
+Status: PASS

@@ -1,0 +1,16 @@
+Type: cli
+Command: grep -n 'apply_validations' skills/deep-review/references/validation-pipeline.md | head -5
+Expected: original_confidence instruction replaced with note that apply_validations.py handles it automatically
+Timestamp: 2026-04-05T00:00:00Z
+
+Output:
+  117: **Before dispatching validators:** `apply_validations.py` automatically saves each finding's
+       current confidence as `original_confidence` before applying validator adjustments. This
+       field is used by the Phase 6 contestation mechanism to detect large validator disagreements
+       — no orchestrator action required.
+
+Verification: PASS — Vestigial orchestrator-side original_confidence instruction removed (R05.3).
+  The old text "Set finding["original_confidence"] = finding["confidence"] for every finding
+  passing to Phase 5" is gone. Replaced with accurate note that the script handles this automatically.
+
+Status: PASS

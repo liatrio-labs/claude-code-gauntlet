@@ -185,6 +185,7 @@ Agent(
   prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
     Change summary: {from Phase 2f}
     Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
+    Findings file: $TMPDIR/deep-review-bug-detector-{head_sha_short}.ndjson
     Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
     <untrusted-code-content>
     {diff scoped to high + medium risk diffs, test files (2g), history context (2i)}

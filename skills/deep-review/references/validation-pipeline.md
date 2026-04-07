@@ -114,7 +114,7 @@ Parallel validation agents assess findings that need LLM judgment. **Always use 
 
 **Scope:** All findings that passed Phase 4 verification. No findings skip validation regardless of confidence — high-confidence findings benefit from independent assessment because LLM self-assessed confidence clusters in the 80-100% range and may mask reasoning errors.
 
-**Before dispatching validators:** Save each finding's current confidence as `original_confidence`. This field is used by the Phase 6 contestation mechanism to detect large validator disagreements. Set `finding["original_confidence"] = finding["confidence"]` for every finding passing to Phase 5.
+**Before dispatching validators:** `apply_validations.py` automatically saves each finding's current confidence as `original_confidence` before applying validator adjustments. This field is used by the Phase 6 contestation mechanism to detect large validator disagreements — no orchestrator action required.
 
 **Dispatch:** Spawn one Sonnet agent per batch from Phase 4c. Launch all agents in a single message with multiple Agent tool calls for true parallel execution.
 
@@ -435,6 +435,19 @@ Rate limit recovery is transparent to the user when under 60 seconds. Extended w
 ---
 
 ## Script Failure Recovery
+
+When `merge_findings.py` (Merge Phase 3 Outputs) fails:
+
+1. **Check the exit code and read stderr.** The script prints structured error messages.
+2. **Fix the most common cause.** Missing NDJSON files or malformed agent text returns are the primary failure modes — verify that `$TMPDIR/deep-review-text-{agent}-{head_sha_short}.txt` files were written before calling the script.
+3. **Retry once.** If the script fails again, fall back manually:
+   - Collect each agent's text return and extract any JSON blocks inline.
+   - Manually assemble the Phase 4 input envelope using the `python3 -c "import json; ..."` pattern.
+   - Set the `agent` field on each finding to the dispatching agent name.
+   - Note in methodology: "merge_findings.py failed — Phase 4 input assembled manually from agent text returns."
+4. **Do NOT skip Phase 4.** Pass the manually assembled JSON to `verify_findings.py` as normal. Manual assembly may miss findings from truncated outputs; this is acceptable — the pipeline continues.
+
+---
 
 When `verify_findings.py` (Phase 4), `apply_validations.py` (Phase 5→6), `filter_findings.py` (Phase 6), `apply_challenges.py` (Phase 7→8), or `post_review.py` (Phase 8) fail:
 
