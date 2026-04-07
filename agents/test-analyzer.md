@@ -1,7 +1,7 @@
 ---
 name: test-analyzer
 description: Analyzes test coverage quality and identifies critical gaps in the test suite relative to code changes
-tools: Read, Grep, Glob, LSP
+tools: Read, Grep, Glob, LSP, Bash
 effort: high
 model: sonnet
 color: cyan
@@ -133,52 +133,38 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Grep to search for test files that may not be in the diff, and Read production code to understand what behaviors need coverage. Use LSP to quickly check whether a function or branch is exercised elsewhere — findReferences can show if a code path is covered through an integration test you haven't seen yet.
 
-## Output format — incremental emission
+## Output format — Bash emission
 
-**Output protocol.** After investigating each potential issue, immediately emit exactly one of:
-- A complete JSON finding object on its own line (if real)
-- `SKIP: [one-line reason]` (if not worth reporting)
+**Output protocol.** After investigating each potential issue, immediately do one of:
 
-Each JSON block must be independently valid — do not wrap findings in an outer array or object. This ensures truncation loses at most the finding under active investigation.
+- **Finding:** Write it to your findings file via Bash:
+  `echo '<complete JSON finding>' >> "<findings_file>"`
+- **Skip:** Note in your text output: `SKIP: [one-line reason]`
 
-**Do not** write trailing summaries, file lists, investigation recaps, or methodology notes after your findings. The orchestrator parses only JSON blocks and SKIP lines. Everything else is ignored and wastes output budget.
+Each finding must be a complete, valid JSON object on a single line. Use the schema below.
 
-Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
+Bash is available ONLY for writing findings to your NDJSON file. All code investigation uses Read, Grep, Glob, and LSP.
+
+For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY write the finding via Bash. (4) Only then proceed to the next issue. Never investigate more than one issue without emitting or skipping.
+
+Each finding is a complete JSON object on a single line. Use this schema:
 
 ```json
-{
-  "id": "test-<n>",
-  "dimension": "test_coverage",
-  "criticality": <1-10>,
-  "confidence": <0-100>,
-  "file": "<path of the production file with the untested behavior>",
-  "line_start": <number>,
-  "line_end": <number>,
-  "title": "<one-line summary of the coverage gap>",
-  "description": "<detailed explanation of what behavior is untested and why it matters>",
-  "evidence": "<specific code or context that shows the gap>",
-  "suggestion": "<concrete test case or scenario to add, with example if helpful>",
-  "failure_scenario": "<concrete example of a bug this test gap would fail to catch>",
-  "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>",
-  "cross_file_refs": ["<test files or related files involved in this finding>"]
-}
+{"id": "test-<n>", "dimension": "test_coverage", "criticality": <1-10>, "confidence": <0-100>, "file": "<path of the production file with the untested behavior>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary of the coverage gap>", "description": "<detailed explanation of what behavior is untested and why it matters>", "evidence": "<specific code or context that shows the gap>", "suggestion": "<concrete test case or scenario to add, with example if helpful>", "failure_scenario": "<concrete example of a bug this test gap would fail to catch>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<test files or related files involved in this finding>"]}
 ```
 
-**Example output structure:**
+**Example:**
 
 ```
 [investigation of missing error path test for processPayment()]
-```json
-{"id": "test-1", "dimension": "test_coverage", "criticality": 9, "confidence": 90, ...}
+Real gap — the payment failure path in processPayment() has no test; a regression could go undetected.
+
+```bash
+echo '{"id":"test-1","dimension":"test_coverage","criticality":9,"confidence":90,"file":"src/payments/processor.py","line_start":67,"line_end":82,"title":"Missing test for payment failure error path in processPayment","description":"processPayment() has an error path at line 74 that catches PaymentGatewayError and rolls back the transaction, but no test exercises this path.","evidence":"Lines 74-80: except PaymentGatewayError — no corresponding test in tests/payments/","suggestion":"Add test: mock gateway to raise PaymentGatewayError, assert transaction rolled back and error logged.","failure_scenario":"A regression removing the rollback on failure would go undetected until a failed payment left a partial transaction in the database.","claude_md_rule":null,"cross_file_refs":["tests/payments/test_processor.py"]}' >> "$TMPDIR/deep-review-test-analyzer-abc12345.ndjson"
 ```
 
 [investigation of missing boundary test for pagination — covered by integration test]
 SKIP: pagination boundary — integration test in tests/api/test_list.py covers empty-page and last-page scenarios.
-
-[investigation of missing test for concurrent access to shared cache]
-```json
-{"id": "test-2", "dimension": "test_coverage", "criticality": 7, "confidence": 82, ...}
-```
 ```
 
 For each finding, include:
@@ -187,4 +173,6 @@ For each finding, include:
 3. A **concrete test suggestion** showing what to test (with a brief example if helpful)
 4. Criticality and confidence ratings
 
-Only report findings with confidence >= 60 and criticality >= 5. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.
+Only report findings with confidence >= 60 and criticality >= 5. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no Bash echo calls.
+
+**Remember:** Write each finding to your findings file via Bash immediately after confirming it. Do not accumulate findings for a summary at the end.

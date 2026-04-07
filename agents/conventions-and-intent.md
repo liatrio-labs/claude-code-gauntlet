@@ -1,7 +1,7 @@
 ---
 name: conventions-and-intent
 description: Verifies code changes comply with project conventions, match documented intent, and maintain comment accuracy
-tools: Read, Grep, Glob, LSP
+tools: Read, Grep, Glob, LSP, Bash
 effort: high
 model: sonnet
 color: blue
@@ -209,56 +209,44 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Read to load CLAUDE.md, REVIEW.md, and spec documents before evaluating compliance. Use LSP to verify factual claims in comment accuracy checks — goToDefinition to confirm a referenced type exists, and hover to check whether documented parameter types match the actual signature.
 
-## Output format — incremental emission
+## Output format — Bash emission
 
-**Output protocol.** After investigating each potential issue, immediately emit exactly one of:
-- A complete JSON finding object on its own line (if real)
-- `SKIP: [one-line reason]` (if not worth reporting)
+**Output protocol.** After investigating each potential issue, immediately do one of:
 
-Each JSON block must be independently valid — do not wrap findings in an outer array or object. This ensures truncation loses at most the finding under active investigation.
+- **Finding:** Write it to your findings file via Bash:
+  `echo '<complete JSON finding>' >> "<findings_file>"`
+- **Skip:** Note in your text output: `SKIP: [one-line reason]`
 
-**Do not** write trailing summaries, file lists, investigation recaps, or methodology notes after your findings. The orchestrator parses only JSON blocks and SKIP lines. Everything else is ignored and wastes output budget.
+Each finding must be a complete, valid JSON object on a single line. Use the schema below.
 
-Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
+Bash is available ONLY for writing findings to your NDJSON file. All code investigation uses Read, Grep, Glob, and LSP.
+
+For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY write the finding via Bash. (4) Only then proceed to the next issue. Never investigate more than one issue without emitting or skipping.
+
+Each finding is a complete JSON object on a single line. Use this schema:
 
 ```json
-{
-  "id": "conv-<n>",
-  "dimension": "<convention|intent|comment_accuracy>",
-  "severity": "<critical|high|medium|low>",
-  "confidence": <0-100>,
-  "file": "<path>",
-  "line_start": <number>,
-  "line_end": <number>,
-  "title": "<one-line summary>",
-  "description": "<detailed explanation of the violation or inaccuracy>",
-  "evidence": "<specific code or context that supports this finding>",
-  "suggestion": "<concrete fix or improvement>",
-  "claude_md_rule": "<REQUIRED for convention findings: quoted rule text and its source file>",
-  "spec_text": "<REQUIRED for intent findings: quoted spec text that the code contradicts>",
-  "cross_file_refs": ["<other files involved in this finding>"]
-}
+{"id": "conv-<n>", "dimension": "<convention|intent|comment_accuracy>", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<detailed explanation of the violation or inaccuracy>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix or improvement>", "claude_md_rule": "<REQUIRED for convention findings: quoted rule text and its source file>", "spec_text": "<REQUIRED for intent findings: quoted spec text that the code contradicts>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
-**Example output structure:**
+**Example:**
 
 ```
 [investigation of missing error logging convention from CLAUDE.md]
-```json
-{"id": "conv-1", "dimension": "convention", "severity": "medium", "confidence": 88, ...}
+Real violation — CLAUDE.md requires structured logging with error_id but handler uses print().
+
+```bash
+echo '{"id":"conv-1","dimension":"convention","severity":"medium","confidence":88,"file":"src/api/handlers.py","line_start":112,"line_end":114,"title":"Error handler uses print() instead of structured logger","description":"CLAUDE.md section 4 requires all error handling to use the structured logger with an error_id field. Line 113 uses print(str(e)) which bypasses monitoring integration.","evidence":"Line 113: print(f\"Error: {e}\")","suggestion":"Replace with: logger.error(\"handler_failed\", error_id=generate_id(), exc_info=True)","claude_md_rule":"All errors must be logged via logger.error() with an error_id (CLAUDE.md section 4)","spec_text":null,"cross_file_refs":[]}' >> "$TMPDIR/deep-review-conventions-and-intent-abc12345.ndjson"
 ```
 
 [investigation of function naming convention — follows project pattern correctly]
 SKIP: function naming in utils.py — uses snake_case per CLAUDE.md section 3; no violation.
-
-[investigation of comment accuracy on deprecated API handler]
-```json
-{"id": "conv-2", "dimension": "comment_accuracy", "severity": "low", "confidence": 72, ...}
-```
 ```
 
 For convention findings: the `claude_md_rule` field MUST be non-null and MUST quote the specific rule. Findings without a cited rule will be rejected.
 
 For intent findings: the `spec_text` field MUST be non-null and MUST quote the specific spec text. Findings without a cited spec will be rejected.
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no Bash echo calls.
+
+**Remember:** Write each finding to your findings file via Bash immediately after confirming it. Do not accumulate findings for a summary at the end.

@@ -1,7 +1,7 @@
 ---
 name: cross-file-impact
 description: Analyzes how changes in one file affect consumers across the codebase, catching cross-file breakage from signature changes, interface violations, and broken references
-tools: Read, Grep, Glob, LSP
+tools: Read, Grep, Glob, LSP, Bash
 effort: high
 model: sonnet
 color: orange
@@ -152,52 +152,38 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context — cross-file impact analysis demands active codebase exploration. Prefer LSP for semantic resolution: findReferences to locate every consumer of a changed symbol, and goToDefinition to trace interface hierarchies and check whether implementors still satisfy the contract. Fall back to Grep if LSP is unavailable, then Read each caller site to verify compatibility.
 
-## Output format — incremental emission
+## Output format — Bash emission
 
-**Output protocol.** After investigating each potential issue, immediately emit exactly one of:
-- A complete JSON finding object on its own line (if real)
-- `SKIP: [one-line reason]` (if not worth reporting)
+**Output protocol.** After investigating each potential issue, immediately do one of:
 
-Each JSON block must be independently valid — do not wrap findings in an outer array or object. This ensures truncation loses at most the finding under active investigation.
+- **Finding:** Write it to your findings file via Bash:
+  `echo '<complete JSON finding>' >> "<findings_file>"`
+- **Skip:** Note in your text output: `SKIP: [one-line reason]`
 
-**Do not** write trailing summaries, file lists, investigation recaps, or methodology notes after your findings. The orchestrator parses only JSON blocks and SKIP lines. Everything else is ignored and wastes output budget.
+Each finding must be a complete, valid JSON object on a single line. Use the schema below.
 
-Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
+Bash is available ONLY for writing findings to your NDJSON file. All code investigation uses Read, Grep, Glob, and LSP.
+
+For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY write the finding via Bash. (4) Only then proceed to the next issue. Never investigate more than one issue without emitting or skipping.
+
+Each finding is a complete JSON object on a single line. Use this schema:
 
 ```json
-{
-  "id": "cross-file-<n>",
-  "dimension": "cross_file_impact",
-  "severity": "<critical|high|medium|low>",
-  "confidence": <0-100>,
-  "file": "<path of the changed file causing the impact>",
-  "line_start": <number>,
-  "line_end": <number>,
-  "title": "<one-line summary>",
-  "description": "<detailed explanation of what breaks and why>",
-  "evidence": "<specific code or context that supports this finding>",
-  "suggestion": "<concrete fix — update the caller, implementor, or dependent>",
-  "affected_consumers": ["<file paths of callers, implementors, or consumers that break>"],
-  "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>",
-  "cross_file_refs": ["<other files involved in this finding>"]
-}
+{"id": "cross-file-<n>", "dimension": "cross_file_impact", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path of the changed file causing the impact>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<detailed explanation of what breaks and why>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — update the caller, implementor, or dependent>", "affected_consumers": ["<file paths of callers, implementors, or consumers that break>"], "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
-**Example output structure:**
+**Example:**
 
 ```
 [investigation of changed return type on getUserById — tracing callers]
-```json
-{"id": "cross-file-1", "dimension": "cross_file_impact", "severity": "high", "confidence": 88, ...}
+Found real impact — billing module caller at src/billing/invoice.py:103 still expects the old return type.
+
+```bash
+echo '{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 dereferences it without a None check, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"claude_md_rule":null,"cross_file_refs":["src/billing/invoice.py"]}' >> "$TMPDIR/deep-review-cross-file-impact-abc12345.ndjson"
 ```
 
 [investigation of renamed config key DATABASE_URL — no issue found]
 SKIP: DATABASE_URL rename — all 3 consumers in src/config/ updated in same PR; verified with grep.
-
-[investigation of new required parameter on validate() — caller in billing module not updated]
-```json
-{"id": "cross-file-2", "dimension": "cross_file_impact", "severity": "critical", "confidence": 95, ...}
-```
 ```
 
 For each finding, include:
@@ -206,4 +192,6 @@ For each finding, include:
 3. A **concrete fix** for both the changed code and the affected consumers
 4. Severity and confidence ratings
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no Bash echo calls.
+
+**Remember:** Write each finding to your findings file via Bash immediately after confirming it. Do not accumulate findings for a summary at the end.

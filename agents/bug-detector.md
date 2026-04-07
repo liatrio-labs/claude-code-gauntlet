@@ -1,7 +1,7 @@
 ---
 name: bug-detector
 description: Detects correctness bugs, logic errors, edge cases, API misuse, and error handling issues in code changes
-tools: Read, Grep, Glob, LSP
+tools: Read, Grep, Glob, LSP, Bash
 effort: high
 model: sonnet
 color: red
@@ -212,52 +212,38 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Read and Grep to examine surrounding code, callers, and error paths before concluding an issue exists. Use LSP for fast semantic symbol resolution — hover to check types, findReferences to confirm a function has no other callers, goToDefinition to inspect what a dependency actually does.
 
-## Output format — incremental emission
+## Output format — Bash emission
 
-**Output protocol.** After investigating each potential issue, immediately emit exactly one of:
-- A complete JSON finding object on its own line (if real)
-- `SKIP: [one-line reason]` (if not worth reporting)
+**Output protocol.** After investigating each potential issue, immediately do one of:
 
-Each JSON block must be independently valid — do not wrap findings in an outer array or object. This ensures truncation loses at most the finding under active investigation.
+- **Finding:** Write it to your findings file via Bash:
+  `echo '<complete JSON finding>' >> "<findings_file>"`
+- **Skip:** Note in your text output: `SKIP: [one-line reason]`
 
-**Do not** write trailing summaries, file lists, investigation recaps, or methodology notes after your findings. The orchestrator parses only JSON blocks and SKIP lines. Everything else is ignored and wastes output budget.
+Each finding must be a complete, valid JSON object on a single line. Use the schema below.
 
-Each finding is a standalone JSON object (NOT wrapped in an array). Use this schema:
+Bash is available ONLY for writing findings to your NDJSON file. All code investigation uses Read, Grep, Glob, and LSP.
+
+For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY write the finding via Bash. (4) Only then proceed to the next issue. Never investigate more than one issue without emitting or skipping.
+
+Each finding is a complete JSON object on a single line. Use this schema:
 
 ```json
-{
-  "id": "bug-<n>",
-  "dimension": "bug",
-  "severity": "<critical|high|medium|low>",
-  "confidence": <0-100>,
-  "file": "<path>",
-  "line_start": <number>,
-  "line_end": <number>,
-  "title": "<one-line summary>",
-  "description": "<detailed explanation of the issue>",
-  "evidence": "<specific code or context that supports this finding>",
-  "suggestion": "<concrete fix or improvement>",
-  "hidden_errors": "<for error-handling findings: specific error types that could be hidden, otherwise null>",
-  "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>",
-  "cross_file_refs": ["<other files involved in this finding>"]
-}
+{"id": "bug-<n>", "dimension": "bug", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<detailed explanation of the issue>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix or improvement>", "hidden_errors": "<for error-handling findings: specific error types that could be hidden, otherwise null>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
-**Example output structure:**
+**Example:**
 
 ```
 [investigation of potential null dereference in auth handler]
-```json
-{"id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 85, ...}
+I found a real issue — the auth context can be null on API key paths.
+
+```bash
+echo '{"id":"bug-1","dimension":"bug","severity":"high","confidence":85,"file":"src/auth.py","line_start":42,"line_end":45,"title":"Auth context null on API key path","description":"When authenticating via API key, organization_context.member is None but line 42 dereferences it unconditionally.","evidence":"Line 42: member.role == Role.ADMIN","suggestion":"Add a None check before accessing member attributes.","hidden_errors":null,"claude_md_rule":null,"cross_file_refs":["src/middleware/auth.py"]}' >> "$TMPDIR/deep-review-bug-detector-abc12345.ndjson"
 ```
 
 [investigation of off-by-one in pagination — no issue found]
-SKIP: off-by-one in pagination — the boundary check at line 42 correctly uses < instead of <=; verified against callers.
-
-[investigation of missing error handling in retry logic]
-```json
-{"id": "bug-2", "dimension": "bug", "severity": "medium", "confidence": 78, ...}
-```
+SKIP: off-by-one in pagination — boundary check at line 42 correctly uses <; verified against callers.
 ```
 
 For error handling findings, include:
@@ -266,4 +252,6 @@ For error handling findings, include:
 3. A **corrected code example** showing how to fix the issue (use the project's conventions if CLAUDE.md specified them, otherwise use idiomatic patterns for the language)
 4. Severity and confidence ratings
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no JSON blocks.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no Bash echo calls.
+
+**Remember:** Write each finding to your findings file via Bash immediately after confirming it. Do not accumulate findings for a summary at the end.
