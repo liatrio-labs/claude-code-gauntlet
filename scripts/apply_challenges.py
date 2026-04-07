@@ -27,7 +27,8 @@ Arguments:
 
 Challenge score thresholds
 --------------------------
-score < 25   remove      eliminated_by="challenge:removed"
+score < 25   non-security: remove (eliminated_by="challenge:removed")
+             security (dimension="security"): downgrade severity instead of remove
 score 25-49  downgrade   severity dropped one step; finding moves to suggestion;
                          eliminated_by="challenge:downgraded" only if the downgraded
                          severity now falls below the pipeline's minimum (low), in
@@ -46,7 +47,7 @@ group_by_proximity utility from filter_findings.py.
 
 Output JSON:
     {
-        "filtered":  [...],   # delivery-ready findings
+        "findings": [...],    # delivery-ready findings (matches post_review.py input schema)
         "eliminated": [...],  # findings removed at any stage (Phase 6 + Phase 7)
         "stats": {
             "total_input":          N,  # findings entering this script
@@ -57,7 +58,7 @@ Output JSON:
             "unchallenged":         N,  # findings with no challenge score
             "dedup_dropped":        N,  # dropped by cross-agent dedup
             "cap_dropped":          N,  # dropped by max_findings cap
-            "final_count":          N   # len(filtered)
+            "final_count":          N   # len(findings)
         },
         "generated_at": "..."
     }
@@ -113,7 +114,8 @@ def _rank_key(finding):
 
     Primary:   severity (critical first, low last)
     Secondary: confidence (higher first)
-    Tertiary:  description length (longer first — proxy for information density)
+    Tertiary:  risk_level when present (higher first), else description length
+               (longer first — proxy for information density)
     """
     sev = finding.get("severity", "low").lower()
     try:
@@ -121,10 +123,17 @@ def _rank_key(finding):
     except ValueError:
         sev_idx = len(SEVERITY_ORDER)
     conf = finding.get("confidence", 0)
-    desc_len = len(finding.get("description", ""))
-    # Lower sev_idx is better; negate conf and desc_len so sorted() (ascending)
+    risk_level = finding.get("risk_level")
+    if risk_level is not None:
+        try:
+            tertiary = -float(risk_level)
+        except (TypeError, ValueError):
+            tertiary = -len(finding.get("description", ""))
+    else:
+        tertiary = -len(finding.get("description", ""))
+    # Lower sev_idx is better; negate conf and tertiary so sorted() (ascending)
     # produces the desired order.
-    return (sev_idx, -conf, -desc_len)
+    return (sev_idx, -conf, tertiary)
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +223,8 @@ def apply_challenges(findings, challenges):
     Apply blind-challenge scores to findings.
 
     For each challenge entry match:
-      score < 25   → remove (eliminated_by="challenge:removed")
+      score < 25   → non-security: remove (eliminated_by="challenge:removed")
+                     security (dimension="security"): downgrade severity instead
       score 25-49  → downgrade severity one step; re-route to suggestion;
                      if downgrade produces None (already at "low"), remove
                      (eliminated_by="challenge:downgraded")
@@ -284,19 +294,52 @@ def apply_challenges(findings, challenges):
             finding["challenge_justification"] = justification
 
         is_surfaced = finding.get("origin", "").lower() == "surfaced"
+        is_security = finding.get("dimension", "").lower() == "security"
 
         if score < 25:
-            # Hard remove
-            elim = dict(finding)
-            elim["eliminated_by"] = "challenge:removed"
-            elim["elimination_reason"] = (
-                f"challenge score {score} < 25; finding does not survive blind challenge"
-            )
-            eliminated.append(elim)
-            stats["challenge_removed"] += 1
-            warn(
-                f"[challenge] Removed finding {fid!r} (score={score})"
-            )
+            if is_security:
+                # Security findings with score < 25 are downgraded rather than removed
+                current_sev = finding.get("severity", "low").lower()
+                new_sev = _downgrade_severity(current_sev)
+                finding["challenge_contested"] = False
+                if new_sev is None:
+                    # Already at lowest — remove
+                    elim = dict(finding)
+                    elim["eliminated_by"] = "challenge:removed"
+                    elim["elimination_reason"] = (
+                        f"challenge score {score} < 25; security finding severity already "
+                        f"'{current_sev}' (lowest) — finding removed"
+                    )
+                    eliminated.append(elim)
+                    stats["challenge_removed"] += 1
+                    warn(
+                        f"[challenge] Removed security finding {fid!r} "
+                        f"(score={score}, severity={current_sev} already at lowest)"
+                    )
+                else:
+                    finding["severity"] = new_sev
+                    finding["severity_downgraded"] = True
+                    finding["original_severity"] = current_sev
+                    finding["report_destination"] = "suggestion"
+                    finding["report_tag"] = "suggestion"
+                    active.append(finding)
+                    stats["challenge_downgraded"] += 1
+                    warn(
+                        f"[challenge] Downgraded security finding {fid!r} "
+                        f"severity {current_sev!r} → {new_sev!r} (score={score} < 25)"
+                    )
+            else:
+                # Hard remove for non-security findings
+                elim = dict(finding)
+                elim["eliminated_by"] = "challenge:removed"
+                elim["elimination_reason"] = (
+                    f"challenge score {score} < 25; finding does not survive blind challenge"
+                )
+                eliminated.append(elim)
+                stats["challenge_removed"] += 1
+                warn(
+                    f"[challenge] Removed finding {fid!r} (score={score})"
+                )
 
         elif score < 50:
             # Downgrade severity one step; re-route to suggestion
@@ -432,19 +475,23 @@ def main():
     # ------------------------------------------------------------------
     active = rank_findings(active)
 
-    cap_dropped = []
+    cap_dropped_elim = []
+    # --max-findings 0 means "no limit" (spec convention)
+    if args.max_findings == 0:
+        args.max_findings = None
     if args.max_findings is not None and len(active) > args.max_findings:
-        cap_dropped = active[args.max_findings:]
+        cap_overflow = active[args.max_findings:]
         active = active[: args.max_findings]
-        for f in cap_dropped:
+        for f in cap_overflow:
             elim = dict(f)
             elim["eliminated_by"] = "cap:max_findings"
             elim["elimination_reason"] = (
                 f"max_findings cap of {args.max_findings} reached; "
                 f"finding ranked outside top {args.max_findings}"
             )
+            cap_dropped_elim.append(elim)
         warn(
-            f"[cap] Dropped {len(cap_dropped)} finding(s) to enforce "
+            f"[cap] Dropped {len(cap_dropped_elim)} finding(s) to enforce "
             f"--max-findings={args.max_findings}"
         )
 
@@ -455,8 +502,7 @@ def main():
         list(prior_eliminated)
         + challenge_eliminated
         + dedup_elim
-        + [dict(f, **{"eliminated_by": f.get("eliminated_by", "cap:max_findings")})
-           for f in cap_dropped]
+        + cap_dropped_elim
     )
 
     stats = {
@@ -467,12 +513,12 @@ def main():
         "challenge_survived": challenge_stats["challenge_survived"],
         "unchallenged": challenge_stats["unchallenged"],
         "dedup_dropped": len(dedup_elim),
-        "cap_dropped": len(cap_dropped),
+        "cap_dropped": len(cap_dropped_elim),
         "final_count": len(active),
     }
 
     result = {
-        "filtered": active,
+        "findings": active,
         "eliminated": all_eliminated,
         "stats": stats,
         "generated_at": datetime.now(timezone.utc).isoformat(),

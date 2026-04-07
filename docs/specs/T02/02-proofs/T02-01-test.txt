@@ -1,0 +1,76 @@
+Type: test
+Command: python -m pytest tests/test_apply_challenges.py -q
+Expected: all pass
+Timestamp: 2026-04-05T00:00:00Z
+
+--- Output ---
+============================= test session starts ==============================
+platform darwin -- Python 3.14.3, pytest-9.0.2, pluggy-1.6.0
+collected 62 items
+
+tests/test_apply_challenges.py::TestDowngradeSeverity::test_case_insensitive PASSED
+tests/test_apply_challenges.py::TestDowngradeSeverity::test_critical_to_high PASSED
+tests/test_apply_challenges.py::TestDowngradeSeverity::test_high_to_medium PASSED
+tests/test_apply_challenges.py::TestDowngradeSeverity::test_low_returns_none PASSED
+tests/test_apply_challenges.py::TestDowngradeSeverity::test_medium_to_low PASSED
+tests/test_apply_challenges.py::TestDowngradeSeverity::test_unknown_severity_returns_none PASSED
+tests/test_apply_challenges.py::TestLoadFiltered::test_bare_array PASSED
+tests/test_apply_challenges.py::TestLoadFiltered::test_filtered_envelope PASSED
+tests/test_apply_challenges.py::TestLoadFiltered::test_findings_envelope PASSED
+tests/test_apply_challenges.py::TestLoadFiltered::test_invalid_json_exits PASSED
+tests/test_apply_challenges.py::TestLoadFiltered::test_missing_file_exits PASSED
+tests/test_apply_challenges.py::TestLoadFiltered::test_wrong_shape_exits PASSED
+tests/test_apply_challenges.py::TestLoadChallenges::test_bare_array PASSED
+tests/test_apply_challenges.py::TestLoadChallenges::test_challenges_envelope PASSED
+tests/test_apply_challenges.py::TestLoadChallenges::test_invalid_json_exits PASSED
+tests/test_apply_challenges.py::TestLoadChallenges::test_missing_file_exits PASSED
+tests/test_apply_challenges.py::TestLoadChallenges::test_wrong_shape_exits PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_challenge_missing_id_skipped PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_challenge_missing_score_skipped PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_challenge_non_integer_score_skipped PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_challenge_score_annotated_on_finding PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_justification_optional PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_multiple_findings_mixed_scores PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_0_security_critical_downgrades_to_high PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_100_survives PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_24_boundary_removes PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_25_49_already_low_removes PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_25_49_downgrades_severity PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_25_boundary_downgrades PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_49_boundary_downgrades PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_50_74_contests_finding PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_50_boundary_contests PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_74_boundary_contests PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_75_boundary_survives PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_below_25_non_security_removes PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_below_25_removes PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_below_25_security_at_low_removes PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_score_below_25_security_downgrades_not_removes PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_surfaced_finding_score_50_74_rerouted_to_suggestion PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_surfaced_finding_score_75_not_rerouted PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_surfaced_finding_score_below_50_rerouted_to_suggestion PASSED
+tests/test_apply_challenges.py::TestApplyChallenges::test_unchallenged_passes_through PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_confidence_tiebreak PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_description_length_tiebreak PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_empty_list PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_risk_level_beats_description_length PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_risk_level_fallback_to_description_when_absent PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_risk_level_tiebreak_higher_first PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_severity_order PASSED
+tests/test_apply_challenges.py::TestRankFindings::test_single_finding PASSED
+tests/test_apply_challenges.py::TestCrossAgentDedupIntegration::test_dedup_runs_post_challenge PASSED
+tests/test_apply_challenges.py::TestMaxFindingsCap::test_cap_applied_after_ranking PASSED
+tests/test_apply_challenges.py::TestMaxFindingsCap::test_no_cap_keeps_all PASSED
+tests/test_apply_challenges.py::TestCapAnnotation::test_cap_dropped_elimination_reason_mentions_cap_size PASSED
+tests/test_apply_challenges.py::TestCapAnnotation::test_cap_dropped_findings_have_elimination_reason PASSED
+tests/test_apply_challenges.py::TestMainCLI::test_basic_output_structure PASSED
+tests/test_apply_challenges.py::TestMainCLI::test_max_findings_cap PASSED
+tests/test_apply_challenges.py::TestMainCLI::test_prior_eliminated_passed_through PASSED
+tests/test_apply_challenges.py::TestMainCLI::test_removed_finding_in_eliminated PASSED
+tests/test_apply_challenges.py::TestMainCLI::test_stats_fields_present PASSED
+tests/test_apply_challenges.py::TestMainCLI::test_stdout_output PASSED
+tests/test_apply_challenges.py::TestMainCLI::test_survived_finding_in_findings PASSED
+
+============================== 62 passed in 0.03s ==============================
+
+Status: PASS

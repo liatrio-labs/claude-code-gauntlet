@@ -237,6 +237,51 @@ class TestApplyChallenges(unittest.TestCase):
         self.assertEqual(len(active), 0)
         self.assertEqual(stats["challenge_removed"], 1)
 
+    # --- R02.1: security dimension with score < 25 downgrades instead of removes ---
+
+    def test_score_below_25_security_downgrades_not_removes(self):
+        """Security findings with score < 25 are downgraded, not removed."""
+        findings = [_make_finding(id="f1", severity="high", dimension="security")]
+        challenges = [_make_challenge("f1", 10)]
+        active, eliminated, stats = apply_challenges(findings, challenges)
+        self.assertEqual(len(active), 1)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(active[0]["severity"], "medium")
+        self.assertTrue(active[0].get("severity_downgraded"))
+        self.assertEqual(active[0].get("original_severity"), "high")
+        self.assertEqual(active[0]["report_destination"], "suggestion")
+        self.assertEqual(stats["challenge_downgraded"], 1)
+        self.assertEqual(stats["challenge_removed"], 0)
+
+    def test_score_below_25_security_at_low_removes(self):
+        """Security findings at lowest severity (low) with score < 25 are removed."""
+        findings = [_make_finding(id="f1", severity="low", dimension="security")]
+        challenges = [_make_challenge("f1", 5)]
+        active, eliminated, stats = apply_challenges(findings, challenges)
+        self.assertEqual(len(active), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(eliminated[0]["eliminated_by"], "challenge:removed")
+        self.assertEqual(stats["challenge_removed"], 1)
+
+    def test_score_below_25_non_security_removes(self):
+        """Non-security findings with score < 25 are still removed."""
+        findings = [_make_finding(id="f1", severity="high", dimension="bug")]
+        challenges = [_make_challenge("f1", 15)]
+        active, eliminated, stats = apply_challenges(findings, challenges)
+        self.assertEqual(len(active), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(eliminated[0]["eliminated_by"], "challenge:removed")
+        self.assertEqual(stats["challenge_removed"], 1)
+
+    def test_score_0_security_critical_downgrades_to_high(self):
+        """Security finding with score 0 and critical severity downgrades to high."""
+        findings = [_make_finding(id="f1", severity="critical", dimension="security")]
+        challenges = [_make_challenge("f1", 0)]
+        active, eliminated, stats = apply_challenges(findings, challenges)
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["severity"], "high")
+        self.assertEqual(stats["challenge_downgraded"], 1)
+
     def test_score_25_boundary_downgrades(self):
         findings = [_make_finding(id="f1", severity="high")]
         challenges = [_make_challenge("f1", 25)]
@@ -437,6 +482,43 @@ class TestRankFindings(unittest.TestCase):
         ranked = rank_findings(findings)
         self.assertEqual(ranked[0]["id"], "long")
 
+    # --- R02.4: risk_level tertiary key ---
+
+    def test_risk_level_tiebreak_higher_first(self):
+        """risk_level used as tertiary key; higher value ranks first."""
+        findings = [
+            _make_finding(id="low-risk", severity="high", confidence=80,
+                          description="Same", risk_level=2),
+            _make_finding(id="high-risk", severity="high", confidence=80,
+                          description="Same", risk_level=8),
+        ]
+        ranked = rank_findings(findings)
+        self.assertEqual(ranked[0]["id"], "high-risk")
+
+    def test_risk_level_fallback_to_description_when_absent(self):
+        """When risk_level absent, falls back to description length."""
+        findings = [
+            _make_finding(id="short", severity="high", confidence=80,
+                          description="Short."),
+            _make_finding(id="long", severity="high", confidence=80,
+                          description="A much longer description with more detail."),
+        ]
+        # Neither has risk_level
+        ranked = rank_findings(findings)
+        self.assertEqual(ranked[0]["id"], "long")
+
+    def test_risk_level_beats_description_length(self):
+        """risk_level takes priority over description length when present."""
+        findings = [
+            _make_finding(id="low-risk-long", severity="high", confidence=80,
+                          description="A very long description indeed for this finding.",
+                          risk_level=1),
+            _make_finding(id="high-risk-short", severity="high", confidence=80,
+                          description="Short.", risk_level=9),
+        ]
+        ranked = rank_findings(findings)
+        self.assertEqual(ranked[0]["id"], "high-risk-short")
+
     def test_empty_list(self):
         self.assertEqual(rank_findings([]), [])
 
@@ -507,6 +589,73 @@ class TestMaxFindingsCap(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Cap annotation propagation (R02.2)
+# ---------------------------------------------------------------------------
+
+class TestCapAnnotation(unittest.TestCase):
+    """Verify cap-dropped findings have elimination_reason in eliminated list."""
+
+    def _run_main_with_cap(self, findings, challenges, max_findings):
+        """Run main() with --max-findings and return parsed output."""
+        import io
+        from unittest.mock import patch
+        from scripts.apply_challenges import main
+
+        f_path = _write_json({"filtered": findings, "eliminated": []})
+        c_path = _write_json(challenges)
+        out_path = tempfile.mktemp(suffix=".json")
+        try:
+            argv = [
+                "apply_challenges.py", f_path, c_path,
+                "--output", out_path,
+                "--max-findings", str(max_findings),
+            ]
+            with patch("sys.argv", argv):
+                main()
+            with open(out_path) as fh:
+                return json.load(fh)
+        finally:
+            os.unlink(f_path)
+            os.unlink(c_path)
+            if os.path.exists(out_path):
+                os.unlink(out_path)
+
+    def test_cap_dropped_findings_have_elimination_reason(self):
+        """Cap-dropped findings appear in eliminated with elimination_reason set."""
+        findings = [
+            _make_finding(id="critical", severity="critical"),
+            _make_finding(id="high", severity="high"),
+            _make_finding(id="medium", severity="medium"),
+        ]
+        challenges = [
+            _make_challenge("critical", 90),
+            _make_challenge("high", 90),
+            _make_challenge("medium", 90),
+        ]
+        result = self._run_main_with_cap(findings, challenges, max_findings=2)
+        elim_ids = {f["id"]: f for f in result["eliminated"]}
+        self.assertIn("medium", elim_ids)
+        medium_elim = elim_ids["medium"]
+        self.assertEqual(medium_elim["eliminated_by"], "cap:max_findings")
+        self.assertIn("elimination_reason", medium_elim)
+        self.assertIn("2", medium_elim["elimination_reason"])
+
+    def test_cap_dropped_elimination_reason_mentions_cap_size(self):
+        """elimination_reason contains the cap value."""
+        findings = [
+            _make_finding(id=f"f{i}", severity="high") for i in range(5)
+        ]
+        challenges = [_make_challenge(f"f{i}", 90) for i in range(5)]
+        result = self._run_main_with_cap(findings, challenges, max_findings=3)
+        cap_elims = [f for f in result["eliminated"]
+                     if f.get("eliminated_by") == "cap:max_findings"]
+        self.assertEqual(len(cap_elims), 2)
+        for elim in cap_elims:
+            self.assertIn("elimination_reason", elim)
+            self.assertIn("3", elim["elimination_reason"])
+
+
+# ---------------------------------------------------------------------------
 # main() CLI integration
 # ---------------------------------------------------------------------------
 
@@ -537,26 +686,28 @@ class TestMainCLI(unittest.TestCase):
                 os.unlink(out_path)
 
     def test_basic_output_structure(self):
+        """Output uses 'findings' key (R02.3) to match post_review.py input schema."""
         findings = [_make_finding(id="f1")]
         challenges = [_make_challenge("f1", 80)]
         result = self._run_main(findings, challenges)
-        self.assertIn("filtered", result)
+        self.assertIn("findings", result)
+        self.assertNotIn("filtered", result)
         self.assertIn("eliminated", result)
         self.assertIn("stats", result)
         self.assertIn("generated_at", result)
 
-    def test_survived_finding_in_filtered(self):
+    def test_survived_finding_in_findings(self):
         findings = [_make_finding(id="f1")]
         challenges = [_make_challenge("f1", 90)]
         result = self._run_main(findings, challenges)
-        self.assertEqual(len(result["filtered"]), 1)
-        self.assertEqual(result["filtered"][0]["id"], "f1")
+        self.assertEqual(len(result["findings"]), 1)
+        self.assertEqual(result["findings"][0]["id"], "f1")
 
     def test_removed_finding_in_eliminated(self):
         findings = [_make_finding(id="f1")]
         challenges = [_make_challenge("f1", 10)]
         result = self._run_main(findings, challenges)
-        self.assertEqual(len(result["filtered"]), 0)
+        self.assertEqual(len(result["findings"]), 0)
         elim_ids = [f["id"] for f in result["eliminated"]]
         self.assertIn("f1", elim_ids)
 
@@ -611,11 +762,11 @@ class TestMainCLI(unittest.TestCase):
             _make_challenge("medium", 90),
         ]
         result = self._run_main(findings, challenges, extra_args=["--max-findings", "2"])
-        self.assertEqual(len(result["filtered"]), 2)
-        filtered_ids = [f["id"] for f in result["filtered"]]
-        self.assertIn("critical", filtered_ids)
-        self.assertIn("high", filtered_ids)
-        self.assertNotIn("medium", filtered_ids)
+        self.assertEqual(len(result["findings"]), 2)
+        findings_ids = [f["id"] for f in result["findings"]]
+        self.assertIn("critical", findings_ids)
+        self.assertIn("high", findings_ids)
+        self.assertNotIn("medium", findings_ids)
         self.assertEqual(result["stats"]["cap_dropped"], 1)
 
     def test_stdout_output(self):
@@ -634,7 +785,8 @@ class TestMainCLI(unittest.TestCase):
                 with patch("sys.stdout", captured):
                     main()
             output = json.loads(captured.getvalue())
-            self.assertIn("filtered", output)
+            self.assertIn("findings", output)
+            self.assertNotIn("filtered", output)
         finally:
             os.unlink(f_path)
             os.unlink(c_path)
