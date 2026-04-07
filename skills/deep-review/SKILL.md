@@ -34,8 +34,11 @@ Bash(command="ls {plugin_root}/scripts/ {plugin_root}/agents/")
 
 If the listing succeeds, `plugin_root` is correct. All subsequent `python3` invocations use `{plugin_root}/scripts/` as the prefix:
 
+- Merge Phase 3: `python3 {plugin_root}/scripts/merge_findings.py`
 - Phase 4: `python3 {plugin_root}/scripts/verify_findings.py`
+- Phase 5→6: `python3 {plugin_root}/scripts/apply_validations.py`
 - Phase 6: `python3 {plugin_root}/scripts/filter_findings.py`
+- Phase 7→8: `python3 {plugin_root}/scripts/apply_challenges.py`
 - Phase 8: `python3 {plugin_root}/scripts/post_review.py`
 
 ### Resolve head SHA short — unique temp filenames
@@ -47,10 +50,16 @@ Bash(command="git rev-parse --short=8 HEAD")
 ```
 
 Store the result as `head_sha_short`. All subsequent temp file references use this suffix:
-- `$TMPDIR/deep-review-diff-{head_sha_short}.patch`
-- `$TMPDIR/deep-review-phase4-input-{head_sha_short}.json` (Phase 4 input)
-- `$TMPDIR/deep-review-phase6-input-{head_sha_short}.json` (Phase 6 input)
-- `$TMPDIR/deep-review-delivery-{head_sha_short}.json` (Phase 8 delivery)
+- `$TMPDIR/deep-review-diff-{head_sha_short}.patch` (Phase 2c diff)
+- `$TMPDIR/deep-review-{agent}-{head_sha_short}.ndjson` (Phase 3 agent NDJSON findings)
+- `$TMPDIR/deep-review-text-{agent}-{head_sha_short}.txt` (Phase 3 agent text returns)
+- `$TMPDIR/deep-review-phase4-input-{head_sha_short}.json` (merge_findings.py output → verify_findings.py input)
+- `$TMPDIR/deep-review-phase4-output-{head_sha_short}.json` (verify_findings.py output)
+- `$TMPDIR/deep-review-validations-{head_sha_short}.json` (Phase 5 validator outputs)
+- `$TMPDIR/deep-review-phase5-output-{head_sha_short}.json` (apply_validations.py output)
+- `$TMPDIR/deep-review-phase6-output-{head_sha_short}.json` (filter_findings.py output)
+- `$TMPDIR/deep-review-challenges-{head_sha_short}.json` (Phase 7 challenger outputs)
+- `$TMPDIR/deep-review-delivery-{head_sha_short}.json` (apply_challenges.py output → Phase 8 input)
 
 ### Resolve review target
 
@@ -141,16 +150,17 @@ Pass the output file path directly to `verify_findings.py` in Phase 4 — see St
 
 Phase 4 is deterministic — main orchestrator, no LLM agents. It classifies each finding as "new" (introduced by this PR) or "surfaced" (pre-existing code exposed by the change), verifies that evidence matches actual file content, validates line references against the diff, and groups surviving findings into batches for Phase 5 validators.
 
-Run `scripts/verify_findings.py` with the Phase 3 findings JSON. The script handles blame classification, factual verification, diff-line validation, and batching deterministically. Write the input JSON using the `python3 -c "import json; json.dump(...)"` pattern (see validation-pipeline.md Step 4.0). Do not use heredocs, `cat <<EOF`, or the Write tool — zsh corrupts `!` as `\!` in heredocs, and Write requires a prior Read.
+Run `scripts/verify_findings.py` with the Phase 3 merged findings JSON (from `$TMPDIR/deep-review-phase4-input-{head_sha_short}.json`). The script handles blame classification, factual verification, diff-line validation, and batching deterministically. Redirect output to disk — `apply_validations.py` in Phase 5 reads it directly:
 
 ```
-python3 {plugin_root}/scripts/verify_findings.py findings.json \
-  --base-branch {base_branch} --diff-file "$TMPDIR/deep-review-diff-{head_sha_short}.patch"
+python3 {plugin_root}/scripts/verify_findings.py \
+  "$TMPDIR/deep-review-phase4-input-{head_sha_short}.json" \
+  --base-branch {base_branch} \
+  --diff-file "$TMPDIR/deep-review-diff-{head_sha_short}.patch" \
+  > "$TMPDIR/deep-review-phase4-output-{head_sha_short}.json"
 ```
 
-Pass `--diff-file` when the diff was saved during Phase 2c (PR/MR mode). The `--diff-file` flag tells the script to read the pre-fetched API diff instead of running its own `git diff`, avoiding merge-base failures in fork-based repos and shallow clones. For **branch comparison** and **local changes** target types (no saved diff file), omit `--diff-file` — the script falls back to its own git diff chain (three-dot, two-dot, skip).
-
-Input: merged Phase 3 agent output as a JSON object with a `"findings"` array plus `base_branch`, `head_sha`, `pr_number`, `owner`, and `repo` fields.
+Pass `--diff-file` when the diff was saved during Phase 2c (PR/MR mode). For **branch comparison** and **local changes** target types (no saved diff file), omit `--diff-file` — the script falls back to its own git diff chain (three-dot, two-dot, skip).
 
 Output: `{ "verified": [...], "eliminated": [...], "batches": [[id, ...], ...], "stats": { "total", "new", "surfaced", "eliminated" } }`. Each verified finding gains `"origin"` (`"new"` or `"surfaced"`), `"blame_metadata"`, and `"factual_verification"` fields.
 
@@ -168,7 +178,18 @@ Dispatch one Sonnet agent per batch from the `verify_findings.py` `"batches"` ou
 
 Read `references/validation-pipeline.md` Phase 5 for the confidence rubric, dispatch template, triggerability cap (65 for hypothetical-only issues), and failure protocol.
 
-After dispatch, announce: "Dispatched N agents for Phase 5." Update each finding's confidence based on the validator's assessment.
+After dispatch, announce: "Dispatched N agents for Phase 5."
+
+**Apply validator results** using `apply_validations.py`. Write each validator's output (a `[{id, confidence, justification}]` JSON array) to `$TMPDIR/deep-review-validations-{head_sha_short}.json`, then run:
+
+```
+python3 {plugin_root}/scripts/apply_validations.py \
+  "$TMPDIR/deep-review-phase4-output-{head_sha_short}.json" \
+  "$TMPDIR/deep-review-validations-{head_sha_short}.json" \
+  --output "$TMPDIR/deep-review-phase5-output-{head_sha_short}.json"
+```
+
+The script reads the Phase 4 `verify_findings.py` output directly from disk (descriptions never pass through the orchestrator — eliminates the description-compression that triggered the injection filter). It applies confidence adjustments and writes updated findings to disk. See `references/validation-pipeline.md` Step 6.0 for details.
 
 ---
 
@@ -176,24 +197,18 @@ After dispatch, announce: "Dispatched N agents for Phase 5." Update each finding
 
 Main orchestrator, rules-based — no LLM agents. Pass ALL Phase 5 validated findings to filter_findings.py — do not drop, exclude, or pre-filter any findings regardless of confidence score. The script applies its own confidence/severity thresholds, disagreement detection, consensus boosting, promotion rules, and REVIEW.md overrides. Orchestrator-side filtering bypasses these mechanisms and has caused real findings to be lost.
 
-Write the input JSON using the `python3 -c "import json; json.dump(...)"` pattern (see validation-pipeline.md Step 6.0). Do not use heredocs, `cat <<EOF`, or the Write tool — zsh corrupts `!` as `\!` in heredocs, and Write requires a prior Read.
-
 ```
-python3 {plugin_root}/scripts/filter_findings.py phase5_output.json \
-  --review-md {repo_root}/REVIEW.md
+python3 {plugin_root}/scripts/filter_findings.py \
+  "$TMPDIR/deep-review-phase5-output-{head_sha_short}.json" \
+  --review-md {repo_root}/REVIEW.md \
+  --output "$TMPDIR/deep-review-phase6-output-{head_sha_short}.json"
 ```
 
-Input: Phase 5 validated findings JSON (object with a `"findings"` array, or raw array). Optionally pass `--review-md` to apply repo-specific `confidence_threshold`, `severity_threshold`, and `ignore` patterns.
+Input: `apply_validations.py` output from `$TMPDIR/deep-review-phase5-output-{head_sha_short}.json`. Optionally pass `--review-md` to apply repo-specific `confidence_threshold`, `severity_threshold`, and `ignore` patterns.
 
-Output: `{ "filtered": [...], "eliminated": [...], "stats": { ... } }`. Each filtered finding gains a `"report_destination"` field (`"main"` or `"suggestion"`) for Phase 8 routing.
+Output: `{ "filtered": [...], "eliminated": [...], "stats": { ... } }` at `$TMPDIR/deep-review-phase6-output-{head_sha_short}.json`. Each filtered finding gains a `"report_destination"` field (`"main"` or `"suggestion"`) for Phase 8 routing.
 
-Routing uses dimension-based rules first, then agent-based fallback. Dimension routing: `bug`, `security`, `cross_file_impact`, `intent` dimensions always route to `"main"`; `comment_accuracy` always routes to `"suggestion"`; `test_coverage`, `convention`, `type_design` route to `"suggestion"` unless functional-violation keywords are present (crash, data loss, runtime error, etc.). When dimension routing does not apply (unknown or missing dimension), agent-based routing takes over: bug-detector, security-reviewer, cross-file-impact-analyzer, conventions-and-intent (intent checks), and type-design-analyzer findings route to `"main"`; test-analyzer, conventions-and-intent comment accuracy pass, and code-simplifier findings route to `"suggestion"`. If a test-analyzer finding overlaps with another agent's finding at the same file/line range, the non-test-analyzer finding wins and the duplicate is dropped.
-
-Singleton findings (flagged by only one agent) in non-core dimensions (not bug, security, or cross_file_impact) receive a -15 confidence penalty during disagreement detection. This selectively removes the weakest singleton observations without affecting high-confidence singletons or any core-dimension findings.
-
-Findings routed to `"suggestion"` are NOT removed — they appear in the Improvement Suggestions section of the report, available via the "Let me pick" walkthrough. The executive summary finding count excludes suggestions.
-
-All tagged findings proceed to Phase 7 regardless of tag.
+Routing, dedup, disagreement detection, and tagging are all handled by the script. All tagged findings proceed to Phase 7 regardless of tag.
 
 Read `references/validation-pipeline.md` for detailed filter/reconciliation rules.
 
@@ -231,23 +246,20 @@ Do NOT include original reasoning or evidence — only title, description, and r
 
 This does not break challenger blindness — the sycophancy concern is about seeing the original agent's reasoning, not factual context about the code's age. For findings with `origin == "new"`, the challenger prompt is unchanged.
 
-**Apply results** based on `confidence_claim_is_correct`:
-- **< 25** → Non-security: remove. Security: downgrade one severity level.
-- **25-49** → Downgrade one severity level.
-- **50-74** → Flag as "contested," no severity change.
-- **>= 75** → Survives.
-
 After dispatch, announce: "Dispatched N agents for Phase 7."
 
 ### Post-challenge finalization
 
-After challenge results are applied:
+**Apply challenge results** using `apply_challenges.py`. Write each challenger's output (a `[{id, score, justification}]` JSON array) to `$TMPDIR/deep-review-challenges-{head_sha_short}.json`, then run:
 
-1. **Dedup** — Merge overlapping findings (same file + line range + issue). Keep highest confidence, most specific description.
-2. **Route** — Materialize routing tags from Phase 6d. Surfaced findings whose challenger scored below 50 are re-routed to `"suggestion"` — the issue is real but not PR-relevant. Main report findings grouped by severity, counted in executive summary. Improvement Suggestions not counted, not posted as PR inline comments by default, available via "Let me pick" walkthrough.
-3. **Cap** — Apply REVIEW.md `max_findings` if configured (default: no limit). Main report only.
-4. **Rank** — Sort by severity → confidence → file risk level.
-5. **Incremental diff** — (Incremental reviews only) Classify vs previous findings as introduced/fixed/preexisting. Suppress preexisting.
+```
+python3 {plugin_root}/scripts/apply_challenges.py \
+  "$TMPDIR/deep-review-phase6-output-{head_sha_short}.json" \
+  "$TMPDIR/deep-review-challenges-{head_sha_short}.json" \
+  --output "$TMPDIR/deep-review-delivery-{head_sha_short}.json"
+```
+
+The script applies challenge thresholds (remove/downgrade/contest/survive), re-runs cross-agent dedup, applies the `max_findings` cap, and ranks findings. Output is delivery-ready JSON. See `references/validation-pipeline.md` Phase 7 for threshold details and incremental diffing.
 
 ---
 

@@ -8,8 +8,8 @@ After all agents return, process their findings through the validation pipeline 
 
 - **Phase 4** — Step 4.0 (read merge script output), 4a (blame classification), 4b (factual verification), 4c (batch for validation)
 - **Phase 5** — Validator dispatch, confidence rubric, failure protocol
-- **Phase 6** — Step 6.0 (write JSON), 6a (threshold filter), 6b (injection filter), 6c (disagreement detection), 6d (tag findings)
-- **Phase 7** — Blind challenge supplementary detail, post-challenge finalization (dedup, route, cap, rank, incremental diffing)
+- **Phase 6** — Step 6.0a (apply_validations.py), 6.0b (filter_findings.py), 6a (threshold filter), 6b (injection filter), 6c (disagreement detection), 6d (tag findings)
+- **Phase 7** — Blind challenge supplementary detail, post-challenge finalization (apply_challenges.py: thresholds, dedup, cap, rank), incremental diffing
 
 ---
 
@@ -27,7 +27,8 @@ Bash(
   command="""python3 {plugin_root}/scripts/verify_findings.py \
   "$TMPDIR/deep-review-phase4-input-{head_sha_short}.json" \
   --base-branch {base_branch} \
-  --diff-file "$TMPDIR/deep-review-diff-{head_sha_short}.patch"
+  --diff-file "$TMPDIR/deep-review-diff-{head_sha_short}.patch" \
+  > "$TMPDIR/deep-review-phase4-output-{head_sha_short}.json"
 """)
 ```
 
@@ -180,50 +181,33 @@ Re-dispatch or degrade transparently. Orchestrator judgment is not a substitute 
 
 Handled by `scripts/filter_findings.py`. Run it against the Phase 5 validated findings before the Phase 7 blind challenge.
 
-**Step 6.0 — Write validated findings to JSON (required before running the script)**
+**Step 6.0 — Apply validator confidence adjustments, then filter**
 
-Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures and zsh heredoc corruption:
+**Step 6.0a — Apply validations** using `apply_validations.py`. Write each validator's output as a combined `[{id, confidence, justification}]` JSON array to `$TMPDIR/deep-review-validations-{head_sha_short}.json`, then run:
+
+```bash
+Bash(
+  description="Applying validator confidence scores to findings",
+  command="""python3 {plugin_root}/scripts/apply_validations.py \
+  "$TMPDIR/deep-review-phase4-output-{head_sha_short}.json" \
+  "$TMPDIR/deep-review-validations-{head_sha_short}.json" \
+  --output "$TMPDIR/deep-review-phase5-output-{head_sha_short}.json"
+""")
+```
+
+The Phase 4 output file (`verify_findings.py` stdout redirected to disk) contains findings with descriptions intact. The script reads it directly — descriptions never pass through the orchestrator, eliminating the description-compression path that triggered the injection filter. Unmatched findings (no validator output) pass through unchanged.
+
+**Step 6.0b — Filter** using `filter_findings.py`:
 
 ```bash
 Bash(
   description="Filtering for high-confidence findings — applying thresholds, removing false positives, routing to report sections",
-  command="""python3 -c "
-import json, sys
-findings = {
-    'findings': [
-        # paste Phase 5 validated finding objects here
-    ]
-}
-with open(sys.argv[1], 'w') as f:
-    json.dump(findings, f, ensure_ascii=False, indent=2)
-" "$TMPDIR/deep-review-phase6-input-{head_sha_short}.json"
-
-python3 {plugin_root}/scripts/filter_findings.py "$TMPDIR/deep-review-phase6-input-{head_sha_short}.json" --review-md REVIEW.md
+  command="""python3 {plugin_root}/scripts/filter_findings.py \
+  "$TMPDIR/deep-review-phase5-output-{head_sha_short}.json" \
+  --review-md {repo_root}/REVIEW.md \
+  --output "$TMPDIR/deep-review-phase6-output-{head_sha_short}.json"
 """)
 ```
-
-**Input JSON schema:**
-```json
-{
-    "findings": [
-        {
-            "id": "bug-1",
-            "file": "src/foo.py",
-            "line_start": 42,
-            "line_end": 45,
-            "severity": "high",
-            "confidence": 85,
-            "title": "...",
-            "description": "...",
-            "origin": "new",
-            "dimension": "bug",
-            "agent": "bug-detector"
-        }
-    ]
-}
-```
-
-Input may also be a flat array of findings (no wrapper object). The `origin`, `dimension`, and `agent` fields are optional but improve disagreement detection and tagging accuracy. Use the canonical field names (`description`, `line_start`, `origin`, `dimension`). The script auto-normalizes legacy names (`body`, `line`, `blame_tag`) as a defensive fallback, but the canonical names are the correct interface.
 
 **Output JSON schema:**
 ```json
@@ -243,7 +227,7 @@ Input may also be a flat array of findings (no wrapper object). The `origin`, `d
 }
 ```
 
-Each finding in `filtered` gains a `report_destination` field (`"main"` or `"suggestion"`). Each finding in `eliminated` gains an `eliminated_by` field. Pass the `filtered` array to Phase 7 blind challenge dispatch.
+Each finding in `filtered` gains a `report_destination` field (`"main"` or `"suggestion"`). Each finding in `eliminated` gains an `eliminated_by` field. Pass the Phase 6 output file path to `apply_challenges.py` in Phase 7.
 
 ---
 
@@ -364,43 +348,49 @@ After dispatch, announce: "Dispatched N agents for Phase 7." (N must equal the n
 
 ---
 
-## Post-challenge finalization — step 1: Deduplicate
+## Post-challenge finalization — apply_challenges.py
 
-Findings from different agents often overlap. Group findings that reference the same file + line range and describe the same underlying issue. When merging:
-- Keep the highest confidence score
-- Keep the most specific description
-- Combine evidence from multiple agents
-- If agents disagree on severity, use the higher severity
-- Note which dimensions flagged it (e.g., "Flagged by: bug-detector, security-reviewer")
+Write each challenger's output as a combined `[{id, score, justification}]` JSON array to `$TMPDIR/deep-review-challenges-{head_sha_short}.json`, then run:
 
----
+```bash
+Bash(
+  description="Applying challenge scores — removing/downgrading challenged findings, deduplicating, ranking",
+  command="""python3 {plugin_root}/scripts/apply_challenges.py \
+  "$TMPDIR/deep-review-phase6-output-{head_sha_short}.json" \
+  "$TMPDIR/deep-review-challenges-{head_sha_short}.json" \
+  --output "$TMPDIR/deep-review-delivery-{head_sha_short}.json"
+""")
+```
 
-## Post-challenge finalization — step 2: Route
+The script applies challenge thresholds, re-routes surfaced findings, re-runs cross-agent dedup, applies the `max_findings` cap, and ranks findings. Output is delivery-ready JSON at `$TMPDIR/deep-review-delivery-{head_sha_short}.json`.
 
-Materialize the routing tags from Phase 6d. Then apply the surfaced-finding re-route: surfaced findings whose challenger scored below 50 are re-routed to `"suggestion"` — the issue is real but not PR-relevant. Separate findings into:
-- **Main report** — grouped by severity, counted in executive summary
-- **Improvement Suggestions** — not counted in executive summary, not posted as PR inline comments by default, available via "Let me pick" walkthrough in Phase 8
+**Challenge threshold reference:**
+- **score < 25** → remove (non-security) or downgrade one severity level (security)
+- **score 25-49** → downgrade one severity level; surfaced findings re-routed to `"suggestion"`
+- **score 50-74** → flag `challenge_contested: true`; surfaced findings re-routed to `"suggestion"`
+- **score ≥ 75** → finding survives unchanged
 
----
+**Output JSON schema:**
+```json
+{
+    "filtered": [...],
+    "eliminated": [...],
+    "stats": {
+        "total_input": 10,
+        "challenge_removed": 1,
+        "challenge_downgraded": 2,
+        "challenge_contested": 1,
+        "challenge_survived": 5,
+        "unchallenged": 1,
+        "dedup_dropped": 0,
+        "cap_dropped": 0,
+        "final_count": 8
+    },
+    "generated_at": "..."
+}
+```
 
-## Post-challenge finalization — step 3: Apply findings cap
-
-Check REVIEW.md for `max_findings`. **Default: no limit** — all findings that survive the pipeline appear in the report. The inline PR comment default cap (6 comments for "Default" mode, no cap for user-selected findings) is applied separately in Phase 8 delivery.
-
-If `max_findings` is set and total findings exceed it:
-1. Sort by severity (critical > high > medium > low), then by confidence (higher first)
-2. Keep the top N findings
-3. Record how many were suppressed
-4. Add a note: "{N} additional findings were suppressed by the max_findings cap ({cap}). Set `max_findings: 0` or remove the setting to see all findings."
-
----
-
-## Post-challenge finalization — step 4: Rank
-
-Sort findings by:
-1. Severity (critical > high > medium > low)
-2. Confidence (higher first)
-3. Risk level of the file (high-risk files first)
+Pass `$TMPDIR/deep-review-delivery-{head_sha_short}.json` to Phase 8 report generation.
 
 ---
 
@@ -446,13 +436,15 @@ Rate limit recovery is transparent to the user when under 60 seconds. Extended w
 
 ## Script Failure Recovery
 
-When `verify_findings.py` (Phase 4), `filter_findings.py` (Phase 6), or `post_review.py` (Phase 8) fail:
+When `verify_findings.py` (Phase 4), `apply_validations.py` (Phase 5→6), `filter_findings.py` (Phase 6), `apply_challenges.py` (Phase 7→8), or `post_review.py` (Phase 8) fail:
 
 1. **Check the exit code and read stderr.** The scripts print structured error messages (`ERROR:` for fatal, `WARNING:` for recoverable).
 2. **Fix the most common cause.** Malformed input JSON is the #1 failure mode — re-write using the `python3 -c "import json; json.dump(...)"` pattern and retry.
 3. **Retry once.** If the same script fails twice on the same input, do not retry further.
 4. **Degrade gracefully.** If the script cannot be recovered:
    - Phase 4 failure: Follow the numbered recovery checklist in the "Phase 4 failure recovery" section above. Do NOT skip Phase 5 or substitute inline analysis — dispatch validation agents with all findings set to `origin: "new"`.
-   - Phase 6 failure: pass all Phase 5 findings directly to Phase 7 without filtering. Note in methodology: "Phase 6 filtering skipped due to script failure."
+   - Phase 5→6 failure (`apply_validations.py`): pass Phase 4 findings directly to `filter_findings.py` without confidence adjustments. Note in methodology: "Validator adjustments skipped due to script failure."
+   - Phase 6 failure (`filter_findings.py`): pass all Phase 5 findings directly to Phase 7 without filtering. Note in methodology: "Phase 6 filtering skipped due to script failure."
+   - Phase 7→8 failure (`apply_challenges.py`): apply challenge thresholds manually (remove < 25, downgrade 25-49, flag 50-74, keep ≥ 75) and proceed to Phase 8. Note in methodology: "Challenge script failed — thresholds applied inline."
    - Phase 8 failure: deliver the report via chat only (no PR comments). Note in methodology: "PR comment delivery failed."
 5. **Never run analysis inline as a substitute.** The scripts exist because LLM-inline analysis has correlated error rates of ~60%. A skipped script with a methodology note is better than fabricated results.
