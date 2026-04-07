@@ -791,6 +791,16 @@ class TestGroupByProximity(unittest.TestCase):
         groups = group_by_proximity([], line_proximity=5)
         self.assertEqual(groups, {})
 
+    def test_bucket_boundary_straddling(self):
+        # Lines 12 and 13 with proximity=5 land in different buckets:
+        #   round(12/5)*5 = round(2.4)*5 = 2*5 = 10
+        #   round(13/5)*5 = round(2.6)*5 = 3*5 = 15
+        # They should NOT be grouped together.
+        f1 = _make_finding(id="f1", file="src/x.py", line_start=12)
+        f2 = _make_finding(id="f2", file="src/x.py", line_start=13)
+        groups = group_by_proximity([f1, f2], line_proximity=5)
+        self.assertEqual(len(groups), 2, "Lines 12 and 13 straddle a bucket boundary and must not be grouped")
+
 
 class TestDedupCrossAgent(unittest.TestCase):
 
@@ -888,6 +898,31 @@ class TestDedupCrossAgent(unittest.TestCase):
         self.assertEqual(len(dropped), 2)
         for d in dropped:
             self.assertEqual(d["eliminated_by"], "dedup:cross-agent")
+
+    def test_mixed_agent_group_same_agent_siblings_preserved(self):
+        # bug-detector has 2 findings + test-analyzer has 1 at the same location.
+        # bug-detector (core dim=bug) wins over test-analyzer (non-core dim=test_coverage).
+        # Both bug-detector findings should survive; only the test-analyzer finding is dropped.
+        bug1 = _make_finding(
+            id="bug-1", file="a.py", line_start=10,
+            agent="bug-detector", dimension="bug", confidence=80,
+        )
+        bug2 = _make_finding(
+            id="bug-2", file="a.py", line_start=11,
+            agent="bug-detector", dimension="bug", confidence=70,
+        )
+        test1 = _make_finding(
+            id="test-1", file="a.py", line_start=12,
+            agent="test-analyzer", dimension="test_coverage", confidence=95,
+        )
+        kept, dropped = _dedup_cross_agent([bug1, bug2, test1])
+        kept_ids = [f["id"] for f in kept]
+        self.assertIn("bug-1", kept_ids, "Winner bug-1 should be kept")
+        self.assertIn("bug-2", kept_ids, "Same-agent sibling bug-2 should be kept")
+        self.assertNotIn("test-1", kept_ids, "Different-agent test-1 should be dropped")
+        self.assertEqual(len(dropped), 1, "Only the different-agent finding should be dropped")
+        self.assertEqual(dropped[0]["id"], "test-1")
+        self.assertEqual(dropped[0]["eliminated_by"], "dedup:cross-agent")
 
     def test_stats_field_cross_agent_deduped(self):
         # tag_findings routes through _dedup_cross_agent; stats must include cross_agent_deduped

@@ -565,7 +565,7 @@ _CONSENSUS_BOOST = 10
 _SINGLETON_PENALTY = 15
 
 # Core dimensions exempt from singleton penalty (real bugs trigger multiple agents)
-_CORE_DIMENSIONS = {"bug", "security", "cross_file_impact"}
+_CORE_DIMENSIONS = {"bug", "security", "cross_file_impact", "intent"}
 
 
 def detect_disagreement(findings):
@@ -1004,9 +1004,15 @@ def _dedup_cross_agent(findings):
         # Sort by priority (best first)
         ranked = sorted(group, key=_winner_key, reverse=True)
         winner = ranked[0]
+        winner_agent = winner.get("agent", "").lower()
         kept_ids.add(id(winner))
 
         for loser in ranked[1:]:
+            loser_agent = loser.get("agent", "").lower()
+            # Keep same-agent siblings of the winner — only drop different-agent findings
+            if loser_agent == winner_agent:
+                kept_ids.add(id(loser))
+                continue
             loser_line = _safe_int_line(loser)
             winner_line = _safe_int_line(winner)
             dup = dict(loser)
