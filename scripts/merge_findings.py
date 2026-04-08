@@ -14,11 +14,11 @@ assemble Phase 4 input envelope with methodology diagnostics.
 
 Usage:
     python3 merge_findings.py \\
-      --findings-dir $TMPDIR \\
+      --findings-dir .deep-review \\
       --session-sha abc12345 \\
       --agents bug-detector security-reviewer cross-file-impact test-analyzer \\
                conventions-and-intent type-design-analyzer code-simplifier \\
-      --text-dir $TMPDIR \\
+      --text-dir .deep-review \\
       --base-branch main \\
       --head-sha abc123 \\
       --pr-number 42 \\
