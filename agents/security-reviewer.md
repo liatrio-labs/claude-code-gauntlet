@@ -27,6 +27,7 @@ Regardless of the PR size or how many other agents are running, you MUST check A
 4. **Auth checks on new endpoints** — For every new route, controller method, API handler, or RPC endpoint in the diff, verify authorization is checked before the operation executes.
 5. **Deserialization of external input** — Search for JSON.parse, Deserialize, unsafe YAML load, or equivalent on data that arrives from outside the process (HTTP bodies, message queues, file reads).
 
+<!-- Canonical source: references/investigation-methodology.md — keep all agent copies in sync -->
 ## How to investigate
 
 1. **Build an input-to-sink map.** This is your primary methodology:

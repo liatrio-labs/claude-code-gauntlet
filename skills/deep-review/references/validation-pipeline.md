@@ -365,7 +365,7 @@ Bash(
 """)
 ```
 
-The script applies challenge thresholds, re-routes surfaced findings, re-runs cross-agent dedup, applies the `max_findings` cap, and ranks findings. Output is delivery-ready JSON at `$TMPDIR/deep-review-delivery-{head_sha_short}.json`.
+The script applies challenge thresholds, re-routes surfaced findings, re-runs cross-agent dedup, and ranks findings. Output is delivery-ready JSON at `$TMPDIR/deep-review-delivery-{head_sha_short}.json`.
 
 **Challenge threshold reference:**
 - **score < 25** → remove (non-security) or downgrade one severity level (security)
@@ -386,7 +386,6 @@ The script applies challenge thresholds, re-routes surfaced findings, re-runs cr
         "challenge_survived": 5,
         "unchallenged": 1,
         "dedup_dropped": 0,
-        "cap_dropped": 0,
         "final_count": 8
     },
     "generated_at": "..."

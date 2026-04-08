@@ -13,8 +13,7 @@ Covers:
     non-integer score, justification copied
   - rank_findings: severity order, confidence tiebreak, description-length tiebreak
   - dedup_cross_agent reuse: cross-agent dedup runs post-challenge
-  - max_findings cap: cap applied after ranking, cap_dropped populated
-  - main() CLI integration: stdout output, --output file, --max-findings,
+  - main() CLI integration: stdout output, --output file,
     prior eliminated passed through, stats fields
 """
 
@@ -561,128 +560,6 @@ class TestCrossAgentDedupIntegration(unittest.TestCase):
         self.assertEqual(len(dropped), 1)
 
 
-# ---------------------------------------------------------------------------
-# max_findings cap
-# ---------------------------------------------------------------------------
-
-class TestMaxFindingsCap(unittest.TestCase):
-
-    def test_cap_applied_after_ranking(self):
-        """Cap keeps the top-ranked findings."""
-        findings = [
-            _make_finding(id="low", severity="low", confidence=90),
-            _make_finding(id="critical", severity="critical", confidence=70),
-            _make_finding(id="high", severity="high", confidence=80),
-        ]
-        ranked = rank_findings(findings)
-        # Simulate cap of 2
-        capped = ranked[:2]
-        ids = [f["id"] for f in capped]
-        self.assertIn("critical", ids)
-        self.assertIn("high", ids)
-        self.assertNotIn("low", ids)
-
-    def test_no_cap_keeps_all(self):
-        findings = [_make_finding(id=f"f{i}") for i in range(10)]
-        ranked = rank_findings(findings)
-        self.assertEqual(len(ranked), 10)
-
-    def test_max_findings_zero_means_no_limit(self):
-        """--max-findings 0 is treated as no limit (same as omitting)."""
-        import io
-        from unittest.mock import patch
-        from scripts.apply_challenges import main
-
-        findings = [_make_finding(id=f"f{i}") for i in range(10)]
-        challenges = [{"id": f"f{i}", "score": 90} for i in range(10)]
-
-        filtered_json = json.dumps({"filtered": findings})
-        challenges_json = json.dumps(challenges)
-
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as ff:
-            ff.write(filtered_json)
-            ff.flush()
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as cf:
-                cf.write(challenges_json)
-                cf.flush()
-
-                buf = io.StringIO()
-                with patch("sys.stdout", buf), \
-                     patch("sys.argv", ["apply_challenges.py", ff.name, cf.name,
-                                        "--max-findings", "0"]):
-                    main()
-
-        result = json.loads(buf.getvalue())
-        self.assertEqual(len(result["findings"]), 10)
-        self.assertEqual(result["stats"]["cap_dropped"], 0)
-
-
-# ---------------------------------------------------------------------------
-# Cap annotation propagation (R02.2)
-# ---------------------------------------------------------------------------
-
-class TestCapAnnotation(unittest.TestCase):
-    """Verify cap-dropped findings have elimination_reason in eliminated list."""
-
-    def _run_main_with_cap(self, findings, challenges, max_findings):
-        """Run main() with --max-findings and return parsed output."""
-        import io
-        from unittest.mock import patch
-        from scripts.apply_challenges import main
-
-        f_path = _write_json({"filtered": findings, "eliminated": []})
-        c_path = _write_json(challenges)
-        out_path = tempfile.mktemp(suffix=".json")
-        try:
-            argv = [
-                "apply_challenges.py", f_path, c_path,
-                "--output", out_path,
-                "--max-findings", str(max_findings),
-            ]
-            with patch("sys.argv", argv):
-                main()
-            with open(out_path) as fh:
-                return json.load(fh)
-        finally:
-            os.unlink(f_path)
-            os.unlink(c_path)
-            if os.path.exists(out_path):
-                os.unlink(out_path)
-
-    def test_cap_dropped_findings_have_elimination_reason(self):
-        """Cap-dropped findings appear in eliminated with elimination_reason set."""
-        findings = [
-            _make_finding(id="critical", severity="critical"),
-            _make_finding(id="high", severity="high"),
-            _make_finding(id="medium", severity="medium"),
-        ]
-        challenges = [
-            _make_challenge("critical", 90),
-            _make_challenge("high", 90),
-            _make_challenge("medium", 90),
-        ]
-        result = self._run_main_with_cap(findings, challenges, max_findings=2)
-        elim_ids = {f["id"]: f for f in result["eliminated"]}
-        self.assertIn("medium", elim_ids)
-        medium_elim = elim_ids["medium"]
-        self.assertEqual(medium_elim["eliminated_by"], "cap:max_findings")
-        self.assertIn("elimination_reason", medium_elim)
-        self.assertIn("2", medium_elim["elimination_reason"])
-
-    def test_cap_dropped_elimination_reason_mentions_cap_size(self):
-        """elimination_reason contains the cap value."""
-        findings = [
-            _make_finding(id=f"f{i}", severity="high") for i in range(5)
-        ]
-        challenges = [_make_challenge(f"f{i}", 90) for i in range(5)]
-        result = self._run_main_with_cap(findings, challenges, max_findings=3)
-        cap_elims = [f for f in result["eliminated"]
-                     if f.get("eliminated_by") == "cap:max_findings"]
-        self.assertEqual(len(cap_elims), 2)
-        for elim in cap_elims:
-            self.assertIn("elimination_reason", elim)
-            self.assertIn("3", elim["elimination_reason"])
-
 
 # ---------------------------------------------------------------------------
 # main() CLI integration
@@ -748,7 +625,7 @@ class TestMainCLI(unittest.TestCase):
         for field in [
             "total_input", "challenge_removed", "challenge_downgraded",
             "challenge_contested", "challenge_survived", "unchallenged",
-            "dedup_dropped", "cap_dropped", "final_count",
+            "dedup_dropped", "final_count",
         ]:
             self.assertIn(field, stats, f"Missing stats field: {field}")
 
@@ -778,25 +655,6 @@ class TestMainCLI(unittest.TestCase):
             os.unlink(c_path)
             if os.path.exists(out_path):
                 os.unlink(out_path)
-
-    def test_max_findings_cap(self):
-        findings = [
-            _make_finding(id="critical", severity="critical"),
-            _make_finding(id="high", severity="high"),
-            _make_finding(id="medium", severity="medium"),
-        ]
-        challenges = [
-            _make_challenge("critical", 90),
-            _make_challenge("high", 90),
-            _make_challenge("medium", 90),
-        ]
-        result = self._run_main(findings, challenges, extra_args=["--max-findings", "2"])
-        self.assertEqual(len(result["findings"]), 2)
-        findings_ids = [f["id"] for f in result["findings"]]
-        self.assertIn("critical", findings_ids)
-        self.assertIn("high", findings_ids)
-        self.assertNotIn("medium", findings_ids)
-        self.assertEqual(result["stats"]["cap_dropped"], 1)
 
     def test_dedup_through_main_cli(self):
         """CLI integration: cross-agent dedup runs within main() pipeline."""

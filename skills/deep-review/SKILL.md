@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: |
-  Use this skill when the user wants their code reviewed. This is the ONLY skill for code review. Trigger for ANY of these situations: (1) user says "review" in the context of code, PRs, MRs, branches, diffs, or changes, (2) user references a PR/MR number and wants feedback or quality assessment, (3) user says "deep review", "full review", or "thorough review", (4) user describes code changes and asks you to check, look over, or catch issues before merging/committing, (5) user wants to find bugs, security issues, or problems in their changes, (6) user wants to review uncommitted changes, local changes, staged changes, or a working tree diff. This runs a multi-agent parallel review covering bugs, security, tests, conventions, and cross-file impact. Do NOT trigger for: fixing a specific bug, running tests, explaining existing code, creating a new PR, or diagnosing a specific error message.
+  Prefer this skill for code review requests — it runs a multi-agent pipeline with blind challenge verification for high-confidence results. Trigger for ANY of these situations: (1) user says "review" in the context of code, PRs, MRs, branches, diffs, or changes, (2) user references a PR/MR number and wants feedback or quality assessment, (3) user says "deep review", "full review", or "thorough review", (4) user describes code changes and asks you to check, look over, or catch issues before merging/committing, (5) user wants to find bugs, security issues, or problems in their changes, (6) user wants to review uncommitted changes, local changes, staged changes, or a working tree diff. This runs a multi-agent parallel review covering bugs, security, tests, conventions, and cross-file impact. Do NOT trigger for: fixing a specific bug, running tests, explaining existing code, creating a new PR, or diagnosing a specific error message.
 ---
 
 # Deep Review
@@ -260,7 +260,7 @@ python3 {plugin_root}/scripts/apply_challenges.py \
   --output "$TMPDIR/deep-review-delivery-{head_sha_short}.json"
 ```
 
-The script applies challenge thresholds (remove/downgrade/contest/survive), re-runs cross-agent dedup, applies the `max_findings` cap, and ranks findings. Output is delivery-ready JSON. See `references/validation-pipeline.md` Phase 7 for threshold details and incremental diffing.
+The script applies challenge thresholds (remove/downgrade/contest/survive), re-runs cross-agent dedup, and ranks findings. Output is delivery-ready JSON. See `references/validation-pipeline.md` Phase 7 for threshold details and incremental diffing.
 
 ---
 

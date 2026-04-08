@@ -5,7 +5,7 @@ A `REVIEW.md` file lets project maintainers customize how deep-review behaves. I
 ## Contents
 
 - **Format** — Section overview, all sections optional
-- **Section Details** — Focus, Skip, Rules, Severity/Confidence Thresholds, Max Findings, Model Tier, Default Delivery, Ignore
+- **Section Details** — Focus, Skip, Rules, Severity/Confidence Thresholds, Model Tier, Default Delivery, Ignore
 - **Hierarchy** — Root + subdirectory configs, merge rules, discovery prompts
 - **Rule-Writing Principles** — Prescriptive vs directional, 15-25 rules per file
 - **Scaffolding Templates** — Root template, subdirectory template
@@ -87,7 +87,7 @@ chat
 Controls which review dimensions run. Valid values map to agents:
 - `bugs` — Bug detection and error handling (bug-detector agent)
 - `security` — Security vulnerability scanning (security-reviewer agent)
-- `cross-file-impact` — Cross-file impact analysis (cross-file-impact-analyzer agent)
+- `cross-file-impact` — Cross-file impact analysis (cross-file-impact agent)
 - `tests` — Test coverage gap analysis (test-analyzer agent)
 - `conventions` — Convention compliance, intent alignment, and comment accuracy (conventions-and-intent agent)
 - `types` — Type design analysis (type-design-analyzer agent)
@@ -152,21 +152,6 @@ Rules for per-dimension thresholds:
 - If `security_min_confidence` is set in REVIEW.md, it provides a lower floor for security findings — useful for repos that want to surface more borderline security issues
 - Per-dimension settings in subdirectory REVIEW.md files override the inherited value for that dimension only
 
-### Max Findings
-
-Maximum number of findings to include in the report. When the cap is hit, the highest-severity findings are kept and a note indicates how many were suppressed.
-
-Default: no limit — all findings that survive the validation pipeline appear in the report. Set this in high-debt codebases to prevent review noise. Use `0` to explicitly mean "no limit" (same as omitting the setting).
-
-Note: this controls findings in the **report**. PR inline comments have a separate default cap of 6 when the user selects "Default" mode (applied in Phase 8 delivery). When the user manually selects findings via the walkthrough, all selected findings are posted with no cap.
-
-```
-## Max Findings
-15
-```
-
-Suppressed findings are noted at the end of the report: "{N} additional findings were suppressed by the max_findings cap ({cap}). Set `max_findings: 0` or remove the setting to see all findings."
-
 ### Model Tier
 
 Controls which LLM models are used for review agents. Two modes are available:
@@ -229,7 +214,6 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 |---------|----------|-----------|
 | `confidence_threshold` | **Override** — subdirectory value replaces root | A module may need stricter or looser thresholds |
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
-| `max_findings` | **Override** — subdirectory value replaces root | High-debt areas may need a cap |
 | `model_tier` | **Override** — subdirectory value replaces root | A security-critical directory might always use frontier |
 | `default_delivery` | **Override** — subdirectory value replaces root | Unlikely to vary by directory, but supported for consistency |
 | `rules` | **Accumulate** — subdirectory rules add to root rules | Directory-specific conventions supplement project-wide ones |

@@ -23,6 +23,7 @@ You do NOT receive:
 - The original confidence score
 - Any chain of thought or reasoning from the original agent
 
+<!-- Canonical source: references/investigation-methodology.md — keep all agent copies in sync -->
 ## Your job: try to DISPROVE the claim
 
 Actively search for reasons the claim is wrong. Look for:
@@ -33,7 +34,7 @@ Actively search for reasons the claim is wrong. Look for:
 4. **Documented intentional behavior** — is the pattern clearly intentional and correct for this context?
 5. **Reachability** — is there a code path today that triggers this issue, or is it only hypothetically triggerable under future changes?
 
-Pull surrounding context via Read, Grep, and Glob if needed to assess the claim. You have codebase access — use it.
+Pull surrounding context via Read, Grep, Glob, and LSP if needed to assess the claim. Prefer LSP `findReferences` to trace call chains from entry points to the finding location, and `goToDefinition` to verify what a symbol resolves to. Fall back to Grep if LSP is unavailable. You have codebase access — use it.
 
 **You MUST attempt to construct a concrete call chain from an entry point (public API, event handler, CLI, scheduled job) through to the finding location. If you cannot construct such a call chain through the current codebase, rate confidence below 25.**
 

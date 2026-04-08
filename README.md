@@ -10,7 +10,7 @@ Deep Review dispatches 6-7 specialized agents in parallel, each examining your c
 |-------|-----------|----------|-------|
 | **bug-detector** | Sonnet | Opus | Logic errors, edge cases, error handling, resource leaks |
 | **security-reviewer** | **Opus** | **Opus** | OWASP top 10, injection, auth, SSRF, deserialization |
-| **cross-file-impact-analyzer** | Sonnet | Opus | How changes affect callers and dependents across the codebase |
+| **cross-file-impact** | Sonnet | Opus | How changes affect callers and dependents across the codebase |
 | **test-analyzer** | Sonnet | Opus | Test coverage gaps, test quality, missing edge cases |
 | **conventions-and-intent** | Sonnet | Opus | CLAUDE.md compliance, spec alignment, comment accuracy |
 | **type-design-analyzer** | Sonnet | Opus | Type encapsulation and invariant design (conditional) |

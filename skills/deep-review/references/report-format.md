@@ -184,7 +184,7 @@ Severity has been downgraded one level from the original classification (see Pha
 |-----------|-------|----------|-------|
 | Correctness & Error Handling | bug-detector | {N issues} | {summary or "Clean"} |
 | Security | security-reviewer | {N issues} | {summary} |
-| Cross-file Impact | cross-file-impact-analyzer | {N issues} | {summary} |
+| Cross-file Impact | cross-file-impact | {N issues} | {summary} |
 | Test Coverage | test-analyzer | {N issues} | {summary} |
 | Conventions & Intent | conventions-and-intent | {N issues} | {summary} |
 | Type Design | type-design-analyzer | {N issues or "Skipped"} | {summary} |

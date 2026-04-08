@@ -21,7 +21,7 @@ The orchestrator provides only the **dynamic per-review content** in the prompt:
 
 - **bug-detector**: high + medium risk diffs, test files (2g), history context (2i)
 - **security-reviewer**: **all files** (security bugs lurk anywhere)
-- **cross-file-impact-analyzer**: **all files** + must search entire codebase for callers/implementors of changed public symbols
+- **cross-file-impact**: **all files** + must search entire codebase for callers/implementors of changed public symbols
 - **test-analyzer**: changed production files + test files (2g)
 - **conventions-and-intent**: **all files** (needs full scope for convention and intent checking)
 - **type-design-analyzer**: files with new type definitions (only dispatched when new types introduced)

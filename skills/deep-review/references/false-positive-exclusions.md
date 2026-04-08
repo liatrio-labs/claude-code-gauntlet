@@ -1,6 +1,23 @@
 # False-Positive Exclusion List
 
-This list is provided to ALL validation subagents. A finding that matches any category below MUST be excluded from the final report. The goal is zero false positives — every reported issue should be something a senior engineer would genuinely want addressed before merge.
+> **Canonical source of truth.** This file is the single source of truth for the false-positive exclusion list used by all discovery agents.
+>
+> **Duplication contract.** Each of the 7 discovery agents carries its own adapted copy of this list for self-containment — if a file read fails during a review, the agent still has the exclusions inline. Do not refactor the agent copies into a shared read.
+>
+> **When updating:** change this file first, then propagate the changes to all 7 agent copies:
+> 1. `agents/bug-detector.md`
+> 2. `agents/security-reviewer.md`
+> 3. `agents/cross-file-impact.md`
+> 4. `agents/test-analyzer.md`
+> 5. `agents/conventions-and-intent.md`
+> 6. `agents/type-design-analyzer.md`
+> 7. `agents/code-simplifier.md`
+>
+> Each agent copy has a `<!-- Canonical source: references/false-positive-exclusions.md -->` comment pointing back here.
+
+---
+
+A finding that matches any category below MUST be excluded. The goal is zero false positives — every reported issue should be something a senior engineer would genuinely want addressed before merge.
 
 ---
 

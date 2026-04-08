@@ -4,12 +4,12 @@ apply_challenges.py — Phase 7→8 bridge for deep-review.
 
 Reads Phase 6 output (filter_findings.py) from disk, applies blind-challenge
 scores to each finding, re-routes and culls according to the challenge
-thresholds, re-runs cross-agent dedup, caps and ranks the final set, then
+thresholds, re-runs cross-agent dedup, ranks the final set, then
 writes delivery-ready JSON to disk.
 
 Usage:
     python3 apply_challenges.py <filtered_json> <challenges_json> \\
-        [--output PATH] [--max-findings N]
+        [--output PATH]
 
 Arguments:
     filtered_json    Path to Phase 6 output JSON (filter_findings.py output).
@@ -21,9 +21,6 @@ Arguments:
                        [{id, score, justification?}, ...]
                      or {"challenges": [...]}
     --output PATH    Write result JSON to this file.  Defaults to stdout.
-    --max-findings N Cap the final filtered list at N findings (default: no cap).
-                     Findings are ranked by severity → confidence → description
-                     length before the cap is applied.
 
 Challenge score thresholds
 --------------------------
@@ -57,7 +54,6 @@ Output JSON:
             "challenge_survived":   N,  # score >= 75, fully passed
             "unchallenged":         N,  # findings with no challenge score
             "dedup_dropped":        N,  # dropped by cross-agent dedup
-            "cap_dropped":          N,  # dropped by max_findings cap
             "final_count":          N   # len(findings)
         },
         "generated_at": "..."
@@ -112,7 +108,7 @@ def _downgrade_severity(severity):
 
 def _rank_key(finding):
     """
-    Sort key for ranking findings before applying the max_findings cap.
+    Sort key for ranking findings by severity, confidence, and description length.
 
     Primary:   severity (critical first, low last)
     Secondary: confidence (higher first)
@@ -419,7 +415,7 @@ def main():
         description=(
             "Phase 7→8 bridge for deep-review. "
             "Applies blind-challenge scores to Phase 6 findings, re-runs "
-            "cross-agent dedup, caps and ranks the final set, and writes "
+            "cross-agent dedup, ranks the final set, and writes "
             "delivery-ready JSON."
         )
     )
@@ -436,18 +432,6 @@ def main():
         metavar="PATH",
         default=None,
         help="Write result JSON to this file instead of stdout.",
-    )
-    parser.add_argument(
-        "--max-findings",
-        metavar="N",
-        type=int,
-        default=None,
-        help=(
-            "Cap the final filtered list at N findings (default: no cap). "
-            "Pass 0 for no limit (same as omitting). "
-            "Findings are ranked by severity → confidence → description length "
-            "before the cap is applied."
-        ),
     )
     args = parser.parse_args()
 
@@ -471,29 +455,9 @@ def main():
     dedup_elim = list(dedup_dropped)  # dedup already sets eliminated_by="dedup:cross-agent"
 
     # ------------------------------------------------------------------
-    # Rank and cap
+    # Rank
     # ------------------------------------------------------------------
     active = rank_findings(active)
-
-    cap_dropped_elim = []
-    # --max-findings 0 or negative means "no limit" (spec convention)
-    if args.max_findings is not None and args.max_findings <= 0:
-        args.max_findings = None
-    if args.max_findings is not None and len(active) > args.max_findings:
-        cap_overflow = active[args.max_findings:]
-        active = active[: args.max_findings]
-        for f in cap_overflow:
-            elim = dict(f)
-            elim["eliminated_by"] = "cap:max_findings"
-            elim["elimination_reason"] = (
-                f"max_findings cap of {args.max_findings} reached; "
-                f"finding ranked outside top {args.max_findings}"
-            )
-            cap_dropped_elim.append(elim)
-        warn(
-            f"[cap] Dropped {len(cap_dropped_elim)} finding(s) to enforce "
-            f"--max-findings={args.max_findings}"
-        )
 
     # ------------------------------------------------------------------
     # Compose output
@@ -502,7 +466,6 @@ def main():
         list(prior_eliminated)
         + challenge_eliminated
         + dedup_elim
-        + cap_dropped_elim
     )
 
     stats = {
@@ -513,7 +476,6 @@ def main():
         "challenge_survived": challenge_stats["challenge_survived"],
         "unchallenged": challenge_stats["unchallenged"],
         "dedup_dropped": len(dedup_elim),
-        "cap_dropped": len(cap_dropped_elim),
         "final_count": len(active),
     }
 

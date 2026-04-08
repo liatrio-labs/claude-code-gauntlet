@@ -772,7 +772,6 @@ _MAIN_REPORT_AGENTS = {
     "bug-detector",
     "security-reviewer",
     "cross-file-impact",
-    "cross-file-impact-analyzer",  # alternate name seen in some configs
     "type-design-analyzer",
 }
 
