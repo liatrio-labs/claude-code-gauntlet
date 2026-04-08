@@ -180,7 +180,7 @@ Each finding is a complete JSON object on a single line. Use this schema:
 Found real impact — billing module caller at src/billing/invoice.py:103 still expects the old return type.
 
 ```bash
-echo '{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 dereferences it without a None check, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"claude_md_rule":null,"cross_file_refs":["src/billing/invoice.py"]}' >> "/tmp/deep-review-cross-file-impact-abc12345.ndjson"
+echo '{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 dereferences it without a None check, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"claude_md_rule":null,"cross_file_refs":["src/billing/invoice.py"]}' >> ".deep-review/deep-review-cross-file-impact-abc12345.ndjson"
 ```
 
 [investigation of renamed config key DATABASE_URL — no issue found]
