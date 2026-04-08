@@ -42,12 +42,13 @@ SKILL.md derives `{plugin_root}` as two levels above the skill base directory. A
 ## Tests
 
 - pytest with `unittest.TestCase` style. Run: `python -m pytest tests/ -q`
-- 483 tests covering all pipeline scripts: `verify_findings.py`, `filter_findings.py`, `post_review.py`, `merge_findings.py`, `apply_validations.py`, `apply_challenges.py`, `validate_bash_subagent.py`.
+- 485 tests covering all pipeline scripts: `verify_findings.py`, `filter_findings.py`, `post_review.py`, `merge_findings.py`, `apply_validations.py`, `apply_challenges.py`, `validate_bash_subagent.py`.
 
 ## Output directory convention
 
 - `{output_dir}` in SKILL.md and references defaults to `.deep-review/` (repo-local, gitignored). Override with `$DEEP_REVIEW_OUTPUT_DIR` for CI or custom environments.
-- The PreToolUse hook validates that subagent Bash commands match the echo-append pattern to `deep-review-*` files and emits `permissionDecision` JSON on stdout per the Claude Code hook protocol.
+- **AST-safe emission only.** Agents use `echo '...' >> "literal_path"` with regular single quotes. For apostrophes in JSON values, use `\u0027` (valid JSON Unicode escape). Never use `$'...'` ANSI-C quoting — the sandbox AST parser rejects it, and in subagent sessions this means silent denial.
+- The PreToolUse hook validates echo-append patterns and emits `permissionDecision` JSON on stdout. **The hook does not propagate to subagents** (Claude Code platform limitation) — AST auto-approval is the primary mechanism, the hook is defense-in-depth.
 
 ## Writing pipeline JSON
 
