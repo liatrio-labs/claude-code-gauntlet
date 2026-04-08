@@ -18,7 +18,7 @@ Deep Review dispatches 6-7 specialized agents in parallel, each examining your c
 
 Two review modes are available. **Optimized** (default) is ~40% cheaper and faster — Sonnet for most agents, Opus only for security. **Frontier** uses Opus for all agents. Security always gets Opus in both modes because different models have complementary vulnerability-class detection profiles.
 
-Agents write findings to NDJSON files on disk via Bash append — a structurally separate channel from investigation, enforced by a PreToolUse hook that blocks non-emission Bash commands.
+Agents write findings to NDJSON files in a repo-local `.deep-review/` directory via Bash append — a structurally separate channel from investigation, enforced by a PreToolUse hook that blocks non-emission Bash commands. The output directory is overridable via `$DEEP_REVIEW_OUTPUT_DIR` for CI environments.
 
 After agents report findings, a six-script deterministic pipeline filters false positives:
 
@@ -175,7 +175,7 @@ claude-deep-review/
 │   ├── apply_challenges.py               #   Phase 7→8: challenge results, dedup, rank
 │   ├── post_review.py                    #   Phase 8: PR/MR comment posting
 │   └── validate_bash_subagent.py         #   Hook: Bash command pattern validation
-├── tests/                                # 486 pytest tests
+├── tests/                                # 483 pytest tests
 ├── skills/
 │   ├── deep-review/
 │   │   ├── SKILL.md                      # Main orchestration (8 phases)
