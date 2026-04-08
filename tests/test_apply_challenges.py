@@ -798,6 +798,25 @@ class TestMainCLI(unittest.TestCase):
         self.assertNotIn("medium", findings_ids)
         self.assertEqual(result["stats"]["cap_dropped"], 1)
 
+    def test_dedup_through_main_cli(self):
+        """CLI integration: cross-agent dedup runs within main() pipeline."""
+        findings = [
+            _make_finding(id="bug-1", agent="bug-detector", dimension="bug",
+                          file="src/auth.py", line_start=41, confidence=90),
+            _make_finding(id="conv-1", agent="conventions-and-intent", dimension="convention",
+                          file="src/auth.py", line_start=42, confidence=80),
+        ]
+        challenges = [
+            _make_challenge("bug-1", 85),
+            _make_challenge("conv-1", 85),
+        ]
+        result = self._run_main(findings, challenges)
+        # bug-1 wins (core dimension), conv-1 deduped
+        result_ids = [f["id"] for f in result["findings"]]
+        self.assertIn("bug-1", result_ids)
+        self.assertNotIn("conv-1", result_ids)
+        self.assertGreater(result["stats"]["dedup_dropped"], 0)
+
     def test_stdout_output(self):
         """When --output is omitted, JSON is written to stdout."""
         import io

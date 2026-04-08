@@ -47,7 +47,7 @@ group_by_proximity utility from filter_findings.py.
 
 Output JSON:
     {
-        "findings": [...],    # delivery-ready findings (matches post_review.py input schema)
+        "findings": [...],    # delivery-ready findings (canonical schema: description/line_start/line_end; orchestrator maps to body/line/end_line for post_review.py)
         "eliminated": [...],  # findings removed at any stage (Phase 6 + Phase 7)
         "stats": {
             "total_input":          N,  # findings entering this script
@@ -476,8 +476,8 @@ def main():
     active = rank_findings(active)
 
     cap_dropped_elim = []
-    # --max-findings 0 means "no limit" (spec convention)
-    if args.max_findings == 0:
+    # --max-findings 0 or negative means "no limit" (spec convention)
+    if args.max_findings is not None and args.max_findings <= 0:
         args.max_findings = None
     if args.max_findings is not None and len(active) > args.max_findings:
         cap_overflow = active[args.max_findings:]

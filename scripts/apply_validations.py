@@ -211,8 +211,9 @@ def apply_validations(findings, validations):
             )
             continue
 
-        # Always save original_confidence before updating
-        finding["original_confidence"] = finding.get("confidence", 0)
+        # Save original_confidence before updating (only on first validation)
+        if "original_confidence" not in finding:
+            finding["original_confidence"] = finding.get("confidence", 0)
         finding["validator_confidence"] = new_conf
         finding["confidence"] = new_conf
 

@@ -567,12 +567,12 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Base branch name (e.g. main)")
     p.add_argument("--head-sha", required=True,
                    help="Full or short head commit SHA")
-    p.add_argument("--pr-number", required=True, type=int,
-                   help="Pull request number")
-    p.add_argument("--owner", required=True,
-                   help="Repository owner (org or user)")
-    p.add_argument("--repo", required=True,
-                   help="Repository name")
+    p.add_argument("--pr-number", type=int, default=0,
+                   help="Pull request number (0 for local reviews)")
+    p.add_argument("--owner", default="",
+                   help="Repository owner (empty for local reviews)")
+    p.add_argument("--repo", default="",
+                   help="Repository name (empty for local reviews)")
     p.add_argument("--output", required=True,
                    help="Output JSON file path")
     return p

@@ -4,7 +4,7 @@ A comprehensive, research-backed code review skill for [Claude Code](https://doc
 
 ## What it does
 
-Deep Review dispatches 5-7 specialized agents in parallel, each examining your code changes through a different lens:
+Deep Review dispatches 6-7 specialized agents in parallel, each examining your code changes through a different lens:
 
 | Agent | Optimized | Frontier | Focus |
 |-------|-----------|----------|-------|
@@ -18,15 +18,18 @@ Deep Review dispatches 5-7 specialized agents in parallel, each examining your c
 
 Two review modes are available. **Optimized** (default) is ~40% cheaper and faster — Sonnet for most agents, Opus only for security. **Frontier** uses Opus for all agents. Security always gets Opus in both modes because different models have complementary vulnerability-class detection profiles.
 
-After agents report findings, a validation pipeline filters false positives:
+Agents write findings to NDJSON files on disk via Bash append — a structurally separate channel from investigation, enforced by a PreToolUse hook that blocks non-emission Bash commands.
 
-1. **Git blame classification** — labels each finding as "new" (introduced by this PR) or "surfaced" (pre-existing code exposed by this change)
-2. **Deterministic verification** — confirms findings reference real code at correct locations
-3. **LLM judgment** — attempts to disprove each finding with a calibrated confidence rubric
-4. **Confidence thresholds** — default 70 (security: 60), configurable per-dimension via REVIEW.md
-5. **Blind challenge round** — fresh agents attempt to disprove blocking findings
-6. **Contradiction resolution** — specs suppress bug findings, security wins ties
-7. **Max findings cap** — configurable limit prevents noise in high-debt codebases
+After agents report findings, a six-script deterministic pipeline filters false positives:
+
+1. **`merge_findings.py`** — collects findings from agent NDJSON files and text returns, deduplicates, validates schema
+2. **`verify_findings.py`** — git blame classification (new vs surfaced), factual verification against actual code, diff-line validation
+3. **`apply_validations.py`** — applies independent validator confidence assessments
+4. **`filter_findings.py`** — confidence/severity thresholds (default 70, security 60), injection filtering, cross-agent dedup, consensus detection, routing (main report vs improvement suggestions)
+5. **`apply_challenges.py`** — applies blind challenge results, severity downgrades, surfaced re-routing, final dedup, max-findings cap, ranking
+6. **`post_review.py`** — delivers findings as PR/MR comments, markdown, or chat
+
+Between scripts, findings live on disk as JSON — zero LLM JSON reconstruction in the pipeline.
 
 ## Key features
 
@@ -83,15 +86,16 @@ Or invoke it directly:
 
 ## How it works
 
-The review runs through 7 phases:
+The review runs through 8 phases:
 
-0. **Pre-flight** — checks if the PR/MR is eligible (not closed, draft, or already reviewed). For previously reviewed PRs, offers incremental review of new commits only
-1. **Target** — detects GitHub/GitLab from git remote, fetches PR/MR metadata and diff
-2. **Triage** — classifies files by risk, detects AI-generated code (elevated risk), discovers related tests, gathers CLAUDE.md + REVIEW.md context, runs git blame preprocessing, produces a change summary. For PRs over 500 lines, generates per-file summaries
-3. **Dispatch** — launches 5-7 agents in parallel with scoped context, trust boundary delimiters, and context-pulling instructions
-4. **Validate** — git blame classification (new vs surfaced), deterministic verification, confidence filtering, injection artifact scanning, challenge round, contradiction resolution, deduplication, max findings cap
-5. **Report** — generates a structured report with severity-ranked findings, surfaced findings section, GitHub/GitLab permalinks, and a methodology section documenting what ran
-6. **Deliver** — asks how you want results: PR/MR comments, markdown file, chat, task board, or all. Offers to add dismissed findings to REVIEW.md for future suppression
+1. **Pre-flight** — eligibility checks (not closed, draft, or already reviewed), configuration gate (review mode, delivery preference), plugin root and session SHA resolution
+2. **Target & Triage** — detects GitHub/GitLab, fetches diff, classifies files by risk, detects AI-generated code, discovers tests, gathers CLAUDE.md + REVIEW.md context, produces a change summary
+3. **Review Agents** — launches 6-7 agents in parallel. Agents investigate via Read/Grep/Glob/LSP and write findings to NDJSON files on disk via Bash append
+4. **Classify & Verify** — `merge_findings.py` collects agent output, then `verify_findings.py` runs git blame classification, factual verification, and diff-line validation
+5. **Validate** — independent Sonnet validators assess each finding's confidence with codebase context. `apply_validations.py` applies their adjustments
+6. **Filter & Reconcile** — `filter_findings.py` applies thresholds, injection filtering, cross-agent dedup, consensus detection, and routes findings to main report vs improvement suggestions
+7. **Blind Challenge** — fresh agents attempt to disprove each finding without seeing original reasoning. `apply_challenges.py` applies challenge results, severity downgrades, surfaced re-routing, final dedup, cap, and ranking
+8. **Report & Deliver** — generates report, delivers via PR/MR comments, markdown, chat, or task board. `post_review.py` handles comment posting
 
 ## REVIEW.md configuration
 
@@ -129,7 +133,7 @@ Every architectural decision is grounded in published research:
 
 | Decision | Research basis |
 |----------|---------------|
-| 5-7 agents | Quality plateaus at 4-6 agents (DeepMind 2025); unstructured parallel systems amplify errors 17.2x |
+| 6-7 agents | Quality plateaus at 4-6 agents (DeepMind 2025); unstructured parallel systems amplify errors 17.2x |
 | Concern decomposition | Anthropic, Ellipsis, Qodo all use concern-parallel, not file-parallel |
 | Deterministic verification | LLM-on-LLM verification shares correlated errors ~60% of the time; deterministic grounding is essential |
 | Context-pulling | cubic achieved 51% fewer false positives switching from push to pull |
@@ -141,6 +145,9 @@ Every architectural decision is grounded in published research:
 | AI-code risk elevation | CodeRabbit: 75% more logic errors in AI-authored code |
 | 500-line large-PR threshold | Review effectiveness drops sharply above 400 lines |
 | Git blame classification | SonarQube's baseline matching is the gold standard; blame-based new/surfaced is the best approach for AI-native tools |
+| Deterministic pipeline scripts | LLM-on-LLM verification shares correlated errors ~60%; mandatory steps are workflows not agent decisions (artifact #17) |
+| Dual-channel emission (Bash append) | Format compliance degrades beyond 4K output tokens (LongGenBench); production frameworks universally separate investigation from structuring (artifact #24) |
+| PreToolUse hook enforcement | Structural enforcement > instruction-level guidance; Claude Code hooks provide hard behavioral constraints on subagents |
 | Suggest-not-modify config | Google SRE Workbook: tools should suggest config changes through reviewable mechanisms, not modify automatically |
 | REVIEW.md hierarchy | Nearest-only with explicit inheritance (Ruff, Biome v2) after ESLint's painful cascading lessons |
 | Max findings cap | Qodo defaults to 3 findings per review; configurable cap prevents noise in high-debt repos |
@@ -150,17 +157,36 @@ Every architectural decision is grounded in published research:
 ```
 claude-deep-review/
 ├── .claude-plugin/
-│   └── plugin.json                       # Plugin manifest
+│   └── plugin.json                       # Plugin manifest (hooks reference)
+├── agents/                               # 10 named subagent definitions
+│   ├── bug-detector.md                   #   7 discovery agents (Read/Grep/Glob/LSP/Bash)
+│   ├── security-reviewer.md
+│   ├── cross-file-impact.md
+│   ├── test-analyzer.md
+│   ├── conventions-and-intent.md
+│   ├── type-design-analyzer.md
+│   ├── code-simplifier.md
+│   ├── validator.md                      #   3 quality-gate agents (Read/Grep/Glob/LSP)
+│   ├── challenger.md
+│   └── change-summarizer.md
+├── hooks/
+│   └── hooks.json                        # PreToolUse hook — restricts subagent Bash to finding emission
+├── scripts/                              # 7 stdlib-only Python scripts (deterministic pipeline)
+│   ├── merge_findings.py                 #   Phase 3→4: collect + deduplicate agent findings
+│   ├── verify_findings.py                #   Phase 4: blame classification, factual verification
+│   ├── apply_validations.py              #   Phase 5→6: apply validator confidence adjustments
+│   ├── filter_findings.py                #   Phase 6: thresholds, dedup, routing
+│   ├── apply_challenges.py               #   Phase 7→8: challenge results, cap, rank
+│   ├── post_review.py                    #   Phase 8: PR/MR comment posting
+│   └── validate_bash_subagent.py         #   Hook: Bash command pattern validation
+├── tests/                                # 484 pytest tests
 ├── skills/
-│   └── deep-review/
-│       ├── SKILL.md                      # Main orchestration (7 phases)
-│       └── references/
-│           ├── delivery-guide.md             # PR comments, task creation, dismissed findings
-│           ├── false-positive-exclusions.md  # Unified false positive filter + injection artifacts
-│           ├── fix-task-metadata.md          # FIX task template for task board integration
-│           ├── report-format.md              # Report template with permalinks
-│           ├── review-md-spec.md             # REVIEW.md configuration + hierarchy spec
-│           └── validation-pipeline.md        # 10-step validation pipeline (4a-4j)
+│   ├── deep-review/
+│   │   ├── SKILL.md                      # Main orchestration (8 phases)
+│   │   └── references/                   # 10 phase-specific reference files
+│   └── build-review-md/                  # Companion skill: REVIEW.md configuration wizard
+├── docs/
+│   └── research/                         # 24 research artifacts informing design
 └── README.md
 ```
 

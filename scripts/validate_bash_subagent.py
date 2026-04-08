@@ -45,6 +45,8 @@ def validate_bash_command(hook_input):
 
     # Extract command from tool_input (Claude Code schema), with top-level fallback
     tool_input = hook_input.get("tool_input", {})
+    if not isinstance(tool_input, dict):
+        tool_input = {}
     command = (tool_input.get("command") or hook_input.get("command", "")).strip()
 
     # Orchestrator (no agent_id) is allowed all commands
