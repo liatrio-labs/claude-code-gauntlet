@@ -126,7 +126,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
   header: "Review Mode",
   multiSelect: false,
   options: [
-    { label: "Optimized (Recommended)", description: "Sonnet for most agents, Opus for security. Faster and ~40% cheaper." },
+    { label: "Optimized", description: "Sonnet for most agents, Opus for security. Faster and ~40% cheaper." },
     { label: "Frontier", description: "All Opus agents. Maximum depth for high-stakes reviews." }
   ]
 }
@@ -184,7 +184,7 @@ If "No — change settings": clear REVIEW.md-resolved values and re-run the gate
 AskUserQuestion(
   questions: [
     { question: "Which review mode?", header: "Review Mode", multiSelect: false, options: [
-        { label: "Optimized (Recommended)", description: "Sonnet for most agents, Opus for security. Faster and ~40% cheaper." },
+        { label: "Optimized", description: "Sonnet for most agents, Opus for security. Faster and ~40% cheaper." },
         { label: "Frontier", description: "All Opus agents. Maximum depth for high-stakes reviews." }
     ]},
     { question: "How should I deliver the review results?", header: "Delivery", multiSelect: true, options: [
