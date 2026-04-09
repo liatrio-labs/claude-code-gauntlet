@@ -2,8 +2,9 @@
 """
 PreToolUse hook: validate_bash_subagent
 
-Restricts Bash usage in subagents to the finding-emission echo-append pattern:
-  echo '...' >> <output_dir>/deep-review-*
+Restricts Bash usage in subagents to the finding-emission printf-append pattern:
+  printf '%s\\n' '...' >> <output_dir>/deep-review-*
+  echo '...' >> <output_dir>/deep-review-*  (legacy, still accepted)
 
 Security boundary — blocks arbitrary commands (grep, git, rm, etc.) while
 allowing agents to append findings to their NDJSON file.
@@ -91,10 +92,10 @@ def validate_bash_command(hook_input):
         if not filename.startswith("deep-review-"):
             return False, "Filename must start with deep-review-"
 
-        return True, "Valid echo-append pattern"
+        return True, "Valid printf/echo-append pattern"
 
     # Command did not match echo-append — produce helpful diagnostics
-    if "echo" not in command:
+    if "echo" not in command and "printf" not in command:
         return False, f"Command not allowed: {command}"
 
     # Reject shell operators

@@ -175,7 +175,7 @@ claude-deep-review/
 │   ├── apply_challenges.py               #   Phase 7→8: challenge results, dedup, rank
 │   ├── post_review.py                    #   Phase 8: PR/MR comment posting
 │   └── validate_bash_subagent.py         #   Hook: Bash command pattern validation
-├── tests/                                # 483 pytest tests
+├── tests/                                # 497 pytest tests
 ├── skills/
 │   ├── deep-review/
 │   │   ├── SKILL.md                      # Main orchestration (8 phases)
