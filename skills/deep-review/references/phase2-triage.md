@@ -4,7 +4,7 @@ Full sub-steps 2a–2l, Agent templates, and detection logic for Phase 2: Target
 
 ## Contents
 
-- **2a** VCS platform detection — **2b** Working tree checkout — **2c** Review target + diff save
+- **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + gitignore + stale cleanup — **2c** Review target + diff save
 - **2d** Project context (CLAUDE.md, REVIEW.md) — **2e** Risk classification — **2f** Change summarizer
 - **2g** Test discovery — **2h** Docs/specs — **2i** History context — **2j** File-level summaries (>500 lines)
 - **2k** AI-generated code detection — **2l** Review dimensions
@@ -51,6 +51,30 @@ Unable to checkout [branch/PR]. The review requires the target code to be access
 You can checkout the branch manually and re-run the review.
 ```
 No fallback or workaround — a silently wrong working tree produces unreliable review results.
+
+---
+
+## 2b-post. Resolve Head SHA, Gitignore, and Clean Stale Files
+
+Now that the working tree reflects the review target, compute the short SHA and perform housekeeping. These steps run after checkout so the SHA reflects the actual PR HEAD and the gitignore addition is not stashed by `gh pr checkout`.
+
+**1. Resolve head SHA:**
+```bash
+Bash(command="git rev-parse --short=8 HEAD")  # Store as `head_sha_short`
+```
+Computed after checkout so the SHA reflects the actual PR HEAD, not whatever branch was checked out before.
+
+**2. Ensure `{output_dir}` is gitignored** (skip if using env var override):
+```bash
+Bash(command="git check-ignore -q .deep-review 2>/dev/null || echo '/.deep-review/' >> .gitignore")
+```
+Added after checkout to avoid stash/pop loss from `gh pr checkout` — if this ran before checkout, the gitignore modification would be stashed and potentially lost.
+
+**3. Truncate stale files** from prior sessions with the same SHA:
+```bash
+Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/deep-review-*-{head_sha_short}.*')]\"")
+```
+Prevents echo-append (`>>`) from accumulating findings across sessions. Without truncation, re-running a review on the same SHA would append duplicate findings to existing NDJSON files.
 
 ---
 

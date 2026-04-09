@@ -2,6 +2,8 @@
 
 Review target resolution, eligibility logic, AskUserQuestion templates, and consolidated pre-flight configuration gate for Phase 1.
 
+> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) and gitignore check (`git check-ignore`) happen in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Phase 1 only resolves the output directory and runs `mkdir -p`.
+
 ---
 
 ## Resolve Review Target
