@@ -650,7 +650,7 @@ class TestVerifyFactual(unittest.TestCase):
         try:
             # Case: 1 of 2 symbols missing → 50% miss ratio → reduction ~35
             with patch("scripts.verify_findings.run") as mock_run:
-                def grep_side_effect(cmd, check=False):
+                def grep_side_effect(cmd, check=False, timeout=None, cwd=None):
                     # func_a is in the code_at_lines (fast path), so only func_d is grepped
                     # func_d not found
                     return ("", "", 1)
@@ -921,15 +921,15 @@ class TestRepoRoot(unittest.TestCase):
         self.assertTrue(os.path.isdir(REPO_ROOT))
 
     def test_grep_called_with_repo_root(self):
-        """verify_factual must pass REPO_ROOT (not '.') as grep search path."""
+        """verify_factual must pass REPO_ROOT as cwd to git grep."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def missing_func():\n    pass\n")
             tmppath = f.name
         try:
-            captured_cmds = []
+            captured_kwargs = []
 
-            def mock_run(cmd, check=False):
-                captured_cmds.append(cmd)
+            def mock_run(cmd, check=False, timeout=None, cwd=None):
+                captured_kwargs.append({"cmd": cmd, "cwd": cwd})
                 return ("", "", 1)  # symbol not found
 
             with patch("scripts.verify_findings.run", side_effect=mock_run):
@@ -942,12 +942,12 @@ class TestRepoRoot(unittest.TestCase):
                 }
                 verify_factual(finding)
 
-            grep_cmds = [c for c in captured_cmds if c[0] == "grep"]
-            self.assertTrue(grep_cmds, "Expected at least one grep call")
-            for cmd in grep_cmds:
-                # The search path (last arg) must not be "." — must be absolute
-                self.assertNotEqual(cmd[-1], ".", msg=f"grep called with '.' instead of REPO_ROOT: {cmd}")
-                self.assertTrue(os.path.isabs(cmd[-1]), msg=f"grep path is not absolute: {cmd[-1]}")
+            git_grep_calls = [k for k in captured_kwargs if k["cmd"][:2] == ["git", "grep"]]
+            self.assertTrue(git_grep_calls, "Expected at least one git grep call")
+            for call in git_grep_calls:
+                # cwd must be REPO_ROOT (absolute), not None or "."
+                self.assertIsNotNone(call["cwd"], msg="git grep called without cwd")
+                self.assertTrue(os.path.isabs(call["cwd"]), msg=f"git grep cwd is not absolute: {call['cwd']}")
         finally:
             os.unlink(tmppath)
 
@@ -1008,6 +1008,87 @@ class TestVerifyFactualGrepError(unittest.TestCase):
                 self.assertLess(finding["confidence"], 75)
                 self.assertGreaterEqual(finding["confidence"], 30)
                 self.assertFalse(finding["factual_verification"]["verified"])
+        finally:
+            os.unlink(tmppath)
+
+
+# ---------------------------------------------------------------------------
+# git grep symbol verification with timeout
+# ---------------------------------------------------------------------------
+
+class TestVerifyFactualGitGrep(unittest.TestCase):
+    """Tests for git grep symbol verification with timeout."""
+
+    def test_symbol_timeout_no_confidence_reduction(self):
+        """Timed-out symbol search must not reduce confidence."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def my_func():\n    pass\n")
+            tmppath = f.name
+        try:
+            with patch("scripts.verify_findings.run") as mock_run:
+                mock_run.return_value = ("", "", -1)
+                finding = {
+                    "file": tmppath,
+                    "line_start": 1,
+                    "line_end": 2,
+                    "description": "The `ExternalWidget` causes issues",
+                    "evidence": "",
+                    "confidence": 80,
+                }
+                result = verify_factual(finding)
+                self.assertTrue(result)
+                self.assertEqual(finding["confidence"], 80)
+                self.assertTrue(finding["factual_verification"]["verified"])
+        finally:
+            os.unlink(tmppath)
+
+    def test_git_grep_called_with_timeout_and_cwd(self):
+        """Symbol search must call git grep with timeout=3 and cwd=REPO_ROOT."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("x = 1\n")
+            tmppath = f.name
+        try:
+            with patch("scripts.verify_findings.run") as mock_run:
+                mock_run.return_value = ("", "", 1)
+                with patch("scripts.verify_findings.REPO_ROOT", "/fake/root"):
+                    finding = {
+                        "file": tmppath,
+                        "line_start": 1,
+                        "line_end": 1,
+                        "description": "The `UnknownSymbol` is problematic",
+                        "evidence": "",
+                        "confidence": 75,
+                    }
+                    verify_factual(finding)
+                    call_args = mock_run.call_args
+                    cmd = call_args[0][0]
+                    self.assertEqual(cmd[0], "git")
+                    self.assertEqual(cmd[1], "grep")
+                    self.assertIn("-l", cmd)
+                    self.assertEqual(call_args[1].get("timeout"), 3)
+                    self.assertEqual(call_args[1].get("cwd"), "/fake/root")
+        finally:
+            os.unlink(tmppath)
+
+    def test_git_grep_fatal_error_skips_symbol(self):
+        """git grep fatal error (rc=128) must skip symbol, not penalize."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("x = 1\n")
+            tmppath = f.name
+        try:
+            with patch("scripts.verify_findings.run") as mock_run:
+                mock_run.return_value = ("", "fatal: not a git repository", 128)
+                finding = {
+                    "file": tmppath,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "description": "The `SomeClass` is unused",
+                    "evidence": "",
+                    "confidence": 85,
+                }
+                result = verify_factual(finding)
+                self.assertTrue(result)
+                self.assertEqual(finding["confidence"], 85)
         finally:
             os.unlink(tmppath)
 

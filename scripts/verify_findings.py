@@ -630,27 +630,28 @@ def verify_factual(finding):
         if symbol in code_at_lines:
             continue
 
-        # Run grep to find the symbol anywhere in the codebase (RF-01: use REPO_ROOT)
+        # Run git grep to find the symbol anywhere in tracked files
         stdout, grep_stderr, rc = run(
-            ["grep", "-rn",
-             "--exclude-dir=.git", "--exclude-dir=node_modules",
-             "--exclude-dir=vendor", "--exclude-dir=__pycache__",
-             "--exclude-dir=dist", "--exclude-dir=build",
-             "--exclude-dir=.next", "--exclude-dir=target",
-             "-l", symbol, REPO_ROOT]
+            ["git", "grep", "-l", symbol],
+            timeout=3,
+            cwd=REPO_ROOT,
         )
-        # RF-03: rc=2 means grep encountered an I/O error (permission denied,
-        # binary file read, etc.).  Treat this as an inconclusive result and
-        # skip the symbol check rather than falsely zeroing confidence.
-        if rc == 2:
+        # rc=-1: timeout — skip symbol, Phase 5 validators will verify
+        if rc == -1:
             warn(
-                f"verify_factual: grep I/O error while searching for symbol "
-                f"'{symbol}': {grep_stderr.strip()} — skipping symbol check."
+                f"verify_factual: symbol search timed out for "
+                f"'{symbol}' — skipping (Phase 5 will validate)."
+            )
+            continue
+        # rc=2: grep I/O error; rc>=128: fatal git error — skip symbol
+        if rc not in (0, 1):
+            warn(
+                f"verify_factual: git grep error (rc={rc}) for symbol "
+                f"'{symbol}': {grep_stderr.strip()} — skipping."
             )
             continue
         if rc != 0 or not stdout.strip():
-            # rc=1 means grep ran successfully but found no matches
-            # Symbol not found in codebase — note it but don't eliminate
+            # rc=1 means git grep ran successfully but found no matches
             missing_symbols.append(symbol)
 
     # V5-05: Proportional confidence reduction
