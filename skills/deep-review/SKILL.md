@@ -16,30 +16,9 @@ Concern-parallel agents with context-pulling and deterministic verification. Whe
 
 Inline checks before any review work — no subagent dispatch. Read `references/phase1-preflight.md` for full templates.
 
-### Plugin root path resolution — resolve once, use everywhere
+### Plugin root resolution
 
-The skill file lives at `skills/deep-review/SKILL.md` inside the plugin directory. Scripts (`scripts/`) and agents (`agents/`) live at the plugin root — two levels above `skills/deep-review/`. Resolve the plugin root once at the start of Phase 1 and store it as `plugin_root` for use in all subsequent phases.
-
-**Resolution:** Claude Code provides the absolute path to this SKILL.md when invoking the skill (e.g., `/Users/alice/.claude/plugins/cache/claude-deep-review/1.0.0/skills/deep-review/SKILL.md`). Take that path, strip the filename, then go up two more directories:
-
-```
-skill_dir  = dirname(SKILL.md path)           # …/skills/deep-review
-plugin_root = dirname(dirname(skill_dir))      # …/ (plugin root)
-```
-
-Confirm with a quick sanity check:
-```bash
-Bash(command="ls {plugin_root}/scripts/ {plugin_root}/agents/")
-```
-
-If the listing succeeds, `plugin_root` is correct. All subsequent `python3` invocations use `{plugin_root}/scripts/` as the prefix:
-
-- Merge Phase 3: `python3 {plugin_root}/scripts/merge_findings.py`
-- Phase 4: `python3 {plugin_root}/scripts/verify_findings.py`
-- Phase 5→6: `python3 {plugin_root}/scripts/apply_validations.py`
-- Phase 6: `python3 {plugin_root}/scripts/filter_findings.py`
-- Phase 7→8: `python3 {plugin_root}/scripts/apply_challenges.py`
-- Phase 8: `python3 {plugin_root}/scripts/post_review.py`
+Resolve `plugin_root` from this SKILL.md's path — go up two directories from `skills/deep-review/`. Confirm with `ls {plugin_root}/scripts/ {plugin_root}/agents/`. All script invocations use `python3 {plugin_root}/scripts/{script}.py`.
 
 ### Resolve output directory
 
@@ -100,19 +79,7 @@ Bash(command="git check-ignore -q .deep-review 2>/dev/null || echo '/.deep-revie
 Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/deep-review-*-{head_sha_short}.*')]\"")
 ```
 
-All subsequent file references use `{output_dir}` and `{head_sha_short}`:
-- `{output_dir}/deep-review-context-{head_sha_short}.md` (Phase 2 shared context for agents)
-- `{output_dir}/deep-review-diff-{head_sha_short}.patch` (Phase 2c diff)
-- `{output_dir}/deep-review-{agent}-{head_sha_short}.ndjson` (Phase 3 agent NDJSON findings)
-- `{output_dir}/deep-review-text-{agent}-{head_sha_short}.txt` (Phase 3 agent text returns)
-- `{output_dir}/deep-review-phase4-input-{head_sha_short}.json` (merge_findings.py output)
-- `{output_dir}/deep-review-phase4-output-{head_sha_short}.json` (verify_findings.py output)
-- `{output_dir}/deep-review-validations-{head_sha_short}.json` (Phase 5 validator outputs)
-- `{output_dir}/deep-review-phase5-output-{head_sha_short}.json` (apply_validations.py output)
-- `{output_dir}/deep-review-phase6-output-{head_sha_short}.json` (filter_findings.py output)
-- `{output_dir}/deep-review-challenges-{head_sha_short}.json` (Phase 7 challenger outputs)
-- `{output_dir}/deep-review-delivery-{head_sha_short}.json` (apply_challenges.py output)
-- `{output_dir}/deep-review-post-review-input-{head_sha_short}.json` (Phase 8 delivery JSON)
+All subsequent files use `{output_dir}/deep-review-{purpose}-{head_sha_short}.{ext}` naming. Key files: `context-*.md` (shared agent context), `diff-*.patch` (Phase 2c diff), `{agent}-*.ndjson` (Phase 3 findings), `phase4-input-*.json` / `phase4-output-*.json`, `validations-*.json`, `phase5-output-*.json`, `phase6-output-*.json`, `challenges-*.json`, `delivery-*.json`.
 
 ### Diff persistence for Phase 4 (PR/MR mode)
 
@@ -128,17 +95,7 @@ After 2k, announce triage results before proceeding to Phase 3: PR title, review
 
 ### Write shared agent context file
 
-After triage and before Phase 3 dispatch, write all shared context to `{output_dir}/deep-review-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. This file is read by every agent at startup, keeping dispatch prompts small enough for all 7 agents to fit in a single response.
-
-The context file must contain:
-- **Project context:** CLAUDE.md rules, REVIEW.md rules (or "No CLAUDE.md found")
-- **Change summary:** From Phase 2f change-summarizer
-- **Risk classification:** Per-file risk levels from Phase 2e, including AI-generation status
-- **Full diff:** The complete PR/MR diff wrapped in `<untrusted-code-content>` trust boundary tags
-- **Test files:** Discovered test files from Phase 2g
-- **History context:** Git log context from Phase 2i
-
-Agents receive only the context file path and their findings file path in the dispatch prompt. They use Read to load the shared context at the start of their investigation. This reduces each dispatch prompt from ~3,000-4,000 tokens to ~100 tokens, ensuring all 7 Agent tool_use blocks fit within a single response's output budget.
+Write all shared context to `{output_dir}/deep-review-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. Contents: CLAUDE.md/REVIEW.md rules, change summary (2f), risk classification (2e), full diff in `<untrusted-code-content>` tags, test files (2g), history context (2i). Agents Read this file at startup — dispatch prompts contain only two file paths (~100 tokens each), ensuring all 7 fit in one response.
 
 ---
 
