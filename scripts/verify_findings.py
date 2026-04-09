@@ -101,9 +101,24 @@ def warn(msg):
     print(f"WARNING: {msg}", file=sys.stderr)
 
 
-def run(cmd, check=False):
-    """Run a subprocess command. Returns (stdout, stderr, returncode)."""
-    result = subprocess.run(cmd, capture_output=True, text=True)
+def run(cmd, check=False, timeout=None, cwd=None):
+    """Run a subprocess command. Returns (stdout, stderr, returncode).
+
+    Args:
+        cmd: Command as list of strings.
+        check: If True, die() on non-zero exit.
+        timeout: Seconds before TimeoutExpired. None = no limit.
+        cwd: Working directory for the subprocess. None = inherit.
+
+    Returns:
+        (stdout, stderr, returncode). On timeout, returns ("", "", -1).
+    """
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout, cwd=cwd
+        )
+    except subprocess.TimeoutExpired:
+        return ("", "", -1)
     if check and result.returncode != 0:
         die(
             f"Command failed (exit {result.returncode}): {' '.join(cmd)}\n"
