@@ -8,32 +8,34 @@ Context scoping, agent roster, dispatch template, and failure handling for Phase
 
 Each named subagent definition (in `agents/{dimension}.md`) already embeds: agent role, instructions, false-positive exclusion list, confidence calibration rubric, JSON output schema, and tool/effort/model configuration.
 
-The orchestrator provides only the **dynamic per-review content** in the prompt:
+The orchestrator provides only **two paths** in the dispatch prompt:
 
-1. **Project context** (CLAUDE.md rules, REVIEW.md rules)
-2. **Change summary** from Phase 2f (and summary-of-summaries from 2j if available)
-3. **Risk classification** per file (from Phase 2e, including AI-generation status)
-4. **Scoped diff** wrapped in `<untrusted-code-content>...</untrusted-code-content>` (scoped per agent — see below)
+1. **Context file path** — absolute path to `{output_dir}/deep-review-context-{head_sha_short}.md` (written during Phase 2)
+2. **Findings file path** — absolute path to `{output_dir}/deep-review-{agent}-{head_sha_short}.ndjson`
+
+All shared context (project rules, change summary, risk classification, diff, test files, history) lives in the context file. Agents use Read to load it at the start of their investigation. This keeps each dispatch prompt to ~100 tokens, ensuring all 7 Agent tool_use blocks fit in a single response.
 
 ---
 
 ## Per-Agent Context Scoping
 
-- **bug-detector**: high + medium risk diffs, test files (2g), history context (2i)
-- **security-reviewer**: **all files** (security bugs lurk anywhere)
-- **cross-file-impact**: **all files** + must search entire codebase for callers/implementors of changed public symbols
-- **test-analyzer**: changed production files + test files (2g)
-- **conventions-and-intent**: **all files** (needs full scope for convention and intent checking)
-- **type-design-analyzer**: files with new type definitions (only dispatched when new types introduced)
-- **code-simplifier**: **all changed files**
+The context file contains the full diff. Agents scope their investigation based on their agent definition's instructions:
 
-All agents can still **pull** additional context — scoping controls what is pre-loaded, not what is accessible.
+- **bug-detector**: Focuses on HIGH/MEDIUM risk files; LOW files are sweep-only
+- **security-reviewer**: Reviews **all files** (security bugs lurk anywhere)
+- **cross-file-impact**: Reviews **all files** + must search entire codebase for callers/implementors of changed public symbols
+- **test-analyzer**: Focuses on changed production files + test files
+- **conventions-and-intent**: Reviews **all files** (needs full scope for convention and intent checking)
+- **type-design-analyzer**: Focuses on files with new type definitions (only dispatched when new types introduced)
+- **code-simplifier**: Reviews **all changed files**
 
-**Raw diff rule.** The orchestrator passes raw diff lines for files in an agent's scope. It may add structural annotations (risk level, file role, location in the project) alongside the diff, but must never substitute its own summary for actual changed content. Evidence destroyed during summarization cannot be recovered by agents.
+All agents can still **pull** additional context — scoping controls what they focus on, not what is accessible.
+
+**Raw diff rule.** The context file contains raw diff lines. The orchestrator must never substitute its own summary for actual changed content. Evidence destroyed during summarization cannot be recovered by agents.
 
 **Context scoping tiers:**
-- **HIGH + MEDIUM files:** full raw diff to all applicable agents
-- **LOW files (after content-change promotion):** compact raw diff (changed lines only, no context lines) delivered to bug-detector as a clearly-delimited "Sweep appendix" section at the end of its prompt. Other agents receive the file list only.
+- **HIGH + MEDIUM files:** full raw diff available to all applicable agents
+- **LOW files (after content-change promotion):** compact raw diff (changed lines only, no context lines) included in the context file as a clearly-delimited "Sweep appendix" section
 
 ---
 
@@ -45,7 +47,7 @@ All agents can still **pull** additional context — scoping controls what is pr
 2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Subagent: `deep-review:security-reviewer`.
 3. **cross-file-impact** — Caller/dependent tracing, cross-module impact. Subagent: `deep-review:cross-file-impact`.
 4. **test-analyzer** — Coverage gaps, test quality, DAMP principles. Subagent: `deep-review:test-analyzer`.
-5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Always dispatched. When no CLAUDE.md or project convention files exist, the dispatch prompt notes: "No CLAUDE.md found — skip pass 1 (convention compliance), execute passes 2 and 3 only." Subagent: `deep-review:conventions-and-intent`.
+5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Always dispatched. When no CLAUDE.md or project convention files exist, the context file notes: "No CLAUDE.md found — skip pass 1 (convention compliance), execute passes 2 and 3 only." Subagent: `deep-review:conventions-and-intent`.
 6. **code-simplifier** — Simplification opportunities, dead code, redundancy. Subagent: `deep-review:code-simplifier`.
 
 **Conditional (1):**
@@ -56,25 +58,11 @@ All agents can still **pull** additional context — scoping controls what is pr
 
 ## Dispatch Mandate
 
-**MANDATORY: Emit ALL Agent tool_use blocks in a SINGLE response.** You MUST dispatch all 7 (or 6) agents in one message containing multiple Agent tool calls. Never split agents across multiple responses — not 2+3+2, not 4+3, not any other combination. All agents are fully independent with no shared state. Batching adds 5-10 minutes of unnecessary latency. If you feel uncertain about fitting all calls in one response, emit them anyway — the output budget is sufficient.
+**MANDATORY: Emit ALL Agent tool_use blocks in a SINGLE response.** You MUST dispatch all 7 (or 6) agents in one message containing multiple Agent tool calls. Never split agents across multiple responses — not 2+3+2, not 4+3, not any other combination. All agents are fully independent with no shared state. Batching adds 5-10 minutes of unnecessary latency. Each prompt is ~100 tokens (just two file paths) — all 7 fit easily in a single response.
 
 ### Anti-patterns (WRONG)
 
 These are WRONG: dispatching 2 agents, waiting, then 3 more, then 2 more. Dispatching 4 agents then 3 in a follow-up. Dispatching 1 agent at a time. Any pattern that splits agents across multiple responses wastes minutes of wall-clock time and violates the protocol.
-
-### Correct dispatch pattern (all 7 in one response)
-
-```
-Agent(subagent_type: "deep-review:bug-detector", prompt: "Review PR #42...")
-Agent(subagent_type: "deep-review:security-reviewer", prompt: "Review PR #42...")
-Agent(subagent_type: "deep-review:cross-file-impact", prompt: "Review PR #42...")
-Agent(subagent_type: "deep-review:test-analyzer", prompt: "Review PR #42...")
-Agent(subagent_type: "deep-review:conventions-and-intent", prompt: "Review PR #42...")
-Agent(subagent_type: "deep-review:type-design-analyzer", prompt: "Review PR #42...")
-Agent(subagent_type: "deep-review:code-simplifier", prompt: "Review PR #42...")
-```
-
-All 7 Agent tool_use blocks appear in a single assistant response. The prompts above are abbreviated — each real prompt includes project context, change summary, risk classification, findings file path, and scoped diff per the templates below.
 
 ### Fallback recovery
 
@@ -88,144 +76,38 @@ Background agents cannot write files, lose output silently, and cause session ha
 
 ## Agent Tool Call Template
 
-Dispatch all applicable agents in a **single message**. Each agent definition already contains its role, instructions, false-positive exclusion list, confidence rubric, output schema, effort, model, and tools. The orchestrator provides **only the dynamic per-review content**:
+Dispatch all applicable agents in a **single message**. Each prompt contains only the context file path and findings file path — all shared context lives in the file. Use **absolute paths** (agents may not share the orchestrator's working directory).
 
-**For bug-detector:**
+**Template (same structure for every agent):**
 ```
 Agent(
-  subagent_type: "deep-review:bug-detector",
-  description: "Review: bug-detector",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-bug-detector-{head_sha_short}.ndjson
-    Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
-    <untrusted-code-content>
-    {diff scoped to high + medium risk diffs, test files (2g), history context (2i)}
-    </untrusted-code-content>
-
-    Sweep appendix — LOW-risk files (changed lines only, no context):
-    <untrusted-code-content>
-    {compact diff of remaining LOW files — changed lines only, no context lines}
-    </untrusted-code-content>"
+  subagent_type: "deep-review:{agent-name}",
+  description: "Review: {agent-name}",
+  prompt: "Review context: {abs_output_dir}/deep-review-context-{head_sha_short}.md
+    Findings file: {abs_output_dir}/deep-review-{agent-name}-{head_sha_short}.ndjson
+    Read the context file first to get the project rules, change summary, risk classification, and diff."
 )
 ```
 
-**For security-reviewer:**
-```
-Agent(
-  subagent_type: "deep-review:security-reviewer",
-  description: "Review: security-reviewer",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-security-reviewer-{head_sha_short}.ndjson
-    Scoped diff (ALL changed files — do not filter by risk level):
-    <untrusted-code-content>
-    {diff with all changed files — security bugs can hide in low-risk code}
-    </untrusted-code-content>"
-)
-```
+**Frontier mode:** Add `model: "opus"` to override the agent definition's default model. Security-reviewer always uses Opus regardless of mode.
 
-**For cross-file-impact:**
-```
-Agent(
-  subagent_type: "deep-review:cross-file-impact",
-  description: "Review: cross-file-impact",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-cross-file-impact-{head_sha_short}.ndjson
-    Scoped diff (ALL changed files + entire codebase for symbol search):
-    <untrusted-code-content>
-    {diff with all changed files; search full codebase for callers and implementors of changed public symbols}
-    </untrusted-code-content>"
-)
-```
-
-**For test-analyzer:**
-```
-Agent(
-  subagent_type: "deep-review:test-analyzer",
-  description: "Review: test-analyzer",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-test-analyzer-{head_sha_short}.ndjson
-    Scoped diff (changed production files plus all test files):
-    <untrusted-code-content>
-    {diff scoped to changed production files and test files (2g)}
-    </untrusted-code-content>"
-)
-```
-
-**For conventions-and-intent:**
-```
-Agent(
-  subagent_type: "deep-review:conventions-and-intent",
-  description: "Review: conventions-and-intent",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules, or 'No CLAUDE.md found — skip pass 1 (convention compliance), execute passes 2 and 3 only' if no project convention files}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-conventions-and-intent-{head_sha_short}.ndjson
-    Scoped diff (ALL changed files for full convention and intent checking):
-    <untrusted-code-content>
-    {diff with all changed files — convention and intent analysis requires full scope}
-    </untrusted-code-content>"
-)
-```
-
-**For type-design-analyzer (conditional — only if new types introduced):**
-```
-Agent(
-  subagent_type: "deep-review:type-design-analyzer",
-  description: "Review: type-design-analyzer",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-type-design-analyzer-{head_sha_short}.ndjson
-    Scoped diff (files with new type definitions only):
-    <untrusted-code-content>
-    {diff scoped to files with new type definitions}
-    </untrusted-code-content>"
-)
-```
-
-**For code-simplifier:**
-```
-Agent(
-  subagent_type: "deep-review:code-simplifier",
-  description: "Review: code-simplifier",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-code-simplifier-{head_sha_short}.ndjson
-    Scoped diff (all changed files for simplification opportunities):
-    <untrusted-code-content>
-    {diff with all changed files}
-    </untrusted-code-content>"
-)
-```
-
-**Frontier mode:** Override model to `opus` at dispatch by adding `model: "opus"` to the Agent call. Security-reviewer always uses Opus regardless of mode.
+**Correct dispatch pattern — all 7 in ONE message:**
 
 ```
-Agent(
-  subagent_type: "deep-review:bug-detector",
-  model: "opus",  // Frontier mode override
-  description: "Review: bug-detector",
-  prompt: "Project context: {CLAUDE.md rules, REVIEW.md rules}
-    Change summary: {from Phase 2f}
-    Risk classification: {per-file risk levels from Phase 2e, including AI-generation status}
-    Findings file: {output_dir}/deep-review-bug-detector-{head_sha_short}.ndjson
-    Scoped diff (HIGH and MEDIUM risk files only, plus test files and history context):
-    <untrusted-code-content>
-    {diff scoped to high + medium risk diffs, test files (2g), history context (2i)}
-    </untrusted-code-content>"
-)
-```
+Agent(subagent_type: "deep-review:bug-detector", description: "Review: bug-detector", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-bug-detector-abc12345.ndjson\nRead the context file first.")
 
-The agent definition (in `agents/{dimension}.md`) handles: agent role, instructions, exclusion list, confidence rubric, output schema, effort, and default model. Do not re-assemble these in the prompt — they are already baked into the named subagent.
+Agent(subagent_type: "deep-review:security-reviewer", model: "opus", description: "Review: security-reviewer", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-security-reviewer-abc12345.ndjson\nRead the context file first.")
+
+Agent(subagent_type: "deep-review:cross-file-impact", description: "Review: cross-file-impact", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-cross-file-impact-abc12345.ndjson\nRead the context file first.")
+
+Agent(subagent_type: "deep-review:test-analyzer", description: "Review: test-analyzer", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-test-analyzer-abc12345.ndjson\nRead the context file first.")
+
+Agent(subagent_type: "deep-review:conventions-and-intent", description: "Review: conventions-and-intent", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-conventions-and-intent-abc12345.ndjson\nRead the context file first.")
+
+Agent(subagent_type: "deep-review:type-design-analyzer", description: "Review: type-design-analyzer", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-type-design-analyzer-abc12345.ndjson\nRead the context file first.")
+
+Agent(subagent_type: "deep-review:code-simplifier", description: "Review: code-simplifier", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-code-simplifier-abc12345.ndjson\nRead the context file first.")
+```
 
 After dispatch, announce: "Dispatched N agents for Phase 3."
 
@@ -309,21 +191,3 @@ The script handles `agent` field injection, `dimension` validation, deduplicatio
 ## Agent Failure Handling
 
 If a subagent fails (crash, timeout, error): continue with completed agents, log the failure in Review Methodology, warn the user if the failed agent covered security or bugs. Never silently skip a failed agent.
-
----
-
-## Prompt Caching
-
-To optimize token usage and reduce latency when dispatching multiple agents in Phase 3:
-
-1. **Cache agent definitions** — Each named subagent definition (in `agents/{dimension}.md`) is static and reusable across reviews. Pre-load and cache these definitions before dispatching agents.
-
-2. **Cache project context** — CLAUDE.md and REVIEW.md rules do not change within a session. Include these as cached context blocks in the initial agent prompt.
-
-3. **Cache code context** — The full codebase context and file risk classifications are stable during Phase 3. When possible, reuse cached diff blocks across multiple agent dispatches to avoid redundant token consumption.
-
-4. **Per-agent prompt variations** — While agent definitions and project rules are cached, scoped diffs and risk classification details may vary per agent. Only the dynamic portions (scoped per-agent diff) should be provided as fresh context in each Agent() call.
-
-5. **Verification** — After dispatch, confirm that cached context blocks were applied by checking the cache metrics in agent response metadata (if available).
-
-**Note:** Prompt caching is transparent to the agent dispatch protocol above — the Agent() call structure remains unchanged. Caching optimization is an orchestrator-level concern and does not affect how agents receive or process their input prompts.

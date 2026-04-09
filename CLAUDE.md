@@ -47,6 +47,7 @@ SKILL.md derives `{plugin_root}` as two levels above the skill base directory. A
 ## Output directory convention
 
 - `{output_dir}` in SKILL.md and references defaults to `.deep-review/` (repo-local, gitignored). Override with `$DEEP_REVIEW_OUTPUT_DIR` for CI or custom environments.
+- **File-based context handoff.** Shared context (diff, rules, summary, risk) is written to `{output_dir}/deep-review-context-{head_sha_short}.md` during Phase 2. Agent dispatch prompts contain only the context file path and findings file path (~100 tokens each), ensuring all 7 fit in a single response. Agents Read the context file at startup.
 - **AST-safe emission only.** Agents use `printf '%s\n' '...' >> "literal_path"` (not `echo` — zsh's builtin `echo` interprets `\n` as newlines even in single quotes, breaking NDJSON). For apostrophes in JSON values, use `\u0027` (valid JSON Unicode escape). Never use `$'...'` ANSI-C quoting — the sandbox AST parser rejects it, and in subagent sessions this means silent denial.
 - The PreToolUse hook validates echo-append patterns and emits `permissionDecision` JSON on stdout. **The hook does not propagate to subagents** (Claude Code platform limitation) — AST auto-approval is the primary mechanism, the hook is defense-in-depth.
 - The head SHA (`head_sha_short`) is resolved in Phase 2 after PR checkout — not in Phase 1 — so filenames reflect the actual PR HEAD.

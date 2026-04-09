@@ -101,6 +101,7 @@ Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob(
 ```
 
 All subsequent file references use `{output_dir}` and `{head_sha_short}`:
+- `{output_dir}/deep-review-context-{head_sha_short}.md` (Phase 2 shared context for agents)
 - `{output_dir}/deep-review-diff-{head_sha_short}.patch` (Phase 2c diff)
 - `{output_dir}/deep-review-{agent}-{head_sha_short}.ndjson` (Phase 3 agent NDJSON findings)
 - `{output_dir}/deep-review-text-{agent}-{head_sha_short}.txt` (Phase 3 agent text returns)
@@ -125,6 +126,20 @@ Complete 2c REVIEW.md detection before proceeding to 2d. REVIEW.md settings casc
 
 After 2k, announce triage results before proceeding to Phase 3: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions.
 
+### Write shared agent context file
+
+After triage and before Phase 3 dispatch, write all shared context to `{output_dir}/deep-review-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. This file is read by every agent at startup, keeping dispatch prompts small enough for all 7 agents to fit in a single response.
+
+The context file must contain:
+- **Project context:** CLAUDE.md rules, REVIEW.md rules (or "No CLAUDE.md found")
+- **Change summary:** From Phase 2f change-summarizer
+- **Risk classification:** Per-file risk levels from Phase 2e, including AI-generation status
+- **Full diff:** The complete PR/MR diff wrapped in `<untrusted-code-content>` trust boundary tags
+- **Test files:** Discovered test files from Phase 2g
+- **History context:** Git log context from Phase 2i
+
+Agents receive only the context file path and their findings file path in the dispatch prompt. They use Read to load the shared context at the start of their investigation. This reduces each dispatch prompt from ~3,000-4,000 tokens to ~100 tokens, ensuring all 7 Agent tool_use blocks fit within a single response's output budget.
+
 ---
 
 ## Phase 3: Review Agents
@@ -141,7 +156,7 @@ After 2k, announce triage results before proceeding to Phase 3: PR title, review
 
 > **AST-safe emission:** Agents must use ONLY `printf '%s\n' '...' >> "literal_path"` — NOT `echo`. zsh's builtin `echo` interprets `\n` as newlines even inside single quotes, breaking NDJSON when evidence fields contain code with `\n`. `printf '%s\n'` treats the argument as literal text. The sandbox AST parser rejects `$'...'` (ANSI-C quoting), `$VAR`, heredocs, and `python3 -c` — producing `too-complex`, which is silently denied in subagent sessions. For apostrophes in JSON values, agents use `\u0027` (valid JSON Unicode escape). The plugin hook does not propagate to subagents (documented Claude Code platform limitation) — AST auto-approval is the primary mechanism, not the hook.
 
-Read `references/phase3-dispatch.md` for context scoping, agent roster, and dispatch template. Each agent is dispatched as `Agent(subagent_type: "deep-review:{agent-name}", ...)` — the agent definition provides role, instructions, rubric, schema, tools, effort, and model. The orchestrator provides only dynamic per-review content in the prompt.
+Read `references/phase3-dispatch.md` for context scoping, agent roster, and dispatch template. Each agent is dispatched as `Agent(subagent_type: "deep-review:{agent-name}", ...)` — the agent definition provides role, instructions, rubric, schema, tools, effort, and model. The orchestrator provides only the **context file path** and **findings file path** in the prompt — all shared context (diff, rules, summary, risk) lives in the context file written during Phase 2. This keeps dispatch prompts to ~100 tokens each, ensuring all 7 fit in a single response.
 
 ---
 

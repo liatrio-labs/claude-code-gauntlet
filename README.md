@@ -191,3 +191,13 @@ claude-deep-review/
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
 - `gh` CLI (for GitHub) or `glab` CLI (for GitLab)
 - Git
+
+## Recommended settings
+
+For optimal performance, increase the output token budget so all review agents can be dispatched in a single response:
+
+```bash
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=64000
+```
+
+The default (8,000 tokens) is too small for dispatching 7 parallel agents. With the file-based context handoff, each agent prompt is ~100 tokens, but the orchestrator's triage text and thinking can consume significant budget. 64,000 tokens provides ample room.
