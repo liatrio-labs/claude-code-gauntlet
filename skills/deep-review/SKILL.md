@@ -41,15 +41,9 @@ If the listing succeeds, `plugin_root` is correct. All subsequent `python3` invo
 - Phase 7→8: `python3 {plugin_root}/scripts/apply_challenges.py`
 - Phase 8: `python3 {plugin_root}/scripts/post_review.py`
 
-### Resolve output directory and head SHA short — unique filenames
+### Resolve output directory
 
-Resolve the output directory for findings files and a short commit SHA for filename uniqueness.
-
-```bash
-Bash(command="git rev-parse --short=8 HEAD")  # Store as `head_sha_short`
-```
-
-Store the result as `head_sha_short`. The output directory defaults to `.deep-review` (repo-local, gitignored). Override with `$DEEP_REVIEW_OUTPUT_DIR` if set.
+Resolve the output directory for findings files.
 
 ```bash
 # Resolve output directory: env var override or repo-local default
@@ -59,24 +53,7 @@ Bash(command="mkdir -p {output_dir}")
 
 If `mkdir -p` fails, stop — the output directory is not writable. This catches read-only filesystems early rather than producing mysterious failures in Phase 3.
 
-**Ensure `.deep-review/` is gitignored** (skip if using env var override):
-
-```bash
-Bash(command="git check-ignore -q .deep-review 2>/dev/null || echo '/.deep-review/' >> .gitignore")
-```
-
-All subsequent file references use `{output_dir}` as the directory prefix:
-- `{output_dir}/deep-review-diff-{head_sha_short}.patch` (Phase 2c diff)
-- `{output_dir}/deep-review-{agent}-{head_sha_short}.ndjson` (Phase 3 agent NDJSON findings)
-- `{output_dir}/deep-review-text-{agent}-{head_sha_short}.txt` (Phase 3 agent text returns)
-- `{output_dir}/deep-review-phase4-input-{head_sha_short}.json` (merge_findings.py output)
-- `{output_dir}/deep-review-phase4-output-{head_sha_short}.json` (verify_findings.py output)
-- `{output_dir}/deep-review-validations-{head_sha_short}.json` (Phase 5 validator outputs)
-- `{output_dir}/deep-review-phase5-output-{head_sha_short}.json` (apply_validations.py output)
-- `{output_dir}/deep-review-phase6-output-{head_sha_short}.json` (filter_findings.py output)
-- `{output_dir}/deep-review-challenges-{head_sha_short}.json` (Phase 7 challenger outputs)
-- `{output_dir}/deep-review-delivery-{head_sha_short}.json` (apply_challenges.py output)
-- `{output_dir}/deep-review-post-review-input-{head_sha_short}.json` (Phase 8 delivery JSON)
+**Do not resolve the head SHA yet** — it must be computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
 ### Resolve review target
 
@@ -102,6 +79,39 @@ Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUser
 > **Entry check:** If no `AskUserQuestion` was presented during Phase 1, STOP — the configuration gate was missed. Return to Phase 1 and complete it before proceeding.
 
 Identify the review target and gather all context needed for agent dispatch. Fast pass in the main context (not a subagent). Read `references/phase2-triage.md` for all 12 sub-steps (2a–2l), Agent templates, and detection logic.
+
+### Resolve head SHA, gitignore, and clean stale files (after checkout)
+
+Now that we're on the correct branch, compute the short SHA for filename uniqueness:
+
+```bash
+Bash(command="git rev-parse --short=8 HEAD")  # Store as `head_sha_short`
+```
+
+**Ensure `.deep-review/` is gitignored** (skip if using env var override). This runs after checkout to avoid the gitignore addition being stashed by `gh pr checkout`:
+
+```bash
+Bash(command="git check-ignore -q .deep-review 2>/dev/null || echo '/.deep-review/' >> .gitignore")
+```
+
+**Truncate stale files** from prior sessions with the same SHA. This prevents echo-append (`>>`) from accumulating findings across sessions:
+
+```bash
+Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/deep-review-*-{head_sha_short}.*')]\"")
+```
+
+All subsequent file references use `{output_dir}` and `{head_sha_short}`:
+- `{output_dir}/deep-review-diff-{head_sha_short}.patch` (Phase 2c diff)
+- `{output_dir}/deep-review-{agent}-{head_sha_short}.ndjson` (Phase 3 agent NDJSON findings)
+- `{output_dir}/deep-review-text-{agent}-{head_sha_short}.txt` (Phase 3 agent text returns)
+- `{output_dir}/deep-review-phase4-input-{head_sha_short}.json` (merge_findings.py output)
+- `{output_dir}/deep-review-phase4-output-{head_sha_short}.json` (verify_findings.py output)
+- `{output_dir}/deep-review-validations-{head_sha_short}.json` (Phase 5 validator outputs)
+- `{output_dir}/deep-review-phase5-output-{head_sha_short}.json` (apply_validations.py output)
+- `{output_dir}/deep-review-phase6-output-{head_sha_short}.json` (filter_findings.py output)
+- `{output_dir}/deep-review-challenges-{head_sha_short}.json` (Phase 7 challenger outputs)
+- `{output_dir}/deep-review-delivery-{head_sha_short}.json` (apply_challenges.py output)
+- `{output_dir}/deep-review-post-review-input-{head_sha_short}.json` (Phase 8 delivery JSON)
 
 ### Diff persistence for Phase 4 (PR/MR mode)
 
@@ -169,15 +179,17 @@ Pass the output file path directly to `verify_findings.py` in Phase 4 — see St
 
 Phase 4 is deterministic — main orchestrator, no LLM agents. It classifies each finding as "new" (introduced by this PR) or "surfaced" (pre-existing code exposed by the change), verifies that evidence matches actual file content, validates line references against the diff, and groups surviving findings into batches for Phase 5 validators.
 
-Run `scripts/verify_findings.py` with the Phase 3 merged findings JSON (from `{output_dir}/deep-review-phase4-input-{head_sha_short}.json`). The script handles blame classification, factual verification, diff-line validation, and batching deterministically. Redirect output to disk — `apply_validations.py` in Phase 5 reads it directly:
+Run `scripts/verify_findings.py` with the Phase 3 merged findings JSON (from `{output_dir}/deep-review-phase4-input-{head_sha_short}.json`). The script handles blame classification, factual verification, diff-line validation, and batching deterministically:
 
 ```
 python3 {plugin_root}/scripts/verify_findings.py \
   "{output_dir}/deep-review-phase4-input-{head_sha_short}.json" \
   --base-branch {base_branch} \
   --diff-file "{output_dir}/deep-review-diff-{head_sha_short}.patch" \
-  > "{output_dir}/deep-review-phase4-output-{head_sha_short}.json"
+  --output "{output_dir}/deep-review-phase4-output-{head_sha_short}.json"
 ```
+
+No stdout redirect needed — `--output` writes JSON directly to the file. **Do not add `2>&1`** — stderr contains diagnostic logging that should go to the terminal.
 
 Pass `--diff-file` when the diff was saved during Phase 2c (PR/MR mode). For **branch comparison** and **local changes** target types (no saved diff file), omit `--diff-file` — the script falls back to its own git diff chain (three-dot, two-dot, skip).
 
