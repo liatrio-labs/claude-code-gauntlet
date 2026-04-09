@@ -51,13 +51,13 @@ Add the marketplace and install the plugin:
 
 ```bash
 claude plugin marketplace add https://github.com/liatrio-labs/claude-deep-review.git
-claude plugin install claude-deep-review@claude-deep-review
+claude plugin install deep-review@deep-review
 ```
 
 To update later:
 
 ```bash
-claude plugin update claude-deep-review@claude-deep-review
+claude plugin update deep-review@deep-review
 ```
 
 ## Usage
