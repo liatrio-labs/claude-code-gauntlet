@@ -150,8 +150,19 @@ def detect_platform():
 
 def parse_diff_lines(platform, owner, repo, pr_number):
     """
-    Return a set of (filepath, line_number) tuples for lines present in the diff.
-    Line numbers are relative to the new (head) version of each file.
+    Return ``(valid_lines, new_files)``:
+
+    * ``valid_lines`` — set of ``(filepath, line_number)`` tuples for lines present
+      in the diff. Line numbers are relative to the new (head) version of each file.
+    * ``new_files`` — set of filepaths that are *newly added* in this diff (the
+      old-side header is ``--- /dev/null``). GitLab's discussions API rejects
+      ``old_path`` for these, so the GitLab poster needs to know.
+
+    Returns ``(None, None)`` when validation should be skipped (unknown platform
+    or CLI failure). Callers must handle the ``None`` case.
+
+    Accepts both ``a/`` / ``b/`` prefixed headers (``gh pr diff``) and unprefixed
+    headers (``glab mr diff``).
     """
     if platform == "github":
         stdout, stderr, rc = run_api(
@@ -164,25 +175,41 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         )
     else:
         warn("Unknown platform — skipping diff validation. All findings will be posted.")
-        return None
+        return None, None
 
     if rc != 0:
         warn(
             f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
             "Skipping line validation — all findings will be posted."
         )
-        return None
+        return None, None
 
     valid_lines = set()
+    new_files = set()
     current_file = None
     new_line = 0
+    current_file_is_new = False
 
     for raw_line in stdout.splitlines():
-        # New file header: +++ b/path/to/file
-        file_match = re.match(r"^\+\+\+ b/(.+)$", raw_line)
+        # Old-side header: `--- a/path`, `--- path`, or `--- /dev/null`.
+        # `glab mr diff` may omit the `a/` prefix that `gh pr diff` emits.
+        old_match = re.match(r"^--- (?:[ab]/)?(.+)$", raw_line)
+        if old_match:
+            current_file_is_new = old_match.group(1) == "/dev/null"
+            continue
+
+        # New-side header: `+++ b/path`, `+++ path`, or `+++ /dev/null`.
+        file_match = re.match(r"^\+\+\+ (?:[ab]/)?(.+)$", raw_line)
         if file_match:
-            current_file = file_match.group(1)
+            path = file_match.group(1)
+            if path == "/dev/null":
+                current_file = None  # deleted file — no new path to track
+            else:
+                current_file = path
+                if current_file_is_new:
+                    new_files.add(current_file)
             new_line = 0
+            current_file_is_new = False
             continue
 
         # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
@@ -206,7 +233,7 @@ def parse_diff_lines(platform, owner, repo, pr_number):
             valid_lines.add((current_file, new_line))
             new_line += 1
 
-    return valid_lines
+    return valid_lines, new_files
 
 
 def is_line_valid(valid_lines, filepath, line):
@@ -233,6 +260,21 @@ def valid_lines_for_file(valid_lines, filepath):
         {l for fp, l in valid_lines if fp == filepath or fp == stripped}
     )
     return lines[:10]
+
+
+def is_new_file(new_files, filepath):
+    """Return True when *filepath* was newly added in the diff.
+
+    Strips any leading ``a/`` / ``b/`` prefix on *filepath* before lookup so
+    finding paths match diff-captured paths regardless of which side emitted
+    the prefix. Returns False when *new_files* is None or empty.
+    """
+    if not new_files:
+        return False
+    if filepath in new_files:
+        return True
+    stripped = re.sub(r"^[ab]/", "", filepath)
+    return stripped in new_files
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +433,7 @@ def fetch_gitlab_shas(project_id, mr_iid):
     )
 
 
-def post_gitlab(data, valid_lines):
+def post_gitlab(data, valid_lines, new_files=None):
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
@@ -440,17 +482,25 @@ def post_gitlab(data, valid_lines):
             skipped += 1
             continue
 
+        position = {
+            "position_type": "text",
+            "base_sha": base_sha,
+            "head_sha": head_sha,
+            "start_sha": start_sha,
+            "new_path": filepath,
+            "new_line": line,
+        }
+        # Newly-added files have no old version. GitLab's discussions API
+        # returns HTTP 500 (after silently creating the discussion) when
+        # ``old_path`` is set on a position pointing into a new file. Omit
+        # ``old_path`` for added files; include it for modified files so the
+        # position stays anchored to the diff.
+        if not is_new_file(new_files, filepath):
+            position["old_path"] = filepath
+
         payload = {
             "body": render_comment_body(f),
-            "position": {
-                "position_type": "text",
-                "base_sha": base_sha,
-                "head_sha": head_sha,
-                "start_sha": start_sha,
-                "old_path": filepath,
-                "new_path": filepath,
-                "new_line": line,
-            },
+            "position": position,
         }
 
         cmd_prefix = [
@@ -514,7 +564,7 @@ def main():
         die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
 
     # Validate diff lines
-    valid_lines = parse_diff_lines(
+    valid_lines, new_files = parse_diff_lines(
         platform, data["owner"], data["repo"], data["pr_number"]
     )
 
@@ -522,7 +572,7 @@ def main():
     if platform == "github":
         post_github(data, valid_lines)
     else:
-        post_gitlab(data, valid_lines)
+        post_gitlab(data, valid_lines, new_files)
 
 
 if __name__ == "__main__":

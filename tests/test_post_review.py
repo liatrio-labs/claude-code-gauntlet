@@ -115,14 +115,16 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """platform='github' must call gh pr diff."""
         diff = (
             "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
             "+++ b/foo.py\n"
             "@@ -1,1 +1,2 @@\n"
             " existing\n"
             "+added\n"
         )
         mock_run.return_value = (diff, "", 0)
-        result = parse_diff_lines("github", "myorg", "myrepo", 42)
-        self.assertIsNotNone(result)
+        valid_lines, new_files = parse_diff_lines("github", "myorg", "myrepo", 42)
+        self.assertIsNotNone(valid_lines)
+        self.assertEqual(new_files, set())
         call_args = mock_run.call_args[0][0]
         self.assertEqual(call_args[0], "gh")
         self.assertEqual(call_args[1], "pr")
@@ -138,24 +140,100 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+new_line\n"
         )
         mock_run.return_value = (diff, "", 0)
-        result = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
-        self.assertIsNotNone(result)
+        valid_lines, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
+        self.assertIsNotNone(valid_lines)
         call_args = mock_run.call_args[0][0]
         self.assertEqual(call_args[0], "glab")
         self.assertEqual(call_args[1], "mr")
         self.assertEqual(call_args[2], "diff")
 
     @patch("scripts.post_review.run_api")
+    def test_glab_no_prefix_headers_are_parsed(self, mock_run):
+        """`glab mr diff` emits headers without the `a/` / `b/` prefix.
+
+        Regression: the regex previously required ``+++ b/<path>`` and dropped
+        every header from glab, leaving valid_lines empty so all findings were
+        rejected as ``line not found in diff``.
+        """
+        diff = (
+            "diff --git a/src/app.py b/src/app.py\n"
+            "--- src/app.py\n"
+            "+++ src/app.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " ctx\n"
+            "+added\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertIn(("src/app.py", 1), valid_lines)
+        self.assertIn(("src/app.py", 2), valid_lines)
+        self.assertEqual(new_files, set())
+
+    @patch("scripts.post_review.run_api")
+    def test_new_file_detected_via_dev_null_old_header(self, mock_run):
+        """Files added in the diff (``--- /dev/null``) must populate new_files."""
+        diff = (
+            "diff --git a/newfile.py b/newfile.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/newfile.py\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+line1\n"
+            "+line2\n"
+            "diff --git a/existing.py b/existing.py\n"
+            "--- a/existing.py\n"
+            "+++ b/existing.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " ctx\n"
+            "+added\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, new_files = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual(new_files, {"newfile.py"})
+        self.assertIn(("newfile.py", 1), valid_lines)
+        self.assertIn(("existing.py", 2), valid_lines)
+
+    @patch("scripts.post_review.run_api")
+    def test_new_file_detected_with_no_prefix_headers(self, mock_run):
+        """New-file detection must work for glab-style (no-prefix) headers too."""
+        diff = (
+            "--- /dev/null\n"
+            "+++ src/added.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+content\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        _, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(new_files, {"src/added.py"})
+
+    @patch("scripts.post_review.run_api")
+    def test_deleted_file_does_not_add_dev_null_to_valid_lines(self, mock_run):
+        """``+++ /dev/null`` (deleted file) must not produce phantom entries."""
+        diff = (
+            "--- a/gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n"
+            "-line1\n"
+            "-line2\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, new_files = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual(valid_lines, set())
+        self.assertEqual(new_files, set())
+
+    @patch("scripts.post_review.run_api")
     def test_nonzero_rc_returns_none(self, mock_run):
-        """A non-zero exit code from the CLI tool must return None."""
+        """A non-zero exit code from the CLI tool must return (None, None)."""
         mock_run.return_value = ("", "fatal: not a git repository", 128)
-        result = parse_diff_lines("github", "myorg", "myrepo", 1)
-        self.assertIsNone(result)
+        valid_lines, new_files = parse_diff_lines("github", "myorg", "myrepo", 1)
+        self.assertIsNone(valid_lines)
+        self.assertIsNone(new_files)
 
     def test_unknown_platform_returns_none(self):
-        """An unknown platform must return None without calling run_api."""
-        result = parse_diff_lines("bitbucket", "myorg", "myrepo", 1)
-        self.assertIsNone(result)
+        """An unknown platform must return (None, None) without calling run_api."""
+        valid_lines, new_files = parse_diff_lines("bitbucket", "myorg", "myrepo", 1)
+        self.assertIsNone(valid_lines)
+        self.assertIsNone(new_files)
 
 
 # ---------------------------------------------------------------------------
@@ -419,6 +497,105 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
                 self.assertIn("5", msg)
                 self.assertIn("15", msg)
         self.assertTrue(found_diag, "Expected diagnostic in skip warning")
+
+
+# ---------------------------------------------------------------------------
+# is_new_file
+# ---------------------------------------------------------------------------
+
+class TestIsNewFile(unittest.TestCase):
+
+    def test_none_new_files_returns_false(self):
+        from scripts.post_review import is_new_file
+        self.assertFalse(is_new_file(None, "any.py"))
+
+    def test_empty_new_files_returns_false(self):
+        from scripts.post_review import is_new_file
+        self.assertFalse(is_new_file(set(), "any.py"))
+
+    def test_exact_match(self):
+        from scripts.post_review import is_new_file
+        self.assertTrue(is_new_file({"src/added.py"}, "src/added.py"))
+
+    def test_stripped_prefix_match(self):
+        from scripts.post_review import is_new_file
+        self.assertTrue(is_new_file({"src/added.py"}, "b/src/added.py"))
+        self.assertTrue(is_new_file({"src/added.py"}, "a/src/added.py"))
+
+    def test_no_match_returns_false(self):
+        from scripts.post_review import is_new_file
+        self.assertFalse(is_new_file({"src/added.py"}, "src/other.py"))
+
+
+# ---------------------------------------------------------------------------
+# GitLab discussion payload — new file vs modified file
+# ---------------------------------------------------------------------------
+
+class TestGitlabPositionPayload(unittest.TestCase):
+    """Regression tests for GitLab's discussions API payload shape.
+
+    GitLab returns HTTP 500 (after silently creating the discussion record,
+    which then dangles as a hung thread) when a position object includes
+    ``old_path`` for a file that's newly added in the MR. ``post_gitlab``
+    must omit ``old_path`` for new files and include it for modified files.
+    """
+
+    def _capture_position(self, data, valid_lines, new_files):
+        """Run post_gitlab and return the position dict from the discussion call."""
+        from scripts.post_review import post_gitlab
+        captured = []
+
+        def fake_post_json(cmd_prefix, payload):
+            captured.append((cmd_prefix, payload))
+            return {}
+
+        with patch("scripts.post_review.get_head_sha", return_value="abc123"), \
+             patch("scripts.post_review.check_tool"), \
+             patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")), \
+             patch("scripts.post_review.post_json", side_effect=fake_post_json):
+            post_gitlab(data, valid_lines, new_files)
+
+        # First post_json call is the summary note; second is the discussion.
+        self.assertGreaterEqual(len(captured), 2, "expected summary + at least one discussion call")
+        return captured[1][1]["position"]
+
+    def test_new_file_position_omits_old_path(self):
+        data = {
+            "owner": "o", "repo": "r", "pr_number": 1,
+            "findings": [{"file": "src/added.py", "line": 5, "title": "Bug", "body": "x"}],
+        }
+        valid_lines = {("src/added.py", 5)}
+        new_files = {"src/added.py"}
+        position = self._capture_position(data, valid_lines, new_files)
+        self.assertNotIn("old_path", position,
+                         "old_path must be omitted for newly-added files")
+        self.assertEqual(position["new_path"], "src/added.py")
+        self.assertEqual(position["new_line"], 5)
+
+    def test_modified_file_position_includes_old_path(self):
+        data = {
+            "owner": "o", "repo": "r", "pr_number": 1,
+            "findings": [{"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}],
+        }
+        valid_lines = {("src/edited.py", 10)}
+        new_files = set()
+        position = self._capture_position(data, valid_lines, new_files)
+        self.assertEqual(position["old_path"], "src/edited.py")
+        self.assertEqual(position["new_path"], "src/edited.py")
+        self.assertEqual(position["new_line"], 10)
+
+    def test_new_files_none_falls_back_to_modified_behavior(self):
+        """If new_files is None (e.g., diff fetch failed), retain old_path.
+
+        Better to risk a 500 on a new-file finding than to lose anchoring on
+        modified-file findings — and the diff-fetch-failed path is rare.
+        """
+        data = {
+            "owner": "o", "repo": "r", "pr_number": 1,
+            "findings": [{"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}],
+        }
+        position = self._capture_position(data, valid_lines=None, new_files=None)
+        self.assertEqual(position["old_path"], "src/edited.py")
 
 
 if __name__ == "__main__":
