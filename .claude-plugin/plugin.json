@@ -1,5 +1,9 @@
 {
   "name": "deep-review",
-  "version": "2.4.0",
-  "description": "Multi-agent code review plugin. Dispatches up to seven concern-specialized agents with deterministic verification, prompt injection defense, and flexible delivery (PR/MR comments, markdown, chat). Supports GitHub and GitLab."
+  "version": "2.3.4",
+  "description": "Multi-agent code review plugin. Dispatches up to seven concern-specialized agents with deterministic verification, prompt injection defense, and flexible delivery (PR/MR comments, markdown, chat). Supports GitHub and GitLab.",
+  "author": {
+    "name": "Matt Saliano"
+  },
+  "keywords": ["code-review", "multi-agent", "github", "gitlab", "ci"]
 }

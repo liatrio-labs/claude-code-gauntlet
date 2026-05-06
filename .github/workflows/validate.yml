@@ -1,0 +1,26 @@
+name: Validate Plugin
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate plugin.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Validate plugin manifest
+        run: claude plugin validate .
+
+      - name: Print plugin metadata
+        run: |
+          jq -r '"  \(.name) \(.version): \(.description)"' .claude-plugin/plugin.json
