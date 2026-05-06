@@ -82,3 +82,15 @@ jobs:
         id: version
         if: steps.release.outputs.released == 'true'
         run: echo "version=v$(jq -r .version .claude-plugin/plugin.json)" >> "$GITHUB_OUTPUT"
+
+  publish-to-marketplace:
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@6b89d0b06b290fecedb8eaaa389d92a5c48b5833
+    with:
+      tag: ${{ needs.release.outputs.version }}
+      path: "."
+      strict: true
