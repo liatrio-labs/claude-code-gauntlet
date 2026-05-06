@@ -1,0 +1,56 @@
+fail_fast: false
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.45.0
+    hooks:
+      - id: markdownlint-fix
+        exclude: "LICENSE"
+
+  - repo: https://github.com/streetsidesoftware/cspell-cli
+    rev: v9.7.0
+    hooks:
+      - id: cspell
+        name: spell check docs with cspell
+        files: ^(README\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|\.github/pull_request_template\.md|docs/.*\.md)$
+
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.23.0
+    hooks:
+      - id: commitlint
+        name: lint commit message for Conventional Commits compliance
+        additional_dependencies:
+          - '@commitlint/config-conventional'
+        stages: [commit-msg]
+        args:
+          - "--extends=@commitlint/config-conventional"
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.29.0
+    hooks:
+      - id: gitleaks
+        name: scan for committed secrets with gitleaks
+        args:
+          - "--redact"
+
+  - repo: local
+    hooks:
+      - id: pytest
+        name: run pytest test suite
+        entry: python -m pytest tests/ -q
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]

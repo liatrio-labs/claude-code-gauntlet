@@ -23,7 +23,9 @@ __pycache__/
 # Claude Code local settings
 .claude/
 
-# AI Artifacts
+# Internal development artifacts (not shipped)
 docs/specs/
 docs/temp/
 docs/design/
+docs/superpowers/
+docs/improvement-backlog.md

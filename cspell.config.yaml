@@ -1,0 +1,86 @@
+version: "0.2"
+language: en
+
+words:
+  - Liatrio
+  - claudemd
+  - cubic
+  - dedup
+  - deserialization
+  - dispatcher
+  - distros
+  - frontmatter
+  - glab
+  - gitleaks
+  - liatrio
+  - markdownlint
+  - merkle
+  - ndjson
+  - opensource
+  - precommit
+  - pyproject
+  - pytest
+  - reviewdog
+  - skillset
+  - SKILL
+  - SSRF
+  - subagent
+  - subagents
+  - SubmitReview
+  - tomli
+
+ignorePaths:
+  - .git/**
+  - .venv/**
+  - __pycache__/**
+  - .pytest_cache/**
+  - deep-review-workspace/**
+  - .deep-review/**
+  - docs/temp/**
+
+ignoreRegExpList:
+  # Fenced code blocks
+  - /```[\s\S]*?```/g
+  - /<pre><code>[\s\S]*?<\/code><\/pre>/g
+  # Inline code
+  - /`[^`]+`/g
+  # URLs
+  - /https?:\/\/\S+/g
+
+overrides:
+  - filename: README.md
+    words:
+      - dedup
+      - GitOps
+      - newlines
+      - reranking
+
+  - filename: CONTRIBUTING.md
+    words:
+      - autoupdate
+      - commitlint
+      - markdownlint
+
+  - filename: docs/research/**
+    words:
+      - autonomic
+      - benchmarked
+      - benchmarks
+      - codebases
+      - CodeRabbit
+      - DeepMind
+      - Ellipsis
+      - Greptile
+      - LongGenBench
+      - LSPRAG
+      - mantyla
+      - Qodo
+      - SonarQube
+      - SonarSource
+      - sycophancy
+      - sycophantic
+      - tokenize
+      - tradeoff
+      - tradeoffs
+      - turnaround
+      - workflows

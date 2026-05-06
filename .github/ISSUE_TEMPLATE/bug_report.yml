@@ -1,0 +1,127 @@
+name: Bug report
+description: Report a bug or regression with clear repro steps and environment details.
+labels:
+  - bug
+  - needs-triage
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out a bug report!
+        Please provide as much detail as possible so we can reproduce and fix the issue.
+
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Short summary of the bug.
+      placeholder: A brief description of the problem
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Provide step-by-step instructions to reproduce the problem.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / Output
+      description: Relevant logs or command output (mask secrets). Attach files if helpful.
+      render: shell
+
+  - type: dropdown
+    id: phase
+    attributes:
+      label: Affected Phase or Component
+      description: Which part of the review pipeline is affected?
+      options:
+        - Phase 1 — Pre-flight
+        - Phase 2 — Target & triage
+        - Phase 3 — Review agents
+        - Phase 4 — Classify & verify
+        - Phase 5 — Validate
+        - Phase 6 — Filter & reconcile
+        - Phase 7 — Blind challenge
+        - Phase 8 — Report & deliver
+        - Pipeline script (scripts/)
+        - Agent definition (agents/)
+        - Skill orchestration (skills/)
+        - Other / unknown
+
+  - type: input
+    id: claude_code_version
+    attributes:
+      label: Claude Code Version
+      placeholder: e.g., 2.4.0
+
+  - type: input
+    id: plugin_version
+    attributes:
+      label: Plugin Version
+      placeholder: See .claude-plugin/plugin.json (e.g., 2.3.4)
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python Version
+      placeholder: e.g., 3.12.4
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating System
+      placeholder: e.g., Ubuntu 22.04, macOS 14.6
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Review Platform
+      description: Where was the review being performed?
+      options:
+        - GitHub PR
+        - GitLab MR
+        - Local uncommitted changes
+        - Not applicable
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other context, screenshots, or information that might be relevant.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-Submission Checks
+      options:
+        - label: I searched existing issues for duplicates
+          required: true
+        - label: I included clear reproduction steps
+          required: true

@@ -1,0 +1,8 @@
+blank_issues_disabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/liatrio-labs/claude-deep-review#readme
+    about: Refer to the README and docs for setup and usage guidance.
+  - name: Research artifacts
+    url: https://github.com/liatrio-labs/claude-deep-review/tree/main/docs/research
+    about: The research informing the design choices behind this plugin.
