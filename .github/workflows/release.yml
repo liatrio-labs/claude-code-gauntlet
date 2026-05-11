@@ -89,7 +89,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@6b89d0b06b290fecedb8eaaa389d92a5c48b5833
+    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@933e23cb9d11ced816e043dfb22a94aa27ca0780
     with:
       tag: ${{ needs.release.outputs.version }}
       path: "."
