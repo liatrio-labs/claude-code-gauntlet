@@ -38,6 +38,7 @@ Output JSON schema:
             "agents_dispatched": [...],
             "findings_per_channel": {"ndjson": N, "text_fallback": N},
             "duplicates_resolved": N,
+            "dropped_no_id": N,
             "truncation_warnings": [...],
             "validation_warnings": [...]
         }
@@ -255,45 +256,21 @@ def parse_text_file(path: str, agent: str) -> tuple[list[dict], list[str], bool,
 def deduplicate(
     ndjson_findings: dict[str, list[dict]],
     text_findings: dict[str, list[dict]],
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, int]:
     """Merge findings from both channels, preferring NDJSON on ID collision.
+
+    Delegates to finding_dedup.dedup_by_id (single source of truth).
 
     Args:
         ndjson_findings: {agent: [finding, ...]} from Channel 1
         text_findings:   {agent: [finding, ...]} from Channel 2
 
     Returns:
-        (merged_list, duplicates_resolved_count)
+        (merged_list, duplicates_resolved_count, dropped_no_id_count)
     """
-    # id -> (finding, source_priority)  — ndjson=2 wins over text=1
-    seen: dict[str, tuple[dict, int]] = {}
-    duplicates_resolved = 0
+    from scripts.finding_dedup import dedup_by_id
 
-    def _add(finding: dict, priority: int) -> None:
-        nonlocal duplicates_resolved
-        fid = finding.get("id")
-        if fid is None:
-            return
-        if fid in seen:
-            existing_priority = seen[fid][1]
-            if priority > existing_priority:
-                seen[fid] = (finding, priority)
-            duplicates_resolved += 1
-        else:
-            seen[fid] = (finding, priority)
-
-    # Channel 2 first (lower priority)
-    for _agent, findings in text_findings.items():
-        for f in findings:
-            _add(f, 1)
-
-    # Channel 1 second (higher priority — overwrites text version)
-    for _agent, findings in ndjson_findings.items():
-        for f in findings:
-            _add(f, 2)
-
-    merged = [item[0] for item in seen.values()]
-    return merged, duplicates_resolved
+    return dedup_by_id(ndjson_findings, text_findings)
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +387,7 @@ def assemble_output(
     ndjson_count: int,
     text_fallback_count: int,
     duplicates_resolved: int,
+    dropped_no_id: int,
     truncation_warnings: list[str],
     validation_warnings: list[str],
     base_branch: str,
@@ -433,6 +411,7 @@ def assemble_output(
                 "text_fallback": text_fallback_count,
             },
             "duplicates_resolved": duplicates_resolved,
+            "dropped_no_id": dropped_no_id,
             "truncation_warnings": truncation_warnings,
             "validation_warnings": validation_warnings,
         },
@@ -504,7 +483,9 @@ def merge(
     text_findings = _filter_valid(text_findings)
 
     # --- Deduplicate ---
-    merged_raw, duplicates_resolved = deduplicate(ndjson_findings, text_findings)
+    merged_raw, duplicates_resolved, dropped_no_id = deduplicate(
+        ndjson_findings, text_findings
+    )
 
     # Channel counts (both post-validation, post-dedup for consistent measurement)
     ndjson_ids = {f["id"] for findings in ndjson_findings.values() for f in findings if "id" in f}
@@ -537,6 +518,7 @@ def merge(
         ndjson_count=ndjson_count,
         text_fallback_count=text_fallback_count,
         duplicates_resolved=duplicates_resolved,
+        dropped_no_id=dropped_no_id,
         truncation_warnings=truncation_warnings,
         validation_warnings=validation_warnings,
         base_branch=base_branch,

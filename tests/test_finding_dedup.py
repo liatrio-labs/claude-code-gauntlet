@@ -85,36 +85,42 @@ class TestDedupById(unittest.TestCase):
     def test_no_collision(self):
         f1 = _f(fid="A")
         f2 = _f(fid="B", file="other.py")
-        merged, dupes = dedup_by_id({"agent1": [f1]}, {"agent2": [f2]})
+        merged, dupes, dropped = dedup_by_id({"agent1": [f1]}, {"agent2": [f2]})
         self.assertEqual(len(merged), 2)
         self.assertEqual(dupes, 0)
+        self.assertEqual(dropped, 0)
 
     def test_ndjson_wins_over_text(self):
         f_text = _f(fid="A", title="from text")
         f_ndjson = _f(fid="A", title="from ndjson")
-        merged, dupes = dedup_by_id({"ndjson-agent": [f_ndjson]}, {"text-agent": [f_text]})
+        merged, dupes, dropped = dedup_by_id({"ndjson-agent": [f_ndjson]}, {"text-agent": [f_text]})
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["title"], "from ndjson")
         self.assertEqual(dupes, 1)
+        self.assertEqual(dropped, 0)
 
-    def test_finding_without_id_ignored(self):
+    def test_finding_without_id_tracked_as_dropped(self):
         f_no_id = {"file": "x.py", "title": "no id"}
         f_with_id = _f(fid="B")
-        merged, _ = dedup_by_id({"a": [f_no_id, f_with_id]}, {})
+        merged, dupes, dropped = dedup_by_id({"a": [f_no_id, f_with_id]}, {})
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["id"], "B")
+        self.assertEqual(dupes, 0)
+        self.assertEqual(dropped, 1)
 
     def test_empty_inputs(self):
-        merged, dupes = dedup_by_id({}, {})
+        merged, dupes, dropped = dedup_by_id({}, {})
         self.assertEqual(merged, [])
         self.assertEqual(dupes, 0)
+        self.assertEqual(dropped, 0)
 
     def test_multiple_agents_same_id(self):
         f1 = _f(fid="X")
         f2 = _f(fid="X")
-        merged, dupes = dedup_by_id({"a": [f1], "b": [f2]}, {})
+        merged, dupes, dropped = dedup_by_id({"a": [f1], "b": [f2]}, {})
         self.assertEqual(len(merged), 1)
         self.assertEqual(dupes, 1)
+        self.assertEqual(dropped, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -158,6 +164,13 @@ class TestDedupByLocation(unittest.TestCase):
         merged, _dupes = dedup_by_location([f_agent1, f_agent2])
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["id"], "SEC-001")
+
+    def test_locationless_findings_pass_through(self):
+        f1 = {"title": "no location A"}
+        f2 = {"title": "no location B"}
+        merged, dupes = dedup_by_location([f1, f2])
+        self.assertEqual(len(merged), 2)
+        self.assertEqual(dupes, 0)
 
     def test_empty_list(self):
         merged, dupes = dedup_by_location([])
@@ -261,6 +274,19 @@ class TestCLI(unittest.TestCase):
             result = json.load(fh)
         self.assertEqual(result["dedup_stats"]["output_count"], 1)
         self.assertEqual(result["dedup_stats"]["duplicates_resolved"], 1)
+
+    def test_cli_id_mode_reports_dropped_no_id(self):
+        from scripts.finding_dedup import main
+        f1 = _f(fid="A")
+        f2 = {"title": "no id"}
+        path = self._write_findings([f1, f2])
+        out_path = os.path.join(self._tmpdir, "out.json")
+        ret = main([path, "--mode", "id", "--output", out_path])
+        self.assertEqual(ret, 0)
+        with open(out_path) as fh:
+            result = json.load(fh)
+        self.assertEqual(result["dedup_stats"]["output_count"], 1)
+        self.assertEqual(result["dedup_stats"]["dropped_no_id"], 1)
 
     def test_cli_id_mode(self):
         from scripts.finding_dedup import main

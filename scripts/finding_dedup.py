@@ -2,8 +2,8 @@
 """
 finding_dedup.py — Standalone finding deduplication module.
 
-Extracts the deduplication logic from merge_findings.py into an importable,
-testable unit. Useful for:
+Provides a standalone copy of the deduplication logic from merge_findings.py
+as an importable, testable unit. Useful for:
   - Integration with external systems (Grove, Slack, custom dashboards)
   - Cross-session finding persistence (same finding on re-review shouldn't reappear)
   - Building on top of deep-review's output in your own pipeline
@@ -18,7 +18,7 @@ Usage (library):
     )
 
     # Deduplicate by finding ID (original merge_findings.py behavior)
-    merged, dupes = dedup_by_id(ndjson_findings, text_findings)
+    merged, dupes, dropped = dedup_by_id(ndjson_findings, text_findings)
 
     # Deduplicate by code location (cross-agent, same-location detection)
     merged, dupes = dedup_by_location(flat_findings)
@@ -54,13 +54,19 @@ def _id_key(finding: dict) -> Optional[str]:
     return finding.get("id")
 
 
+_LOCATIONLESS_KEY = ("", 0, 0, "")
+
+
 def _location_key(finding: dict) -> tuple:
     """Return (file, line_start, line_end, dimension) dedup key.
 
-    This catches the same location/issue reported by multiple agents under
+    Exact-match semantics: two findings collide only when all four fields
+    match. This catches the same location reported by multiple agents under
     different IDs — cross-agent deduplication that ID-based dedup misses.
 
-    Mirrors the approach used by filter_findings.py cross-agent dedup (BF-09).
+    Unlike filter_findings.dedup_cross_agent (group_by_proximity with a
+    5-line bucket on file+line, no line_end or dimension), this module
+    requires exact line_start, line_end, and dimension equality.
     """
     return (
         finding.get("file", ""),
@@ -77,20 +83,22 @@ def _location_key(finding: dict) -> tuple:
 def dedup_by_id(
     ndjson_findings: dict[str, list[dict]],
     text_findings: dict[str, list[dict]],
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, int]:
     """Deduplicate findings by ID, preferring NDJSON over text fallback.
 
-    Drop-in replacement for merge_findings.deduplicate() with cleaner API.
-    Returns (merged_list, duplicates_resolved_count).
+    Delegated by merge_findings.deduplicate() — single source of truth.
+    Returns (merged_list, duplicates_resolved_count, dropped_no_id_count).
     """
     # id -> (finding, priority)  ndjson=2 wins over text=1
     seen: dict[str, tuple[dict, int]] = {}
     duplicates_resolved = 0
+    dropped_no_id = 0
 
     def _add(finding: dict, priority: int) -> None:
-        nonlocal duplicates_resolved
+        nonlocal duplicates_resolved, dropped_no_id
         fid = finding.get("id")
         if fid is None:
+            dropped_no_id += 1
             return
         if fid in seen:
             existing_priority = seen[fid][1]
@@ -109,7 +117,7 @@ def dedup_by_id(
             _add(f, 2)
 
     merged = [item[0] for item in seen.values()]
-    return merged, duplicates_resolved
+    return merged, duplicates_resolved, dropped_no_id
 
 
 # ---------------------------------------------------------------------------
@@ -126,13 +134,20 @@ def dedup_by_location(
     Catches the same code location reported by multiple agents under different
     IDs. Winner is determined by `prefer_field` (default: higher confidence).
 
+    Findings with no location fields pass through unchanged (not collapsed
+    on the empty sentinel key).
+
     Returns (deduplicated_list, duplicates_resolved_count).
     """
     seen: dict[tuple, dict] = {}
+    locationless: list[dict] = []
     duplicates_resolved = 0
 
     for finding in findings:
         key = _location_key(finding)
+        if key == _LOCATIONLESS_KEY:
+            locationless.append(finding)
+            continue
         if key in seen:
             existing = seen[key]
             existing_val = existing.get(prefer_field, 0)
@@ -145,7 +160,7 @@ def dedup_by_location(
         else:
             seen[key] = finding
 
-    return list(seen.values()), duplicates_resolved
+    return list(seen.values()) + locationless, duplicates_resolved
 
 
 # ---------------------------------------------------------------------------
@@ -257,9 +272,10 @@ def main(argv: list[str] | None = None) -> int:
         # by passing {"loaded": findings} and {}. This is a deliberate simplification
         # where the original ndjson/text distinction (and priority behavior) is
         # intentionally collapsed for id-mode deduplication.
-        merged, dupes = dedup_by_id({"loaded": findings}, {})
+        merged, dupes, dropped_no_id = dedup_by_id({"loaded": findings}, {})
     else:
         merged, dupes = dedup_by_location(findings)
+        dropped_no_id = 0
 
     prior_suppressed = 0
     if args.prior_session:
@@ -273,6 +289,7 @@ def main(argv: list[str] | None = None) -> int:
             "input_count": len(findings),
             "output_count": len(merged),
             "duplicates_resolved": dupes,
+            "dropped_no_id": dropped_no_id,
             "prior_session_suppressed": prior_suppressed,
         },
     }

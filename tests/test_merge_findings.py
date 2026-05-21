@@ -340,41 +340,46 @@ class TestDeduplicate(unittest.TestCase):
         text = {"bug-detector": [text_finding]}
         # Inject agents so we can track source
         inject_agent_field(ndjson, text)
-        merged, dupes = deduplicate(ndjson, text)
+        merged, dupes, dropped = deduplicate(ndjson, text)
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["title"], "NDJSON version")
         self.assertEqual(dupes, 1)
+        self.assertEqual(dropped, 0)
 
     def test_unique_ids_all_kept(self):
         ndjson = {"bug-detector": [_make_finding(id="bug-1")]}
         text = {"security-reviewer": [_make_finding(id="sec-1")]}
         inject_agent_field(ndjson, text)
-        merged, dupes = deduplicate(ndjson, text)
+        merged, dupes, dropped = deduplicate(ndjson, text)
         self.assertEqual(len(merged), 2)
         self.assertEqual(dupes, 0)
+        self.assertEqual(dropped, 0)
 
     def test_finding_without_id_not_included(self):
         finding = {"severity": "high", "title": "no id"}
         ndjson = {"bug-detector": [finding]}
         text = {}
         inject_agent_field(ndjson, text)
-        merged, dupes = deduplicate(ndjson, text)
+        merged, dupes, dropped = deduplicate(ndjson, text)
         self.assertEqual(len(merged), 0)
+        self.assertEqual(dropped, 1)
 
     def test_multiple_agents_same_finding_in_both_channels(self):
         shared = _make_finding(id="shared-1")
         ndjson = {"bug-detector": [dict(shared, title="NDJSON")]}
         text = {"bug-detector": [dict(shared, title="Text")]}
         inject_agent_field(ndjson, text)
-        merged, dupes = deduplicate(ndjson, text)
+        merged, dupes, dropped = deduplicate(ndjson, text)
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["title"], "NDJSON")
         self.assertGreater(dupes, 0)
+        self.assertEqual(dropped, 0)
 
     def test_empty_channels_returns_empty(self):
-        merged, dupes = deduplicate({}, {})
+        merged, dupes, dropped = deduplicate({}, {})
         self.assertEqual(merged, [])
         self.assertEqual(dupes, 0)
+        self.assertEqual(dropped, 0)
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +619,7 @@ class TestMerge(unittest.TestCase):
         self.assertIn("agents_dispatched", m)
         self.assertIn("findings_per_channel", m)
         self.assertIn("duplicates_resolved", m)
+        self.assertIn("dropped_no_id", m)
         self.assertIn("truncation_warnings", m)
         self.assertIn("validation_warnings", m)
         self.assertEqual(m["agents_dispatched"], self.agents)
