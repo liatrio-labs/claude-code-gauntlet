@@ -809,5 +809,32 @@ class TestMain(unittest.TestCase):
         self.assertEqual(len(data["findings"]), 2)
 
 
+
+
+class TestDeduplicateImportPath(unittest.TestCase):
+    """merge_findings must import finding_dedup when run as a script from /tmp."""
+
+    def test_deduplicate_works_when_scripts_on_path_only(self):
+        import subprocess
+
+        code = (
+            "import json, os, sys\n"
+            "sys.path.insert(0, '/home/sean-campbell/github/willow-2.0/worktrees/upstream-claude-deep-review/scripts')\n"
+            "from merge_findings import deduplicate\n"
+            "ndjson = {'a': [{'id': 'x', 'title': 'n'}]}\n"
+            "text = {'a': [{'id': 'x', 'title': 't'}]}\n"
+            "merged, dupes, dropped = deduplicate(ndjson, text)\n"
+            "assert len(merged) == 1 and merged[0]['title'] == 'n' and dupes == 1\n"
+            "print('ok')\n"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd="/tmp",
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

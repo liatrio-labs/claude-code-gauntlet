@@ -50,6 +50,9 @@ import os
 import re
 import sys
 
+# Ensure scripts/ is on sys.path for direct invocation (SKILL.md path).
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -268,10 +271,7 @@ def deduplicate(
     Returns:
         (merged_list, duplicates_resolved_count, dropped_no_id_count)
     """
-    try:
-        from finding_dedup import dedup_by_id  # direct invocation: scripts/ on sys.path
-    except ImportError:
-        from scripts.finding_dedup import dedup_by_id  # module import from repo root
+    from finding_dedup import dedup_by_id
 
     return dedup_by_id(ndjson_findings, text_findings)
 

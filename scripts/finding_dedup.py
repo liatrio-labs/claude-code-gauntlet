@@ -2,9 +2,8 @@
 """
 finding_dedup.py — Canonical finding deduplication module.
 
-Houses the deduplication logic for merge_findings.py as an importable,
-testable unit. merge_findings.deduplicate() delegates here — single source
-of truth.
+Houses the canonical deduplication logic (merge_findings.deduplicate()
+delegates here). Also usable standalone for tests and tooling.
 
 No external dependencies. stdlib only.
 
