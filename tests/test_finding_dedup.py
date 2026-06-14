@@ -87,6 +87,18 @@ class TestDedupById(unittest.TestCase):
         self.assertEqual(dupes, 1)
         self.assertEqual(dropped, 0)
 
+    def test_equal_priority_keeps_first_seen_content(self):
+        """Same id + same priority: first-seen content survives; dupe is counted."""
+        first = _f(fid="X", title="first-seen")
+        second = _f(fid="X", title="should-not-win")
+        # Both in the ndjson channel → both priority 2 (equal). Dict insertion
+        # order means "first" is processed before "second".
+        merged, dupes, dropped = dedup_by_id({"a": [first], "b": [second]}, {})
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]["title"], "first-seen")
+        self.assertEqual(dupes, 1)
+        self.assertEqual(dropped, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
