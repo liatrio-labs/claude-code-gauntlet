@@ -731,6 +731,19 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(result["methodology"]["findings_per_channel"]["text_fallback"], 0)
         self.assertEqual(result["methodology"]["duplicates_resolved"], 0)
 
+    def test_dropped_no_id_counts_idless_findings(self):
+        """methodology.dropped_no_id reflects findings dropped for a missing/empty id."""
+        missing = {
+            "dimension": "bug", "severity": "high", "file": "x.py",
+            "line_start": 1, "title": "t", "description": "d", "confidence": 80,
+        }  # every required field EXCEPT id
+        empty = dict(missing, id="")  # id present but empty — also dropped
+        valid = _make_finding(id="bug-1")
+        _write_ndjson(self._ndjson_path("bug-detector"), [missing, empty, valid])
+        result = self._run_merge()
+        self.assertEqual(result["methodology"]["dropped_no_id"], 2)
+        self.assertEqual(len(result["findings"]), 1)  # only the valid finding survives
+
 
 # ---------------------------------------------------------------------------
 # CLI: main()

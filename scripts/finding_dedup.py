@@ -8,6 +8,9 @@ delegates here). Also usable standalone for tests and tooling.
 No external dependencies. stdlib only.
 
 Usage:
+    # Standalone / SKILL.md script invocation (scripts/ is on sys.path):
+    from finding_dedup import dedup_by_id
+    # From pytest run at the repo root (repo root is on sys.path):
     from scripts.finding_dedup import dedup_by_id
 
     merged, dupes, dropped = dedup_by_id(ndjson_findings, text_findings)

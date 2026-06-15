@@ -472,6 +472,17 @@ def merge(
     all_text_findings_flat = [f for findings in text_findings.values() for f in findings]
     _, pre_val_warnings = validate_findings(all_ndjson_findings_flat + all_text_findings_flat)
 
+    # --- Real dropped_no_id (production signal) ---
+    # id-less findings are stripped by _filter_valid() below and never reach
+    # dedup, so the production count must come from the pre-validation findings
+    # here. dedup_by_id keeps its own counter for direct/tooling callers.
+    # Findings duplicated across both channels are counted per occurrence (they
+    # cannot be correlated without an id), which matches "findings dropped".
+    dropped_no_id = sum(
+        1 for f in all_ndjson_findings_flat + all_text_findings_flat
+        if f.get("id") in (None, "")
+    )
+
     # Filter each channel to only valid findings
     def _filter_valid(findings_dict: dict) -> dict:
         out = {}
@@ -486,7 +497,10 @@ def merge(
     text_findings = _filter_valid(text_findings)
 
     # --- Deduplicate ---
-    merged_raw, duplicates_resolved, dropped_no_id = deduplicate(
+    # Third return (dedup's own dropped_no_id) is always 0 here because
+    # _filter_valid() already removed id-less findings; the real count is
+    # computed above from the pre-validation findings.
+    merged_raw, duplicates_resolved, _ = deduplicate(
         ndjson_findings, text_findings
     )
 
@@ -588,7 +602,8 @@ def main(argv: list[str] | None = None) -> int:
         f"merge_findings: {len(result['findings'])} findings "
         f"(ndjson={m['findings_per_channel']['ndjson']}, "
         f"text_fallback={m['findings_per_channel']['text_fallback']}, "
-        f"dupes={m['duplicates_resolved']})",
+        f"dupes={m['duplicates_resolved']}, "
+        f"dropped_no_id={m['dropped_no_id']})",
         file=sys.stderr,
     )
     if m["truncation_warnings"]:
