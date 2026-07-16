@@ -1,0 +1,37 @@
+# Marketplace publish is intentionally separate from semantic-release.
+#
+# From 2026-05-11 through 2026-07-16, inlining this reusable workflow call in
+# release.yml caused every main push to fail at workflow startup (0s, zero jobs)
+# — GitHub validates `uses:` / caller permission envelopes before any job `if:`
+# runs, so a bad pin or under-scoped permissions blocked version bumps entirely.
+#
+# Triggered by the v* tag that semantic-release pushes. Caller permissions are
+# intentionally broad so the reusable workflow can request write scopes without
+# another silent startup_failure; tighten once claude-plugins documents the
+# minimum envelope for publish-to-marketplace.yml@933e23c.
+name: Publish to Marketplace
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  publish-to-marketplace:
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
+      issues: write
+    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@933e23cb9d11ced816e043dfb22a94aa27ca0780
+    secrets: inherit
+    with:
+      tag: ${{ github.ref_name }}
+      path: "."
+      strict: true

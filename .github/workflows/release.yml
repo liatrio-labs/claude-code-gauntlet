@@ -19,9 +19,6 @@ jobs:
     concurrency:
       group: semantic-release-${{ github.ref }}
       cancel-in-progress: false
-    outputs:
-      released: ${{ steps.release.outputs.released }}
-      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: octo-sts/action@v1.1.1
         id: octo-sts
@@ -74,23 +71,8 @@ jobs:
           after_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$after_tag" ] && [ "$after_tag" != "$before_tag" ]; then
             echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "Released ${after_tag} (was ${before_tag:-none})"
           else
             echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "No release (tag still ${after_tag:-none})"
           fi
-
-      - name: Get plugin version
-        id: version
-        if: steps.release.outputs.released == 'true'
-        run: echo "version=v$(jq -r .version .claude-plugin/plugin.json)" >> "$GITHUB_OUTPUT"
-
-  publish-to-marketplace:
-    needs: release
-    if: needs.release.outputs.released == 'true'
-    permissions:
-      id-token: write
-      contents: read
-    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@933e23cb9d11ced816e043dfb22a94aa27ca0780
-    with:
-      tag: ${{ needs.release.outputs.version }}
-      path: "."
-      strict: true
