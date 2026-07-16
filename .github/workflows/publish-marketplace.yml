@@ -1,19 +1,10 @@
 # Marketplace publish is intentionally separate from semantic-release.
 #
-# From 2026-05-11 through 2026-07-16, inlining this reusable workflow call in
-# release.yml caused every main push to fail at workflow startup (0s, zero jobs)
-# — GitHub validates `uses:` / caller permission envelopes before any job `if:`
-# runs, so a bad pin or under-scoped permissions blocked version bumps entirely.
-#
-# Prefer the `release` event (GitHub Release created by semantic-release) over
-# `push` tags: tag pushes from the release bot do not always enqueue workflows.
-# `workflow_dispatch` covers backfills (e.g. v2.5.0).
-#
-# Pin to @main (not a commit SHA): the previous SHA pin 933e23c became
-# unresolvable and caused startup_failure on every publish attempt. Actions in
-# this org can still reach liatrio-labs/claude-plugins; floating main tracks the
-# healed url+sha catalog bump path from PR #100 without depending on a tip SHA
-# that may not survive squash-merge.
+# Diagnostic pin: restore the last-known-resolvable SHA (6b89d0b) and the
+# exact caller permission envelope that parsed successfully in May 2026.
+# @main and @933e23c both currently fail with startup_failure; if this pin
+# also fails, Actions access from this repo to claude-plugins was revoked.
+# If it runs, we can re-pin to a durable SHA once one is confirmed on main.
 name: Publish to Marketplace
 
 on:
@@ -29,18 +20,13 @@ on:
 permissions:
   contents: read
   id-token: write
-  pull-requests: write
-  issues: write
 
 jobs:
   publish-to-marketplace:
     permissions:
       id-token: write
-      contents: write
-      pull-requests: write
-      issues: write
-    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@main
-    secrets: inherit
+      contents: read
+    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@6b89d0b06b290fecedb8eaaa389d92a5c48b5833
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
       path: "."
