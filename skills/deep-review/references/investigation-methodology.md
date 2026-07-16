@@ -14,7 +14,7 @@
 > 8. `agents/validator.md`
 > 9. `agents/challenger.md`
 >
-> Each agent copy has a `<!-- Canonical source: references/investigation-methodology.md -->` comment pointing back here. `change-summarizer` is excluded (tools: none).
+> Each agent copy has a `<!-- Canonical source: references/investigation-methodology.md -->` comment pointing back here. `change-summarizer` is excluded (works from prompt context only; `tools: Read` satisfies the harness non-empty requirement).
 
 ## LSP-first investigation
 
