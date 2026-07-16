@@ -9,10 +9,11 @@
 # `push` tags: tag pushes from the release bot do not always enqueue workflows.
 # `workflow_dispatch` covers backfills (e.g. v2.5.0).
 #
-# Caller permissions are intentionally broad so the reusable workflow can
-# request write scopes without another silent startup_failure; tighten once
-# claude-plugins documents the minimum envelope for
-# publish-to-marketplace.yml@933e23c.
+# Pin to @main (not a commit SHA): the previous SHA pin 933e23c became
+# unresolvable and caused startup_failure on every publish attempt. Actions in
+# this org can still reach liatrio-labs/claude-plugins; floating main tracks the
+# healed url+sha catalog bump path from PR #100 without depending on a tip SHA
+# that may not survive squash-merge.
 name: Publish to Marketplace
 
 on:
@@ -38,7 +39,7 @@ jobs:
       contents: write
       pull-requests: write
       issues: write
-    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@933e23cb9d11ced816e043dfb22a94aa27ca0780
+    uses: liatrio-labs/claude-plugins/.github/workflows/publish-to-marketplace.yml@main
     secrets: inherit
     with:
       tag: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.release.tag_name }}
