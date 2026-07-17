@@ -1,0 +1,63 @@
+# Live smoke-tier run of the deep-review benchmark harness (bench/).
+#
+# Manual only: this workflow spends real Anthropic API credit and drives the
+# Claude Code CLI + gh CLI against live PRs, so it runs on workflow_dispatch
+# ONLY — never on push or pull_request.
+#
+# Required repository secret:
+#   BENCH_ANTHROPIC_API_KEY — Anthropic API key for the smoke-tier runs.
+#     Mapped into bench/.env as ANTHROPIC_API_KEY for bench/run.py to read.
+#
+# Runner prerequisites (bench/run.py's prereq check fails fast with a fix
+# message if any of these are missing):
+#   - `claude` CLI on PATH — installed below via the official install script.
+#   - `gh` CLI authenticated — satisfied via GH_TOKEN using the default
+#     GITHUB_TOKEN (no extra secret needed).
+#   - `uv` on PATH — installed below via astral-sh/setup-uv, used to run the
+#     vendored scorer in its own isolated environment.
+name: Bench Smoke (live)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    name: Run Smoke-Tier Benchmark
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.3.2
+
+      - name: Install Claude Code CLI
+        run: |
+          curl -fsSL https://claude.ai/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Write bench/.env
+        env:
+          BENCH_ANTHROPIC_API_KEY: ${{ secrets.BENCH_ANTHROPIC_API_KEY }}
+        run: |
+          echo "ANTHROPIC_API_KEY=${BENCH_ANTHROPIC_API_KEY}" > bench/.env
+
+      - name: Run smoke-tier benchmark
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 bench/run.py --tier smoke
+
+      - name: Upload run artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: bench-smoke-runs
+          path: bench/workspace/runs/**
+          if-no-files-found: warn
