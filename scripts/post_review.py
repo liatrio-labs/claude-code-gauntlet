@@ -3,7 +3,11 @@
 post_review.py — Deterministic PR/MR comment delivery for deep-review.
 
 Usage:
-    python3 post_review.py <findings_json_path>
+    python3 post_review.py <findings_json_path> [--dry-run]
+
+    --dry-run captures the would-be GitHub/GitLab API payloads to
+    post-review-payload.json (written next to the findings file) instead of
+    posting. Line validation and read-only fetches (diff, MR versions) still run.
 
 Input JSON schema:
     {
@@ -55,6 +59,19 @@ from datetime import datetime, timezone
 
 
 # ---------------------------------------------------------------------------
+# Dry-run capture
+# ---------------------------------------------------------------------------
+# When --dry-run is passed, main() sets DRY_RUN=True and post_json() captures
+# the would-be API calls into _CAPTURED instead of sending them. Skip warnings
+# are accumulated into _SKIP_WARNINGS (in addition to being printed) so they can
+# be written into the payload file. main() resets all three at startup.
+
+DRY_RUN = False
+_CAPTURED = []
+_SKIP_WARNINGS = []
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -65,6 +82,12 @@ def die(msg):
 
 def warn(msg):
     print(f"WARNING: {msg}", file=sys.stderr)
+
+
+def warn_skip(msg):
+    """Emit a skip warning and record it for dry-run payload capture."""
+    _SKIP_WARNINGS.append(msg)
+    warn(msg)
 
 
 def check_tool(name):
@@ -86,7 +109,15 @@ def run_api(cmd):
 
 
 def post_json(cmd_prefix, payload):
-    """Write payload to a temp file and pass via --input. Returns parsed response."""
+    """Write payload to a temp file and pass via --input. Returns parsed response.
+
+    In dry-run mode the call is captured instead of sent: the intended command
+    prefix and payload are appended to ``_CAPTURED`` and an empty dict is
+    returned so callers proceed exactly as they would after a successful post.
+    """
+    if DRY_RUN:
+        _CAPTURED.append({"cmd_prefix": cmd_prefix, "payload": payload})
+        return {}
     fd, tmppath = tempfile.mkstemp(suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
@@ -349,7 +380,7 @@ def post_github(data, valid_lines):
             vl = valid_lines_for_file(valid_lines, filepath)
             if vl is not None:
                 diag = f" Valid lines for this file: {vl}"
-            warn(
+            warn_skip(
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
@@ -466,7 +497,7 @@ def post_gitlab(data, valid_lines, new_files=None):
         filepath = f["file"]
         line = f.get("line")
         if line is None:
-            warn(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
+            warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
             skipped += 1
             continue
 
@@ -475,7 +506,7 @@ def post_gitlab(data, valid_lines, new_files=None):
             vl = valid_lines_for_file(valid_lines, filepath)
             if vl is not None:
                 diag = f" Valid lines for this file: {vl}"
-            warn(
+            warn_skip(
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
@@ -518,10 +549,63 @@ def post_gitlab(data, valid_lines, new_files=None):
 
 
 # ---------------------------------------------------------------------------
+# Dry-run payload assembly
+# ---------------------------------------------------------------------------
+
+def _method_from_cmd(cmd_prefix):
+    """Return the HTTP method following ``--method`` in *cmd_prefix* (default POST)."""
+    for i, tok in enumerate(cmd_prefix):
+        if tok == "--method" and i + 1 < len(cmd_prefix):
+            return cmd_prefix[i + 1]
+    return "POST"
+
+
+def build_dry_run_payload(platform):
+    """Transform the captured API calls + skip warnings into the payload shape.
+
+    GitHub posts a single review, so the payload exposes ``endpoint`` / ``method``
+    / ``payload`` for that one call. GitLab posts a summary note followed by one
+    discussion per finding, so the first capture becomes ``summary`` and the rest
+    become ``discussions``.
+    """
+    if platform == "github":
+        cap = _CAPTURED[0] if _CAPTURED else {"cmd_prefix": [], "payload": {}}
+        cmd_prefix = cap["cmd_prefix"]
+        return {
+            "platform": "github",
+            "endpoint": cmd_prefix[-1] if cmd_prefix else "",
+            "method": _method_from_cmd(cmd_prefix),
+            "payload": cap["payload"],
+            "skipped": list(_SKIP_WARNINGS),
+        }
+
+    summary = _CAPTURED[0]["payload"] if _CAPTURED else {}
+    discussions = [cap["payload"] for cap in _CAPTURED[1:]]
+    return {
+        "platform": "gitlab",
+        "summary": summary,
+        "discussions": discussions,
+        "skipped": list(_SKIP_WARNINGS),
+    }
+
+
+def write_dry_run_payload(platform, findings_path):
+    """Write the dry-run payload JSON next to *findings_path*. Returns its path."""
+    payload = build_dry_run_payload(platform)
+    out_dir = os.path.dirname(os.path.abspath(findings_path))
+    out_path = os.path.join(out_dir, "post-review-payload.json")
+    with open(out_path, "w") as f:
+        json.dump(payload, f, indent=2, ensure_ascii=False)
+    return out_path
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
+    global DRY_RUN
+
     parser = argparse.ArgumentParser(
         description="Post deep-review findings as PR/MR comments."
     )
@@ -529,7 +613,18 @@ def main():
         "findings_json",
         help="Path to the findings JSON file.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Capture the would-be API payloads to post-review-payload.json "
+             "(next to the findings file) instead of posting. Line validation "
+             "and read-only fetches still run.",
+    )
     args = parser.parse_args()
+
+    DRY_RUN = args.dry_run
+    _CAPTURED.clear()
+    _SKIP_WARNINGS.clear()
 
     # Load input
     try:
@@ -573,6 +668,10 @@ def main():
         post_github(data, valid_lines)
     else:
         post_gitlab(data, valid_lines, new_files)
+
+    if DRY_RUN:
+        out_path = write_dry_run_payload(platform, args.findings_json)
+        print(f"Dry run — no comments posted. Payload written to: {out_path}")
 
 
 if __name__ == "__main__":
