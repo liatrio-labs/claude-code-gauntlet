@@ -522,7 +522,13 @@ def _score_only(run_id):
     if not run_dir.exists():
         print("No run dir at {} to score.".format(run_dir), file=sys.stderr)
         return 2
-    return int(score.score_run(str(run_dir)) or 0)
+    try:
+        score.score_run(str(run_dir))
+    except (ValueError, RuntimeError) as exc:
+        print("--score-only failed for {}: {}".format(run_id, exc), file=sys.stderr)
+        return 2
+    print("Scored {}: wrote {}".format(run_id, run_dir / "scores.json"))
+    return 0
 
 
 # -------------------------------------------------------------------------------- CLI

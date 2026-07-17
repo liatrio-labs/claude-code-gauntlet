@@ -294,12 +294,36 @@ class ResumeTest(RunTestBase):
 
 
 class CliGuardTest(RunTestBase):
-    def test_score_only_without_module_errors_cleanly(self):
+    def test_score_only_missing_run_dir_errors_cleanly(self):
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
             rc = run.main(["--score-only", "smoke-20260101-000000-abc1234"])
         self.assertEqual(rc, 2)
-        self.assertIn("score.py", stderr.getvalue())
+        self.assertIn("No run dir", stderr.getvalue())
+
+    def test_score_only_invokes_score_run(self):
+        run_id = "smoke-20260101-000000-abc1234"
+        (run.RUNS_ROOT / run_id).mkdir(parents=True, exist_ok=True)
+        with patch("bench.runner.score.score_run", return_value={"ok": True}) as scored:
+            stdout = io.StringIO()
+            with contextlib.redirect_stdout(stdout):
+                rc = run.main(["--score-only", run_id])
+        self.assertEqual(rc, 0)
+        scored.assert_called_once_with(str(run.RUNS_ROOT / run_id))
+        self.assertIn("Scored", stdout.getvalue())
+
+    def test_score_only_refusal_is_actionable(self):
+        run_id = "smoke-20260101-000000-abc1235"
+        (run.RUNS_ROOT / run_id).mkdir(parents=True, exist_ok=True)
+        with patch(
+            "bench.runner.score.score_run",
+            side_effect=RuntimeError("judge_pin is null"),
+        ):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = run.main(["--score-only", run_id])
+        self.assertEqual(rc, 2)
+        self.assertIn("judge_pin is null", stderr.getvalue())
 
     def test_mutually_exclusive_modes_rejected(self):
         stderr = io.StringIO()
