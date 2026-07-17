@@ -1,6 +1,6 @@
 {
-  "judge_pin": null,
-  "adjudicator_pin": null,
+  "judge_pin": "claude-opus-4-8",
+  "adjudicator_pin": "claude-opus-4-8",
   "scorer_sha": "dfc6cb427b5d0d7492a8d875ee9447744b7de3d1",
   "anchors": {},
   "judge_sd": null,
@@ -11,6 +11,7 @@
     "subset_early_abort_thresholds": "RESEARCH_PENDING: per-difficulty-bucket early-abort thresholds (artifact 32).",
     "subset_full_tracking_acceptance": "RESEARCH_PENDING: default is rank-order preserved on the full-50 pass with no bucket inverting by >1 SD (artifact 32).",
     "power_analysis_subset_size": "RESEARCH_PENDING: power-analysis refinement of the 15-PR subset size (artifact 32).",
-    "delta_noise": "RESEARCH_PENDING: owner pins delta_noise from measured v2 noise mean+SD after the baseline pass (spec H6)."
+    "delta_noise": "RESEARCH_PENDING: owner pins delta_noise from measured v2 noise mean+SD after the baseline pass (spec H6).",
+    "judge_pin_resolution": "Resolved 2026-07-17: spec Q7 asked for the Opus 4.8 DATED snapshot; the models API exposes claude-opus-4-8 only as an undated alias (models list verified complete, has_more=false; newest dated Opus ids: claude-opus-4-5-20251101, claude-opus-4-1-20250805). Pinned the literal alias per the spec-wins/log-discrepancy rule. Owner may override to a dated id before the Task 18 freeze; re-judge cost ~USD10, caches are pin-keyed."
   }
 }
