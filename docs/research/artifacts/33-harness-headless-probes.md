@@ -8,7 +8,7 @@
 
 | # | Probe | Status | Observed | Consequence |
 |---|-------|--------|----------|-------------|
-| P1 | `AskUserQuestion` availability under `claude -p`, per permission mode | CONFIRMED for default and `acceptEdits`; INCONCLUSIVE for `--dangerously-skip-permissions` (blocked at the outer session's permission layer, not yet run) | `AskUserQuestion` is absent from the headless tool registry in both tested modes — `ToolSearch select:AskUserQuestion` returns no match, and a direct invocation errors with "No such tool available" | No hang path via this tool was observed under `-p`. Task 9's `invoke.py` still keeps a per-PR watchdog plus an `AskUserQuestion` tool-use scan of the result JSON as defense-in-depth |
+| P1 | `AskUserQuestion` availability under `claude -p`, per permission mode | CONFIRMED for all three modes (default, `acceptEdits`, `--dangerously-skip-permissions`) | `AskUserQuestion` is absent from the headless tool registry in all tested modes — `ToolSearch select:AskUserQuestion` returns no match, and a direct invocation errors with "No such tool available" | No hang path via this tool was observed under `-p`. Task 9's `invoke.py` still keeps a per-PR watchdog plus an `AskUserQuestion` tool-use scan of the result JSON as defense-in-depth |
 | P2 | Plugin loading and isolation mechanism | CONFIRMED | `--bare` strips the ambient OAuth session (breaks login unless API-key auth is supplied) and does not isolate operator-installed plugins from the skill list. Isolated `HOME`/`CLAUDE_CONFIG_DIR` + `--plugin-dir`, without `--bare`, loads only the target plugin and rejects the workspace's own `.claude/settings.json` as untrusted | Pinned invocation context: isolated `HOME` + `CLAUDE_CONFIG_DIR` + `--plugin-dir`, no `--bare`. `invoke.py` must pre-seed the isolated config's `.claude.json` with `hasTrustDialogAccepted: true` for the worktree path before invoking |
 | P3 | Cost/usage field paths in `-p --output-format json` | CONFIRMED | Exact field paths for `total_cost_usd`, `modelUsage`, `usage`, and supporting envelope fields — see detail section below | `costs.py` can read these paths directly from the single result envelope with no parsing of a per-message transcript |
 
@@ -25,7 +25,9 @@ timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question.
 
 **Note on the "direct call" evidence:** the default-mode transcript's assistant text frames the direct-call outcome as a prediction ("attempting to call an unloaded tool directly would just fail with an InputValidationError") rather than an executed attempt — no actual direct call appears in that transcript. The verbatim "No such tool available: AskUserQuestion" error was only actually observed in the `acceptEdits` transcript. Both modes agree on the underlying conclusion (tool absent from the registry); only the specific mechanism of the "direct call" observation differs by mode. See the appendix for both raw transcripts.
 
-**`bypass` mode** (`--dangerously-skip-permissions`): Status INCONCLUSIVE by direct observation — the outer orchestration session's auto-mode permission classifier denied launching a nested `claude … --dangerously-skip-permissions`, so this variant could not run yet. Inference (recorded as inference, not observation): since the `-p` tool registry is assembled identically for default and `acceptEdits` modes, the tool is almost certainly absent under bypass too. Re-run is pending an owner permission rule (`Bash(claude *)` in `.claude/settings.local.json`).
+**`bypass` mode** (`--dangerously-skip-permissions`): Status CONFIRMED — exit 0, no hang, `is_error:false`, `num_turns` 3, `total_cost_usd` ≈ 0.955, `modelUsage` key `"claude-fable-5"`. The model reported the same outcome as default and `acceptEdits`: `AskUserQuestion` is absent from the `-p` tool registry (`ToolSearch select:AskUserQuestion` → "No matching deferred tools found"; not present in either the loaded or deferred tool sets). Raw: `/tmp/p1-bypass.json`.
+
+The permission-mode-independence of the `-p` tool registry is now directly observed across all three modes, not inferred — `AskUserQuestion` is absent under default, `acceptEdits`, and bypass alike. This probe initially could not run because the outer orchestration session's auto-mode permission classifier denied launching a nested `claude … --dangerously-skip-permissions`; it was completed 2026-07-17 after the owner added a `Bash(claude:*)` allow rule.
 
 **Consequence:** `AskUserQuestion` cannot fire under `claude -p` — no hang path via this tool was observed. Task 9's `invoke.py` keeps the per-PR watchdog plus an `AskUserQuestion` tool-use scan of the result JSON as defense-in-depth; a hit still marks the run `invalid`. The observed response shape to scan: `-p --output-format json` returns a single result envelope (`type:"result"`), not a per-message transcript — tool-use records do not appear in this format, so the scanner must scan the envelope's `result` text plus treat any `permission_denials` entries naming `AskUserQuestion` as a hit.
 
@@ -201,6 +203,78 @@ timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question.
     "terminal_reason": "completed",
     "fast_mode_state": "off",
     "uuid": "ea0143e5-8c89-4025-9524-4d9cb092e7eb"
+}
+```
+
+### P1 bypass mode — exit 0
+
+Command:
+```
+timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question. Report what happens." --dangerously-skip-permissions --output-format json
+```
+
+```json
+{
+    "type": "result",
+    "subtype": "success",
+    "is_error": false,
+    "api_error_status": null,
+    "duration_ms": 19171,
+    "duration_api_ms": 16370,
+    "ttft_ms": 4079,
+    "ttft_stream_ms": 3164,
+    "time_to_request_ms": 120,
+    "num_turns": 3,
+    "result": "The AskUserQuestion tool isn't available to me in this session. Here's what happened:\n\n1. **Direct lookup failed.** I ran `ToolSearch` with `select:AskUserQuestion` and got back \"No matching deferred tools found\" — it's not in my loaded tool set and not in the deferred tool list either.\n\n2. **Keyword search confirmed it.** A broader search for \"ask user question yes no\" returned only unrelated matches (Slack/Miro user-profile tools, PushNotification, TaskCreate) — no interactive question tool.\n\nInterestingly, `AskUserQuestion` does exist in this environment, but only in the tool lists of certain subagent types (e.g., `claude-workflow:implementer`, `claude-workflow:planner`, `claude-workflow:test-executor`) — it's not exposed to me as the top-level agent in this session.\n\nSo I can't ask you a yes/no question through that structured UI. If you'd like, I can just ask in plain text instead — or if you were testing whether the tool surface includes it, the answer is: it doesn't for the main agent here.",
+    "stop_reason": "end_turn",
+    "session_id": "5e525c78-86b8-4a99-bfe2-cef9cdcd015d",
+    "total_cost_usd": 0.95497,
+    "usage": {
+        "input_tokens": 6,
+        "cache_creation_input_tokens": 40562,
+        "cache_read_input_tokens": 103870,
+        "output_tokens": 796,
+        "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+            "ephemeral_1h_input_tokens": 40562,
+            "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "not_available",
+        "iterations": [
+            {
+                "input_tokens": 2,
+                "output_tokens": 510,
+                "cache_read_input_tokens": 44371,
+                "cache_creation_input_tokens": 11521,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 0,
+                    "ephemeral_1h_input_tokens": 11521
+                },
+                "type": "message"
+            }
+        ],
+        "speed": "standard"
+    },
+    "modelUsage": {
+        "claude-fable-5": {
+            "inputTokens": 6,
+            "outputTokens": 796,
+            "cacheReadInputTokens": 103870,
+            "cacheCreationInputTokens": 40562,
+            "webSearchRequests": 0,
+            "costUSD": 0.95497,
+            "contextWindow": 1000000,
+            "maxOutputTokens": 64000
+        }
+    },
+    "permission_denials": [],
+    "terminal_reason": "completed",
+    "fast_mode_state": "off",
+    "uuid": "6d00d198-6701-4a06-b65c-2afa4519d3c4"
 }
 ```
 
