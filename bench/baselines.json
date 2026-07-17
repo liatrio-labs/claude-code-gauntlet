@@ -1,0 +1,16 @@
+{
+  "judge_pin": null,
+  "adjudicator_pin": null,
+  "scorer_sha": "dfc6cb427b5d0d7492a8d875ee9447744b7de3d1",
+  "anchors": {},
+  "judge_sd": null,
+  "delta_noise": null,
+  "notes": {
+    "_about": "Frozen scoring baselines for the bench harness (spec H7 register). judge_pin/adjudicator_pin are resolved once by resolve_judge_pin(); score_run() refuses to run while judge_pin is null. Read-only to any optimizing loop.",
+    "noise_rate_se_extension_criterion": "RESEARCH_PENDING: extend baseline N=3 -> N=5 if noise-rate SE at N=3 > 2pp (artifact 32).",
+    "subset_early_abort_thresholds": "RESEARCH_PENDING: per-difficulty-bucket early-abort thresholds (artifact 32).",
+    "subset_full_tracking_acceptance": "RESEARCH_PENDING: default is rank-order preserved on the full-50 pass with no bucket inverting by >1 SD (artifact 32).",
+    "power_analysis_subset_size": "RESEARCH_PENDING: power-analysis refinement of the 15-PR subset size (artifact 32).",
+    "delta_noise": "RESEARCH_PENDING: owner pins delta_noise from measured v2 noise mean+SD after the baseline pass (spec H6)."
+  }
+}
