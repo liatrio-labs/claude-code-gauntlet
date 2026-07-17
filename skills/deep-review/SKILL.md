@@ -47,15 +47,23 @@ Parse the user's input to determine the review target before eligibility checks 
 
 ### Pre-flight configuration gate — MANDATORY GATE
 
+> **Headless branch (`DEEP_REVIEW_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`, `post_mode`, `pr_comment_cap`, `draft_policy`, `reviewed_policy`, `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and continue. Do NOT call `AskUserQuestion` anywhere in this run — every gate below (eligibility, configuration, REVIEW.md setup, trivial scope, Phase 8 delivery/task-board) resolves deterministically from the environment. An invalid value fails loud per the validation rule in that reference; it never falls back and never asks.
+
 > **STOP: Complete this gate before Phase 2.** Never assume defaults from remembered preferences.
+>
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): this gate is satisfied by the headless resolution above — the printed `Headless config:` block stands in for the interactive answers; do not present `AskUserQuestion`.
 
 Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUserQuestion` containing the unresolved items (review mode, delivery preference, REVIEW.md setup if missing). If REVIEW.md pre-configures both, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 8.
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
 
 ---
 
 ## Phase 2: Target & Triage
 
 > **Entry check:** If no `AskUserQuestion` was presented during Phase 1, STOP — the configuration gate was missed. Return to Phase 1 and complete it before proceeding.
+>
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): this check passes if the `Headless config:` block was printed during Phase 1; no `AskUserQuestion` is expected, so do not return to the gate.
 
 Identify the review target and gather all context needed for agent dispatch. Fast pass in the main context (not a subagent). Read `references/phase2-triage.md` for all 12 sub-steps (2a–2l), Agent templates, and detection logic.
 
@@ -273,6 +281,8 @@ The script applies challenge thresholds (remove/downgrade/contest/survive), re-r
 
 Four stages: **generate report**, **deliver report**, **offer task board**, **offer dismissed findings**. Execute in order.
 
+> **Headless hard rules (`DEEP_REVIEW_HEADLESS=1`):** Stage 1 uses PR-comment selection=`default` with cap `$DEEP_REVIEW_PR_COMMENT_CAP` (the interactive finding walkthrough is unavailable); posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`, capturing the payload instead of posting). Stage 2 (task board) is skipped — no tasks are created. Stage 3 (dismissed findings) is unreachable because no walkthrough runs, so dismissed_set is empty; REVIEW.md is never written. See `references/headless-mode.md`.
+
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (if closed/merged: deliver via chat/markdown only).
 
 Read `references/phase8-delivery.md` for the full delivery flow (all AskUserQuestion templates, interactive finding walkthrough, pr_comment_set tracking, Improvement Suggestions exclusion rules).
@@ -282,8 +292,12 @@ Read `references/report-format.md` for the report template.
 Read `references/delivery-guide.md` for PR comment API implementation (batched review event, platform-specific API, Python posting scripts, dismissed findings write logic).
 
 > **MANDATORY GATE: Do not post PR comments without completing the PR comment selection flow (Stage 1 Step B) in `references/phase8-delivery.md`.**
+>
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the selection flow is satisfied by selection=`default` with cap `$DEEP_REVIEW_PR_COMMENT_CAP`; the walkthrough is unavailable and no `AskUserQuestion` is presented.
 
 > **MANDATORY GATE: Do not finish without completing the task board offer (Stage 2) in `references/phase8-delivery.md`.**
+>
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the task board is skipped; do not present the offer.
 
 ---
 

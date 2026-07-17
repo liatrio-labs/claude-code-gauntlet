@@ -142,6 +142,8 @@ Never use `find` from Bash for locating these files.
 
 Complete this check before proceeding to 2e. REVIEW.md settings cascade to all thresholds, rules, and ignore patterns for the entire review.
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): skip both REVIEW.md-setup prompts below (the "No REVIEW.md found" build-review-md suggestion and the subdirectory-REVIEW.md `AskUserQuestion`). Root config applies to all directories; never invoke `build-review-md`. REVIEW.md is read-only in headless mode — the hierarchical parse still runs, but no REVIEW.md is created. See `references/headless-mode.md`.
+
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
 - **No REVIEW.md anywhere:**
@@ -188,6 +190,8 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 ### Light Review for Trivial PRs
 
 If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not ask — use `$DEEP_REVIEW_TRIVIAL_SCOPE` (`light` runs bugs+security only, `full` runs all dimensions). See `references/headless-mode.md`.
 
 ---
 

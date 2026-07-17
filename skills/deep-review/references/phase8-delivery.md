@@ -37,6 +37,8 @@ Deliver using the method(s) selected in Phase 1, in this order:
 
 Complete the selection flow below before posting any PR comments.
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Use selection=`default` — top `min($DEEP_REVIEW_PR_COMMENT_CAP, count)` main-report findings by severity then confidence, Improvement Suggestions excluded. The "Let me pick" walkthrough is unavailable. Posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
+
 ```
 AskUserQuestion(
   questions: [{
@@ -102,6 +104,8 @@ See `references/delivery-guide.md` for the findings JSON schema and validation d
 
 The user decides whether to create tasks — always ask before finishing.
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the task board is skipped — present neither `AskUserQuestion` below and create no tasks. See `references/headless-mode.md`.
+
 **If pr_comment_set exists:**
 
 ```
@@ -151,11 +155,15 @@ See `references/delivery-guide.md` for the full dismissed findings flow (AskUser
 
 **Stage 3 self-check:** After delivery and task board, verify Stage 3 (dismissed findings -> REVIEW.md suppression offer) was offered to the user. If dismissed_set is non-empty and you did not present the suppression prompt, go back and present it now before finishing the review.
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): Stage 3 is unreachable — selection=`default` means no walkthrough runs, so dismissed_set is always empty. Skip the self-check and never write REVIEW.md (read-only in headless mode). See `references/headless-mode.md`.
+
 ---
 
 ## Interactive Finding Walkthrough
 
 Reusable selection pattern for both PR comment selection (Stage 1 Step B) and task board selection (Stage 2).
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the walkthrough is unreachable — Stage 1 uses selection=`default` and Stage 2 (task board) is skipped, so neither caller invokes it. The per-finding `AskUserQuestion` below is never presented and dismissed_set stays empty. See `references/headless-mode.md`.
 
 ### Step 1: Show Summary Table
 
