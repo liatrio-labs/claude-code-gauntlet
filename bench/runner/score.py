@@ -245,7 +245,11 @@ def _assemble_candidates(run_dir, pr_records):
         number = _pull_number(url)
         pr_dir = run_dir / "pr-{}".format(number)
         payload_path = pr_dir / "post-review-payload.json"
-        if payload_path.is_file():
+        if not payload_path.is_file():
+            # Tolerate a nested payload (mirrors invoke._find_payload) before concluding empty.
+            nested = sorted(pr_dir.rglob("post-review-payload.json"))
+            payload_path = nested[0] if nested else None
+        if payload_path is not None and payload_path.is_file():
             result, _stats = payload_to_candidates(payload_path, url, tool=TOOL)
         else:
             result = {url: {TOOL: []}}
@@ -304,6 +308,24 @@ def _sanitize_model_name(model):
     return model.strip().replace("/", "_")
 
 
+def _run_stage(cmd, env, stage):
+    """Run one vendored-scorer stage; raise a diagnostic RuntimeError on failure.
+
+    A non-zero exit surfaces as ``RuntimeError`` naming the ``stage`` and carrying
+    the tail of stderr (stdout if stderr is empty) -- never a bare
+    ``CalledProcessError`` whose message omits the stage and output.
+    """
+    result = subprocess.run(
+        cmd, cwd=str(VENDOR_DIR), env=env, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip()[-2000:]
+        raise RuntimeError(
+            "scorer stage {!r} failed (exit {}): {}".format(stage, result.returncode, tail)
+        )
+    return result
+
+
 def _run_scorer_stages(pin, api_key, model_dir):
     """Run dedup (step2_5) then judge (step3) via ``uv run`` in the vendor dir."""
     if not api_key:
@@ -316,16 +338,16 @@ def _run_scorer_stages(pin, api_key, model_dir):
     sanitized = _sanitize_model_name(pin)
     dedup_rel = "results/{}/dedup_groups.json".format(sanitized)
 
-    subprocess.run(
+    _run_stage(
         ["uv", "run", "python", "-m",
          "code_review_benchmark.step2_5_dedup_candidates", "--tool", TOOL],
-        cwd=str(VENDOR_DIR), env=env, check=True,
+        env, "dedup",
     )
-    subprocess.run(
+    _run_stage(
         ["uv", "run", "python", "-m",
          "code_review_benchmark.step3_judge_comments",
          "--tool", TOOL, "--dedup-groups", dedup_rel],
-        cwd=str(VENDOR_DIR), env=env, check=True,
+        env, "judge",
     )
 
 
@@ -552,9 +574,14 @@ def _read_run_costs(run_dir):
     per_model = {}
     for pr_dir in sorted(Path(run_dir).glob("pr-*")):
         envelope = None
-        raw = pr_dir / "raw.json"
-        if raw.is_file():
-            envelope = _extract_result_envelope(raw.read_text(errors="replace"))
+        # raw.json is the real review's envelope; raw-naive.json the naive anchor's.
+        # A PR dir carries one or the other -- probe both, real review taking precedence.
+        for raw_name in ("raw.json", "raw-naive.json"):
+            raw = pr_dir / raw_name
+            if raw.is_file():
+                envelope = _extract_result_envelope(raw.read_text(errors="replace"))
+                if envelope is not None:
+                    break
         if envelope is None:
             for name in ("result.json", "costs.json"):
                 path = pr_dir / name
@@ -681,6 +708,11 @@ def score_run(
     # 1) candidates from each PR payload, keyed by golden URL.
     pr_records = _run_pr_records(run_dir)
     candidates, per_pr = _assemble_candidates(run_dir, pr_records)
+    if not candidates:
+        raise RuntimeError(
+            "no scorable PRs in {}: no PR completed with status 'ok', so there are no "
+            "candidates to score. Re-run the tier (or --retry-failed) first.".format(run_dir)
+        )
 
     # 2) stage scorer inputs (candidates.json + injected benchmark_data.json).
     sanitized = _sanitize_model_name(pin)

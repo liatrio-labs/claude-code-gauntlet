@@ -12,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -227,6 +228,88 @@ class ScoreRunRefusalTests(unittest.TestCase):
                 baselines_path=baselines,
             )
         self.assertIn("MARTIAN_MODEL", str(ctx.exception))
+
+    def test_no_ok_prs_raises_actionable(self):
+        # A run whose only PR failed -> zero candidates -> the scorer would write no
+        # evaluations.json (FileNotFoundError downstream). score_run must refuse first.
+        state = self.run_dir / "state"
+        state.mkdir()
+        write_json(state / "a.json",
+                   {"url": "https://github.com/o/r/pull/1", "status": "failed"})
+        baselines = self.tmp / "baselines.json"
+        write_json(baselines, {"judge_pin": "claude-opus-4-8-20260101"})
+        with self.assertRaises(RuntimeError) as ctx:
+            score_run(self.run_dir, env={}, baselines_path=baselines)
+        self.assertIn("no scorable PRs", str(ctx.exception))
+
+
+# ----------------------------------------------------- scorer-stage failure surface
+
+
+class ScorerStageFailureTests(unittest.TestCase):
+    def test_stage_nonzero_exit_raises_runtimeerror_naming_stage(self):
+        pin = "claude-opus-4-8-20260101"
+        fake = SimpleNamespace(returncode=1, stdout="", stderr="Traceback: boom in dedup")
+        with mock.patch.object(score.subprocess, "run", return_value=fake):
+            with self.assertRaises(RuntimeError) as ctx:
+                score._run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
+        msg = str(ctx.exception)
+        self.assertIn("dedup", msg)  # the failing stage is named
+        self.assertIn("boom", msg)   # stderr tail is surfaced
+
+
+# ------------------------------------------------------------- _read_run_costs
+
+
+class ReadRunCostsTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_reads_raw_naive_envelope(self):
+        # A naive-anchor PR dir carries only raw-naive.json (never raw.json).
+        pr = self.tmp / "run" / "pr-9"
+        pr.mkdir(parents=True)
+        write_json(pr / "raw-naive.json", {
+            "type": "result",
+            "total_cost_usd": 0.7,
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        })
+        costs = score._read_run_costs(self.tmp / "run")
+        self.assertAlmostEqual(costs["cost_usd"], 0.7)
+        self.assertEqual(costs["tokens_total"], 15)
+
+
+# ------------------------------------------------------------- _assemble_candidates
+
+
+class AssembleCandidatesTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_finds_nested_payload(self):
+        # The flat post-review-payload.json is absent; a nested one under output/
+        # must still be discovered (mirrors invoke._find_payload's rglob fallback).
+        run_dir = self.tmp / "run"
+        url = "https://github.com/o/r/pull/12"
+        nested = run_dir / "pr-12" / "output"
+        nested.mkdir(parents=True)
+        write_json(nested / "post-review-payload.json", {
+            "platform": "github",
+            "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
+            "skipped": [],
+        })
+        candidates, per_pr = score._assemble_candidates(run_dir, [(url, "ok")])
+        self.assertIn(url, candidates)
+        self.assertEqual(len(candidates[url]["deep-review"]), 1)
+        self.assertEqual(per_pr[url]["candidates"][0]["text"], "c1")
 
 
 class ScoreRunEndToEndTests(unittest.TestCase):
