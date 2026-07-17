@@ -1,0 +1,452 @@
+{
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/1": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 1,
+    "fork": true,
+    "head_sha": "ffbaf8c54269df2ce510de91245760fddce09896",
+    "base_sha": "3f71fa15c93bb0b751bb92abae1b5dc9a21bd4ca",
+    "base_ref": "image-processing-optimization"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 10,
+    "fork": true,
+    "head_sha": "d1c69189f3c90ecf56013a8da904da9bff9a8e19",
+    "base_sha": "913c3d6f636d02b3dd6c2c022ca1af2bec95d752",
+    "base_ref": "rest-serializer-enhancement-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/2": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 2,
+    "fork": true,
+    "head_sha": "6669a2d94d76eea3b99b8c476d12b1eb66726b07",
+    "base_sha": "56abd247e1829cb6de82dfcc8ce04deb5f0d1e91",
+    "base_ref": "email-notifications-enhancement"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/3": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 3,
+    "fork": true,
+    "head_sha": "5f8a130277dbddc95d133cd2832be639baf89213",
+    "base_sha": "e25638dab0d4b98f99c8fe8976ccaae8f4fb9db3",
+    "base_ref": "blocked-email-validation-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 4,
+    "fork": true,
+    "head_sha": "4f8aed295a29954023b2849c060ef4fb299d1b5d",
+    "base_sha": "62db063e1e1abe691313ab42682a68f796d63769",
+    "base_ref": "embed-url-handling-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/5": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 5,
+    "fork": true,
+    "head_sha": "5b229316ee4c661836ed1161139692a3e8527444",
+    "base_sha": "98fa098e6fade3097a11fe7f99a98a4e6ffb4728",
+    "base_ref": "header-layout-optimization-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/6": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 6,
+    "fork": true,
+    "head_sha": "267d8be1f556ed59639ced396c885bb44586da19",
+    "base_sha": "7a5fbae060bd0d3e29f3a4b5c6f2bfd8b2914dc7",
+    "base_ref": "url-handling-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/7": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 7,
+    "fork": true,
+    "head_sha": "d38c4d5f7443223c81529c22470293771baf9f38",
+    "base_sha": "7554b5e3c458dc79b591d5e874e79ab10cf30c2f",
+    "base_ref": "theme-color-scheme-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/8": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 8,
+    "fork": true,
+    "head_sha": "060cda77729cb1c4a827560e09e89a7b22078ba9",
+    "base_sha": "4975fc28903a84418f546b2809370f19abf10e08",
+    "base_ref": "group-dm-user-addition-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/9": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "discourse-graphite",
+    "pr_number": 9,
+    "fork": true,
+    "head_sha": "ecfa17b5a79dfdc91e7a4d50b42ae78a35d0a293",
+    "base_sha": "728845d008f06828630a632e5c7d67e11bf15deb",
+    "base_ref": "localization-system-pre"
+  },
+  "https://github.com/ai-code-review-evaluation/keycloak-greptile/pull/1": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "keycloak-greptile",
+    "pr_number": 1,
+    "fork": true,
+    "head_sha": "3214b188de808fdb0fff335556b686f1b0a63218",
+    "base_sha": "30f804af450dec523909a52f2a4b97302d27f5cc",
+    "base_ref": "improve-auth-user-experience"
+  },
+  "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "sentry-greptile",
+    "pr_number": 1,
+    "fork": true,
+    "head_sha": "8ab88145113dd23a930e23b9cbbcf8b30e4c0b17",
+    "base_sha": "a5d290951def84afdcc4c88d2f1f20023fc36e2a",
+    "base_ref": "master"
+  },
+  "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "sentry-greptile",
+    "pr_number": 2,
+    "fork": true,
+    "head_sha": "8ab88145113dd23a930e23b9cbbcf8b30e4c0b17",
+    "base_sha": "28e3db2520d4ea28c57b08da57b83917ba7b2e15",
+    "base_ref": "performance-optimization-baseline"
+  },
+  "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/3": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "sentry-greptile",
+    "pr_number": 3,
+    "fork": true,
+    "head_sha": "6ad6fe3899f630ccf922ce7ac681147dc7987435",
+    "base_sha": "a5d290951def84afdcc4c88d2f1f20023fc36e2a",
+    "base_ref": "master"
+  },
+  "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/5": {
+    "owner": "ai-code-review-evaluation",
+    "repo": "sentry-greptile",
+    "pr_number": 5,
+    "fork": true,
+    "head_sha": "ea188e2d736fd6ed27c1dba8aae63b7268e2a7a9",
+    "base_sha": "49a275847631e231672d01b5dcd66558c069d25b",
+    "base_ref": "replays-delete-vulnerable"
+  },
+  "https://github.com/calcom/cal.com/pull/10600": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 10600,
+    "fork": false,
+    "head_sha": "54486a059cd2032042189bb565646ba4e0f6bd61",
+    "base_sha": "efa6d464a38e60ceeeb88f40668c1c4ac4bfaf54",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/10967": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 10967,
+    "fork": false,
+    "head_sha": "de628295646d0848226618108a52f2f1e5d04ac0",
+    "base_sha": "a308075bc39b77ed7059b0cae9d443d669a7bf98",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/11059": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 11059,
+    "fork": false,
+    "head_sha": "9fde0e906897cc0f4f71793f647dd629faba3317",
+    "base_sha": "bc89fe00ea84d20bedcec782f0701b9711dc8201",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/14740": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 14740,
+    "fork": false,
+    "head_sha": "92f44dcea7ff19e9123a30c63c167a2938df5a55",
+    "base_sha": "b004587262e8221083bafbe9a0c515e7becaa7b3",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/14943": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 14943,
+    "fork": false,
+    "head_sha": "c790227e0cda780e6fea9bb03af27948d9e286b9",
+    "base_sha": "917c7b0764f4c6bfdca95db2c5f73dbfdbe11757",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/22345": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 22345,
+    "fork": false,
+    "head_sha": "da09bc0808e7c6df1bc10e00d5acf764d94c7cc7",
+    "base_sha": "c9a47dd0cebd121ff73f24e1f8c1829579daf8e3",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/22532": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 22532,
+    "fork": false,
+    "head_sha": "5fd11f9faa79c4aefd39975d1b0e963e5034f793",
+    "base_sha": "30a92a4d66b417f7c19dee2b343099adc6e88aa6",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/7232": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 7232,
+    "fork": false,
+    "head_sha": "6048e2a86b50e81e1e3b1b467dfea5a895add3dc",
+    "base_sha": "d1440bb5d2f2190ad7ae1d26c165f970055b5370",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/8087": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 8087,
+    "fork": false,
+    "head_sha": "820d7fa87e0c824c5dee8082a33efadb1a2566f7",
+    "base_sha": "ba9688a04a8398c9a8332ee7061bfae2f2efd524",
+    "base_ref": "main"
+  },
+  "https://github.com/calcom/cal.com/pull/8330": {
+    "owner": "calcom",
+    "repo": "cal.com",
+    "pr_number": 8330,
+    "fork": false,
+    "head_sha": "ee38fd295fd294b9fc787eba482bde24bbfea69b",
+    "base_sha": "93cb21f55a2a40d9116c014741f5679fbeff5fd9",
+    "base_ref": "main"
+  },
+  "https://github.com/getsentry/sentry/pull/67876": {
+    "owner": "getsentry",
+    "repo": "sentry",
+    "pr_number": 67876,
+    "fork": false,
+    "head_sha": "bb75657fc8f13923c1d7983f422290908a1e7310",
+    "base_sha": "344aa102e7818606e29426ebe69d5a680d8727c6",
+    "base_ref": "master"
+  },
+  "https://github.com/getsentry/sentry/pull/77754": {
+    "owner": "getsentry",
+    "repo": "sentry",
+    "pr_number": 77754,
+    "fork": false,
+    "head_sha": "9501091c52ae94e8d916f79b35d21975b3f9cadb",
+    "base_sha": "bb5a6837cb5b3d8d3b174e17d42ec14486ef8738",
+    "base_ref": "master"
+  },
+  "https://github.com/getsentry/sentry/pull/80168": {
+    "owner": "getsentry",
+    "repo": "sentry",
+    "pr_number": 80168,
+    "fork": false,
+    "head_sha": "8422030ef456e3a898415e96475b4d8ddfc7640f",
+    "base_sha": "bdd229e3f22e307fe40b30ef99e92ff3f6723da4",
+    "base_ref": "master"
+  },
+  "https://github.com/getsentry/sentry/pull/80528": {
+    "owner": "getsentry",
+    "repo": "sentry",
+    "pr_number": 80528,
+    "fork": false,
+    "head_sha": "dcdcadb771128e79259cc9eff9c70c38fc597976",
+    "base_sha": "0cfc28e76ddc986d2d89dd9b9f63ee916a18a5f9",
+    "base_ref": "master"
+  },
+  "https://github.com/getsentry/sentry/pull/93824": {
+    "owner": "getsentry",
+    "repo": "sentry",
+    "pr_number": 93824,
+    "fork": false,
+    "head_sha": "3162ad68a5c87666788b27a44eb31235025091a9",
+    "base_sha": "de11fb0166a7244115bb066edd65ec0d6b7e365c",
+    "base_ref": "master"
+  },
+  "https://github.com/getsentry/sentry/pull/95633": {
+    "owner": "getsentry",
+    "repo": "sentry",
+    "pr_number": 95633,
+    "fork": false,
+    "head_sha": "9966ec5a13e331659c3ea00981f9b11b0faf821f",
+    "base_sha": "fd358e8a388939959369f08f616e29552cdaf96e",
+    "base_ref": "master"
+  },
+  "https://github.com/grafana/grafana/pull/103633": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 103633,
+    "fork": false,
+    "head_sha": "7562f37880367411a62304bcdcdc178bced23906",
+    "base_sha": "5634ca44f799a82161f0401dadc286452f3bdbf8",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/106778": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 106778,
+    "fork": false,
+    "head_sha": "8df850371034b73dc4dd9908cc30fa09f12a1f97",
+    "base_sha": "47e5bd23163e6037fc0741068ac78930bba2769f",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/107534": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 107534,
+    "fork": false,
+    "head_sha": "1cab4143d443c33079566f6ca36931eb8468159f",
+    "base_sha": "d9a8253640464014aa3662c91131278990cfb828",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/76186": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 76186,
+    "fork": false,
+    "head_sha": "303cdc2caf256aa5df660611120c2e3f7392365d",
+    "base_sha": "58ba11ecbd60863e2bfc6e32f0399ed4feb3927a",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/79265": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 79265,
+    "fork": false,
+    "head_sha": "bbd8c507cdf56f6b884373809e0b24abd4a2353d",
+    "base_sha": "50f4e78a39914711d0d231a501ba215becf17ebc",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/80329": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 80329,
+    "fork": false,
+    "head_sha": "04cfa3bfd469c035ff8b35f9a66867c4e8d5dcf4",
+    "base_sha": "a886bd3c79a417a70b51509384d1f1ec3e87e96b",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/90045": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 90045,
+    "fork": false,
+    "head_sha": "e369f24665ec70e1e3700f457d25ef83301d931a",
+    "base_sha": "66c4dff17e9147b11fb9b14c6ed63089a599da65",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/90939": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 90939,
+    "fork": false,
+    "head_sha": "b1613e320acff00623e6efc59f00ee68c7684a97",
+    "base_sha": "3ce1a5b0caab215346a51629b0344b90d67e9478",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/94942": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 94942,
+    "fork": false,
+    "head_sha": "f3317b329b4eb8fd96f99dd86525bc4a22d20248",
+    "base_sha": "cbe1e7d63f098e306058c0fbcab2f5c30602fa7d",
+    "base_ref": "main"
+  },
+  "https://github.com/grafana/grafana/pull/97529": {
+    "owner": "grafana",
+    "repo": "grafana",
+    "pr_number": 97529,
+    "fork": false,
+    "head_sha": "26fed312840cd76b766cbd2158e17a7e6c0ec548",
+    "base_sha": "871af07203177ce59a24e742107119409274f48a",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/32918": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 32918,
+    "fork": false,
+    "head_sha": "e944e2acf1e64421860a8e827f93ad06c169621b",
+    "base_sha": "272cfc68dcc88615396ae62ed1571918e9c58ad3",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/33832": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 33832,
+    "fork": false,
+    "head_sha": "79d11c4890cc4792e3dc3535af59e4e5f7a2739d",
+    "base_sha": "10aca5552314d6e5c9226f3c6d0107861c38c693",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/36880": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 36880,
+    "fork": false,
+    "head_sha": "1950a511026d520a7329c7b6b9ee60a4af8f8b55",
+    "base_sha": "b8c1cd410f4499c77a8b372decfe1718b80ccfd2",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/36882": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 36882,
+    "fork": false,
+    "head_sha": "62bf98939eda58f0d0a1a41a58aa6d4ecdc24dba",
+    "base_sha": "8671f860469d6d95e54df3e13f77ebc401249489",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/37038": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 37038,
+    "fork": false,
+    "head_sha": "7355f05e6aafe2a7acc6434fb40c686665416606",
+    "base_sha": "7ea067aae9be56cb2622bce6563864817c3dfeaf",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/37429": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 37429,
+    "fork": false,
+    "head_sha": "02f48f776f43734d1ac8914d3ad6a7115acdcb33",
+    "base_sha": "f3c8e8f3487112f2c99aa78400430cce2d30be39",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/37634": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 37634,
+    "fork": false,
+    "head_sha": "daffb05b5ad091d3ec09933c3c99c2b54f448696",
+    "base_sha": "c22f76867f595f0f7c327376a66a08dca01949e8",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/38446": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 38446,
+    "fork": false,
+    "head_sha": "ce2dcc537b4b1f98a335e88cfe8e0b804483252a",
+    "base_sha": "85737f52b59aa2e3403c9b8e48acf71ccc5bfae3",
+    "base_ref": "main"
+  },
+  "https://github.com/keycloak/keycloak/pull/40940": {
+    "owner": "keycloak",
+    "repo": "keycloak",
+    "pr_number": 40940,
+    "fork": false,
+    "head_sha": "4def149a50c4b9b2c24fbb753ac60fe4f4df0cac",
+    "base_sha": "c834e7473c02f11451216b3fbf355f953cfd95e9",
+    "base_ref": "main"
+  }
+}
