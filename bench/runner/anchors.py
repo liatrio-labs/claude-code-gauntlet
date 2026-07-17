@@ -16,11 +16,13 @@ Two entry points:
   real scoring runs on the 4.8 pin. This makes real (small) API spend.
 
 * ``rejudge_anchors(judge_pin)`` — the Step-3 machinery: re-judge all three
-  anchors on a subset under the pinned 4.8 judge (dedup regenerated), adjudicate
+  anchors on a subset under the pinned judge (dedup regenerated), adjudicate
   their non-golden-matched comments symmetrically via ``bench/adjudicator``, and
   return per-tool recall / noise / precision. Results are cached keyed by
-  ``sha256(judge_pin + candidates)``. It is fully injectable so tests drive it
-  with no network; it is **not** run live until the 4.8 pin is settled.
+  ``sha256(judge_pin + candidates)``. Adjudication for anchors uses the whole
+  (capped) PR diff as context rather than a sliced hunk, because the upstream
+  anchor candidates carry no path/line (see ``_adjudicate_anchor_bucket``). It is
+  fully injectable so tests drive it with no network.
 
 Both reuse ``score.py``'s scorer-invocation and bucket-join machinery rather than
 restating it (single-producer rule). Only ``bench/vendor/`` pulls third-party
@@ -77,6 +79,7 @@ ANCHOR_TOOLS = ("claude", "claude-code", "coderabbit")
 
 _COUNT_KEYS = ("tp", "fp", "fn")
 _TOLERANCE = 1  # ±1 per count per tool: judge nondeterminism at temp 0.
+_MAX_DIFF_CHARS = 30000  # cap on the full-diff adjudicator context per anchor comment.
 
 
 # ------------------------------------------------------------- scorer staging
@@ -324,28 +327,42 @@ def _subset_candidates(anchors, urls, tools):
     return out
 
 
+def _capped_diff(diff_text, cap=_MAX_DIFF_CHARS):
+    """Return ``diff_text`` truncated to ``cap`` chars, marking any truncation."""
+    if len(diff_text) <= cap:
+        return diff_text
+    return diff_text[:cap] + "\n... [diff truncated at {} chars]".format(cap)
+
+
 def _adjudicate_anchor_bucket(buckets, candidates, tool, pin, api_key, adjudicator, diffs):
     """Adjudicate every non-golden-matched comment for one anchor tool.
 
-    ``diffs`` (optional ``{url: diff_text}``) supplies hunk context; without it
-    the adjudicator classifies on comment text alone (anchor PRs are not checked
-    out, so head-file context is unavailable). Mirrors ``score._adjudicate_bucket``.
+    Anchor candidates carry no path/line (upstream extracted them without a
+    location), so a sliced hunk cannot be built. When a PR diff is available it
+    is passed **in full** (capped at ``_MAX_DIFF_CHARS``, truncation marked) as
+    the adjudicator's diff context, so check 1 ("the referenced location exists
+    in the shown code") stays groundable for anchors; head-file ±5-line context
+    is still unavailable (anchor PRs are not checked out). If a candidate does
+    carry path/line and the diff contains that path, the sliced hunk is used
+    instead (forward-compatible with located candidates). Mirrors
+    ``score._adjudicate_bucket``.
     """
     verdicts = []
     for url, split in buckets.items():
         cand_by_text = {c["text"]: c for c in candidates.get(url, {}).get(tool, [])}
         diff_text = (diffs or {}).get(url, "")
+        full = _capped_diff(diff_text) if diff_text else ""
         for text in split["adjudicator"]:
             cand = cand_by_text.get(text, {})
             path = cand.get("path")
             line = cand.get("line")
-            hunk = ""
+            hunk = full  # default: the whole (capped) PR diff for anchor comments
             ctx = ""
             if diff_text and path and line:
                 try:
                     hunk = slice_hunk(diff_text, path, line)
                 except ValueError:
-                    hunk = ""
+                    hunk = full
             verdict = dict(adjudicator(text, hunk, ctx, pin, api_key))
             verdict["url"] = url
             verdict["tool"] = tool

@@ -373,5 +373,46 @@ class RejudgeAnchorsTests(unittest.TestCase):
             )
 
 
+class AdjudicatorContextTests(unittest.TestCase):
+    """Anchor comments (null path/line) get the whole capped PR diff as context."""
+
+    def test_capped_diff_truncates_with_marker(self):
+        short = "x" * 100
+        self.assertEqual(anchors._capped_diff(short), short)
+        long = "y" * (anchors._MAX_DIFF_CHARS + 500)
+        out = anchors._capped_diff(long)
+        self.assertTrue(out.startswith("y" * anchors._MAX_DIFF_CHARS))
+        self.assertIn("truncated", out)
+
+    def test_null_path_line_comment_gets_full_diff(self):
+        buckets = {"u": {"golden_matched": [], "adjudicator": ["c-extra"]}}
+        candidates = {"u": {"claude": [{"text": "c-extra", "path": None, "line": None}]}}
+        diffs = {"u": "diff --git a/f b/f\n@@ -1 +1 @@\n+code"}
+        seen = []
+
+        def adj(text, hunk, ctx, pin, key):
+            seen.append({"hunk": hunk, "ctx": ctx})
+            return {"bucket": "valid_extra", "failed_check": None, "reason": "t"}
+
+        anchors._adjudicate_anchor_bucket(buckets, candidates, "claude", "pin", "k", adj, diffs)
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(seen[0]["hunk"], diffs["u"])  # whole diff, not a slice
+        self.assertEqual(seen[0]["ctx"], "")
+
+    def test_located_candidate_gets_sliced_hunk(self):
+        buckets = {"u": {"golden_matched": [], "adjudicator": ["c"]}}
+        candidates = {"u": {"claude": [{"text": "c", "path": "f.py", "line": 2}]}}
+        diff = ("diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+                "@@ -1,3 +1,3 @@\n line1\n+line2\n line3\n")
+        seen = []
+
+        def adj(text, hunk, ctx, pin, key):
+            seen.append(hunk)
+            return {"bucket": "noise", "failed_check": 1, "reason": "t"}
+
+        anchors._adjudicate_anchor_bucket(buckets, candidates, "claude", "pin", "k", adj, {"u": diff})
+        self.assertTrue(seen[0].startswith("@@ "))  # sliced hunk, not whole diff
+
+
 if __name__ == "__main__":
     unittest.main()

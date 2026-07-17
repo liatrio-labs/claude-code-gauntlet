@@ -2,7 +2,42 @@
   "judge_pin": "claude-opus-4-5-20251101",
   "adjudicator_pin": "claude-opus-4-5-20251101",
   "scorer_sha": "dfc6cb427b5d0d7492a8d875ee9447744b7de3d1",
-  "anchors": {},
+  "anchors": {
+    "judge_only": true,
+    "subset": "gate",
+    "judge_pin": "claude-opus-4-5-20251101",
+    "adjudicator_pin": "claude-opus-4-5-20251101",
+    "claude_code_cli": "claude",
+    "published_claude_code_cli": {
+      "precision": 0.348,
+      "recall": 0.409
+    },
+    "cli_distance": {
+      "claude": 0.0828,
+      "claude-code": 0.1386
+    },
+    "adjudicator_context_note": "anchor candidates carry null path/line, so each non-golden-matched comment was adjudicated with the full PR diff (capped at 30000 chars, truncation marked) as context rather than a sliced hunk; head-file +/-5-line context unavailable (anchor PRs not checked out). Symmetric three-bucket, blind to tool identity.",
+    "rows": {
+      "claude": {
+        "recall": 0.3389830508474576,
+        "noise_rate": 0.48148148148148145,
+        "valid_extra_rate": 0.14814814814814814,
+        "precision_strict": 0.39215686274509803
+      },
+      "claude-code": {
+        "recall": 0.2711864406779661,
+        "noise_rate": 0.5416666666666666,
+        "valid_extra_rate": 0.125,
+        "precision_strict": 0.3333333333333333
+      },
+      "coderabbit": {
+        "recall": 0.6271186440677966,
+        "noise_rate": 0.5658914728682171,
+        "valid_extra_rate": 0.14728682170542637,
+        "precision_strict": 0.29838709677419356
+      }
+    }
+  },
   "judge_sd": null,
   "delta_noise": null,
   "notes": {
