@@ -65,6 +65,19 @@ def fake_invoke_boom(*args, **kwargs):
     raise AssertionError("invoke_review must not run for an already-completed PR")
 
 
+def make_invoke_first_fails():
+    """An invoke fake that fails the first PR and oks the rest."""
+    state = {"n": 0}
+
+    def _inv(worktree, pr, run_dir, timeout_s=1800):
+        state["n"] += 1
+        if state["n"] == 1:
+            return run.invoke.InvokeResult("failed", reason="boom")
+        return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+    return _inv
+
+
 # -------------------------------------------------------------------------------- base
 
 
@@ -88,9 +101,9 @@ class RunTestBase(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def _install_runner_fakes(self, invoke_fn=fake_invoke_ok, make_worktree_fn=None,
-                              remove_fn=None):
+                              remove_fn=None, ensure_fn=None):
         pairs = [
-            (run.mirrors, "ensure_mirror", fake_ensure_mirror),
+            (run.mirrors, "ensure_mirror", ensure_fn or fake_ensure_mirror),
             (run.mirrors, "make_worktree", make_worktree_fn or fake_make_worktree),
             (run.mirrors, "remove_worktree", remove_fn or (lambda mirror, dest: None)),
             (run.invoke, "invoke_review", invoke_fn),
@@ -99,6 +112,10 @@ class RunTestBase(unittest.TestCase):
             patcher = patch.object(target, name, fn)
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    def _detail(self, cp, url):
+        """Return the persisted checkpoint detail dict for *url*."""
+        return json.loads(Path(cp._path(url)).read_text())["detail"]
 
 
 # ----------------------------------------------------------------------------- prereqs
@@ -242,6 +259,108 @@ class DriftTest(RunTestBase):
         self.assertEqual(summary["counts"].get("drifted"), 1)
         self.assertEqual(len(summary["drifted"]), 1)
         self.assertEqual(summary["drifted"][0][0], urls[0])
+
+
+# ---------------------------------------------------------------------- loop hardening
+
+
+class LoopHardeningTest(RunTestBase):
+    def test_missing_sentinel_head_sha_failed_without_mirror(self):
+        url = "https://github.com/o/r/pull/1"
+        meta = {"owner": "o", "repo": "r", "head_sha": "missing",
+                "base_sha": "b", "base_ref": "main", "pr_number": 1}
+        called = []
+
+        def boom(clone_url, mirrors_dir, refresh=False):
+            called.append(clone_url)
+            raise AssertionError("ensure_mirror must not run for an incomplete entry")
+
+        self._install_runner_fakes(ensure_fn=boom)
+        run_dir = self.runs_root / "run-missing-sha"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        summary = run._run_prs(run_dir, [url], cp, {url: meta}, set(), 60, None, {})
+
+        self.assertEqual(cp.status(url), "failed")
+        self.assertEqual(self._detail(cp, url)["reason"], "incomplete_sha_entry")
+        self.assertEqual(summary["counts"].get("failed"), 1)
+        self.assertEqual(called, [])
+
+    def test_missing_owner_failed_without_mirror(self):
+        url = "https://github.com/o/r/pull/2"
+        meta = {"repo": "r", "head_sha": "h", "base_sha": "b",
+                "base_ref": "main", "pr_number": 2}  # no owner
+
+        def boom(clone_url, mirrors_dir, refresh=False):
+            raise AssertionError("ensure_mirror must not run for an incomplete entry")
+
+        self._install_runner_fakes(ensure_fn=boom)
+        run_dir = self.runs_root / "run-missing-owner"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        summary = run._run_prs(run_dir, [url], cp, {url: meta}, set(), 60, None, {})
+
+        self.assertEqual(cp.status(url), "failed")
+        self.assertEqual(self._detail(cp, url)["reason"], "incomplete_sha_entry")
+        self.assertEqual(summary["counts"].get("failed"), 1)
+
+    def test_mirror_error_marks_failed_and_run_continues(self):
+        urls = ["https://github.com/o/r/pull/10", "https://github.com/o/r/pull/11"]
+        metas = {
+            urls[0]: {"owner": "o", "repo": "r", "head_sha": "h0", "base_sha": "b0",
+                      "base_ref": "main", "pr_number": 10},
+            urls[1]: {"owner": "o", "repo": "r", "head_sha": "h1", "base_sha": "b1",
+                      "base_ref": "main", "pr_number": 11},
+        }
+        state = {"n": 0}
+
+        def ensure(clone_url, mirrors_dir, refresh=False):
+            state["n"] += 1
+            if state["n"] == 1:
+                raise run.subprocess.CalledProcessError(128, ["git", "clone", "--mirror"])
+            return fake_ensure_mirror(clone_url, mirrors_dir, refresh)
+
+        self._install_runner_fakes(ensure_fn=ensure)
+        run_dir = self.runs_root / "run-mirror-error"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        summary = run._run_prs(run_dir, urls, cp, metas, set(), 60, None, {})
+
+        self.assertEqual(cp.status(urls[0]), "failed")
+        self.assertEqual(self._detail(cp, urls[0])["reason"], "mirror_error")
+        # The run did not abort: the next PR still ran to completion.
+        self.assertEqual(cp.status(urls[1]), "ok")
+        self.assertEqual(summary["counts"].get("failed"), 1)
+        self.assertEqual(summary["counts"].get("ok"), 1)
+
+
+# ------------------------------------------------------------------------- exit codes
+
+
+class ExitCodeTest(RunTestBase):
+    def test_new_run_all_ok_exits_0(self):
+        self._install_runner_fakes(invoke_fn=fake_invoke_ok)
+        with patch.object(run, "check_prereqs", lambda *a, **k: []):
+            rc = run.main(["--tier", "smoke"])
+        self.assertEqual(rc, 0)
+
+    def test_new_run_one_failed_exits_1(self):
+        self._install_runner_fakes(invoke_fn=make_invoke_first_fails())
+        with patch.object(run, "check_prereqs", lambda *a, **k: []):
+            rc = run.main(["--tier", "smoke"])
+        self.assertEqual(rc, 1)
+
+    def test_resume_with_terminal_failure_exits_1(self):
+        # A run where the first PR failed. Plain resume treats failed as terminal,
+        # so nothing re-runs and the still-failed PR keeps the exit code at 1.
+        self._install_runner_fakes(invoke_fn=make_invoke_first_fails())
+        args = run.parse_args(["--tier", "smoke"])
+        run._new_run(args)
+        run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
+        run_id = run_dir.name
+        with patch.object(run.invoke, "invoke_review", fake_invoke_boom):
+            rc = run._resume(run_id, args, retry=False)
+        self.assertEqual(rc, 1)
 
 
 # ------------------------------------------------------------------------- runs / resume

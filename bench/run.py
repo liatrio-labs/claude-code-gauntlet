@@ -373,9 +373,13 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
     counts = defaultdict(int)
     drifted = []
 
+    # A scorable entry has each key present, truthy, and not the fetch_shas "missing"
+    # sentinel (owner/repo are needed to build the clone URL; the SHAs/ref to check out).
+    required = ("owner", "repo", "head_sha", "base_sha", "base_ref", "pr_number")
+
     for url in urls:
         meta = shas.get(url)
-        if not meta or not all(meta.get(k) for k in ("head_sha", "base_sha", "base_ref", "pr_number")):
+        if not meta or not all(meta.get(k) and meta.get(k) != "missing" for k in required):
             cp.mark(url, "failed", detail={"reason": "incomplete_sha_entry"})
             counts["failed"] += 1
             continue
@@ -387,8 +391,10 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
         pr_dir.mkdir(parents=True, exist_ok=True)
         worktree = pr_dir / "worktree"
 
-        mirror = mirrors.ensure_mirror(clone_url, MIRRORS_DIR)
+        # Mirror clone/fetch is per-PR: a single bad repo must fail only its own PR,
+        # never abort the tier. Input drift (make_worktree) is a distinct outcome.
         try:
+            mirror = mirrors.ensure_mirror(clone_url, MIRRORS_DIR)
             mirrors.make_worktree(
                 mirror, meta["head_sha"], meta["base_sha"], meta["base_ref"], worktree, pr_number=number
             )
@@ -396,6 +402,10 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             cp.mark(url, "drifted", detail={"reason": str(exc)})
             drifted.append((url, str(exc)))
             counts["drifted"] += 1
+            continue
+        except subprocess.CalledProcessError:
+            cp.mark(url, "failed", detail={"reason": "mirror_error"})
+            counts["failed"] += 1
             continue
 
         start = time.monotonic()
@@ -459,6 +469,12 @@ def _print_summary(run_id, run_dir, urls, cp, summary):
         print("  !! DRIFTED (input drift -- never scored):")
         for url, reason in summary["drifted"]:
             print("     - {}: {}".format(url, reason))
+    return final
+
+
+def _exit_code(final, urls):
+    """Return 0 only when every targeted PR ended status ``ok``; 1 otherwise."""
+    return 0 if final.get("ok", 0) == len(urls) else 1
 
 
 # ------------------------------------------------------------------------------- modes
@@ -478,8 +494,8 @@ def _new_run(args):
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.pending(urls)  # a fresh run -> all pending
     summary = _run_prs(run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data)
-    _print_summary(run_id, run_dir, urls, cp, summary)
-    return 0
+    final = _print_summary(run_id, run_dir, urls, cp, summary)
+    return _exit_code(final, urls)
 
 
 def _resume(run_id, args, retry):
@@ -504,8 +520,8 @@ def _resume(run_id, args, retry):
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
     summary = _run_prs(run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data)
-    _print_summary(run_id, run_dir, urls, cp, summary)
-    return 0
+    final = _print_summary(run_id, run_dir, urls, cp, summary)
+    return _exit_code(final, urls)
 
 
 def _score_only(run_id):
