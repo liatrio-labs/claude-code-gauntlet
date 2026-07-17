@@ -1,0 +1,20 @@
+[project]
+name = "code-review-benchmark"
+version = "0.1.0"
+description = "AI Code Review Benchmark Replication (vendored subset: step2_5 dedup + step3 judge)"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.10.0",
+    "tqdm>=4.66.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+judge-comments = "code_review_benchmark.step3_judge_comments:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
