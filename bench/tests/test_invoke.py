@@ -135,6 +135,52 @@ class BuildEnvTest(InvokeTestBase):
         self.assertTrue(data["projects"][wt]["hasTrustDialogAccepted"])
 
 
+# ------------------------------------------------------------------ build_env .env
+
+
+class BuildEnvDotenvTest(InvokeTestBase):
+    """build_env must load the metered ANTHROPIC_API_KEY from bench/.env.
+
+    The isolated HOME/CLAUDE_CONFIG_DIR carries no credentials and the ambient
+    env generally has no key, so every invocation would be unauthenticated
+    without this. The bench/.env value is authoritative: it wins over any
+    ambient ANTHROPIC_API_KEY so all bench spend lands on the single metered key.
+    """
+
+    def _use_env_file(self, text):
+        path = Path(self.tmp) / "bench.env"
+        path.write_text(text)
+        saved = invoke.ENV_PATH
+        invoke.ENV_PATH = path
+        self.addCleanup(setattr, invoke, "ENV_PATH", saved)
+        return path
+
+    def _use_missing_env(self):
+        saved = invoke.ENV_PATH
+        invoke.ENV_PATH = Path(self.tmp) / "does-not-exist.env"
+        self.addCleanup(setattr, invoke, "ENV_PATH", saved)
+
+    def test_loads_api_key_from_dotenv(self):
+        self._use_env_file("# metered key\nANTHROPIC_API_KEY=sk-from-dotenv\n\n")
+        env = build_env(PR, self.run_dir, {})
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-from-dotenv")
+
+    def test_dotenv_wins_over_ambient(self):
+        self._use_env_file("ANTHROPIC_API_KEY=sk-from-dotenv\n")
+        env = build_env(PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"})
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-from-dotenv")
+
+    def test_absent_dotenv_leaves_ambient_untouched(self):
+        self._use_missing_env()
+        env = build_env(PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"})
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-ambient")
+
+    def test_empty_key_in_dotenv_leaves_ambient_untouched(self):
+        self._use_env_file("ANTHROPIC_API_KEY=\n")
+        env = build_env(PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"})
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-ambient")
+
+
 # --------------------------------------------------------------------------- costs
 
 

@@ -29,6 +29,10 @@ __all__ = ["InvokeResult", "build_env", "invoke_review"]
 # Repo root == the deep-review plugin dir. bench/runner/invoke.py -> parents[2].
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# The metered-key .env (repo-root-relative). build_env loads ANTHROPIC_API_KEY from
+# here into every child env. A module global so tests can repoint it at a tempfile.
+ENV_PATH = REPO_ROOT / "bench" / ".env"
+
 # The 9 bench values (spec H2 table, bench overrides): pinned explicitly on every run
 # so the harness is drift-immune even though the skill defines its own defaults.
 BENCH_ENV = {
@@ -100,6 +104,28 @@ def _repo(pr):
     return pr.get("repo") or _parse_url(pr.get("url", ""))[1]
 
 
+def _load_dotenv_key(path, key):
+    """Return ``key``'s value from a simple ``KEY=VALUE`` .env file, or None.
+
+    Blank lines and ``#`` comments are ignored and surrounding quotes are stripped.
+    A missing/unreadable file, an absent key, or an empty value all yield None. The
+    value is never printed or logged (it is a live API credential).
+    """
+    value = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, _, raw = line.partition("=")
+                if name.strip() == key:
+                    value = raw.strip().strip("'\"") or None
+    except OSError:
+        return None
+    return value
+
+
 def _claude_home(run_dir, base_env):
     override = base_env.get("BENCH_CLAUDE_HOME")
     if override:
@@ -147,10 +173,21 @@ def _seed_trust(config_dir, worktree):
 
 
 def build_env(pr, run_dir, base_env):
-    """Assemble the pinned isolated env for one PR invocation (side effect: seeds trust)."""
+    """Assemble the pinned isolated env for one PR invocation (side effect: seeds trust).
+
+    Loads ``ANTHROPIC_API_KEY`` from ``bench/.env`` (``ENV_PATH``) into the child env.
+    The isolated ``HOME``/``CLAUDE_CONFIG_DIR`` carries no credentials, so without this
+    every ``claude`` invocation would be unauthenticated. The ``.env`` value is
+    authoritative: it WINS over any ambient ``ANTHROPIC_API_KEY`` so all bench spend
+    lands on the single metered key. A missing/empty ``.env`` or key leaves the ambient
+    env untouched (the prereq check reports that separately).
+    """
     run_dir = Path(run_dir)
     env = dict(base_env)
     env.update(BENCH_ENV)
+    api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
+    if api_key:
+        env["ANTHROPIC_API_KEY"] = api_key
     env["DEEP_REVIEW_OUTPUT_DIR"] = str(run_dir / "output")
     env["GH_REPO"] = "{}/{}".format(_owner(pr), _repo(pr))
 
