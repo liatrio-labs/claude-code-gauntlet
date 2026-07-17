@@ -420,9 +420,13 @@ def post_github(data, valid_lines):
     ]
 
     resp = post_json(cmd_prefix, payload)
-    url = resp.get("html_url", resp.get("id", "posted"))
-    print(f"Review posted: {url}")
-    print(f"  {len(comments)} inline comment(s) posted.")
+    if DRY_RUN:
+        print("Review captured (dry-run).")
+        print(f"  {len(comments)} inline comment(s) captured.")
+    else:
+        url = resp.get("html_url", resp.get("id", "posted"))
+        print(f"Review posted: {url}")
+        print(f"  {len(comments)} inline comment(s) posted.")
     if skipped:
         print(f"  {len(skipped)} finding(s) skipped (lines not in diff).")
 
@@ -488,7 +492,7 @@ def post_gitlab(data, valid_lines, new_files=None):
         f"projects/{project_id}/merge_requests/{mr_iid}/notes",
     ]
     post_json(cmd_prefix, summary_payload)
-    print("MR summary note posted.")
+    print("MR summary note captured (dry-run)." if DRY_RUN else "MR summary note posted.")
 
     # Post each finding as an inline discussion
     posted = 0
@@ -543,7 +547,10 @@ def post_gitlab(data, valid_lines, new_files=None):
         resp = post_json(cmd_prefix, payload)
         posted += 1
 
-    print(f"  {posted} inline discussion(s) posted.")
+    if DRY_RUN:
+        print(f"  {posted} inline discussion(s) captured.")
+    else:
+        print(f"  {posted} inline discussion(s) posted.")
     if skipped:
         print(f"  {skipped} finding(s) skipped.")
 

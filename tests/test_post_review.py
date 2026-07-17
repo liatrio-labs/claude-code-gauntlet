@@ -11,6 +11,8 @@ Covers:
   - gitlab_project_id: URL encoding of owner/repo
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -792,6 +794,69 @@ class TestLivePathUnchanged(_DryRunTestBase):
         self.assertTrue(post_calls, "live path must issue the reviews POST")
         self.assertFalse(
             os.path.exists(os.path.join(self.tmp, "post-review-payload.json")))
+
+
+class TestDryRunStdout(_DryRunTestBase):
+    """In dry-run, the post paths must not claim anything was posted."""
+
+    def _run_main_capturing_stdout(self, data, diff, versions=None):
+        self._write(data)
+        stdout = io.StringIO()
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=diff, versions=versions)), \
+             contextlib.redirect_stdout(stdout):
+            post_review.main()
+        return stdout.getvalue()
+
+    def test_github_dry_run_stdout_has_no_posted_claim(self):
+        out = self._run_main_capturing_stdout({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
+                          "title": "Bug A", "body": "Body A"}],
+        }, diff=GH_DIFF)
+        self.assertNotIn("Review posted:", out)
+        self.assertNotIn("comment(s) posted.", out)
+        self.assertIn("Review captured (dry-run).", out)
+        self.assertIn("inline comment(s) captured.", out)
+
+    def test_gitlab_dry_run_stdout_has_no_posted_claim(self):
+        versions = [{"base_commit_sha": "b", "head_commit_sha": "h",
+                     "start_commit_sha": "s"}]
+        out = self._run_main_capturing_stdout({
+            "platform": "gitlab", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [{"file": "bar.py", "line": 2, "severity": "medium",
+                          "title": "Issue X", "body": "Desc X"}],
+        }, diff=GL_DIFF, versions=versions)
+        self.assertNotIn("note posted.", out)
+        self.assertNotIn("discussion(s) posted.", out)
+        self.assertIn("MR summary note captured (dry-run).", out)
+        self.assertIn("inline discussion(s) captured.", out)
+
+
+class TestLivePathStdout(_DryRunTestBase):
+    """The live path's stdout is unchanged: it still claims posts."""
+
+    def test_github_live_path_prints_posted(self):
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
+                          "title": "Bug A", "body": "Body A"}],
+        })
+        stdout = io.StringIO()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)), \
+             contextlib.redirect_stdout(stdout):
+            post_review.main()
+        out = stdout.getvalue()
+        self.assertIn("Review posted:", out)
+        self.assertIn("inline comment(s) posted.", out)
+        self.assertNotIn("captured", out)
 
 
 if __name__ == "__main__":
