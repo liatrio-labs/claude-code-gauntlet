@@ -1,0 +1,11 @@
+{
+  "platform": "github",
+  "endpoint": "repos/withastro/astro/pulls/1234/reviews",
+  "method": "POST",
+  "payload": {
+    "body": "Automated review summary.\n\n<!-- deep-review-findings: {\"version\":\"3.0\",\"findings_count\":0,\"sha\":\"deadbeefcafe1234deadbeefcafe1234deadbeef\"} -->",
+    "event": "COMMENT",
+    "comments": []
+  },
+  "skipped": []
+}
