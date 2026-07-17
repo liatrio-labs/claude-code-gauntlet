@@ -281,7 +281,7 @@ The script applies challenge thresholds (remove/downgrade/contest/survive), re-r
 
 Four stages: **generate report**, **deliver report**, **offer task board**, **offer dismissed findings**. Execute in order.
 
-> **Headless hard rules (`DEEP_REVIEW_HEADLESS=1`):** Stage 1 uses PR-comment selection=`default` with cap `$DEEP_REVIEW_PR_COMMENT_CAP` (the interactive finding walkthrough is unavailable); posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`, capturing the payload instead of posting). Stage 2 (task board) is skipped — no tasks are created. Stage 3 (dismissed findings) is unreachable because no walkthrough runs, so dismissed_set is empty; REVIEW.md is never written. See `references/headless-mode.md`.
+> **Headless hard rules (`DEEP_REVIEW_HEADLESS=1`):** Stage 1 uses PR-comment selection=`default` with cap `$DEEP_REVIEW_PR_COMMENT_CAP` (the interactive finding walkthrough is unavailable); posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`, capturing the payload instead of posting). Stage 2 (task board) is skipped — no tasks are created. Stage 3 (dismissed findings) is unreachable because no walkthrough runs, so dismissed_set is empty; REVIEW.md is never written. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim — for `-p --output-format json` runs, where intermediate-turn stdout is not captured, the final-message copy is the only machine-visible receipt. See `references/headless-mode.md`.
 
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (if closed/merged: deliver via chat/markdown only).
 

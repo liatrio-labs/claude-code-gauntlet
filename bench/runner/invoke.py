@@ -9,8 +9,9 @@ answer a first-run trust dialog, so it must be accepted ahead of time.
 ``invoke_review`` runs ``claude -p "/deep-review <n>"`` under that context in its own
 process session, with a watchdog that kills the whole process group on timeout (no
 orphans), scans the output for AskUserQuestion (defense-in-depth -> ``invalid``),
-verifies the ``Headless config:`` echo receipt, parses costs, and locates the dry-run
-payload. See CLAUDE.md: stdlib-only.
+verifies the ``Headless config:`` echo receipt (accepted from raw stdout, the result
+envelope's ``.result``, or a collected report ``*.md`` -- see ``_echo_ok``), parses costs,
+and locates the dry-run payload. See CLAUDE.md: stdlib-only.
 """
 
 import json
@@ -251,13 +252,55 @@ def _has_askuserquestion(raw_text, envelope):
     return bool(_ASKUSERQUESTION_RE.search(raw_text or ""))
 
 
-def _echo_ok(raw_text):
-    text = raw_text or ""
+def _echo_in_text(text):
+    """True when *text* carries the full receipt: every expected knob line present."""
+    text = text or ""
     for key, value in EXPECTED_ECHO.items():
         pattern = r"(?m)^[ \t]*{}={}(?:[ \t]|\(|$)".format(re.escape(key), re.escape(value))
         if not re.search(pattern, text):
             return False
     return True
+
+
+def _echo_in_reports(report_dirs):
+    """True when any ``*.md`` under any of *report_dirs* carries the full receipt."""
+    seen = set()
+    for base in report_dirs:
+        if not base:
+            continue
+        base = Path(base)
+        if not base.exists():
+            continue
+        for md in sorted(base.rglob("*.md")):
+            resolved = md.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                if _echo_in_text(md.read_text(errors="replace")):
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _echo_ok(raw_text, envelope=None, report_dirs=()):
+    """True when the ``Headless config:`` receipt is present in ANY available source.
+
+    A ``-p --output-format json`` run hides intermediate-turn stdout: only the final
+    message survives in the envelope's ``.result``. So the receipt is accepted from
+    (a) the raw stdout text, (b) the envelope ``.result`` text, or (c) any collected
+    report ``*.md`` under *report_dirs* (the run output dir and the PR dir). Missing
+    from all three -> not ok (the run is classified ``invalid``/``config_echo_mismatch``).
+    """
+    texts = [raw_text or ""]
+    if isinstance(envelope, dict):
+        result = envelope.get("result")
+        if isinstance(result, str):
+            texts.append(result)
+    if any(_echo_in_text(t) for t in texts):
+        return True
+    return _echo_in_reports(report_dirs)
 
 
 def _find_payload(output_dir):
@@ -339,12 +382,15 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
 
     raw_text = raw_path.read_text(errors="replace")
     envelope = _extract_envelope(raw_text)
+    # The receipt may live in stdout, the envelope .result, or a report .md — collected
+    # into pr_dir by run.py, or still in the shared output dir at echo-check time.
+    report_dirs = (env.get("DEEP_REVIEW_OUTPUT_DIR"), str(pr_dir))
 
     # 1) AskUserQuestion (safety) wins even over a clean-looking envelope.
     if _has_askuserquestion(raw_text, envelope):
         return InvokeResult(
             "invalid",
-            echo_ok=_echo_ok(raw_text),
+            echo_ok=_echo_ok(raw_text, envelope, report_dirs),
             raw_json_path=str(raw_path),
             reason="askuserquestion_detected",
         )
@@ -359,13 +405,13 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
             "failed",
             cost_usd=cost_usd,
             per_model=per_model,
-            echo_ok=_echo_ok(raw_text),
+            echo_ok=_echo_ok(raw_text, envelope, report_dirs),
             raw_json_path=str(raw_path),
             reason=_fail_reason(proc.returncode, envelope),
         )
 
-    # 3) Config receipt.
-    echo_ok = _echo_ok(raw_text)
+    # 3) Config receipt (accepted from stdout, the .result envelope, or a report .md).
+    echo_ok = _echo_ok(raw_text, envelope, report_dirs)
     if not echo_ok:
         return InvokeResult(
             "invalid",

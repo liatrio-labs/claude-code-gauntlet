@@ -65,6 +65,17 @@ class InvokeTestBase(unittest.TestCase):
         dst.chmod(dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return bindir
 
+    def _run(self, mode, timeout_s=30, extra_env=None):
+        bindir = self.install_fake()
+        overrides = {
+            "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+            "FAKE_CLAUDE_MODE": mode,
+        }
+        if extra_env:
+            overrides.update(extra_env)
+        with patched_environ(**overrides):
+            return invoke_review(self.worktree, PR, self.run_dir, timeout_s=timeout_s)
+
 
 # --------------------------------------------------------------------------- build_env
 
@@ -291,17 +302,6 @@ class ParseCostsTest(unittest.TestCase):
 
 
 class InvokeReviewTest(InvokeTestBase):
-    def _run(self, mode, timeout_s=30, extra_env=None):
-        bindir = self.install_fake()
-        overrides = {
-            "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
-            "FAKE_CLAUDE_MODE": mode,
-        }
-        if extra_env:
-            overrides.update(extra_env)
-        with patched_environ(**overrides):
-            return invoke_review(self.worktree, PR, self.run_dir, timeout_s=timeout_s)
-
     def test_ok(self):
         res = self._run("ok")
         self.assertIsInstance(res, InvokeResult)
@@ -343,6 +343,36 @@ class InvokeReviewTest(InvokeTestBase):
             res = invoke_review(self.worktree, PR, self.run_dir, timeout_s=5)
         self.assertEqual(res.status, "failed")
         self.assertEqual(res.reason, "claude_not_found")
+
+
+# ------------------------------------------------------------------- echo receipt source
+
+
+class EchoReceiptSourceTest(InvokeTestBase):
+    """The config-echo receipt is accepted from any of stdout, .result, or a report .md.
+
+    A ``-p --output-format json`` run hides intermediate-turn stdout, so the receipt is
+    only recoverable from the envelope's ``.result`` or the collected report markdown.
+    """
+
+    def test_receipt_only_in_result_is_ok(self):
+        res = self._run("echo_in_result")
+        # Block absent from raw stdout, present only in the envelope .result.
+        self.assertEqual(res.status, "ok")
+        self.assertTrue(res.echo_ok)
+
+    def test_receipt_only_in_report_md_is_ok(self):
+        res = self._run("echo_in_report")
+        # Block absent from stdout and .result, present only in a report .md.
+        self.assertEqual(res.status, "ok")
+        self.assertTrue(res.echo_ok)
+
+    def test_partial_block_everywhere_is_invalid(self):
+        # badecho emits a partial block in BOTH stdout and .result (no report .md).
+        res = self._run("badecho")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "config_echo_mismatch")
+        self.assertFalse(res.echo_ok)
 
 
 if __name__ == "__main__":

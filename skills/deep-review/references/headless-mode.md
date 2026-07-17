@@ -93,6 +93,8 @@ Headless config:
 
 The eight echoed knobs are every variable except the master switch `DEEP_REVIEW_HEADLESS`. The example shows a bench-configured run (env overrides throughout); a run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `model_tier=frontier (review_md)`.
 
+**Emit the block in three places, verbatim and identical:** (1) Phase 1 stdout (as above); (2) the markdown report's methodology section; and (3) the **final response message** of the run. The three copies must be byte-identical. The final-response copy is the machine-parsed receipt for `-p --output-format json` runs: intermediate-turn stdout is not captured in the result envelope, so only the last message survives in `.result`. A runner that cannot see Phase 1 stdout therefore recovers the receipt from the final message, or from the collected report markdown — all three carry the same block so the receipt is verifiable regardless of which output the runner can observe.
+
 ---
 
 ## Prerequisite
