@@ -171,6 +171,18 @@ class PrereqTest(RunTestBase):
         self.assertIn("claude CLI not found", joined)
         self.assertIn("uv not found", joined)
 
+    def test_quoted_empty_key_is_a_failure(self):
+        # A quoted-empty value must fail prereqs the same way build_env would treat
+        # it: _read_env_key delegates to invoke._load_dotenv_key, so the two parsers
+        # can never disagree on this again.
+        env_file = self.tmp / "bench.env"
+        env_file.write_text('ANTHROPIC_API_KEY=""\n')
+        empty_bin = self.tmp / "empty-bin3"
+        empty_bin.mkdir()
+        with patch.dict(os.environ, {"PATH": str(empty_bin)}):
+            failures = run.check_prereqs(env_path=env_file, workspace_dir=self.tmp)
+        self.assertTrue(any("ANTHROPIC_API_KEY missing" in f for f in failures))
+
     def test_low_disk_is_a_failure(self):
         env_file = self.tmp / "bench.env"
         env_file.write_text("ANTHROPIC_API_KEY=sk-test\n")

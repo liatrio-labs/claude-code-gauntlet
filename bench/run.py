@@ -181,14 +181,9 @@ def _compute_diff(worktree, base_sha, head_sha):
 
 
 def _read_env_key(env_path, key):
-    env_path = Path(env_path)
-    if not env_path.exists():
-        return None
-    for line in env_path.read_text().splitlines():
-        line = line.strip()
-        if line.startswith(f"{key}="):
-            return line[len(key) + 1 :].strip()
-    return None
+    # Delegates to the canonical dotenv reader so the prereq check and build_env
+    # agree on every edge case (quoted-empty values, comments, quoting).
+    return invoke._load_dotenv_key(env_path, key)
 
 
 def _free_gb(path):
