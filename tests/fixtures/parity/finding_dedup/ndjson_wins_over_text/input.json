@@ -1,0 +1,20 @@
+{
+  "ndjson_findings": {
+    "bug-detector": [
+      {
+        "id": "F1",
+        "title": "ndjson",
+        "confidence": 90
+      }
+    ]
+  },
+  "text_findings": {
+    "bug-detector": [
+      {
+        "id": "F1",
+        "title": "text",
+        "confidence": 50
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "ndjson_findings": {},
+  "text_findings": {
+    "bug-detector": [
+      {
+        "id": "T1",
+        "title": "kept"
+      },
+      {
+        "id": null,
+        "title": "dropped"
+      }
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "ndjson_findings": {
+    "security-reviewer": [
+      {
+        "id": "N1",
+        "title": "ndjson-one"
+      }
+    ],
+    "bug-detector": [
+      {
+        "id": "N2",
+        "title": "ndjson-two"
+      }
+    ]
+  },
+  "text_findings": {
+    "bug-detector": [
+      {
+        "id": "T1",
+        "title": "text-one"
+      }
+    ]
+  }
+}

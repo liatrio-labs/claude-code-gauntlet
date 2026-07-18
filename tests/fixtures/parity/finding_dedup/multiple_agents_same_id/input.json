@@ -1,0 +1,18 @@
+{
+  "ndjson_findings": {
+    "agent-b": [
+      {
+        "id": "F1",
+        "title": "from-ndjson-agent-b"
+      }
+    ]
+  },
+  "text_findings": {
+    "agent-a": [
+      {
+        "id": "F1",
+        "title": "from-text-agent-a"
+      }
+    ]
+  }
+}
