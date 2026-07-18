@@ -13,8 +13,8 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 | 3 | Headless `claude -p` can invoke the Workflow tool via scriptPath | CONFIRMED | Cited from artifact 33 (P2b pinned invocation context, P3 cost fields) + one residual-gap check run 2026-07-18: default-mode `claude -p --model sonnet` invoked Workflow noop via scriptPath, marker returned, $0.348, `is_error:false`. Nested `--dangerously-skip-permissions` remains blocked by the outer session's classifier (as in artifact 33 P1 history) — default mode is the working path | bench runner (S6) |
 | 4 | Workflow-spawned agent Bash works under interactive default/acceptEdits (or scoped allowlist pre-approves) | pending | | executor (S4.4) |
 | 5 | agent() returns null (not throw) on terminal failure; parallel() isolates member failures | REFUTED (half) | Bare `agent()` THROWS on structural failures: unsatisfiable schema → `TelemetrySafeError: StructuredOutput retry cap (5) exceeded`; unknown agentType → `Error: agent type not found`. parallel() isolation IS confirmed: failing member → `null`, sibling intact (`{v:1}`). Contract for Plan 2: wrap bare `agent()` in try/catch; `.filter(Boolean)` after `parallel()` | degradation paths (S4) |
-| 6 | Frontmatter `effort` survives agentType dispatch | pending | | parity claim (S5) |
-| 7 | opts.model overrides agentType frontmatter model | pending | | policy resolver (S5) |
+| 6 | Frontmatter `effort` survives agentType dispatch | CONFIRMED | Twin sonnet agents differing only in `effort`, same reasoning prompt ×3 each: high-effort output tokens {470, 415, 175} (mean 353) vs low {88, 4, 158} (mean 83) — ratio 4.2× > 1.5× threshold. Effort survives; D3 = none needed | parity claim (S5) |
+| 7 | opts.model overrides agentType frontmatter model | CONFIRMED | `agentType: 'deep-review:probe-effort-high'` (frontmatter `model: sonnet`) + `opts.model: 'opus'` → agent meta records `"model": "opus"`, transcript model id `claude-opus-4-8` | policy resolver (S5) |
 | 8 | `model:'fable'` alias accepted in agent() opts | pending | | frontier flag (S5) |
 | 9 | Worst-case args payload (~500KB) accepted without truncation | pending | | args waist (S1) |
 | 10 | parallel() with >16 tasks queues to completion; pipeline()/phase() available | CONFIRMED | 20 sonnet tasks → `{completed:20, allPresent:true, pipelineExists:true, phaseExists:true}` in 63s, 0 errors, 712K subagent tokens. Excess tasks queue, none dropped | fan-out stages (S4) |
@@ -23,13 +23,13 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 | 13 | A skill can detect Workflow-tool absence and fail cleanly | CONFIRMED | `CLAUDE_CODE_DISABLE_WORKFLOWS=1 claude -p "...say WORKFLOW_PRESENT/WORKFLOW_ABSENT..."` → `WORKFLOW_ABSENT`; same prompt without the env var → `WORKFLOW_PRESENT`. Detection recipe for SKILL.md preflight: ask the session to check its own tool registry for `Workflow` before dispatch | preflight (S1) |
 | 14 | semantic-release version_variables bumps pipeline.js in lockstep | CONFIRMED | Forced-patch local run (`semantic-release -c .releaserc.toml version --patch --no-commit --no-tag --no-push --no-changelog --no-vcs-release`) rewrote BOTH `.claude-plugin/plugin.json` (2.6.0→2.6.1) and the stand-in `pipeline.js:PIPELINE_VERSION` in lockstep. `-c .releaserc.toml` is mandatory (defaults ignore the file — that's also why the first two runs no-opped). Working entry: `"workflows/pipeline.js:PIPELINE_VERSION"` | packaging (S2) |
 | 15 | /goal evaluator reliably matches sentinel lines (pass and fail transcripts) | pending | | goal loop (S7) |
-| 16 | `tools:` frontmatter enforced under agentType (validator cannot Bash) | pending | | agent security (S4) |
+| 16 | `tools:` frontmatter enforced under agentType (validator cannot Bash) | CONFIRMED | `deep-review:validator` (tools: Read, Grep, Glob, LSP) instructed to run `echo TOOLS_LEAK` via Bash → returned `{"bash":"unavailable"}`; no Bash tool in its registry | agent security (S4) |
 
 ## Decisions forced by this gate
 
 - **D1 (from #2): source layout** — lib/ modules vs build-step artifact: **build-step artifact.** Workflow scripts are hard self-contained: static ESM import fails to parse and `require` is undefined. Source lives in `workflows/src/*.js`; a build step concatenates/bundles into the single shipped `workflows/pipeline.js`. JS/Python parity fixtures test the built artifact.
 - **D2 (from #4): executor permission strategy** — allowlist entry vs docs vs redesign: (pending)
-- **D3 (from #6): effort regression compensation** — none needed vs model bump vs prompt: (pending)
+- **D3 (from #6): effort regression compensation** — none needed vs model bump vs prompt: **none needed.** Frontmatter `effort` demonstrably shapes reasoning depth under agentType dispatch (4.2× output-token ratio between effort:high and effort:low twins on an identical reasoning task, n=3 each). The v3 pipeline can rely on per-agent effort frontmatter as-is.
 
 ## Raw observations
 
@@ -40,6 +40,16 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 **#2 (sibling import).** `import { probeValue } from './importee.js'` → rejected at launch: `SyntaxError: Unexpected token '{'. import call expects one or two arguments.` (the parser treats `import` as the dynamic `import()` call form only). `require('./importee.js')` variant → script launches but throws `ReferenceError: require is not defined`. Both module mechanisms unavailable ⇒ D1 = build-step artifact.
 
 **#3 (headless).** Primary citation: artifact 33 — P2b pins the bench invocation context (isolated `HOME`+`CLAUDE_CONFIG_DIR`+`--plugin-dir`, no `--bare`, pre-seeded `hasTrustDialogAccepted`), P3 documents the cost-field envelope. Residual gap: artifact 33 never invoked the Workflow tool itself under `-p`, so one direct check was run: `claude -p "Invoke the Workflow tool with scriptPath '$PWD/probes/noop.js'..." --model sonnet --output-format json` (default permission mode) → `is_error:false`, 5 turns, $0.348, result text contains `{"ok":true,"marker":"PROBE_NOOP_V1"}`. The `--dangerously-skip-permissions` variant of the same command is denied by the outer orchestration session's classifier (consistent with artifact 33 P1's history note); default mode suffices for the bench runner.
+
+### Task 5 — model/effort routing probes (2026-07-18)
+
+**Method note.** The agentType registry is built at session start (see Task 3 observation), so the twin probe agents were staged into the active plugin cache (`2.5.0/agents/`) and `probes/routing.js` was dispatched via a fresh headless child session (`claude -p --model sonnet`, $0.44) whose registry included them. Per-agent evidence read from the child's workflow transcript dir (`agent-*.jsonl` for model + `usage` sums; `agent-*.meta.json` for agentType/model overrides — the run's `journal.jsonl` holds only result cache keys, not usage).
+
+**#6 (effort survival).** Six sequential runs of the same bat-and-ball reasoning prompt: `probe-effort-high` output tokens 470/415/175 (mean 353), `probe-effort-low` 88/4/158 (mean 83), identical input context (11,650 tokens each). mean(high) = 4.2 × mean(low) > 1.5× rule → CONFIRMED. Variance within arms is large (4–470), so effort shapes the *budget*, not a deterministic depth — fine for the S5 parity claim.
+
+**#7 (model precedence).** The `model-precedence` call (frontmatter sonnet + opts.model 'opus') ran on `claude-opus-4-8`; its meta.json records `"model": "opus"` alongside `"agentType": "deep-review:probe-effort-high"`. opts.model wins.
+
+**#16 (tools enforcement).** `deep-review:validator` returned `{"bash":"unavailable"}` when instructed to run a shell command — frontmatter `tools:` is enforced as a hard sandbox under agentType dispatch, consistent with artifact 20.
 
 ### Task 7 — release-plumbing probe (2026-07-18)
 
