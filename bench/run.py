@@ -149,6 +149,22 @@ def _collect_artifacts(output_dir, pr_dir):
     return moved
 
 
+def _relocate_payload(payload_path, pr_dir):
+    """Point a recorded payload path at its post-collection home under ``pr_dir``.
+
+    ``invoke`` returns ``payload_path`` in the shared output dir, but ``_collect_artifacts``
+    then moves the payload into ``pr_dir``, leaving the recorded path stale. When that path's
+    basename now exists under ``pr_dir``, return the pr-dir location so the checkpoint detail
+    records where the payload actually landed; otherwise return the path unchanged. A falsey
+    path (no payload produced) passes through as-is; a naive payload already under ``pr_dir``
+    resolves to itself.
+    """
+    if not payload_path:
+        return payload_path
+    relocated = Path(pr_dir) / Path(payload_path).name
+    return str(relocated) if relocated.exists() else payload_path
+
+
 def _compute_diff(worktree, base_sha, head_sha):
     """Return ``git diff base...head`` run inside the worktree (empty string on failure)."""
     result = subprocess.run(
@@ -502,6 +518,7 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
         finally:
             mirrors.remove_worktree(mirror, worktree)
 
+        payload_path = _relocate_payload(result.payload_path, pr_dir)
         cp.mark(
             url,
             result.status,
@@ -510,7 +527,7 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                 "cost_usd": result.cost_usd,
                 "duration_s": round(time.monotonic() - start, 3),
                 "reason": result.reason,
-                "payload_path": result.payload_path,
+                "payload_path": payload_path,
             },
         )
         counts[result.status] += 1

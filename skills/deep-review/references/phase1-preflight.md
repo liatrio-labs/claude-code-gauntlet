@@ -44,7 +44,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ## Eligibility Checks
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): none of the `AskUserQuestion` gates in this section are presented. The draft gate applies `DEEP_REVIEW_DRAFT_POLICY` (`review` proceeds, `skip` stops); both previously-reviewed variants apply `DEEP_REVIEW_REVIEWED_POLICY` (`incremental` / `full` / `skip`). Closed/merged and trivial-only-changes still stop deterministically. See `references/headless-mode.md`.
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): none of the `AskUserQuestion` gates in this section are presented. The draft gate applies `DEEP_REVIEW_DRAFT_POLICY` (`review` proceeds, `skip` stops); both previously-reviewed variants apply `DEEP_REVIEW_REVIEWED_POLICY` (`incremental` / `full` / `skip`). Closed/merged does **not** stop the run headless — it proceeds against the pinned head exactly as resolved (benchmarking historical merged PRs is the headless use case; posting safety is governed by `DEEP_REVIEW_POST_MODE`, and `dry-run` posts nothing). Trivial-only-changes still stops deterministically. See `references/headless-mode.md`.
 
 1. **Closed/merged?** — Stop: "This PR is already closed/merged. No review needed."
 

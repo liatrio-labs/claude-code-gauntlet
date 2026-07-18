@@ -235,6 +235,31 @@ class ArtifactCaptureTest(RunTestBase):
         self.assertEqual(cp.status(PLAIN_URL), "ok")
 
 
+# ---------------------------------------------------------------- checkpoint payload path
+
+
+class CheckpointPayloadPathTest(RunTestBase):
+    def test_detail_payload_path_points_at_moved_pr_dir_file(self):
+        # invoke returns payload_path in the shared output dir; _collect_artifacts then
+        # moves it into pr-dir. The persisted checkpoint detail must record the pr-dir
+        # location (the file that still exists), not the stale pre-move path.
+        self._install_runner_fakes(invoke_fn=fake_invoke_ok)
+        run_dir = self.runs_root / "payload-path-run"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        run._run_prs(run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data)
+
+        pr_number = self.shas[PLAIN_URL]["pr_number"]
+        expected = run_dir / "pr-{}".format(pr_number) / "post-review-payload.json"
+        detail = self._detail(cp, PLAIN_URL)
+        self.assertEqual(detail["payload_path"], str(expected))
+        self.assertTrue(Path(detail["payload_path"]).is_file())
+        # The stale shared-output location must not be what was recorded.
+        self.assertNotEqual(
+            detail["payload_path"], str(run_dir / "output" / "post-review-payload.json")
+        )
+
+
 # --------------------------------------------------------------------------- drift guard
 
 

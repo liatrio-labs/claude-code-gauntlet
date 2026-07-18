@@ -29,6 +29,8 @@ Always use the full 40-character SHA from `git rev-parse HEAD`.
 
 **Re-check eligibility** — verify the PR is still open. If closed/merged: deliver via chat/markdown only.
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivers per `DEEP_REVIEW_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `DEEP_REVIEW_POST_MODE`. See `references/headless-mode.md`.
+
 Deliver using the method(s) selected in Phase 1, in this order:
 
 **Step A. Chat** — if selected, output the full report per `references/report-format.md`.

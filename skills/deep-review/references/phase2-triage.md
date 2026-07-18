@@ -50,6 +50,12 @@ If the SHA matches → proceed to 2c.
 | Branch name | `git checkout <branch>` |
 | Local changes | no-op |
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): never run any checkout command from
+> this table — the harness pre-places the working tree at the pinned head. If the
+> step-2 SHA comparison mismatches, print `HEADLESS INPUT ERROR: working tree HEAD
+> <sha> != PR head <sha>` and stop with a non-zero outcome; never silently review
+> different code. See `references/headless-mode.md`.
+
 **4. If checkout fails → STOP immediately:**
 
 ```

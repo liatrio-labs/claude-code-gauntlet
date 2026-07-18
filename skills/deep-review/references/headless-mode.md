@@ -49,6 +49,8 @@ and stop the run with a non-zero outcome. **Never** fall back to a default and n
 ## Hard rules (always true when headless — no env var toggles these)
 
 - **PR-comment selection = `default`.** The per-finding interactive walkthrough (the unbounded question loop) is structurally unreachable, which in turn makes the dismissed-findings gate unreachable.
+- **Closed/merged PRs are reviewed, not skipped.** The interactive closed/merged stop does not apply — headless runs the full pipeline against the pinned head exactly as resolved. Benchmarking historical (already-merged) PRs is the primary headless use case; posting safety is governed by `DEEP_REVIEW_POST_MODE` (`dry-run` writes a payload and posts nothing), not by PR state. Phase 8 delivery follows `DEEP_REVIEW_DELIVERY` regardless of whether the PR is open, closed, or merged — the interactive chat/markdown-only restriction on closed/merged PRs does not apply headless.
+- **`gh pr checkout` is never run.** Headless never checks out, fetches, or stashes to move the working tree — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit than the one pinned.
 - **Task board = none.** The Phase 8 task-board offer is skipped; no tasks are created.
 - **REVIEW.md setup and subdirectory prompts = skip.** Neither the root-setup offer nor the subdirectory-REVIEW.md offer is presented.
 - **`build-review-md` is never invoked.** Headless runs never launch the REVIEW.md configuration wizard.
@@ -65,6 +67,7 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 | Pre-flight configuration gate (Phase 1) | Resolve `model_tier` + `delivery` per precedence; print the `Headless config:` block. No question. |
 | Phase 2 entry check | Passes if the `Headless config:` block was printed in Phase 1; do not return to the gate. |
 | PR-not-found (resolution failure) | `DEEP_REVIEW_PR_NOT_FOUND_POLICY`: `error` stops the run; `local` proceeds as a local review. |
+| Closed / merged PR (eligibility) | Proceed — do not stop. Review the pinned head as resolved; posting still obeys `DEEP_REVIEW_POST_MODE` and delivery follows `DEEP_REVIEW_DELIVERY`. (Interactive mode stops here; headless does not.) |
 | Draft PR | `DEEP_REVIEW_DRAFT_POLICY`: `review` proceeds; `skip` stops the run. |
 | Previously reviewed (both variants) | `DEEP_REVIEW_REVIEWED_POLICY`: `incremental` reviews new commits only, `full` reviews from scratch, `skip` stops the run. |
 | Trivial / light-scope (all low-risk, <50 lines) | `DEEP_REVIEW_TRIVIAL_SCOPE`: `light` runs bugs+security only, `full` runs all dimensions. |
