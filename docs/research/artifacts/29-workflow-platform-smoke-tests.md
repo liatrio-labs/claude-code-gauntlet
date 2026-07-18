@@ -37,6 +37,10 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 - **Row 5 (REFUTED half)** → modifies **S4 (degradation wrappers)**: bare `agent()` throws on structural failures (schema-retry exhaustion cap 5, unknown agentType) instead of returning null; every pipeline stage wraps calls in try/catch or routes through `parallel()` null-isolation, always `.filter(Boolean)`.
 - **Row 4 (acceptEdits leg refuted headlessly)** → modifies **S1/S4.4 docs surface only** (no stage redesign): dynamic-workflow review gate + agent-Bash approval both need pre-approval under acceptEdits; ship a documented allowlist recipe; bench pins default mode. (= D2 provisional.)
 
+## Addendum (2026-07-18, build phase): workflow entry contract
+
+Pinned empirically while building Task 1 (controller-run probes): (1) `export default` — and any `export` other than the single `export const meta` literal — is a **SyntaxError** ("Unexpected keyword 'export'"); the runtime executes the script **body top-level**, and a top-level `return <value>` is the result channel (consistent with every Phase 0 probe). (2) `meta.description` is **required non-empty** — validation fails before parse otherwise ("meta.description must be a non-empty string"). (3) Confirmed end-to-end on the built `workflows/pipeline.js`: session-invoked args arrive as a JSON string, entry normalizes, returns `{ok:true, phaseReached:'entry', pipelineVersion:'3.0.0-dev', args:{probe:true}}`. Build-system consequences: meta must be emitted as a single line (line-based hoisting) and `workflows/src/pipeline_entry.js` is build-only source (its trailing top-level return is illegal in a standalone ES module).
+
 ## Raw observations
 
 ### Task 2 — Workflow invocation probes (2026-07-18, CLI 2.1.214)
