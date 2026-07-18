@@ -32,3 +32,4 @@ docs/improvement-backlog.md
 /.deep-review/
 bench/workspace/
 bench/.env
+probes/
