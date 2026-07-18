@@ -30,3 +30,5 @@ docs/design/
 docs/superpowers/
 docs/improvement-backlog.md
 /.deep-review/
+bench/workspace/
+bench/.env

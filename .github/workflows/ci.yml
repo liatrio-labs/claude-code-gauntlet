@@ -60,3 +60,27 @@ jobs:
 
       - name: Run pytest
         run: python -m pytest tests/ -q
+
+  bench-tests:
+    name: Run Bench Self-Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run bench self-tests
+        run: python -m pytest bench/tests/ -q

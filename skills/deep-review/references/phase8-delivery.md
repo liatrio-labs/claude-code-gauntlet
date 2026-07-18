@@ -29,6 +29,8 @@ Always use the full 40-character SHA from `git rev-parse HEAD`.
 
 **Re-check eligibility** — verify the PR is still open. If closed/merged: deliver via chat/markdown only.
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivers per `DEEP_REVIEW_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `DEEP_REVIEW_POST_MODE`. See `references/headless-mode.md`.
+
 Deliver using the method(s) selected in Phase 1, in this order:
 
 **Step A. Chat** — if selected, output the full report per `references/report-format.md`.
@@ -36,6 +38,8 @@ Deliver using the method(s) selected in Phase 1, in this order:
 **Step B. PR comments** — if selected, run the PR comment selection flow before posting.
 
 Complete the selection flow below before posting any PR comments.
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Use selection=`default` — top `min($DEEP_REVIEW_PR_COMMENT_CAP, count)` main-report findings by severity then confidence, Improvement Suggestions excluded. The "Let me pick" walkthrough is unavailable. Posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
@@ -92,6 +96,8 @@ python3 {plugin_root}/scripts/post_review.py "{output_dir}/deep-review-post-revi
 """)
 ```
 
+> Headless carve-out (`DEEP_REVIEW_POST_MODE=dry-run`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `DEEP_REVIEW_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
+
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
 **Step C. Markdown file** — if selected, write to `./deep-review-{date}.md`.
@@ -101,6 +107,8 @@ See `references/delivery-guide.md` for the findings JSON schema and validation d
 ## Stage 2: Task Board
 
 The user decides whether to create tasks — always ask before finishing.
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the task board is skipped — present neither `AskUserQuestion` below and create no tasks. See `references/headless-mode.md`.
 
 **If pr_comment_set exists:**
 
@@ -151,11 +159,15 @@ See `references/delivery-guide.md` for the full dismissed findings flow (AskUser
 
 **Stage 3 self-check:** After delivery and task board, verify Stage 3 (dismissed findings -> REVIEW.md suppression offer) was offered to the user. If dismissed_set is non-empty and you did not present the suppression prompt, go back and present it now before finishing the review.
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): Stage 3 is unreachable — selection=`default` means no walkthrough runs, so dismissed_set is always empty. Skip the self-check and never write REVIEW.md (read-only in headless mode). See `references/headless-mode.md`.
+
 ---
 
 ## Interactive Finding Walkthrough
 
 Reusable selection pattern for both PR comment selection (Stage 1 Step B) and task board selection (Stage 2).
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the walkthrough is unreachable — Stage 1 uses selection=`default` and Stage 2 (task board) is skipped, so neither caller invokes it. The per-finding `AskUserQuestion` below is never presented and dismissed_set stays empty. See `references/headless-mode.md`.
 
 ### Step 1: Show Summary Table
 

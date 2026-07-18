@@ -19,6 +19,8 @@ The user's input determines the review target. Resolve it before eligibility che
 
 **Validation:** After resolving to PR/MR mode, verify the PR/MR exists by running `gh pr view {pr_number}` (or `glab mr view`). If the command fails, do NOT silently fall back to local mode — ask the user:
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Apply `DEEP_REVIEW_PR_NOT_FOUND_POLICY` — `error` stops the run, `local` proceeds as a local review with `pr_number` cleared. See `references/headless-mode.md`.
+
 ```
 AskUserQuestion(
   questions: [{
@@ -41,6 +43,8 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 ---
 
 ## Eligibility Checks
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): none of the `AskUserQuestion` gates in this section are presented. The draft gate applies `DEEP_REVIEW_DRAFT_POLICY` (`review` proceeds, `skip` stops); both previously-reviewed variants apply `DEEP_REVIEW_REVIEWED_POLICY` (`incremental` / `full` / `skip`). Closed/merged does **not** stop the run headless — it proceeds against the pinned head exactly as resolved (benchmarking historical merged PRs is the headless use case; posting safety is governed by `DEEP_REVIEW_POST_MODE`, and `dry-run` posts nothing). Trivial-only-changes still stops deterministically. See `references/headless-mode.md`.
 
 1. **Closed/merged?** — Stop: "This PR is already closed/merged. No review needed."
 
@@ -102,6 +106,8 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 ## Pre-Flight Configuration Gate
 
 > **STOP: Complete this gate before Phase 2.** Do not skip or assume defaults — this includes preferences remembered from prior sessions or memory. Preferences change between reviews; asking takes 5 seconds, a wrong assumption wastes the entire review.
+>
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the entire gate below resolves deterministically — `model_tier` and `default_delivery` come from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, no REVIEW.md-setup question is asked, and the `Headless config:` block replaces every `AskUserQuestion` in this section (resolution logic, question templates, confirmation-only template, and combined-call example). Do not present any `AskUserQuestion`.
 
 ### Resolution logic
 
@@ -120,6 +126,8 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 |---|---|
 | **0** | Still present AskUserQuestion with a single confirmation question (see "Confirmation-only template" below). Never skip — Phase 2 checks that AskUserQuestion was called. |
 | **1-3** | Single AskUserQuestion with all unresolved items in the `questions` array. |
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): neither the "0" nor the "1-3" row applies — dispatch no `AskUserQuestion` regardless of how many items REVIEW.md leaves unresolved. Headless defaults fill any gap and the `Headless config:` block records the resolution; Phase 2's entry check is satisfied by that block, not by an `AskUserQuestion` call.
 
 ### Question templates
 
@@ -217,6 +225,8 @@ Store the delivery selection for Phase 8. Confirm all resolved settings in outpu
 > **Note:** This template is triggered during Phase 2d (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
 
 Used when ALL files are low-risk AND total lines <50:
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Apply `DEEP_REVIEW_TRIVIAL_SCOPE` — `light` runs bugs+security only, `full` runs all dimensions. See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(

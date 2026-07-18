@@ -1,0 +1,33 @@
+{
+  "platform": "gitlab",
+  "summary": {
+    "body": "Automated review summary.\n\n<!-- deep-review-findings: {\"version\":\"3.0\",\"findings_count\":2,\"sha\":\"deadbeefcafe1234deadbeefcafe1234deadbeef\"} -->"
+  },
+  "discussions": [
+    {
+      "body": "**🟠 [HIGH] N+1 query in loop**\n\nuser.posts is queried inside the each loop; preload before iterating.",
+      "position": {
+        "position_type": "text",
+        "base_sha": "ba5e0000000000000000000000000000000000ba",
+        "head_sha": "43ad0000000000000000000000000000000043ad",
+        "start_sha": "57a27000000000000000000000000000000057a2",
+        "new_path": "app/models/user.rb",
+        "new_line": 27,
+        "old_path": "app/models/user.rb"
+      }
+    },
+    {
+      "body": "**💡 [LOW] Unused parameter**\n\nThe redirect_to param is never read.",
+      "position": {
+        "position_type": "text",
+        "base_sha": "ba5e0000000000000000000000000000000000ba",
+        "head_sha": "43ad0000000000000000000000000000000043ad",
+        "start_sha": "57a27000000000000000000000000000000057a2",
+        "new_path": "app/controllers/sessions_controller.rb",
+        "new_line": 5,
+        "old_path": "app/controllers/sessions_controller.rb"
+      }
+    }
+  ],
+  "skipped": []
+}

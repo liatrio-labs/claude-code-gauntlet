@@ -1,0 +1,9 @@
+# uv-managed virtualenv and caches — never vendored
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# scorer runtime outputs (results/{model}/candidates.json, evaluations.json, …)
+results/

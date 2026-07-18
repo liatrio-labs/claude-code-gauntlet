@@ -11,14 +11,20 @@ Covers:
   - gitlab_project_id: URL encoding of owner/repo
 """
 
+import contextlib
+import io
 import json
 import os
+import shutil
 import sys
+import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+import scripts.post_review as post_review
 from scripts.post_review import (
     detect_platform,
     is_line_valid,
@@ -596,6 +602,343 @@ class TestGitlabPositionPayload(unittest.TestCase):
         }
         position = self._capture_position(data, valid_lines=None, new_files=None)
         self.assertEqual(position["old_path"], "src/edited.py")
+
+
+# ---------------------------------------------------------------------------
+# --dry-run payload capture
+# ---------------------------------------------------------------------------
+
+# A GitHub diff (gh pr diff) that makes foo.py lines 1 (context) and 2 (added)
+# valid for inline comments.
+GH_DIFF = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,1 +1,2 @@\n"
+    " existing\n"
+    "+added\n"
+)
+
+# A GitLab diff (glab mr diff) that makes bar.py lines 1 and 2 valid.
+GL_DIFF = (
+    "diff --git a/bar.py b/bar.py\n"
+    "--- a/bar.py\n"
+    "+++ b/bar.py\n"
+    "@@ -1,1 +1,2 @@\n"
+    " ctx\n"
+    "+newline\n"
+)
+
+
+def _fake_run(diff="", versions=None, remote="git@github.com:o/r.git\n"):
+    """Build a ``subprocess.run`` side_effect that mocks the read-only CLI calls.
+
+    Handles ``which``, ``git remote get-url``, ``git rev-parse``, ``gh pr diff``,
+    ``glab mr diff``, and the GitLab ``.../versions`` GET. Any other command
+    (i.e. a POST) returns an empty JSON object — but in dry-run mode ``post_json``
+    short-circuits before reaching ``subprocess.run`` for POSTs.
+    """
+    def _run(cmd, *a, **k):
+        def res(out="", err="", rc=0):
+            return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+        if cmd[0] == "which":
+            return res(out="/usr/bin/" + cmd[1])
+        if cmd[:3] == ["git", "remote", "get-url"]:
+            return res(out=remote)
+        if cmd[:2] == ["git", "rev-parse"]:
+            return res(out="deadbeefcafe\n")
+        if cmd[:3] == ["gh", "pr", "diff"]:
+            return res(out=diff)
+        if cmd[:3] == ["glab", "mr", "diff"]:
+            return res(out=diff)
+        if cmd[:2] == ["glab", "api"] and cmd[-1].endswith("/versions"):
+            return res(out=json.dumps(versions if versions is not None else []))
+        return res(out="{}", rc=0)
+    return _run
+
+
+class _DryRunTestBase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.findings_path = os.path.join(self.tmp, "findings.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        post_review.DRY_RUN = False
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    def _write(self, data):
+        with open(self.findings_path, "w") as f:
+            json.dump(data, f)
+
+    def _payload(self):
+        with open(os.path.join(self.tmp, "post-review-payload.json")) as f:
+            return json.load(f)
+
+
+class TestDryRunGitHub(_DryRunTestBase):
+
+    def test_dry_run_captures_payload_and_makes_no_post(self):
+        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
+                     "title": "Bug A", "body": "Body A"}
+        finding_b = {"file": "foo.py", "line": 99, "severity": "low",
+                     "title": "Bug B", "body": "Body B"}
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary", "findings": [finding_a, finding_b],
+        })
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            post_review.main()
+
+        post_calls = [c for c in mock_run.call_args_list
+                      if "--method" in c.args[0] and "POST" in c.args[0]]
+        self.assertEqual(post_calls, [], "no POST subprocess call in dry-run")
+
+        payload_path = os.path.join(self.tmp, "post-review-payload.json")
+        self.assertTrue(os.path.exists(payload_path))
+        cap = self._payload()
+
+        self.assertEqual(cap["platform"], "github")
+        self.assertEqual(cap["endpoint"], "repos/o/r/pulls/5/reviews")
+        self.assertEqual(cap["method"], "POST")
+        self.assertEqual(cap["payload"]["event"], "COMMENT")
+        # Comments must match the live-path rendering byte-for-byte.
+        self.assertEqual(len(cap["payload"]["comments"]), 1)
+        comment = cap["payload"]["comments"][0]
+        self.assertEqual(comment["body"], render_comment_body(finding_a))
+        self.assertEqual(comment["path"], "foo.py")
+        self.assertEqual(comment["line"], 2)
+        self.assertEqual(comment["side"], "RIGHT")
+
+    def test_invalid_line_lands_in_skipped_not_comments(self):
+        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
+                     "title": "Bug A", "body": "Body A"}
+        finding_b = {"file": "foo.py", "line": 99, "severity": "low",
+                     "title": "Bug B", "body": "Body B"}
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary", "findings": [finding_a, finding_b],
+        })
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)):
+            post_review.main()
+
+        cap = self._payload()
+        expected = ("Skipping finding 'Bug B' at foo.py:99 "
+                    "— line not found in diff. Valid lines for this file: [1, 2]")
+        self.assertIn(expected, cap["skipped"])
+        bodies = [c["body"] for c in cap["payload"]["comments"]]
+        self.assertNotIn(render_comment_body(finding_b), bodies)
+
+
+class TestDryRunGitLab(_DryRunTestBase):
+
+    def test_dry_run_captures_summary_and_discussions(self):
+        finding_x = {"file": "bar.py", "line": 2, "severity": "medium",
+                     "title": "Issue X", "body": "Desc X"}
+        self._write({
+            "platform": "gitlab", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "MR review", "findings": [finding_x],
+        })
+        versions = [{"base_commit_sha": "base1", "head_commit_sha": "head1",
+                     "start_commit_sha": "start1"}]
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GL_DIFF, versions=versions)) as mock_run:
+            post_review.main()
+
+        post_calls = [c for c in mock_run.call_args_list
+                      if "--method" in c.args[0] and "POST" in c.args[0]]
+        self.assertEqual(post_calls, [], "no POST subprocess call in dry-run")
+
+        versions_calls = [
+            c for c in mock_run.call_args_list
+            if c.args[0][:2] == ["glab", "api"] and c.args[0][-1].endswith("/versions")
+        ]
+        self.assertTrue(versions_calls,
+                        "fetch_gitlab_shas versions GET must still run in dry-run")
+
+        cap = self._payload()
+        self.assertEqual(cap["platform"], "gitlab")
+        self.assertIn("MR review", cap["summary"]["body"])
+        self.assertEqual(len(cap["discussions"]), 1)
+        disc = cap["discussions"][0]
+        self.assertEqual(disc["body"], render_comment_body(finding_x))
+        self.assertEqual(disc["position"]["new_path"], "bar.py")
+        self.assertEqual(disc["position"]["new_line"], 2)
+
+
+class TestLivePathUnchanged(_DryRunTestBase):
+
+    def test_without_flag_posts_and_writes_no_payload_file(self):
+        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
+                     "title": "Bug A", "body": "Body A"}
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary", "findings": [finding_a],
+        })
+        # Pin DEEP_REVIEW_POST_MODE off so an ambient bench value (the harness pins it
+        # to dry-run) cannot flip this live-path assertion.
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {}, clear=False), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
+            post_review.main()
+
+        post_calls = [c for c in mock_run.call_args_list
+                      if "--method" in c.args[0] and "POST" in c.args[0]]
+        self.assertTrue(post_calls, "live path must issue the reviews POST")
+        self.assertFalse(
+            os.path.exists(os.path.join(self.tmp, "post-review-payload.json")))
+
+
+class TestDryRunStdout(_DryRunTestBase):
+    """In dry-run, the post paths must not claim anything was posted."""
+
+    def _run_main_capturing_stdout(self, data, diff, versions=None):
+        self._write(data)
+        stdout = io.StringIO()
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=diff, versions=versions)), \
+             contextlib.redirect_stdout(stdout):
+            post_review.main()
+        return stdout.getvalue()
+
+    def test_github_dry_run_stdout_has_no_posted_claim(self):
+        out = self._run_main_capturing_stdout({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
+                          "title": "Bug A", "body": "Body A"}],
+        }, diff=GH_DIFF)
+        self.assertNotIn("Review posted:", out)
+        self.assertNotIn("comment(s) posted.", out)
+        self.assertIn("Review captured (dry-run).", out)
+        self.assertIn("inline comment(s) captured.", out)
+
+    def test_gitlab_dry_run_stdout_has_no_posted_claim(self):
+        versions = [{"base_commit_sha": "b", "head_commit_sha": "h",
+                     "start_commit_sha": "s"}]
+        out = self._run_main_capturing_stdout({
+            "platform": "gitlab", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "MR review",
+            "findings": [{"file": "bar.py", "line": 2, "severity": "medium",
+                          "title": "Issue X", "body": "Desc X"}],
+        }, diff=GL_DIFF, versions=versions)
+        self.assertNotIn("note posted.", out)
+        self.assertNotIn("discussion(s) posted.", out)
+        self.assertIn("MR summary note captured (dry-run).", out)
+        self.assertIn("inline discussion(s) captured.", out)
+
+
+class TestLivePathStdout(_DryRunTestBase):
+    """The live path's stdout is unchanged: it still claims posts."""
+
+    def test_github_live_path_prints_posted(self):
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
+                          "title": "Bug A", "body": "Body A"}],
+        })
+        stdout = io.StringIO()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {}, clear=False), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)), \
+             contextlib.redirect_stdout(stdout):
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
+            post_review.main()
+        out = stdout.getvalue()
+        self.assertIn("Review posted:", out)
+        self.assertIn("inline comment(s) posted.", out)
+        self.assertNotIn("captured", out)
+
+
+# ---------------------------------------------------------------------------
+# DEEP_REVIEW_POST_MODE env-enforced dry-run
+# ---------------------------------------------------------------------------
+
+class TestPostModeEnv(_DryRunTestBase):
+    """DEEP_REVIEW_POST_MODE=dry-run self-enforces dry-run even without --dry-run.
+
+    The env var is part of the headless contract and the bench harness pins it to
+    dry-run; a headless Phase 8 invocation that omits the flag must still capture the
+    payload and post nothing. The flag wins when present; env "live" or unset changes
+    nothing on its own.
+    """
+
+    def _write_gh(self):
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
+                          "title": "Bug A", "body": "Body A"}],
+        })
+
+    def _post_calls(self, mock_run):
+        return [c for c in mock_run.call_args_list
+                if "--method" in c.args[0] and "POST" in c.args[0]]
+
+    def _payload_exists(self):
+        return os.path.exists(os.path.join(self.tmp, "post-review-payload.json"))
+
+    def test_env_dry_run_alone_captures_payload_no_posts(self):
+        self._write_gh()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {"DEEP_REVIEW_POST_MODE": "dry-run"}), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            post_review.main()
+        self.assertEqual(self._post_calls(mock_run), [],
+                         "env dry-run must issue no POST")
+        self.assertTrue(self._payload_exists())
+        self.assertEqual(self._payload()["platform"], "github")
+
+    def test_flag_alone_dry_run_when_env_unset(self):
+        self._write_gh()
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch.dict(os.environ, {}, clear=False), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
+            post_review.main()
+        self.assertEqual(self._post_calls(mock_run), [])
+        self.assertTrue(self._payload_exists())
+
+    def test_neither_flag_nor_env_posts_live(self):
+        self._write_gh()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {}, clear=False), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
+            post_review.main()
+        self.assertTrue(self._post_calls(mock_run),
+                        "live path must issue the reviews POST")
+        self.assertFalse(self._payload_exists())
+
+    def test_env_live_without_flag_posts_live(self):
+        self._write_gh()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {"DEEP_REVIEW_POST_MODE": "live"}), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            post_review.main()
+        self.assertTrue(self._post_calls(mock_run),
+                        "env=live with no flag must post live")
+        self.assertFalse(self._payload_exists())
 
 
 if __name__ == "__main__":

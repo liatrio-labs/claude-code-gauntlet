@@ -256,6 +256,8 @@ REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md â
 
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): skip both REVIEW.md-setup `AskUserQuestion` prompts below â€” root config applies, `build-review-md` is never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is created. See `references/headless-mode.md`.
+
 - **No REVIEW.md anywhere:**
 
   ```

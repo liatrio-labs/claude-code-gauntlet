@@ -1,0 +1,40 @@
+{
+  "gate": [
+    "https://github.com/keycloak/keycloak/pull/37634",
+    "https://github.com/keycloak/keycloak/pull/37429",
+    "https://github.com/keycloak/keycloak/pull/36880",
+    "https://github.com/getsentry/sentry/pull/93824",
+    "https://github.com/getsentry/sentry/pull/77754",
+    "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1",
+    "https://github.com/grafana/grafana/pull/79265",
+    "https://github.com/grafana/grafana/pull/94942",
+    "https://github.com/grafana/grafana/pull/90939",
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4",
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10",
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/2",
+    "https://github.com/calcom/cal.com/pull/14740",
+    "https://github.com/calcom/cal.com/pull/11059",
+    "https://github.com/calcom/cal.com/pull/10600"
+  ],
+  "holdout": [
+    "https://github.com/keycloak/keycloak/pull/37038",
+    "https://github.com/keycloak/keycloak/pull/33832",
+    "https://github.com/getsentry/sentry/pull/95633",
+    "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/3",
+    "https://github.com/grafana/grafana/pull/97529",
+    "https://github.com/grafana/grafana/pull/90045",
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/8",
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/3",
+    "https://github.com/calcom/cal.com/pull/10967",
+    "https://github.com/calcom/cal.com/pull/8087"
+  ],
+  "smoke": [
+    "https://github.com/grafana/grafana/pull/80329",
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/6",
+    "https://github.com/calcom/cal.com/pull/22345"
+  ],
+  "review_md_fixtures": [
+    "https://github.com/getsentry/sentry/pull/77754",
+    "https://github.com/calcom/cal.com/pull/10600"
+  ]
+}

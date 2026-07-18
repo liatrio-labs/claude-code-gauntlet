@@ -17,7 +17,8 @@ repos:
     rev: v0.45.0
     hooks:
       - id: markdownlint-fix
-        exclude: "LICENSE"
+        # bench/golden holds byte-exact fixtures (recorded input envelopes), not docs
+        exclude: "LICENSE|^bench/golden/"
 
   - repo: https://github.com/streetsidesoftware/cspell-cli
     rev: v9.7.0

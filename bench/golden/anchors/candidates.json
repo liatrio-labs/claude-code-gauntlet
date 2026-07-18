@@ -1,0 +1,2707 @@
+{
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10": {
+    "claude": [
+      {
+        "text": "Test fabricators file swap - category_fabricator.rb was overwritten with embeddable_host content, destroying all category fabricators (Fabricator(:category), Fabricator(:diff_category), etc.)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Uses deprecated where().first pattern instead of find_by() (codebase-wide refactoring established find_by as the standard)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing strong parameters - directly accesses params[:embeddable_host] without using require/permit",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Migration at db/migrate/20150818190757_create_embeddable_hosts.rb uses string interpolation in raw SQL: VALUES ('#{h}', ...) which is unparameterized and a SQL injection risk",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Fabricator files appear swapped: category_fabricator.rb contains the embeddable_host fabricator and embeddable_host_fabricator.rb contains category fabricators",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Migration uses force: true which will drop the table if it already exists, potentially causing data loss on re-run",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "embedding_controller.rb update action is a no-op - it re-renders without saving anything",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "rest.js.es6 type.replace('_', '-') only replaces the first underscore, not all occurrences, which could be fragile for other types",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Tests for the new controller are minimal - only checks inheritance with no integration tests for CRUD actions",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Icon-only d-button elements (save, cancel, edit, delete) lack accessible labels for screen readers - need title attributes with i18n keys that don't currently exist in locale files",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "obj[k].map in store.js.es6 will throw if API returns null or non-array for *_ids fields - needs Array.isArray guard before calling map",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "EmbeddableHost.where(id:).first returns nil causing NoMethodError in update/destroy actions when invalid id is passed - need find_by with explicit guard",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Host validation regex caps TLDs at 5 characters, rejecting valid domains like .museum or .community - should allow up to 63 characters",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "self.host.sub! in before_validation raises on nil host instead of returning validation error - needs nil guard",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Migration execute(...)[0] will raise IndexError if embed_category or uncategorized_category_id queries return no rows - needs presence checks",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Migration backfill interpolates host strings directly into SQL without escaping and doesn't filter blank lines - needs connection.quote and blank check",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Fabricator(:private_category) after_build uses update! which persists even for Fabricate.build, and transients[:group].id raises if group not passed - should set attribute directly and guard group usage",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Extra blank lines in spec files violate RuboCop layout rules (Layout/EmptyLinesAroundBlockBody)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Typo in spec context description: 'emeddable' should be 'embeddable'",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test requests fruit id 2 but mock always returns fruit id 1 - test passes accidentally due to matching color_ids",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/2": {
+    "claude": [
+      {
+        "text": "List-Unsubscribe header not updated to use per-topic unsubscribe URL - the PR adds per-topic unsubscribe functionality and passes unsubscribe_url in email template arguments, but the List-Unsubscribe header still points to the global user preferences URL instead of the new per-topic unsubscribe URL",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "The unsubscribe action requires ensure_logged_in but the unsubscribe URL is embedded in notification emails - when logged-out users click the link, they are silently redirected to the homepage with no error message and no unsubscribe action taken, making the per-topic email unsubscribe feature non-functional for the most common use case",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The unsubscribe_link i18n string now requires %{unsubscribe_url} interpolation but Email::MessageBuilder provides no default value for it - any plugin using build_email with add_unsubscribe_link: true without providing unsubscribe_url will raise I18n::MissingInterpolationArgument",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Missing trailing comma in multiline filter list - the array passed to skip_before_filter should include a trailing comma after :unsubscribe to match project style and fix lint warning",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "TopicUser.find_by can return nil and the current toggle logic can re-subscribe users or flip state due to email link prefetching - should make unsubscribe idempotent by always setting to muted and creating the record if needed",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Duplicate respond instructions in email template - Line 6 duplicates the respond instructions that already appear at Line 19 when context_posts are present",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Header class has leading dot preventing CSS targeting - Line 10 includes '.previous-discussion' instead of 'previous-discussion' in the class attribute",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "State-changing unsubscribe action uses GET request - topics#unsubscribe mutates notification state but is mapped to GET, should use POST/PUT or require a signed token",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Typo in stopNotificiationsText property name - should be stopNotificationsText",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test for List-Unsubscribe header only checks presence but should assert the value uses the provided unsubscribe_url",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/3": {
+    "claude": [
+      {
+        "text": "Race condition in BlockedEmail.should_block? where multiple concurrent requests can cause lost updates to match_count due to read-modify-write pattern",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Silent failure on save in BlockedEmail.should_block? - uses .save instead of .save! which silently swallows validation errors",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "BlockedEmail.should_block? modifies database records during validation which should be side-effect-free - increments counters even when validation fails for other reasons",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Statistics tracking in validation causes stat pollution - failed user creations still increment stats making statistics inaccurate",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Transaction issues - if user creation fails after validation the stats are still saved",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing newline at end of file in lib/validators/email_validator.rb",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Inconsistent use of 'and' keyword instead of '&&' operator in lib/validators/email_validator.rb line 13",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "UsersController#create now returns user.errors.to_hash which could potentially leak internal validation details",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "BlockedEmail.should_block? performs a database write (updating match_count and last_match_at) during a validation callback, which is an unusual side-effect pattern that could have subtle implications when validation is called without intending to persist",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "No updated specs for the changes to UsersController#create",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "No updated specs for the modified User model validations",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "email_validator.rb file is missing a trailing newline",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Case-sensitive email lookup in BlockedEmail.should_block? creates bypass risk - User@Example.com can bypass a block on user@example.com",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Email.downcase() only lowercases the domain part, not the local part, so using it won't fix the case-sensitivity issue - need to use full downcase instead",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "BlockedEmail model needs email normalization via before_validation callback to downcase emails before storage",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "BlockedEmail.should_block? should use email.downcase when querying to ensure case-insensitive matching",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Regex in email_in_restriction_setting? missing end anchor allows suffix domain bypass - user@example.com.evil.com matches whitelisted example.com domain",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Regex pattern should be changed from @(#{domains}) to @(?:#{domains})\\z to anchor domain matching to end of string",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Extra blank lines at start/end of describe block in email_validator_spec.rb violate RuboCop Layout/EmptyLinesAroundBlockBody convention",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Consider using the new user.email.blocked translation key instead of user.email.invalid for blocked email validation messages",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Potential duplicate entries in rejectedEmails array if user submits same blocked email multiple times",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4": {
+    "claude": [
+      {
+        "text": "Origin validation in embed.js uses indexOf which can be bypassed - an attacker could use origin 'http://example.com.evil.com' and indexOf would return 0, bypassing the check",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "X-Frame-Options set to 'ALLOWALL' is not a valid value - should be 'ALLOW-FROM' with specific origin. This disables clickjacking protection entirely",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "request.referer is directly interpolated without escaping in embed.html.erb, allowing potential XSS and postMessage to untrusted origins if attacker controls referer header",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "open() calls in poll_feed.rb and topic_embed.rb have no error handling, timeouts, or resource cleanup - can lead to hanging jobs, resource exhaustion, or unhandled exceptions",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "TOCTOU race condition in TopicEmbed.import - between checking if embed exists and creating it, another process could create the same embed, leading to duplicate topics or database constraint violation",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "URL validation in topic_embed.rb and poll_feed.rb only checks for http/https prefix but doesn't validate URL structure - could allow SSRF attacks to localhost or metadata endpoints",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Host validation in topic_retriever.rb doesn't prevent SSRF to internal networks - attacker could use URL like 'http://embeddable_host@internal.server/' to bypass host check",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "XSS vulnerability: the `url` parameter on line 13 is interpolated directly into HTML without escaping. Since the href uses single quotes, a URL like `http://evil.com/'><script>alert(1)</script>` breaks out of the attribute and injects script tags. Combined with `cook_method: raw_html` (bypassing sanitization) and `raw post.cooked` in the embed view, this allows arbitrary JavaScript execution. The URL should be HTML-escaped with `ERB::Util.html_escape` or `CGI.escapeHTML` before interpolation.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "ERB syntax error on line 6: `<%- end if %>` should be `<%- end %>`. In Ruby, `end if` is a postfix conditional modifier that requires a condition expression, but none is provided here. This will raise a `SyntaxError` when rendering the embed view, completely breaking the embeddable comments feature for any topic with posts.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "On line 35, `i.content` returns `nil` for RSS 2.0 feeds that use `<description>` instead of `<content>`, causing `NoMethodError` when `.scrub` is called on `nil`. Since the job has `sidekiq_options retry: false`, this crashes the entire feed polling job with no retry. Should fall back to `i.description` and guard against nil.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The origin check `discourseUrl.indexOf(e.origin) === -1` on line 17 uses substring matching, which allows any origin that is a prefix/substring of `discourseUrl` to pass validation. Should use strict origin comparison: `new URL(discourseUrl).origin === e.origin`.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Missing guard against missing #discourse-comments container - appendChild will throw if the container doesn't exist",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "postMessage origin validation uses substring matching on discourseUrl which can be spoofed if URL contains origin in path/query",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "postMessage height value should be parsed and validated before use to prevent invalid values",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "SSRF vulnerability: unsafe use of open() with URL from site settings allows fetching internal services, file:// URLs, or cloud metadata endpoints",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Potential NoMethodError if feed item content is nil when calling .scrub",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused feed_key method should be removed or connected to intended functionality",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "XSS vulnerability: raw_html cook_method bypasses sanitizer, allowing untrusted HTML to become stored XSS",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Embed URL not escaped before interpolating into raw HTML anchor tag, allowing HTML/JS injection",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Nil contents will raise on << operator when appending to contents",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "content_sha1 updated unconditionally even if PostRevisor#revise! returns false, causing state desync",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "import_remote missing timeout protection - open(url).read can hang indefinitely",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "import_remote missing URL scheme validation before fetching",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Syntax error: end if is invalid ERB syntax in embed/best.html.erb",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Destructive force: true in create_table migration will drop existing topic_embeds table and data",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Destructive force: true in create_table migration will drop existing top_topics table and data",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Non-atomic Redis setnx + expire pattern can leave key without TTL permanently blocking retrieval",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing blank guard for SiteSetting.embed_by_username before calling downcase",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "cook_method option not validated before persisting, risking invalid enum values",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Adding column with default + null: false in single migration step can cause long-running locks on large tables",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Deprecated RSpec matcher be_true should be be true (with space)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Assertions in after block is anti-pattern - if test body fails, after block still executes causing confusing errors",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing error handling for network and parsing failures in poll_feed method",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "raw and cooked both set to p[:cooked] in disqus importer - raw should contain source text not HTML",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Date.parse loses time information - should use DateTime.parse or Time.parse to preserve full timestamp",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Consider using image_tag for safer avatar rendering instead of direct URL interpolation",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/6": {
+    "claude": [],
+    "claude-code": [
+      {
+        "text": "The `website_name` attribute is not included in `untrusted_attributes`, so it remains visible to anonymous users viewing TL0 profiles even though `website` is correctly hidden, leaking website information that should be restricted",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "`include_website_name` method (line 153) is missing the trailing `?` - ActiveModel::Serializer requires the method to be named `include_website_name?` for conditional attribute inclusion, causing `website_name` to always be serialized instead of being conditionally omitted",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "include_website_name is missing the trailing question mark (?) required by ActiveModelSerializers, so the predicate won't be invoked and website_name will serialize even when user fields are restricted (e.g., TL0/anonymous users viewing other profiles), leaking private data",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/8": {
+    "claude": [
+      {
+        "text": "Pagination calculation error returns extra empty page (bug in totalPages formula)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Function returns undefined instead of promise when name is empty (inconsistent return type breaks promise chaining)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Regression of truncation fix from 5 days earlier - commit 35edfb5b9 on Dec 31, 2014 explicitly prevented truncation of non-automatic groups, this PR removes that protection by applying pagination limits to all groups",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test uses wrong HTTP method - uses PUT but route expects DELETE for remove_member endpoint",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "TODO comment about fixing group truncation bug was removed without clearly addressing the root cause mentioned in the comment",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "New TODO comment added in admin-group.js.es6 indicating input field should be cleared after adding members but functionality not implemented",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "remove_member calls group.users.delete(user_id) which performs a direct SQL DELETE bypassing ActiveRecord callbacks including counter_cache, causing group.user_count to become stale after member removal. Should use group.remove(User.find(user_id)) instead which properly triggers counter cache updates.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "totalPages is computed as Math.floor(user_count / limit) + 1 which produces an off-by-one error when user_count is an exact multiple of limit (e.g., 100/50 gives 3 instead of 2), allowing users to navigate to an empty page. Should use Math.ceil(user_count / limit) instead.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "totalPages calculation has off-by-one error when user_count is a multiple of limit - Math.floor(user_count / limit) + 1 yields an extra page for exact multiples, should use Math.ceil instead",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "next() function allows navigating to an empty page by clamping offset to user_count instead of the last valid offset",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Usernames are not normalized before lookup in add_members - whitespace or blank entries will silently skip valid users",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Pagination params limit and offset are not clamped - negative or very large values can trigger heavy queries or odd behavior",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test for automatic-group remove_member uses PUT instead of DELETE, which won't validate verb correctness",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Guard condition in group/members.hbs checks model but loop iterates over members - if model is truthy but members is undefined/empty, table header renders with no rows",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Stray closing </div> tag with no matching opening tag in group/members.hbs template",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Route parameter mismatch - routes provide :id but controller expects :group_id, causing param is missing error",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Hardcoded colors #333 and #aaa in SCSS instead of SCSS variables may break theme consistency",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "usernames input is not cleared after add operation, making it easy to accidentally re-add the same usernames",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1": {
+    "claude": [
+      {
+        "text": "AttributeError when organization_context.member is None - code accesses organization_context.member.has_global_access without checking if member is None, which will crash for users without organization membership",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Django QuerySet does not support negative indexing - code allows negative offsets to be passed to Django QuerySet slicing which will raise AssertionError since Django explicitly prohibits negative indices",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Incorrect boundary condition check - code checks len(results) == offset + limit + extra but should check against start_offset + limit + extra, causing inconsistent logic between slicing and boundary check",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Re-introduction of previously fixed security vulnerability - negative offset handling was explicitly fixed in commit 35548e2d285 (Nov 2019) but this PR re-introduces it",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Misleading comment about Django ORM behavior - comment claims Django ORM properly handles negative slicing automatically but this is technically incorrect",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Inconsistent security permission check - uses request.user.is_superuser directly instead of established is_active_superuser() helper function",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing tests for new OptimizedCursorPaginator functionality with potentially dangerous negative offset handling",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Modification of BasePaginator affects all inheriting paginators - changes to get_result() affect Paginator, DateTimePaginator, and OptimizedCursorPaginator, potentially breaking existing pagination behavior",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Django QuerySets do not support negative indexing - when enable_advanced_features is true and cursor.offset is negative, line 882 passes the negative offset directly to queryset[start_offset:stop], which raises AssertionError. Any superuser hitting the audit logs endpoint with optimized_pagination=true and a crafted cursor containing a negative offset will get a 500 error. The fix should clamp start_offset to 0 or reject negative offsets with a BadPaginationError.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "OptimizedCursorPaginator.get_item_key calls math.floor()/math.ceil() directly on datetime objects (line 839), which raises TypeError since datetime does not implement __floor__. The method should convert datetime to float timestamp first like DateTimePaginator does.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "OptimizedCursorPaginator.value_from_cursor returns the raw cursor value (an integer timestamp) instead of converting it back to a datetime, so build_queryset will compare an integer against a DateTimeField on page 2+, causing type mismatch errors. It should convert back using datetime.fromtimestamp() like DateTimePaginator does.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Potential AttributeError when organization_context.member is None, causing organization_context.member.has_global_access to raise AttributeError",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "OptimizedCursorPaginator is incompatible with datetime fields - get_item_key calls math.floor() on datetime objects causing TypeError when used with order_by=\"-datetime\"",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "OptimizedCursorPaginator.value_from_cursor returns cursor.value directly without converting to datetime, breaking build_queryset's comparison logic for datetime fields",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Misleading comment claims to allow negative offsets but implementation clamps offset to 0 for forward pagination, and negative offsets for backward pagination will cause Django QuerySet AssertionError/ValueError since negative indexing is not supported",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Django QuerySet does not support negative slicing - the negative offset feature will crash at runtime when enable_advanced_features=True and cursor.offset < 0",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Misleading comments in Cursor class describe performance optimization for negative offsets but the Cursor class itself doesn't implement any special handling - actual implementation is in OptimizedCursorPaginator",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/3": {
+    "claude": [
+      {
+        "text": "Non-deterministic cache keys due to Python hash() behavior across processes - using hash(tuple(sorted(snuba_params.project_ids))) generates different hash values for identical project_ids in different workers sharing a Redis cache, causing cache misses and defeating the caching mechanism",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "_get_event_stats passes the outer closure variable `dataset` instead of the `scoped_dataset` parameter to `is_errors_query_for_error_upsampled_projects`, causing the upsampling eligibility check to use the wrong dataset when get_event_stats_factory calls _get_event_stats with a different dataset during dashboard widget splitting",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "PR accidentally adds a `sentry-repo` git submodule reference at the repository root (commit a5d290951def) which is unrelated to the error upsampling feature and appears to be an artifact from the development environment",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "`upsampled_count` uses `default_result_type=\"number\"` but wraps its result in `toInt64()` and is designed to replace `count()` which uses `default_result_type=\"integer\"`, causing API response metadata to report the type inconsistently when upsampling is active",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Cache key using hash() may cause collisions or inconsistent behavior because Python's hash() for tuples can vary between interpreter sessions (PYTHONHASHSEED) and different project ID combinations could hash to the same value",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Cache invalidation uses same problematic hash pattern and requires the caller to know the exact set of project IDs that were cached, which may be difficult in practice when invalidating due to allowlist changes",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused lambda parameter 'args' in SnQLFunction definition for 'upsampled_count' should use underscore '_' to follow file conventions for unused parameters",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Truthiness check 'if client_sample_rate:' may skip valid sample_rate of 0 or 0.0, should use explicit None check 'if client_sample_rate is not None'",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused 'organization' parameter in _are_all_projects_error_upsampled function",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Allowlist lookup is O(n) per project, should convert to a set for O(1) lookups",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Substring check 'event.type:error' in query may have edge cases with negated queries like '!event.type:error' incorrectly returning True, or queries with extra whitespace like 'event.type: error' returning False",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Repeated transformation logic 'transform_query_columns_for_error_upsampling(query_columns)' in three separate branches could be consolidated",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/calcom/cal.com/pull/10600": {
+    "claude": [
+      {
+        "text": "Backup code array contains null values after use - when a backup code is used during login, it's set to null in the array instead of being removed, which could cause issues with indexOf matching and leaves corrupted data",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Component name mismatch in BackupCode.tsx - the exported component is named TwoFactor but the file is BackupCode.tsx, causing confusion and maintenance issues",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Memory leak - Blob URL created for backup codes download is not revoked on component unmount in EnableTwoFactorModal.tsx, only when a new one is created",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Inconsistent error handling order in DisableTwoFactorModal.tsx - the if/else if chains differ from historical patterns in the codebase",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing cleanup for backupCodesUrl in resetState() function - URL.revokeObjectURL is not called when modal is closed or reset",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Inconsistent password field requirement handling - required attribute is added to PasswordField but the field is conditionally rendered based on disablePassword prop",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Auto-submit 2FA pattern not applied consistently - the auto-submit feature from PR #9729 is present in EnableTwoFactorModal but not in the login page TwoFactor component",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing TODOs in test file indicating incomplete test coverage for backup code tests, file content checks, and clipboard content checks",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "No validation for backup code format in BackupCode component - only minLength and maxLength validation, no format validation for the expected XXXXX-XXXXX pattern",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Dismissing the dialog (via Escape key or clicking outside) during the backup codes step bypasses the onEnable callback, causing the UI to show 2FA as disabled even though it was successfully enabled on the server because utils.viewer.me.invalidate() is never called",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "First e2e test never interacts with the new backup codes screen after OTP verification - it skips straight to checking the two-factor-switch without clicking backup-codes-close, so onEnable() is never called",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "First e2e test assertion on line 53 uses expect(Promise).toBeTruthy() which evaluates the Promise object itself (always truthy) rather than the resolved boolean - should use await expect(page.locator(...)).toBeChecked()",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "PasswordField on line 167 has explicit type=\"password\" prop that breaks the show/hide password toggle because {...props} spread in InputField comes after the internal type prop, causing the explicit type to always override the dynamic isPasswordVisible state",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "BackupCode.tsx line 7 exports function TwoFactor instead of function BackupCode - wrong function name will appear in React DevTools and error stack traces causing confusion since a real TwoFactor component already exists",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Backup codes are stored as decryptable ciphertext using symmetricEncrypt instead of one-way hashes, making them recoverable if DB and app key material are exposed",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "locator.isChecked() returns a Promise<boolean>, so expect(locator.isChecked()).toBeTruthy() only asserts that a Promise object exists, not its resolved value - should use data-state attribute check instead",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Backup code validation reads full plaintext list, checks in memory, then writes back updated encrypted array - this leaves backup codes recoverable at rest and opens a TOCTOU window where two parallel requests can both pass the lookup before either write null",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Migration timestamp 20230804153419 is older than existing migrations like 20230828094603, causing Prisma migration-order drift across environments",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Password visibility toggle button has tabIndex={-1} which removes it from keyboard navigation, causing accessibility regression for keyboard-only users",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "SSO users still can't authenticate with backup codes because guards only exempt totpCode - a Google/SAML user submitting backupCode will hit ThirdPartyIdentityProviderEnabled or IncorrectEmailPassword before the backup-code branch runs",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "When totpEmail is present the login page switches to ExternalTotpFooter, so SAML/Google users never see the new backup-code entry point and can still be locked out after losing their authenticator",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Component exported from BackupCode.tsx is named TwoFactor instead of BackupCode, making DevTools, stack traces, and search results point to the wrong component during auth debugging",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test suite doesn't cover login-with-backup-code, disable-via-backup-code, or sequential reuse failure, so the recovery path can regress without CI noticing",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/calcom/cal.com/pull/10967": {
+    "claude": [
+      {
+        "text": "Undefined property access in EventManager.ts - missing null check after array destructuring on mainHostDestinationCalendar, causing crash when destinationCalendar is empty",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Broken find logic in GoogleCalendarService.ts - when externalCalendarId is falsy, searching for cal.externalId === externalCalendarId will never find a match",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Team calendars not added for collective events in handleNewBooking.ts - optional chaining on evt.destinationCalendar?.push causes silent failure when destinationCalendar is null",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unrelated logic inversion in organizations/create.handler.ts - IS_TEAM_BILLING_ENABLED check was previously negated, logic has been accidentally inverted",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "EventManager.ts credentialId handling sets credentialId to undefined for non-calendar types when it should still be tracked for video integrations",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Breaking interface change - Calendar.createEvent() signature changed to require credentialId parameter but only GoogleCalendarService was updated, all other calendar implementations still use old signature",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Inconsistent createEvent calls in EventManager - some calls pass externalId parameter while others don't, causing some calendar events to not be associated with correct external calendar ID",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "In createAllCalendarEvents, the else branch (line 380) calls createEvent(c, event) without passing destination.externalId as the third argument, unlike the if-branch, causing externalCalendarId to be undefined for the legacy fallback path and potentially breaking future update/delete operations",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In updateAllCalendarEvents (line 542), updateEvent(credential, ...) is called without checking if credential is defined, causing a runtime error if both in-memory lookup and DB fallback fail",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "EventManager.ts:119 will crash with TypeError when destinationCalendar is null/empty - the old code used optional chaining but the new code accesses .integration directly on potentially-undefined mainHostDestinationCalendar",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "GoogleCalendarService updateEvent (line 256) and deleteEvent (line 317) have broken fallback logic - the else branch searches .find(cal => cal.externalId === externalCalendarId) but externalCalendarId is falsy there, so it never matches",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "organizations/create.handler.ts:151 reverses the slug assignment logic - old: slug set when billing disabled, new: slug set when billing enabled",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The loadUsers function in handleNewBooking.ts was refactored and the organization select was removed from the dynamic user query, which could break organization-related user lookups",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Multiple places use destructuring like [first] = array without guarding against undefined before property access",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "The nullish fallback in lines 254-256 and 315-317 never selects a stored destination calendar because the find() branch only runs when externalCalendarId is already nullish, comparing every cal.externalId against undefined/null and always returning undefined. updateEvent() then sends Google an undefined calendarId, while deleteEvent() falls back to 'primary' which can hit the wrong calendar",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The createEvent method signature in LarkCalendarService is missing the credentialId parameter required by the Calendar interface, violating the TypeScript interface contract",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Lines 128, 164, 192, and 237 in LarkCalendarService select event.destinationCalendar[0] blindly which targets the first calendar, incorrect in collective flows where multiple destination calendars with different credentials exist",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Line 119 in EventManager dereferences mainHostDestinationCalendar.integration even when evt.destinationCalendar is null or empty, throwing before the Daily fallback can run for the 'Meet without Google Calendar' path",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Lines 338-380 in EventManager iterate event.destinationCalendar but each provider call still receives the full destination array, causing providers that read the first entry to create every collective event on the first host's calendar instead of the current destination",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Lines 511-542 in EventManager can leave credential undefined when a saved credentialId no longer resolves, causing updateEvent(credential, ...) to throw and lines 597-608 to convert that single stale reference into a failure result for every calendar update in the booking",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Lines 449-458 in handleCancelBooking ignore the current reference and use updBooking.references.find(), so each updated booking contributes at most one _calendar reference. In collective bookings with one calendar reference per host, the first host gets hit repeatedly while other hosts' events are never deleted. This branch also switches back to bookingToDelete.user.credentials, dropping a DB-fetched team credential",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Lines 1063-1067 in handleNewBooking initialize evt.destinationCalendar to null when neither eventType nor organizerUser has a destination calendar, and lines 1077-1079 use optional chaining so teamDestinationCalendars are never appended. Collective events where only secondary hosts have calendars will be created with no destination calendars",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "CalendarService.ts in packages/lib violates the Calendar interface contract by missing the credentialId parameter, and line 156 selects only the first destination calendar ignoring credential routing needed for collective/multi-host flows",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Line 151 in organization create.handler.ts assigns slug when IS_TEAM_BILLING_ENABLED is true, which conflicts with the publish flow and pending-state checks. slug should be set only when billing is disabled; keep requestedSlug for billing-enabled orgs",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "updateEvent and deleteEvent in Office365CalendarService don't match the Calendar interface: updateEvent is missing the externalCalendarId parameter, and deleteEvent is missing both event and externalCalendarId parameters. This causes createEvent to correctly use calendar-specific endpoints but updateEvent and deleteEvent always use the default calendar path",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In requestReschedule.handler.ts lines 240-242, the second optional chain in bookingToReschedule?.destinationCalendar is redundant since bookingToReschedule is already checked in the truthy branch",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/calcom/cal.com/pull/11059": {
+    "claude": [
+      {
+        "text": "Salesforce integration uses stale credentials after token refresh - after refreshing tokens and updating the database with new tokens from accessTokenParsed.data, the code creates a jsforce.Connection using the OLD credentialKey values instead of the newly refreshed tokens, causing immediate API failures",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Salesforce integration missing refreshOAuthTokens wrapper - unlike all other integrations (Google Calendar, Office365, Zoom, Hubspot, etc.), Salesforce makes a direct fetch() call instead of using the refreshOAuthTokens() wrapper, which means it will bypass the custom sync endpoint even when APP_CREDENTIAL_SHARING_ENABLED is true",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Zoho-Bigin passes wrong parameter type to refreshOAuthTokens - passes credentialId (credential's database ID) instead of credential.userId, causing the sync endpoint to receive the wrong identifier",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Invalid Zod schema syntax in parseRefreshTokenResponse - uses z.string().toString() as object keys, which evaluates to the literal string '[object Object]' instead of creating dynamic key validation, causing token validation to fail for credential sync mode",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Google Calendar stores entire parse result instead of extracted data - stores the entire SafeParseReturnType object {success: boolean, data: any} to the database instead of extracting .data like other integrations (Zoom, Office365, Salesforce)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Hardcoded refresh_token placeholder breaks token preservation - sets refresh_token to literal string 'refresh_token' when missing, contradicting commit 358aa8be2's pattern to preserve old tokens, causing OAuth providers to reject this invalid token string",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "In zoho-bigin/lib/CalendarService.ts, refreshOAuthTokens on line 93 is passed credentialId (credential.id, the database row ID) instead of credential.userId, causing incorrect user lookup when credential sync is enabled",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In salesforce/lib/CalendarService.ts, the getClient method refreshes the OAuth token and saves it to the database, but then creates the jsforce.Connection using the stale credentialKey.access_token and credentialKey.instance_url from the original credential instead of the freshly obtained accessTokenParsed.data values",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "minimumTokenResponseSchema uses [z.string().toString()] as computed property keys which evaluate to '[object Object]' instead of dynamic key matchers, causing the schema to strip all properties except access_token from parsed token data when APP_CREDENTIAL_SHARING_ENABLED is true",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Lines 25-27 inject the literal string 'refresh_token' as a dummy value when no refresh_token is present, which for Office365 overwrites the valid existing refresh_token via the spread on line 264 of CalendarService.ts, breaking subsequent token refreshes",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Handler accepts any HTTP method but should enforce POST with a 405 response like other webhook handlers",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Header lookup is case-sensitive - if CALCOM_WEBHOOK_HEADER_NAME is set in mixed case, lookup will fail because Node.js normalizes incoming headers to lowercase",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Header lookup doesn't handle arrays - if the header is sent multiple times, req.headers[...] will be an array and comparison against a string will incorrectly allow the request through",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "appCredentialWebhookRequestBodySchema.parse can throw on invalid payload, turning bad input into 500s instead of 400s",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "JSON.parse(symmetricDecrypt(...)) can throw on decrypt/JSON errors, turning bad input into 500s instead of 400s",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "minimumTokenResponseSchema uses [z.string().toString()] which yields a literal key and makes it required, so real token payloads will fail validation",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "parseRefreshTokenResponse overwrites missing refresh tokens with placeholder 'refresh_token' string, which will clobber valid refresh tokens downstream and break future refreshes",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "refreshOAuthTokens returns a Response object when credential sharing is enabled but returns refreshFunction() result otherwise - callers expect .data property which doesn't exist on Response objects",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "No error handling for the fetch call in refreshOAuthTokens - network failures throw unhandled exceptions",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "No timeout on the external fetch in refreshOAuthTokens, risking indefinite hangs",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The () => any type signature in refreshOAuthTokens provides no type safety",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "No response validation in refreshOAuthTokens - the fetch response status and content aren't checked",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing prisma import in salesforce/lib/CalendarService.ts for credential update",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "zoho-bigin/lib/CalendarService.ts passes credentialId instead of credential.userId to refreshOAuthTokens, causing sync to target wrong subject",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "zohocrm/lib/CalendarService.ts caller expects AxiosResponse with .data property but refreshOAuthTokens can return fetch Response, causing runtime error",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Read-then-write pattern for credential upsert can create duplicates under concurrent requests without unique constraint",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "office365calendar/lib/CalendarService.ts silently persists stale credentials if token parsing fails instead of throwing error",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "salesforce/lib/CalendarService.ts uses stale credentialKey values when creating jsforce connection instead of refreshed token values",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "googlecalendar/lib/CalendarService.ts stores entire parseRefreshTokenResponse wrapper object as credential key instead of extracting .data property",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/calcom/cal.com/pull/14740": {
+    "claude": [
+      {
+        "text": "Incorrect permission logic using AND instead of OR - The team permission check requires users to be BOTH admin AND owner (impossible), preventing team admins from adding guests. The variable name `isTeamAdminOrOwner` indicates OR logic was intended, but the implementation uses `&&` (AND)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Case-sensitive email comparison allows blacklist bypass - Blacklisted emails are lowercased but guest emails are not lowercased before comparison, allowing users to bypass the blacklist with different casing (e.g., `Test@Example.com` bypasses a blacklist containing `test@example.com`)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Authorization logic bug in addGuests.handler.ts:47 - isTeamAdminOrOwner uses && instead of ||, so only team owners pass the check while team admins are incorrectly denied access despite isTeamAdmin already covering both ADMIN and OWNER roles",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "sendAddGuestsEmails function does not check eventTypeMetadata.disableStandardEmails, which is inconsistent with other email-sending functions and could result in unwanted emails for event types that have explicitly disabled standard emails",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "No tests are included for the new handler or UI components",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Invalid email banner remains visible even after user edits the email input to valid values - banner only clears when clicking Cancel or attempting to add again",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "sendAddGuestsEmails ignores disableStandardEmails flags and forwards calendarEvent unchanged, which can send emails when they're disabled",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "sendAddGuestsEmails can leak hidden notes to attendees by not respecting hideCalendarNotes setting",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Authorization check uses && requiring both admin AND owner roles, which blocks legitimate admins or owners who only have one role - should use || instead",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Guest email comparisons are case-sensitive, allowing blacklisted/existing guests to slip through with different casing",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Duplicate guest emails are not removed from the input list",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Notifications use the unfiltered guests input instead of the filtered uniqueGuests list",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Reassigning function parameter 'value' in MultiEmail component is a code smell",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Using array index as key in MultiEmail can cause issues when items are removed from the middle of the list",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Empty fragment <></> in MultiEmail can be simplified by restructuring the conditional",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Email uniqueness check in ZAddGuestsInputSchema is case-sensitive, so User@x.com and user@x.com pass as unique",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/calcom/cal.com/pull/22345": {
+    "claude": [],
+    "claude-code": [
+      {
+        "text": "SQL operator precedence bug: buildOrgAuthorizationCondition and buildTeamAuthorizationCondition produce top-level OR expressions without outer parentheses. When getBaseConditions() returns these directly (line 75, no filters), callers composing with AND get incorrect precedence - AND binds tighter than OR, so team bookings bypass additional filters entirely. Fix: wrap the return at line 75 with parens around authConditions, or add outer parens in the reduce calls.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Dead code: since authConditions is always a Prisma.Sql object (never null), the else if (filterConditions) and else branches (lines 76-80) are unreachable dead code",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Constructor parameter type was changed from InsightsBookingServiceOptions (discriminated union requiring teamId when scope: 'team') to InsightsBookingServicePublicOptions (flat type with teamId?: number), which loses compile-time enforcement that teamId is provided for team scope. While runtime zod validation catches this, the failure mode is silent empty results instead of a compile error. This is inconsistent with InsightsRoutingService which still uses the strict discriminated union type.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "InsightsBookingServicePublicOptions type at line 29 makes teamId optional for all scopes, but the schema correctly requires teamId only for scope: 'team'. This allows code like {scope: 'team', userId: 1, orgId: 1} to compile without teamId, then fails validation silently at runtime, setting this.options to null and returning no results instead of catching the error at compile time. Should use z.input<typeof insightsBookingServiceOptionsSchema> or a discriminated union type instead.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In getAuthorizationConditions for org scope (lines 157-168), returning empty array when teamsFromOrg.length === 0 drops the userId lookup for orgs that only have direct org memberships. teamIds already contains options.orgId, so org admins miss members' personal bookings. Should always query MembershipRepository.findAllByTeamIds using teamIds.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Integration tests for 'should build team scope conditions' and 'should build org scope conditions' (lines 295-343) only verify SQL structure with toEqual(Prisma.sql`...`) but never execute the queries against Postgres. The ANY(...) array binding syntax is never tested at runtime, so regressions in array binding or fragment generation would pass undetected.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test fixtures created at lines 445-466 (userEventType and userBooking) are only cleaned up after assertions. If the query or expectation fails, those rows stay in the integration database and can contaminate later test cases. Should wrap in try/finally for cleanup.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/calcom/cal.com/pull/8087": {
+    "claude": [
+      {
+        "text": "async callback in forEach does not await - promises will not be awaited. The forEach method does not wait for async callbacks to complete, so calendar deletion and video meeting deletion promises are ignored and may not execute before the function returns (packages/app-store/vital/lib/reschedule.ts#L124-L135)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "async callback in forEach does not await - promises will not be awaited. The forEach method does not wait for async callbacks to complete, so calendar deletion and video meeting deletion promises are ignored and may not execute before the function returns (packages/app-store/wipemycalother/lib/reschedule.ts#L124-L135)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Using forEach(async ...) in 4 locations causes returned promises to be silently discarded since Array.prototype.forEach does not await async callbacks",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Calendar/video deletions are fire-and-forget with no error handling because the surrounding try/catch cannot catch errors from async forEach callbacks",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "sendRequestRescheduleEmail executes before deletions complete due to forEach not awaiting async callbacks",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In handleCancelBooking.ts:458, apiDeletes.push(deletedEvent) pushes the resolved value rather than a Promise, so Promise.all(prismaPromises.concat(apiDeletes)) will not wait for the deletions",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Errors from async forEach callbacks become unhandled promise rejections which can crash Node.js process",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Should use for...of or Promise.all with .map() instead of forEach with async callbacks (pattern already correctly applied at handleCancelBooking.ts:474-486 but missed in other locations)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Line 26 in getVideoAdapters can reject, and while createMeeting is protected by try/catch with fallback, updateMeeting, deleteMeeting, and getBusyVideoTimes all await getVideoAdapters without error handling - a single broken provider will fail all these paths",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The for loop in getVideoAdapters serializes adapter loads, reducing performance compared to parallel loading",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "forEach with async callback in packages/app-store/vital/lib/reschedule.ts creates fire-and-forget promises that won't be awaited or caught - errors in getCalendar or deleteEvent/deleteMeeting will be silently swallowed",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "forEach with async callback in packages/app-store/wipemycalother/lib/reschedule.ts creates fire-and-forget promises - the email may be sent before deletions complete and function may return true before all operations finish",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "forEach with async callback in packages/trpc/server/routers/viewer/bookings.tsx creates fire-and-forget promises - errors won't propagate and sendRequestRescheduleEmail may execute before deletions complete",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In packages/features/bookings/lib/handleCancelBooking.ts lines 589-596, app resolution and PaymentService instantiation happen outside the try-catch block - if either fails, the error bypasses handleRefundError leaving refund flow incomplete",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In packages/features/bookings/lib/handleCancelBooking.ts lines 458-470, forEach with async callback causes race condition - handler can reach Promise.all before delete operations start, and line 467 pushes resolved value instead of promise itself breaking promise tracking",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The calendar property in packages/core/CalendarManager.ts now holds Promise<Calendar | null> but property name doesn't indicate async nature - may confuse consumers expecting resolved Calendar object",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Dynamic imports in packages/app-store/index.ts are still eager - each import() runs when module is evaluated, so importing appStore kicks off every provider load immediately instead of true on-demand loading",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/getsentry/sentry/pull/77754": {
+    "claude": [
+      {
+        "text": "Dataclass default value causes all instances to share the same timestamp - the `queued` field uses `timezone.now()` as a default value, which is evaluated once at class definition time rather than at instance creation. Use `field(default_factory=timezone.now)` instead.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Typo in test method name: `test_from_dict_inalid_data` should be `test_from_dict_invalid_data`",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "`queued: datetime = timezone.now()` on line 18 evaluates `timezone.now()` once at module import time, not per-instance creation. Every `AssignmentSource` created via `from_integration()` will share the same stale timestamp. Fix: use `queued: datetime = field(default_factory=timezone.now)` instead",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Ruff flags both parameters (attribute, sync_source) as unused in the default should_sync implementation, which may cause CI lint failures",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "ExampleIntegration.sync_status_outbound method lacks **kwargs and will raise TypeError when called with the new assignment_source parameter",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "timezone.now() is evaluated at class definition time for the queued field default, causing all instances to share the same timestamp instead of capturing current time per instance",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test method name 'test_from_dict_empty_array' is a typo - should be 'test_from_dict_empty_dict' since the test uses an empty dict",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test method name 'test_from_dict_inalid_data' is a typo - should be 'test_from_dict_invalid_data'",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/getsentry/sentry/pull/93824": {
+    "claude": [
+      {
+        "text": "Duplicate memory counting in submit() method causes incorrect backpressure decisions - when checking Redis memory usage, the code iterates through all buffers and calls get_memory_info() on each, which returns cluster-wide memory information. Since all buffers share the same Redis cluster, this causes the same memory to be counted multiple times (once per buffer/process), causing premature backpressure when max_memory_percentage is checked",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Dead code - unused _create_process_for_shard method is defined but never called anywhere in the codebase, appears to be leftover from refactoring when transitioning from per-shard processes to process-to-shards mapping",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "isinstance(process, multiprocessing.Process) is always False for SpawnProcess objects created via get_context('spawn').Process(), since SpawnProcess inherits from BaseProcess, not multiprocessing.Process, causing process.kill() and process.terminate() to never be called",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The break at line 340 exits the entire for loop when the deadline expires, so terminate() is skipped for all remaining processes even if the isinstance bug were fixed",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "process.kill() in _ensure_processes_alive is a regression since the pre-PR code called it unconditionally, meaning unhealthy/hung processes are now never killed before spawning a replacement",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "_create_process_for_shard (singular, line 127) is defined but never called anywhere - it's dead code that should be removed",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Having both _create_process_for_shard and _create_process_for_shards methods with near-identical names is confusing for future maintainers",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Typo on line 199: tags={'shards': shard_tag} should be tags={'shard': shard_tag} (singular) to match the other two metrics on lines 186 and 195, causing dashboards filtering by the shard tag to silently miss the wait_produce timer",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Remove the unused `_create_process_for_shard` method or document if it's reserved for future use. The method at lines 127-132 has no callers in the codebase and only delegates to `_create_process_for_shards`. If not intended for public API or future extension, it should be removed to reduce maintenance burden.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/getsentry/sentry/pull/95633": {
+    "claude": [],
+    "claude-code": [
+      {
+        "text": "SimpleQueueProcessingStrategy.close() calls self.queue_pool.shutdown() which permanently destroys all workers and queues in the shared FixedQueuePool, causing any Kafka partition rebalance to leave the new strategy referencing a dead pool where submitted messages will never be processed",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "FixedQueuePool.shutdown() sets worker.shutdown = True for all workers before calling q.shutdown(immediate=False), creating a race where workers exit their while loop before draining remaining queued items, causing unnecessary reprocessing on restart",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "hash(group_key) % self.num_queues will raise ZeroDivisionError if num_queues is 0 - need to guard against num_queues <= 0 in __init__",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused timeout parameter in join method - should silence with _ = timeout to satisfy Ruff linter",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused identifier parameter in result_processor function in test_queue_consumer.py - should rename to _identifier to satisfy Ruff linter",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused identifier parameter in track_calls function in test_results_consumer.py - should rename to _identifier to satisfy Ruff linter",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused force parameter in track_commits functions in test_results_consumer.py - should rename to _force to satisfy Ruff linter",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "pytestmark class attribute is a mutable list which triggers RUF012 - should be changed to immutable tuple (requires_kafka,)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "try-except-pass silently swallows all exceptions during cleanup when deleting test topic - should catch Kafka-specific exception and log the error instead",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/grafana/grafana/pull/79265": {
+    "claude": [
+      {
+        "text": "The PR changes violate the FIXME comment guidance on TagDevice method - the comment indicates the method should be unexported and interface removed, but the PR makes it more central to authentication flow by changing from async to sync execution and making it block authentication",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Removing the goroutine wrapper and timeout mechanism from TagDevice operation introduces performance risks - the synchronous database work (COUNT query and UPDATE) will add latency to every anonymous authentication request and create contention under high concurrent load",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The historical async design pattern is being reverted to synchronous without addressing the original performance issues that led to the async implementation",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "tagDeviceUI() sets the local cache entry BEFORE the CreateOrUpdateDevice DB call. When the device limit is reached, the first request from a new device poisons the cache and fails auth, but the second request within 29 minutes hits the cache, returns nil (no error), and bypasses the device limit entirely. Fix by moving localCache.SetDefault after the successful DB write, or by clearing the cache entry when ErrDeviceLimitReached is returned.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "pkg/server/wire.go lines 374-375 still register anonstore.ProvideAnonDBStore and wire.Bind for AnonStore, but ProvideAnonDBStore now requires (db.DB, int64) which wire cannot inject, and ProvideAnonymousDeviceService no longer accepts anonstore.AnonStore. Both lines and the anonstore import in wire.go must be removed for wire generation to succeed.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "GrafanaBootConfig class property anonymousDeviceLimit lacks explicit type annotation, causing TypeScript to infer narrower type 'undefined' instead of 'number | undefined' required by GrafanaConfig interface",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Race condition between CountDevices check and device creation/update in CreateOrUpdateDevice allows concurrent requests to exceed the device limit",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "updateDevice returning ErrDeviceLimitReached when rowsAffected == 0 is semantically incorrect - zero rows affected could mean the device doesn't exist within the time window, not that the limit was reached",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Duplicate constant anonymousDeviceExpiration defined in both database.go and api/api.go risks drift if one is updated without the other",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Potential time skew in limit check - CountDevices uses time.Now().UTC() while subsequent upsert operations use device.UpdatedAt, which may differ significantly",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test for device limit doesn't verify that existing devices can still be updated when limit is reached",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing CreatedAt field in test device struct may cause issues with DB constraints or default value handling",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/grafana/grafana/pull/80329": {
+    "claude": [
+      {
+        "text": "Debug/info messages are being logged at ERROR level inappropriately in xorm_store.go (lines 534, 537, 554, 557, 576, 579) - routine operational messages should use Info or Debug level",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "SQL injection risk in xorm_store.go (lines 585, 589, 613, 616) - direct string interpolation of table names without validation against an allowlist",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Infinite loop risk in untilDoneOrCancelled function (lines 643-661) - if batch continuously returns non-zero affected count without errors, loop may never terminate naturally, missing iteration limit or timeout",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Logging full IDs array in xorm_store.go (lines 534, 554, 576) could be extremely verbose and create performance issues - should log count only or sample IDs",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Cleanup job interval reduced from 10 minutes to 1 minute in cleanup.go (line 77) - increases cleanup frequency by 10x which may be a testing artifact left in production code",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing ID field with pk autoincr directive in annotationTag struct used in cleanup_test.go - the definition in xorm_store.go lacks the ID field needed for proper database inserts",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "The cleanup ticker interval was changed from 10 minutes to 1 minute (time.Minute * 1), causing all 8 cleanup jobs to run 10x more frequently - this appears to be a debugging/testing change accidentally included",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The 9-minute timeout on line 89 was designed for the 10-minute interval; with a 1-minute ticker, overlapping cleanup cycles are nearly guaranteed",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Six r.log.Error() calls (lines 534, 537, 554, 557, 576, 579) log routine cleanup operational info at ERROR level - these are debug statements that were not removed before submission",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The ERROR-level log statements dump potentially thousands of annotation IDs into the log stream and will trigger monitoring alerts",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The 'err' field is logged after the error has already been checked and returned, meaning err is guaranteed to be nil at those log points, showing misleading err=<nil> output",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "deleteByIDs at line 608 checks r.cfg.AnnotationCleanupJobBatchSize > sqliteParameterLimit but should check len(ids) > sqliteParameterLimit instead - when batchSize is configured above 999, the last partial batch with fewer than 999 IDs will unnecessarily use string-interpolation instead of safer parameterized queries",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Incorrect log level: Error used for informational messages in annotation cleanup - logs at line 534 use Error level for routine operational information, which will pollute error logs and potentially trigger alerts",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Variable 'err' at line 534 will always be nil at that point since errors return early, so logging it is unnecessary",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Same log level issue at lines 554-558: Error level used for informational messages in 'Annotations to clean by count' and 'cleaned annotations by count' logs",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Same log level issue at lines 576-580: Error level used for informational messages in 'Tags to clean' and 'cleaned tags' logs",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Condition checks r.cfg.AnnotationCleanupJobBatchSize > sqliteParameterLimit instead of len(ids) > sqliteParameterLimit, meaning even small final batches unnecessarily use inlined IDs when configured batch size is large",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/grafana/grafana/pull/90045": {
+    "claude": [
+      {
+        "text": "All async goroutines use the parent context which may already be canceled or have a deadline exceeded by the time the goroutine executes, causing legacy writes to fail immediately if the parent request completes before the goroutine executes",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In DeleteCollection, the legacy goroutine calls recordStorageDuration() instead of recordLegacyDuration(), causing metrics for legacy DeleteCollection operations to be incorrectly recorded as storage operations",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "When Storage operations fail in Create (line 45) and Update (line 129), the code calls recordLegacyDuration() instead of recordStorageDuration(), causing storage error metrics to be recorded as legacy metrics",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The success path of Delete uses 'name' as the third parameter instead of 'options.Kind', breaking metric aggregation since metrics labels for successful Delete operations will have object names instead of kinds",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The Delete method creates a local log variable with additional context values but then passes the base d.Log to the context instead of the enriched log variable, causing log messages to miss contextual information",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In the Update method goroutine, defer cancel() is placed after startLegacy assignment instead of immediately after creating the context, potentially holding timer resources slightly longer than necessary",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Create error path (line 45): calls recordLegacyDuration when storage fails — should be recordStorageDuration",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Delete success path (line 106): passes name instead of options.Kind as the kind argument",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Update error path (line 129): calls recordLegacyDuration when storage fails — should be recordStorageDuration",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "DeleteCollection goroutine (line 166): calls recordStorageDuration for the legacy operation — should be recordLegacyDuration",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Logger context bug in Delete: ctx = klog.NewContext(ctx, d.Log) uses the base logger instead of the enriched log variable",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Async goroutines derive child contexts from the request context, which may already be cancelled by the time the goroutine executes since the handler returns immediately after spawning the goroutine, causing legacy writes to fail silently",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Metrics are attributed to the wrong path on failures - Create/Update error paths record legacy duration instead of storage duration, and DeleteCollection legacy goroutine records storage duration instead of legacy duration",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Async legacy writes are tied to request cancellation - background legacy operations inherit the request context, so if the request ends quickly the legacy write can be canceled immediately",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Delete metrics label uses resource name instead of kind, which can explode label cardinality and mislabel metrics",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "klog.NewContext uses d.Log instead of the enriched log variable, dropping the enriched fields",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Mode 3 async legacy writes can make test assertions race - doPlaylistTests validates legacy API results immediately after K8s writes, but in mode 3 legacy writes are fire-and-forget, causing potential flakiness",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/grafana/grafana/pull/90939": {
+    "claude": [
+      {
+        "text": "Missing double-check after acquiring write lock in double-checked locking pattern. When multiple goroutines pass the initial read-lock check simultaneously (when cache is nil), they will queue up at the write lock, and each will perform the expensive cache loading operations redundantly instead of reusing the result from the first goroutine. The standard pattern requires re-checking the cache condition after acquiring the write lock to prevent this redundant work.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Double-checked locking pattern is missing the second check after upgrading from RLock to Lock - after releasing RLock and acquiring Lock, another goroutine may have already populated the cache, but the code proceeds to reload assets from disk without checking. Add `if cfg.Env != setting.Dev && entryPointAssetsCache != nil { return entryPointAssetsCache, nil }` after acquiring the write lock to avoid redundant file reads on concurrent cold-start requests.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Add a second cache check under the write lock to avoid redundant rebuilds - a concurrent caller could fill the cache between the initial RUnlock and Lock, re-checking avoids extra IO",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Docstring coverage is 0.00% which is insufficient - the required threshold is 80.00%, need to write docstrings for functions missing them",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/grafana/grafana/pull/94942": {
+    "claude": [
+      {
+        "text": "Dead code in enableSqlExpressions function - always returns false regardless of feature flag state due to negating the feature flag check and both branches returning false",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Stub implementation in pkg/expr/sql/db.go lacks documentation explaining why methods return 'not implemented' errors, the migration plan, or whether this is temporary or permanent",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "The enableSqlExpressions security check only guards the ReadQuery code path used when FlagExpressionParser is enabled, but in default configuration buildCMDNode calls UnmarshalSQLCommand directly for TypeSQL, completely bypassing this check - the security gate should be added to the TypeSQL case in buildCMDNode or within UnmarshalSQLCommand",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The enableSqlExpressions function always returns false in both branches, making the feature flag check and negation dead code - the function body should be simplified to just return false to avoid confusing future maintainers who might misinterpret the inverted flag logic",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "The enableSqlExpressions function logic is unnecessarily confusing - both branches return false, making the feature flag check dead code. The implementation should be simplified since it always returns false regardless of the feature flag state.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Docstring coverage is 25.00% which is insufficient - the required threshold is 80.00%. Functions are missing docstrings.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/grafana/grafana/pull/97529": {
+    "claude": [
+      {
+        "text": "Race condition: BuildIndex() writes to b.cache while holding cacheMu.Lock(), but TotalDocs() reads from b.cache without any lock protection. This violates Go's map safety rules since TotalDocs() is called from Prometheus metrics collection which can happen at any time, including while concurrent BuildIndex() calls are writing to the cache during initialization. Go maps are not safe for concurrent read/write access, and this can cause panics or data corruption.",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "When Init() fails in NewResourceServer(), the function returns (nil, err) without calling cancel(), leaking the context created at line 229 and any goroutines spawned during partial initialization",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The error is logged twice with identical message 'error initializing resource server' - once at line 260 (new) and once inside Init() at line 314 (existing)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "TotalDocs() in bleve.go iterates b.cache without holding b.cacheMu.RLock(), while BuildIndex() writes to b.cache under cacheMu.Lock() - concurrent map iteration and map write is undefined behavior that can cause a fatal runtime panic",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In searchSupport.init() when initWorkers > 1, the errgroup goroutines concurrently write to the shared err variable (line 190 uses = instead of :=) - if one goroutine sets err=someError and another sets err=nil, the error is silently lost",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In searchSupport.init() when initWorkers > 1, totalBatchesIndexed++ (line 189) is a non-atomic increment from multiple concurrent goroutines, causing a data race",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Skipping PostgreSQL test for all postgres runs removes coverage; consider gating this on a CI-only env var and/or filing a follow-up issue",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Track the RV short-circuit TODO - if this optimization is intended, consider filing a follow-up so it doesn't get lost",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Consider per-key dedupe now that the lock is narrow - without a singleflight/per-key guard, concurrent callers can build the same index twice",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Docstring coverage is 0.00% which is insufficient - the required threshold is 80.00%; write docstrings for the functions missing them",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/keycloak/keycloak/pull/33832": {
+    "claude": [
+      {
+        "text": "CryptoIntegration.init() call in AuthzClient.create() may cause race condition when called from different contexts or classloaders, as setProvider() method is not synchronized and bypasses double-checked locking protection",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Dead code in ASN1 encoding - Lines 114-115 create ASN1Encoder instances that are immediately discarded without being used",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "String concatenation using + operator inside StringBuilder.append() in loop is inefficient - should use separate append calls instead",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Removal of strict check that threw IllegalStateException when multiple crypto providers were found changes behavior to silently use highest-order provider - this behavioral change needs documentation and testing",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "AuthzClientCryptoProvider returns order value of 100 while other crypto providers return 200 - needs verification this is intentional and should have explanatory comment",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "ASN1Decoder and ASN1Encoder classes have minimal JavaDoc documentation - should explain purpose, why custom implementation was chosen, and thread safety characteristics",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "The new `order()` method on `CryptoProvider` interface is missing the `default` keyword, making it a breaking API change that will cause third-party implementations to fail to compile or throw AbstractMethodError at runtime - should be `default int order() { return 0; }`",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test uses a single P-256 key pair for all three ECDSA algorithm tests (ES256, ES384, ES512), but P-256 keys produce ~32-byte r,s values so ES384 and ES512 tests only exercise zero-padding/unpadding rather than realistic signature sizes - should generate curve-appropriate keys (P-384 for ES384, P-521 for ES512)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Lines 114-115 in `concatenatedRSToASN1DER` are dead code that create two `ASN1Encoder` instances and write BigIntegers to them but discard the results - the actual DER encoding is performed by fresh encoders in the return statement at lines 117-121",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Indefinite-length encoding (0x80) is not properly handled by callers - readLength() returns -1 for indefinite-length encoding, but readSequence() would skip the loop entirely and readInteger() would throw NegativeArraySizeException when calling read(-1)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Dead code: unused encoder instances - two lines create ASN1Encoder instances and write values to them but the results are never used (ASN1Encoder.create().write(rBigInteger) and ASN1Encoder.create().write(sBigInteger))",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Key pair curve may not match all tested algorithms - EC key pair is generated using default curve but each ECDSA algorithm expects a specific curve: ES256 uses P-256 (secp256r1), ES384 uses P-384 (secp384r1), and ES512 uses P-521 (secp521r1)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/keycloak/keycloak/pull/36880": {
+    "claude": [
+      {
+        "text": "Potential NullPointerException in hasPermission(ClientModel, String) method - getResourceTypeResource() can return null, and the subsequent findByResource() call would pass a null resource parameter",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing CLIENTS resource type handling in getResourceName() method - the method handles USERS resource type but doesn't handle the newly added CLIENTS resource type, causing client permissions to display raw IDs instead of meaningful client names",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Unused private method getEvaluationContext() in ClientPermissionsV2.java that is never called - may indicate incomplete implementation or dead code",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Missing Logic.NEGATIVE tests in PermissionClientTest.java - test suite should include tests with NEGATIVE logic to ensure proper deny-by-default behavior and permission precedence",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Label 'area/ci' could not be found and needs to be created before Dependabot can use it",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Label 'area/dependencies' could not be found and needs to be created before Dependabot can use it",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Feature flag guard at line 77 only checks ADMIN_FINE_GRAINED_AUTHZ (V1), but when only ADMIN_FINE_GRAINED_AUTHZ_V2 is enabled, the entire cleanup block is skipped and permission cleanup won't occur for role, client, and group removal events",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Javadoc for requireView() incorrectly states 'Returns {@code true}' but requireView() is a void method that throws ForbiddenException - this is a copy-paste error",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Potential IndexOutOfBoundsException when accessing clientResource.getDefaultClientScopes().get(1) assuming at least two default client scopes exist",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Same IndexOutOfBoundsException risk with defaultClientScopes.get(1) access without verifying the list size",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Prefer List.of() over Arrays.asList() for single-element immutable lists in ClientPermissionsV2",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Remove unused getEvaluationContext private method in ClientPermissionsV2 - it is defined but never called",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Add CLIENTS branch to getResourceName method in AdminPermissionsSchema for display name consistency with USERS pattern",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/keycloak/keycloak/pull/37038": {
+    "claude": [
+      {
+        "text": "Wrong resource ID used in `getGroupIdsWithViewPermission` method - the method returns authorization resource IDs instead of group IDs, using `groupResource.getId()` (the authorization Resource's internal ID) instead of `groupResource.getName()` (which contains the actual group ID), causing `resourceStore.findByName()` to fail and incorrect permission evaluation",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "AdminPermissionsSchema.getOrCreateResource() never calls resource.setType(resourceType) on individual group resources, so findByType(server, GROUPS_RESOURCE_TYPE, ...) cannot find them",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "In GroupPermissionsV2.getGroupIdsWithViewPermission(), granted.add(groupResource.getId()) adds the authorization resource UUID instead of the group model ID - should be groupResource.getName()",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Per-group VIEW_MEMBERS permissions are non-functional in V2, breaking getUsersCount and the DB-level group filtering optimization in user searches",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "canManage() Javadoc says V2 VIEW is enough to manage groups, but this is incorrect - VIEW should not grant management rights",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "requireManageMembers() Javadoc points at canManage() but should point at canManageMembership(GroupModel)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "@return tags say Stream but the method returns Set<String>",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "canManage() method treats AdminPermissionsSchema.VIEW as sufficient for global group management by calling hasPermission(null, AdminPermissionsSchema.VIEW, AdminPermissionsSchema.MANAGE) - VIEW should not confer create/move authority",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "getGroupIdsWithViewPermission() uses groupResource.getId() (authorization resource IDs) instead of groupResource.getName() (Keycloak group IDs), causing permission checks to miss intended per-group resources and returning UUIDs that downstream group filters cannot match",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "canMapRole() checks root.hasOneAdminRole(AdminRoles.MANAGE_USERS) then calls checkAdminRoles(role), removing the schema-level users-manage shortcut - should return true immediately when MANAGE_USERS is detected",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "UserPermissionsV2 dropped the AdminRoles.ADMIN fast-path shortcut - users granted only the umbrella admin role will fail canView/canManage/canMapRoles/canManageGroupMembership checks",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "AdminPermissions listener for cleanup on role/client/group removal is only registered when ADMIN_FINE_GRAINED_AUTHZ is enabled, leaving orphaned authorization state in V2-only deployments",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "response.getLocation() can be null even with 201 status, causing NPE - should add explicit null assertion before parsing the path",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "RealmAdminPermissionsConfig adds AdminRoles.QUERY_GROUPS to shared fixture, which may hide regressions in Groups resource-type permission path for tests that shouldn't satisfy the group list gate",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/keycloak/keycloak/pull/37429": {
+    "claude": [
+      {
+        "text": "Method name has typo: 'santizeAnchors' should be 'sanitizeAnchors' (missing 'i' in 'sanitize')",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Instance fields POLICY_SOME_HTML, POLICY_NO_HTML, HTML_TAGS use constant naming convention but aren't declared as static final",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Typo in method name 'santizeAnchors' (should be 'sanitizeAnchors')",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The santizeAnchors method modifies value via replaceFirst while iterating matches, which could have subtle edge cases with repeated identical anchors",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Two new dependencies added with hardcoded versions instead of being managed via a BOM",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The normalizeValue method has special cases for specific keys (templateHelp, optimizeLookupHelp, linkExpirationFormatter, error-invalid-multivalued-size, and email RTL styles) that bypass parts of sanitization and should be verified for completeness and correctness",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Placeholder format mismatch in error-invalid-multivalued-size message - uses {0}, {1}, {2} and choice syntax instead of i18next-standard {{...}} interpolation, causing the Admin UI to display validation message literally instead of interpolating values",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "owasp-java-html-sanitizer dependency version 20240325.1 is outdated and should be updated to 20260313.1",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "commons-text dependency version 1.13.0 is outdated and should be updated to 1.15.0",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Wrong language in Lithuanian bundle (messages_lt.properties) - totpStep1 at line 101 contains Italian text instead of Lithuanian",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Traditional Chinese characters used in Simplified Chinese locale file (messages_zh_CN.properties) - totpStep1 at line 112 contains Traditional Chinese characters (手機, 安裝, 應用程式) instead of Simplified Chinese equivalents (手机, 安装, 应用程序)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Inconsistent placeholder spacing after <br /> in Georgian locale (messages_ka.properties) - lines 172, 174, 451, 452 use <br />{0} while other locales use <br /> {0}",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Wrong language in Lithuanian login bundle (messages_lt.properties) - loginTotpStep1 at line 71 contains Italian text instead of Lithuanian",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Typo in method name: santizeAnchors should be sanitizeAnchors",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "PolicyFactory instances POLICY_SOME_HTML and POLICY_NO_HTML should be static final for performance and clarity",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Pattern HTML_TAGS should be static final to avoid recompilation per instance",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  },
+  "https://github.com/keycloak/keycloak/pull/37634": {
+    "claude": [
+      {
+        "text": "Copy-paste error in AccessTokenContext constructor at line 73: validates `grantType` twice instead of validating `rawTokenId`, allowing null rawTokenId values to pass validation",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Validation in DefaultTokenContextEncoderProviderFactory.postInit checks for duplicate shortcuts but only throws exception if map sizes differ, and the check happens after adding UNKNOWN entries with unclear error messaging about which grant types conflict",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Javadoc on OAuth2GrantTypeFactory.getShortcut() states '3-letters shortcut' but implementation enforces exactly 2-character shortcuts, documentation doesn't match implementation constraints",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "claude-code": [
+      {
+        "text": "Label 'area/ci' could not be found and needs to be created before Dependabot can use it",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Label 'area/dependencies' could not be found and needs to be created before Dependabot can use it",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ],
+    "coderabbit": [
+      {
+        "text": "Line 73 repeats the grantType null-check instead of checking rawTokenId, so rawTokenId == null can slip through and later be encoded as '...:null' instead of failing fast",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The decoder assumes a fixed 2+2+2 prefix but the factory never validates that grant shortcuts are exactly 2 characters, meaning custom grants can emit token IDs that later fail to decode",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "The lazy refresh paths at Lines 106-137 bypass the one-time duplicate check, allowing a custom grant to overwrite an existing shortcut mapping at runtime",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "Test catches RuntimeException instead of the specific parsing exception, making the test pass on unrelated failures like IndexOutOfBoundsException or NullPointerException",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "isAccessTokenId matcher has inverted logic - returns false when grant shortcut matches instead of when they do not match",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "isAccessTokenId matcher uses wrong substring indices - substring(3, 5) extracts characters at indices 3-4 ('ta') instead of the grant type which should be substring(4, 6)",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      },
+      {
+        "text": "grantType field is captured once in constructor but setFormParams() can replace parameters later without updating it, making getGrantType() return stale data",
+        "path": null,
+        "line": null,
+        "source": "extracted"
+      }
+    ]
+  }
+}
