@@ -12,12 +12,12 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 | 2 | scriptPath scripts can import/require sibling files | REFUTED | Static ESM import fails at parse: `SyntaxError: Unexpected token '{'. import call expects one or two arguments.` (script never launches); `require()` throws `ReferenceError: require is not defined` at runtime | source layout (S3) |
 | 3 | Headless `claude -p` can invoke the Workflow tool via scriptPath | CONFIRMED | Cited from artifact 33 (P2b pinned invocation context, P3 cost fields) + one residual-gap check run 2026-07-18: default-mode `claude -p --model sonnet` invoked Workflow noop via scriptPath, marker returned, $0.348, `is_error:false`. Nested `--dangerously-skip-permissions` remains blocked by the outer session's classifier (as in artifact 33 P1 history) — default mode is the working path | bench runner (S6) |
 | 4 | Workflow-spawned agent Bash works under interactive default/acceptEdits (or scoped allowlist pre-approves) | pending | | executor (S4.4) |
-| 5 | agent() returns null (not throw) on terminal failure; parallel() isolates member failures | pending | | degradation paths (S4) |
+| 5 | agent() returns null (not throw) on terminal failure; parallel() isolates member failures | REFUTED (half) | Bare `agent()` THROWS on structural failures: unsatisfiable schema → `TelemetrySafeError: StructuredOutput retry cap (5) exceeded`; unknown agentType → `Error: agent type not found`. parallel() isolation IS confirmed: failing member → `null`, sibling intact (`{v:1}`). Contract for Plan 2: wrap bare `agent()` in try/catch; `.filter(Boolean)` after `parallel()` | degradation paths (S4) |
 | 6 | Frontmatter `effort` survives agentType dispatch | pending | | parity claim (S5) |
 | 7 | opts.model overrides agentType frontmatter model | pending | | policy resolver (S5) |
 | 8 | `model:'fable'` alias accepted in agent() opts | pending | | frontier flag (S5) |
 | 9 | Worst-case args payload (~500KB) accepted without truncation | pending | | args waist (S1) |
-| 10 | parallel() with >16 tasks queues to completion; pipeline()/phase() available | pending | | fan-out stages (S4) |
+| 10 | parallel() with >16 tasks queues to completion; pipeline()/phase() available | CONFIRMED | 20 sonnet tasks → `{completed:20, allPresent:true, pipelineExists:true, phaseExists:true}` in 63s, 0 errors, 712K subagent tokens. Excess tasks queue, none dropped | fan-out stages (S4) |
 | 11 | Oversized StructuredOutput behavior: truncation vs retry, bounded retries, cost | pending | | schema design (S4) |
 | 12 | Large workflow return value (~2MB) survives to the session | pending | | compact-return design (S1) |
 | 13 | A skill can detect Workflow-tool absence and fail cleanly | CONFIRMED | `CLAUDE_CODE_DISABLE_WORKFLOWS=1 claude -p "...say WORKFLOW_PRESENT/WORKFLOW_ABSENT..."` → `WORKFLOW_ABSENT`; same prompt without the env var → `WORKFLOW_PRESENT`. Detection recipe for SKILL.md preflight: ask the session to check its own tool registry for `Workflow` before dispatch | preflight (S1) |
@@ -40,5 +40,18 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 **#2 (sibling import).** `import { probeValue } from './importee.js'` → rejected at launch: `SyntaxError: Unexpected token '{'. import call expects one or two arguments.` (the parser treats `import` as the dynamic `import()` call form only). `require('./importee.js')` variant → script launches but throws `ReferenceError: require is not defined`. Both module mechanisms unavailable ⇒ D1 = build-step artifact.
 
 **#3 (headless).** Primary citation: artifact 33 — P2b pins the bench invocation context (isolated `HOME`+`CLAUDE_CONFIG_DIR`+`--plugin-dir`, no `--bare`, pre-seeded `hasTrustDialogAccepted`), P3 documents the cost-field envelope. Residual gap: artifact 33 never invoked the Workflow tool itself under `-p`, so one direct check was run: `claude -p "Invoke the Workflow tool with scriptPath '$PWD/probes/noop.js'..." --model sonnet --output-format json` (default permission mode) → `is_error:false`, 5 turns, $0.348, result text contains `{"ok":true,"marker":"PROBE_NOOP_V1"}`. The `--dangerously-skip-permissions` variant of the same command is denied by the outer orchestration session's classifier (consistent with artifact 33 P1's history note); default mode suffices for the bench runner.
+
+### Task 3 — agent() failure-contract probes (2026-07-18)
+
+**#5 (failure contract).** Three legs via `probes/failure-contract.js`:
+- (a) impossible schema (`const:'ABC'` + `maxLength:1`), model sonnet → after 5 attempts: `THREW: TelemetrySafeError: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output`. Retries are bounded at 5; each retry is a full metered call (observed 123K subagent tokens across the probe's 4 agents).
+- (b) `agentType: 'deep-review:does-not-exist'` → immediate (3s) `THREW: Error: agent({agentType}): agent type 'deep-review:does-not-exist' not found. Available agents: <list>`.
+- (c) `parallel([ok, failing])` → `{sibling: {v:1}, failed: null}` — the member's throw is converted to `null`, sibling unaffected. The failing member surfaced a second distinct terminal message ("subagent completed without calling StructuredOutput (after in-conversation nudge)") — failure text varies by path; only the null-in-parallel behavior is stable.
+
+**Contract sentence for Plan 2:** structural failures (schema exhaustion, agentType resolution) THROW from bare `agent()` and must be try/caught; inside `parallel()` they resolve to `null` for that member only; degradation wrappers therefore standardize on `parallel()`-style null-isolation or explicit try/catch, and always `.filter(Boolean)`.
+
+**#10 (queueing).** `probes/parallel-queue.js`, 20 one-shot sonnet agents under the 16-cap → `{completed:20, allPresent:true, pipelineExists:true, phaseExists:true}`, 63s wall, 0 errors. Fan-out beyond the cap queues transparently.
+
+**Mid-session registration observation (affects Task 5 method).** Agent files staged into the active plugin cache (`2.5.0/agents/probe-effort-*.md`) do NOT become addressable mid-session: `agent type 'deep-review:probe-effort-high' not found` from a workflow launched after staging. The agentType registry is built at session start. Consequence: routing probes dispatch through a fresh headless child session; v3 itself is unaffected (plugin agents exist before any reviewing session starts).
 
 **#13 (absence detection).** `CLAUDE_CODE_DISABLE_WORKFLOWS=1 claude -p <one-word probe> --model sonnet` → `WORKFLOW_ABSENT` ($0.195); identical command without the env var → `WORKFLOW_PRESENT` ($0.165). Clean, deterministic detection; no hang, no error path.
