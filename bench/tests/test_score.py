@@ -313,6 +313,34 @@ class AdjudicateBucketIdentityTests(unittest.TestCase):
         self.assertAlmostEqual(m["valid_extra_rate"], 0.5)
         self.assertAlmostEqual(m["noise_rate"], 0.5)
 
+    def test_ledger_invocation_labels_naive_and_skill(self):
+        metrics = {
+            "n_prs": 1, "golden_recall": 0.0, "valid_extra_rate": 0.0,
+            "noise_rate": 0.0, "precision_strict": 0.0, "f1_strict": 0.0,
+            "per_bucket": {}, "per_dimension": {}, "drift": {},
+        }
+        costs = {"tokens_total": 0, "cost_usd": 0.0, "per_model": {}}
+        # Explicit manifest invocation wins.
+        row = score._build_ledger_row(
+            "/tmp/r", metrics, costs,
+            {"run_id": "r", "tier": "smoke", "git_sha": "abc",
+             "invocation": "naive:single-pass max-turns=40", "anchor": "naive"},
+            "pin", "pin", "sha")
+        self.assertEqual(row["envelope"]["invocation"], "naive:single-pass max-turns=40")
+        # Legacy naive manifest without invocation falls back by anchor.
+        row = score._build_ledger_row(
+            "/tmp/r", metrics, costs,
+            {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": "naive"},
+            "pin", "pin", "sha")
+        self.assertEqual(row["envelope"]["invocation"], "naive:single-pass")
+        self.assertEqual(row["tool"], "naive-anchor")
+        # Skill run keeps the headless label.
+        row = score._build_ledger_row(
+            "/tmp/r", metrics, costs,
+            {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": None},
+            "pin", "pin", "sha")
+        self.assertEqual(row["envelope"]["invocation"], "headless:/deep-review")
+
     def test_string_line_is_normalized_not_crashing(self):
         url = "https://github.com/o/r/pull/1"
         pr_dir = self.tmp / "pr-1"

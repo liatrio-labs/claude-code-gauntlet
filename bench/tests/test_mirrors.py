@@ -146,6 +146,29 @@ class EnsureMirrorTest(MirrorsTestBase):
 
 
 class MakeWorktreeTest(MirrorsTestBase):
+    def test_stale_registered_worktree_is_self_healed(self):
+        # An unclean stop leaves the worktree behind; a resume must re-add, not fail.
+        mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
+        dest = self.tmp / "wt-stale-reg"
+        make_worktree(mirror, self.feat_sha, self.base_sha, "main", dest, pr_number=7)
+        # No remove_worktree: simulate the crash, then resume.
+        result = make_worktree(
+            mirror, self.feat_sha, self.base_sha, "main", dest, pr_number=7
+        )
+        self.assertEqual(result, dest)
+        self.assertTrue((dest / ".git").exists())
+
+    def test_stale_unregistered_dir_is_self_healed(self):
+        mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
+        dest = self.tmp / "wt-stale-dir"
+        dest.mkdir(parents=True)
+        (dest / "leftover.txt").write_text("stale")
+        result = make_worktree(
+            mirror, self.feat_sha, self.base_sha, "main", dest, pr_number=7
+        )
+        self.assertEqual(result, dest)
+        self.assertFalse((dest / "leftover.txt").exists())
+
     def test_worktree_detached_at_head(self):
         mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
         dest = self.tmp / "wt"

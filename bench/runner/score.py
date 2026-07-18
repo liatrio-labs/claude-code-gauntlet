@@ -107,36 +107,21 @@ def _load_baselines(baselines_path=None):
     return _load_json(path)
 
 
-def _parse_dotenv(path):
-    """Return a dict from a ``KEY=VALUE`` .env file (quotes/comments stripped)."""
-    values = {}
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, _, value = line.partition("=")
-                values[key.strip()] = value.strip().strip("'\"")
-    except OSError:
-        pass
-    return values
-
-
 def _judge_api_key(env=None):
     """Resolve the judge API key: BENCH_JUDGE_API_KEY, else ANTHROPIC_API_KEY.
 
     Falls back to ``bench/.env`` for whichever is not already in the environment
     (the owner runs single-key: the judge uses the ANTHROPIC_API_KEY fallback).
+    Delegates to :func:`invoke._load_dotenv_key` — the single dotenv parser — so
+    prereqs, build_env, and the judge can never disagree on an edge case.
     """
     env = os.environ if env is None else env
     for name in ("BENCH_JUDGE_API_KEY", "ANTHROPIC_API_KEY"):
         value = env.get(name)
         if value:
             return value
-    dotenv = _parse_dotenv(BENCH_DIR / ".env")
     for name in ("BENCH_JUDGE_API_KEY", "ANTHROPIC_API_KEY"):
-        value = dotenv.get(name)
+        value = invoke._load_dotenv_key(BENCH_DIR / ".env", name)
         if value:
             return value
     return None
@@ -720,7 +705,12 @@ def _build_ledger_row(run_dir, metrics, costs, manifest, pin, adjudicator_pin, s
     envelope = {
         "cap": manifest.get("cap", 25),
         "fixtures": manifest.get("fixtures", []),
-        "invocation": manifest.get("invocation", "headless:/deep-review"),
+        "invocation": manifest.get("invocation")
+        or (
+            "naive:single-pass"
+            if manifest.get("anchor") == "naive"
+            else "headless:/deep-review"
+        ),
     }
     return {
         "run_id": run_id,

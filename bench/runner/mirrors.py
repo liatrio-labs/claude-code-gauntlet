@@ -12,6 +12,7 @@ an argument list — never ``shell=True``.
 
 import hashlib
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -94,6 +95,19 @@ def make_worktree(mirror, head_sha, base_sha, base_ref, dest, pr_number):
             f"{actual_base}, expected pinned base {base_sha} -- input drift, "
             f"refusing to score."
         )
+
+    if dest.exists():
+        # Leftover from an unclean stop (SIGKILL/OOM before the removal ran):
+        # `git worktree add` would fail on the existing path, turning every
+        # --resume/--retry-failed into a mirror_error. Self-heal: force-remove a
+        # registered worktree, rmtree an unregistered leftover, prune stale admin.
+        _git(
+            ["-C", str(mirror), "worktree", "remove", "--force", str(dest)],
+            check=False,
+        )
+        if dest.exists():
+            shutil.rmtree(dest)
+        _git(["-C", str(mirror), "worktree", "prune"], check=False)
 
     _git(["-C", str(mirror), "worktree", "add", "--detach", str(dest), head_sha])
     return dest

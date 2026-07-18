@@ -171,6 +171,20 @@ class PrereqTest(RunTestBase):
         self.assertIn("claude CLI not found", joined)
         self.assertIn("uv not found", joined)
 
+    def test_manifest_invocation_labels_naive_and_skill(self):
+        import types
+
+        for anchor, expected in (
+            ("naive", "naive:single-pass max-turns={}".format(run.NAIVE_MAX_TURNS)),
+            (None, "headless:/deep-review"),
+        ):
+            run_dir = self.tmp / "manifest-{}".format(anchor or "skill")
+            run_dir.mkdir(parents=True)
+            args = types.SimpleNamespace(anchor=anchor, fidelity="dry-run")
+            run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
+            manifest = json.loads((run_dir / "run.json").read_text())
+            self.assertEqual(manifest["invocation"], expected)
+
     def test_quoted_empty_key_is_a_failure(self):
         # A quoted-empty value must fail prereqs the same way build_env would treat
         # it: _read_env_key delegates to invoke._load_dotenv_key, so the two parsers

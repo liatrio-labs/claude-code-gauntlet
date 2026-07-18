@@ -589,6 +589,11 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 DEEP_REVIEW_* values
     env_fingerprint["timeout_s"] = timeout_s
+    invocation = (
+        "naive:single-pass max-turns={}".format(NAIVE_MAX_TURNS)
+        if args.anchor == "naive"
+        else "headless:/deep-review"
+    )
     manifest = {
         "run_id": run_id,
         "tier": tier,
@@ -596,6 +601,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         "started": _utc_iso(),
         "anchor": args.anchor,
         "fidelity": args.fidelity,
+        "invocation": invocation,
         "env_fingerprint": env_fingerprint,
         "pr_urls": list(urls),
     }
