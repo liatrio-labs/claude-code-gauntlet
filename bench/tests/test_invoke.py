@@ -327,7 +327,7 @@ class ParseCostsTest(unittest.TestCase):
                 }
             },
         }
-        out = costs.parse_costs(envelope)
+        out = parse_costs(envelope)
         self.assertEqual(out["tokens_total"], 150)
         self.assertEqual(out["per_model"]["claude-opus-4-8[1m]"]["tokens"], 150)
 
