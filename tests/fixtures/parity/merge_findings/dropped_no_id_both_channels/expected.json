@@ -1,0 +1,36 @@
+{
+  "base_branch": "main",
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": "high",
+      "description": "a description of the finding",
+      "dimension": "bug",
+      "file": "src/app.py",
+      "id": "F1",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "example finding"
+    }
+  ],
+  "head_sha": "abc123",
+  "methodology": {
+    "agents_dispatched": [
+      "bug-detector"
+    ],
+    "dropped_no_id": 2,
+    "duplicates_resolved": 0,
+    "findings_per_channel": {
+      "ndjson": 1,
+      "text_fallback": 0
+    },
+    "truncation_warnings": [],
+    "validation_warnings": [
+      "[<no id>] Missing required field 'id' \u2014 finding rejected",
+      "[] Missing required field 'id' \u2014 finding rejected"
+    ]
+  },
+  "owner": "o",
+  "pr_number": 1,
+  "repo": "r"
+}

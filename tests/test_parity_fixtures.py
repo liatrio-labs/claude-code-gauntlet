@@ -27,6 +27,29 @@ class TestFindingDedupParity(unittest.TestCase):
                 self.assertEqual(got, expected)
 
 
+class TestMergeFindingsParity(unittest.TestCase):
+    def test_all_cases(self):
+        import tempfile
+        from merge_findings import merge
+        for case_dir in sorted((FIXTURES / "merge_findings").iterdir()):
+            if not case_dir.is_dir():
+                continue
+            with self.subTest(case=case_dir.name):
+                inp, expected = _load(case_dir)
+                a = inp["args"]
+                with tempfile.TemporaryDirectory() as fd, tempfile.TemporaryDirectory() as td:
+                    for n, t in inp.get("findings_dir_files", {}).items():
+                        (Path(fd) / n).write_text(t)
+                    for n, t in inp.get("text_dir_files", {}).items():
+                        (Path(td) / n).write_text(t)
+                    got = merge(findings_dir=fd, session_sha=a["session_sha"], agents=a["agents"],
+                                text_dir=td, base_branch=a["base_branch"], head_sha=a["head_sha"],
+                                pr_number=a["pr_number"], owner=a["owner"], repo=a["repo"])
+                self.assertEqual(got["methodology"]["duplicates_resolved"], expected["methodology"]["duplicates_resolved"])
+                self.assertEqual(len(got["findings"]), len(expected["findings"]))
+                self.assertEqual(got["methodology"]["truncation_warnings"], expected["methodology"]["truncation_warnings"])
+
+
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
         before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}

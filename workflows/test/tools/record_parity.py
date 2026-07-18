@@ -19,8 +19,23 @@ def _finding_dedup(inp):
     return {"merged": merged, "duplicates_resolved": dupes, "dropped_no_id": dropped}
 
 
+def _merge_findings(inp):
+    import tempfile
+    from merge_findings import merge
+    args = inp["args"]
+    with tempfile.TemporaryDirectory() as fd, tempfile.TemporaryDirectory() as td:
+        for name, text in inp.get("findings_dir_files", {}).items():
+            (Path(fd) / name).write_text(text)
+        for name, text in inp.get("text_dir_files", {}).items():
+            (Path(td) / name).write_text(text)
+        env = merge(findings_dir=fd, session_sha=args["session_sha"], agents=args["agents"],
+                    text_dir=td, base_branch=args["base_branch"], head_sha=args["head_sha"],
+                    pr_number=args["pr_number"], owner=args["owner"], repo=args["repo"])
+    return env
+
+
 # Registered per-script recorders. Later tasks append entries here.
-RECORDERS = {"finding_dedup": _finding_dedup}
+RECORDERS = {"finding_dedup": _finding_dedup, "merge_findings": _merge_findings}
 
 
 def record(script, case_dir):

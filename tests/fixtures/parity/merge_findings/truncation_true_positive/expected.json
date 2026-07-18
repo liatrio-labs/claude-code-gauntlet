@@ -1,0 +1,23 @@
+{
+  "base_branch": "main",
+  "findings": [],
+  "head_sha": "abc123",
+  "methodology": {
+    "agents_dispatched": [
+      "bug-detector"
+    ],
+    "dropped_no_id": 0,
+    "duplicates_resolved": 0,
+    "findings_per_channel": {
+      "ndjson": 0,
+      "text_fallback": 0
+    },
+    "truncation_warnings": [
+      "[bug-detector] Possible truncation: no structured findings, prose present in text output, no SKIP lines detected"
+    ],
+    "validation_warnings": []
+  },
+  "owner": "o",
+  "pr_number": 1,
+  "repo": "r"
+}
