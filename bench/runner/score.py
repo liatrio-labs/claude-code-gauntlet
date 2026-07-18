@@ -280,6 +280,14 @@ def _prepare_scorer_inputs(candidates, results_dir, model_dir):
     results_dir.mkdir(parents=True, exist_ok=True)
     model_dir.mkdir(parents=True, exist_ok=True)
 
+    # The vendored scorer persists stage outputs under results/{pin}/ across
+    # invocations; stale evaluations/dedup groups from a previous run (same pin,
+    # same URLs, same tool key) would contaminate this run's bucket join.
+    for stale in ("evaluations.json", "dedup_groups.json"):
+        stale_path = model_dir / stale
+        if stale_path.exists():
+            stale_path.unlink()
+
     _write_json(model_dir / "candidates.json", candidates)
 
     golden = _load_json(GOLDEN_DATA)

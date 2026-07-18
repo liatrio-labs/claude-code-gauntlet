@@ -522,5 +522,23 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         self.assertEqual(bench_data[self.uC]["reviews"], [])  # not scored -> no stub
 
 
+class PrepareScorerInputsStaleTests(unittest.TestCase):
+    def test_stale_stage_outputs_removed_before_run(self):
+        import shutil as _shutil
+
+        tmp = Path(tempfile.mkdtemp(prefix="bench-score-stale-"))
+        self.addCleanup(_shutil.rmtree, tmp, ignore_errors=True)
+        results = tmp / "results"
+        model = results / "pin"
+        model.mkdir(parents=True)
+        (model / "evaluations.json").write_text('{"stale": true}')
+        (model / "dedup_groups.json").write_text('{"stale": true}')
+        url = "https://github.com/grafana/grafana/pull/80329"
+        score._prepare_scorer_inputs({url: {"deep-review": []}}, results, model)
+        self.assertFalse((model / "evaluations.json").exists())
+        self.assertFalse((model / "dedup_groups.json").exists())
+        self.assertTrue((model / "candidates.json").exists())
+
+
 if __name__ == "__main__":
     unittest.main()

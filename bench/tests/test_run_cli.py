@@ -387,7 +387,7 @@ class MultiRunTest(RunTestBase):
         fingerprint = manifest["env_fingerprint"]
         self.assertEqual(fingerprint["DEEP_REVIEW_HEADLESS"], "1")
         self.assertEqual(fingerprint["DEEP_REVIEW_MODEL_TIER"], "optimized")
-        self.assertEqual(fingerprint["timeout_s"], 30 * 60)
+        self.assertEqual(fingerprint["timeout_s"], 45 * 60)
 
 
 class ResumeTest(RunTestBase):

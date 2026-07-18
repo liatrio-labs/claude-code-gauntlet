@@ -638,7 +638,9 @@ def parse_args(argv=None):
         "--retry-failed", metavar="RUN_ID", dest="retry_failed",
         help="re-run the timeout+failed PRs of RUN_ID",
     )
-    parser.add_argument("--timeout-mins", type=int, default=30, dest="timeout_mins")
+    # Default calibrated from the Task 16 smoke shakedown: full-skill reviews ran
+    # 971-1345s, peaking at 75% of the original 30-min budget (plan threshold: >50%).
+    parser.add_argument("--timeout-mins", type=int, default=45, dest="timeout_mins")
     parser.add_argument("--anchor", choices=["naive"], help="bare single-pass anchor review")
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     return parser.parse_args(argv)
