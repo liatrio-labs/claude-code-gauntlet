@@ -78,6 +78,19 @@ def make_invoke_first_fails():
     return _inv
 
 
+def make_invoke_raises_first(exc):
+    """An invoke fake that raises *exc* on the first PR and oks the rest."""
+    state = {"n": 0}
+
+    def _inv(worktree, pr, run_dir, timeout_s=1800):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise exc
+        return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+    return _inv
+
+
 # -------------------------------------------------------------------------------- base
 
 
@@ -356,6 +369,70 @@ class LoopHardeningTest(RunTestBase):
         self.assertEqual(cp.status(urls[1]), "ok")
         self.assertEqual(summary["counts"].get("failed"), 1)
         self.assertEqual(summary["counts"].get("ok"), 1)
+
+
+# --------------------------------------------------------------------- unexpected error
+
+
+class UnexpectedErrorTest(RunTestBase):
+    """An unexpected per-PR exception fails only that PR and the tier continues."""
+
+    def test_unexpected_exception_fails_pr_and_run_continues(self):
+        gate = self.subsets["gate"]
+        urls = gate[:2]
+        removed = []
+        self._install_runner_fakes(
+            invoke_fn=make_invoke_raises_first(ValueError("kaboom")),
+            remove_fn=lambda mirror, dest: removed.append(dest),
+        )
+
+        run_dir = self.runs_root / "unexpected-run"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            summary = run._run_prs(
+                run_dir, urls, cp, self.shas, set(), 60, None, self.bench_data
+            )
+
+        # The failed PR is marked with the unexpected_error reason + a full traceback.
+        self.assertEqual(cp.status(urls[0]), "failed")
+        detail = self._detail(cp, urls[0])
+        self.assertTrue(detail["reason"].startswith("unexpected_error:ValueError:"))
+        self.assertIn("kaboom", detail["reason"])
+        self.assertIn("ValueError", detail["traceback"])
+        self.assertIn("kaboom", detail["traceback"])
+        # A single loud stderr breadcrumb names the PR.
+        self.assertIn(urls[0], stderr.getvalue())
+
+        # The run did not abort: the next PR still ran to completion.
+        self.assertEqual(cp.status(urls[1]), "ok")
+        self.assertEqual(summary["counts"].get("failed"), 1)
+        self.assertEqual(summary["counts"].get("ok"), 1)
+        # finally-removal still fired for both the failed and the ok PR.
+        self.assertEqual(len(removed), 2)
+
+        # A failed PR keeps the run's exit code at 1.
+        final = {}
+        for u in urls:
+            final[cp.status(u)] = final.get(cp.status(u), 0) + 1
+        self.assertEqual(run._exit_code(final, urls), 1)
+
+    def test_keyboardinterrupt_is_not_swallowed(self):
+        gate = self.subsets["gate"]
+        urls = gate[:2]
+        removed = []
+        self._install_runner_fakes(
+            invoke_fn=make_invoke_raises_first(KeyboardInterrupt()),
+            remove_fn=lambda mirror, dest: removed.append(dest),
+        )
+        run_dir = self.runs_root / "kbint-run"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        with self.assertRaises(KeyboardInterrupt):
+            run._run_prs(run_dir, urls, cp, self.shas, set(), 60, None, self.bench_data)
+        # The worktree of the interrupted PR was still cleaned up (finally ran).
+        self.assertEqual(len(removed), 1)
 
 
 # ------------------------------------------------------------------------- exit codes

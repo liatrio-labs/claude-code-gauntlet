@@ -27,6 +27,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -555,6 +556,21 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             else:
                 result = invoke.invoke_review(worktree, pr, run_dir, timeout_s=timeout_s)
             _collect_artifacts(output_dir, pr_dir)
+        except Exception as exc:
+            # PR-granular progress: an unexpected error (bad JSON, an OSError during
+            # collection, a plain bug) must fail only this PR and let the tier continue --
+            # distinct from the mirror block's DriftError->drifted and
+            # CalledProcessError->mirror_error above. KeyboardInterrupt/SystemExit derive
+            # from BaseException (not Exception), so they are never swallowed here and stop
+            # the run as intended. The finally below still removes the worktree.
+            reason = "unexpected_error:{}: {}".format(type(exc).__name__, str(exc)[:200])
+            print(
+                "!! {} failed unexpectedly ({}) -- continuing to next PR".format(url, reason),
+                file=sys.stderr,
+            )
+            cp.mark(url, "failed", detail={"reason": reason, "traceback": traceback.format_exc()})
+            counts["failed"] += 1
+            continue
         finally:
             mirrors.remove_worktree(mirror, worktree)
 

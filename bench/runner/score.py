@@ -504,16 +504,27 @@ def _head_file_lines(pr_info, path):
 
 
 def _adjudicate_bucket(buckets, per_pr, pin, api_key, adjudicator):
-    """Adjudicate every non-golden-matched comment; return a flat verdict list."""
+    """Adjudicate every non-golden-matched comment; return a flat verdict list.
+
+    ``bucket_join`` permits duplicate UNMATCHED candidate texts (only matched
+    texts must be unique), so each adjudicated comment is resolved to its own
+    per-PR candidate record -- iterating the candidate list and selecting the
+    unmatched texts -- rather than through a text-keyed dict that would collapse
+    same-body comments to a single path/line. Two same-text candidates at
+    different locations therefore get separate adjudicator calls (distinct
+    hunk/context) and independent verdicts.
+    """
     verdicts = []
     for url, split in buckets.items():
         info = per_pr.get(url, {})
-        cand_by_text = {c["text"]: c for c in info.get("candidates", [])}
+        adj_texts = set(split["adjudicator"])
         diff_path = Path(info.get("pr_dir", "")) / "diff.patch"
         diff_text = diff_path.read_text(errors="replace") if diff_path.is_file() else ""
 
-        for text in split["adjudicator"]:
-            cand = cand_by_text.get(text, {})
+        for cand in info.get("candidates", []):
+            text = cand.get("text")
+            if text not in adj_texts:
+                continue
             path = cand.get("path")
             line = cand.get("line")
             hunk = ""

@@ -243,6 +243,77 @@ class ComputeMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(m["drift"]["desc_len_mean"], (11 + 11 + 6) / 3)
 
 
+# ----------------------------------------------------------- adjudicate identity
+
+
+class AdjudicateBucketIdentityTests(unittest.TestCase):
+    """Duplicate unmatched candidate texts are adjudicated per-candidate.
+
+    bucket_join permits duplicate UNMATCHED texts (only matched texts must be
+    unique). Each such candidate must be adjudicated with ITS OWN path/line
+    context, not collapsed to a single text-keyed record, so two same-body
+    comments at different locations get separate calls and independent verdicts.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_duplicate_texts_get_distinct_contexts_and_verdicts(self):
+        url = "https://github.com/o/r/pull/1"
+        pr_dir = self.tmp / "pr-1"
+        pr_dir.mkdir()
+        # Two files/hunks so each location slices to a distinct hunk.
+        diff = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,3 +1,3 @@\n line1\n+AAA marker\n line3\n"
+            "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n"
+            "@@ -9,3 +9,3 @@\n line9\n+BBB marker\n line11\n"
+        )
+        (pr_dir / "diff.patch").write_text(diff, encoding="utf-8")
+
+        # Same body text, different locations.
+        candidates = [
+            {"text": "same body", "path": "a.py", "line": 2, "source": "extracted"},
+            {"text": "same body", "path": "b.py", "line": 10, "source": "extracted"},
+        ]
+        per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
+        # bucket_join emits the unmatched text once per candidate occurrence.
+        buckets = {url: {"golden_matched": [], "adjudicator": ["same body", "same body"]}}
+
+        seen = []
+
+        def adjudicator(text, hunk, ctx, pin, api_key):
+            seen.append({"text": text, "hunk": hunk})
+            return {
+                "bucket": "valid_extra" if "AAA" in hunk else "noise",
+                "failed_check": None,
+                "reason": "t",
+            }
+
+        verdicts = score._adjudicate_bucket(buckets, per_pr, "pin", "key", adjudicator)
+
+        # One call per candidate, each with its own (distinct) hunk.
+        self.assertEqual(len(seen), 2)
+        self.assertTrue(any("AAA" in s["hunk"] for s in seen))
+        self.assertTrue(any("BBB" in s["hunk"] for s in seen))
+        self.assertNotEqual(seen[0]["hunk"], seen[1]["hunk"])
+        # Independent verdicts: the two locations bucket differently.
+        self.assertEqual(sorted(v["bucket"] for v in verdicts), ["noise", "valid_extra"])
+
+        # Metrics tally per candidate: 2 candidates -> 1 valid_extra + 1 noise.
+        candidates_map = {url: {"deep-review": candidates}}
+        evaluations = {url: {"deep-review": ev_result(0, 2, 0, [])}}
+        m = compute_metrics(evaluations, candidates_map, buckets, verdicts)
+        self.assertEqual(m["total_candidates"], 2)
+        self.assertEqual(m["per_bucket"], {"golden_matched": 0, "valid_extra": 1, "noise": 1})
+        self.assertAlmostEqual(m["valid_extra_rate"], 0.5)
+        self.assertAlmostEqual(m["noise_rate"], 0.5)
+
+
 # --------------------------------------------------------------- score_run
 
 
