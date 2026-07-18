@@ -56,5 +56,29 @@
     "power_analysis_subset_size": "RESEARCH_PENDING: power-analysis refinement of the 15-PR subset size (artifact 32).",
     "delta_noise": "RESEARCH_PENDING: owner pins delta_noise from measured v2 noise mean+SD after the baseline pass (spec H6).",
     "judge_pin_resolution": "Final resolution 2026-07-17, superseding the brief claude-opus-4-8 alias pin: spec H5/Q7 requires Opus 4.8 dated + temp 0, which is jointly unsatisfiable \u2014 (1) no dated 4.8 id exists (models API verified complete), and (2) the 4.7/4.8/Sonnet-5/Fable-5 family rejects the temperature param (HTTP 400 'temperature is deprecated for this model'), while the vendored scorer (step2_5/step3) and the frozen adjudicator hardcode temperature=0. Pinned claude-opus-4-5-20251101: dated, temp-0-accepting, the judge upstream used for its committed results, and validated end-to-end by our exact spot-check reproduction (sentry#77754, deltas 0). Owner may still override before the Task 18 freeze; caches are pin-keyed."
+  },
+  "delta_noise_proposed": {
+    "value": 0.24,
+    "derivation": "noise_mean 0.1636 + 1.5 x binomial SE 0.050 (55 candidates); provisional \u2014 judge_sd=0 and N=1 leave no between-run variance; owner sign-off pending",
+    "proposed": "2026-07-18"
+  },
+  "baseline_v2": {
+    "run_id": "subset-20260718-031746-27875ca",
+    "n_prs": 15,
+    "n_goldens": 59,
+    "runs": 1,
+    "golden_recall": 0.4915,
+    "valid_extra_rate": 0.3636,
+    "noise_rate": 0.1636,
+    "precision_strict": 0.5273,
+    "f1_strict": 0.5088,
+    "note": "Owner-amended protocol 2026-07-18: N=1 (runs 2-3, extension, and full-50 tracking dropped under budget cap); k=5 judge re-scores deterministic."
+  },
+  "protected": {
+    "golden": "417417cf918433958496638f388c5193cac8f1b2",
+    "vendor": "4710e1ff3e45a914c37941ff3bc6c0ab1827016a",
+    "adapter": "ed13e407b1f9e43b922e36cbb2d2e610732bb155",
+    "adjudicator": "0c131d7def428639c30995a9e2f3d16f3509ecf4",
+    "note": "git tree SHAs at freeze (recompute: git rev-parse <commit>:bench/<dir>); baselines.json protected by review, not self-reference"
   }
 }
