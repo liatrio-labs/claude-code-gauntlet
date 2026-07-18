@@ -236,6 +236,25 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB):
 
 # ----------------------------------------------------------------------- naive anchor
 
+# The output contract appended to the naive prompt: the bare review has no plugin to
+# capture comments, so it must self-report them as a machine-readable block that
+# _naive_payload_from_result turns into the same dry-run payload the adapter consumes.
+_NAIVE_OUTPUT_CONTRACT = (
+    "\n\nOutput contract: after your review, END your final message with a single "
+    "fenced code block tagged `json` and nothing after it. The block must contain "
+    "exactly this shape:\n"
+    "```json\n"
+    "{\"comments\": [{\"path\": \"<file path>\", \"line\": <integer line number>, "
+    "\"body\": \"<the full review comment>\"}]}\n"
+    "```\n"
+    "Emit one object per distinct issue, in the diff's order; use an empty list "
+    "(\"comments\": []) if you found no issues. Each body must be self-contained and "
+    "stand on its own without referring to your other comments."
+)
+
+# A fenced code block, optional language tag on the fence line, body captured lazily.
+_JSON_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+
 
 def _parse_envelope(text):
     """Tolerantly extract the ``type=="result"`` envelope dict from raw stdout, or None."""
@@ -274,7 +293,52 @@ def _naive_prompt(pr, diff_text, bench_entry):
         "----- BEGIN DIFF -----\n"
         + (diff_text or "")
         + "\n----- END DIFF -----\n"
+        + _NAIVE_OUTPUT_CONTRACT
     )
+
+
+def _extract_comments(result_text):
+    """Return the comments list from the LAST fenced json block carrying a top-level
+    ``comments`` list in ``result_text``, or None when there is no such block.
+
+    Scanning to the last block lets the model echo the prompt's example fence and still
+    have its real answer win; a block that fails to parse or lacks a ``comments`` list is
+    skipped rather than fatal.
+    """
+    comments = None
+    for body in _JSON_BLOCK_RE.findall(result_text or ""):
+        try:
+            obj = json.loads(body.strip())
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and isinstance(obj.get("comments"), list):
+            comments = obj["comments"]
+    return comments
+
+
+def _naive_payload_from_result(result_text, pr_dir):
+    """Turn the naive review's self-reported comments into the adapter's dry-run payload.
+
+    Parses the last fenced ``json`` block (top-level ``comments`` list) out of the
+    envelope's result text and writes it to ``{pr_dir}/post-review-payload.json`` in the
+    exact GitHub dry-run shape bench/adapter/adapt.py consumes -- it reads only
+    ``platform`` + ``payload.comments``, so ``endpoint``/``method`` are null. Returns the
+    payload path, or None when no parseable block is present (caller marks the run failed,
+    which is retryable via --retry-failed).
+    """
+    comments = _extract_comments(result_text)
+    if comments is None:
+        return None
+    payload = {
+        "platform": "github",
+        "endpoint": None,
+        "method": None,
+        "payload": {"event": "COMMENT", "comments": comments},
+        "skipped": [],
+    }
+    dest = Path(pr_dir) / "post-review-payload.json"
+    dest.write_text(json.dumps(payload))
+    return dest
 
 
 def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
@@ -350,10 +414,21 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
             reason=reason,
         )
 
+    payload_path = _naive_payload_from_result(envelope.get("result"), pr_dir)
+    if payload_path is None:
+        return invoke.InvokeResult(
+            "failed",
+            cost_usd=costs["cost_usd"],
+            per_model=costs["per_model"],
+            raw_json_path=str(raw_path),
+            reason="naive_output_unparseable",
+        )
+
     return invoke.InvokeResult(
         "ok",
         cost_usd=costs["cost_usd"],
         per_model=costs["per_model"],
+        payload_path=str(payload_path),
         raw_json_path=str(raw_path),
     )
 

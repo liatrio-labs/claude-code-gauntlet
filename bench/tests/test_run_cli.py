@@ -459,5 +459,135 @@ class CliGuardTest(RunTestBase):
         self.assertIn("nothing to resume", stderr.getvalue())
 
 
+# --------------------------------------------------------------- naive anchor output
+
+
+NAIVE_FAKE_CLAUDE = '''#!/usr/bin/env python3
+import os, sys, json
+try:
+    sys.stdin.read()
+except Exception:
+    pass
+result = os.environ.get("FAKE_NAIVE_RESULT", "")
+envelope = {
+    "type": "result", "subtype": "success", "is_error": False,
+    "result": result, "total_cost_usd": 0.33,
+    "modelUsage": {"claude-opus-4-8": {"inputTokens": 10, "outputTokens": 5, "costUSD": 0.33}},
+    "usage": {"input_tokens": 10, "output_tokens": 5},
+    "permission_denials": [],
+}
+sys.stdout.write(json.dumps(envelope) + "\\n")
+'''
+
+NAIVE_PR = {
+    "url": "https://github.com/octo/widget/pull/7",
+    "owner": "octo",
+    "repo": "widget",
+    "pr_number": 7,
+    "head_sha": "a" * 40,
+    "base_sha": "b" * 40,
+    "base_ref": "main",
+}
+
+
+class NaivePayloadParseTest(RunTestBase):
+    def test_fenced_block_written_verbatim_in_github_shape(self):
+        pr_dir = self.tmp / "pr-7"
+        pr_dir.mkdir()
+        text = (
+            "Here are my findings.\n```json\n"
+            '{"comments": [{"path": "a.py", "line": 3, "body": "Null deref [HIGH]"}]}\n```\n'
+        )
+        dest = run._naive_payload_from_result(text, pr_dir)
+        self.assertIsNotNone(dest)
+        payload = json.loads(Path(dest).read_text())
+        self.assertEqual(payload["platform"], "github")
+        self.assertIsNone(payload["endpoint"])
+        self.assertIsNone(payload["method"])
+        self.assertEqual(payload["payload"]["event"], "COMMENT")
+        self.assertEqual(
+            payload["payload"]["comments"],
+            [{"path": "a.py", "line": 3, "body": "Null deref [HIGH]"}],
+        )
+        self.assertEqual(payload["skipped"], [])
+
+    def test_last_block_with_comments_wins(self):
+        pr_dir = self.tmp / "pr-7"
+        pr_dir.mkdir()
+        text = (
+            '```json\n{"comments": [{"path": "x", "line": 1, "body": "first"}]}\n```\n'
+            'more prose\n```json\n{"comments": [{"path": "y", "line": 2, "body": "second"}]}\n```'
+        )
+        dest = run._naive_payload_from_result(text, pr_dir)
+        payload = json.loads(Path(dest).read_text())
+        self.assertEqual([c["body"] for c in payload["payload"]["comments"]], ["second"])
+
+    def test_empty_comments_list_is_written(self):
+        pr_dir = self.tmp / "pr-7"
+        pr_dir.mkdir()
+        text = "No issues found.\n```json\n{\"comments\": []}\n```"
+        dest = run._naive_payload_from_result(text, pr_dir)
+        self.assertIsNotNone(dest)
+        payload = json.loads(Path(dest).read_text())
+        self.assertEqual(payload["payload"]["comments"], [])
+
+    def test_no_parseable_block_returns_none(self):
+        pr_dir = self.tmp / "pr-7"
+        pr_dir.mkdir()
+        self.assertIsNone(run._naive_payload_from_result("just prose, no json block", pr_dir))
+        self.assertFalse((pr_dir / "post-review-payload.json").exists())
+
+    def test_prompt_appends_output_contract(self):
+        prompt = run._naive_prompt(NAIVE_PR, "some diff", {"pr_title": "T"})
+        self.assertIn(run._NAIVE_OUTPUT_CONTRACT, prompt)
+        self.assertIn("```json", prompt)
+
+
+class NaiveInvokeTest(RunTestBase):
+    def _install_naive_fake(self, result_text):
+        bindir = self.tmp / "naive-bin"
+        bindir.mkdir(exist_ok=True)
+        claude = bindir / "claude"
+        claude.write_text(NAIVE_FAKE_CLAUDE)
+        claude.chmod(0o755)
+        return {
+            "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+            "FAKE_NAIVE_RESULT": result_text,
+        }
+
+    def _run_naive(self, result_text):
+        run_dir = self.runs_root / "naive-run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        worktree = self.tmp / "wt"
+        worktree.mkdir(exist_ok=True)
+        with patch.dict(os.environ, self._install_naive_fake(result_text)):
+            result = run._invoke_naive(
+                worktree, NAIVE_PR, run_dir, "diff text", {"pr_title": "T"}, 30
+            )
+        return result
+
+    def test_ok_with_parseable_block_sets_payload(self):
+        text = (
+            "Findings:\n```json\n"
+            '{"comments": [{"path": "a.py", "line": 3, "body": "Bug"}]}\n```'
+        )
+        result = self._run_naive(text)
+        self.assertEqual(result.status, "ok")
+        self.assertIsNotNone(result.payload_path)
+        payload = json.loads(Path(result.payload_path).read_text())
+        self.assertEqual(payload["payload"]["comments"][0]["body"], "Bug")
+
+    def test_unparseable_output_is_failed_and_retryable(self):
+        result = self._run_naive("no structured output here at all")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.reason, "naive_output_unparseable")
+
+    def test_empty_comments_is_ok_with_empty_payload(self):
+        result = self._run_naive("```json\n{\"comments\": []}\n```")
+        self.assertEqual(result.status, "ok")
+        payload = json.loads(Path(result.payload_path).read_text())
+        self.assertEqual(payload["payload"]["comments"], [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -549,6 +549,20 @@ def _git_head():
     return "unknown"
 
 
+def _tool_label(manifest):
+    """Ledger tool label from the run manifest.
+
+    An explicit manifest ``tool`` wins (experiment override); otherwise the run's
+    ``anchor`` field decides -- ``"naive"`` -> ``"naive-anchor"`` (the bare same-model
+    anchor), anything else -> ``"deep-review-v2"`` (the v2 skill run). The scorer's
+    internal candidates key stays ``deep-review`` regardless -- only labeling changes.
+    """
+    explicit = manifest.get("tool")
+    if explicit:
+        return explicit
+    return "naive-anchor" if manifest.get("anchor") == "naive" else "deep-review-v2"
+
+
 def _read_run_manifest(run_dir):
     path = Path(run_dir) / "run.json"
     if path.is_file():
@@ -643,7 +657,7 @@ def _build_ledger_row(run_dir, metrics, costs, manifest, pin, adjudicator_pin, s
         "ts": _now(),
         "git_sha": manifest.get("git_sha") or _git_head(),
         "tier": tier,
-        "tool": manifest.get("tool", "deep-review-v2"),
+        "tool": _tool_label(manifest),
         "hypothesis": manifest.get("hypothesis"),
         "change": manifest.get("change"),
         "n_prs": metrics["n_prs"],

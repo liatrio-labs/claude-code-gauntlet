@@ -312,6 +312,36 @@ class AssembleCandidatesTests(unittest.TestCase):
         self.assertEqual(per_pr[url]["candidates"][0]["text"], "c1")
 
 
+class ToolLabelTests(unittest.TestCase):
+    """The ledger row's tool label is derived from the run manifest's anchor field."""
+
+    def test_naive_and_default_labels(self):
+        self.assertEqual(score._tool_label({"anchor": "naive"}), "naive-anchor")
+        self.assertEqual(score._tool_label({"anchor": None}), "deep-review-v2")
+        self.assertEqual(score._tool_label({}), "deep-review-v2")
+
+    def test_explicit_tool_overrides_anchor(self):
+        self.assertEqual(
+            score._tool_label({"tool": "deep-review-v3", "anchor": "naive"}),
+            "deep-review-v3",
+        )
+
+    def test_label_read_from_run_json(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        run_dir = Path(tmp.name)
+
+        write_json(run_dir / "run.json", {"run_id": "smoke-x", "anchor": "naive"})
+        self.assertEqual(
+            score._tool_label(score._read_run_manifest(run_dir)), "naive-anchor"
+        )
+
+        write_json(run_dir / "run.json", {"run_id": "smoke-x"})  # no anchor
+        self.assertEqual(
+            score._tool_label(score._read_run_manifest(run_dir)), "deep-review-v2"
+        )
+
+
 class ScoreRunEndToEndTests(unittest.TestCase):
     """One fully wired run: scorer + adjudicator injected, no network."""
 
@@ -464,6 +494,7 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         self.assertAlmostEqual(row["cost_usd"], 1.0)
         self.assertEqual(row["tokens_total"], 250)  # 150 + 100
         self.assertEqual(row["tier"], "subset")
+        self.assertEqual(row["tool"], "deep-review-v2")  # no anchor manifest -> v2 label
         self.assertEqual(row["judge_pin"], self.pin)
         self.assertEqual(row["scorer_sha"], "dfc6cb42")
         self.assertEqual(row["envelope"]["cap"], 25)
