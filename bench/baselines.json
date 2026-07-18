@@ -38,7 +38,15 @@
       }
     }
   },
-  "judge_sd": null,
+  "judge_sd": {
+    "k": 5,
+    "golden_recall": 0.0,
+    "valid_extra_rate": 0.0,
+    "noise_rate": 0.0,
+    "precision_strict": 0.0,
+    "f1_strict": 0.0,
+    "note": "k=5 identical re-scorings of run subset-20260718-031746-27875ca fixed candidates under claude-opus-4-5-20251101 temp 0: byte-identical results every pass \u2014 judge+adjudicator pipeline is deterministic."
+  },
   "delta_noise": null,
   "notes": {
     "_about": "Frozen scoring baselines for the bench harness (spec H7 register). judge_pin/adjudicator_pin are resolved once by resolve_judge_pin(); score_run() refuses to run while judge_pin is null. Read-only to any optimizing loop.",
