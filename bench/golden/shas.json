@@ -104,8 +104,10 @@
     "pr_number": 1,
     "fork": true,
     "head_sha": "8ab88145113dd23a930e23b9cbbcf8b30e4c0b17",
-    "base_sha": "a5d290951def84afdcc4c88d2f1f20023fc36e2a",
-    "base_ref": "master"
+    "base_sha": "74618671bff8114fcec8fe77c6260c9a2bc2864a",
+    "base_ref": "master",
+    "base_sha_api_at_pin": "a5d290951def84afdcc4c88d2f1f20023fc36e2a",
+    "base_repinned": "2026-07-18: API base.sha was the branch tip at fetch time, not the branch point; re-pinned to merge-base(head, base_ref) from the frozen mirror"
   },
   "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/2": {
     "owner": "ai-code-review-evaluation",
@@ -320,8 +322,10 @@
     "pr_number": 79265,
     "fork": false,
     "head_sha": "bbd8c507cdf56f6b884373809e0b24abd4a2353d",
-    "base_sha": "50f4e78a39914711d0d231a501ba215becf17ebc",
-    "base_ref": "main"
+    "base_sha": "7ddcd0c9611882858701f4f876fb8e449fe73980",
+    "base_ref": "main",
+    "base_sha_api_at_pin": "50f4e78a39914711d0d231a501ba215becf17ebc",
+    "base_repinned": "2026-07-18: API base.sha was the branch tip at fetch time, not the branch point; re-pinned to merge-base(head, base_ref) from the frozen mirror"
   },
   "https://github.com/grafana/grafana/pull/80329": {
     "owner": "grafana",
@@ -347,8 +351,10 @@
     "pr_number": 90939,
     "fork": false,
     "head_sha": "b1613e320acff00623e6efc59f00ee68c7684a97",
-    "base_sha": "3ce1a5b0caab215346a51629b0344b90d67e9478",
-    "base_ref": "main"
+    "base_sha": "cca9dee702ac4338ddc38aa56257273b8143e32e",
+    "base_ref": "main",
+    "base_sha_api_at_pin": "3ce1a5b0caab215346a51629b0344b90d67e9478",
+    "base_repinned": "2026-07-18: API base.sha was the branch tip at fetch time, not the branch point; re-pinned to merge-base(head, base_ref) from the frozen mirror"
   },
   "https://github.com/grafana/grafana/pull/94942": {
     "owner": "grafana",
@@ -392,8 +398,10 @@
     "pr_number": 36880,
     "fork": false,
     "head_sha": "1950a511026d520a7329c7b6b9ee60a4af8f8b55",
-    "base_sha": "b8c1cd410f4499c77a8b372decfe1718b80ccfd2",
-    "base_ref": "main"
+    "base_sha": "b7b84d75d16e91d3f56ec527a260c53c5dd4396c",
+    "base_ref": "main",
+    "base_sha_api_at_pin": "b8c1cd410f4499c77a8b372decfe1718b80ccfd2",
+    "base_repinned": "2026-07-18: API base.sha was the branch tip at fetch time, not the branch point; re-pinned to merge-base(head, base_ref) from the frozen mirror"
   },
   "https://github.com/keycloak/keycloak/pull/36882": {
     "owner": "keycloak",
