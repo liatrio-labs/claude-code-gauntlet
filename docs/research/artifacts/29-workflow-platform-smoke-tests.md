@@ -28,7 +28,7 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 ## Decisions forced by this gate
 
 - **D1 (from #2): source layout** — lib/ modules vs build-step artifact: **build-step artifact.** Workflow scripts are hard self-contained: static ESM import fails to parse and `require` is undefined. Source lives in `workflows/src/*.js`; a build step concatenates/bundles into the single shipped `workflows/pipeline.js`. JS/Python parity fixtures test the built artifact.
-- **D2 (from #4): executor permission strategy** — allowlist entry vs docs vs redesign: (pending)
+- **D2 (from #4): executor permission strategy** — allowlist entry vs docs vs redesign: **(provisional, owner confirmation pending)** No stage redesign needed. Bench/CI path: default permission mode — fully clean headlessly (Workflow auto-allowed, AST-simple executor Bash sandbox-approved, zero prompts). Interactive path: default mode works out-of-box pending prompt-UX confirmation; acceptEdits requires pre-approving BOTH the dynamic-workflow review gate (`Workflow` allow rule — worked in leg D) and the executor's Bash (rule syntax unresolved — leg D/E anomaly suggests an invalid Bash-glob spec disables the allow array); bypassPermissions works. Deliverable for Plan 2: documented allowlist recipe in the plugin README + skill preflight note, exact rule strings pinned in the owner's attended session.
 - **D3 (from #6): effort regression compensation** — none needed vs model bump vs prompt: **none needed.** Frontmatter `effort` demonstrably shapes reasoning depth under agentType dispatch (4.2× output-token ratio between effort:high and effort:low twins on an identical reasoning task, n=3 each). The v3 pipeline can rely on per-agent effort frontmatter as-is.
 
 ## Raw observations
