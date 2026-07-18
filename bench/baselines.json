@@ -47,14 +47,14 @@
     "f1_strict": 0.0,
     "note": "k=5 identical re-scorings of run subset-20260718-031746-27875ca fixed candidates under claude-opus-4-5-20251101 temp 0: byte-identical results every pass \u2014 judge+adjudicator pipeline is deterministic."
   },
-  "delta_noise": null,
+  "delta_noise": 0.24,
   "notes": {
     "_about": "Frozen scoring baselines for the bench harness (spec H7 register). judge_pin/adjudicator_pin are resolved once by resolve_judge_pin(); score_run() refuses to run while judge_pin is null. Read-only to any optimizing loop.",
     "noise_rate_se_extension_criterion": "RESEARCH_PENDING: extend baseline N=3 -> N=5 if noise-rate SE at N=3 > 2pp (artifact 32).",
     "subset_early_abort_thresholds": "RESEARCH_PENDING: per-difficulty-bucket early-abort thresholds (artifact 32).",
     "subset_full_tracking_acceptance": "RESEARCH_PENDING: default is rank-order preserved on the full-50 pass with no bucket inverting by >1 SD (artifact 32).",
     "power_analysis_subset_size": "RESEARCH_PENDING: power-analysis refinement of the 15-PR subset size (artifact 32).",
-    "delta_noise": "RESEARCH_PENDING: owner pins delta_noise from measured v2 noise mean+SD after the baseline pass (spec H6).",
+    "delta_noise": "Signed 2026-07-18 (owner: proceed with everything except the merge). Derivation: baseline noise mean 0.1636 + 1.5 x binomial SE 0.050 (55 candidates, N=1, judge_sd=0). Provisional until between-run variance exists (v3 era); a scored run whose noise_rate exceeds 0.24 fails the gate.",
     "judge_pin_resolution": "Final resolution 2026-07-17, superseding the brief claude-opus-4-8 alias pin: spec H5/Q7 requires Opus 4.8 dated + temp 0, which is jointly unsatisfiable \u2014 (1) no dated 4.8 id exists (models API verified complete), and (2) the 4.7/4.8/Sonnet-5/Fable-5 family rejects the temperature param (HTTP 400 'temperature is deprecated for this model'), while the vendored scorer (step2_5/step3) and the frozen adjudicator hardcode temperature=0. Pinned claude-opus-4-5-20251101: dated, temp-0-accepting, the judge upstream used for its committed results, and validated end-to-end by our exact spot-check reproduction (sentry#77754, deltas 0). Owner may still override before the Task 18 freeze; caches are pin-keyed."
   },
   "delta_noise_proposed": {
@@ -75,10 +75,10 @@
     "note": "Owner-amended protocol 2026-07-18: N=1 (runs 2-3, extension, and full-50 tracking dropped under budget cap); k=5 judge re-scores deterministic."
   },
   "protected": {
-    "golden": "417417cf918433958496638f388c5193cac8f1b2",
+    "golden": "61242d399d5b27f282a997cf5ed4566decda3140",
     "vendor": "4710e1ff3e45a914c37941ff3bc6c0ab1827016a",
     "adapter": "ed13e407b1f9e43b922e36cbb2d2e610732bb155",
-    "adjudicator": "0c131d7def428639c30995a9e2f3d16f3509ecf4",
-    "note": "git tree SHAs at freeze (recompute: git rev-parse <commit>:bench/<dir>); baselines.json protected by review, not self-reference"
+    "adjudicator": "bfda0a4a077fa6294643b414ca3f7e66a44eb2fe",
+    "note": "git tree SHAs at final freeze 2026-07-18, post review-hardening (recompute: git rev-parse <commit>:bench/<dir>); baselines.json protected by review, not self-reference"
   }
 }
