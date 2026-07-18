@@ -15,6 +15,7 @@
 ## P1 — AskUserQuestion under `claude -p`, per permission mode
 
 **Command template:**
+
 ```
 timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question. Report what happens." [mode-flag] --output-format json
 ```
@@ -65,6 +66,7 @@ Exit codes recorded via a sibling `.exit` file per probe (`exit=N`).
 ### P1 default mode — exit 0
 
 Command:
+
 ```
 timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question. Report what happens." --output-format json
 ```
@@ -137,6 +139,7 @@ timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question.
 ### P1 acceptEdits mode — exit 0
 
 Command:
+
 ```
 timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question. Report what happens." --permission-mode acceptEdits --output-format json
 ```
@@ -209,6 +212,7 @@ timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question.
 ### P1 bypass mode — exit 0
 
 Command:
+
 ```
 timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question. Report what happens." --dangerously-skip-permissions --output-format json
 ```
@@ -281,6 +285,7 @@ timeout 180 claude -p "Use the AskUserQuestion tool to ask me a yes/no question.
 ### P2 original ( `--bare` + ambient OAuth HOME) — exit 1
 
 Command (verbatim):
+
 ```
 timeout 180 claude -p --bare --plugin-dir /Users/lee/personal/claude-deep-review "List the names of skills available to you, one per line." --output-format json
 ```
@@ -327,6 +332,7 @@ timeout 180 claude -p --bare --plugin-dir /Users/lee/personal/claude-deep-review
 ### P2a ( `--bare` + `ANTHROPIC_API_KEY` ) — exit 0
 
 Command (verbatim; same as P2 with the metered API key prepended via `env`):
+
 ```
 timeout 180 env ANTHROPIC_API_KEY=<metered key> claude -p --bare --plugin-dir /Users/lee/personal/claude-deep-review "List the names of skills available to you, one per line." --output-format json
 ```
@@ -409,11 +415,13 @@ timeout 180 env ANTHROPIC_API_KEY=<metered key> claude -p --bare --plugin-dir /U
 ### P2b (isolated HOME + CLAUDE_CONFIG_DIR, no `--bare` ) — exit 0
 
 Command (verbatim):
+
 ```
 timeout 180 env HOME=/tmp/bench-claude-home CLAUDE_CONFIG_DIR=/tmp/bench-claude-home/config ANTHROPIC_API_KEY=<metered key> claude -p --plugin-dir /Users/lee/personal/claude-deep-review "List the names of skills available to you, one per line." --output-format json
 ```
 
 Stdout preamble (printed before the JSON envelope, not part of the JSON itself):
+
 ```
 Ignoring 1 permissions.allow entry from .claude/settings.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/Users/lee/personal/claude-deep-review"].hasTrustDialogAccepted: true in /tmp/bench-claude-home/config/.claude.json.
 ```

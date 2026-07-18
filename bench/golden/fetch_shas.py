@@ -88,6 +88,7 @@ def main():
     with open(GOLDEN / "shas.json", "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
+        fh.write("\n")
 
     fetched = len(out) - len(missing)
     print(f"fetched {fetched}/{len(out)} PR SHAs; wrote {GOLDEN / 'shas.json'}")
