@@ -26,7 +26,12 @@ def _to_float(value):
 
 
 def _sum_tokens(usage):
-    """Sum every top-level integer field whose name mentions "token"."""
+    """Sum every top-level integer USAGE field whose name mentions "token".
+
+    Capacity/limit fields (``maxOutputTokens``, anything max/limit-prefixed) sit
+    beside the real counters in ``modelUsage`` entries and are model properties,
+    not consumption — they are excluded.
+    """
     if not isinstance(usage, dict):
         return 0
     total = 0
@@ -35,8 +40,12 @@ def _sum_tokens(usage):
         # nested breakdown (dict) never double-counts its parent aggregate.
         if isinstance(value, bool) or not isinstance(value, int):
             continue
-        if "token" in key.lower():
-            total += value
+        lowered = key.lower()
+        if "token" not in lowered:
+            continue
+        if lowered.startswith("max") or "limit" in lowered:
+            continue
+        total += value
     return total
 
 

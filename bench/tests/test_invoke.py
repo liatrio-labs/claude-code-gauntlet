@@ -310,6 +310,27 @@ class ParseCostsTest(unittest.TestCase):
         self.assertEqual(out["per_model"]["claude-haiku-4-5"]["tokens"], 30)
         self.assertEqual(out["per_model"]["claude-haiku-4-5"]["cost_usd"], 0.5)
 
+    def test_capacity_fields_are_not_usage(self):
+        # maxOutputTokens (and any max/limit-prefixed field) is a model property
+        # documented beside the real counters in modelUsage; it must not inflate
+        # the summed totals.
+        envelope = {
+            "total_cost_usd": 1.0,
+            "usage": {},
+            "modelUsage": {
+                "claude-opus-4-8[1m]": {
+                    "inputTokens": 100,
+                    "outputTokens": 50,
+                    "maxOutputTokens": 32000,
+                    "tokenLimit": 200000,
+                    "costUSD": 1.0,
+                }
+            },
+        }
+        out = costs.parse_costs(envelope)
+        self.assertEqual(out["tokens_total"], 150)
+        self.assertEqual(out["per_model"]["claude-opus-4-8[1m]"]["tokens"], 150)
+
     def test_multi_model_sums_all_with_variant_suffix(self):
         # A run can report several models (a primary plus a background bookkeeping
         # call); ids are opaque and may carry variant suffixes. Every key is summed
