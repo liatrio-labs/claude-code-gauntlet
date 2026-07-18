@@ -297,7 +297,7 @@ class ScorerStageFailureTests(unittest.TestCase):
         fake = SimpleNamespace(returncode=1, stdout="", stderr="Traceback: boom in dedup")
         with mock.patch.object(score.subprocess, "run", return_value=fake):
             with self.assertRaises(RuntimeError) as ctx:
-                score._run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
+                score.run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
         msg = str(ctx.exception)
         self.assertIn("dedup", msg)  # the failing stage is named
         self.assertIn("boom", msg)   # stderr tail is surfaced

@@ -535,6 +535,23 @@ class NaivePayloadParseTest(RunTestBase):
         )
         self.assertEqual(payload["skipped"], [])
 
+    def test_body_with_triple_backticks_parses_fully(self):
+        # A comment body that itself contains ``` must not truncate the contract block:
+        # the last fence runs to end-of-text, so backticks inside the JSON string reach
+        # json.loads intact and the body is preserved verbatim.
+        pr_dir = self.tmp / "pr-7"
+        pr_dir.mkdir()
+        body = "Use ```python\nx = 1\n``` instead of the raw call"
+        text = (
+            "Here are my findings.\n```json\n"
+            + json.dumps({"comments": [{"path": "a.py", "line": 3, "body": body}]})
+            + "\n```\n"
+        )
+        dest = run._naive_payload_from_result(text, pr_dir)
+        self.assertIsNotNone(dest)
+        payload = json.loads(Path(dest).read_text())
+        self.assertEqual(payload["payload"]["comments"], [{"path": "a.py", "line": 3, "body": body}])
+
     def test_last_block_with_comments_wins(self):
         pr_dir = self.tmp / "pr-7"
         pr_dir.mkdir()

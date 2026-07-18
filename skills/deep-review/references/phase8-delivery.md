@@ -96,6 +96,8 @@ python3 {plugin_root}/scripts/post_review.py "{output_dir}/deep-review-post-revi
 """)
 ```
 
+> Headless carve-out (`DEEP_REVIEW_POST_MODE=dry-run`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `DEEP_REVIEW_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
+
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
 **Step C. Markdown file** — if selected, write to `./deep-review-{date}.md`.

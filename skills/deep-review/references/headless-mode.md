@@ -15,7 +15,7 @@ Read once at Phase 1 entry. Every value is echoed in a `Headless config:` block 
 | `DEEP_REVIEW_HEADLESS` | `1` | master switch |
 | `DEEP_REVIEW_MODEL_TIER` | `optimized`\|`frontier` (`optimized`) | Phase 1 gate (a) |
 | `DEEP_REVIEW_DELIVERY` | subset of `chat,pr_comments,markdown` (`markdown`) | Phase 1 gate (b); `pr_comments` illegal for local targets |
-| `DEEP_REVIEW_POST_MODE` | `dry-run`\|`live` (`dry-run`) | whether post_review.py gets `--dry-run` |
+| `DEEP_REVIEW_POST_MODE` | `dry-run`\|`live` (`dry-run`) | whether post_review.py gets `--dry-run`; post_review.py also reads this var directly and self-enforces dry-run (belt-and-braces) |
 | `DEEP_REVIEW_PR_COMMENT_CAP` | int (`6`) | Phase 8 Stage 1 cap; bench sets 25 (flood guard) |
 | `DEEP_REVIEW_DRAFT_POLICY` | `review`\|`skip` (`review`) | draft-PR gate |
 | `DEEP_REVIEW_REVIEWED_POLICY` | `incremental`\|`full`\|`skip` (`full`) | both previously-reviewed variants |

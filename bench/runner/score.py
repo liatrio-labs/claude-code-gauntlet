@@ -397,29 +397,37 @@ def _run_stage(cmd, env, stage):
     return result
 
 
-def _run_scorer_stages(pin, api_key, model_dir):
-    """Run dedup (step2_5) then judge (step3) via ``uv run`` in the vendor dir."""
+def run_scorer_stages(pin, api_key, model_dir=None, *, tool=TOOL, base_url=None, env=None):
+    """Run dedup (step2_5) then judge (step3) via ``uv run`` in the vendor dir.
+
+    The single scorer-stage runner, shared by ``score_run`` (``tool="deep-review"``)
+    and the anchor re-judge paths (``tool=None``, which judges every stubbed review
+    rather than filtering to one tool). Each stage runs through ``_run_stage`` so a
+    non-zero exit raises a stage-named RuntimeError carrying the stderr tail -- never a
+    bare ``CalledProcessError`` that omits the stage and output. ``base_url`` / ``env``
+    default to ``MARTIAN_BASE_URL`` / ``os.environ``; ``model_dir`` is accepted (and
+    unused -- the runner derives everything from ``pin``) so the injected ``run_scorer``
+    seam in ``score_run`` keeps its ``(pin, api_key, model_dir)`` signature.
+    """
     if not api_key:
         raise RuntimeError("no judge API key available to run the scorer")
-    env = dict(os.environ)
-    env["MARTIAN_BASE_URL"] = MARTIAN_BASE_URL
-    env["MARTIAN_API_KEY"] = api_key
-    env["MARTIAN_MODEL"] = pin
+    run_env = dict(os.environ if env is None else env)
+    run_env["MARTIAN_BASE_URL"] = base_url or MARTIAN_BASE_URL
+    run_env["MARTIAN_API_KEY"] = api_key
+    run_env["MARTIAN_MODEL"] = pin
 
-    sanitized = _sanitize_model_name(pin)
-    dedup_rel = "results/{}/dedup_groups.json".format(sanitized)
+    dedup_rel = "results/{}/dedup_groups.json".format(_sanitize_model_name(pin))
+    dedup_cmd = ["uv", "run", "python", "-m",
+                 "code_review_benchmark.step2_5_dedup_candidates"]
+    judge_cmd = ["uv", "run", "python", "-m",
+                 "code_review_benchmark.step3_judge_comments",
+                 "--dedup-groups", dedup_rel]
+    if tool:
+        dedup_cmd += ["--tool", tool]
+        judge_cmd += ["--tool", tool]
 
-    _run_stage(
-        ["uv", "run", "python", "-m",
-         "code_review_benchmark.step2_5_dedup_candidates", "--tool", TOOL],
-        env, "dedup",
-    )
-    _run_stage(
-        ["uv", "run", "python", "-m",
-         "code_review_benchmark.step3_judge_comments",
-         "--tool", TOOL, "--dedup-groups", dedup_rel],
-        env, "judge",
-    )
+    _run_stage(dedup_cmd, run_env, "dedup")
+    _run_stage(judge_cmd, run_env, "judge")
 
 
 # --------------------------------------------------------------------- bucket join
@@ -782,7 +790,7 @@ def score_run(
 
     # 3) dedup + judge under the pin (subprocess unless injected).
     api_key = _judge_api_key(env)
-    stage_runner = run_scorer if run_scorer is not None else _run_scorer_stages
+    stage_runner = run_scorer if run_scorer is not None else run_scorer_stages
     stage_runner(pin, api_key, model_dir)
 
     # 4) parse evaluations.

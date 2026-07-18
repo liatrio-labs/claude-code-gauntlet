@@ -268,8 +268,15 @@ _NAIVE_OUTPUT_CONTRACT = (
     "stand on its own without referring to your other comments."
 )
 
-# A fenced code block, optional language tag on the fence line, body captured lazily.
+# The opening line of a fenced block: ``` plus an optional language tag, at the start
+# of a line, through the newline. Anchored with MULTILINE so backticks *inside* a JSON
+# string (json.dumps keeps the object on one physical line) are never read as a fence.
+_FENCE_OPEN_RE = re.compile(r"^```[^\n]*\n", re.MULTILINE)
+# A whole fenced block (opening fence, lazy body, closing fence) -- used only by the
+# earlier-blocks fallback in _extract_comments, never for the final contract block.
 _JSON_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+# A single trailing closing fence (with surrounding whitespace) at end of text.
+_TRAILING_FENCE_RE = re.compile(r"\s*```\s*$")
 
 
 def _naive_prompt(pr, diff_text, bench_entry):
@@ -311,26 +318,53 @@ def _valid_naive_comment(item):
     return True
 
 
-def _extract_comments(result_text):
-    """Return the comments list from the LAST fenced json block carrying a well-formed
-    top-level ``comments`` list in ``result_text``, or None when there is no such block.
+def _parse_comments_block(body):
+    """Return the ``comments`` list from a JSON block body, or None if malformed.
 
-    Scanning to the last block lets the model echo the prompt's example fence and still
-    have its real answer win; a block that fails to parse, lacks a ``comments`` list, or
-    whose list contains a malformed element (see ``_valid_naive_comment``) is skipped
-    rather than fatal, so a later valid block can still win and an all-malformed output
-    yields None (the caller marks the run naive_output_unparseable).
+    Well-formed = parses as a dict with a top-level ``comments`` list whose every
+    element passes ``_valid_naive_comment``. Any other shape yields None.
     """
+    try:
+        obj = json.loads(body.strip())
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("comments"), list):
+        return None
+    block = obj["comments"]
+    return block if all(_valid_naive_comment(c) for c in block) else None
+
+
+def _extract_comments(result_text):
+    """Return the comments list from the naive review's contract block, or None.
+
+    The output contract puts the real answer in the FINAL fenced block, with nothing
+    after it. Primary path: take the last real opening fence's span to the END of the
+    text and strip one trailing fence, then json.loads it -- so a comment body that
+    itself contains ``` cannot truncate the block (backticks inside a JSON string are
+    harmless once the whole block reaches json.loads). A trailing closing fence
+    followed by a newline registers as a fence line with a blank tail, so blank tails
+    are walked past to reach the opener.
+
+    If the last block is malformed, fall back to the earlier-blocks last-wins scan (a
+    block that fails to parse or validate is skipped) -- this both lets the model echo
+    the prompt's example fence and still have its real answer win, and yields None for
+    an all-malformed output (the caller marks the run naive_output_unparseable).
+    """
+    text = result_text or ""
+
+    for match in reversed(list(_FENCE_OPEN_RE.finditer(text))):
+        tail = _TRAILING_FENCE_RE.sub("", text[match.end():])
+        if not tail.strip():
+            continue  # this fence line was the closing fence -- keep walking back
+        block = _parse_comments_block(tail)
+        if block is not None:
+            return block
+        break  # the contract block is malformed; defer to the earlier-blocks fallback
+
     comments = None
-    for body in _JSON_BLOCK_RE.findall(result_text or ""):
-        try:
-            obj = json.loads(body.strip())
-        except ValueError:
-            continue
-        if not isinstance(obj, dict) or not isinstance(obj.get("comments"), list):
-            continue
-        block = obj["comments"]
-        if all(_valid_naive_comment(c) for c in block):
+    for body in _JSON_BLOCK_RE.findall(text):
+        block = _parse_comments_block(body)
+        if block is not None:
             comments = block
     return comments
 

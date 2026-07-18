@@ -32,8 +32,6 @@ deps; this module is stdlib-only and never imports the scorer (it shells out to
 
 import hashlib
 import json
-import os
-import subprocess
 from pathlib import Path
 
 from bench.runner import score
@@ -126,35 +124,16 @@ def _stage_inputs(candidates_by_url, tools, model, results_dir):
 
 
 def _run_scorer_stages(model, api_key, base_url, dedup_rel, env=None, tool=None):
-    """Run dedup (step2_5) then judge (step3) via ``uv run`` in the vendor dir.
+    """Run dedup (step2_5) then judge (step3) for the anchor paths.
 
-    A parameterized twin of ``score._run_scorer_stages``: ``base_url``/``model``
-    are explicit and ``tool`` is optional (``None`` judges every stubbed review,
-    which is what the anchor paths want). No ``--tool`` filter means one dedup +
-    one judge pass covers all three anchors.
+    Delegates to the single implementation ``score.run_scorer_stages`` (``tool=None``
+    judges every stubbed review, which is what the anchor paths want) so an anchor
+    stage failure surfaces the same stage-named RuntimeError as the main scoring path
+    rather than a bare ``CalledProcessError``. ``dedup_rel`` is recomputed from
+    ``model`` inside the shared runner (identical value), so the argument passed here
+    is unused; it is retained in the signature for the injectable ``run_scorer`` seam.
     """
-    if not api_key:
-        raise RuntimeError("no judge API key available to run the scorer")
-    run_env = dict(os.environ if env is None else env)
-    run_env["MARTIAN_BASE_URL"] = base_url
-    run_env["MARTIAN_API_KEY"] = api_key
-    run_env["MARTIAN_MODEL"] = model
-
-    dedup_cmd = [
-        "uv", "run", "python", "-m",
-        "code_review_benchmark.step2_5_dedup_candidates",
-    ]
-    judge_cmd = [
-        "uv", "run", "python", "-m",
-        "code_review_benchmark.step3_judge_comments",
-        "--dedup-groups", dedup_rel,
-    ]
-    if tool:
-        dedup_cmd += ["--tool", tool]
-        judge_cmd += ["--tool", tool]
-
-    subprocess.run(dedup_cmd, cwd=str(VENDOR_DIR), env=run_env, check=True)
-    subprocess.run(judge_cmd, cwd=str(VENDOR_DIR), env=run_env, check=True)
+    score.run_scorer_stages(model, api_key, tool=tool, base_url=base_url, env=env)
 
 
 def _clear_stale(model_dir):

@@ -11,13 +11,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import anchors  # noqa: E402
+from bench.runner import anchors, score  # noqa: E402
 from bench.runner.anchors import (  # noqa: E402
     ANCHOR_TOOLS,
     rejudge_anchors,
@@ -371,6 +372,26 @@ class RejudgeAnchorsTests(unittest.TestCase):
                 run_scorer=lambda *a, **k: None,
                 adjudicator=self._adjudicator(),
             )
+
+
+class AnchorScorerStageFailureTests(unittest.TestCase):
+    """The anchor path delegates to score.run_scorer_stages, so a non-zero scorer
+    stage now surfaces a stage-named RuntimeError (score behavior) instead of the bare
+    CalledProcessError the old duplicated runner raised."""
+
+    def test_stage_failure_surfaces_stage_named_runtimeerror(self):
+        fake = SimpleNamespace(returncode=1, stdout="", stderr="Traceback: boom in dedup")
+        with mock.patch.object(score.subprocess, "run", return_value=fake):
+            with self.assertRaises(RuntimeError) as ctx:
+                anchors._run_scorer_stages(
+                    "claude-opus-4-8-20260101",
+                    "api-key",
+                    anchors.MARTIAN_BASE_URL,
+                    "results/claude-opus-4-8-20260101/dedup_groups.json",
+                )
+        msg = str(ctx.exception)
+        self.assertIn("dedup", msg)  # the failing stage is named
+        self.assertIn("boom", msg)   # stderr tail is surfaced
 
 
 class AdjudicatorContextTests(unittest.TestCase):

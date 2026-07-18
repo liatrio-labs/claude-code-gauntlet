@@ -629,7 +629,10 @@ def main():
     )
     args = parser.parse_args()
 
-    DRY_RUN = args.dry_run
+    # Defense-in-depth: DEEP_REVIEW_POST_MODE=dry-run self-enforces dry-run so a
+    # headless Phase 8 invocation that omits --dry-run cannot live-post. The flag wins
+    # when present; env "live" or unset changes nothing without the flag.
+    DRY_RUN = args.dry_run or os.environ.get("DEEP_REVIEW_POST_MODE") == "dry-run"
     _CAPTURED.clear()
     _SKIP_WARNINGS.clear()
 

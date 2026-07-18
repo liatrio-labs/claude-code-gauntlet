@@ -784,9 +784,13 @@ class TestLivePathUnchanged(_DryRunTestBase):
             "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
             "review_body": "Summary", "findings": [finding_a],
         })
+        # Pin DEEP_REVIEW_POST_MODE off so an ambient bench value (the harness pins it
+        # to dry-run) cannot flip this live-path assertion.
         with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {}, clear=False), \
              patch("scripts.post_review.subprocess.run",
                    side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
             post_review.main()
 
         post_calls = [c for c in mock_run.call_args_list
@@ -849,14 +853,92 @@ class TestLivePathStdout(_DryRunTestBase):
         })
         stdout = io.StringIO()
         with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {}, clear=False), \
              patch("scripts.post_review.subprocess.run",
                    side_effect=_fake_run(diff=GH_DIFF)), \
              contextlib.redirect_stdout(stdout):
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
             post_review.main()
         out = stdout.getvalue()
         self.assertIn("Review posted:", out)
         self.assertIn("inline comment(s) posted.", out)
         self.assertNotIn("captured", out)
+
+
+# ---------------------------------------------------------------------------
+# DEEP_REVIEW_POST_MODE env-enforced dry-run
+# ---------------------------------------------------------------------------
+
+class TestPostModeEnv(_DryRunTestBase):
+    """DEEP_REVIEW_POST_MODE=dry-run self-enforces dry-run even without --dry-run.
+
+    The env var is part of the headless contract and the bench harness pins it to
+    dry-run; a headless Phase 8 invocation that omits the flag must still capture the
+    payload and post nothing. The flag wins when present; env "live" or unset changes
+    nothing on its own.
+    """
+
+    def _write_gh(self):
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary",
+            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
+                          "title": "Bug A", "body": "Body A"}],
+        })
+
+    def _post_calls(self, mock_run):
+        return [c for c in mock_run.call_args_list
+                if "--method" in c.args[0] and "POST" in c.args[0]]
+
+    def _payload_exists(self):
+        return os.path.exists(os.path.join(self.tmp, "post-review-payload.json"))
+
+    def test_env_dry_run_alone_captures_payload_no_posts(self):
+        self._write_gh()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {"DEEP_REVIEW_POST_MODE": "dry-run"}), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            post_review.main()
+        self.assertEqual(self._post_calls(mock_run), [],
+                         "env dry-run must issue no POST")
+        self.assertTrue(self._payload_exists())
+        self.assertEqual(self._payload()["platform"], "github")
+
+    def test_flag_alone_dry_run_when_env_unset(self):
+        self._write_gh()
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch.dict(os.environ, {}, clear=False), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
+            post_review.main()
+        self.assertEqual(self._post_calls(mock_run), [])
+        self.assertTrue(self._payload_exists())
+
+    def test_neither_flag_nor_env_posts_live(self):
+        self._write_gh()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {}, clear=False), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            os.environ.pop("DEEP_REVIEW_POST_MODE", None)
+            post_review.main()
+        self.assertTrue(self._post_calls(mock_run),
+                        "live path must issue the reviews POST")
+        self.assertFalse(self._payload_exists())
+
+    def test_env_live_without_flag_posts_live(self):
+        self._write_gh()
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
+             patch.dict(os.environ, {"DEEP_REVIEW_POST_MODE": "live"}), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+            post_review.main()
+        self.assertTrue(self._post_calls(mock_run),
+                        "env=live with no flag must post live")
+        self.assertFalse(self._payload_exists())
 
 
 if __name__ == "__main__":
