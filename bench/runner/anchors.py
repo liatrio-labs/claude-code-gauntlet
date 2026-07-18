@@ -323,16 +323,26 @@ def _adjudicate_anchor_bucket(buckets, candidates, tool, pin, api_key, adjudicat
     in the shown code") stays groundable for anchors; head-file ±5-line context
     is still unavailable (anchor PRs are not checked out). If a candidate does
     carry path/line and the diff contains that path, the sliced hunk is used
-    instead (forward-compatible with located candidates). Mirrors
-    ``score._adjudicate_bucket``.
+    instead (forward-compatible with located candidates).
+
+    Mirrors ``score._adjudicate_bucket``: ``bucket_join`` permits duplicate
+    UNMATCHED candidate texts, so this iterates the tool's candidate records and
+    selects those whose text is in the adjudicator bucket, adjudicating EACH with
+    its own path/line-derived context — rather than through a text-keyed dict that
+    would collapse same-body comments at different locations to a single context.
+    (Anchor candidates carry null path/line today, so every such comment still gets
+    the whole capped diff and behaviour is unchanged in practice; this is
+    forward-parity for located candidates.)
     """
     verdicts = []
     for url, split in buckets.items():
-        cand_by_text = {c["text"]: c for c in candidates.get(url, {}).get(tool, [])}
+        adj_texts = set(split["adjudicator"])
         diff_text = (diffs or {}).get(url, "")
         full = _capped_diff(diff_text) if diff_text else ""
-        for text in split["adjudicator"]:
-            cand = cand_by_text.get(text, {})
+        for cand in candidates.get(url, {}).get(tool, []):
+            text = cand.get("text")
+            if text not in adj_texts:
+                continue
             path = cand.get("path")
             line = cand.get("line")
             hunk = full  # default: the whole (capped) PR diff for anchor comments

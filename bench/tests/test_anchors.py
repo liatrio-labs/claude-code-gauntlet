@@ -434,6 +434,35 @@ class AdjudicatorContextTests(unittest.TestCase):
         anchors._adjudicate_anchor_bucket(buckets, candidates, "claude", "pin", "k", adj, {"u": diff})
         self.assertTrue(seen[0].startswith("@@ "))  # sliced hunk, not whole diff
 
+    def test_duplicate_text_candidates_get_distinct_contexts(self):
+        # Two same-body comments at different located path/line must each be
+        # adjudicated with their OWN sliced hunk, not collapsed to one context by
+        # a text-keyed dict. Mirrors score._adjudicate_bucket's record iteration.
+        buckets = {"u": {"golden_matched": [], "adjudicator": ["dup", "dup"]}}
+        candidates = {"u": {"claude": [
+            {"text": "dup", "path": "a.py", "line": 2},
+            {"text": "dup", "path": "b.py", "line": 2},
+        ]}}
+        diff = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,3 +1,3 @@\n a1\n+a2\n a3\n"
+            "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n"
+            "@@ -1,3 +1,3 @@\n b1\n+b2\n b3\n"
+        )
+        seen = []
+
+        def adj(text, hunk, ctx, pin, key):
+            seen.append(hunk)
+            return {"bucket": "noise", "failed_check": 1, "reason": "t"}
+
+        anchors._adjudicate_anchor_bucket(
+            buckets, candidates, "claude", "pin", "k", adj, {"u": diff}
+        )
+        self.assertEqual(len(seen), 2)  # one adjudicator call per candidate record
+        self.assertEqual(len(set(seen)), 2, "each duplicate got its own hunk")
+        self.assertIn("a2", seen[0])  # a.py record -> a.py hunk
+        self.assertIn("b2", seen[1])  # b.py record -> b.py hunk
+
 
 if __name__ == "__main__":
     unittest.main()
