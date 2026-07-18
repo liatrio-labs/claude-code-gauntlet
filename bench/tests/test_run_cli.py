@@ -612,6 +612,22 @@ class NaiveInvokeTest(RunTestBase):
         payload = json.loads(Path(result.payload_path).read_text())
         self.assertEqual(payload["payload"]["comments"], [])
 
+    def test_delegates_to_canonical_envelope_parser(self):
+        # run.py must not re-implement the tolerant envelope parser; it delegates to the
+        # shared invoke.parse_result_envelope. Spy-wrap the canonical parser and confirm
+        # the real _invoke_naive path routes through it.
+        real = run.invoke.parse_result_envelope
+        calls = []
+
+        def spy(text):
+            calls.append(text)
+            return real(text)
+
+        with patch.object(run.invoke, "parse_result_envelope", spy):
+            result = self._run_naive("```json\n{\"comments\": []}\n```")
+        self.assertEqual(result.status, "ok")
+        self.assertTrue(calls)
+
 
 # --------------------------------------------------------------- naive failure reason
 

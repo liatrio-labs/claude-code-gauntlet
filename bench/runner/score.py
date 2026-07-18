@@ -41,8 +41,8 @@ from pathlib import Path
 from bench.adapter.adapt import merge_candidates, payload_to_candidates
 from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import file_context, slice_hunk
+from bench.runner import invoke
 from bench.runner.costs import parse_costs
-from bench.runner.invoke import pr_dir_name
 from bench.runner.ledger import append_row
 
 __all__ = [
@@ -280,7 +280,7 @@ def _resolve_pr_dir(run_dir, url, payload_hint=None):
         hint = Path(payload_hint)
         if hint.is_file():
             return hint.parent
-    current = run_dir / pr_dir_name({"url": url})
+    current = run_dir / invoke.pr_dir_name({"url": url})
     if current.is_dir():
         return current
     legacy = run_dir / "pr-{}".format(_pull_number(url))
@@ -664,7 +664,7 @@ def _read_run_costs(run_dir):
         for raw_name in ("raw.json", "raw-naive.json"):
             raw = pr_dir / raw_name
             if raw.is_file():
-                envelope = _extract_result_envelope(raw.read_text(errors="replace"))
+                envelope = invoke.parse_result_envelope(raw.read_text(errors="replace"))
                 if envelope is not None:
                     break
         if envelope is None:
@@ -686,33 +686,6 @@ def _read_run_costs(run_dir):
             agg["tokens"] += usage["tokens"]
             agg["cost_usd"] += usage["cost_usd"]
     return {"cost_usd": total_cost, "tokens_total": total_tokens, "per_model": per_model}
-
-
-def _extract_result_envelope(text):
-    """Return the ``type=="result"`` envelope from raw stdout, or None.
-
-    Real ``-p`` stdout is pure JSON; a fake may print the echo block first.
-    """
-    text = (text or "").strip()
-    if not text:
-        return None
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except ValueError:
-        pass
-    decoder = json.JSONDecoder()
-    idx = text.find("{")
-    while idx != -1:
-        try:
-            obj, _ = decoder.raw_decode(text[idx:])
-        except ValueError:
-            obj = None
-        if isinstance(obj, dict) and obj.get("type") == "result":
-            return obj
-        idx = text.find("{", idx + 1)
-    return None
 
 
 def _build_ledger_row(run_dir, metrics, costs, manifest, pin, adjudicator_pin, scorer_sha):

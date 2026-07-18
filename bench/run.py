@@ -272,30 +272,6 @@ _NAIVE_OUTPUT_CONTRACT = (
 _JSON_BLOCK_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
 
 
-def _parse_envelope(text):
-    """Tolerantly extract the ``type=="result"`` envelope dict from raw stdout, or None."""
-    text = (text or "").strip()
-    if not text:
-        return None
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
-            return obj
-    except ValueError:
-        pass
-    decoder = json.JSONDecoder()
-    idx = text.find("{")
-    while idx != -1:
-        try:
-            obj, _ = decoder.raw_decode(text[idx:])
-        except ValueError:
-            obj = None
-        if isinstance(obj, dict) and obj.get("type") == "result":
-            return obj
-        idx = text.find("{", idx + 1)
-    return None
-
-
 def _naive_prompt(pr, diff_text, bench_entry):
     # Vendored golden data carries pr_title but no PR body; the naive prompt uses the
     # title plus the full diff (the changes are what the anchor is asked to review).
@@ -442,7 +418,7 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
     if _ASK_RE.search(out or ""):
         return invoke.InvokeResult("invalid", raw_json_path=str(raw_path), reason="askuserquestion_detected")
 
-    envelope = _parse_envelope(out)
+    envelope = invoke.parse_result_envelope(out)
     costs = parse_costs(envelope or {})
     if envelope is None or proc.returncode != 0 or envelope.get("is_error"):
         # Reuse invoke._fail_reason: it encodes is_error(subtype)/exit_N without the

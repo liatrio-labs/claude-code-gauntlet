@@ -327,6 +327,29 @@ class ReadRunCostsTests(unittest.TestCase):
         self.assertAlmostEqual(costs["cost_usd"], 0.7)
         self.assertEqual(costs["tokens_total"], 15)
 
+    def test_delegates_to_canonical_envelope_parser(self):
+        # score.py must not re-implement the tolerant envelope parser; it delegates to
+        # the shared invoke.parse_result_envelope. Spy-wrap it and confirm _read_run_costs
+        # routes through it.
+        pr = self.tmp / "run" / "pr-3"
+        pr.mkdir(parents=True)
+        write_json(pr / "raw.json", {
+            "type": "result",
+            "total_cost_usd": 0.5,
+            "usage": {"input_tokens": 4, "output_tokens": 2},
+        })
+        real = score.invoke.parse_result_envelope
+        calls = []
+
+        def spy(text):
+            calls.append(text)
+            return real(text)
+
+        with mock.patch.object(score.invoke, "parse_result_envelope", spy):
+            costs = score._read_run_costs(self.tmp / "run")
+        self.assertTrue(calls)
+        self.assertAlmostEqual(costs["cost_usd"], 0.5)
+
 
 # ------------------------------------------------------------- _assemble_candidates
 
@@ -507,7 +530,7 @@ class ScoreRunEndToEndTests(unittest.TestCase):
     def _pr(self, url, comments, cost, tokens):
         # New runs key each PR dir on pr-{owner}-{repo}-{n} (FIX 1); a fresh run's
         # scoring resolves that name directly.
-        pr_dir = self.run_dir / score.pr_dir_name({"url": url})
+        pr_dir = self.run_dir / score.invoke.pr_dir_name({"url": url})
         pr_dir.mkdir()
         payload = {
             "platform": "github",

@@ -173,6 +173,60 @@ class BuildEnvTest(InvokeTestBase):
         self.assertTrue(data["projects"][wt]["hasTrustDialogAccepted"])
 
 
+# --------------------------------------------------------------- build_env gh auth
+
+
+class BuildEnvGhAuthTest(InvokeTestBase):
+    """build_env must keep child ``gh`` authenticated across the HOME override.
+
+    The claude-config isolation overrides HOME/CLAUDE_CONFIG_DIR (the S7 boundary is
+    the claude binary's settings/plugins). The skill's children still shell out to
+    ``gh pr view/diff``, whose auth lives under the REAL home -- so build_env points
+    GH_CONFIG_DIR back at the real gh config dir and passes GH_TOKEN/GITHUB_TOKEN
+    through. This does NOT weaken the isolation: gh auth is an ambient prerequisite,
+    not part of the claude-settings boundary.
+    """
+
+    def test_gh_config_dir_derived_from_base_home_when_dir_exists(self):
+        home = Path(self.tmp) / "realhome"
+        gh_dir = home / ".config" / "gh"
+        gh_dir.mkdir(parents=True)
+        env = build_env(PR, self.run_dir, {"HOME": str(home)})
+        self.assertEqual(env["GH_CONFIG_DIR"], str(gh_dir))
+        # HOME itself is still overridden to the isolated claude-home.
+        self.assertNotEqual(env["HOME"], str(home))
+
+    def test_gh_config_dir_honors_xdg_config_home(self):
+        xdg = Path(self.tmp) / "xdg"
+        gh_dir = xdg / "gh"
+        gh_dir.mkdir(parents=True)
+        home = Path(self.tmp) / "realhome"
+        (home / ".config" / "gh").mkdir(parents=True)  # must lose to XDG_CONFIG_HOME
+        env = build_env(
+            PR, self.run_dir, {"HOME": str(home), "XDG_CONFIG_HOME": str(xdg)}
+        )
+        self.assertEqual(env["GH_CONFIG_DIR"], str(gh_dir))
+
+    def test_gh_config_dir_not_set_when_dir_absent(self):
+        home = Path(self.tmp) / "realhome-empty"
+        home.mkdir()  # no .config/gh underneath
+        env = build_env(PR, self.run_dir, {"HOME": str(home)})
+        self.assertNotIn("GH_CONFIG_DIR", env)
+
+    def test_explicit_base_gh_config_dir_preserved(self):
+        # An operator-set GH_CONFIG_DIR wins and passes through unchanged, even when it
+        # does not exist on disk (the caller vouches for it -- no derivation, no check).
+        env = build_env(
+            PR, self.run_dir, {"HOME": str(self.tmp), "GH_CONFIG_DIR": "/custom/gh"}
+        )
+        self.assertEqual(env["GH_CONFIG_DIR"], "/custom/gh")
+
+    def test_gh_and_github_tokens_passed_through(self):
+        env = build_env(PR, self.run_dir, {"GH_TOKEN": "ght", "GITHUB_TOKEN": "ghb"})
+        self.assertEqual(env["GH_TOKEN"], "ght")
+        self.assertEqual(env["GITHUB_TOKEN"], "ghb")
+
+
 # ------------------------------------------------------------------ build_env .env
 
 

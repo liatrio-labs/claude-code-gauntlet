@@ -25,7 +25,13 @@ from pathlib import Path
 
 from bench.runner.costs import parse_costs
 
-__all__ = ["InvokeResult", "build_env", "invoke_review", "pr_dir_name"]
+__all__ = [
+    "InvokeResult",
+    "build_env",
+    "invoke_review",
+    "parse_result_envelope",
+    "pr_dir_name",
+]
 
 # Repo root == the deep-review plugin dir. bench/runner/invoke.py -> parents[2].
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -195,6 +201,50 @@ def _seed_trust(config_dir, worktree):
     path.write_text(json.dumps(data, indent=2))
 
 
+def _gh_auth_env(base_env):
+    """Return the ``gh`` auth env vars to carry across the ``HOME`` override.
+
+    ``build_env`` overrides ``HOME``/``CLAUDE_CONFIG_DIR`` to isolate the *claude*
+    binary's settings/plugins (the S7 isolation boundary). But the skill's child
+    processes also shell out to ``gh`` (``gh pr view/diff``), and on machines where
+    ``gh`` keeps its token in a config file (the common Linux case) that token lives
+    under the REAL home -- ``$GH_CONFIG_DIR`` if set, else ``$XDG_CONFIG_HOME/gh``,
+    else ``$HOME/.config/gh``. The moved ``HOME`` would strand it, so re-point ``gh``
+    back at the real dir. This does NOT weaken the claude-config isolation: ``gh``
+    auth is an ambient prerequisite (references/headless-mode.md, validated by
+    ``check_prereqs``'s ``gh auth status``), not a claude setting.
+
+    - ``GH_CONFIG_DIR``: an explicit value in ``base_env`` wins untouched; otherwise
+      derive it from the ORIGINAL base ``HOME`` (XDG-aware) and set it only when that
+      dir actually exists -- keychain / env-token setups keep no such dir and need no
+      pointer, so setting nothing there is harmless.
+    - ``GH_TOKEN`` / ``GITHUB_TOKEN``: passed through when present; in CI they may be
+      the only auth (no config dir, no keychain).
+    """
+    result = {}
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = base_env.get(name)
+        if value:
+            result[name] = value
+
+    explicit = base_env.get("GH_CONFIG_DIR")
+    if explicit:
+        result["GH_CONFIG_DIR"] = explicit
+        return result
+
+    xdg = base_env.get("XDG_CONFIG_HOME")
+    home = base_env.get("HOME")
+    if xdg:
+        gh_dir = Path(xdg) / "gh"
+    elif home:
+        gh_dir = Path(home) / ".config" / "gh"
+    else:
+        return result
+    if gh_dir.is_dir():
+        result["GH_CONFIG_DIR"] = str(gh_dir)
+    return result
+
+
 def build_env(pr, run_dir, base_env):
     """Assemble the pinned isolated env for one PR invocation (side effect: seeds trust).
 
@@ -204,6 +254,12 @@ def build_env(pr, run_dir, base_env):
     authoritative: it WINS over any ambient ``ANTHROPIC_API_KEY`` so all bench spend
     lands on the single metered key. A missing/empty ``.env`` or key leaves the ambient
     env untouched (the prereq check reports that separately).
+
+    The ``HOME``/``CLAUDE_CONFIG_DIR`` override isolates the *claude* binary's settings
+    and plugins (the S7 boundary); it must not strand ``gh``, which the skill's children
+    call. ``_gh_auth_env`` re-establishes ``gh``'s auth (``GH_CONFIG_DIR`` pointing at the
+    real home, plus any ``GH_TOKEN``/``GITHUB_TOKEN``) across that override -- ``gh`` auth
+    is an ambient prerequisite, not part of the claude-config isolation.
     """
     run_dir = Path(run_dir)
     env = dict(base_env)
@@ -218,6 +274,9 @@ def build_env(pr, run_dir, base_env):
     config_dir = claude_home / "config"
     env["HOME"] = str(claude_home)
     env["CLAUDE_CONFIG_DIR"] = str(config_dir)
+    # Re-point gh at its real auth AFTER the HOME override (derived from the original
+    # base HOME), so child `gh pr view/diff` stays authenticated despite the isolation.
+    env.update(_gh_auth_env(base_env))
 
     _seed_trust(config_dir, _worktree_dir(run_dir, pr))
     return env
@@ -233,11 +292,15 @@ def _kill_group(proc):
         pass
 
 
-def _extract_envelope(text):
+def parse_result_envelope(text):
     """Return the ``type=="result"`` envelope dict from raw stdout, or None.
 
-    Real ``-p`` stdout is pure JSON; the fake (and any future prefix) may print the
-    echo block first, so scan for the first parseable object that is the result envelope.
+    The canonical tolerant parser shared by the whole runner (``run.py`` and
+    ``score.py`` delegate here rather than re-implementing it). Real ``-p`` stdout is
+    pure JSON; a fake (or any future preamble) may print the echo block or other
+    non-JSON lines first, and there may be trailing output after the envelope -- so if
+    the whole text is not a single JSON object, scan for the first parseable object
+    that is the ``type=="result"`` envelope. Returns None on empty/unparseable input.
     """
     text = (text or "").strip()
     if not text:
@@ -404,7 +467,7 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
             )
 
     raw_text = raw_path.read_text(errors="replace")
-    envelope = _extract_envelope(raw_text)
+    envelope = parse_result_envelope(raw_text)
     # The receipt may live in stdout, the envelope .result, or a report .md — collected
     # into pr_dir by run.py, or still in the shared output dir at echo-check time.
     report_dirs = (env.get("DEEP_REVIEW_OUTPUT_DIR"), str(pr_dir))
