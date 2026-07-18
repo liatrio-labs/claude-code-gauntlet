@@ -15,3 +15,10 @@ Assertion rule: decision outcomes and integer counts/stats are asserted EXACTLY.
 Free-text fields (`elimination_reason`, warning bodies, `escalation_note`,
 `corroborated_by` ordering of equal keys) are asserted for substring/prefix
 presence only — Python f-string formatting need not match JS template strings.
+
+Authoring caveat (`merge_findings`): a fixture finding must not be missing more
+than ONE required field. `validate_findings` iterates the `REQUIRED_FIELDS`
+**set** and reports the first missing field it hits; Python randomizes str-set
+iteration order (`PYTHONHASHSEED`), so a finding missing ≥2 fields yields a
+nondeterministic warning body and flakes golden-freshness (which byte-compares
+`expected.json`). With exactly one bad field the reported field is fixed.

@@ -197,6 +197,9 @@ export function parseTextFile(text, agent) {
   let stripped = text.replace(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g, '');
   stripped = stripped.replace(/^\s*SKIP\s*:.*$/gim, '');
   stripped = stripped.trim();
+  // .length counts UTF-16 units where Python len() counts code points, so an astral
+  // char shifts this threshold by one vs Python. Accepted: has_prose is diagnostics
+  // only (truncation heuristic), and parity fixtures keep prose ASCII where it is load-bearing.
   if (stripped.replace(/\s+/g, '').length > 20) hasProse = true;
 
   return { findings, warnings, hasProse, hasSkip };
