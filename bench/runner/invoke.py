@@ -318,7 +318,8 @@ def _fail_reason(returncode, envelope):
     if envelope is None:
         return "no_envelope"
     if envelope.get("is_error"):
-        return envelope.get("subtype") or "is_error"
+        # subtype alone can read "success" on a mid-response API error; keep both.
+        return "is_error({})".format(envelope.get("subtype") or "unknown")
     if returncode != 0:
         return "exit_{}".format(returncode)
     return "failed"
