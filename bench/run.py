@@ -530,8 +530,17 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             drifted.append((url, str(exc)))
             counts["drifted"] += 1
             continue
-        except subprocess.CalledProcessError:
-            cp.mark(url, "failed", detail={"reason": "mirror_error"})
+        except (subprocess.CalledProcessError, OSError) as exc:
+            # OSError covers e.g. shutil.rmtree failing during stale-worktree
+            # cleanup -- same containment as a clone/fetch failure.
+            cp.mark(
+                url,
+                "failed",
+                detail={
+                    "reason": "mirror_error",
+                    "error": "{}: {}".format(type(exc).__name__, str(exc)[:200]),
+                },
+            )
             counts["failed"] += 1
             continue
 
@@ -567,7 +576,17 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             counts["failed"] += 1
             continue
         finally:
-            mirrors.remove_worktree(mirror, worktree)
+            # Cleanup failure must never abort the tier (a stale worktree is
+            # self-healed by the next make_worktree anyway); warn and move on.
+            try:
+                mirrors.remove_worktree(mirror, worktree)
+            except Exception as cleanup_exc:
+                print(
+                    "!! worktree cleanup failed for {} ({}) -- continuing".format(
+                        url, cleanup_exc
+                    ),
+                    file=sys.stderr,
+                )
 
         payload_path = _relocate_payload(result.payload_path, pr_dir)
         cp.mark(

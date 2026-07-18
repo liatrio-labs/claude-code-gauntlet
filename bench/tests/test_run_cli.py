@@ -396,6 +396,63 @@ class LoopHardeningTest(RunTestBase):
         self.assertEqual(summary["counts"].get("failed"), 1)
         self.assertEqual(summary["counts"].get("ok"), 1)
 
+    def test_oserror_during_mirror_block_marks_failed_and_continues(self):
+        urls = ["https://github.com/o/r/pull/20", "https://github.com/o/r/pull/21"]
+        metas = {
+            urls[0]: {"owner": "o", "repo": "r", "head_sha": "h0", "base_sha": "b0",
+                      "base_ref": "main", "pr_number": 20},
+            urls[1]: {"owner": "o", "repo": "r", "head_sha": "h1", "base_sha": "b1",
+                      "base_ref": "main", "pr_number": 21},
+        }
+        state = {"n": 0}
+
+        def worktree_oserror(mirror, head_sha, base_sha, base_ref, dest, pr_number):
+            state["n"] += 1
+            if state["n"] == 1:
+                raise OSError("rmtree failed on stale worktree")
+            return fake_make_worktree(mirror, head_sha, base_sha, base_ref, dest, pr_number)
+
+        self._install_runner_fakes(make_worktree_fn=worktree_oserror)
+        run_dir = self.runs_root / "run-oserror"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        summary = run._run_prs(run_dir, urls, cp, metas, set(), 60, None, {})
+
+        self.assertEqual(cp.status(urls[0]), "failed")
+        detail = self._detail(cp, urls[0])
+        self.assertEqual(detail["reason"], "mirror_error")
+        self.assertIn("OSError", detail["error"])
+        self.assertEqual(cp.status(urls[1]), "ok")
+
+    def test_cleanup_failure_in_finally_does_not_abort(self):
+        urls = ["https://github.com/o/r/pull/30", "https://github.com/o/r/pull/31"]
+        metas = {
+            urls[0]: {"owner": "o", "repo": "r", "head_sha": "h0", "base_sha": "b0",
+                      "base_ref": "main", "pr_number": 30},
+            urls[1]: {"owner": "o", "repo": "r", "head_sha": "h1", "base_sha": "b1",
+                      "base_ref": "main", "pr_number": 31},
+        }
+        state = {"n": 0}
+
+        def remove_boom(mirror, dest):
+            state["n"] += 1
+            if state["n"] == 1:
+                raise run.subprocess.CalledProcessError(1, ["git", "worktree", "remove"])
+
+        self._install_runner_fakes(remove_fn=remove_boom)
+        run_dir = self.runs_root / "run-cleanup-fail"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            summary = run._run_prs(run_dir, urls, cp, metas, set(), 60, None, {})
+
+        # The failing cleanup neither aborted the tier nor changed the PR outcome.
+        self.assertEqual(cp.status(urls[0]), "ok")
+        self.assertEqual(cp.status(urls[1]), "ok")
+        self.assertEqual(summary["counts"].get("ok"), 2)
+        self.assertIn("worktree cleanup failed", stderr.getvalue())
+
 
 # --------------------------------------------------------------------- unexpected error
 

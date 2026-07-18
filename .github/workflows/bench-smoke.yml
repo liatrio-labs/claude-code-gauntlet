@@ -26,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # upload-artifact needs the actions scope; naming only `contents` would
+      # clear it and fail the always() upload after real API spend.
+      actions: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
