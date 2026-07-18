@@ -527,12 +527,19 @@ def _adjudicate_bucket(buckets, per_pr, pin, api_key, adjudicator):
                 continue
             path = cand.get("path")
             line = cand.get("line")
+            # Rendered comments can carry a string line (e.g. a copied end_line);
+            # normalize to int or drop context rather than crash slice_hunk.
+            if not isinstance(line, int) or isinstance(line, bool):
+                try:
+                    line = int(str(line))
+                except (TypeError, ValueError):
+                    line = None
             hunk = ""
             ctx = ""
             if diff_text and path and line:
                 try:
                     hunk = slice_hunk(diff_text, path, line)
-                except ValueError:
+                except (ValueError, TypeError):
                     hunk = ""
                 head_lines = _head_file_lines(info, path)
                 ctx = file_context(head_lines, line) if head_lines else ""

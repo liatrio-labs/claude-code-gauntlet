@@ -162,6 +162,24 @@ class AdjudicateTests(unittest.TestCase):
             adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
         self.assertEqual(len(transport.calls), 2)
 
+    def test_parseable_non_object_retries_then_valid(self):
+        # A JSON array/null/scalar parses but is not a verdict object; it must take
+        # the retry path, not crash with AttributeError.
+        transport = FakeTransport([
+            "[]",
+            '{"bucket":"noise","failed_check":2,"reason":"ungrounded"}',
+        ])
+        verdict = adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
+        self.assertEqual(verdict["bucket"], "noise")
+        self.assertEqual(len(transport.calls), 2)
+
+    def test_parseable_non_object_twice_raises_cleanly(self):
+        transport = FakeTransport(["null", "[1, 2]"])
+        with self.assertRaises(ValueError) as ctx:
+            adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
+        self.assertIn("unparseable JSON twice", str(ctx.exception))
+        self.assertEqual(len(transport.calls), 2)
+
     def test_invalid_bucket_value_triggers_retry(self):
         transport = FakeTransport([
             '{"bucket":"maybe","reason":"x"}',

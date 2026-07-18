@@ -313,6 +313,36 @@ class AdjudicateBucketIdentityTests(unittest.TestCase):
         self.assertAlmostEqual(m["valid_extra_rate"], 0.5)
         self.assertAlmostEqual(m["noise_rate"], 0.5)
 
+    def test_string_line_is_normalized_not_crashing(self):
+        url = "https://github.com/o/r/pull/1"
+        pr_dir = self.tmp / "pr-1"
+        pr_dir.mkdir()
+        diff = (
+            "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
+            "@@ -1,3 +1,3 @@\n line1\n+AAA marker\n line3\n"
+        )
+        (pr_dir / "diff.patch").write_text(diff, encoding="utf-8")
+        # A rendered comment can carry a string line (copied end_line) or garbage.
+        candidates = [
+            {"text": "numeric-ish", "path": "a.py", "line": "2", "source": "extracted"},
+            {"text": "garbage-line", "path": "a.py", "line": "n/a", "source": "extracted"},
+        ]
+        per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
+        buckets = {url: {"golden_matched": [], "adjudicator": ["numeric-ish", "garbage-line"]}}
+
+        seen = []
+
+        def adjudicator(text, hunk, ctx, pin, api_key):
+            seen.append({"text": text, "hunk": hunk})
+            return {"bucket": "noise", "failed_check": 1, "reason": "t"}
+
+        verdicts = score._adjudicate_bucket(buckets, per_pr, "pin", "key", adjudicator)
+        self.assertEqual(len(verdicts), 2)
+        by_text = {s["text"]: s for s in seen}
+        # "2" normalizes to int 2 -> hunk sliced; "n/a" drops context, no crash.
+        self.assertIn("AAA", by_text["numeric-ish"]["hunk"])
+        self.assertEqual(by_text["garbage-line"]["hunk"], "")
+
 
 # --------------------------------------------------------------- score_run
 

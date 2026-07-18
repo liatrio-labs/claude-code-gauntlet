@@ -210,6 +210,10 @@ def _parse_verdict(content):
             text = text[4:]
         text = text.strip()
     data = json.loads(text)  # may raise json.JSONDecodeError
+    if not isinstance(data, dict):
+        raise ValueError(
+            "verdict must be a JSON object, got {}".format(type(data).__name__)
+        )
     bucket = data.get("bucket")
     if bucket not in ("valid_extra", "noise"):
         raise ValueError("verdict bucket must be valid_extra|noise, got {!r}".format(bucket))
