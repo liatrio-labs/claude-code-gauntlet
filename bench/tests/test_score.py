@@ -91,8 +91,11 @@ class ResolveJudgePinTests(unittest.TestCase):
 
     def test_no_key_raises(self):
         write_json(self.baselines, {"judge_pin": None})
-        with self.assertRaises(RuntimeError):
-            resolve_judge_pin(env={}, baselines_path=self.baselines)
+        # env has no key and BENCH_DIR points at a keyless tmp dir, so the bench/.env
+        # fallback finds nothing either -> genuinely keyless, no network call.
+        with mock.patch.object(score, "BENCH_DIR", Path(self._tmp.name)):
+            with self.assertRaises(RuntimeError):
+                resolve_judge_pin(env={}, baselines_path=self.baselines)
 
     def test_no_dated_snapshot_raises(self):
         write_json(self.baselines, {"judge_pin": None})
@@ -103,12 +106,54 @@ class ResolveJudgePinTests(unittest.TestCase):
 
     def test_pick_snapshot_helper_selects_newest(self):
         self.assertEqual(
-            score._pick_opus_48_snapshot(
+            score._pick_opus_snapshot(
                 {"data": [{"id": "claude-opus-4-8-20260101"}, {"id": "claude-opus-4-8-20260901"}]}
             ),
             "claude-opus-4-8-20260901",
         )
-        self.assertIsNone(score._pick_opus_48_snapshot({"data": []}))
+        self.assertIsNone(score._pick_opus_snapshot({"data": []}))
+
+    def test_pick_prefers_dated_4_8_over_older_opus(self):
+        # A dated 4.8 wins even when an older-family dated Opus is also present.
+        self.assertEqual(
+            score._pick_opus_snapshot({"data": [
+                {"id": "claude-opus-4-5-20251101"},
+                {"id": "claude-opus-4-8-20260101"},
+                {"id": "claude-opus-4-1-20250805"},
+            ]}),
+            "claude-opus-4-8-20260101",
+        )
+
+    def test_pick_falls_back_to_newest_dated_opus_when_no_4_8(self):
+        # No dated 4.8 (the real-world case): fall back to the newest dated Opus, which
+        # is the settled claude-opus-4-5-20251101 that baselines.json already ships.
+        self.assertEqual(
+            score._pick_opus_snapshot({"data": [
+                {"id": "claude-opus-4-1-20250805"},
+                {"id": "claude-opus-4-5-20251101"},
+                {"id": "claude-opus-4-8"},          # alias, undated -> ignored
+                {"id": "claude-opus-4-8[1m]"},      # variant, undated -> ignored
+            ]}),
+            "claude-opus-4-5-20251101",
+        )
+
+    def test_pick_none_when_no_dated_opus(self):
+        self.assertIsNone(score._pick_opus_snapshot({"data": [
+            {"id": "claude-opus-4-8"}, {"id": "claude-sonnet-5-20260101"},
+        ]}))
+
+    def test_fallback_resolves_and_pins_newest_dated_opus(self):
+        # End-to-end resolve with no dated 4.8 available: writes the 4.5 fallback.
+        write_json(self.baselines, {"judge_pin": None})
+        models = {"data": [
+            {"id": "claude-opus-4-8"},
+            {"id": "claude-opus-4-5-20251101"},
+            {"id": "claude-opus-4-1-20250805"},
+        ]}
+        with mock.patch.object(score, "_http_get_json", lambda url, headers: models):
+            pin = resolve_judge_pin(env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines)
+        self.assertEqual(pin, "claude-opus-4-5-20251101")
+        self.assertEqual(json.loads(self.baselines.read_text())["judge_pin"], pin)
 
 
 # ------------------------------------------------------------- bucket join
@@ -312,6 +357,59 @@ class AssembleCandidatesTests(unittest.TestCase):
         self.assertEqual(per_pr[url]["candidates"][0]["text"], "c1")
 
 
+class ResolvePrDirTests(unittest.TestCase):
+    """FIX 1: pr-dir resolution across the new pr-{owner}-{repo}-{n} name, the legacy
+    pr-{n} name, and an authoritative checkpoint payload_path hint."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.run_dir = Path(self._tmp.name) / "run"
+        self.run_dir.mkdir(parents=True)
+        # A URL whose pull number (1) collides across repos in the real golden set.
+        self.url = "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1"
+        self.new_dir = self.run_dir / "pr-ai-code-review-evaluation-sentry-greptile-1"
+        self.legacy = self.run_dir / "pr-1"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _payload(self, pr_dir):
+        pr_dir.mkdir(parents=True, exist_ok=True)
+        write_json(pr_dir / "post-review-payload.json", {
+            "platform": "github",
+            "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
+            "skipped": [],
+        })
+
+    def test_resolves_new_owner_repo_key(self):
+        self._payload(self.new_dir)
+        _c, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", None)])
+        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.new_dir))
+
+    def test_legacy_pr_n_rescorable_despite_stale_output_hint(self):
+        # Reproduces the committed baseline subset-20260718-031746-27875ca: the payload
+        # lives in the legacy pr-{n} dir, but the recorded detail payload_path points at
+        # the now-empty shared output dir. Resolution must skip the dead hint and fall
+        # through to pr-{n}, keeping that run re-scorable.
+        self._payload(self.legacy)
+        stale_hint = str(self.run_dir / "output" / "post-review-payload.json")  # never written
+        cands, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", stale_hint)])
+        self.assertIn(self.url, cands)
+        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.legacy))
+
+    def test_payload_hint_parent_is_authoritative(self):
+        self._payload(self.new_dir)
+        hint = str(self.new_dir / "post-review-payload.json")
+        _c, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", hint)])
+        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.new_dir))
+
+    def test_new_name_wins_over_legacy_when_both_exist(self):
+        self._payload(self.new_dir)
+        self._payload(self.legacy)
+        _c, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", None)])
+        self.assertEqual(per_pr[self.url]["pr_dir"], str(self.new_dir))
+
+
 class ToolLabelTests(unittest.TestCase):
     """The ledger row's tool label is derived from the run manifest's anchor field."""
 
@@ -366,13 +464,13 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         write_json(state / "c.json", {"url": self.uC, "status": "failed"})
 
         # PR A: 3 comments (2 will match goldens, 1 is an extra).
-        self._pr(101, [
+        self._pr(self.uA, [
             ("cA1 body", "src/a.py", 11),
             ("cA2 body", "src/a.py", 12),
             ("cA3 body", "src/a.py", 13),
         ], cost=0.5, tokens={"input_tokens": 100, "output_tokens": 50})
         # PR B: 1 comment, unmatched (an extra to adjudicate).
-        self._pr(202, [
+        self._pr(self.uB, [
             ("cB1 body", "src/b.py", 5),
         ], cost=0.5, tokens={"input_tokens": 60, "output_tokens": 40})
 
@@ -406,8 +504,10 @@ class ScoreRunEndToEndTests(unittest.TestCase):
     def tearDown(self):
         self._tmp.cleanup()
 
-    def _pr(self, number, comments, cost, tokens):
-        pr_dir = self.run_dir / "pr-{}".format(number)
+    def _pr(self, url, comments, cost, tokens):
+        # New runs key each PR dir on pr-{owner}-{repo}-{n} (FIX 1); a fresh run's
+        # scoring resolves that name directly.
+        pr_dir = self.run_dir / score.pr_dir_name({"url": url})
         pr_dir.mkdir()
         payload = {
             "platform": "github",

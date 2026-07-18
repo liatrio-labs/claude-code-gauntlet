@@ -313,13 +313,37 @@ def _naive_prompt(pr, diff_text, bench_entry):
     )
 
 
+def _valid_naive_comment(item):
+    """True when ``item`` is a well-formed naive review comment.
+
+    The adapter downstream reads ``body`` (required) and optional ``path``/``line``,
+    so enforce that shape here: a dict with a non-empty string ``body``, a ``path``
+    that is a string or null, and a ``line`` that is an int or null. Anything else
+    (a bare string, a missing body, a numeric path, a stringified line) is malformed.
+    """
+    if not isinstance(item, dict):
+        return False
+    body = item.get("body")
+    if not isinstance(body, str) or not body.strip():
+        return False
+    path = item.get("path")
+    if path is not None and not isinstance(path, str):
+        return False
+    line = item.get("line")
+    if line is not None and (not isinstance(line, int) or isinstance(line, bool)):
+        return False
+    return True
+
+
 def _extract_comments(result_text):
-    """Return the comments list from the LAST fenced json block carrying a top-level
-    ``comments`` list in ``result_text``, or None when there is no such block.
+    """Return the comments list from the LAST fenced json block carrying a well-formed
+    top-level ``comments`` list in ``result_text``, or None when there is no such block.
 
     Scanning to the last block lets the model echo the prompt's example fence and still
-    have its real answer win; a block that fails to parse or lacks a ``comments`` list is
-    skipped rather than fatal.
+    have its real answer win; a block that fails to parse, lacks a ``comments`` list, or
+    whose list contains a malformed element (see ``_valid_naive_comment``) is skipped
+    rather than fatal, so a later valid block can still win and an all-malformed output
+    yields None (the caller marks the run naive_output_unparseable).
     """
     comments = None
     for body in _JSON_BLOCK_RE.findall(result_text or ""):
@@ -327,8 +351,11 @@ def _extract_comments(result_text):
             obj = json.loads(body.strip())
         except ValueError:
             continue
-        if isinstance(obj, dict) and isinstance(obj.get("comments"), list):
-            comments = obj["comments"]
+        if not isinstance(obj, dict) or not isinstance(obj.get("comments"), list):
+            continue
+        block = obj["comments"]
+        if all(_valid_naive_comment(c) for c in block):
+            comments = block
     return comments
 
 
@@ -367,9 +394,8 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
     payload is expected; naive candidates are extracted downstream from the raw output.
     """
     worktree = Path(worktree).resolve()
-    number = pr["pr_number"]
     env = invoke.build_env(pr, run_dir, os.environ)
-    pr_dir = Path(run_dir) / "pr-{}".format(number)
+    pr_dir = Path(run_dir) / invoke.pr_dir_name(pr)
     pr_dir.mkdir(parents=True, exist_ok=True)
     raw_path = pr_dir / "raw-naive.json"
 
@@ -419,15 +445,15 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
     envelope = _parse_envelope(out)
     costs = parse_costs(envelope or {})
     if envelope is None or proc.returncode != 0 or envelope.get("is_error"):
-        reason = "no_envelope" if envelope is None else (
-            envelope.get("subtype") or "is_error" if envelope.get("is_error") else "exit_{}".format(proc.returncode)
-        )
+        # Reuse invoke._fail_reason: it encodes is_error(subtype)/exit_N without the
+        # operator-precedence trap of a local ``subtype or ... if ... else ...`` (which
+        # stored reason "success" for an is_error envelope whose subtype was "success").
         return invoke.InvokeResult(
             "failed",
             cost_usd=costs["cost_usd"],
             per_model=costs["per_model"],
             raw_json_path=str(raw_path),
-            reason=reason,
+            reason=invoke._fail_reason(proc.returncode, envelope),
         )
 
     payload_path = _naive_payload_from_result(envelope.get("result"), pr_dir)
@@ -478,7 +504,11 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
         number = meta["pr_number"]
         clone_url = "https://github.com/{}/{}.git".format(meta["owner"], meta["repo"])
         pr = {"url": url, **meta}
-        pr_dir = run_dir / "pr-{}".format(number)
+        # pr-{owner}-{repo}-{n}: golden URLs reuse pull numbers across repos, so a bare
+        # pr-{n} would collide on --tier full. run.py, invoke.py, and score.py share
+        # invoke.pr_dir_name so the worktree placement, raw/payload writes, and scoring
+        # resolution all key on the same dir name.
+        pr_dir = run_dir / invoke.pr_dir_name(pr)
         pr_dir.mkdir(parents=True, exist_ok=True)
         worktree = pr_dir / "worktree"
 

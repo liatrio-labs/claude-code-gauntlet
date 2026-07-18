@@ -42,6 +42,7 @@ from bench.adapter.adapt import merge_candidates, payload_to_candidates
 from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import file_context, slice_hunk
 from bench.runner.costs import parse_costs
+from bench.runner.invoke import pr_dir_name
 from bench.runner.ledger import append_row
 
 __all__ = [
@@ -65,9 +66,12 @@ MARTIAN_BASE_URL = "https://api.anthropic.com/v1/"
 
 TOOL = "deep-review"
 
-# A dated Opus 4.8 snapshot: the alias plus an 8-digit (or longer) date suffix.
-# The ``[1m]`` context variant has no digit suffix and is intentionally excluded.
+# A dated snapshot id: the family alias plus a 6-digit (or longer) date suffix.
+# ``_OPUS_48_DATED`` matches only the 4.8 family; ``_OPUS_DATED`` matches any dated
+# Opus (4-8, 4-5, 4-1, ...). The ``[1m]`` context variant has no digit suffix and is
+# intentionally excluded by both.
 _OPUS_48_DATED = re.compile(r"^claude-opus-4-8-(\d{6,})$")
+_OPUS_DATED = re.compile(r"^claude-opus-(?:\d+-)+(\d{6,})$")
 _SEVERITY_RE = re.compile(r"\[(CRITICAL|HIGH|MEDIUM|LOW)\]", re.IGNORECASE)
 _PULL_RE = re.compile(r"github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
@@ -148,23 +152,36 @@ def _http_get_json(url, headers):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def _pick_opus_48_snapshot(models_json):
-    """Return the newest dated ``claude-opus-4-8-<date>`` id, or None."""
+def _pick_opus_snapshot(models_json):
+    """Return the judge snapshot id: newest dated Opus 4.8, else newest dated Opus.
+
+    Preference order (baselines.json ``judge_pin_resolution``): a dated
+    ``claude-opus-4-8-<date>`` id if one ever appears in the models list, otherwise a
+    fallback to the newest-dated ``claude-opus-*-<date>`` id across families. As of the
+    pin resolution no dated 4.8 exists (models API verified complete), so the fallback
+    selects ``claude-opus-4-5-20251101`` -- the settled pin the committed baselines.json
+    already ships. Returns None only when the list carries no dated Opus id at all.
+    """
     data = models_json.get("data") if isinstance(models_json, dict) else None
     if not isinstance(data, list):
         return None
-    dated = []
+    dated_48 = []
+    dated_any = []
     for entry in data:
         model_id = entry.get("id") if isinstance(entry, dict) else None
         if not model_id:
             continue
-        m = _OPUS_48_DATED.match(model_id)
-        if m:
-            dated.append((int(m.group(1)), model_id))
-    if not dated:
+        m48 = _OPUS_48_DATED.match(model_id)
+        if m48:
+            dated_48.append((int(m48.group(1)), model_id))
+        m_any = _OPUS_DATED.match(model_id)
+        if m_any:
+            dated_any.append((int(m_any.group(1)), model_id))
+    pool = dated_48 or dated_any
+    if not pool:
         return None
-    dated.sort()
-    return dated[-1][1]
+    pool.sort()
+    return pool[-1][1]
 
 
 def resolve_judge_pin(env=None, force=False, baselines_path=None):
@@ -172,9 +189,10 @@ def resolve_judge_pin(env=None, force=False, baselines_path=None):
 
     Idempotent: if ``baselines.json`` already carries a ``judge_pin`` it is
     returned without any API call unless ``force=True``. Otherwise the models
-    API is queried (``x-api-key`` from the judge key) and the newest dated
-    snapshot is written back. Raises ``RuntimeError`` if no key is available or
-    no dated snapshot is found.
+    API is queried (``x-api-key`` from the judge key) and ``_pick_opus_snapshot``
+    resolves the id -- a dated 4.8 snapshot if one exists, else the newest dated
+    Opus of any family. Raises ``RuntimeError`` if no key is available or no dated
+    Opus snapshot is found.
     """
     path = Path(baselines_path) if baselines_path else BASELINES_PATH
     baselines = _load_baselines(path)
@@ -193,10 +211,14 @@ def resolve_judge_pin(env=None, force=False, baselines_path=None):
         MODELS_URL,
         {"x-api-key": api_key, "anthropic-version": ANTHROPIC_VERSION},
     )
-    pin = _pick_opus_48_snapshot(models_json)
+    pin = _pick_opus_snapshot(models_json)
     if not pin:
         raise RuntimeError(
-            "no dated claude-opus-4-8 snapshot found in the models list"
+            "no dated claude-opus snapshot found in the models list: resolve_judge_pin "
+            "prefers a dated claude-opus-4-8-* id and otherwise falls back to the newest "
+            "dated claude-opus-*-* id, but the list carried neither. Note the committed "
+            "baselines.json already ships the settled pin (claude-opus-4-5-20251101), so "
+            "scoring needs no live resolution unless you are re-resolving with force=True."
         )
 
     baselines["judge_pin"] = pin
@@ -215,7 +237,14 @@ def _pull_number(url):
 
 
 def _run_pr_records(run_dir):
-    """Return ``[(golden_url, status)]`` from the run's checkpoint state files."""
+    """Return ``[(golden_url, status, payload_hint)]`` from the checkpoint state files.
+
+    ``payload_hint`` is the checkpoint detail's recorded ``payload_path`` (the
+    post-relocation pr-dir home for runs that recorded it), used by
+    ``_resolve_pr_dir`` as the authoritative pr-dir source. It is None when the
+    detail is absent or omits the path (e.g. the legacy baseline recorded the now
+    empty shared output dir, which resolution then skips).
+    """
     state_dir = Path(run_dir) / "state"
     records = []
     if state_dir.is_dir():
@@ -226,8 +255,38 @@ def _run_pr_records(run_dir):
                 continue
             url = rec.get("url")
             if url:
-                records.append((url, rec.get("status")))
+                payload_hint = (rec.get("detail") or {}).get("payload_path")
+                records.append((url, rec.get("status"), payload_hint))
     return records
+
+
+def _resolve_pr_dir(run_dir, url, payload_hint=None):
+    """Resolve a scored PR's artifact dir, tolerating the legacy ``pr-{n}`` layout.
+
+    Resolution order:
+      1. The checkpoint detail's ``payload_hint`` parent -- authoritative, but only
+         when that recorded payload file still exists (new runs record the
+         post-relocation pr-dir home; the legacy baseline recorded the now-empty
+         shared output dir, which must fall through).
+      2. The current ``pr-{owner}-{repo}-{n}`` name (unique across repos that reuse
+         pull numbers).
+      3. The legacy ``pr-{n}`` name (pre-rename runs, e.g. the committed baseline
+         ``subset-20260718-031746-27875ca``, which must stay re-scorable).
+    Returns the first candidate dir that resolves; falls back to the current-name
+    dir (which may not exist) so the caller's empty-candidates path still applies.
+    """
+    run_dir = Path(run_dir)
+    if payload_hint:
+        hint = Path(payload_hint)
+        if hint.is_file():
+            return hint.parent
+    current = run_dir / pr_dir_name({"url": url})
+    if current.is_dir():
+        return current
+    legacy = run_dir / "pr-{}".format(_pull_number(url))
+    if legacy.is_dir():
+        return legacy
+    return current
 
 
 def _assemble_candidates(run_dir, pr_records):
@@ -235,15 +294,19 @@ def _assemble_candidates(run_dir, pr_records):
 
     Returns ``(candidates, per_pr)`` where ``per_pr[url]`` carries the PR dir,
     number, and the candidate list (with path/line) used later for adjudication.
+    ``pr_records`` entries are ``(url, status[, payload_hint])``; the optional hint
+    is the checkpoint detail's recorded payload path (see ``_resolve_pr_dir``).
     """
     run_dir = Path(run_dir)
     parts = []
     per_pr = {}
-    for url, status in pr_records:
+    for record in pr_records:
+        url, status = record[0], record[1]
+        payload_hint = record[2] if len(record) > 2 else None
         if status != "ok":
             continue
         number = _pull_number(url)
-        pr_dir = run_dir / "pr-{}".format(number)
+        pr_dir = _resolve_pr_dir(run_dir, url, payload_hint)
         payload_path = pr_dir / "post-review-payload.json"
         if not payload_path.is_file():
             # Tolerate a nested payload (mirrors invoke._find_payload) before concluding empty.
@@ -716,7 +779,9 @@ def score_run(
     pin = baselines.get("judge_pin")
     if not pin:
         raise RuntimeError(
-            "baselines.json judge_pin is null; run resolve_judge_pin() before scoring"
+            "baselines.json judge_pin is null; run resolve_judge_pin() before scoring. "
+            "The committed baselines.json ships a settled pin, and resolve_judge_pin() "
+            "will otherwise fall back to the newest dated Opus snapshot."
         )
     martian = env.get("MARTIAN_MODEL")
     if martian and martian != pin:

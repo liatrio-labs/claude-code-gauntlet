@@ -25,7 +25,7 @@ from pathlib import Path
 
 from bench.runner.costs import parse_costs
 
-__all__ = ["InvokeResult", "build_env", "invoke_review"]
+__all__ = ["InvokeResult", "build_env", "invoke_review", "pr_dir_name"]
 
 # Repo root == the deep-review plugin dir. bench/runner/invoke.py -> parents[2].
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -105,6 +105,28 @@ def _repo(pr):
     return pr.get("repo") or _parse_url(pr.get("url", ""))[1]
 
 
+# Anything outside this set is collapsed to a hyphen so the dir name is safe on any
+# filesystem; GitHub owner/repo already stay within it (alnum, dot, hyphen, underscore).
+_PR_KEY_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _slug(part):
+    return _PR_KEY_UNSAFE.sub("-", str(part or "")).strip("-")
+
+
+def pr_dir_name(pr):
+    """Per-PR artifact dir name: ``pr-{owner}-{repo}-{n}`` (filesystem-safe).
+
+    Golden URLs reuse pull numbers across repos (e.g. ``/pull/1`` exists in three
+    forks), so a bare ``pr-{n}`` collides -- ``--tier full`` would overwrite one
+    PR's artifacts with another's and mis-join candidates at scoring time. Keying on
+    owner/repo/number keeps every PR's dir distinct. Owner/repo come from the ``pr``
+    dict when present, else are parsed from its ``url`` -- the identical resolution
+    ``build_env`` uses -- so run.py, invoke.py, and score.py all derive the same key.
+    """
+    return "pr-{}-{}-{}".format(_slug(_owner(pr)), _slug(_repo(pr)), _pr_number(pr))
+
+
 def _load_dotenv_key(path, key):
     """Return ``key``'s value from a simple ``KEY=VALUE`` .env file, or None.
 
@@ -136,7 +158,7 @@ def _claude_home(run_dir, base_env):
 
 
 def _worktree_dir(run_dir, pr):
-    return Path(run_dir) / "pr-{}".format(_pr_number(pr)) / "worktree"
+    return Path(run_dir) / pr_dir_name(pr) / "worktree"
 
 
 def _seed_trust(config_dir, worktree):
@@ -341,7 +363,7 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
     # placed it somewhere other than the build_env-derived convention path.
     _seed_trust(Path(env["CLAUDE_CONFIG_DIR"]), worktree)
 
-    pr_dir = run_dir / "pr-{}".format(number)
+    pr_dir = run_dir / pr_dir_name(pr)
     pr_dir.mkdir(parents=True, exist_ok=True)
     raw_path = pr_dir / "raw.json"
 

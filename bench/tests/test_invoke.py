@@ -77,6 +77,33 @@ class InvokeTestBase(unittest.TestCase):
             return invoke_review(self.worktree, PR, self.run_dir, timeout_s=timeout_s)
 
 
+# ------------------------------------------------------------------------ pr_dir_name
+
+
+class PrDirNameTest(unittest.TestCase):
+    def test_owner_repo_number_key(self):
+        pr = {"owner": "octo", "repo": "widget", "pr_number": 5,
+              "url": "https://github.com/octo/widget/pull/5"}
+        self.assertEqual(invoke.pr_dir_name(pr), "pr-octo-widget-5")
+
+    def test_derives_from_url_when_owner_repo_absent(self):
+        pr = {"url": "https://github.com/acme/thing/pull/9"}
+        self.assertEqual(invoke.pr_dir_name(pr), "pr-acme-thing-9")
+
+    def test_same_number_different_repo_yields_distinct_keys(self):
+        # The collision FIX 1 targets: /pull/1 in two forks must not share a dir.
+        a = {"url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1"}
+        b = {"url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/1"}
+        self.assertNotEqual(invoke.pr_dir_name(a), invoke.pr_dir_name(b))
+        self.assertEqual(
+            invoke.pr_dir_name(a), "pr-ai-code-review-evaluation-sentry-greptile-1"
+        )
+
+    def test_unsafe_chars_collapsed(self):
+        pr = {"owner": "o/w", "repo": "a b", "pr_number": 3}
+        self.assertEqual(invoke.pr_dir_name(pr), "pr-o-w-a-b-3")
+
+
 # --------------------------------------------------------------------------- build_env
 
 
@@ -121,7 +148,7 @@ class BuildEnvTest(InvokeTestBase):
         cfg = Path(env["CLAUDE_CONFIG_DIR"]) / ".claude.json"
         self.assertTrue(cfg.exists())
         data = json.loads(cfg.read_text())
-        wt = str((self.run_dir / "pr-5" / "worktree").resolve())
+        wt = str((self.run_dir / invoke.pr_dir_name(PR) / "worktree").resolve())
         self.assertIn(wt, data["projects"])
         self.assertTrue(data["projects"][wt]["hasTrustDialogAccepted"])
 
@@ -142,7 +169,7 @@ class BuildEnvTest(InvokeTestBase):
         self.assertEqual(data["numStartups"], 4)
         self.assertIn("/some/other/repo", data["projects"])
         # new worktree merged in
-        wt = str((self.run_dir / "pr-5" / "worktree").resolve())
+        wt = str((self.run_dir / invoke.pr_dir_name(PR) / "worktree").resolve())
         self.assertTrue(data["projects"][wt]["hasTrustDialogAccepted"])
 
 

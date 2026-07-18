@@ -202,10 +202,10 @@ class FixtureWriteTest(RunTestBase):
             run_dir, urls, cp, self.shas, {FIXTURE_URL}, 60, None, self.bench_data
         )
 
-        fixture_pr = self.shas[FIXTURE_URL]["pr_number"]
-        plain_pr = self.shas[PLAIN_URL]["pr_number"]
-        fixture_review = run_dir / "pr-{}".format(fixture_pr) / "worktree" / "REVIEW.md"
-        plain_review = run_dir / "pr-{}".format(plain_pr) / "worktree" / "REVIEW.md"
+        fixture_key = run.invoke.pr_dir_name({"url": FIXTURE_URL, **self.shas[FIXTURE_URL]})
+        plain_key = run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
+        fixture_review = run_dir / fixture_key / "worktree" / "REVIEW.md"
+        plain_review = run_dir / plain_key / "worktree" / "REVIEW.md"
 
         self.assertTrue(fixture_review.exists())
         self.assertEqual(fixture_review.read_text(), run.FIXTURE_PATH.read_text())
@@ -223,8 +223,7 @@ class ArtifactCaptureTest(RunTestBase):
         cp = run.checkpoint.Checkpoint(run_dir)
         run._run_prs(run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data)
 
-        pr_number = self.shas[PLAIN_URL]["pr_number"]
-        pr_dir = run_dir / "pr-{}".format(pr_number)
+        pr_dir = run_dir / run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
         self.assertTrue((pr_dir / "post-review-payload.json").is_file())
         self.assertTrue((pr_dir / "deep-review-report.md").is_file())
         self.assertTrue((pr_dir / "diff.patch").exists())
@@ -249,8 +248,8 @@ class CheckpointPayloadPathTest(RunTestBase):
         cp = run.checkpoint.Checkpoint(run_dir)
         run._run_prs(run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data)
 
-        pr_number = self.shas[PLAIN_URL]["pr_number"]
-        expected = run_dir / "pr-{}".format(pr_number) / "post-review-payload.json"
+        pr_key = run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
+        expected = run_dir / pr_key / "post-review-payload.json"
         detail = self._detail(cp, PLAIN_URL)
         self.assertEqual(detail["payload_path"], str(expected))
         self.assertTrue(Path(detail["payload_path"]).is_file())
@@ -612,6 +611,119 @@ class NaiveInvokeTest(RunTestBase):
         self.assertEqual(result.status, "ok")
         payload = json.loads(Path(result.payload_path).read_text())
         self.assertEqual(payload["payload"]["comments"], [])
+
+
+# --------------------------------------------------------------- naive failure reason
+
+
+# A parametrizable naive fake: FAKE_NAIVE_IS_ERROR / _SUBTYPE / _EXIT / _RESULT let a
+# test drive the exact failure envelope + exit code the reason logic must classify.
+NAIVE_FAKE_CLAUDE_PARAM = '''#!/usr/bin/env python3
+import os, sys, json
+try:
+    sys.stdin.read()
+except Exception:
+    pass
+envelope = {
+    "type": "result",
+    "subtype": os.environ.get("FAKE_NAIVE_SUBTYPE", "success"),
+    "is_error": os.environ.get("FAKE_NAIVE_IS_ERROR") == "1",
+    "result": os.environ.get("FAKE_NAIVE_RESULT", ""),
+    "total_cost_usd": 0.33,
+    "modelUsage": {"claude-opus-4-8": {"inputTokens": 10, "outputTokens": 5, "costUSD": 0.33}},
+    "usage": {"input_tokens": 10, "output_tokens": 5},
+    "permission_denials": [],
+}
+sys.stdout.write(json.dumps(envelope) + "\\n")
+sys.exit(int(os.environ.get("FAKE_NAIVE_EXIT", "0")))
+'''
+
+
+class NaiveFailureReasonTest(RunTestBase):
+    def _run_param(self, **fake_env):
+        bindir = self.tmp / "naive-param-bin"
+        bindir.mkdir(exist_ok=True)
+        claude = bindir / "claude"
+        claude.write_text(NAIVE_FAKE_CLAUDE_PARAM)
+        claude.chmod(0o755)
+        overrides = {"PATH": str(bindir) + os.pathsep + os.environ.get("PATH", "")}
+        overrides.update({k: str(v) for k, v in fake_env.items()})
+        run_dir = self.runs_root / "naive-reason-run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        worktree = self.tmp / "wt-reason"
+        worktree.mkdir(exist_ok=True)
+        with patch.dict(os.environ, overrides):
+            return run._invoke_naive(
+                worktree, NAIVE_PR, run_dir, "diff text", {"pr_title": "T"}, 30
+            )
+
+    def test_is_error_with_success_subtype_keeps_both(self):
+        # The precedence bug computed reason "success" for an is_error envelope whose
+        # subtype was "success"; _fail_reason must report is_error(success) instead.
+        res = self._run_param(
+            FAKE_NAIVE_IS_ERROR="1", FAKE_NAIVE_SUBTYPE="success", FAKE_NAIVE_RESULT="x"
+        )
+        self.assertEqual(res.status, "failed")
+        self.assertEqual(res.reason, "is_error(success)")
+
+    def test_nonzero_exit_without_is_error_reports_exit_code(self):
+        res = self._run_param(FAKE_NAIVE_EXIT="7", FAKE_NAIVE_RESULT="x")
+        self.assertEqual(res.status, "failed")
+        self.assertEqual(res.reason, "exit_7")
+
+
+# ------------------------------------------------------------ naive comment validation
+
+
+class NaiveCommentValidationTest(RunTestBase):
+    """_extract_comments rejects a malformed comments block so the run fails cleanly."""
+
+    def _extract(self, comments_obj):
+        text = "```json\n" + json.dumps(comments_obj) + "\n```"
+        return run._extract_comments(text)
+
+    def test_string_element_rejected(self):
+        self.assertIsNone(self._extract({"comments": ["a string"]}))
+
+    def test_missing_body_key_rejected(self):
+        self.assertIsNone(self._extract({"comments": [{"path": "a.py", "line": 1}]}))
+
+    def test_empty_body_rejected(self):
+        self.assertIsNone(self._extract({"comments": [{"body": "   "}]}))
+
+    def test_nonstring_path_rejected(self):
+        self.assertIsNone(self._extract({"comments": [{"body": "b", "path": 5}]}))
+
+    def test_nonint_line_rejected(self):
+        self.assertIsNone(self._extract({"comments": [{"body": "b", "line": "3"}]}))
+
+    def test_bool_line_rejected(self):
+        # bool is an int subclass; a JSON true/false is still not a line number.
+        self.assertIsNone(self._extract({"comments": [{"body": "b", "line": True}]}))
+
+    def test_minimal_valid_dicts_with_null_path_line_ok(self):
+        out = self._extract({"comments": [{"body": "b", "path": None, "line": None}]})
+        self.assertEqual(out, [{"body": "b", "path": None, "line": None}])
+
+    def test_body_only_dict_ok(self):
+        self.assertEqual(self._extract({"comments": [{"body": "b"}]}), [{"body": "b"}])
+
+    def test_invalid_block_does_not_override_earlier_valid_block(self):
+        text = (
+            '```json\n{"comments": [{"body": "good", "path": "a.py", "line": 1}]}\n```\n'
+            '```json\n{"comments": ["bad element"]}\n```'
+        )
+        self.assertEqual(
+            run._extract_comments(text),
+            [{"body": "good", "path": "a.py", "line": 1}],
+        )
+
+    def test_unparseable_shape_yields_none_payload(self):
+        pr_dir = self.tmp / "pr-val"
+        pr_dir.mkdir()
+        text = '```json\n{"comments": ["just a string"]}\n```'
+        self.assertIsNone(run._naive_payload_from_result(text, pr_dir))
+        self.assertFalse((pr_dir / "post-review-payload.json").exists())
 
 
 if __name__ == "__main__":
