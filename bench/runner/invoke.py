@@ -297,6 +297,15 @@ def build_env(pr, run_dir, base_env):
         env["ANTHROPIC_API_KEY"] = api_key
     env["DEEP_REVIEW_OUTPUT_DIR"] = str(run_dir / "output")
     env["GH_REPO"] = "{}/{}".format(_owner(pr), _repo(pr))
+    # Uncap the CLI's "background tasks at exit" wait. A ``-p`` run blocks on any background
+    # task still running when the main turn ends, but only up to CLAUDE_CODE_PRINT_BG_WAIT_
+    # CEILING_MS (default 600000 = 600s since v2.1.182; docs: code.claude.com/docs/en/headless
+    # "Background tasks at exit"). The Phase 3 review Workflow can run detached and legitimately
+    # exceed 600s, so the default ceiling terminates it before Phase 8 delivers -- the whole run
+    # in smoke-20260719-190902-a14b4cc failed this way (all 3 PRs "workflow_backgrounded"). "0"
+    # waits without limit; the per-PR watchdog (invoke_review's timeout_s -> _kill_group) remains
+    # the sole time bound, so an unbounded wait cannot hang the run past that budget.
+    env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
 
     claude_home = _claude_home(run_dir, base_env)
     config_dir = claude_home / "config"

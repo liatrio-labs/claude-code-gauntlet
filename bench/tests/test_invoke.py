@@ -133,6 +133,13 @@ class BuildEnvTest(InvokeTestBase):
         env = build_env(pr, self.run_dir, {})
         self.assertEqual(env["GH_REPO"], "acme/thing")
 
+    def test_uncaps_background_wait_ceiling(self):
+        # The child must carry CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="0" so the CLI does not
+        # terminate a still-running Phase 3 Workflow at its default 600s background-wait cap
+        # (which sank smoke-20260719-190902-a14b4cc). The per-PR watchdog bounds total time.
+        env = build_env(PR, self.run_dir, {})
+        self.assertEqual(env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"], "0")
+
     def test_home_and_config_dir_isolated(self):
         env = build_env(PR, self.run_dir, {})
         workspace = self.run_dir.resolve().parent.parent
