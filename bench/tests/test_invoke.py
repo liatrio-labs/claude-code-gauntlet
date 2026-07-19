@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Import via the intended package path regardless of how pytest is invoked.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +66,7 @@ class InvokeTestBase(unittest.TestCase):
         dst.chmod(dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return bindir
 
-    def _run(self, mode, timeout_s=30, extra_env=None):
+    def _run(self, mode, timeout_s=30, extra_env=None, tool="deep-review-v3"):
         bindir = self.install_fake()
         overrides = {
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
@@ -74,7 +75,9 @@ class InvokeTestBase(unittest.TestCase):
         if extra_env:
             overrides.update(extra_env)
         with patched_environ(**overrides):
-            return invoke_review(self.worktree, PR, self.run_dir, timeout_s=timeout_s)
+            return invoke_review(
+                self.worktree, PR, self.run_dir, timeout_s=timeout_s, tool=tool
+            )
 
 
 # ------------------------------------------------------------------------ pr_dir_name
@@ -475,6 +478,68 @@ class EchoReceiptSourceTest(InvokeTestBase):
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "config_echo_mismatch")
         self.assertFalse(res.echo_ok)
+
+
+class V3PreflightTest(InvokeTestBase):
+    """A deep-review-v3 run preflights the child CLI's Workflow-tool support.
+
+    v3 dispatches through the Workflow tool (Claude Code >= 2.1.154). An older or
+    unreadable CLI is marked ``invalid`` (never scored) with a clear reason, before the
+    review is even launched; v2 skips the gate. The version probe is mocked so the check
+    is exercised without depending on the fake binary's --version output.
+    """
+
+    def test_old_cli_marks_invalid(self):
+        with patch.object(invoke, "_claude_version", lambda _bin: (2, 1, 100)):
+            res = self._run("ok")  # tool defaults to deep-review-v3
+        self.assertEqual(res.status, "invalid")
+        self.assertIn("v3_workflow_unsupported", res.reason)
+        self.assertIn("2.1.154", res.reason)
+        self.assertIn("2.1.100", res.reason)
+
+    def test_unreadable_version_marks_invalid(self):
+        with patch.object(invoke, "_claude_version", lambda _bin: None):
+            res = self._run("ok")
+        self.assertEqual(res.status, "invalid")
+        self.assertIn("v3_workflow_unsupported", res.reason)
+
+    def test_new_enough_cli_passes_preflight(self):
+        with patch.object(invoke, "_claude_version", lambda _bin: (2, 1, 154)):
+            res = self._run("ok")
+        self.assertEqual(res.status, "ok")
+
+    def test_v2_tool_skips_preflight_even_on_old_cli(self):
+        # A v2-labelled run needs no Workflow tool, so an old CLI still runs to completion.
+        with patch.object(invoke, "_claude_version", lambda _bin: (2, 1, 100)):
+            res = self._run("ok", tool="deep-review-v2")
+        self.assertEqual(res.status, "ok")
+
+    def test_preflight_reads_version_via_fake_binary(self):
+        # End-to-end through the real _claude_version + fake claude --version (no mock):
+        # FAKE_CLAUDE_VERSION drives an old CLI, proving the probe actually shells out.
+        res = self._run("ok", extra_env={"FAKE_CLAUDE_VERSION": "2.1.100"})
+        self.assertEqual(res.status, "invalid")
+        self.assertIn("2.1.100", res.reason)
+
+
+class ClaudeVersionParseTest(InvokeTestBase):
+    """_claude_version parses the CLI's --version output via the fake binary."""
+
+    def _bin(self, version=None):
+        bindir = self.install_fake()
+        if version is not None:
+            self.addCleanup(os.environ.pop, "FAKE_CLAUDE_VERSION", None)
+            os.environ["FAKE_CLAUDE_VERSION"] = version
+        return str(bindir / "claude")
+
+    def test_parses_semver_tuple(self):
+        self.assertEqual(invoke._claude_version(self._bin("2.1.154")), (2, 1, 154))
+
+    def test_unparseable_returns_none(self):
+        self.assertIsNone(invoke._claude_version(self._bin("no-version-here")))
+
+    def test_missing_binary_returns_none(self):
+        self.assertIsNone(invoke._claude_version(str(Path(self.tmp) / "nope" / "claude")))
 
 
 if __name__ == "__main__":

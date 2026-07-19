@@ -52,7 +52,7 @@ def drift_on(target_pr_number):
     return _make
 
 
-def fake_invoke_ok(worktree, pr, run_dir, timeout_s=1800):
+def fake_invoke_ok(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
     outdir = Path(run_dir) / "output"
     outdir.mkdir(parents=True, exist_ok=True)
     payload = outdir / "post-review-payload.json"
@@ -69,7 +69,7 @@ def make_invoke_first_fails():
     """An invoke fake that fails the first PR and oks the rest."""
     state = {"n": 0}
 
-    def _inv(worktree, pr, run_dir, timeout_s=1800):
+    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
         state["n"] += 1
         if state["n"] == 1:
             return run.invoke.InvokeResult("failed", reason="boom")
@@ -82,7 +82,7 @@ def make_invoke_raises_first(exc):
     """An invoke fake that raises *exc* on the first PR and oks the rest."""
     state = {"n": 0}
 
-    def _inv(worktree, pr, run_dir, timeout_s=1800):
+    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
         state["n"] += 1
         if state["n"] == 1:
             raise exc
@@ -180,7 +180,9 @@ class PrereqTest(RunTestBase):
         ):
             run_dir = self.tmp / "manifest-{}".format(anchor or "skill")
             run_dir.mkdir(parents=True)
-            args = types.SimpleNamespace(anchor=anchor, fidelity="dry-run")
+            args = types.SimpleNamespace(
+                anchor=anchor, fidelity="dry-run", tool="deep-review-v3"
+            )
             run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
             manifest = json.loads((run_dir / "run.json").read_text())
             self.assertEqual(manifest["invocation"], expected)
@@ -572,6 +574,47 @@ class MultiRunTest(RunTestBase):
         self.assertEqual(fingerprint["DEEP_REVIEW_HEADLESS"], "1")
         self.assertEqual(fingerprint["DEEP_REVIEW_MODEL_TIER"], "optimized")
         self.assertEqual(fingerprint["timeout_s"], 45 * 60)
+
+
+class ToolWiringTest(RunTestBase):
+    """--tool threads into the manifest and forwards to invoke_review (v3 default)."""
+
+    def _manifest_for(self, argv):
+        args = run.parse_args(argv)
+        run_dir = self.tmp / "tool-manifest-{}".format(len(list(self.tmp.iterdir())))
+        run_dir.mkdir(parents=True)
+        run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
+        return json.loads((run_dir / "run.json").read_text())
+
+    def test_default_tool_is_v3_in_manifest(self):
+        self.assertEqual(self._manifest_for(["--tier", "smoke"])["tool"], "deep-review-v3")
+
+    def test_v2_label_still_selectable(self):
+        manifest = self._manifest_for(["--tier", "smoke", "--tool", "deep-review-v2"])
+        self.assertEqual(manifest["tool"], "deep-review-v2")
+
+    def test_naive_anchor_leaves_tool_unset(self):
+        # score._tool_label gives an explicit tool precedence over anchor, so a naive run
+        # must not carry a tool label or its "naive-anchor" ledger label would be masked.
+        manifest = self._manifest_for(["--tier", "smoke", "--anchor", "naive"])
+        self.assertIsNone(manifest["tool"])
+
+    def test_run_prs_forwards_tool_to_invoke_review(self):
+        captured = {}
+
+        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+            captured["tool"] = tool
+            return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+        self._install_runner_fakes(invoke_fn=spy)
+        run_dir = self.runs_root / "tool-forward"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        run._run_prs(
+            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data,
+            tool="deep-review-v2",
+        )
+        self.assertEqual(captured["tool"], "deep-review-v2")
 
 
 class ResumeTest(RunTestBase):

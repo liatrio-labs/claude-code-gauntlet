@@ -111,6 +111,14 @@ def _write_report(lines):
 
 
 def main():
+    # A --version probe (the v3 preflight) prints only the version and exits, before any
+    # mode handling -- so it never records a pgid, hangs, or emits a review envelope. The
+    # default clears V3_MIN_CLAUDE_VERSION; FAKE_CLAUDE_VERSION can drive an older CLI.
+    if "--version" in sys.argv:
+        version = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.154")
+        sys.stdout.write("{} (Claude Code)\n".format(version))
+        return
+
     _record_pgid()
     mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 

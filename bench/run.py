@@ -484,8 +484,13 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
 # ------------------------------------------------------------------------- per-PR flow
 
 
-def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data):
+def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
+             tool="deep-review-v3"):
     """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
+
+    ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
+    ``invoke.invoke_review`` so v3 can preflight the child CLI version; it is ignored on
+    the ``--anchor naive`` path, which does not run the skill.
 
     Returns ``{"counts": {status: n}, "drifted": [(url, reason), ...]}``. A DriftError
     marks the PR ``drifted`` (never scored) and the run continues to the next PR.
@@ -558,7 +563,9 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                     worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s
                 )
             else:
-                result = invoke.invoke_review(worktree, pr, run_dir, timeout_s=timeout_s)
+                result = invoke.invoke_review(
+                    worktree, pr, run_dir, timeout_s=timeout_s, tool=tool
+                )
             _collect_artifacts(output_dir, pr_dir)
         except Exception as exc:
             # PR-granular progress: an unexpected error (bad JSON, an OSError during
@@ -619,6 +626,11 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         "git_sha": _git_short_sha(),
         "started": _utc_iso(),
         "anchor": args.anchor,
+        # The naive anchor is its own baseline (not a deep-review pipeline), so it carries
+        # no tool label -- score._tool_label gives an explicit tool precedence over anchor,
+        # so writing one here would mask the "naive-anchor" ledger label. A skill run records
+        # the selected pipeline (deep-review-v2|v3) verbatim for the ledger row.
+        "tool": None if args.anchor == "naive" else args.tool,
         "fidelity": args.fidelity,
         "invocation": invocation,
         "env_fingerprint": env_fingerprint,
@@ -661,7 +673,10 @@ def _new_run(args):
     _write_manifest(run_dir, run_id, tier, urls, timeout_s, args)
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.pending(urls)  # a fresh run -> all pending
-    summary = _run_prs(run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data)
+    summary = _run_prs(
+        run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data,
+        tool=args.tool,
+    )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
 
@@ -684,10 +699,16 @@ def _resume(run_id, args, retry):
     fingerprint = manifest.get("env_fingerprint") or {}
     timeout_s = fingerprint.get("timeout_s") or args.timeout_mins * 60
     anchor = manifest.get("anchor") if manifest.get("anchor") is not None else args.anchor
+    # Prefer the manifest's recorded pipeline so a resume re-runs the same tool it began
+    # with; fall back to the CLI default for pre-tool run.json files (or a naive run, whose
+    # None tool is unused because the anchor path skips the skill).
+    tool = manifest.get("tool") or args.tool
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
-    summary = _run_prs(run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data)
+    summary = _run_prs(
+        run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data, tool=tool
+    )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
 
@@ -735,6 +756,10 @@ def parse_args(argv=None):
     # 971-1345s, peaking at 75% of the original 30-min budget (plan threshold: >50%).
     parser.add_argument("--timeout-mins", type=int, default=45, dest="timeout_mins")
     parser.add_argument("--anchor", choices=["naive"], help="bare single-pass anchor review")
+    parser.add_argument(
+        "--tool", choices=["deep-review-v2", "deep-review-v3"], default="deep-review-v3",
+        help="which deep-review pipeline to invoke/label (default: deep-review-v3)",
+    )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     return parser.parse_args(argv)
 

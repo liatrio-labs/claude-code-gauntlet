@@ -70,6 +70,13 @@ EXPECTED_ECHO = {
 
 _ASKUSERQUESTION_RE = re.compile(r'"(?:name|tool_name)"\s*:\s*"AskUserQuestion"')
 
+# v3 drives its pipeline through the Workflow tool, first exposed by the Claude Code CLI
+# in 2.1.154. A ``--tool deep-review-v3`` run pre-flights the child CLI's version and is
+# marked ``invalid`` (never scored) on an older/unreadable CLI, rather than silently
+# running a degraded review or hanging. v2 needs no such gate. See ``_v3_preflight``.
+V3_MIN_CLAUDE_VERSION = (2, 1, 154)
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
 
 @dataclass
 class InvokeResult:
@@ -410,8 +417,57 @@ def _fail_reason(returncode, envelope):
     return "failed"
 
 
-def invoke_review(worktree, pr, run_dir, timeout_s=1800):
+def _claude_version(claude_bin):
+    """Return the child ``claude`` CLI version as ``(major, minor, patch)``, or None.
+
+    Runs ``claude --version`` and parses the first ``N.N.N`` it prints (real output is
+    ``2.1.154 (Claude Code)``). Any launch/parse failure yields None -- the caller treats
+    an unreadable version as "cannot confirm v3 support" and fails the run rather than
+    guessing which pipeline the CLI can honor.
+    """
+    try:
+        out = subprocess.run(
+            [claude_bin, "--version"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = _VERSION_RE.search((out.stdout or "") + (out.stderr or ""))
+    if not m:
+        return None
+    return tuple(int(g) for g in m.groups())
+
+
+def _fmt_version(version):
+    return ".".join(str(part) for part in version) if version else "unknown"
+
+
+def _v3_preflight(claude_bin):
+    """Return a failure reason when the child CLI cannot drive v3, else None.
+
+    v3 dispatches its pipeline through the Workflow tool, first exposed in Claude Code
+    ``2.1.154`` (``V3_MIN_CLAUDE_VERSION``). An older -- or unreadable -- CLI cannot honor
+    the v3 SKILL.md, so the caller marks the PR ``invalid`` (never scored) with this reason
+    instead of running a degraded review or deadlocking.
+    """
+    required = _fmt_version(V3_MIN_CLAUDE_VERSION)
+    version = _claude_version(claude_bin)
+    if version is None:
+        return "v3_workflow_unsupported: claude --version unreadable, need >= {}".format(required)
+    if version < V3_MIN_CLAUDE_VERSION:
+        return "v3_workflow_unsupported: claude {} < required {}".format(
+            _fmt_version(version), required
+        )
+    return None
+
+
+def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
     """Run the headless review for one PR and classify the outcome.
+
+    ``tool`` selects the pipeline label and gates the v3 preflight: a ``deep-review-v3``
+    run first asserts the child CLI is new enough to expose the Workflow tool (see
+    ``_v3_preflight``) and returns ``invalid`` if not; ``deep-review-v2`` skips that check.
+    The invocation itself is unchanged either way -- the ``--plugin-dir`` repo is whichever
+    pipeline version is checked out; ``tool`` records/gates, it does not fork the command.
 
     Returns an :class:`InvokeResult`. The isolated ``HOME``/``CLAUDE_CONFIG_DIR`` has no
     allowlist and no user, so ``--dangerously-skip-permissions`` plus the pinned context
@@ -433,6 +489,14 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
     claude_bin = shutil.which("claude", path=env.get("PATH") or os.environ.get("PATH"))
     if not claude_bin:
         return InvokeResult("failed", raw_json_path=str(raw_path), reason="claude_not_found")
+
+    # v3 preflight: the pipeline runs through the Workflow tool (Claude Code >= 2.1.154).
+    # An older/unreadable CLI cannot honor the v3 skill, so fail the PR invalid (never
+    # scored) with a clear reason rather than silently degrading. v2 needs no such gate.
+    if tool == "deep-review-v3":
+        reason = _v3_preflight(claude_bin)
+        if reason:
+            return InvokeResult("invalid", raw_json_path=str(raw_path), reason=reason)
 
     cmd = [
         claude_bin,
