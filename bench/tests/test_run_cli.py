@@ -635,6 +635,34 @@ class ResumeTest(RunTestBase):
         for url in run._resolve_tier("smoke", self.subsets, self.shas):
             self.assertEqual(cp.status(url), "ok")
 
+    def test_resume_prefers_manifest_tool_over_cli_default(self):
+        # A run started with --tool deep-review-v2 then interrupted (all PRs left pending)
+        # must, on resume with default args (tool defaults to deep-review-v3), re-invoke
+        # with the manifest's recorded tool -- the run.py:705 precedence
+        # `manifest.get("tool") or args.tool`. The manifest wins over the v3 default.
+        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        v2_args = run.parse_args(["--tier", "smoke", "--tool", "deep-review-v2"])
+        with self.assertRaises(KeyboardInterrupt):
+            run._new_run(v2_args)  # writes the v2 manifest, then interrupts on PR 1
+        run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
+        run_id = run_dir.name
+        self.assertEqual(
+            json.loads((run_dir / "run.json").read_text())["tool"], "deep-review-v2"
+        )
+
+        captured = []
+
+        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+            captured.append(tool)
+            return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+        default_args = run.parse_args(["--tier", "smoke"])  # no --tool -> v3 default
+        with patch.object(run.invoke, "invoke_review", spy):
+            run._resume(run_id, default_args, retry=False)
+        # Every re-invoked (pending) PR used the manifest's v2 tool, never the v3 default.
+        self.assertTrue(captured)
+        self.assertTrue(all(t == "deep-review-v2" for t in captured))
+
 
 # ----------------------------------------------------------------------------- cli guard
 
