@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join, relative } from 'node:path';
 import { dedupById } from '../src/findingDedup.js';
 import { merge } from '../src/mergeFindings.js';
+import { applyValidations } from '../src/applyValidations.js';
 import {
   normalizeFieldNames,
   parseReviewMd,
@@ -72,6 +73,19 @@ for (const c of loadCases('merge_findings')) {
     // Warning ARRAY LENGTHS only — bodies are free-text (substring rule), so not byte-compared.
     assert.equal(m.truncation_warnings.length, em.truncation_warnings.length);
     assert.equal(m.validation_warnings.length, em.validation_warnings.length);
+  });
+}
+
+for (const c of loadCases('apply_validations')) {
+  test(`apply_validations parity: ${c.name}`, () => {
+    // applyValidations mutates findings in place -- clone so the fixture's
+    // input.json (re-read by every test run) is never mutated across cases.
+    const findings = structuredClone(c.input.findings);
+    const { adjustedCount, unmatchedIds } = applyValidations(findings, c.input.validations);
+    assert.deepEqual(
+      { findings, adjusted_count: adjustedCount, unmatched_ids: unmatchedIds },
+      c.expected,
+    );
   });
 }
 

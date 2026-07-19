@@ -1,0 +1,19 @@
+{
+  "adjusted_count": 2,
+  "findings": [
+    {
+      "confidence": 60,
+      "id": "F1",
+      "original_confidence": 30,
+      "validation_justification": "Confirmed reachable via public API.",
+      "validator_confidence": 60
+    },
+    {
+      "confidence": 20,
+      "id": "F2",
+      "original_confidence": 40,
+      "validator_confidence": 20
+    }
+  ],
+  "unmatched_ids": []
+}

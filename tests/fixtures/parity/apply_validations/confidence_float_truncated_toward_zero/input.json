@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "id": "F1",
+      "confidence": 10
+    }
+  ],
+  "validations": [
+    {
+      "id": "F1",
+      "confidence": 72.9
+    }
+  ]
+}

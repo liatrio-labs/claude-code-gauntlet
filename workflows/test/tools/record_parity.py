@@ -88,8 +88,21 @@ def _filter_findings(inp):
     raise ValueError(fn)
 
 
+def _apply_validations(inp):
+    import copy
+    from apply_validations import apply_validations
+    findings = copy.deepcopy(inp["findings"])
+    adjusted_count, unmatched_ids = apply_validations(findings, inp["validations"])
+    return {"findings": findings, "adjusted_count": adjusted_count, "unmatched_ids": unmatched_ids}
+
+
 # Registered per-script recorders. Later tasks append entries here.
-RECORDERS = {"finding_dedup": _finding_dedup, "merge_findings": _merge_findings, "filter_findings": _filter_findings}
+RECORDERS = {
+    "finding_dedup": _finding_dedup,
+    "merge_findings": _merge_findings,
+    "filter_findings": _filter_findings,
+    "apply_validations": _apply_validations,
+}
 
 
 def record(script, case_dir):

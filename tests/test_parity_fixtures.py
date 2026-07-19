@@ -113,6 +113,21 @@ class TestFilterFindingsParity(unittest.TestCase):
                     self.fail(f"unhandled fn: {fn!r}")
 
 
+class TestApplyValidationsParity(unittest.TestCase):
+    def test_all_cases(self):
+        import copy
+        from apply_validations import apply_validations
+        for case_dir in sorted((FIXTURES / "apply_validations").iterdir()):
+            if not case_dir.is_dir():
+                continue
+            with self.subTest(case=case_dir.name):
+                inp, expected = _load(case_dir)
+                findings = copy.deepcopy(inp["findings"])
+                adjusted_count, unmatched_ids = apply_validations(findings, inp["validations"])
+                got = {"findings": findings, "adjusted_count": adjusted_count, "unmatched_ids": unmatched_ids}
+                self.assertEqual(got, expected)
+
+
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
         before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}
