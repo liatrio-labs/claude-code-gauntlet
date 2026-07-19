@@ -1717,7 +1717,7 @@ const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 const STAGE_DEFAULTS = { validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet', report: 'sonnet' };
 
 function resolvePolicy(agentType, opts = {}) {
-  if (opts.subagentModelEnv) {
+  if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
     return { model: opts.subagentModelEnv, note: 'CLAUDE_CODE_SUBAGENT_MODEL override — model policy bypassed' };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);
@@ -1733,6 +1733,11 @@ function resolvePolicy(agentType, opts = {}) {
 // --- args.js ---
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
+//
+// policy shape: { tier, frontier, frontierModelId, subagentModel }.
+//   - policy.subagentModel is passed to registry.js's resolvePolicy() as opts.subagentModelEnv.
+//     This is a RENAME, not a passthrough — dispatch sites must map the field name.
+//   - policy.tier is carried through the waist but is not read by resolvePolicy today.
 const ARGS_VERSION = 1;
 const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFilesPath', 'agentFlags', 'policy', 'limits'];
 

@@ -19,7 +19,7 @@ export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 const STAGE_DEFAULTS = { validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet', report: 'sonnet' };
 
 export function resolvePolicy(agentType, opts = {}) {
-  if (opts.subagentModelEnv) {
+  if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
     return { model: opts.subagentModelEnv, note: 'CLAUDE_CODE_SUBAGENT_MODEL override — model policy bypassed' };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);

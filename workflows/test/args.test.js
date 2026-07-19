@@ -36,3 +36,15 @@ test('validateArgs rejects frontier:true without a frontierModelId', () => {
   assert.match(r.errors.join(' '), /frontierModelId/);
 });
 test('ARGS_VERSION is 1', () => { assert.equal(ARGS_VERSION, 1); });
+test('validateArgs rejects an unrecognized mode', () => {
+  const r = validateArgs({ ...good, mode: 'bogus' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /invalid mode: bogus/);
+});
+test('validateArgs accepts frontier:true with a valid frontierModelId', () => {
+  const r = validateArgs({ ...good, policy: { tier: 'optimized', frontier: true, frontierModelId: 'claude-fable-5', subagentModel: null } });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+test('normalizeArgs(undefined) returns undefined without throwing', () => {
+  assert.equal(normalizeArgs(undefined), undefined);
+});
