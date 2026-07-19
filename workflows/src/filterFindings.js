@@ -37,8 +37,14 @@ const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
 const DEFAULT_SEVERITY_THRESHOLD = 'low';
 const CONTESTATION_DROP_THRESHOLD = 25;
 
-// Python `config.get(key, default)`: substitute the default only when the key
-// is absent or explicitly null (not on other falsy values like 0).
+// Approximates Python `config.get(key, default)`, which substitutes the
+// default ONLY when the key is absent (a present `None` value is returned
+// as-is, not replaced). This helper is deliberately broader -- it also
+// substitutes on an explicit `null` -- since JS has no equivalent to Python
+// silently returning `None` through arithmetic; the config fields this backs
+// (confidence_threshold, severity_threshold, etc.) are never legitimately
+// null in practice, so the divergence has no observable effect. It never
+// substitutes on other falsy values (0, '', false), matching Python.
 function cfgGet(config, key, fallback) {
   const v = config ? config[key] : undefined;
   return v === undefined || v === null ? fallback : v;
@@ -342,7 +348,13 @@ export function loadExclusions(text) {
     return patterns;
   }
 
-  for (const line of text.split('\n')) {
+  // Split on \r?\n (not plain '\n'): on CRLF input, a plain split leaves a
+  // trailing \r on every line, and `.` in the regex below excludes line
+  // terminators (including \r), so `(.+)$` could never bridge to the
+  // (non-multiline) end-of-string anchor -- every bullet would silently fail
+  // to match. Python's splitlines() (used by load_exclusions) strips \r\n as
+  // a single line break, so this normalizes JS to the same behavior.
+  for (const line of text.split(/\r?\n/)) {
     const m = /^\s*[-*]\s+(.+)$/.exec(line);
     if (m) patterns.push(m[1].trim());
   }

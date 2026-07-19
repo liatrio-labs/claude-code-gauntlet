@@ -1,0 +1,26 @@
+{
+  "contested_count": 0,
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 60,
+      "description": "d",
+      "dimension": "security",
+      "file": "a.py",
+      "id": "TB1",
+      "line_start": 7,
+      "severity": "low",
+      "title": "boundary-sec"
+    },
+    {
+      "confidence": 70,
+      "description": "d",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "TB2",
+      "line_start": 8,
+      "severity": "low",
+      "title": "boundary-bug"
+    }
+  ]
+}
