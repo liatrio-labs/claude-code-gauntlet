@@ -16,7 +16,20 @@ Workflow(
 - **One call.** The workflow orchestrates all eight stages and persists artifacts. Do not split work across calls, and do not run any review stage inline in the main session.
 - **`scriptPath` is a repo file path.** The plugin ships `workflows/pipeline.js` as a plain file; there is no native plugin-workflow component, so invocation is always by `scriptPath`. Never copy the bundle into `.claude/workflows/` (avoids version drift).
 - **Args arrive as one object.** The workflow normalizes a JSON-string-or-object waist, validates it (`validateArgs`), and rejects an unknown `argsVersion` or a missing required field before any dispatch.
-- **The return is compact:** `{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps }`. Full findings/report live on disk at `artifactPaths.*` — Phase 8 reads them.
+- **The return is compact:** `{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, checkpoints, resolvedPolicy, gaps }`. Full findings/report live on disk at `artifactPaths.*` — Phase 8 reads them.
+
+---
+
+## Wait Protocol (MANDATORY — do not end the turn early)
+
+The `Workflow` call can be **detached to a background task**. If the session yields its turn while the workflow runs, the CLI kills the background task at its **600-second ceiling** before Phase 8 — the compact return is never observed and the review is silently lost (the `config_echo_mismatch`/no-payload bench symptom). This is model-discretionary, so it must be forced:
+
+1. **Never end the turn and never begin Phase 8 without a terminal workflow result** — either the inline compact return or a terminal `{ ok, ... }` read from the workflow's task output file.
+2. **If the compact return resolved inline** → carry it into Phase 8.
+3. **If the call handed back a task handle / output-file path (backgrounded)** → poll it in-turn: `sleep 60`, then Read the output file; repeat until it holds a terminal `{ ok, phaseReached, ... }` object. **Cap at 30 iterations** (~30 min).
+4. **On 30 iterations with no terminal result** → declare a `workflow-timeout` gap, stop polling, and deliver partial artifacts per the Phase 8 degradation rules (resume-from-checkpoint if available, else partial report + gaps). Never fabricate a result.
+
+Headless `-p` child sessions are the highest-risk case (they background aggressively) — they must poll, never assume completion. A missing/empty compact return is a failure to surface, not an empty-but-successful review.
 
 ---
 

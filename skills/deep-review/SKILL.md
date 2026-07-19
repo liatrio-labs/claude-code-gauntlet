@@ -179,6 +179,26 @@ The workflow returns a **compact** result — counts, artifact paths, and gaps, 
 
 Do not re-run the review stages yourself and do not reconstruct findings from the return value — the full findings and report live on disk at `artifactPaths.*` (Phase 8 reads them).
 
+### Wait protocol — MANDATORY
+
+The `Workflow` invocation can run as a **background task** (the CLI may detach a long-running review). If the session ends its turn while the workflow is still running, the CLI kills the background task at its 600-second ceiling — *before* Phase 8 — so no compact return is ever observed, no artifacts are picked up, and the review is silently lost. This is model-discretionary today (a session that happens to hold its turn completes fine, one that yields does not), which is exactly the failure to eliminate.
+
+**You MUST NOT end your turn, and MUST NOT begin Phase 8, until you hold a terminal workflow result** — either the completion notification with the compact return in hand, or a terminal result read from the workflow's task output file.
+
+- **If the compact return is delivered inline** (the tool call resolved in-turn) → proceed to Phase 8 with it.
+- **If the Workflow call returned a task handle / output-file path instead of the compact result** (backgrounded) → **poll** it, in-turn, until terminal. Take the task output file path from the `Workflow` tool result and loop with bounded Bash sleeps:
+
+  ```bash
+  # repeat up to 30 times; stop as soon as the output file holds a terminal { ok: ... } result
+  Bash(command="sleep 60")            # one bounded wait per iteration
+  Read(<task output file path>)        # terminal when it contains the compact { ok, phaseReached, ... } object
+  ```
+
+  Poll at most **30 iterations** (~30 minutes). Each iteration: `sleep 60`, then Read the output file; the moment it shows a terminal `{ ok, ... }` object, stop polling and carry it into Phase 8.
+- **If 30 iterations elapse with no terminal result** → declare a **`workflow-timeout` gap**, stop polling, and deliver whatever partial artifacts exist per the Phase 8 degradation rules (resume-from-checkpoint if the last-seen state offers it, else deliver the partial report + gaps). Never fabricate a result and never claim delivery without one.
+
+**Never start Phase 8 with no terminal workflow result.** A missing/empty compact return is a failure to surface (a `workflow-timeout` gap), never an empty-but-successful review.
+
 > **Permission-mode note.** Default permission mode runs clean. Under `acceptEdits` the dynamic-workflow review gate and the executor's `verify_findings.py` Bash command must be pre-approved before the run, or the workflow stalls waiting on approval it cannot surface. (Provisional per artifact 29 / Phase 0 test 4 — confirm against the live gate.)
 
 ---
@@ -198,7 +218,7 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
    - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) via chat and report the `gaps`.
 3. **Surface `gaps`** in the methodology regardless of `ok` — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 
-> **Headless hard rules (`DEEP_REVIEW_HEADLESS=1`):** deliver per `DEEP_REVIEW_DELIVERY` regardless of PR state; PR-comment selection uses selection=`default` with cap `$DEEP_REVIEW_PR_COMMENT_CAP` (the interactive walkthrough is unavailable); posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
+> **Headless hard rules (`DEEP_REVIEW_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — a headless `-p` child session backgrounds the workflow and is killed at the CLI's 600s ceiling if it yields its turn, so headless runs must **poll the task output file to a terminal result before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `DEEP_REVIEW_DELIVERY` regardless of PR state; PR-comment selection uses selection=`default` with cap `$DEEP_REVIEW_PR_COMMENT_CAP` (the interactive walkthrough is unavailable); posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
 
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver via chat/markdown only).
 >
