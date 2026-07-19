@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "id": "f1",
+      "file": "src/foo.py",
+      "line_start": 10,
+      "line_end": 12,
+      "severity": "low",
+      "confidence": 60,
+      "title": "Minor nit",
+      "description": "A small style inconsistency that is already tagged at the lowest severity.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "origin": "new"
+    }
+  ],
+  "challenges": [
+    { "id": "f1", "score": 30 }
+  ]
+}

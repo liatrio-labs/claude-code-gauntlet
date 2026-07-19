@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "id": "f1",
+      "file": "src/auth.py",
+      "line_start": 20,
+      "line_end": 24,
+      "severity": "low",
+      "confidence": 60,
+      "title": "Minor auth nit",
+      "description": "A defensive check could be tightened here, but it is already low severity.",
+      "agent": "security-reviewer",
+      "dimension": "security",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "origin": "new"
+    }
+  ],
+  "challenges": [
+    { "id": "f1", "score": 5 }
+  ]
+}

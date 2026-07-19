@@ -1,0 +1,69 @@
+{
+  "findings": [
+    {
+      "id": "F-critical",
+      "file": "rank1/a.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "critical",
+      "confidence": 50,
+      "risk_level": 1,
+      "title": "Critical finding",
+      "description": "Critical severity with low confidence and low risk_level.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    },
+    {
+      "id": "F-high-risk9",
+      "file": "rank1/b.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "high",
+      "confidence": 90,
+      "risk_level": 9,
+      "title": "High severity, high risk",
+      "description": "High severity finding with risk_level nine.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    },
+    {
+      "id": "F-high-risk1",
+      "file": "rank1/c.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "high",
+      "confidence": 90,
+      "risk_level": 1,
+      "title": "High severity, low risk",
+      "description": "High severity finding with risk_level one, same confidence as sibling.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    },
+    {
+      "id": "F-medium",
+      "file": "rank1/d.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "medium",
+      "confidence": 100,
+      "risk_level": 10,
+      "title": "Medium severity, max confidence",
+      "description": "Medium severity finding with maximum confidence and risk_level.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    }
+  ],
+  "challenges": []
+}

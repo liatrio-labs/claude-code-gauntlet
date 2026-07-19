@@ -1,0 +1,32 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "challenge_contested": true,
+      "challenge_score": 60,
+      "confidence": 80,
+      "description": "This finding was surfaced by the automatic-surfacing pass rather than an agent.",
+      "dimension": "bug",
+      "file": "src/foo.py",
+      "id": "f1",
+      "line_end": 12,
+      "line_start": 10,
+      "origin": "surfaced",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "high",
+      "title": "Surfaced finding"
+    }
+  ],
+  "stats": {
+    "challenge_contested": 1,
+    "challenge_downgraded": 0,
+    "challenge_removed": 0,
+    "challenge_survived": 0,
+    "dedup_dropped": 0,
+    "final_count": 1,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

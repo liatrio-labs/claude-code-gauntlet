@@ -1,0 +1,79 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 50,
+      "description": "Critical severity with low confidence and low risk_level.",
+      "dimension": "bug",
+      "file": "rank1/a.py",
+      "id": "F-critical",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "new",
+      "report_destination": "main",
+      "report_tag": "main",
+      "risk_level": 1,
+      "severity": "critical",
+      "title": "Critical finding"
+    },
+    {
+      "agent": "bug-detector",
+      "confidence": 90,
+      "description": "High severity finding with risk_level nine.",
+      "dimension": "bug",
+      "file": "rank1/b.py",
+      "id": "F-high-risk9",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "new",
+      "report_destination": "main",
+      "report_tag": "main",
+      "risk_level": 9,
+      "severity": "high",
+      "title": "High severity, high risk"
+    },
+    {
+      "agent": "bug-detector",
+      "confidence": 90,
+      "description": "High severity finding with risk_level one, same confidence as sibling.",
+      "dimension": "bug",
+      "file": "rank1/c.py",
+      "id": "F-high-risk1",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "new",
+      "report_destination": "main",
+      "report_tag": "main",
+      "risk_level": 1,
+      "severity": "high",
+      "title": "High severity, low risk"
+    },
+    {
+      "agent": "bug-detector",
+      "confidence": 100,
+      "description": "Medium severity finding with maximum confidence and risk_level.",
+      "dimension": "bug",
+      "file": "rank1/d.py",
+      "id": "F-medium",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "new",
+      "report_destination": "main",
+      "report_tag": "main",
+      "risk_level": 10,
+      "severity": "medium",
+      "title": "Medium severity, max confidence"
+    }
+  ],
+  "stats": {
+    "challenge_contested": 0,
+    "challenge_downgraded": 0,
+    "challenge_removed": 0,
+    "challenge_survived": 0,
+    "dedup_dropped": 0,
+    "final_count": 4,
+    "total_input": 4,
+    "unchallenged": 4
+  }
+}

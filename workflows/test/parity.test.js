@@ -18,6 +18,7 @@ import {
   dedupCrossAgent,
   tagFindings,
 } from '../src/filterFindings.js';
+import { applyChallenges } from '../src/applyChallenges.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, '..', '..', 'tests', 'fixtures', 'parity');
@@ -176,5 +177,35 @@ for (const c of loadCases('filter_findings')) {
       return;
     }
     throw new Error(`unhandled fn: ${fn}`);
+  });
+}
+
+// --- applyChallenges: composite comparator / deep-clone / dedup reuse ------
+
+for (const c of loadCases('apply_challenges')) {
+  test(`apply_challenges parity: ${c.name}`, () => {
+    // deep_copy_no_mutation_of_input additionally asserts that calling
+    // applyChallenges never mutates the caller's input findings array/objects
+    // -- snapshot BEFORE the call, compare AFTER (applyChallenges itself is
+    // called on c.input.findings directly, not cloned by the test, precisely
+    // so a real aliasing bug would be caught here).
+    const inputSnapshot = c.name === 'deep_copy_no_mutation_of_input' ? structuredClone(c.input.findings) : null;
+
+    const { findings, eliminated, stats } = applyChallenges(c.input.findings, c.input.challenges);
+
+    if (inputSnapshot) assert.deepEqual(c.input.findings, inputSnapshot);
+
+    // `findings` (post-dedup, post-rank, ranked order matters) and `stats`
+    // are fully structural -- no free-text fields. `eliminated` carries
+    // elimination_reason (free text, e.g. dedup_cross_agent's JSON.stringify
+    // vs Python's !r quoting) -- compared by id + eliminated_by only, same
+    // convention as dedupCrossAgent's own parity test above.
+    assert.deepEqual(findings, c.expected.findings);
+    assert.deepEqual(
+      eliminated.map((f) => ({ id: f.id, eliminated_by: f.eliminated_by })),
+      c.expected.eliminated.map((f) => ({ id: f.id, eliminated_by: f.eliminated_by })),
+    );
+    for (const e of eliminated) assert.ok(e.elimination_reason && e.elimination_reason.length > 0);
+    assert.deepEqual(stats, c.expected.stats);
   });
 }

@@ -128,6 +128,49 @@ class TestApplyValidationsParity(unittest.TestCase):
                 self.assertEqual(got, expected)
 
 
+class TestApplyChallengesParity(unittest.TestCase):
+    def test_all_cases(self):
+        import copy
+        from apply_challenges import apply_challenges, rank_findings
+        from filter_findings import dedup_cross_agent
+        for case_dir in sorted((FIXTURES / "apply_challenges").iterdir()):
+            if not case_dir.is_dir():
+                continue
+            with self.subTest(case=case_dir.name):
+                inp, expected = _load(case_dir)
+                findings = copy.deepcopy(inp["findings"])
+                # deep_copy_no_mutation_of_input additionally asserts the
+                # caller's input findings list is untouched by apply_challenges
+                # (mirrors the JS twin's structuredClone-before-mutation check).
+                snapshot = copy.deepcopy(findings) if case_dir.name == "deep_copy_no_mutation_of_input" else None
+
+                total_input = len(findings)
+                active, challenge_eliminated, challenge_stats = apply_challenges(findings, inp["challenges"])
+
+                if snapshot is not None:
+                    self.assertEqual(findings, snapshot)
+
+                active, dedup_dropped = dedup_cross_agent(active)
+                dedup_elim = list(dedup_dropped)
+                active = rank_findings(active)
+                stats = {
+                    "total_input": total_input,
+                    "challenge_removed": challenge_stats["challenge_removed"],
+                    "challenge_downgraded": challenge_stats["challenge_downgraded"],
+                    "challenge_contested": challenge_stats["challenge_contested"],
+                    "challenge_survived": challenge_stats["challenge_survived"],
+                    "unchallenged": challenge_stats["unchallenged"],
+                    "dedup_dropped": len(dedup_elim),
+                    "final_count": len(active),
+                }
+                got = {
+                    "findings": active,
+                    "eliminated": challenge_eliminated + dedup_elim,
+                    "stats": stats,
+                }
+                self.assertEqual(got, expected)
+
+
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
         before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}

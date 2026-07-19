@@ -96,12 +96,42 @@ def _apply_validations(inp):
     return {"findings": findings, "adjusted_count": adjusted_count, "unmatched_ids": unmatched_ids}
 
 
+def _apply_challenges(inp):
+    # Mirrors apply_challenges.py main()'s bridge composition (:444-480) --
+    # apply_challenges() -> dedup_cross_agent() re-run -> rank_findings() --
+    # minus the file I/O (load_filtered/load_challenges) and prior_eliminated
+    # concatenation, which belong to the skill/stage layer, not this pure
+    # transform. Matches the JS twin's applyChallenges() return shape.
+    import copy
+    from apply_challenges import apply_challenges, rank_findings
+    from filter_findings import dedup_cross_agent
+    findings = copy.deepcopy(inp["findings"])
+    challenges = inp["challenges"]
+    total_input = len(findings)
+    active, challenge_eliminated, challenge_stats = apply_challenges(findings, challenges)
+    active, dedup_dropped = dedup_cross_agent(active)
+    dedup_elim = list(dedup_dropped)
+    active = rank_findings(active)
+    stats = {
+        "total_input": total_input,
+        "challenge_removed": challenge_stats["challenge_removed"],
+        "challenge_downgraded": challenge_stats["challenge_downgraded"],
+        "challenge_contested": challenge_stats["challenge_contested"],
+        "challenge_survived": challenge_stats["challenge_survived"],
+        "unchallenged": challenge_stats["unchallenged"],
+        "dedup_dropped": len(dedup_elim),
+        "final_count": len(active),
+    }
+    return {"findings": active, "eliminated": challenge_eliminated + dedup_elim, "stats": stats}
+
+
 # Registered per-script recorders. Later tasks append entries here.
 RECORDERS = {
     "finding_dedup": _finding_dedup,
     "merge_findings": _merge_findings,
     "filter_findings": _filter_findings,
     "apply_validations": _apply_validations,
+    "apply_challenges": _apply_challenges,
 }
 
 
