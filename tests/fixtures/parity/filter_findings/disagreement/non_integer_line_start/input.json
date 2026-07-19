@@ -1,0 +1,27 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "D12",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "n.py",
+      "line_start": 25.7,
+      "severity": "medium",
+      "confidence": 70,
+      "title": "t12",
+      "description": "d12"
+    },
+    {
+      "id": "D13",
+      "agent": "cross-file-impact",
+      "dimension": "cross_file_impact",
+      "file": "n.py",
+      "line_start": 20,
+      "severity": "medium",
+      "confidence": 60,
+      "title": "t13",
+      "description": "d13"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "D14",
+      "agent": "security-reviewer",
+      "dimension": "security",
+      "file": "f.py",
+      "line_start": 30,
+      "severity": "high",
+      "confidence": 85,
+      "title": "possible injection",
+      "description": "d14"
+    },
+    {
+      "id": "D15",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "f.py",
+      "line_start": 30,
+      "severity": "low",
+      "confidence": 40,
+      "title": "t15",
+      "description": "d15"
+    }
+  ]
+}

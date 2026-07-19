@@ -88,6 +88,27 @@ class TestFilterFindingsParity(unittest.TestCase):
                 elif fn == "apply_exclusions":
                     kept, eliminated = ff.apply_exclusions(inp["findings"], inp["exclusion_patterns"])
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
+                elif fn == "detect_disagreement":
+                    active, suppressed, boosted_count = ff.detect_disagreement(inp["findings"])
+                    self.assertEqual(
+                        {"active": active, "suppressed": suppressed, "boosted_count": boosted_count}, expected
+                    )
+                elif fn == "_route_by_dimension":
+                    self.assertEqual({"route": ff._route_by_dimension(inp["finding"])}, expected)
+                elif fn == "dedup_cross_agent":
+                    kept, dropped = ff.dedup_cross_agent(inp["findings"])
+                    self.assertEqual({"kept": kept, "dropped": dropped}, expected)
+                elif fn == "tag_findings":
+                    tagged, dedup_dropped, main_count, suggestion_count = ff.tag_findings(inp["findings"])
+                    self.assertEqual(
+                        {
+                            "tagged": tagged,
+                            "dedup_dropped": dedup_dropped,
+                            "main_count": main_count,
+                            "suggestion_count": suggestion_count,
+                        },
+                        expected,
+                    )
                 else:
                     self.fail(f"unhandled fn: {fn!r}")
 

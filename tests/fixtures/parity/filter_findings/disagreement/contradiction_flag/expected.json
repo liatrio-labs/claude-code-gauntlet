@@ -1,0 +1,42 @@
+{
+  "active": [
+    {
+      "agent": "bug-detector",
+      "confidence": 100,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": true,
+      "corroborated_by": [
+        "type-design-analyzer"
+      ],
+      "description": "d8",
+      "dimension": "bug",
+      "file": "e.py",
+      "id": "D8",
+      "line_start": 15,
+      "security_escalation": false,
+      "severity": "critical",
+      "title": "t8"
+    },
+    {
+      "agent": "type-design-analyzer",
+      "confidence": 60,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": true,
+      "corroborated_by": [
+        "bug-detector"
+      ],
+      "description": "d9",
+      "dimension": "type_design",
+      "file": "e.py",
+      "id": "D9",
+      "line_start": 15,
+      "security_escalation": false,
+      "severity": "low",
+      "title": "t9"
+    }
+  ],
+  "boosted_count": 2,
+  "suppressed": []
+}

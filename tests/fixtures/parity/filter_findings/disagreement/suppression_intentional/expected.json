@@ -1,0 +1,36 @@
+{
+  "active": [
+    {
+      "agent": "conventions-and-intent",
+      "confidence": 60,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "this behavior is intentional and documented",
+      "dimension": "intent",
+      "file": "c.py",
+      "id": "D5",
+      "line_start": 11,
+      "security_escalation": false,
+      "severity": "low",
+      "title": "t5"
+    }
+  ],
+  "boosted_count": 0,
+  "suppressed": [
+    {
+      "agent": "bug-detector",
+      "confidence": 80,
+      "description": "d4",
+      "dimension": "bug",
+      "eliminated_by": "suppressed:intentional",
+      "elimination_reason": "conventions-and-intent confirms behaviour at c.py:10 is intentional",
+      "file": "c.py",
+      "id": "D4",
+      "line_start": 10,
+      "severity": "high",
+      "title": "possible null deref"
+    }
+  ]
+}

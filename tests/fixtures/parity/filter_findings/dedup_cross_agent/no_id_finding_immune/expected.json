@@ -1,0 +1,39 @@
+{
+  "dropped": [
+    {
+      "agent": "code-simplifier",
+      "confidence": 95,
+      "description": "a description with no id field present at all for immunity test",
+      "dimension": "convention",
+      "eliminated_by": "dedup:cross-agent",
+      "elimination_reason": "cross-agent dedup: finding at j.py:51 (agent='code-simplifier', dim='convention', conf=95) lost to agent='bug-detector' at line 50 within 5 lines",
+      "file": "j.py",
+      "line_start": 51,
+      "severity": "low",
+      "title": "t11"
+    }
+  ],
+  "kept": [
+    {
+      "agent": "bug-detector",
+      "confidence": 90,
+      "description": "d1",
+      "dimension": "bug",
+      "file": "j.py",
+      "id": "C10",
+      "line_start": 50,
+      "severity": "high",
+      "title": "t10"
+    },
+    {
+      "agent": "code-simplifier",
+      "confidence": 95,
+      "description": "a description with no id field present at all for immunity test",
+      "dimension": "convention",
+      "file": "j.py",
+      "line_start": 51,
+      "severity": "low",
+      "title": "t11"
+    }
+  ]
+}

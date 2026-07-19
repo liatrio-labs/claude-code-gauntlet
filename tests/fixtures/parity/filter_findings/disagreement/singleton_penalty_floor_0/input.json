@@ -1,0 +1,16 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "D3",
+      "agent": "conventions-and-intent",
+      "dimension": "convention",
+      "file": "b.py",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 10,
+      "title": "t3",
+      "description": "d3"
+    }
+  ]
+}

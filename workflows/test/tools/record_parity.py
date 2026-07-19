@@ -68,6 +68,23 @@ def _filter_findings(inp):
     if fn == "apply_exclusions":
         kept, eliminated = ff.apply_exclusions(inp["findings"], inp["exclusion_patterns"])
         return {"kept": kept, "eliminated": eliminated}
+    if fn == "detect_disagreement":
+        active, suppressed, boosted_count = ff.detect_disagreement(inp["findings"])
+        return {"active": active, "suppressed": suppressed, "boosted_count": boosted_count}
+    if fn == "_route_by_dimension":
+        # Single-finding-in, route-out -- no list plumbing needed.
+        return {"route": ff._route_by_dimension(inp["finding"])}
+    if fn == "dedup_cross_agent":
+        kept, dropped = ff.dedup_cross_agent(inp["findings"])
+        return {"kept": kept, "dropped": dropped}
+    if fn == "tag_findings":
+        tagged, dedup_dropped, main_count, suggestion_count = ff.tag_findings(inp["findings"])
+        return {
+            "tagged": tagged,
+            "dedup_dropped": dedup_dropped,
+            "main_count": main_count,
+            "suggestion_count": suggestion_count,
+        }
     raise ValueError(fn)
 
 

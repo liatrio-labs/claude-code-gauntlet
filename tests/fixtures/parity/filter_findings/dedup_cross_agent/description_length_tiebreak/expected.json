@@ -1,0 +1,30 @@
+{
+  "dropped": [
+    {
+      "agent": "test-analyzer",
+      "confidence": 70,
+      "description": "short",
+      "dimension": "test_coverage",
+      "eliminated_by": "dedup:cross-agent",
+      "elimination_reason": "cross-agent dedup: finding at h.py:30 (agent='test-analyzer', dim='test_coverage', conf=70) lost to agent='code-simplifier' at line 31 within 5 lines",
+      "file": "h.py",
+      "id": "C5",
+      "line_start": 30,
+      "severity": "low",
+      "title": "t5"
+    }
+  ],
+  "kept": [
+    {
+      "agent": "code-simplifier",
+      "confidence": 70,
+      "description": "this description is considerably longer than the other one",
+      "dimension": "convention",
+      "file": "h.py",
+      "id": "C6",
+      "line_start": 31,
+      "severity": "low",
+      "title": "t6"
+    }
+  ]
+}

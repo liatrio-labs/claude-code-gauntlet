@@ -1,0 +1,56 @@
+{
+  "fn": "tag_findings",
+  "findings": [
+    {
+      "id": "G1",
+      "agent": "test-analyzer",
+      "file": "k1.py",
+      "line_start": 100,
+      "severity": "medium",
+      "confidence": 70,
+      "title": "race condition in worker pool",
+      "description": "the counter increment is not synchronized"
+    },
+    {
+      "id": "G2",
+      "agent": "conventions-and-intent",
+      "dimension": "comment-accuracy",
+      "file": "k2.py",
+      "line_start": 200,
+      "severity": "low",
+      "confidence": 60,
+      "title": "stale comment",
+      "description": "comment says X but code does Y"
+    },
+    {
+      "id": "G3",
+      "agent": "conventions-and-intent",
+      "file": "k3.py",
+      "line_start": 300,
+      "severity": "medium",
+      "confidence": 65,
+      "title": "violates naming convention documented in style guide",
+      "description": "uses camelCase instead of snake_case"
+    },
+    {
+      "id": "G4",
+      "agent": "some-unknown-agent",
+      "file": "k4.py",
+      "line_start": 400,
+      "severity": "high",
+      "confidence": 75,
+      "title": "weird finding",
+      "description": "unclear origin"
+    },
+    {
+      "id": "G5",
+      "agent": "code-simplifier",
+      "file": "k5.py",
+      "line_start": 500,
+      "severity": "low",
+      "confidence": 55,
+      "title": "redundant code",
+      "description": "this block can be simplified"
+    }
+  ]
+}

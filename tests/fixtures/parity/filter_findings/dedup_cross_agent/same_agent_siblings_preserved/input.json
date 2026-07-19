@@ -1,0 +1,38 @@
+{
+  "fn": "dedup_cross_agent",
+  "findings": [
+    {
+      "id": "C7",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "i.py",
+      "line_start": 40,
+      "severity": "high",
+      "confidence": 90,
+      "title": "t7",
+      "description": "d1"
+    },
+    {
+      "id": "C8",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "i.py",
+      "line_start": 41,
+      "severity": "medium",
+      "confidence": 60,
+      "title": "t8",
+      "description": "d2"
+    },
+    {
+      "id": "C9",
+      "agent": "code-simplifier",
+      "dimension": "convention",
+      "file": "i.py",
+      "line_start": 42,
+      "severity": "low",
+      "confidence": 95,
+      "title": "t9",
+      "description": "a very long description here for tiebreak purposes maybe"
+    }
+  ]
+}

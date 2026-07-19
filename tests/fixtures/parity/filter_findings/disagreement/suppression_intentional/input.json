@@ -1,0 +1,27 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "D4",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "c.py",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 80,
+      "title": "possible null deref",
+      "description": "d4"
+    },
+    {
+      "id": "D5",
+      "agent": "conventions-and-intent",
+      "dimension": "intent",
+      "file": "c.py",
+      "line_start": 11,
+      "severity": "low",
+      "confidence": 60,
+      "title": "t5",
+      "description": "this behavior is intentional and documented"
+    }
+  ]
+}

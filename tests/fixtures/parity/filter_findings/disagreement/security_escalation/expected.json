@@ -1,0 +1,43 @@
+{
+  "active": [
+    {
+      "agent": "security-reviewer",
+      "confidence": 95,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": false,
+      "corroborated_by": [
+        "bug-detector"
+      ],
+      "description": "d14",
+      "dimension": "security",
+      "escalation_note": "Kept: security-reviewer finding retained despite conflicting low-severity signal from another agent (security escalation rule)",
+      "file": "f.py",
+      "id": "D14",
+      "line_start": 30,
+      "security_escalation": true,
+      "severity": "high",
+      "title": "possible injection"
+    },
+    {
+      "agent": "bug-detector",
+      "confidence": 50,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": false,
+      "corroborated_by": [
+        "security-reviewer"
+      ],
+      "description": "d15",
+      "dimension": "bug",
+      "file": "f.py",
+      "id": "D15",
+      "line_start": 30,
+      "security_escalation": true,
+      "severity": "low",
+      "title": "t15"
+    }
+  ],
+  "boosted_count": 2,
+  "suppressed": []
+}

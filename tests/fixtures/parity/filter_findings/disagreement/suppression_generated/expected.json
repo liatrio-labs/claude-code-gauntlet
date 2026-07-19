@@ -1,0 +1,36 @@
+{
+  "active": [
+    {
+      "agent": "conventions-and-intent",
+      "confidence": 60,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "this file is auto-generated scaffolding, do not add tests",
+      "dimension": "intent",
+      "file": "d.py",
+      "id": "D7",
+      "line_start": 21,
+      "security_escalation": false,
+      "severity": "low",
+      "title": "t7"
+    }
+  ],
+  "boosted_count": 0,
+  "suppressed": [
+    {
+      "agent": "test-analyzer",
+      "confidence": 70,
+      "description": "d6",
+      "dimension": "test_coverage",
+      "eliminated_by": "suppressed:generated",
+      "elimination_reason": "conventions-and-intent confirms code at d.py:20 is generated/scaffolding",
+      "file": "d.py",
+      "id": "D6",
+      "line_start": 20,
+      "severity": "medium",
+      "title": "missing test"
+    }
+  ]
+}

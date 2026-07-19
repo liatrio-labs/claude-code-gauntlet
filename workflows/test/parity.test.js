@@ -12,6 +12,10 @@ import {
   applyInjectionFilter,
   loadExclusions,
   applyExclusions,
+  detectDisagreement,
+  routeByDimension,
+  dedupCrossAgent,
+  tagFindings,
 } from '../src/filterFindings.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -120,6 +124,41 @@ for (const c of loadCases('filter_findings')) {
       const { kept, eliminated } = applyExclusions(c.input.findings, c.input.exclusion_patterns);
       assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
       assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
+      return;
+    }
+    // --- part 2: disagreement / dimension routing / cross-agent dedup / tag ---
+    if (fn === 'detect_disagreement') {
+      const { active, suppressed, boostedCount } = detectDisagreement(c.input.findings);
+      // `active` carries no elimination_reason (free text) -- full structural
+      // equality is meaningful and safe here, unlike the eliminated lists below.
+      assert.deepEqual(active, c.expected.active);
+      assert.deepEqual(idsOf(suppressed), idsOf(c.expected.suppressed));
+      for (const s of suppressed) assert.ok(s.elimination_reason && s.elimination_reason.length > 0);
+      assert.equal(boostedCount, c.expected.boosted_count);
+      return;
+    }
+    if (fn === '_route_by_dimension') {
+      assert.equal(routeByDimension(c.input.finding), c.expected.route);
+      return;
+    }
+    if (fn === 'dedup_cross_agent') {
+      const { kept, dropped } = dedupCrossAgent(c.input.findings);
+      // `kept` has no elimination_reason field -- full equality. `dropped`'s
+      // elimination_reason interpolates JSON.stringify (double quotes) where
+      // Python interpolates !r (single quotes) -- cosmetic only, per the same
+      // "free-text join format not load-bearing" rule as the injection filter.
+      assert.deepEqual(kept, c.expected.kept);
+      assert.deepEqual(idsOf(dropped), idsOf(c.expected.dropped));
+      for (const d of dropped) assert.ok(d.elimination_reason && d.elimination_reason.length > 0);
+      return;
+    }
+    if (fn === 'tag_findings') {
+      const { tagged, dedupDropped, mainCount, suggestionCount } = tagFindings(c.input.findings);
+      assert.deepEqual(tagged, c.expected.tagged);
+      assert.deepEqual(idsOf(dedupDropped), idsOf(c.expected.dedup_dropped));
+      for (const d of dedupDropped) assert.ok(d.elimination_reason && d.elimination_reason.length > 0);
+      assert.equal(mainCount, c.expected.main_count);
+      assert.equal(suggestionCount, c.expected.suggestion_count);
       return;
     }
     throw new Error(`unhandled fn: ${fn}`);
