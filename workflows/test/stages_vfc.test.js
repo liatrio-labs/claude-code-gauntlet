@@ -76,6 +76,20 @@ test('validated confidence adjustments are merged in place (applyValidations)', 
   assert.equal(out.stats.validated, 2); // batch succeeded -> both validated
 });
 
+test('validate accepts the .md-shaped validator output (finding_id -> id)', async () => {
+  // agents/validator.md emits [{finding_id, confidence, justification}]; the stage
+  // must normalize finding_id -> id so applyValidations actually matches. Without
+  // this the adjustment silently no-ops and F1 keeps its original 90.
+  const findings = [vFinding('F1', { confidence: 90 }), vFinding('F2', { confidence: 80 })];
+  const ctx = validateCtx({ byBatch: () => [{ finding_id: 'F1', confidence: 40, justification: 'reachable only hypothetically' }] });
+  const out = await validateStage(ctx, { findings, limits: { validateBatch: 10 }, policy: {} });
+  const f1 = out.findings.find((f) => f.id === 'F1');
+  assert.equal(f1.confidence, 40);
+  assert.equal(f1.original_confidence, 90);
+  assert.equal(f1.validation_justification, 'reachable only hypothetically');
+  assert.equal(out.stats.adjusted, 1);
+});
+
 test('validate: empty finding set dispatches nothing', async () => {
   const ctx = validateCtx();
   const out = await validateStage(ctx, { findings: [], limits: { validateBatch: 10 }, policy: {} });
@@ -202,6 +216,29 @@ test('challenge: low blind score removes a non-security finding (applyChallenges
   assert.equal(out.findings.length, 0); // removed by the < 25 blind-score rule
   assert.equal(out.stats.challenge_removed, 1);
   assert.equal(out.eliminated.length, 1);
+});
+
+test('challenge accepts the .md-shaped challenger output (confidence_claim_is_correct)', async () => {
+  // agents/challenger.md emits {confidence_claim_is_correct, justification} (no `score`,
+  // no `id`). The stage must read confidence_claim_is_correct and inject the id by index;
+  // otherwise every result is unscored -> skipped and the high-confidence bucket is empty.
+  const findings = [cFinding('F1', 'high'), cFinding('F2', 'critical')];
+  const ctx = challengeCtx({ byIdx: () => ({ confidence_claim_is_correct: 90, justification: 'claim holds' }) });
+  const out = await challengeStage(ctx, { findings, limits: { challengeCap: 40 }, policy: {} });
+  assert.equal(out.findings.length, 2); // both scored high -> high-confidence bucket, NOT unverified
+  assert.equal(out.unverified.length, 0);
+  assert.equal(out.stats.completed, 2);
+  assert.equal(out.stats.challenge_survived, 2);
+});
+
+test('challenge honours a legitimate 0 from confidence_claim_is_correct (?? not ||)', async () => {
+  // A real 0 (claim definitively wrong) must be treated as a score, not as "unscored".
+  const findings = [cFinding('F1', 'high')];
+  const ctx = challengeCtx({ byIdx: () => ({ confidence_claim_is_correct: 0, justification: 'disproved' }) });
+  const out = await challengeStage(ctx, { findings, limits: { challengeCap: 40 }, policy: {} });
+  assert.equal(out.stats.completed, 1); // scored (not skipped)
+  assert.equal(out.stats.challenge_removed, 1); // 0 < 25 -> removed, not routed to unverified
+  assert.equal(out.unverified.length, 0);
 });
 
 test('challenge: generated_at threaded from args, empty set is trivial', async () => {

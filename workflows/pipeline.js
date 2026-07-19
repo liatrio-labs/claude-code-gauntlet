@@ -2281,7 +2281,14 @@ async function validateStage(ctx, input) {
       return;
     }
     completed += 1;
-    validations.push(...list);
+    // Field-name normalization (v2 SKILL parity): the validator agent's shipped
+    // output format emits `finding_id` (agents/validator.md), but applyValidations
+    // matches on `id`. Accept BOTH the .md-shaped (`finding_id`) and schema-shaped
+    // (`id`) entries so a real validator dispatch actually merges — without this the
+    // adjustments silently never match and every finding keeps its raw confidence.
+    for (const e of list) {
+      validations.push(e && typeof e === 'object' ? { ...e, id: e.id ?? e.finding_id } : e);
+    }
   });
 
   const { adjustedCount } = applyValidations(findings, validations);
@@ -2413,7 +2420,12 @@ async function challengeStage(ctx, input) {
 
   results.forEach((res, idx) => {
     const finding = candidates[idx];
-    const rawScore = res && typeof res === 'object' && 'score' in res ? res.score : undefined;
+    // Field-name normalization (v2 SKILL parity): the challenger agent's shipped
+    // output format emits `confidence_claim_is_correct` (agents/challenger.md), not
+    // `score`. Accept BOTH so a real challenger dispatch is scored — without this
+    // every result reads unscored, every finding is skipped, and the high-confidence
+    // bucket is ALWAYS empty. `??` (not `||`) so a legitimate 0 score is honoured.
+    const rawScore = res && typeof res === 'object' ? (res.confidence_claim_is_correct ?? res.score) : undefined;
     if (res === null || res === undefined || pyIntStrict(rawScore) === null) {
       gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=skipped, pipeline-degraded)`);
       skipped.push(finding);
