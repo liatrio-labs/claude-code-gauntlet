@@ -68,6 +68,9 @@ export function makeCtx(args, opts = {}) {
       throw new Error(`injected agent throw on ${label}`);
     }
     if (label === 'summarize' || label === 'summarize-merge') return { summary: 'the PR changes X' };
+    // verifyStage materializes slice inputs via the artifact-writer before dispatching
+    // executors; the writer succeeds by default so verify proceeds to the executor loop.
+    if (label.startsWith('verify-input-writer')) return { written: true };
     if (label.startsWith('verify-slice-')) {
       // Echo a receipt the verify stage will TRUST: same head sha, the per-slice
       // derived nonce `${nonce}.0` (one slice because verifySliceSize > nFindings),

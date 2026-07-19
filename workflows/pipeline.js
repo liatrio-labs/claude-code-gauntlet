@@ -1797,6 +1797,33 @@ function defaultCtx() {
   };
 }
 
+// Shared char budget for a single agent's by-value prompt payload. Above it, stages
+// that carry findings by value (report generation, verify slice-input writing) segment
+// into multiple dispatches to stay under the writer's context.
+const SEGMENT_CHAR_BUDGET = 100000;
+
+// Greedy pack: accumulate items into a chunk until adding the next would exceed
+// `budget` serialized chars, then start a new chunk. A single oversized item still
+// goes in a chunk of its own (never dropped). Shared by report segmentation and
+// verify slice-input writing.
+function chunkBySerializedSize(items, budget) {
+  const chunks = [];
+  let cur = [];
+  let curSize = 0;
+  for (const it of items) {
+    const size = JSON.stringify(it).length;
+    if (cur.length && curSize + size > budget) {
+      chunks.push(cur);
+      cur = [];
+      curSize = 0;
+    }
+    cur.push(it);
+    curSize += size;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks.length ? chunks : [[]];
+}
+
 // --- Phase 1: Summarize -----------------------------------------------------
 
 // summarize(ctx, input) -> { summary, gaps }
@@ -2060,6 +2087,15 @@ async function verifyStage(ctx, input) {
   const slices = [];
   for (let i = 0; i < findings.length; i += sliceSize) slices.push(findings.slice(i, i + sliceSize));
 
+  // Materialize each slice's --input JSON on disk BEFORE the executor loop. The
+  // executor reads ${inputPathBase}.slice{i}.json, but the workflow script has no disk
+  // access and the merged findings exist only mid-workflow (the skill CANNOT pre-write
+  // them). One or more artifact-writer dispatches (segmented like the report stage when
+  // the payload is large) write them by value. Any writer failure -> the WHOLE set takes
+  // the UNVERIFIED path, exactly like an untrusted slice: never fabricate a verification.
+  const materialized = await materializeVerifySlices(c, inp, slices, policy);
+  if (!materialized.ok) return unverifiedResult(findings, materialized.reason);
+
   const verifiedOut = [];
   let failureReason = null;
 
@@ -2094,16 +2130,60 @@ async function verifyStage(ctx, input) {
     verifiedOut.push(...verified);
   }
 
-  if (failureReason !== null) {
-    const unknown = findings.map((f) => ({ ...f, origin: 'unknown' }));
-    return {
-      findings: unknown,
-      verified: false,
-      gaps: [`verify: UNVERIFIED — ${failureReason}; all ${findings.length} finding(s) marked origin=unknown, surfaced-classification skipped`],
-    };
-  }
+  if (failureReason !== null) return unverifiedResult(findings, failureReason);
 
   return { findings: verifiedOut, verified: true, gaps: [] };
+}
+
+// The UNVERIFIED degradation: every ORIGINAL finding re-emitted with origin='unknown'
+// (surfaced-classification skipped), verified=false, a loud gap. Findings are never
+// dropped and success is never fabricated. Reached by an untrusted slice, an executor
+// throw, OR a slice-input writer failure.
+function unverifiedResult(findings, reason) {
+  return {
+    findings: findings.map((f) => ({ ...f, origin: 'unknown' })),
+    verified: false,
+    gaps: [`verify: UNVERIFIED — ${reason}; all ${findings.length} finding(s) marked origin=unknown, surfaced-classification skipped`],
+  };
+}
+
+// Dispatch the artifact-writer to persist each slice's --input JSON (the shape
+// verify_findings.py --input reads: { findings, base_branch }). Segmented under the
+// shared char budget. Returns { ok } / { ok:false, reason }; a throw OR a null result
+// is a failure (the caller degrades the whole set to UNVERIFIED).
+async function materializeVerifySlices(c, inp, slices, policy) {
+  const v = inp.verify || {};
+  const inputPathBase = v.inputPathBase || 'phase4-input';
+  const model = resolvePolicy('deep-review:artifact-writer', {
+    frontier: policy.frontier,
+    frontierModelId: policy.frontierModelId,
+    subagentModelEnv: policy.subagentModel,
+  }).model;
+  const entries = slices.map((slice, i) => ({
+    path: `${inputPathBase}.slice${i}.json`,
+    content: { findings: slice, base_branch: v.baseBranch },
+  }));
+  const groups = chunkBySerializedSize(entries, SEGMENT_CHAR_BUDGET);
+  for (let g = 0; g < groups.length; g += 1) {
+    let result;
+    try {
+      result = await c.agent({
+        label: `verify-input-writer-${g}`,
+        agentType: 'deep-review:artifact-writer',
+        model,
+        prompt: verifySliceWriterPrompt(groups[g]),
+      });
+    } catch (e) {
+      return { ok: false, reason: `slice-input writer threw (${(e && e.message) || 'unknown'})` };
+    }
+    if (!result) return { ok: false, reason: 'slice-input writer returned null' };
+  }
+  return { ok: true };
+}
+
+function verifySliceWriterPrompt(entries) {
+  const payload = JSON.stringify(entries);
+  return `Persist each verify slice-input file to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "content" as JSON to its "path". Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 // A slice envelope is trusted only if it is the honest success shape AND its receipt
@@ -2139,7 +2219,8 @@ function trustSlice(env, { nonce, headShaShort, n }) {
 // The pinned command: a single `python3 <script> --flags...` invocation of plain word
 // tokens only (CLAUDE.md AST-safe emission — no command substitution, heredocs, env
 // prefix, or shell operators). Per-slice input/output paths are sha-scoped and index-
-// suffixed; the skill layer writes the slice inputs, the executor reads the slice output.
+// suffixed; verifyStage materializes the slice inputs via the artifact-writer (see
+// materializeVerifySlices) before dispatch, then the executor reads the slice output.
 function verifyCommand(inp, i) {
   const v = inp.verify || {};
   const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
@@ -2479,12 +2560,6 @@ async function challengeStage(ctx, input) {
 
 const REPORT_SCHEMA = { type: 'object', report: 'string' };
 
-// Char budget for the findings payload embedded in one report-writer prompt.
-// Above this, reportStage segments findings into chunks and dispatches one
-// report-writer per chunk (the report generation would otherwise blow the
-// writer's context). 100k chars ~= a comfortably-sized single dispatch.
-const REPORT_SEGMENT_CHAR_BUDGET = 100000;
-
 // reportStage(ctx, input) -> { report, gaps }
 // Dispatches the report-writer agent to render the review markdown from the
 // high-confidence + unverified buckets (carried BY VALUE in the prompt — the
@@ -2496,7 +2571,7 @@ const REPORT_SEGMENT_CHAR_BUDGET = 100000;
 // from the pipeline stats and a gap is recorded; report failure is NON-FATAL.
 //
 // Segmentation: when the serialized findings payload exceeds
-// REPORT_SEGMENT_CHAR_BUDGET the findings are chunked and one report-writer is
+// SEGMENT_CHAR_BUDGET the findings are chunked and one report-writer is
 // dispatched PER chunk (sequentially, each with the same try/catch), then the
 // per-chunk reports are concatenated under titled segment headings. Any single
 // chunk that fails degrades to its own minimal section — the rest still render.
@@ -2511,13 +2586,13 @@ async function reportStage(ctx, input) {
   }).model;
 
   const findings = inp.findings || [];
-  const oversized = JSON.stringify(findings).length > REPORT_SEGMENT_CHAR_BUDGET;
+  const oversized = JSON.stringify(findings).length > SEGMENT_CHAR_BUDGET;
   if (!oversized) {
     return dispatchReportSegment(c, model, inp, findings, null);
   }
 
   // Segment: one dispatch per chunk, sequentially, titled sections joined.
-  const chunks = chunkFindingsBySize(findings, REPORT_SEGMENT_CHAR_BUDGET);
+  const chunks = chunkBySerializedSize(findings, SEGMENT_CHAR_BUDGET);
   const parts = [];
   const gaps = [];
   for (let i = 0; i < chunks.length; i += 1) {
@@ -2551,27 +2626,6 @@ async function dispatchReportSegment(c, model, inp, findings, seg) {
   } catch (e) {
     return { report: minimalReport(segInp), gaps: [`report${tag}: writer agent threw (${(e && e.message) || 'unknown'}) — assembled a minimal report from pipeline stats`] };
   }
-}
-
-// Greedy pack: accumulate findings into a chunk until adding the next would exceed
-// `budget` serialized chars, then start a new chunk. A single oversized finding
-// still goes in a chunk of its own (never dropped).
-function chunkFindingsBySize(findings, budget) {
-  const chunks = [];
-  let cur = [];
-  let curSize = 0;
-  for (const f of findings) {
-    const size = JSON.stringify(f).length;
-    if (cur.length && curSize + size > budget) {
-      chunks.push(cur);
-      cur = [];
-      curSize = 0;
-    }
-    cur.push(f);
-    curSize += size;
-  }
-  if (cur.length) chunks.push(cur);
-  return chunks.length ? chunks : [[]];
 }
 
 // Deterministic fallback report (no agent, no wall-clock) built from what the
@@ -2727,6 +2781,19 @@ function readCheckpoints(ctx, args) {
   return unwrap(A.checkpoints) || (ctx && unwrap(ctx.checkpoints)) || {};
 }
 
+// buildResumeCheckpoints(phaseOutputs) -> resume state for a FAILURE-path return.
+// Carries the full per-phase outputs map ({ phases, completed }) so the skill can resume
+// from the compact return when nothing was persisted — UNLESS that map would exceed the
+// char budget, in which case only the completed-phase NAMES are returned with
+// truncated:true (resume then falls back to re-running rather than shipping findings bulk
+// through the compact return). readCheckpoints unwraps the .phases form directly.
+function buildResumeCheckpoints(phaseOutputs) {
+  const completed = Object.keys(phaseOutputs);
+  const withPhases = { phases: phaseOutputs, completed };
+  if (JSON.stringify(withPhases).length <= SEGMENT_CHAR_BUDGET) return withPhases;
+  return { completed, truncated: true };
+}
+
 // --- Full orchestration: runWith --------------------------------------------
 
 // runWith(ctx, rawArgs) -> compact envelope.
@@ -2863,16 +2930,24 @@ async function runWith(ctx, rawArgs) {
         frontier: !!policy.frontier,
         frontierModelId: policy.frontierModelId || null,
       },
-      checkpoints: completed,
+      // On persist success the resume state lives in artifactPaths.checkpoints — the
+      // compact return carries only phase NAMES (never the findings bulk). If the writer
+      // FAILED nothing was persisted, so carry the in-memory resume state (phases, or
+      // names+truncated when it would exceed the budget) so the skill can still resume.
+      checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
     };
   } catch (e) {
+    // Nothing was persisted on the throw path either — carry the in-memory resume state
+    // (bounded by the char budget) in the compact return so the skill can resume the
+    // failed run rather than restarting from scratch.
     return {
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
       artifactPaths: {},
       stats: {},
+      checkpoints: buildResumeCheckpoints(phaseOutputs),
       gaps,
     };
   }

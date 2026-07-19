@@ -17,7 +17,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  runWith, reportStage, writeArtifacts, checkpointPath, readCheckpoints,
+  runWith, reportStage, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
@@ -39,6 +39,10 @@ test('happy path: full pipeline returns ok:true, phaseReached=report, artifact p
   assert.equal(out.stats.highConfidence, 2);
   assert.ok(Array.isArray(out.gaps));
   assert.ok(!('findings' in out), 'compact return must not carry raw findings');
+  // On persist SUCCESS the return stays compact: phase names only, no findings-bearing
+  // phases map (that lives in the persisted artifact at artifactPaths.checkpoints).
+  assert.ok(Array.isArray(out.checkpoints.completed));
+  assert.ok(!('phases' in out.checkpoints), 'success return must not carry the phases bulk');
   // Every stage dispatched: summarize + 7 discover + verify + validate + challenge + report + writer.
   assert.ok(ctx.calls.some((t) => t.label === 'report-writer'));
   assert.ok(ctx.calls.some((t) => t.label === 'artifact-writer'));
@@ -67,6 +71,11 @@ test('a throw in a core stage (discover) is caught by the top-level try/catch', 
   // The failure envelope still carries the compact keys.
   assert.ok('artifactPaths' in out);
   assert.ok('stats' in out);
+  // Nothing was persisted on the throw path, so the resume state rides in the return:
+  // the completed phase (summarize) is recoverable.
+  assert.ok(out.checkpoints && out.checkpoints.phases, 'catch path carries the in-memory phases map');
+  assert.ok('summarize' in out.checkpoints.phases);
+  assert.ok(!('discover' in out.checkpoints.phases), 'the phase that threw is not recorded');
 });
 
 test('run never throws out of runWith even when a stage throws', async () => {
@@ -113,6 +122,10 @@ test('a writeArtifacts agent() throw yields ok:true with a partial-artifacts gap
   assert.ok(out.gaps.some((g) => /partial|artifact/i.test(g)), `expected a partial-artifacts gap, got: ${out.gaps}`);
   // On failure the persisted paths are null (nothing was written).
   assert.equal(out.artifactPaths.findings, null);
+  // Persistence failed, so the resume state rides in the compact return instead: every
+  // phase (through report) is recoverable without re-running.
+  assert.ok(out.checkpoints && out.checkpoints.phases, 'writer-failure carries the in-memory phases map');
+  assert.ok('report' in out.checkpoints.phases);
 });
 
 test('writeArtifacts in isolation: a bare agent() throw yields a partial-artifacts gap', async () => {
@@ -212,6 +225,25 @@ test('reportStage segments an oversized findings payload into >1 dispatch and jo
   assert.match(out.report, /Report segment 1 of/);
   assert.match(out.report, new RegExp(`Report segment ${calls.length} of ${calls.length}`));
   assert.equal(out.gaps.length, 0, 'all segments rendered cleanly');
+});
+
+// --- buildResumeCheckpoints truncation (compact-return principle) ------------
+
+test('buildResumeCheckpoints carries the phases map when it fits the budget', () => {
+  const phaseOutputs = { summarize: { summary: 's' }, discover: { findings: [{ id: 'F1' }] } };
+  const cp = buildResumeCheckpoints(phaseOutputs);
+  assert.deepEqual(cp.phases, phaseOutputs);
+  assert.deepEqual(cp.completed, ['summarize', 'discover']);
+  assert.ok(!cp.truncated);
+});
+
+test('buildResumeCheckpoints truncates to names-only when the phases map exceeds the budget', () => {
+  // A single phase whose serialized output blows past the 100k char budget.
+  const huge = { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) };
+  const cp = buildResumeCheckpoints({ discover: huge, verify: huge });
+  assert.ok(!('phases' in cp), 'oversized phases map is dropped from the compact return');
+  assert.equal(cp.truncated, true);
+  assert.deepEqual(cp.completed, ['discover', 'verify']);
 });
 
 test('reportStage under the budget stays a single dispatch', async () => {

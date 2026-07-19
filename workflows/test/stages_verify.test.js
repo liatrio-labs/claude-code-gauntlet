@@ -11,11 +11,24 @@ import { verifyStage } from '../src/stages.js';
 
 // ctx.agent is the injected seam. parallel() throws: verify uses per-slice agent()
 // calls, never parallel() (the sequential order is what pairs receipts to slices).
-function verifyCtx(agentImpl) {
+// Before the executor loop, verifyStage dispatches artifact-writer 'verify-input-writer-*'
+// calls to materialize the slice inputs; those are handled separately here (succeeding
+// by default, or via opts.sliceWriter) so `agentImpl` sees only executor dispatches with
+// a clean 0-based executor index.
+function verifyCtx(agentImpl, opts = {}) {
   const calls = [];
+  let execIdx = -1;
   return {
     calls,
-    agent: async (t) => { calls.push(t); return agentImpl(t, calls.length - 1); },
+    execCalls: () => calls.filter((t) => (t.label || '').startsWith('verify-slice-')),
+    agent: async (t) => {
+      calls.push(t);
+      if ((t.label || '').startsWith('verify-input-writer')) {
+        return opts.sliceWriter ? opts.sliceWriter(t) : { written: true };
+      }
+      execIdx += 1;
+      return agentImpl(t, execIdx);
+    },
     parallel: async () => { throw new Error('verifyStage must use agent() per slice, not parallel()'); },
   };
 }
@@ -135,7 +148,7 @@ test('(g) large set slices into ceil(n/verifySliceSize) executor calls; all trus
   // Each executor call answers for exactly its slice: per-slice nonce + n_in === slice length.
   const ctx = verifyCtx((_t, i) => okEnvelope(slices[i], { nonce: `n-1.${i}`, n_in: slices[i].length }));
   const out = await verifyStage(ctx, input);
-  assert.equal(ctx.calls.length, slices.length); // 3 = ceil(5/2)
+  assert.equal(ctx.execCalls().length, slices.length); // 3 = ceil(5/2) executor calls
   assert.equal(out.verified, true);
   assert.equal(out.findings.length, 5); // verified findings from every slice, concatenated
   assert.equal(out.gaps.length, 0);
@@ -170,6 +183,47 @@ test('(h2) equal-length slices cannot satisfy each other: per-slice nonces are d
   assert.match(commands[1], /--nonce n-1\.1(\s|$)/);
 });
 
+test('(j) slice inputs are materialized by the artifact-writer BEFORE any executor runs', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  await verifyStage(ctx, input);
+  // The first dispatch is the slice-input writer; the executor(s) come after.
+  assert.match(ctx.calls[0].label, /^verify-input-writer/);
+  assert.equal(ctx.calls[0].agentType, 'deep-review:artifact-writer');
+  const firstExecIdx = ctx.calls.findIndex((t) => (t.label || '').startsWith('verify-slice-'));
+  const writerIdx = ctx.calls.findIndex((t) => (t.label || '').startsWith('verify-input-writer'));
+  assert.ok(writerIdx >= 0 && writerIdx < firstExecIdx, 'writer dispatched before executors');
+  // The writer prompt carries the sliced findings by value and their target paths.
+  assert.match(ctx.calls[0].prompt, /phase4-input-abc123\.slice0\.json/);
+  assert.match(ctx.calls[0].prompt, /"id":"F1"/);
+});
+
+test('(k) slice-input writer failure -> whole set UNVERIFIED, no executor dispatched', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx(
+    () => { throw new Error('executor should never run when slice inputs were not written'); },
+    { sliceWriter: () => null }, // writer returns null -> materialization failed
+  );
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.equal(out.findings.length, 2); // preserved, never dropped
+  assert.ok(out.findings.every((f) => f.origin === 'unknown'));
+  assert.ok(out.gaps.some((g) => /UNVERIFIED/.test(g) && /writer/i.test(g)));
+  assert.equal(ctx.execCalls().length, 0, 'no executor ran after the write failure');
+});
+
+test('(l) slice-input writer THROW -> whole set UNVERIFIED (never fabricate)', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx(
+    () => okEnvelope(input.findings),
+    { sliceWriter: () => { throw new Error('disk on fire'); } },
+  );
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.ok(out.findings.every((f) => f.origin === 'unknown'));
+  assert.equal(ctx.execCalls().length, 0);
+});
+
 test('(i) empty finding set -> trivially verified, no executor calls', async () => {
   const input = baseInput({ findings: [] });
   const ctx = verifyCtx(() => { throw new Error('should not dispatch for an empty set'); });
@@ -183,7 +237,7 @@ test('the executor command is a single AST-safe python3 word-token invocation', 
   const input = baseInput();
   const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
   await verifyStage(ctx, input);
-  const t = ctx.calls[0];
+  const t = ctx.execCalls()[0];
   const cmd = t.command || t.prompt || '';
   assert.match(cmd, /python3 \S*verify_findings\.py/);
   assert.match(cmd, /--input /);

@@ -15,12 +15,15 @@ interpret, reformat, summarize, or edit the payload.
 
 ## Input
 
-The dispatch prompt names three target paths and carries a payload as a single JSON
-line after the `PAYLOAD_JSON:` marker. Parse that line, then persist:
+The dispatch prompt names the target path(s) and carries a payload as a single JSON
+line after the `PAYLOAD_JSON:` marker. Parse that line, then persist. Two payload
+shapes occur:
 
-- `findings` → write as pretty JSON to the findings path.
-- `report` → write verbatim to the report markdown path.
-- `checkpoints` → write as JSON to the checkpoint path.
+- **Final artifacts** — an object `{ findings, report, checkpoints }`: write `findings`
+  as pretty JSON to the findings path, `report` verbatim to the report markdown path,
+  and `checkpoints` as JSON to the checkpoint path.
+- **Verify slice inputs** — an array of `{ path, content }` entries: for each entry,
+  write its `content` as JSON to its `path`.
 
 ## Protocol
 
@@ -31,5 +34,5 @@ line after the `PAYLOAD_JSON:` marker. Parse that line, then persist:
 
 ## Output
 
-Return the structured object `{ artifactPaths }` echoing the three paths you
-wrote (`{ findings, report, checkpoints }`).
+Return the structured object the prompt asks for — `{ artifactPaths }` (final artifacts)
+or `{ written }` (slice inputs) — echoing the paths you wrote.
