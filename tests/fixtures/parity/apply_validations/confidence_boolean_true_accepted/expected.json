@@ -1,0 +1,12 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "confidence": 1,
+      "id": "F1",
+      "original_confidence": 60,
+      "validator_confidence": 1
+    }
+  ],
+  "unmatched_ids": []
+}

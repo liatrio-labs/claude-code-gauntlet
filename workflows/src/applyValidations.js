@@ -6,22 +6,26 @@
 
 // Replicate Python int(): accepts a JS number (truncate toward zero, matching
 // Python's int(float) truncation direction -- confirmed against the running
-// interpreter: int(72.9) == 72, int(-0.5) == 0) or an integer-valued decimal
+// interpreter: int(72.9) == 72, int(-0.5) == 0), an integer-valued decimal
 // string (Python strips surrounding whitespace and accepts a leading sign --
-// int(" 72 ") == int("+72") == 72). REJECTS decimal strings like "72.9" and
+// int(" 72 ") == int("+72") == 72), or a JS boolean (Python's bool is an int
+// subclass, so int(True) == 1 and int(False) == 0 -- verified against the
+// running interpreter; apply_validations.py:196-204 calls int() with no type
+// gate, so a validator emitting `"confidence": true` is applied as 1 in
+// Python and must be too here). REJECTS decimal strings like "72.9" and
 // non-numeric strings (Python int("72.9") / int("abc") / int("") all raise
 // ValueError). Returns null on reject; the caller skips the validation entry,
 // mirroring Python's `except (TypeError, ValueError): ... continue`.
 export function pyIntStrict(v) {
+  if (typeof v === 'boolean') return v ? 1 : 0;
   if (typeof v === 'number') return Number.isFinite(v) ? Math.trunc(v) : null;
   if (typeof v === 'string') {
     const s = v.trim();
     if (/^[+-]?\d+$/.test(s)) return parseInt(s, 10); // int-string only
     return null; // "72.9", "abc", "" all rejected
   }
-  return null; // bool/None/object -> skip (see Task 6 self-review: Python's
-  // int(True)/int(False) actually succeed as 1/0 rather than raising -- this
-  // is a documented, fixture-uncovered divergence, not a Python-verified trap).
+  return null; // None/object -> skip (int(None) raises TypeError in Python;
+  // a plain object has no int() coercion path either).
 }
 
 export function applyValidations(findings, validations) {
