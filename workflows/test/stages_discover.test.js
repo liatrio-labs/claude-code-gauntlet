@@ -10,12 +10,15 @@ import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 // Platform contract: agent(promptString, opts); parallel(thunks). The mock asserts it.
 // Discovery's per-agent result is keyed on opts.label (which IS the agentType); a
 // `nulls` label makes its thunk throw so parallel() null-isolates it (Phase 0).
+// `prompts` records the exact prompt string dispatched per label, for elicitation tests.
 function fakeCtx({ nulls = [], byAgent = {} } = {}) {
   const calls = [];
+  const prompts = {};
   const agent = async (prompt, opts = {}) => {
     assertPrompt(prompt);
     assertValidSchema(opts.schema);
     calls.push(opts.label);
+    prompts[opts.label] = prompt;
     if (nulls.includes(opts.label)) throw new Error(`injected failure for ${opts.label}`);
     return byAgent[opts.label] ?? { findings: [], complete: true, total_seen: 0 };
   };
@@ -23,7 +26,7 @@ function fakeCtx({ nulls = [], byAgent = {} } = {}) {
     if (typeof thunk !== 'function') throw new Error('parallel() members must be zero-arg functions');
     try { return await thunk(); } catch { return null; }
   }));
-  return { calls, agent, parallel };
+  return { calls, prompts, agent, parallel };
 }
 
 test('discover dispatches once per AGENT (7)', async () => {
@@ -53,6 +56,42 @@ test('complete=false is a SOFT possibly-incomplete gap, not degradation', async 
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.ok(out.gaps.some((g) => /possibly incomplete|bug-detector/.test(g)));
   assert.equal(out.degraded.length, 0); // a live-but-incomplete agent did not fail -> not degraded
+});
+
+test('discover returns `dispatched`: every active agentType, regardless of outcome', async () => {
+  const ctx = fakeCtx({ nulls: ['deep-review:security-reviewer'] });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  // Includes the nulled (failed) agent too — a dispatch attempt happened even though it failed.
+  assert.deepEqual([...out.dispatched].sort(), [...AGENTS].sort());
+});
+
+// v2-grade elicitation frame (hill-climb iter 1): the terse one-liner dropped raw
+// discovery yield ~40%. Assert the markers that replace it are present in every
+// dispatched prompt — context-file-first instruction, explicit no-cap/no-minimum
+// framing, and the agent's own dimension names (not a generic "your dimensions").
+test('discoverPrompt: elicitation markers present (context-file-first, no-cap, dimension naming)', async () => {
+  const ctx = fakeCtx();
+  await discover(ctx, {
+    changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, contextPath: '/abs/ctx.md',
+  });
+  const bugPrompt = ctx.prompts['deep-review:bug-detector'];
+  assert.match(bugPrompt, /Read the shared context at \/abs\/ctx\.md first/);
+  assert.match(bugPrompt, /no cap and no minimum/);
+  assert.match(bugPrompt, /genuine post-investigation absence/);
+  assert.match(bugPrompt, /\bbug\b/); // names its own dimension
+  assert.match(bugPrompt, /canonical schema/);
+  assert.match(bugPrompt, /single paragraph/);
+  // Multi-dimension agent names ALL of its dimensions, not just one.
+  const conventionsPrompt = ctx.prompts['deep-review:conventions-and-intent'];
+  assert.match(conventionsPrompt, /convention/);
+  assert.match(conventionsPrompt, /intent/);
+  assert.match(conventionsPrompt, /comment_accuracy/);
+});
+
+test('discoverPrompt: no contextPath -> no dangling context-file instruction', async () => {
+  const ctx = fakeCtx();
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  assert.doesNotMatch(ctx.prompts['deep-review:bug-detector'], /Read the shared context/);
 });
 
 test('worst-case agent count stays under 1000; coarsening lowers challengeCap and raises batch sizes', () => {
@@ -143,4 +182,22 @@ test('mergeStage: consumes merge() as-is and produces the Phase-4 envelope', () 
   assert.ok(env.methodology.agents_dispatched.includes('deep-review:bug-detector'));
   // agent field survives the round-trip (re-injected by merge()).
   assert.ok(env.findings.every((f) => typeof f.agent === 'string'));
+});
+
+test('mergeStage: agents_dispatched counts a zero-finding agent, distinct from never-dispatched', () => {
+  // deep-review:code-simplifier was dispatched (discover() attempted it) but produced
+  // zero findings; deep-review:type-design-analyzer was never in `dispatched` at all
+  // (e.g. disabled via agentFlags). agents_dispatched must include the former, not the latter.
+  const discoverOut = {
+    findings: [
+      { id: 'F1', file: 'a.js', line_start: 1, title: 't1', description: 'd1', severity: 'high', confidence: 'high', dimension: 'bug', agent: 'deep-review:bug-detector' },
+    ],
+    gaps: [],
+    degraded: [],
+    dispatched: ['deep-review:bug-detector', 'deep-review:code-simplifier'],
+  };
+  const meta = { base_branch: 'main', head_sha: 'abc123', pr_number: 7, owner: 'o', repo: 'r' };
+  const env = mergeStage(discoverOut, meta);
+  assert.deepEqual([...env.methodology.agents_dispatched].sort(), ['deep-review:bug-detector', 'deep-review:code-simplifier']);
+  assert.ok(!env.methodology.agents_dispatched.includes('deep-review:type-design-analyzer'));
 });

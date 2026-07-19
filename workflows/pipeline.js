@@ -1967,7 +1967,10 @@ function findingSchema(spec) {
   };
 }
 
-// discover(ctx, input) -> { findings, gaps, degraded }
+// discover(ctx, input) -> { findings, gaps, degraded, dispatched }
+// `dispatched` is the full fan-out list (every active agentType, whether it succeeded,
+// failed, or returned zero findings) — mergeStage() uses it so a zero-finding agent
+// stays distinguishable from one never dispatched at all (e.g. disabled via agentFlags).
 // One parallel() call fanning out to every active AGENT. A null member -> gap AND
 // every dimension that agent covers is marked degraded: a null means the agent
 // terminally failed after the platform's schema retries (cap 5), so those dimensions
@@ -2038,12 +2041,26 @@ async function discover(ctx, input) {
 
   // Each dimension belongs to a single agent so no overlap is possible today; the Set
   // keeps degraded deduplicated and insertion-ordered should that ever change.
-  return { findings, gaps, degraded: [...new Set(degradedDims)] };
+  return {
+    findings,
+    gaps,
+    degraded: [...new Set(degradedDims)],
+    dispatched: specs.map((spec) => spec.agentType),
+  };
 }
 
+// v2-grade elicitation frame (v3's terse one-liner cut discovery yield ~40% — see the
+// skill's phase3-dispatch.md history): read context first, investigate with the agent's
+// OWN methodology/tools per its .md definition (loaded as its system prompt via
+// agentType), no cap/no minimum on findings, and a reminder of the canonical schema's
+// single-paragraph description constraint. Kept short — StructuredOutput's `schema`
+// (findingSchema) does the actual shape enforcement, this prompt only sets behavior.
 function discoverPrompt(inp, spec) {
-  const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
-  return `${ctxLine}Review the changes for the following dimension(s): ${spec.dimensions.join(', ')}. Return { findings, complete, total_seen } where each finding matches the canonical schema.`;
+  const ctxLine = inp.contextPath
+    ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
+    : '';
+  const dims = spec.dimensions.join(', ');
+  return `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
 }
 
 // --- Phase 3: Merge ---------------------------------------------------------
@@ -2069,9 +2086,15 @@ function mergeStage(discoverOut, meta) {
     ndjsonContents[a] = group.map((f) => JSON.stringify(f)).join('\n');
   }
 
-  // agents drives merge()'s per-agent iteration; use the agents that actually produced
-  // findings, falling back to the full roster so an empty run still yields an envelope.
-  const agents = Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.slice();
+  // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched.
+  // Prefer discover()'s own fan-out list (`dispatched`) so a zero-finding agent is
+  // still counted as dispatched, distinguishable from one never dispatched at all
+  // (disabled via agentFlags). Older/synthetic callers that omit `dispatched` fall back
+  // to the agents that actually produced findings, and finally the full roster so an
+  // empty run still yields an envelope.
+  const agents = Array.isArray(out.dispatched)
+    ? out.dispatched
+    : (Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.slice());
   return merge(ndjsonContents, {}, { ...M, agents });
 }
 
