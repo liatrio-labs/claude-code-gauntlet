@@ -14,6 +14,8 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
                     (models a ``-p --output-format json`` run). + payload.
   echo_in_report -> NO echo in stdout or .result; the full block lives only in a collected
                     report .md under $DEEP_REVIEW_OUTPUT_DIR. + payload.
+  mutate_repo    -> write to FAKE_CLAUDE_MUTATE_PATH (inside the plugin repo), then behave
+                    like ``ok`` — models a child self-healing the plugin mid-run.
 
 All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
 process-group id is written there at startup so the watchdog test can prove the group was
@@ -102,6 +104,20 @@ def _record_pgid():
             fh.write(str(os.getpgrp()))
 
 
+def _mutate_repo():
+    """Write to a path inside the plugin repo — models a child self-healing the plugin
+    mid-run (the contamination the invoke.py integrity guard must catch and reset).
+    The target path is given by FAKE_CLAUDE_MUTATE_PATH."""
+    path = os.environ.get("FAKE_CLAUDE_MUTATE_PATH")
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write("// self-healed by child mid-run\n")
+
+
 def _record_argv():
     argv_file = os.environ.get("FAKE_CLAUDE_ARGV_FILE")
     if argv_file:
@@ -132,6 +148,12 @@ def main():
     _record_pgid()
     _record_argv()
     mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
+
+    if mode == "mutate_repo":
+        # Write into the plugin repo, then otherwise behave like a normal 'ok' run so the
+        # only anomaly is the dirty repo — exactly the self-healing-child contamination.
+        _mutate_repo()
+        mode = "ok"
 
     if mode == "hang":
         time.sleep(60)

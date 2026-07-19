@@ -37,6 +37,16 @@ export function assertValidSchema(schema, path = '$') {
   }
 }
 
+// Every top-level dispatch schema must be OBJECT-rooted: the Messages API rejects an
+// array-rooted tool input_schema with `tools.N.custom.input_schema.type: Input should
+// be 'object'` (the 400 the live smoke run hit on the array-rooted VALIDATE_SCHEMA).
+// Nested schemas may still be arrays — this constrains only the dispatch ROOT.
+export function assertObjectRootSchema(schema) {
+  if (!schema || schema.type !== 'object') {
+    throw new Error(`dispatch schema must be object-rooted (API contract: root type must be 'object', got ${schema && schema.type})`);
+  }
+}
+
 // --- Fixtures ---------------------------------------------------------------
 
 // A canonical discovery finding carrying every REQUIRED_FIELD (merge validates against
@@ -95,6 +105,8 @@ export function validArgs(over = {}) {
 //     failures null-isolate and every single-dispatch stage catches its own throw)
 //   - onPersist(payload): called with the parsed writer payload at the artifact-writer
 //     dispatch (lets a test/recorder capture the REAL persisted findings/checkpoints)
+//   - reportText: when present, the report-writer returns this exact string (drives the
+//     empty-report guard — e.g. '' or '   ' for a whitespace-only false-negative report)
 export function makeCtx(args, opts = {}) {
   const calls = [];
   const violations = [];
@@ -104,6 +116,7 @@ export function makeCtx(args, opts = {}) {
     try {
       assertPrompt(prompt);
       assertValidSchema(dispatch.schema);
+      assertObjectRootSchema(dispatch.schema);
     } catch (e) {
       violations.push(`${dispatch.label || '?'}: ${e.message}`);
       throw e;
@@ -126,9 +139,13 @@ export function makeCtx(args, opts = {}) {
         result: { verified, eliminated: [], batches: [], stats: {} },
       };
     }
-    if (label.startsWith('validate-batch-')) return []; // validator returns an array
+    if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
-    if (label === 'report-writer' || label.startsWith('report-writer-')) return { report: `# Deep Review\n\nrendered ${label}` };
+    if (label === 'report-writer' || label.startsWith('report-writer-')) {
+      // reportText override lets a test drive the empty-report guard (e.g. a
+      // whitespace-only report the writer returned as a false negative).
+      return { report: 'reportText' in opts ? opts.reportText : `# Deep Review\n\nrendered ${label}` };
+    }
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
       return { artifactPaths: {} };

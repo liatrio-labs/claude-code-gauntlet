@@ -5,11 +5,22 @@
 // layer -- not ported here, matching filterFindings.js's applyFilterPipeline
 // (config/exclusions passed in already-parsed, no disk access).
 
-import { dedupCrossAgent } from './filterFindings.js';
+import { dedupCrossAgent, SEVERITY_ORDER } from './filterFindings.js';
 import { pyIntStrict } from './applyValidations.js';
 
-// Severity ordering for downgrade step. Lower index = higher severity.
-export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+// SEVERITY_ORDER is imported from filterFindings.js (its single owner) — see the
+// note there. A second top-level `const SEVERITY_ORDER` here collided in the
+// concatenated bundle after build.js strips the `export` keyword.
+
+// Deep clone via JSON round-trip. The workflow runtime sandbox does NOT provide
+// structuredClone (a node/browser global, absent here — it crashed the live smoke
+// run at the call site below). Findings are JSON-safe by construction (strings,
+// numbers, booleans, null, plain arrays/objects — no Date/Map/Set/undefined/
+// functions), so a JSON round-trip is a faithful deep copy. See CLAUDE.md
+// (Workflow runtime section — only JSON-safe globals are guaranteed here).
+export function deepClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
 // Port of _downgrade_severity: "critical" -> "high" -> "medium" -> "low" ->
 // null. Non-string input (Python's severity.lower() raising AttributeError
@@ -65,9 +76,9 @@ export function rankFindings(findings) {
 //   score >= 75  survive unchanged
 // Findings with no matching challenge entry pass through untouched (by
 // reference -- not cloned, mirroring Python's aliasing of unmatched dict
-// objects). Findings WITH a matching entry are structuredClone'd before any
-// mutation, so the caller's input array/objects are never mutated (see the
-// deep_copy_no_mutation_of_input fixture).
+// objects). Findings WITH a matching entry are deep-cloned (deepClone, a
+// JSON round-trip) before any mutation, so the caller's input array/objects
+// are never mutated (see the deep_copy_no_mutation_of_input fixture).
 export function applyChallenges(findings, challenges) {
   // Build id -> challenge entry map (O(n) lookup). An entry is registered
   // only when it has both a truthy id and an int-coercible score -- matches
@@ -113,7 +124,7 @@ export function applyChallenges(findings, challenges) {
     const justification = 'justification' in entry ? entry.justification : undefined;
 
     // Deep-clone before mutation -- no aliasing of the caller's finding.
-    finding = structuredClone(finding);
+    finding = deepClone(finding);
     finding.challenge_score = score;
     if (justification) finding.challenge_justification = justification;
 

@@ -31,7 +31,12 @@ export function normalizeFieldNames(findings) {
 
 // --- REVIEW.md parser ---------------------------------------------------
 
-const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+// Single owner of SEVERITY_ORDER for the whole bundle: applyChallenges.js imports
+// this rather than re-declaring it. In the concatenated bundle build.js strips the
+// `export` keyword, so two top-level `const SEVERITY_ORDER` declarations (one here,
+// one there) collided as "already been declared" — a runtime SyntaxError. filterFindings.js
+// is emitted before applyChallenges.js (build.js ORDER), so the export is in scope there.
+export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
 const DEFAULT_SEVERITY_THRESHOLD = 'low';

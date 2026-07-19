@@ -60,6 +60,11 @@ function normalizeFieldNames(findings) {
 
 // --- REVIEW.md parser ---------------------------------------------------
 
+// Single owner of SEVERITY_ORDER for the whole bundle: applyChallenges.js imports
+// this rather than re-declaring it. In the concatenated bundle build.js strips the
+// `export` keyword, so two top-level `const SEVERITY_ORDER` declarations (one here,
+// one there) collided as "already been declared" — a runtime SyntaxError. filterFindings.js
+// is emitted before applyChallenges.js (build.js ORDER), so the export is in scope there.
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
@@ -1486,8 +1491,19 @@ function applyValidations(findings, validations) {
 // (config/exclusions passed in already-parsed, no disk access).
 
 
-// Severity ordering for downgrade step. Lower index = higher severity.
-const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+// SEVERITY_ORDER is imported from filterFindings.js (its single owner) — see the
+// note there. A second top-level `const SEVERITY_ORDER` here collided in the
+// concatenated bundle after build.js strips the `export` keyword.
+
+// Deep clone via JSON round-trip. The workflow runtime sandbox does NOT provide
+// structuredClone (a node/browser global, absent here — it crashed the live smoke
+// run at the call site below). Findings are JSON-safe by construction (strings,
+// numbers, booleans, null, plain arrays/objects — no Date/Map/Set/undefined/
+// functions), so a JSON round-trip is a faithful deep copy. See CLAUDE.md
+// (Workflow runtime section — only JSON-safe globals are guaranteed here).
+function deepClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
 
 // Port of _downgrade_severity: "critical" -> "high" -> "medium" -> "low" ->
 // null. Non-string input (Python's severity.lower() raising AttributeError
@@ -1543,9 +1559,9 @@ function rankFindings(findings) {
 //   score >= 75  survive unchanged
 // Findings with no matching challenge entry pass through untouched (by
 // reference -- not cloned, mirroring Python's aliasing of unmatched dict
-// objects). Findings WITH a matching entry are structuredClone'd before any
-// mutation, so the caller's input array/objects are never mutated (see the
-// deep_copy_no_mutation_of_input fixture).
+// objects). Findings WITH a matching entry are deep-cloned (deepClone, a
+// JSON round-trip) before any mutation, so the caller's input array/objects
+// are never mutated (see the deep_copy_no_mutation_of_input fixture).
 function applyChallenges(findings, challenges) {
   // Build id -> challenge entry map (O(n) lookup). An entry is registered
   // only when it has both a truthy id and an int-coercible score -- matches
@@ -1591,7 +1607,7 @@ function applyChallenges(findings, challenges) {
     const justification = 'justification' in entry ? entry.justification : undefined;
 
     // Deep-clone before mutation -- no aliasing of the caller's finding.
-    finding = structuredClone(finding);
+    finding = deepClone(finding);
     finding.challenge_score = score;
     if (justification) finding.challenge_justification = justification;
 
@@ -2179,6 +2195,22 @@ function unverifiedResult(findings, reason) {
   };
 }
 
+// Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1,
+// line comparisons). Pin them to real numbers before the slice-input JSON is written:
+// a value that reaches the script as a string ("153") makes the receipt-path arithmetic
+// raise `unsupported operand type(s) for -: 'str' and 'int'` and degrade the whole slice
+// to UNVERIFIED (the TypeError the live smoke run hit). Coerce only clean numeric strings;
+// leave everything else (null, non-numeric) untouched so the script's own guards still fire.
+const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
+function pinNumericFields(finding) {
+  const out = { ...finding };
+  for (const k of VERIFY_NUMERIC_FIELDS) {
+    const val = out[k];
+    if (typeof val === 'string' && val.trim() !== '' && Number.isFinite(Number(val))) out[k] = Number(val);
+  }
+  return out;
+}
+
 // Dispatch the artifact-writer to persist each slice's --input JSON (the shape
 // verify_findings.py --input reads: { findings, base_branch }). Segmented under the
 // shared char budget. Returns { ok } / { ok:false, reason }; a throw OR a null result
@@ -2193,7 +2225,7 @@ async function materializeVerifySlices(c, inp, slices, policy) {
   }).model;
   const entries = slices.map((slice, i) => ({
     path: `${inputPathBase}.slice${i}.json`,
-    content: { findings: slice, base_branch: v.baseBranch },
+    content: { findings: slice.map(pinNumericFields), base_branch: v.baseBranch },
   }));
   const groups = chunkBySerializedSize(entries, SEGMENT_CHAR_BUDGET);
   for (let g = 0; g < groups.length; g += 1) {
@@ -2337,22 +2369,29 @@ function coarsenLimits(limits, nFiles, nFindings) {
 
 // --- Phase 5: Validate ------------------------------------------------------
 
-// The validator independently re-scores a batch of findings; the documented schema
-// is a bare array [{id, confidence, justification}] (one entry per finding it chose
-// to score — it may omit some, which then keep their original confidence).
-// The validator agent (agents/validator.md) emits an array of
-// { finding_id, confidence, justification }; the stage normalizes finding_id -> id.
+// The validator independently re-scores a batch of findings, one entry per finding it
+// chose to score (it may omit some, which then keep their original confidence). The
+// entries are an array, but the DISPATCH schema must be OBJECT-rooted: the Messages API
+// rejects an array-rooted tool input_schema with `tools.N.custom.input_schema.type:
+// Input should be 'object'` (the 400 the live smoke run hit). So the array is wrapped in
+// a { validations: [...] } object; validateStage unwraps `.validations` at the consumer.
 const VALIDATE_SCHEMA = {
-  type: 'array',
-  items: {
-    type: 'object',
-    properties: {
-      finding_id: { type: 'string' },
-      confidence: { type: 'number' },
-      justification: { type: 'string' },
+  type: 'object',
+  properties: {
+    validations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          finding_id: { type: 'string' },
+          confidence: { type: 'number' },
+          justification: { type: 'string' },
+        },
+        required: ['finding_id', 'confidence'],
+      },
     },
-    required: ['finding_id', 'confidence'],
   },
+  required: ['validations'],
 };
 
 // validateStage(ctx, input) -> { findings, gaps, stats }
@@ -2445,7 +2484,7 @@ async function validateStage(ctx, input) {
 function validatePrompt(inp, batch) {
   const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
   const ids = batch.map((f) => f.id).join(', ');
-  return `${ctxLine}Independently validate this batch of findings (ids: ${ids}). Attempt to disprove each and return the array [{ id, confidence, justification }] — confidence 0-100.`;
+  return `${ctxLine}Independently validate this batch of findings (ids: ${ids}). Attempt to disprove each and return { validations: [{ finding_id, confidence, justification }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
 }
 
 // --- Phase 6: Filter --------------------------------------------------------
@@ -2936,7 +2975,7 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
-    const reportOut = await runPhase('report', () => reportStage(c, {
+    const reportInput = {
       summary: summaryOut.summary,
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
@@ -2947,8 +2986,29 @@ async function runWith(ctx, rawArgs) {
         challenge: challengeOut.stats,
       },
       policy, contextPath, generatedAt: A.generatedAt,
-    }));
+    };
+    let reportOut = await runPhase('report', () => reportStage(c, reportInput));
     gaps.push(...(reportOut.gaps || []));
+
+    // Empty-report guard (false-negative defense). A report that is empty/absent while
+    // findings survived the filter is a false negative — most often a RESUME replaying the
+    // degenerate empty-report stub a crashed run left in its checkpoint. Never ship or
+    // persist it silently:
+    //   1) if it came from a replayed checkpoint, re-run report from scratch (a resume must
+    //      re-run report+persist, not skip past the crashed stub); and
+    //   2) if it is STILL empty with findings present, keep ok:true but record an explicit
+    //      'empty_report' gap and null the report artifact path — never a silent empty report.
+    const postFilterCount = (filterOut.filtered || []).length;
+    const reportIsEmpty = (out) => !out || typeof out.report !== 'string' || out.report.trim() === '';
+    if (reportIsEmpty(reportOut) && postFilterCount > 0 && checkpoints.report !== undefined) {
+      reportOut = await reportStage(c, reportInput);
+      phaseOutputs.report = reportOut;
+      gaps.push(...(reportOut.gaps || []));
+    }
+    const emptyReport = reportIsEmpty(reportOut) && postFilterCount > 0;
+    if (emptyReport) {
+      gaps.push(`empty_report: report stage produced no report while ${postFilterCount} finding(s) survived the filter — refusing to ship a silent empty report`);
+    }
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
     // writer failure degrades to a partial-artifacts gap rather than the top-level catch.
@@ -2965,6 +3025,9 @@ async function runWith(ctx, rawArgs) {
       policy,
     });
     gaps.push(...(writeOut.gaps || []));
+    // On an empty report the findings/checkpoints still persist, but the report path is
+    // nulled so no consumer mistakes an empty stub for a real review (envelope contract).
+    if (emptyReport && writeOut.artifactPaths) writeOut.artifactPaths = { ...writeOut.artifactPaths, report: null };
 
     return {
       ok: true,

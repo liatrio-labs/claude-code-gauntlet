@@ -20,6 +20,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -310,6 +311,91 @@ def _kill_group(proc):
         pass
 
 
+# ---------------------------------------------------------------- plugin integrity
+
+# Paths in the plugin repo the CONTROLLER legitimately rewrites during a run (not child
+# contamination): the experiment ledger is appended every PR. Excluded from the mutation
+# guard so it never false-flags a clean run. Everything else changing means a child wrote
+# into the plugin (self-healing mid-run), which contaminates the measurement.
+_CONTROLLER_OWNED_PATHS = frozenset({"bench/experiments.jsonl"})
+
+
+def _git(args, repo_root):
+    """Run a git command in ``repo_root``; return ``(stdout, returncode)`` (rc=-1 on
+    launch failure). Never raises — the guard degrades to "cannot judge" instead."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=str(repo_root), capture_output=True, text=True
+        )
+    except OSError:
+        return ("", -1)
+    return (proc.stdout, proc.returncode)
+
+
+def _parse_porcelain(text):
+    """Parse ``git status --porcelain`` into ``[(status_xy, path)]``.
+
+    Resolves rename/copy targets (``orig -> new`` -> ``new``) and strips the quotes git
+    adds around paths with special characters. Blank lines are ignored.
+    """
+    entries = []
+    for line in (text or "").splitlines():
+        if not line.strip():
+            continue
+        status, path = line[:2], line[3:]
+        if " -> " in path:  # rename/copy entry: 'orig -> new'
+            path = path.split(" -> ", 1)[1]
+        entries.append((status, path.strip().strip('"')))
+    return entries
+
+
+def _plugin_dirty_paths(repo_root):
+    """Set of paths currently dirty in the plugin repo — the pre-run BASELINE for the
+    mutation guard. Empty set on a clean repo; ``None`` when ``git status`` can't be read.
+
+    The guard compares against this so a legitimate pre-existing local edit (a dev's WIP,
+    or the controller's experiments.jsonl already modified) is never mistaken for — or
+    reset as — child contamination. Only NEW dirtiness a child introduces is flagged.
+    """
+    out, rc = _git(["status", "--porcelain"], repo_root)
+    if rc != 0:
+        return None
+    return {p for _s, p in _parse_porcelain(out)}
+
+
+def _plugin_mutations(repo_root, baseline_paths=frozenset()):
+    """Return child-caused changes ``[(status, path)]`` in the plugin repo: paths dirty
+    now that were NOT dirty in ``baseline_paths`` and are not controller-owned. ``None``
+    when ``git status`` can't be read (cannot judge — the caller then does not flag/reset)."""
+    out, rc = _git(["status", "--porcelain"], repo_root)
+    if rc != 0:
+        return None
+    baseline = baseline_paths or frozenset()
+    return [
+        (s, p) for (s, p) in _parse_porcelain(out)
+        if p not in _CONTROLLER_OWNED_PATHS and p not in baseline
+    ]
+
+
+def _reset_plugin_repo(repo_root, mutations):
+    """Undo child mutations to the plugin repo: delete untracked files/dirs, revert
+    tracked edits with ``git checkout --``. Controller-owned paths were already filtered
+    out (``_plugin_mutations``), so experiments.jsonl is never reverted."""
+    repo_root = Path(repo_root)
+    for status, path in mutations:
+        target = repo_root / path
+        if status.strip() == "??":  # untracked — checkout won't remove it
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+        else:
+            _git(["checkout", "--", path], repo_root)
+
+
 def parse_result_envelope(text):
     """Return the ``type=="result"`` envelope dict from raw stdout, or None.
 
@@ -509,6 +595,10 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
         if reason:
             return InvokeResult("invalid", raw_json_path=str(raw_path), reason=reason)
 
+    # Snapshot the plugin repo's pre-run dirty state so the post-run integrity guard flags
+    # only NEW mutations the child introduced — never a pre-existing local edit.
+    baseline_dirty = _plugin_dirty_paths(REPO_ROOT) or frozenset()
+
     cmd = [
         claude_bin,
         "-p",
@@ -537,6 +627,17 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
+            # A killed child may have left the plugin repo dirty; reset so the NEXT PR
+            # starts from a clean plugin (this PR is already invalid via 'timeout').
+            leftover = _plugin_mutations(REPO_ROOT, baseline_dirty)
+            if leftover:
+                _reset_plugin_repo(REPO_ROOT, leftover)
+                print(
+                    "PLUGIN MUTATED BY CHILD (timed-out PR {}) — reset {}: {}".format(
+                        number, REPO_ROOT, ", ".join(p for _s, p in leftover)
+                    ),
+                    file=sys.stderr,
+                )
             return InvokeResult(
                 "timeout", raw_json_path=str(raw_path), reason="watchdog_timeout"
             )
@@ -546,6 +647,28 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
     # The receipt may live in stdout, the envelope .result, or a report .md — collected
     # into pr_dir by run.py, or still in the shared output dir at echo-check time.
     report_dirs = (env.get("DEEP_REVIEW_OUTPUT_DIR"), str(pr_dir))
+
+    # 0) Plugin-repo integrity (measurement guard): a child that self-healed the plugin
+    #    mid-run leaves REPO_ROOT dirty and contaminates this and every later PR. Reset
+    #    the repo and invalidate BEFORE any outcome gate — the run is no longer trustworthy.
+    mutations = _plugin_mutations(REPO_ROOT, baseline_dirty)
+    if mutations:
+        _reset_plugin_repo(REPO_ROOT, mutations)
+        print(
+            "PLUGIN MUTATED BY CHILD during PR {} — invalidated + reset {}: {}".format(
+                number, REPO_ROOT, ", ".join(p for _s, p in mutations)
+            ),
+            file=sys.stderr,
+        )
+        costs = parse_costs(envelope or {})
+        return InvokeResult(
+            "invalid",
+            cost_usd=costs["cost_usd"],
+            per_model=costs["per_model"],
+            echo_ok=_echo_ok(raw_text, envelope, report_dirs),
+            raw_json_path=str(raw_path),
+            reason="plugin_mutated_by_child",
+        )
 
     # 1) AskUserQuestion (safety) wins even over a clean-looking envelope.
     if _has_askuserquestion(raw_text, envelope):

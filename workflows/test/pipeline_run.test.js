@@ -26,6 +26,16 @@ import {
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
+// Node/browser host globals the workflow runtime SANDBOX does not provide (but node:test
+// does). Deleting them makes the pipeline run under sandbox-parity conditions, so a
+// reintroduced dependency (the structuredClone crash) fails a test instead of only prod.
+const SANDBOX_ABSENT_GLOBALS = ['structuredClone', 'Buffer', 'TextEncoder', 'TextDecoder', 'setTimeout', 'queueMicrotask'];
+async function withSandboxGlobals(fn) {
+  const saved = {};
+  for (const name of SANDBOX_ABSENT_GLOBALS) { saved[name] = globalThis[name]; delete globalThis[name]; }
+  try { return await fn(); } finally { for (const name of SANDBOX_ABSENT_GLOBALS) globalThis[name] = saved[name]; }
+}
+
 // --- Happy path -------------------------------------------------------------
 
 test('happy path: full pipeline returns ok:true, phaseReached=report, artifact paths', async () => {
@@ -59,6 +69,68 @@ test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true
   const out = await runWith(ctx, args);
   assert.equal(out.stats.verified, true);
   assert.ok(!out.gaps.some((g) => /UNVERIFIED/.test(g)), `no verify degradation, got: ${out.gaps}`);
+});
+
+test('sandbox parity: full pipeline runs ok with node-only globals (structuredClone etc.) removed', async () => {
+  // Regression guard for the live-smoke crash: applyChallenges used structuredClone, a
+  // global the runtime sandbox lacks. With it deleted, the OLD code threw in the challenge
+  // stage -> top-level catch -> ok:false. deepClone (JSON round-trip) removes that dependency.
+  const args = validArgs();
+  const out = await withSandboxGlobals(() => runWith(makeCtx(args), args));
+  assert.equal(out.ok, true, `pipeline must not depend on node-only globals; gaps: ${out.gaps}`);
+  assert.equal(out.phaseReached, 'report');
+  assert.equal(out.stats.highConfidence, 2);
+});
+
+// --- Validate dispatch schema is object-rooted (Messages API contract) -------
+
+test('every stage dispatch uses an object-rooted schema (no array-rooted 400)', async () => {
+  // The Messages API rejects an array-rooted tool input_schema (the VALIDATE_SCHEMA 400
+  // the live smoke run hit). The mock asserts this per-dispatch; here we also check the
+  // recorded calls directly, including the validate batch specifically.
+  const args = validArgs();
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(ctx.violations, [], `object-root violations: ${ctx.violations.join('; ')}`);
+  for (const c of ctx.calls) {
+    assert.equal(c.schema.type, 'object', `dispatch ${c.label} must be object-rooted, got ${c.schema.type}`);
+  }
+  const validate = ctx.calls.find((c) => c.label.startsWith('validate-batch-'));
+  assert.ok(validate, 'a validate batch dispatched');
+  assert.equal(validate.schema.type, 'object');
+  assert.ok(validate.schema.properties.validations, 'validate schema wraps the array under { validations }');
+});
+
+// --- Empty-report false-negative guard --------------------------------------
+
+test('empty report while findings survive the filter -> ok:true, empty_report gap, report path nulled', async () => {
+  // A report-writer that returns whitespace-only content is a false negative: the pipeline
+  // must NOT ship it silently. ok stays true, findings still persist, but the report path
+  // is nulled and an explicit empty_report gap is recorded.
+  const args = validArgs();
+  const ctx = makeCtx(args, { reportText: '   ' });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.stats.highConfidence, 2, 'findings survived the filter/challenge');
+  assert.ok(out.gaps.some((g) => /empty_report/.test(g)), `expected an empty_report gap, got: ${out.gaps}`);
+  assert.equal(out.artifactPaths.report, null, 'the empty report path is nulled');
+  assert.equal(typeof out.artifactPaths.findings, 'string', 'findings are still persisted');
+});
+
+test('resume replaying an empty report checkpoint re-runs report+persist (not skipped)', async () => {
+  // The crashed-persist false negative: a prior run left an empty report in its checkpoint.
+  // On resume, runPhase would normally REUSE it — the guard must instead re-run report from
+  // scratch so a real report persists, rather than shipping the degenerate empty stub.
+  const args = validArgs({ checkpoints: { report: { report: '', gaps: [] } } });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.ok(ctx.calls.some((c) => c.label === 'report-writer'), 'report was re-dispatched, not skipped');
+  assert.equal(typeof out.artifactPaths.report, 'string', 'a real report persisted');
+  assert.ok(!out.gaps.some((g) => /empty_report/.test(g)), 'recovered cleanly — no empty_report gap remains');
 });
 
 // --- Top-level catch --------------------------------------------------------

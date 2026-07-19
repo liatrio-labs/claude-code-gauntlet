@@ -9,7 +9,7 @@
 // ends with a top-level `return await run(...)`, which the runtime executes after
 // every sibling definition above it, reading the runtime-injected `args` global.
 import { readFileSync, writeFileSync, readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -47,7 +47,28 @@ function strip(source) {
   return out.join('\n');
 }
 
-function build() {
+// Every top-level binding in the concatenated bundle shares ONE lexical scope
+// (the runtime wraps the whole body in a single async function). Two modules
+// declaring the same top-level name — after `export` is stripped — is therefore a
+// runtime `Identifier 'X' has already been declared` SyntaxError, invisible to this
+// bundler's text concat but fatal on the first live dispatch (the SEVERITY_ORDER
+// collision the live smoke run hit). Detect it at BUILD time and fail loudly with the
+// duplicate name instead. A top-level declaration is one at column 0 (module bodies
+// concatenate flat); const/let/var/function/class, with optional `export`/`async`.
+const TOP_LEVEL_DECL = /^(?:export\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/;
+
+export function detectTopLevelCollisions(bundleText) {
+  const seen = new Map(); // name -> [lineNumbers]
+  bundleText.split('\n').forEach((line, i) => {
+    const m = TOP_LEVEL_DECL.exec(line);
+    if (m) seen.set(m[1], (seen.get(m[1]) || []).concat(i + 1));
+  });
+  return [...seen.entries()]
+    .filter(([, lines]) => lines.length > 1)
+    .map(([name, lines]) => ({ name, lines }));
+}
+
+export function build() {
   const files = present();
   // 1) Hoist the public surface so the bundle's first line is `export const meta`.
   const hoisted = [];
@@ -62,8 +83,29 @@ function build() {
     parts.push(`// --- ${file} ---`);
     parts.push(strip(readFileSync(join(SRC, file), 'utf8')));
   }
-  return parts.join('\n') + '\n';
+  const bundle = parts.join('\n') + '\n';
+
+  // 3) Fail the build on any top-level identifier collision (see above).
+  const collisions = detectTopLevelCollisions(bundle);
+  if (collisions.length) {
+    const detail = collisions
+      .map((c) => `  '${c.name}' declared at lines ${c.lines.join(', ')}`)
+      .join('\n');
+    throw new Error(
+      `build.js: top-level identifier collision(s) in the bundle — each name must have a single owner (export from one module, import into the others):\n${detail}`,
+    );
+  }
+  return bundle;
 }
 
-writeFileSync(OUT, build());
-console.log(`built ${OUT}`);
+// main-guard: only write when run as `node workflows/build.js`; importing this module
+// (the collision-detector unit test) must not trigger a write.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  try {
+    writeFileSync(OUT, build());
+    console.log(`built ${OUT}`);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(1);
+  }
+}

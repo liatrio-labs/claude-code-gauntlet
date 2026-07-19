@@ -559,5 +559,87 @@ class ClaudeVersionParseTest(InvokeTestBase):
         self.assertIsNone(invoke._claude_version(str(Path(self.tmp) / "nope" / "claude")))
 
 
+class PluginMutationGuardTest(InvokeTestBase):
+    """invoke.py's plugin-repo integrity guard. A child that writes into REPO_ROOT
+    mid-run (self-healing the plugin) contaminates the measurement: the PR is marked
+    invalid ('plugin_mutated_by_child') and the repo is reset. Pre-existing local edits
+    (captured as the baseline) and the controller-owned experiments.jsonl are exempt.
+    Each test points invoke.REPO_ROOT at a throwaway git repo so the real plugin is
+    never touched."""
+
+    def _init_repo(self, files):
+        import subprocess
+        root = Path(self.tmp) / "plugin"
+        root.mkdir()
+        for rel, content in files.items():
+            p = root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        for cmd in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-q", "-m", "baseline"]):
+            subprocess.run(cmd, cwd=str(root), check=True, capture_output=True, env=env)
+        return root
+
+    def _porcelain(self, root):
+        import subprocess
+        return subprocess.run(
+            ["git", "status", "--porcelain"], cwd=str(root), capture_output=True, text=True
+        ).stdout.strip()
+
+    def _run_mutating(self, root, mutate_path):
+        with patch.object(invoke, "REPO_ROOT", root):
+            return self._run("mutate_repo", extra_env={"FAKE_CLAUDE_MUTATE_PATH": str(mutate_path)})
+
+    def test_untracked_file_mutation_marks_invalid_and_removes_file(self):
+        root = self._init_repo({"README.md": "base\n"})
+        injected = root / "workflows" / "src" / "injected.js"
+        res = self._run_mutating(root, injected)
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_mutated_by_child")
+        self.assertFalse(injected.exists(), "untracked child file removed on reset")
+        self.assertEqual(self._porcelain(root), "", "plugin repo clean after reset")
+
+    def test_tracked_file_modification_marks_invalid_and_reverts(self):
+        root = self._init_repo({"workflows/src/filterFindings.js": "ORIGINAL\n"})
+        target = root / "workflows" / "src" / "filterFindings.js"
+        res = self._run_mutating(root, target)
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_mutated_by_child")
+        self.assertEqual(target.read_text(), "ORIGINAL\n", "tracked edit reverted on reset")
+        self.assertEqual(self._porcelain(root), "")
+
+    def test_controller_owned_experiments_jsonl_is_not_flagged(self):
+        root = self._init_repo({"bench/experiments.jsonl": "{}\n"})
+        target = root / "bench" / "experiments.jsonl"
+        res = self._run_mutating(root, target)
+        self.assertEqual(res.status, "ok", "a controller-owned change is not child contamination")
+        self.assertNotEqual(self._porcelain(root), "", "experiments.jsonl left modified (controller owns it)")
+
+    def test_preexisting_local_edit_is_not_flagged_or_reset(self):
+        # A dirty file that predates the child (the run's baseline) must survive untouched
+        # — the guard flags DELTA, not absolute dirtiness.
+        root = self._init_repo({"workflows/src/stages.js": "COMMITTED\n"})
+        preexisting = root / "workflows" / "src" / "stages.js"
+        preexisting.write_text("LOCAL WIP\n")  # dirty BEFORE the child runs
+        injected = root / "agents" / "injected.md"
+        res = self._run_mutating(root, injected)
+        # The child's NEW file is flagged + removed; the pre-existing edit is preserved.
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_mutated_by_child")
+        self.assertFalse(injected.exists())
+        self.assertEqual(preexisting.read_text(), "LOCAL WIP\n", "pre-existing local edit untouched")
+
+    def test_clean_run_is_not_flagged(self):
+        root = self._init_repo({"README.md": "base\n"})
+        with patch.object(invoke, "REPO_ROOT", root):
+            res = self._run("ok")  # no mutation
+        self.assertEqual(res.status, "ok")
+        self.assertEqual(self._porcelain(root), "", "clean repo stays clean")
+
+
 if __name__ == "__main__":
     unittest.main()

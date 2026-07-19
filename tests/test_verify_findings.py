@@ -32,6 +32,8 @@ from scripts.verify_findings import (
     get_diff,
     _extract_symbols,
     _write_output,
+    _coerce_numeric_fields,
+    load_input,
     run,
     REPO_ROOT,
 )
@@ -1428,6 +1430,101 @@ class TestReceipt(unittest.TestCase):
             self.assertIn("boom", envelope["stderr"])
         finally:
             os.unlink(findings_path)
+
+
+class TestCoerceNumericFields(unittest.TestCase):
+    """The --input-boundary int-cast that stops a quoted number ("153") from
+    crashing the receipt-path arithmetic ('str' - 'int'). Casts clean integer
+    strings; leaves None, real numbers, and non-numeric junk untouched so the
+    script's own range/existence guards still fire."""
+
+    def test_string_integers_cast_to_int(self):
+        f = {"line_start": "153", "line_end": "155", "confidence": "80", "line": "1", "end_line": "9"}
+        _coerce_numeric_fields(f)
+        self.assertEqual(f, {"line_start": 153, "line_end": 155, "confidence": 80, "line": 1, "end_line": 9})
+        for v in f.values():
+            self.assertIsInstance(v, int)
+
+    def test_signed_and_whitespace_padded_strings_cast(self):
+        f = {"line_start": " 42 ", "line_end": "-3"}
+        _coerce_numeric_fields(f)
+        self.assertEqual(f["line_start"], 42)
+        self.assertEqual(f["line_end"], -3)
+
+    def test_non_numeric_and_none_and_real_numbers_untouched(self):
+        f = {"line_start": None, "line_end": 12, "confidence": "high", "title": "t", "line": "1.5"}
+        _coerce_numeric_fields(f)
+        self.assertIsNone(f["line_start"])
+        self.assertEqual(f["line_end"], 12)
+        self.assertEqual(f["confidence"], "high")  # non-integer string left alone
+        self.assertEqual(f["line"], "1.5")          # float string is not a clean int -> left alone
+        self.assertEqual(f["title"], "t")
+
+    def test_load_input_casts_numeric_fields(self):
+        import json
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"findings": [{"id": "b1", "line_start": "10", "line_end": "12"}]}, f)
+            path = f.name
+        try:
+            data = load_input(path)
+            self.assertEqual(data["findings"][0]["line_start"], 10)
+            self.assertEqual(data["findings"][0]["line_end"], 12)
+        finally:
+            os.unlink(path)
+
+
+class TestReceiptStringLineNumbers(unittest.TestCase):
+    """Regression for the live-smoke verify crash: a slice written the way
+    verifyStage's writer prompt specifies ({findings, base_branch}) with quoted
+    numeric fields must NOT degrade the slice to a status='failed' envelope
+    ('unsupported operand type(s) for -: 'str' and 'int'')."""
+
+    def _run_main(self, argv):
+        import io
+        from scripts.verify_findings import main
+        with patch.object(sys, "argv", argv), \
+                patch("sys.stderr", new_callable=io.StringIO):
+            main()
+
+    def test_receipt_ok_with_string_typed_line_numbers(self):
+        import json
+        # A real file with enough lines so the (in-range) line reference reaches the
+        # arithmetic that crashed on a string line_start; description has no extractable
+        # symbols, so no git grep is needed.
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as srcf:
+            srcf.write("\n".join(f"line {i}" for i in range(1, 51)) + "\n")
+            src_path = srcf.name
+        slice_input = {
+            "findings": [{
+                "id": "bug-1", "dimension": "bug", "severity": "high",
+                "confidence": "80", "file": src_path,
+                "line_start": "5", "line_end": "7",  # quoted numbers — the crash trigger
+                "title": "t", "description": "d", "evidence": "e", "cross_file_refs": [],
+            }],
+            "base_branch": "main",
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump(slice_input, f)
+            in_path = f.name
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+            empty_diff = f.name
+        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        try:
+            self._run_main([
+                "verify_findings.py", "--input", in_path,
+                "--diff-file", empty_diff, "--output", out_path,
+                "--nonce", "N.0", "--head-sha", "abc1234",
+            ])
+            with open(out_path) as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "ok", f"expected ok, got {envelope}")
+            self.assertEqual(envelope["receipt"]["n_in"], 1)
+            verified = envelope["result"]["verified"]
+            self.assertEqual(len(verified), 1)
+            self.assertEqual(verified[0]["line_start"], 5)  # cast to int at the boundary
+        finally:
+            for p in (src_path, in_path, empty_diff, out_path):
+                os.unlink(p)
 
 
 if __name__ == "__main__":

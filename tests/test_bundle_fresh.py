@@ -6,6 +6,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 BUNDLE = REPO / "workflows" / "pipeline.js"
 BUILD = REPO / "workflows" / "build.js"
+PARSE_GATE = REPO / "workflows" / "test" / "tools" / "parse_gate.mjs"
 
 
 class TestBundleFresh(unittest.TestCase):
@@ -45,6 +46,25 @@ class TestBundleFresh(unittest.TestCase):
             f"bundle must contain exactly one `export` statement (the meta literal), found: {export_stmt_lines!r}",
         )
         self.assertTrue(export_stmt_lines[0].strip().startswith("export const meta"))
+
+    def test_bundle_body_compiles_as_async_function(self):
+        # PARSE GATE: the runtime wraps the meta-stripped bundle body in an async
+        # function. A top-level identifier collision across concatenated modules
+        # (two `const SEVERITY_ORDER`) is a compile-time SyntaxError there — the
+        # exact defect that shipped in the committed bundle and crashed the live
+        # smoke run. Compile it with the AsyncFunction constructor and assert it
+        # does not throw. Fails against a colliding bundle, passes once single-owned.
+        result = subprocess.run(
+            ["node", str(PARSE_GATE), str(BUNDLE)],
+            capture_output=True,
+            text=True,
+            cwd=REPO,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"bundle body failed to compile as an async function: {result.stderr.strip()}",
+        )
 
     def test_bundle_ends_with_top_level_run_invocation(self):
         # The runtime executes the bundle body as a wrapped async function with no

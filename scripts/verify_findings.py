@@ -838,6 +838,33 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
+# Numeric finding fields this script does arithmetic/comparisons on. A value that
+# arrives as a string ("153") — e.g. from JS-written JSON where a number was quoted —
+# makes `line_start - 1`, `line_start < 1`, or `range(line_start, line_end + 1)` raise a
+# TypeError ("unsupported operand type(s) for -: 'str' and 'int'" / "'<' not supported
+# between instances of 'str' and 'int'"), which in receipt mode surfaces as
+# status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
+_NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
+_INT_RE = re.compile(r"[+-]?\d+")
+
+
+def _coerce_numeric_fields(finding):
+    """Best-effort int-cast of numeric finding fields at the input boundary.
+
+    Casts a string that is a clean integer (optionally signed) to ``int``; leaves
+    everything else untouched — ``None``, real numbers, and non-numeric junk pass
+    through so the script's own range/existence guards still fire as before. Bools
+    are numbers in Python but never legitimately appear in these fields; guard anyway.
+    """
+    if not isinstance(finding, dict):
+        return finding
+    for key in _NUMERIC_FIELDS:
+        value = finding.get(key)
+        if isinstance(value, str) and _INT_RE.fullmatch(value.strip()):
+            finding[key] = int(value.strip())
+    return finding
+
+
 def load_input(findings_json_path):
     """Load and validate the input JSON file."""
     try:
@@ -854,6 +881,11 @@ def load_input(findings_json_path):
         die("Input JSON is missing required 'findings' array.")
     if not isinstance(data["findings"], list):
         die("'findings' must be an array.")
+
+    # Defensive int-cast at the --input boundary: numbers that arrived quoted must not
+    # crash the arithmetic downstream (see _coerce_numeric_fields).
+    for finding in data["findings"]:
+        _coerce_numeric_fields(finding)
 
     return data
 
