@@ -174,7 +174,7 @@ Workflow(
 The workflow returns a **compact** result — counts, artifact paths, and gaps, never the raw findings bulk:
 
 ```
-{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps }
+{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, checkpoints, resolvedPolicy, gaps }
 ```
 
 Do not re-run the review stages yourself and do not reconstruct findings from the return value — the full findings and report live on disk at `artifactPaths.*` (Phase 8 reads them).
