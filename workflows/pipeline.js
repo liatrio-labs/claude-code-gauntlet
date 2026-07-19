@@ -1891,18 +1891,22 @@ function findingSchema(spec) {
 }
 
 // discover(ctx, input) -> { findings, gaps, degraded }
-// One parallel() call fanning out to every active AGENT. Null member -> gap (agent
-// failed; parallel() already isolated it). A result reporting complete=false or
-// total_seen at/over an optional discovery cap -> "possibly incomplete" gap. A null
-// member also counts a schema failure against each dimension the agent covers;
-// dimensions reaching limits.schemaFailureLimit failures are marked degraded.
+// One parallel() call fanning out to every active AGENT. A null member -> gap AND
+// every dimension that agent covers is marked degraded: a null means the agent
+// terminally failed after the platform's schema retries (cap 5), so those dimensions
+// are entirely uncovered — the failure IS the degradation. (Each dimension maps to
+// exactly one agent, so a per-dimension failure COUNTER could never cross a >1
+// threshold within a single dispatch; degradation is therefore recorded on the first
+// failure, not counted toward a limit.) A malformed result (no findings array) is
+// treated the same. A non-null result reporting complete=false or total_seen at/over
+// an optional discoveryCap -> "possibly incomplete" gap (soft: its findings are still
+// collected, dimension not degraded).
 async function discover(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const agentFlags = inp.agentFlags || {};
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const schemaFailureLimit = limits.schemaFailureLimit || 3;
   const discoveryCap = limits.discoveryCap; // optional per-agent finding ceiling
 
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
@@ -1927,21 +1931,22 @@ async function discover(ctx, input) {
 
   const gaps = [];
   const findings = [];
-  const schemaFailures = {}; // dimension -> consecutive schema-failure count
-  const bump = (dimension) => { schemaFailures[dimension] = (schemaFailures[dimension] || 0) + 1; };
+  const degradedDims = [];
 
+  // parallel() resolves a failed member to null IN PLACE (Phase 0 verified): the
+  // results array is positionally aligned with `tasks`, so results[i] pairs with specs[i].
   results.forEach((res, i) => {
     const spec = specs[i];
     if (res === null || res === undefined) {
       gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered`);
-      spec.dimensions.forEach(bump);
+      degradedDims.push(...spec.dimensions); // terminal agent failure -> its dimensions degraded
       return;
     }
     const list = Array.isArray(res.findings) ? res.findings : null;
     if (list === null) {
-      // Malformed result (no findings array) — treat as a schema failure, no findings.
+      // Malformed result (no findings array) — no usable coverage, so degrade like a null.
       gaps.push(`${spec.agentType}: malformed result (no findings array)`);
-      spec.dimensions.forEach(bump);
+      degradedDims.push(...spec.dimensions);
       return;
     }
     for (const f of list) {
@@ -1954,8 +1959,9 @@ async function discover(ctx, input) {
     }
   });
 
-  const degraded = Object.keys(schemaFailures).filter((dim) => schemaFailures[dim] >= schemaFailureLimit);
-  return { findings, gaps, degraded };
+  // Each dimension belongs to a single agent so no overlap is possible today; the Set
+  // keeps degraded deduplicated and insertion-ordered should that ever change.
+  return { findings, gaps, degraded: [...new Set(degradedDims)] };
 }
 
 function discoverPrompt(inp, spec) {

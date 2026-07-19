@@ -8,7 +8,7 @@ const good = {
   diffPath: '/r/.deep-review/d.patch', changedFilesPath: '/r/.deep-review/f.json',
   reviewConfigPath: null, agentFlags: {},
   policy: { tier: 'optimized', frontier: false, frontierModelId: null, subagentModel: null },
-  limits: { summarizeBucketSize: 20, validateBatch: 10, challengeCap: 40, schemaFailureLimit: 3, verifySliceSize: 200 },
+  limits: { summarizeBucketSize: 20, validateBatch: 10, challengeCap: 40, verifySliceSize: 200 },
 };
 
 test('normalizeArgs parses a JSON string (session tool-call form)', () => {

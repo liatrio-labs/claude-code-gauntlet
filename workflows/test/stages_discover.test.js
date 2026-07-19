@@ -21,22 +21,31 @@ function fakeCtx({ nulls = [], byAgent = {} } = {}) {
 
 test('discover dispatches once per AGENT (7)', async () => {
   const ctx = fakeCtx();
-  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: { schemaFailureLimit: 3 }, policy: {} });
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.equal(new Set(ctx.calls).size, AGENTS.length);
 });
 
-test('null member becomes a gap, siblings survive', async () => {
+test('null member becomes a gap + degrades its dimension, siblings survive', async () => {
   const ctx = fakeCtx({ nulls: ['deep-review:security-reviewer'],
     byAgent: { 'deep-review:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } } });
-  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: { schemaFailureLimit: 3 }, policy: {} });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.ok(out.gaps.some((g) => /security-reviewer/.test(g)));
   assert.equal(out.findings.length, 1);
+  // A null result is terminal degradation: the failed agent's dimension is marked immediately.
+  assert.ok(out.degraded.includes('security'));
 });
 
-test('complete=false is surfaced as possibly-incomplete', async () => {
+test('a nulled multi-dimension agent degrades every dimension it covers', async () => {
+  const ctx = fakeCtx({ nulls: ['deep-review:conventions-and-intent'] });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  assert.deepEqual([...out.degraded].sort(), ['comment_accuracy', 'convention', 'intent']);
+});
+
+test('complete=false is a SOFT possibly-incomplete gap, not degradation', async () => {
   const ctx = fakeCtx({ byAgent: { 'deep-review:bug-detector': { findings: [], complete: false, total_seen: 999 } } });
-  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: { schemaFailureLimit: 3 }, policy: {} });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.ok(out.gaps.some((g) => /possibly incomplete|bug-detector/.test(g)));
+  assert.equal(out.degraded.length, 0); // a live-but-incomplete agent did not fail -> not degraded
 });
 
 test('worst-case agent count stays under 1000; coarsening lowers challengeCap and raises batch sizes', () => {
