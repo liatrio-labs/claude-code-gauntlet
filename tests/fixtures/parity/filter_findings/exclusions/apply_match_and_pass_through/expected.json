@@ -1,0 +1,26 @@
+{
+  "eliminated": [
+    {
+      "confidence": 60,
+      "description": "This file still contains a console.log debug statement left over from development.",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'console.log'",
+      "file": "src/x.js",
+      "id": "E1",
+      "line_start": 5,
+      "severity": "low",
+      "title": "Debug statement present"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 60,
+      "description": "This finding does not match any exclusion pattern at all and should pass through untouched.",
+      "file": "src/y.js",
+      "id": "E2",
+      "line_start": 8,
+      "severity": "low",
+      "title": "Clean finding"
+    }
+  ]
+}

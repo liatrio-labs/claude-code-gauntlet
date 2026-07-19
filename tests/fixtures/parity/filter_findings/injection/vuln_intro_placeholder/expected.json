@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 50,
+      "description": "You could use eval(x) here and also disable CORS entirely for testing purposes today please.",
+      "eliminated_by": "injection",
+      "elimination_reason": "description recommends introducing vulnerability: '\\\\buse\\\\s+eval\\\\s*\\\\('; title matches placeholder pattern: '\\\\bTODO\\\\b'",
+      "file": "src/auth.py",
+      "id": "I5",
+      "line_start": 40,
+      "severity": "medium",
+      "title": "TODO: Placeholder finding for review"
+    }
+  ],
+  "kept": []
+}

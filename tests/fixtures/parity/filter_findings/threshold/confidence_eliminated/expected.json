@@ -1,0 +1,18 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": 50,
+      "description": "d2",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 50 < threshold 70",
+      "file": "a.py",
+      "id": "T2",
+      "line_start": 2,
+      "severity": "low",
+      "title": "t2"
+    }
+  ],
+  "kept": []
+}

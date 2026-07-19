@@ -50,6 +50,48 @@ class TestMergeFindingsParity(unittest.TestCase):
                 self.assertEqual(got["methodology"]["truncation_warnings"], expected["methodology"]["truncation_warnings"])
 
 
+class TestFilterFindingsParity(unittest.TestCase):
+    def test_all_cases(self):
+        import tempfile
+        import filter_findings as ff
+        # rglob, not iterdir: filter_findings fixtures nest one level deeper
+        # (filter_findings/<group>/<case>/) than finding_dedup/merge_findings'
+        # flat (<script>/<case>/) layout.
+        for input_path in sorted((FIXTURES / "filter_findings").rglob("input.json")):
+            case_dir = input_path.parent
+            case_label = str(case_dir.relative_to(FIXTURES / "filter_findings"))
+            with self.subTest(case=case_label):
+                inp, expected = _load(case_dir)
+                fn = inp["fn"]
+                if fn == "normalize_field_names":
+                    findings = inp["findings"]
+                    ff.normalize_field_names(findings)
+                    self.assertEqual({"findings": findings}, expected)
+                elif fn == "parse_review_md":
+                    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+                        t.write(inp["markdown"])
+                        path = t.name
+                    self.assertEqual({"config": ff.parse_review_md(path)}, expected)
+                elif fn == "load_exclusions":
+                    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+                        t.write(inp["markdown"])
+                        path = t.name
+                    self.assertEqual({"patterns": ff.load_exclusions(path)}, expected)
+                elif fn == "apply_threshold_filter":
+                    passed, eliminated, contested = ff.apply_threshold_filter(inp["findings"], inp["config"])
+                    self.assertEqual(
+                        {"kept": passed, "eliminated": eliminated, "contested_count": contested}, expected
+                    )
+                elif fn == "apply_injection_filter":
+                    kept, eliminated = ff.apply_injection_filter(inp["findings"])
+                    self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
+                elif fn == "apply_exclusions":
+                    kept, eliminated = ff.apply_exclusions(inp["findings"], inp["exclusion_patterns"])
+                    self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
+                else:
+                    self.fail(f"unhandled fn: {fn!r}")
+
+
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
         before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}

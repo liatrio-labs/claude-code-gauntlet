@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "I4",
+      "title": "Possible issue",
+      "description": "Bug here maybe.",
+      "file": "src/app.py",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 90
+    }
+  ]
+}

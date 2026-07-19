@@ -1,0 +1,4 @@
+{
+  "fn": "parse_review_md",
+  "markdown": "# Custom Review Rules\n\nWe want stricter gating for this repository.\n\nconfidence_threshold: 55\nseverity_threshold: critical\n\nThanks.\n"
+}

@@ -1,0 +1,7 @@
+{
+  "patterns": [
+    "ignore console.log statements",
+    "ignore TODO comments in vendor code",
+    "final bullet pattern"
+  ]
+}

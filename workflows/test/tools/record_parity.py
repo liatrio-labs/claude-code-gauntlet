@@ -34,8 +34,45 @@ def _merge_findings(inp):
     return env
 
 
+def _filter_findings(inp):
+    import tempfile
+    import filter_findings as ff
+    fn = inp["fn"]
+    if fn == "normalize_field_names":
+        findings = inp["findings"]
+        ff.normalize_field_names(findings)
+        return {"findings": findings}
+    if fn == "parse_review_md":
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+            t.write(inp["markdown"])
+            path = t.name
+        return {"config": ff.parse_review_md(path)}
+    if fn == "load_exclusions":
+        # Not in the Task 4 brief's Step 1 skeleton — added because loadExclusions
+        # is a Produced part-1 function (brief interfaces list) and the exclusions/
+        # fixture case names (fenced_block_match, bullet_list_fallback) describe
+        # load_exclusions's two parse paths, not apply_exclusions's matching.
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+            t.write(inp["markdown"])
+            path = t.name
+        return {"patterns": ff.load_exclusions(path)}
+    if fn == "apply_threshold_filter":
+        # apply_threshold_filter returns a 3-tuple (passed, eliminated, contested_count),
+        # not the 2-tuple the brief's Step 1 skeleton unpacks -- corrected per the
+        # brief's own instruction to confirm arity against scripts/filter_findings.py.
+        passed, eliminated, contested_count = ff.apply_threshold_filter(inp["findings"], inp["config"])
+        return {"kept": passed, "eliminated": eliminated, "contested_count": contested_count}
+    if fn == "apply_injection_filter":
+        kept, eliminated = ff.apply_injection_filter(inp["findings"])
+        return {"kept": kept, "eliminated": eliminated}
+    if fn == "apply_exclusions":
+        kept, eliminated = ff.apply_exclusions(inp["findings"], inp["exclusion_patterns"])
+        return {"kept": kept, "eliminated": eliminated}
+    raise ValueError(fn)
+
+
 # Registered per-script recorders. Later tasks append entries here.
-RECORDERS = {"finding_dedup": _finding_dedup, "merge_findings": _merge_findings}
+RECORDERS = {"finding_dedup": _finding_dedup, "merge_findings": _merge_findings, "filter_findings": _filter_findings}
 
 
 def record(script, case_dir):
@@ -47,14 +84,20 @@ def record(script, case_dir):
 def main(argv):
     only_script = argv[1] if len(argv) > 1 else None
     only_case = argv[2] if len(argv) > 2 else None
-    for script, _fn in RECORDERS.items():
+    for script in RECORDERS:
         if only_script and script != only_script:
             continue
-        for case_dir in sorted((FIXTURES / script).iterdir()):
-            if not case_dir.is_dir() or (only_case and case_dir.name != only_case):
+        script_dir = FIXTURES / script
+        # rglob (not iterdir) so both flat (<script>/<case>/) and grouped
+        # (<script>/<group>/<case>/, e.g. filter_findings/threshold/<case>/) fixture
+        # layouts are found uniformly, at whatever depth input.json actually lives.
+        for input_path in sorted(script_dir.rglob("input.json")):
+            case_dir = input_path.parent
+            case_label = str(case_dir.relative_to(script_dir))
+            if only_case and only_case not in (case_label, case_dir.name):
                 continue
             record(script, case_dir)
-            print(f"recorded {script}/{case_dir.name}")
+            print(f"recorded {script}/{case_label}")
     return 0
 
 

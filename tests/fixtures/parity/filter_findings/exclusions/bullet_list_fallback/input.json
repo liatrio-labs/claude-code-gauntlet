@@ -1,0 +1,4 @@
+{
+  "fn": "load_exclusions",
+  "markdown": "# Exclusions\n\n- ignore console.log statements\n* ignore TODO comments in vendor code\nNot a bullet line, should be ignored\n- final bullet pattern\n"
+}

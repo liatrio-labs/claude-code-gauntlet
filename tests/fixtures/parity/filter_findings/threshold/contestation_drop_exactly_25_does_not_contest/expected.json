@@ -1,0 +1,17 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": 40,
+      "description": "d",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 40 < threshold 70",
+      "id": "F1",
+      "original_confidence": 65,
+      "severity": "low",
+      "title": "t"
+    }
+  ],
+  "kept": []
+}

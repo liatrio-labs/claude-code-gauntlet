@@ -1,0 +1,26 @@
+{
+  "fn": "apply_exclusions",
+  "findings": [
+    {
+      "id": "E1",
+      "title": "Debug statement present",
+      "description": "This file still contains a console.log debug statement left over from development.",
+      "file": "src/x.js",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 60
+    },
+    {
+      "id": "E2",
+      "title": "Clean finding",
+      "description": "This finding does not match any exclusion pattern at all and should pass through untouched.",
+      "file": "src/y.js",
+      "line_start": 8,
+      "severity": "low",
+      "confidence": 60
+    }
+  ],
+  "exclusion_patterns": [
+    "console.log"
+  ]
+}

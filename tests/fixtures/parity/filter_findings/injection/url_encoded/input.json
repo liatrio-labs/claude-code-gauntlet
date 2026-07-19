@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "I2",
+      "title": "Suspicious payload note",
+      "description": "Investigate this encoded payload before proceeding further today: ZGVlcC1yZXZpZXcgZmlsdGVyIGZpbmRpbmdzIGluamVjdGlvbiBmaXh0dXJlIHBheWxvYWQgZGF0YQ== end of note.",
+      "file": "src/handler.py",
+      "line_start": 20,
+      "severity": "medium",
+      "confidence": 50
+    }
+  ]
+}

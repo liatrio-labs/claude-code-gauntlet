@@ -1,0 +1,29 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": 65,
+      "description": "d",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 65 < threshold 90",
+      "file": "a.py",
+      "id": "T4b",
+      "line_start": 5,
+      "severity": "low",
+      "title": "bug"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 65,
+      "description": "d",
+      "dimension": "security",
+      "file": "a.py",
+      "id": "T4a",
+      "line_start": 4,
+      "severity": "low",
+      "title": "sec"
+    }
+  ]
+}
