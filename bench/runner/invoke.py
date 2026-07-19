@@ -6,7 +6,7 @@
 the isolated ``.claude.json`` with the worktree marked trusted -- a headless run cannot
 answer a first-run trust dialog, so it must be accepted ahead of time.
 
-``invoke_review`` runs ``claude -p "/deep-review <n>"`` under that context in its own
+``invoke_review`` runs ``claude -p "/deep-review:deep-review <n>"`` under that context in its own
 process session, with a watchdog that kills the whole process group on timeout (no
 orphans), scans the output for AskUserQuestion (defense-in-depth -> ``invalid``),
 verifies the ``Headless config:`` echo receipt (accepted from raw stdout, the result
@@ -76,6 +76,17 @@ _ASKUSERQUESTION_RE = re.compile(r'"(?:name|tool_name)"\s*:\s*"AskUserQuestion"'
 # running a degraded review or hanging. v2 needs no such gate. See ``_v3_preflight``.
 V3_MIN_CLAUDE_VERSION = (2, 1, 154)
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+# The slash command that triggers the review skill. It MUST be namespace-qualified as
+# ``<plugin>:<skill>`` (both are "deep-review"): in the harness's pinned isolated context
+# (isolated HOME/CLAUDE_CONFIG_DIR + --plugin-dir, no --bare), Claude Code registers a
+# plugin skill's slash command only under its namespaced name. The bare/flat ``/deep-review``
+# alias is not reliably registered there and resolves to "Unknown command: /deep-review"
+# (num_turns 0, $0), which the runner then classes ``invalid``/``config_echo_mismatch`` --
+# the intermittent registration is why some children in a run failed and others did not.
+# Namespace-qualifying makes command resolution deterministic. See references/artifact 33
+# (P2b): skills are namespace-qualified in this isolation mode, unlike the flat --bare mode.
+SKILL_COMMAND = "deep-review:deep-review"
 
 
 @dataclass
@@ -501,7 +512,7 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
     cmd = [
         claude_bin,
         "-p",
-        "/deep-review {}".format(number),
+        "/{} {}".format(SKILL_COMMAND, number),
         "--output-format",
         "json",
         "--dangerously-skip-permissions",

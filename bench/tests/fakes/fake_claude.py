@@ -15,8 +15,11 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   echo_in_report -> NO echo in stdout or .result; the full block lives only in a collected
                     report .md under $DEEP_REVIEW_OUTPUT_DIR. + payload.
 
-All CLI args are ignored. If FAKE_CLAUDE_PIDFILE is set, the process-group id is written
-there at startup so the watchdog test can prove the group was killed.
+All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
+process-group id is written there at startup so the watchdog test can prove the group was
+killed. If FAKE_CLAUDE_ARGV_FILE is set, the review invocation's argv is recorded there
+(one arg per line) so a test can assert the exact ``-p`` command the runner built -- the
+``--version`` preflight probe does not record (it returns before reaching main's body).
 """
 
 import json
@@ -99,6 +102,13 @@ def _record_pgid():
             fh.write(str(os.getpgrp()))
 
 
+def _record_argv():
+    argv_file = os.environ.get("FAKE_CLAUDE_ARGV_FILE")
+    if argv_file:
+        with open(argv_file, "w") as fh:
+            fh.write("\n".join(sys.argv[1:]))
+
+
 def _write_report(lines):
     """Write a report .md carrying the echo block in its methodology section."""
     output_dir = os.environ.get("DEEP_REVIEW_OUTPUT_DIR")
@@ -120,6 +130,7 @@ def main():
         return
 
     _record_pgid()
+    _record_argv()
     mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 
     if mode == "hang":

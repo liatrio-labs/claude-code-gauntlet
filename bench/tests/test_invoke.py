@@ -418,6 +418,23 @@ class InvokeReviewTest(InvokeTestBase):
         self.assertTrue(Path(res.raw_json_path).exists())
         self.assertIn("claude-opus-4-8", res.per_model)
 
+    def test_invokes_namespace_qualified_skill_command(self):
+        # Regression: the child must be invoked with the NAMESPACE-QUALIFIED slash command
+        # ``/deep-review:deep-review <n>``, not the flat ``/deep-review <n>``. In the pinned
+        # isolated --plugin-dir context the flat alias is not reliably registered and
+        # resolves to "Unknown command: /deep-review" (num_turns 0), which sank real smoke
+        # children. See invoke.SKILL_COMMAND and artifact 33 (P2b).
+        argv_file = Path(self.tmp) / "argv.txt"
+        res = self._run("ok", extra_env={"FAKE_CLAUDE_ARGV_FILE": str(argv_file)})
+        self.assertEqual(res.status, "ok")
+        self.assertTrue(argv_file.exists())
+        argv = argv_file.read_text().splitlines()
+        self.assertIn("-p", argv)
+        prompt = argv[argv.index("-p") + 1]
+        self.assertEqual(prompt, "/deep-review:deep-review {}".format(PR["pr_number"]))
+        # Guard the exact regression: the bare/flat command must not reappear.
+        self.assertNotEqual(prompt, "/deep-review {}".format(PR["pr_number"]))
+
     def test_hang_times_out_and_kills_group(self):
         pidfile = Path(self.tmp) / "pgid.txt"
         res = self._run("hang", timeout_s=2, extra_env={"FAKE_CLAUDE_PIDFILE": str(pidfile)})
