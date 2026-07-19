@@ -4,15 +4,34 @@ Full UX orchestration flow for Phase 8: report delivery, PR comment selection, t
 
 ---
 
-## Stage 0: Generate Report (Internal)
+## Stage 0: Collect Artifacts (from the workflow return)
 
-> **Generate the report internally.** You may output a brief summary to chat, but the full report is delivered per the method(s) selected in Phase 1.
+> **The workflow already generated the report.** The Report stage rendered `report.md` and the artifact-writer persisted it; the main session collects it, it does not re-generate it. You may output a brief summary to chat, but the full report is delivered per the method(s) selected in Phase 1.
 
-**Read the delivery-ready findings** from `{output_dir}/deep-review-delivery-{head_sha_short}.json` (output of `apply_challenges.py`). This file contains the final ranked, deduped, capped findings with all challenge metadata applied. Do not reconstruct findings from memory — use this file as the source of truth for the report.
+The Phase 3 `Workflow` call returned a compact object:
 
-Read `references/report-format.md` for the full template and PR comment format.
+```
+{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps }
+```
 
-The report includes: executive summary with finding counts (no verdict), severity-grouped findings, surfaced findings section, improvement suggestions section, per-dimension summary, and a **required** Review Methodology section documenting agents dispatched, model tier, validation stats, challenge results, and failures.
+**On `ok: true`:** read the two artifacts — they are the source of truth for delivery. Do not reconstruct findings from the return value or from memory.
+
+- `artifactPaths.findings` — the persisted findings JSON. It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged.
+- `artifactPaths.report` — the rendered report markdown (already includes the severity-grouped findings, surfaced section, improvement suggestions, per-dimension summary, and Review Methodology).
+
+**On `ok: false` or a partial-artifacts gap** (writer failed, `artifactPaths.findings` null): the run reached `phaseReached` but did not finish. Offer **resume-from-checkpoint** before delivering anything partial:
+
+1. Read the checkpoint artifact at `artifactPaths.checkpoints`.
+2. Re-invoke the same `Workflow(scriptPath, args)` call with `args.checkpoints` set to that artifact's content. The workflow skips every already-completed phase (it unwraps the `.phases` map) and resumes at the first missing one.
+3. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists via chat and report the `gaps`.
+
+**Surface `gaps` in the methodology regardless of `ok`** — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
+
+Read `references/report-format.md` for the report template and PR comment format. If the persisted report is the deterministic **minimal report** (a report-writer failure — indicated by a report gap), note that in delivery: it lists findings from pipeline stats without the full narrative.
+
+### Methodology inputs
+
+The methodology section must disclose: **plugin version** (`.claude-plugin/plugin.json` `version`), **PIPELINE_VERSION** (the `version` in `workflows/pipeline.js` `meta`), **per-stage models** (from `resolvedPolicy` — a `subagentModel` override if present, else `frontier`/`frontierModelId` and the S5 defaults), the **effective config** (mode, delivery, limits), and `stats`/`gaps`. If `resolvedPolicy.subagentModel` is set, disclose it prominently — `CLAUDE_CODE_SUBAGENT_MODEL` overrode every per-stage model.
 
 ### Permalinks
 

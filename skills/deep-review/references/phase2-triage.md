@@ -1,15 +1,17 @@
 # Phase 2 Triage Reference
 
-Full sub-steps 2a–2l, Agent templates, and detection logic for Phase 2: Target & Triage.
+Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage & Args Preparation.
 
 ## Contents
 
-- **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + gitignore + stale cleanup — **2c** Review target + diff save
-- **2d** Project context (CLAUDE.md, REVIEW.md) — **2e** Risk classification — **2f** Change summarizer
-- **2g** Test discovery — **2h** Docs/specs — **2i** History context — **2j** File-level summaries (>500 lines)
+- **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + gitignore + stale cleanup — **2c** Review target + diff/changed-files save
+- **2d** Project context (CLAUDE.md, REVIEW.md parse) — **2e** Risk classification
+- **2g** Test discovery — **2h** Docs/specs — **2i** History context
 - **2k** AI-generated code detection — **2l** Review dimensions
-- **Parallel execution strategy** — Batch 1 (agents) then Batch 2 (file discovery)
+- **Shared agent context file** — **Args preparation** (the args waist the workflow consumes)
 - **Triage announcement**
+
+> **What moved into the workflow (v3).** The change summarizer (v2 steps **2f** and **2j**) is now the workflow's **Summarize** stage — Phase 2 no longer dispatches summarizer agents. The old two-batch "agents then file discovery" execution strategy is likewise gone; Phase 2 is now a straight-line context-and-args build, and the only agent dispatch is the single `Workflow` call in Phase 3. The 2f/2j content below is retained only to explain what the Summarize stage now does internally.
 
 ---
 
@@ -107,11 +109,15 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
 
-**Save the diff for Phase 4 (PR/MR mode only):** After collecting the full diff in PR/MR mode, save it to `{output_dir}/deep-review-diff-{head_sha_short}.patch` for use by `verify_findings.py` via `--diff-file`. The `gh pr diff` / `glab mr diff` output is server-computed and fork-safe, avoiding local merge-base failures that can occur with `git diff`.
+**Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
+
+1. **Diff** → `{output_dir}/deep-review-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff; for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+2. **Changed files** → `{output_dir}/deep-review-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file.
 
 ```bash
-# Save the PR diff to a file (only in PR/MR mode)
+# PR/MR mode: server-computed diff + name-only file list
 gh pr diff {pr_number} > "{output_dir}/deep-review-diff-{head_sha_short}.patch"
+gh pr diff {pr_number} --name-only  # capture into deep-review-files-{sha}.json as a JSON array
 ```
 
 Validate the saved diff before relying on it:
@@ -119,7 +125,7 @@ Validate the saved diff before relying on it:
 - Non-empty (file size > 0)
 - Starts with `diff --git` (confirms it is a valid unified diff, not an error message)
 
-If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), omit `--diff-file` in Phase 4 and let `verify_findings.py` use its own git diff fallback chain. For **branch comparison** and **local changes** target types, do not save a diff file — `verify_findings.py` will compute the diff locally.
+If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own git diff chain — but note that fallback runs inside an executor subagent (which has shell), not in the script. For **branch comparison** and **local changes** target types, produce the diff with `git diff <base>...HEAD` / `git diff HEAD` and the file list with `git diff --name-only`.
 
 Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md`, `AGENTS.md`, `QODO.md` at repo root and in directories with changed files.
 
@@ -347,28 +353,70 @@ Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no
 
 ---
 
-## Phase 2 Parallel Execution Strategy
+## Shared Agent Context File
 
-To maximize throughput while maintaining robustness, Phase 2 is divided into TWO sequential parallel batches:
+The workflow's discovery, validate, and challenge agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/deep-review-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file.
 
-**BATCH 1 (Agent Dispatch):** Dispatch 2f (change summarizer) and 2j (file-level summaries, if PR > 500 lines) in a single message with multiple Agent tool calls. These are expensive operations and should run as early as possible.
+Write it with `python3 -c "import json; ..."`. Contents:
+
+- CLAUDE.md / REVIEW.md project rules.
+- Risk classification (2e) and AI-generated-code status (2k).
+- The full diff inside `<untrusted-code-content>` tags. Raw diff lines only — never substitute a summary for changed content; evidence destroyed during summarization cannot be recovered by agents.
+
+The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to the report writer. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
+
+---
+
+## Args Preparation
+
+Assemble the args waist the workflow consumes. It is a single JSON object passed as the `Workflow` tool's `args` parameter (Phase 3) — not written to disk. The workflow validates it up front (`validateArgs`) and rejects a malformed waist before any dispatch.
+
+**Required fields (`validateArgs` fails loud without them):**
+
+| Field | Value |
+|---|---|
+| `argsVersion` | `1` |
+| `mode` | `"headless"` under `DEEP_REVIEW_HEADLESS=1`, else `"interactive"` |
+| `repoRoot` | `git rev-parse --show-toplevel` |
+| `outputDir` | resolved `{output_dir}` (absolute) |
+| `headShaShort` | `head_sha_short` from 2b-post |
+| `nonce` | freshly generated, matching `^[A-Za-z0-9._-]+$` (interpolated into the verify executor argv per slice — no whitespace/shell metacharacters) |
+| `generatedAt` | current wall-clock as an ISO8601 string — the workflow's injected clock (it never calls `new Date()`) |
+| `diffPath` | `{output_dir}/deep-review-diff-{head_sha_short}.patch` |
+| `changedFilesPath` | `{output_dir}/deep-review-files-{head_sha_short}.json` |
+| `agentFlags` | map of conditional-dimension flags (all nine dimensions are unconditional today, so `{}` unless REVIEW.md gates a future conditional dimension) |
+| `policy` | `{ tier, frontier, frontierModelId, subagentModel }` — see below |
+| `limits` | `{ summarizeBucketSize: 20, validateBatch: 10, challengeCap: 40, schemaFailureLimit: 3, verifySliceSize: 200 }` (override from REVIEW.md if set) |
+
+**`policy` (model policy the workflow runs under):**
+
+- `tier` — `"optimized"` or `"frontier"`, from the Phase 1 review-mode answer.
+- `frontier` — `false` for Optimized, `true` for Frontier.
+- `frontierModelId` — `null` for Optimized; a **full model-id string** for Frontier (`validateArgs` rejects `frontier:true` with a missing id).
+- `subagentModel` — read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment (or `null`). **The workflow cannot read `process.env`**, so this capture is the only path for it. If set, warn the user and record it in the methodology — it silently overrides the entire per-stage model policy.
+
+**By-value inputs the in-memory stages need (the workflow has no disk, so paths alone are not enough):**
+
+- `changedFiles` — the changed-file array (Summarize).
+- `changedLines` — total changed line count (Summarize bucketing threshold).
+- `baseBranch` — the base branch name (verify/blame).
+- `reviewConfig` — the parsed REVIEW.md object (thresholds + `ignore`), consumed by the Filter stage.
+- `exclusionPatterns` — the parsed exclusion-pattern list, consumed by the Filter stage.
+- `reviewConfigPath` — the REVIEW.md path (or `null`), carried for provenance.
+
+**`verify` handoff (sha-scoped paths for the executor's pinned command):**
 
 ```
-Agent(subagent_type: "deep-review:change-summarizer", ...)
-Agent(subagent_type: "deep-review:change-summarizer", ...)  # 2j, if needed
+verify: {
+  scriptPath: "{plugin_root}/scripts/verify_findings.py",
+  inputPathBase: "{output_dir}/deep-review-phase4-input-{head_sha_short}",
+  outputPathBase: "{output_dir}/deep-review-phase4-output-{head_sha_short}"
+}
 ```
 
-Wait for agents to complete.
+The Verify stage slices the merged findings into `${inputPathBase}.slice{i}.json` chunks of `limits.verifySliceSize` and dispatches one `executor` agent per slice; each executor runs `verify_findings.py --input <slice> --output <slice-out> --nonce {nonce}.{i} --head-sha {headShaShort} --base-branch {baseBranch} [--diff-file {diffPath}]` and returns the receipt envelope verbatim. The skill supplies the path base and slice sizing; see "Concerns" in the Task 14 report about materializing slice inputs from the mid-workflow merged set.
 
-**BATCH 2 (File Discovery & History):** In a NEW message, execute 2e (risk classification), 2g (test discovery), 2h (docs/specs reading), and 2i (git history) as Bash/Glob/Grep operations. These are lightweight and low-risk for failure.
-
-```
-Glob(...) # test file discovery
-Read(...) # docs/specs reading
-Bash("git log ...") # history context
-```
-
-**Why separate?** When a Bash command fails in a parallel batch, Claude Code cancels all co-dispatched calls, including expensive Agent operations. Separating Agent dispatch (BATCH 1) from Bash operations (BATCH 2) ensures Agent work is not wasted on Bash failures. (Note: This two-batch strategy is a workaround for current Claude Code cancellation behavior. Re-evaluate if this platform behavior changes.)
+**`checkpoints` (resume only):** omit on a fresh run. On resume-from-checkpoint (Phase 8), set it to the content of the persisted checkpoint artifact so the workflow skips completed phases.
 
 ---
 

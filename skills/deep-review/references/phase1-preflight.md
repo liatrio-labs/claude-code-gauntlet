@@ -1,8 +1,23 @@
 # Phase 1 Pre-Flight Reference
 
-Review target resolution, eligibility logic, AskUserQuestion templates, and consolidated pre-flight configuration gate for Phase 1.
+Workflow-tool availability check, review target resolution, eligibility logic, AskUserQuestion templates, and consolidated pre-flight configuration gate for Phase 1.
 
-> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) and gitignore check (`git check-ignore`) happen in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Phase 1 only resolves the output directory and runs `mkdir -p`.
+> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) and gitignore check (`git check-ignore`) happen in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Phase 1 only runs the availability check, resolves the output directory, and runs `mkdir -p`.
+
+---
+
+## Workflow-Tool Availability Check (run first)
+
+v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-session fallback — the break from v2's inline subagent dispatch is a locked decision. Before any other work, confirm the **`Workflow` tool is present in this session's available tools**.
+
+- **Present** → continue with target resolution.
+- **Absent** → print exactly the message below and STOP. Do not emulate the pipeline by dispatching agents inline.
+
+```
+deep-review v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install deep-review v2.x for older CLIs.
+```
+
+This is the Phase-0 test-13 recipe: the session inspects its own tool registry for `Workflow` before dispatch. The check is identical in interactive and headless modes.
 
 ---
 
@@ -140,10 +155,15 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
   multiSelect: false,
   options: [
     { label: "Optimized", description: "Sonnet for most agents, Opus for security. Faster and ~40% cheaper." },
-    { label: "Frontier", description: "All Opus agents. Maximum depth for high-stakes reviews." }
+    { label: "Frontier", description: "Frontier model behind the frontier flag (challenger upgraded). Maximum depth for high-stakes reviews." }
   ]
 }
 ```
+
+**This answer sets the workflow's model policy (the `frontier` flag).** It is not cosmetic — it is threaded into `args.policy` in Phase 2:
+
+- **Optimized** → `policy.tier = "optimized"`, `policy.frontier = false`, `policy.frontierModelId = null`.
+- **Frontier** → `policy.tier = "frontier"`, `policy.frontier = true`, and `policy.frontierModelId` **must** be set to a full model-id string. The workflow's `validateArgs` rejects `frontier: true` with a missing `frontierModelId` (no silent alias fallback — the Fable alias is Phase-0-deferred). The `frontier` flag currently upgrades the **challenger** stage only; discovery security-reviewer stays Opus and the other stages stay Sonnet.
 
 **Delivery preference** (when `default_delivery` not set in REVIEW.md):
 

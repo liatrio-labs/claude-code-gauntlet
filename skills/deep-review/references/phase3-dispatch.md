@@ -1,198 +1,72 @@
 # Phase 3 Dispatch Reference
 
-Context scoping, agent roster, dispatch template, and failure handling for Phase 3: Review Agents.
+In v3 the review stages run **inside** the workflow. Phase 3 is a single `Workflow` tool call — not a batch of subagent dispatches. This reference covers the invocation contract, the internal stage map, and the agent roles the workflow drives.
 
 ---
 
-## What Each Agent Receives
-
-Each named subagent definition (in `agents/{dimension}.md`) already embeds: agent role, instructions, false-positive exclusion list, confidence calibration rubric, JSON output schema, and tool/effort/model configuration.
-
-The orchestrator provides only **two paths** in the dispatch prompt:
-
-1. **Context file path** — absolute path to `{output_dir}/deep-review-context-{head_sha_short}.md` (written during Phase 2)
-2. **Findings file path** — absolute path to `{output_dir}/deep-review-{agent}-{head_sha_short}.ndjson`
-
-All shared context (project rules, change summary, risk classification, diff, test files, history) lives in the context file. Agents use Read to load it at the start of their investigation. This keeps each dispatch prompt to ~100 tokens, ensuring all 7 Agent tool_use blocks fit in a single response.
-
----
-
-## Per-Agent Context Scoping
-
-The context file contains the full diff. Agents scope their investigation based on their agent definition's instructions:
-
-- **bug-detector**: Focuses on HIGH/MEDIUM risk files; LOW files are sweep-only
-- **security-reviewer**: Reviews **all files** (security bugs lurk anywhere)
-- **cross-file-impact**: Reviews **all files** + must search entire codebase for callers/implementors of changed public symbols
-- **test-analyzer**: Focuses on changed production files + test files
-- **conventions-and-intent**: Reviews **all files** (needs full scope for convention and intent checking)
-- **type-design-analyzer**: Focuses on files with new type definitions (only dispatched when new types introduced)
-- **code-simplifier**: Reviews **all changed files**
-
-All agents can still **pull** additional context — scoping controls what they focus on, not what is accessible.
-
-**Raw diff rule.** The context file contains raw diff lines. The orchestrator must never substitute its own summary for actual changed content. Evidence destroyed during summarization cannot be recovered by agents.
-
-**Context scoping tiers:**
-
-- **HIGH + MEDIUM files:** full raw diff available to all applicable agents
-- **LOW files (after content-change promotion):** compact raw diff (changed lines only, no context lines) included in the context file as a clearly-delimited "Sweep appendix" section
-
----
-
-## Agent Roster
-
-**Always-on (6)** — default model per agent is defined in each agent's frontmatter; Frontier mode overrides to `opus` at dispatch:
-
-1. **bug-detector** — Logic errors, edge cases, null handling, race conditions, API misuse. Subagent: `deep-review:bug-detector`.
-2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Subagent: `deep-review:security-reviewer`.
-3. **cross-file-impact** — Caller/dependent tracing, cross-module impact. Subagent: `deep-review:cross-file-impact`.
-4. **test-analyzer** — Coverage gaps, test quality, DAMP principles. Subagent: `deep-review:test-analyzer`.
-5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Always dispatched. When no CLAUDE.md or project convention files exist, the context file notes: "No CLAUDE.md found — skip pass 1 (convention compliance), execute passes 2 and 3 only." Subagent: `deep-review:conventions-and-intent`.
-6. **code-simplifier** — Simplification opportunities, dead code, redundancy. Subagent: `deep-review:code-simplifier`.
-
-**Conditional (1):**
-
-7. **type-design-analyzer** — Type encapsulation, invariant expression. Only if new types introduced. Subagent: `deep-review:type-design-analyzer`.
-
----
-
-## Dispatch Mandate
-
-**MANDATORY: Emit ALL Agent tool_use blocks in a SINGLE response.** You MUST dispatch all 7 (or 6) agents in one message containing multiple Agent tool calls. Never split agents across multiple responses — not 2+3+2, not 4+3, not any other combination. All agents are fully independent with no shared state. Batching adds 5-10 minutes of unnecessary latency. Each prompt is ~100 tokens (just two file paths) — all 7 fit easily in a single response.
-
-### Anti-patterns (WRONG)
-
-These are WRONG: dispatching 2 agents, waiting, then 3 more, then 2 more. Dispatching 4 agents then 3 in a follow-up. Dispatching 1 agent at a time. Any pattern that splits agents across multiple responses wastes minutes of wall-clock time and violates the protocol.
-
-### Fallback recovery
-
-If you emitted fewer than all agents in the previous message, dispatch the remaining agents immediately in the next message. Do not re-analyze or re-triage — just emit the remaining Agent tool calls.
-
-### Never use `run_in_background: true`
-
-Background agents cannot write files, lose output silently, and cause session hangs. Foreground parallel dispatch in one message is the canonical pattern. Never set `run_in_background: true` on Phase 3 agent calls.
-
----
-
-## Agent Tool Call Template
-
-Dispatch all applicable agents in a **single message**. Each prompt contains only the context file path and findings file path — all shared context lives in the file. Use **absolute paths** (agents may not share the orchestrator's working directory).
-
-**Template (same structure for every agent):**
+## The Invocation
 
 ```
-Agent(
-  subagent_type: "deep-review:{agent-name}",
-  description: "Review: {agent-name}",
-  prompt: "Review context: {abs_output_dir}/deep-review-context-{head_sha_short}.md
-    Findings file: {abs_output_dir}/deep-review-{agent-name}-{head_sha_short}.ndjson
-    Read the context file first to get the project rules, change summary, risk classification, and diff."
+Workflow(
+  scriptPath: "{plugin_root}/workflows/pipeline.js",
+  args: { ...the args object assembled in Phase 2... }
 )
 ```
 
-**Frontier mode:** Add `model: "opus"` to override the agent definition's default model. Security-reviewer always uses Opus regardless of mode.
-
-**Correct dispatch pattern — all 7 in ONE message:**
-
-```
-Agent(subagent_type: "deep-review:bug-detector", description: "Review: bug-detector", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-bug-detector-abc12345.ndjson\nRead the context file first.")
-
-Agent(subagent_type: "deep-review:security-reviewer", model: "opus", description: "Review: security-reviewer", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-security-reviewer-abc12345.ndjson\nRead the context file first.")
-
-Agent(subagent_type: "deep-review:cross-file-impact", description: "Review: cross-file-impact", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-cross-file-impact-abc12345.ndjson\nRead the context file first.")
-
-Agent(subagent_type: "deep-review:test-analyzer", description: "Review: test-analyzer", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-test-analyzer-abc12345.ndjson\nRead the context file first.")
-
-Agent(subagent_type: "deep-review:conventions-and-intent", description: "Review: conventions-and-intent", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-conventions-and-intent-abc12345.ndjson\nRead the context file first.")
-
-Agent(subagent_type: "deep-review:type-design-analyzer", description: "Review: type-design-analyzer", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-type-design-analyzer-abc12345.ndjson\nRead the context file first.")
-
-Agent(subagent_type: "deep-review:code-simplifier", description: "Review: code-simplifier", prompt: "Review context: /abs/path/.deep-review/deep-review-context-abc12345.md\nFindings file: /abs/path/.deep-review/deep-review-code-simplifier-abc12345.ndjson\nRead the context file first.")
-```
-
-After dispatch, announce: "Dispatched N agents for Phase 3."
+- **One call.** The workflow orchestrates all eight stages and persists artifacts. Do not split work across calls, and do not run any review stage inline in the main session.
+- **`scriptPath` is a repo file path.** The plugin ships `workflows/pipeline.js` as a plain file; there is no native plugin-workflow component, so invocation is always by `scriptPath`. Never copy the bundle into `.claude/workflows/` (avoids version drift).
+- **Args arrive as one object.** The workflow normalizes a JSON-string-or-object waist, validates it (`validateArgs`), and rejects an unknown `argsVersion` or a missing required field before any dispatch.
+- **The return is compact:** `{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps }`. Full findings/report live on disk at `artifactPaths.*` — Phase 8 reads them.
 
 ---
 
-## Agent Output Channels
+## Internal Stage Map
 
-Agents emit findings via two channels:
+The workflow threads eight stages inside one top-level try/catch, checkpointing each. Every `agent()` call is wrapped for the throw/`null` failure contract, so a stage degrades (records a gap) rather than aborting the run.
 
-**Channel 1 (primary): NDJSON files on disk.** Each agent writes findings directly via Bash to `{output_dir}/deep-review-{agent}-{head_sha_short}.ndjson`. Each line is a complete JSON finding. These files survive even if the agent's text output is truncated.
+| # | Stage | What it dispatches | Degradation |
+|---|-------|--------------------|-------------|
+| 1 | **Summarize** | `change-summarizer` (one call; fans out per-file buckets + a merge call for >500-line PRs) | empty summary + gap |
+| 2 | **Discover** | one `parallel()` fan-out to every active discovery agent (see roster) | a null member marks that agent's dimensions degraded |
+| 3 | **Merge** | pure JS (no agents) — regroups + dedups discovered findings | — |
+| 4 | **Verify** | one `executor` per finding-slice, sequential | any untrusted slice → whole set `origin=unknown`, `verified=false`, loud gap |
+| 5 | **Validate** | one `validator` per batch, `parallel()` | a null batch → its findings `validation=skipped`, kept at face value |
+| 6 | **Filter** | pure JS (no agents) — thresholds, injection filter, dedup, routing | — |
+| 7 | **Challenge** | one `challenger` per finding (blind), up to `limits.challengeCap` | overflow / null → `challenge=skipped`, routed to the unverified bucket |
+| 8 | **Report** | `report-writer` (segmented if oversized) | throw/null → deterministic minimal report + gap |
+|  | **Persist** | `artifact-writer` writes findings.json + report.md + checkpoints | throw/null → partial-artifacts gap, `artifactPaths` nulled |
 
-**Channel 2 (fallback): Agent text returns.** The orchestrator saves each agent's text return to `{output_dir}/deep-review-text-{agent}-{head_sha_short}.txt`. The merge script parses these for inline JSON blocks as a fallback for behavioral drift toward the old inline-emission pattern.
-
-`SKIP: <reason>` lines in the agent's text output indicate confirmed non-issues — they are informational and not parsed as findings. The merge script uses their presence to distinguish "found nothing" from "was truncated before finding anything".
-
-The `merge_findings.py` script handles both channels automatically — do not parse agent output manually.
-
----
-
-### AST-Safe Emission Protocol
-
-Agents must use ONLY `printf '%s\n'` (not `echo`) — zsh's builtin `echo` interprets `\n` as newlines even inside single quotes, breaking NDJSON when evidence fields contain code with `\n`. `printf '%s\n'` treats the argument as literal text. The sandbox's tree-sitter AST parser rejects all other quoting forms in subagent sessions:
-
-```bash
-printf '%s\n' '<json_payload_with_no_literal_single_quotes>' >> ".deep-review/deep-review-{agent}-{sha}.ndjson"
-```
-
-- **`printf '%s\n'`** instead of `echo` — prevents zsh `\n` interpretation that breaks NDJSON
-- **Single quotes** around payload (`raw_string` AST node — in allowlist, auto-approved)
-- **Literal path** in double quotes (`string` AST node — in allowlist, auto-approved)
-- **Apostrophes** in JSON values: replace `'` with `\u0027` (valid JSON Unicode escape, `json.loads()` decodes automatically)
-- **Control characters in JSON string values** (newline, tab, carriage return) must be replaced with the two-character escape sequences `\n`, `\t`, `\r`. A literal newline byte inside a JSON string value splits one finding into two corrupt physical lines, which the merge pipeline then mis-parses. See `references/ndjson-emission-contract.md` for the full per-agent contract (description-field constraints, BAD/GOOD examples, validator step).
-- **Prohibited** (produce unrecognized AST nodes, silently denied): `$'...'` (ANSI-C quoting), `$VAR` in paths, heredocs, `echo`, `python3 -c`, command substitution
-
-### Final-step NDJSON validation
-
-Each Phase 3 agent runs `python3 "{plugin_root}/scripts/validate_ndjson.py" "<findings_file>"` as its last action before returning — the validator path is written into the context file's `## Validator` section by Phase 2. The validator is a regular `python3 path/script.py args` invocation (three plain word tokens), so it passes the subagent sandbox AST parser cleanly even though `python3 -c "..."` does not. Exit code 0 means every line parses; non-zero means the agent must re-emit any flagged findings with proper escaping before returning. This catches malformed findings while the agent still has the original strings in scope, instead of leaving the orchestrator to fall back to text-channel reconstruction (which loses `cross_file_refs` and other structured fields).
+Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, report-writer, artifact-writer Sonnet. The `frontier` flag upgrades the challenger to `policy.frontierModelId`. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.
 
 ---
 
-## Merge Script Output Format
+## Discovery Agent Roster
 
-After all agents return, run `merge_findings.py` as described in SKILL.md "Merge Phase 3 Outputs". The script writes a Phase 4 input JSON file to `{output_dir}/deep-review-phase4-input-{head_sha_short}.json` with this structure:
+The Discover stage groups the nine dimensions by agent and fans out one task per **active** agent (a dimension is active when its `conditionalFlag` is null or the matching `agentFlags` entry is truthy — all nine are unconditional today):
 
-```json
-{
-  "findings": [
-    {
-      "id": "bug-1",
-      "dimension": "bug",
-      "agent": "bug-detector",
-      "severity": "high",
-      "confidence": 80,
-      "file": "src/auth.py",
-      "line_start": 42,
-      "line_end": 45,
-      "title": "Token not invalidated on logout",
-      "description": "...",
-      "evidence": "...",
-      "suggestion": "...",
-      "suggested_fix_code": null,
-      "cross_file_refs": []
-    }
-  ],
-  "base_branch": "main",
-  "head_sha": "abc123",
-  "pr_number": 42,
-  "owner": "org",
-  "repo": "name",
-  "methodology": {
-    "agents_dispatched": ["bug-detector", "security-reviewer", "..."],
-    "findings_per_channel": {"ndjson": 12, "text_fallback": 2},
-    "duplicates_resolved": 1,
-    "truncation_warnings": [],
-    "validation_warnings": []
-  }
-}
-```
+1. **bug-detector** — logic errors, edge cases, null handling, race conditions, API misuse. Dimension: `bug`.
+2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Dimension: `security`.
+3. **cross-file-impact** — caller/dependent tracing, cross-module impact. Dimension: `cross_file_impact`.
+4. **test-analyzer** — coverage gaps, test quality. Dimension: `test_coverage`.
+5. **conventions-and-intent** — CLAUDE.md/REVIEW.md adherence, intent alignment, comment accuracy. Dimensions: `convention`, `intent`, `comment_accuracy`.
+6. **code-simplifier** — simplification opportunities, dead code, redundancy. Dimension: `simplification`.
+7. **type-design-analyzer** — type encapsulation, invariant expression. Dimension: `type_design`.
 
-The script handles `agent` field injection, `dimension` validation, deduplication, and truncation detection. Pass the output file path directly to `verify_findings.py` — see Step 4.0 in `references/validation-pipeline.md`.
+Each agent returns structured findings against the canonical schema (`agent()` `schema`), wrapped in the per-agent envelope `{ findings, complete, total_seen }`. The orchestrator injects the `agent` field during Merge. Discovery agents receive only the **context file path** (`{output_dir}/deep-review-context-{head_sha_short}.md`) and their target dimension(s) in the prompt — all shared context (rules, risk, diff) lives in that file, which Phase 2 wrote.
+
+> **NDJSON emission is vestigial in v3.** Discovery agent `.md` bodies still carry the `printf`-NDJSON emission prose, but the workflow collects findings through structured output, not disk files. The bodies are untouched this plan (their cleanup is the deferred S8 migration). If a discovery agent hits the schema-retry throw because the vestigial "emit NDJSON" instructions conflict with structured-output dispatch, that surfaces as a discover-stage gap — pull the S8 prose removal forward if it recurs.
+
+---
+
+## Executor and Writer Roles
+
+Two mechanical agents exist because the workflow script has no disk or shell:
+
+- **executor** (`tools: Bash, Read`) — runs one pinned `verify_findings.py` command exactly as given, reads the `--output` file, and returns its contents verbatim through the receipt schema. It never interprets, edits, or fabricates a success envelope; an honest `{status:'failed', ...}` is a legal answer. The Verify stage trusts a slice only when `status==='ok'` and the receipt echoes the dispatched nonce, head sha, and slice length.
+- **artifact-writer** (`tools: Write, Read`) — persists the by-value payload (findings JSON, report markdown, checkpoint JSON) to the exact paths given. The output directory already exists (Phase 2 created it). It writes exactly what it is given — no reformatting.
 
 ---
 
 ## Agent Failure Handling
 
-If a subagent fails (crash, timeout, error): continue with completed agents, log the failure in Review Methodology, warn the user if the failed agent covered security or bugs. Never silently skip a failed agent.
+Stage failures are non-fatal by design and arrive as `gaps` in the return: a degraded discovery dimension, an unverified verify set, a skipped validation batch, capped challenges, a minimal report, or partial artifacts. Surface every gap in the methodology — never hide a degraded stage. A hard `ok:false` (an unexpected throw in the deterministic glue) is recoverable via resume-from-checkpoint (Phase 8). Never reproduce a failed stage inline in the main session.

@@ -1,484 +1,108 @@
-# Validation Pipeline
+# Validation Pipeline (internal workflow stages)
 
-After all agents return, process their findings through the validation pipeline (Phases 4-6) before the blind challenge (Phase 7). This is what separates useful reviews from noisy ones.
+In v3 the validation pipeline runs **inside** `workflows/pipeline.js` — the main session does not invoke `verify_findings.py`, `apply_validations.py`, `filter_findings.py`, or `apply_challenges.py` between agent rounds. Those five deterministic transforms are now JS twins compiled into the bundle (`workflows/src/{mergeFindings,applyValidations,filterFindings,applyChallenges,findingDedup}.js`), and the stages that orchestrate them live in `workflows/src/stages.js`. This reference documents what each stage does — for understanding a `gaps` entry or debugging a persisted artifact, not for running anything by hand.
 
-**Pipeline:** Phase 4 (Classify & Verify) → Phase 5 (Validate) → Phase 6 (Filter & Reconcile) → Phase 7 (Blind Challenge + post-challenge finalization)
+**Pipeline order inside the workflow:** Merge → **Verify** → **Validate** → **Filter** → **Challenge** → Report.
 
-## Contents
-
-- **Phase 4** — Step 4.0 (read merge script output), 4a (blame classification), 4b (factual verification), 4c (batch for validation)
-- **Phase 5** — Validator dispatch, confidence rubric, failure protocol
-- **Phase 6** — Step 6.0a (apply_validations.py), 6.0b (filter_findings.py), 6a (threshold filter), 6b (injection filter), 6c (disagreement detection), 6d (tag findings)
-- **Phase 7** — Blind challenge supplementary detail, post-challenge finalization (apply_challenges.py: thresholds, dedup, rank), incremental diffing
+The Python scripts are still shipped and still pass their suites (parity is proven against frozen golden fixtures), but they are exercised only by the retained `verify_findings.py` executor path and by tests — not by the skill.
 
 ---
 
-# Phase 4: Classify & Verify
+# Verify stage (`verifyStage`)
 
-Handled by `scripts/verify_findings.py`. Run it against the merged Phase 3 agent output before dispatching Phase 5 validators.
+Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
-**Step 4.0 — Read the merge script output (produced by "Merge Phase 3 Outputs" in SKILL.md)**
+**The executor pattern.** The stage slices the merged findings into `${verify.inputPathBase}.slice{i}.json` chunks of `limits.verifySliceSize`, then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs exactly:
 
-The merge script writes `{output_dir}/deep-review-phase4-input-{head_sha_short}.json` during the Merge Phase 3 Outputs step. Pass this file directly to `verify_findings.py`:
-
-```bash
-Bash(
-  description="Fact-checking findings against the codebase — verifying line numbers, confirming symbols exist, classifying new vs pre-existing",
-  command="""python3 {plugin_root}/scripts/verify_findings.py \
-  "{output_dir}/deep-review-phase4-input-{head_sha_short}.json" \
-  --base-branch {base_branch} \
-  --diff-file "{output_dir}/deep-review-diff-{head_sha_short}.patch" \
-  > "{output_dir}/deep-review-phase4-output-{head_sha_short}.json"
-""")
+```
+python3 {verify.scriptPath} --input {inputPathBase}.slice{i}.json --output {outputPathBase}.slice{i}.json \
+  --nonce {nonce}.{i} --head-sha {headShaShort} --base-branch {baseBranch} [--diff-file {diffPath}]
 ```
 
-When the review target is a PR/MR, pass `--diff-file` pointing to the diff saved during Phase 2c. This uses the server-computed API diff (`gh pr diff` / `glab mr diff`), which is fork-safe and avoids local merge-base failures. For branch comparison or local changes (no saved diff), omit `--diff-file` — the script falls back to its own git diff chain (three-dot, two-dot, skip).
+and returns the script's discriminated-union envelope verbatim:
 
-The merge script injects the `agent` field and validates `dimension` — do not construct the input JSON manually.
-
-**Output JSON schema:**
-
-```json
-{
-    "verified": [...],
-    "eliminated": [...],
-    "batches": [["bug-1", "bug-2", "bug-3"], ...],
-    "stats": {
-        "total": 10,
-        "new": 7,
-        "surfaced": 2,
-        "eliminated": 1
-    }
-}
+```
+{ status: 'ok', receipt: { sha, n_in, nonce }, result: { verified, eliminated, batches, stats } }
+   | { status: 'failed', exitCode, stderr }
 ```
 
-Each finding in `verified` gains an `origin` field (`"new"` or `"surfaced"`), a `blame_metadata` block, and a `factual_verification` block. Each finding in `eliminated` gains an `elimination_reason` field. Pass the `batches` output directly to Phase 5 agent dispatch.
+**Trust.** A slice is trusted only when `status==='ok'` AND the receipt echoes the dispatched nonce (`{nonce}.{i}`), head sha, and `n_in` (slice length), AND `verified.length + eliminated.length === n_in` (the truncation guard — proof the result body was not silently cut). The per-slice nonce (`{nonce}.{i}`) means two equal-length slices can never satisfy each other's receipts.
+
+**Degradation.** ANY untrusted slice — receipt mismatch, `status:'failed'`, or an executor throw — degrades the WHOLE set to the UNVERIFIED path: every original finding is re-emitted with `origin='unknown'`, surfaced-classification is skipped, a loud gap is recorded, and `verified=false`. Findings are never dropped and success is never faked.
+
+**Classification rules** (applied by `verify_findings.py` on the trusted path):
+
+- Findings with `cross_file_refs` are always `surfaced`.
+- Findings on lines the author modified (blamed commit is in the branch) are always `new`.
+- A finding spanning both new and old lines classifies as `new`.
+- `surfaced` findings are downgraded one severity level and grouped into their own report section; `blame_metadata` records original severity/author/date.
+- Factual verification: if any claim is wrong (line number, symbol existence, code mismatch), confidence is set to 0.
 
 ---
 
-## 4a. Classify findings as "New" or "Surfaced" using git blame
+# Validate stage (`validateStage`)
 
-The script runs git blame on each finding's reported line range and compares the blamed commit against the set of commits introduced by the current branch.
+Independent re-scoring by fresh Sonnet agents — **always Sonnet, even under `frontier`**. Discovery and validation sharing the same context produces correlated errors ~60% of the time; fresh agents assessing findings independently is what breaks that.
 
-**Classification rules:**
+The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification }]` (confidence 0–100). `applyValidations` merges the adjustments in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
 
-- Cross-file impact findings (those with `cross_file_refs`) are always "Surfaced"
-- Findings on lines the author modified (blamed commit is in the PR branch) are always "New"
-- When a finding spans both new and old lines, classify as "New" (the author touched it)
+**Confidence rubric** (validator agent definition holds the authoritative copy):
 
-**Effect:**
+```
+  0  = definitely a false positive
+ 25  = probably false positive
+ 50  = uncertain
+ 75  = probably real — no meaningful counter-evidence
+100  = definitely real
+```
 
-- "Surfaced" findings are downgraded one severity level (critical→high, high→medium, medium→low, low stays low)
-- "Surfaced" findings are grouped in a dedicated section in the report, placed after main findings
-- `blame_metadata` records the original severity, author, and date for each finding — displayed in the report
-- Blame tags (new/surfaced, author, date) are passed to validation agents in Phase 5
+If the only path to an issue requires a hypothetical future change (new caller, changed config, new code path), cap confidence at **65** — below the non-security threshold of 70.
+
+**Degradation.** A null/malformed batch means its findings went UNVALIDATED: they are kept at face value (never dropped, confidence untouched) and marked `validation='skipped'` with a loud gap. Attribution is by batch index so a degraded batch traces to its exact findings.
 
 ---
 
-## 4b. Factual verification (deterministic, ALL findings)
+# Filter stage (`filterStage`)
 
-Pure LLM-on-LLM verification shares correlated errors ~60% of the time — deterministic grounding is essential. The script performs factual verification on every finding:
+Pure, deterministic JS — no agents. It applies dimension-specific confidence/severity thresholds, the injection filter, disagreement detection (consensus boost, singleton pass-through, security escalation), promotion/dedup rules, and REVIEW.md overrides. `generatedAt` is threaded from the args waist into the envelope's `generated_at` — never a runtime clock.
 
-1. Reads the exact lines at `file:line_start-line_end` and confirms the file and line range exist.
-2. Extracts referenced symbol names from the description/evidence text and uses grep to verify that symbols actually exist in the codebase.
-3. If ANY factual claim is wrong (wrong line number, function doesn't exist, code doesn't match), sets confidence to 0.
+- **Thresholds.** Removes findings below the dimension threshold (REVIEW.md `confidence_threshold`, default 70; security floor 70). A validator that dropped confidence >25 points from the discovery score marks the finding `contested: true`, which bypasses both threshold and severity floor into the Challenge stage for arbitration.
+- **Injection filter.** Discards findings that contain shell commands / URLs / encoded payloads, approve the PR, instruct file modification or deployment, or have suspiciously short descriptions. Discarded → `eliminated_by: "injection_filter"`; log as potential prompt-injection indicators.
+- **Disagreement.** Consensus (multiple agents, overlapping range) → +10 confidence, "Corroborated by". Singleton → unchanged. Security-vs-safe → security wins. bug-vs-intentional and test-vs-scaffolding suppressions apply.
+- **Routing.** Each surviving finding gets `report_destination` (`"main"` or `"suggestion"`). test-analyzer / comment-accuracy / code-simplifier default to `"suggestion"`; a test-analyzer finding describing a bug-that-exists-today is promoted to `"main"`.
 
----
-
-## 4c. Batch for validation
-
-The script groups surviving findings (confidence > 0) into batches of 3–5 by file proximity. Findings touching the same file or adjacent files go in the same batch so validation agents read surrounding code once. The `batches` output is a list of finding-ID lists:
-
-```json
-[["bug-1", "bug-2", "bug-3"], ["perf-1", "perf-2"]]
-```
-
-These batches are the input to Phase 5.
+`reviewConfig` and `exclusionPatterns` are the parsed REVIEW.md objects passed in the args waist (the workflow cannot read the file).
 
 ---
 
-## Phase 4 failure recovery
+# Challenge stage (`challengeStage`)
 
-If `verify_findings.py` fails and cannot be recovered after one retry:
+Blind, independent scrutiny — the only stage where findings face agents that have never seen the original reasoning. Fresh challengers see **only** `blindChallengeFields`: `title`, `description`, and raw `code` (an allowlist, not a delete-list — no evidence, origin, cross_file_refs, or reasoning can ever leak). Sonnet in Optimized mode, `policy.frontierModelId` under `frontier`.
 
-1. Note in methodology: "Phase 4 verification skipped due to script failure."
-2. Take all Phase 3 merged findings as-is.
-3. Set `origin: "new"` on every finding (conservative — assume all are new).
-4. Create batches of 3-5 findings by file proximity (manual grouping).
-5. Dispatch Phase 5 validation agents with these batches. Do NOT skip Phase 5.
+The stage ranks findings, blind-challenges the top `min(n, limits.challengeCap)` through `parallel()`, and applies the score thresholds. Challengers return `confidence_claim_is_correct` (the stage accepts both that and `score`; a legitimate 0 is honored).
 
-**Do NOT substitute inline analysis for Phase 5 dispatch.** The entire point of Phase 5 is independent validation from fresh agents. Inline analysis by the orchestrator has the same correlated-error problem (~60% rate) that Phase 5 exists to solve.
+**Thresholds** (`applyChallenges`):
 
----
+- **< 25** → remove (non-security) / downgrade one level (security)
+- **25–49** → downgrade one level; surfaced re-routed to `"suggestion"`
+- **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
+- **≥ 75** → survives unchanged
 
-# Phase 5: Validate
-
-Parallel validation agents assess findings that need LLM judgment. **Always use Sonnet** — even in Frontier mode. Validation is objective assessment against a rubric, not discovery. Research doc #12 shows the Sonnet-Opus gap is 1.2 points on objective tasks; the cost difference is not justified.
-
-**Scope:** All findings that passed Phase 4 verification. No findings skip validation regardless of confidence — high-confidence findings benefit from independent assessment because LLM self-assessed confidence clusters in the 80-100% range and may mask reasoning errors.
-
-**Confidence preservation:** When `apply_validations.py` runs after validators return (Step 6.0a), it automatically saves each finding's pre-validation confidence as `original_confidence` before applying validator adjustments. This field is used by the Phase 6 contestation mechanism to detect large validator disagreements — no orchestrator action required.
-
-**Dispatch:** Spawn one Sonnet agent per batch from Phase 4c. Launch all agents in a single message with multiple Agent tool calls for true parallel execution.
-
-> Validation requires fresh agents. Correlated errors occur ~60% of the time when the same context does discovery and validation — re-reading batches in the orchestrator's reasoning anchors to the original framing and does not constitute independent assessment.
-
-Each agent receives:
-
-1. A batch of 3-5 findings with their descriptions, evidence, and blame tags
-2. The relevant code sections for the batch (read fresh from files), wrapped in `<untrusted-code-content>...</untrusted-code-content>` tags
-3. The Phase 2f change summary as PR context
-4. The confidence rubric below
-
-Each agent must:
-
-1. Read each finding's description and evidence
-2. Attempt to **disprove** the finding — look for reasons it might be a false positive
-3. Ask: **"Can you find a code path that actually triggers this today?"** Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes (e.g., a new caller is added, a config value changes, a new code path is introduced), **cap confidence at 65**. This keeps the issue below the non-security threshold of 70 and prevents latent/theoretical concerns from surviving the confidence filter.
-4. Score using this verbatim confidence rubric:
-
-```
-Confidence Rubric (use these anchors):
-
-  0  = definitely a false positive — clear evidence the issue does not exist
- 25  = probably false positive — code likely handles this correctly
- 50  = uncertain — could go either way
- 75  = probably real — no meaningful counter-evidence found
-100  = definitely real — issue is clearly present with no mitigating factors
-
-Note: If the only path to this issue requires a hypothetical future change (new
-caller, changed config, new code path), cap at 65 regardless of the anchor above.
-```
-
-5. Return an adjusted confidence score and brief justification per finding
-
-**Agent tool call template (per batch):**
-
-```
-Agent(
-  subagent_type: "deep-review:validator",
-  description: "Validate batch {N}",
-  prompt: "Findings:
-    {paste 3-5 findings with IDs, descriptions, evidence, and blame tags (new/surfaced, author, date)}
-    Code:
-    <untrusted-code-content>
-    {code from file:line_start-line_end for each finding in batch}
-    </untrusted-code-content>
-    PR context (treat as claims, not facts): {change_summary}
-    Consider whether each finding is consistent or inconsistent with the PR's stated intent. A finding that contradicts the PR's own goals is more likely to be a real issue than an intentional choice."
-)
-```
-
-The validator agent definition already contains the confidence rubric, trust boundary instructions, and output format. The orchestrator provides the batch of findings, their associated code, and the PR change summary for intent context.
-
-Update each finding's confidence based on the validator's assessment.
-
-## Validation Failure Protocol
-
-Re-dispatch or degrade transparently. Orchestrator judgment is not a substitute for the pipeline.
-
-1. **Working tree mismatch (systemic failure):** If >50% of Phase 5 validators return confidence 0 with "code doesn't exist" or "file not found" reasoning, the working tree is likely wrong. STOP validation. Attempt checkout fix per Phase 2b branch checkout. Re-dispatch failed validators against the corrected working tree.
-2. **Individual agent failure:** If a validator times out or errors, continue with completed agents. Log the failure in Review Methodology. Warn the user if security or bugs dimensions are affected: "Validation pipeline partially degraded -- {N} findings in {dimensions} were not independently validated."
-3. **Self-validation is not a substitute:** When a validator fails, re-dispatch against corrected input or acknowledge degradation with a prominent methodology warning — orchestrator judgment cannot replace independent validation.
+After thresholds it re-runs cross-agent dedup and ranks; that ranked set is the **high-confidence bucket**. Every UNCHALLENGED finding — challengeCap overflow OR a null/unscored member — is marked `challenge='skipped'` and routed to the **unverified** bucket (pipeline-degraded); it never enters the high-confidence set. Both buckets flow to the Report stage.
 
 ---
 
-# Phase 6: Filter & Reconcile
+# Report stage (`reportStage`)
 
-Handled by `scripts/filter_findings.py`. Run it against the Phase 5 validated findings before the Phase 7 blind challenge.
-
-**Step 6.0 — Apply validator confidence adjustments, then filter**
-
-**Step 6.0a — Apply validations** using `apply_validations.py`. Collect validator outputs into a combined `[{id, confidence, justification}]` JSON array. **Field mapping:** validators return `finding_id` — rename to `id`. Write to `{output_dir}/deep-review-validations-{head_sha_short}.json`, then run:
-
-```bash
-Bash(
-  description="Applying validator confidence scores to findings",
-  command="""python3 {plugin_root}/scripts/apply_validations.py \
-  "{output_dir}/deep-review-phase4-output-{head_sha_short}.json" \
-  "{output_dir}/deep-review-validations-{head_sha_short}.json" \
-  --output "{output_dir}/deep-review-phase5-output-{head_sha_short}.json"
-""")
-```
-
-The Phase 4 output file (`verify_findings.py` stdout redirected to disk) contains findings with descriptions intact. The script reads it directly — descriptions never pass through the orchestrator, eliminating the description-compression path that triggered the injection filter. Unmatched findings (no validator output) pass through unchanged.
-
-**Step 6.0b — Filter** using `filter_findings.py`:
-
-```bash
-Bash(
-  description="Filtering for high-confidence findings — applying thresholds, removing false positives, routing to report sections",
-  command="""python3 {plugin_root}/scripts/filter_findings.py \
-  "{output_dir}/deep-review-phase5-output-{head_sha_short}.json" \
-  --review-md {repo_root}/REVIEW.md \
-  --output "{output_dir}/deep-review-phase6-output-{head_sha_short}.json"
-""")
-```
-
-**Output JSON schema:**
-
-```json
-{
-    "filtered": [...],
-    "eliminated": [...],
-    "stats": {
-        "total": 10,
-        "passed_threshold": 8,
-        "contested_count": 1,
-        "injections_removed": 1,
-        "consensus_boosted": 2,
-        "singleton_penalized": 1,
-        "dimension_routed": 2,
-        "cross_agent_deduped": 1,
-        "test_analyzer_promoted": 0,
-        "tagged_main": 6,
-        "tagged_suggestion": 2
-    }
-}
-```
-
-Each finding in `filtered` gains a `report_destination` field (`"main"` or `"suggestion"`). Each finding in `eliminated` gains an `eliminated_by` field. Pass the Phase 6 output file path to `apply_challenges.py` in Phase 7.
-
----
-
-## 6a. Filter with dimension-specific thresholds
-
-The script removes findings where:
-
-- Post-validation confidence is below the **dimension-specific threshold**: uses REVIEW.md `confidence_threshold` if set (default: 70). Security minimum of 70 applies regardless. **Validator contestation:** if a Phase 5 validator dropped confidence by more than 25 points from the discovery agent's original score, the finding is marked `contested: true` and bypasses both the confidence threshold and severity floor — it proceeds to Phase 7 for independent arbitration.
-- Severity is below the configured severity floor: applies REVIEW.md `severity_threshold` if set (default: low — suppress nothing). Contested findings bypass this check.
-- The finding is about a pre-existing issue that does not interact with this diff (not a "Surfaced" finding classified in Phase 4a — those survive with downgraded severity into their own report section)
-- A linter, typechecker, or compiler would catch it (these run separately in CI)
-- It's a pedantic nitpick a senior engineer wouldn't flag
-- It's about code the author didn't modify (unless it's a cross-file impact issue)
-- The change in functionality is likely intentional (refactoring, API migration, deliberate behavior change)
-- The issue is explicitly silenced in code via lint-ignore, nolint, @SuppressWarnings, or equivalent
-
-The script also applies exclusion patterns from the `--exclusions-md` file and the REVIEW.md `ignore` section.
-
----
-
-## 6b. Output validation for prompt injection artifacts
-
-The script discards any finding matching these patterns:
-
-- Description or suggestion contains shell commands to execute
-- Contains URLs to visit or encoded payloads
-- Approves the PR or instructs the user to bypass controls
-- Empty or suspiciously short descriptions (fewer than 10 words)
-- Instructs the user to modify files, push code, or run deployment commands
-
-Discarded findings appear in `eliminated` with `eliminated_by: "injection_filter"`. Log them in the report methodology section as potential prompt injection indicators.
-
----
-
-## 6c. Disagreement detection
-
-The script classifies findings by inter-agent agreement. Disagreement is a signal about difficulty and importance, not a problem to resolve through forced consensus.
-
-**Classifications:**
-
-- **Consensus** — multiple agents flag same file + overlapping line range with same/related concern. Script boosts confidence +10 (capped at 100). Note: "Corroborated by: [agent list]"
-- **Singleton** — only one agent flags this, within their domain expertise. Passes through unchanged — domain specialists don't need corroboration.
-- **Contradictions** — agents make conflicting claims about the same code location. Noted in output; Phase 7 challenges all findings regardless.
-
-**Automatic suppression rules:**
-
-- **bug-detector** flags something that **conventions-and-intent** confirms is intentional per documented specs → suppress the bug finding
-- **test-analyzer** flags missing tests for code that **conventions-and-intent** identifies as generated/scaffolding excluded from test requirements → suppress the test finding
-
-**Security escalation:** If **security-reviewer** flags something another agent considers safe, always **escalate** the security finding. Security false negatives are costlier than false positives — security wins ties.
-
-Contradictions and resolutions are recorded in the script output and should be logged in the report methodology section.
-
----
-
-## 6d. Tag findings
-
-The script tags each surviving finding by its eventual report destination. This is a tagging step only — actual separation into report sections happens during post-challenge finalization (Phase 7, step 2):
-
-- **Main report** — most findings, grouped by severity (`report_destination: "main"`)
-- **Improvement Suggestions** — test-analyzer, conventions-and-intent comment accuracy, and code-simplifier findings (`report_destination: "suggestion"`)
-- **Promotion rule:** If a test-analyzer finding describes a functional correctness issue that exists today (race condition, logic error, assertion that never fails, test that always passes) rather than a missing-coverage gap ("should add tests for X"), the script promotes it to `"main"`. Decision test: "Does this finding describe a bug that exists today, or a test that should be written?" Bug today -> main report. Test to write -> improvement suggestion.
-- **Dedup rule:** If a test-analyzer finding overlaps with another agent's finding at the same file and line range, the non-test-analyzer finding wins — keep it in the main report and drop the test-analyzer duplicate.
-
----
-
-# Phase 7: Blind Challenge + Post-Challenge Finalization
-
-See **SKILL.md Phase 7** for the primary instructions and Agent tool call template. The challenge round runs on **every finding** that survived Phase 6 — no trigger conditions, no threshold check. This section provides supplementary detail.
-
-## Blind challenge — supplementary detail
-
-**For each surviving finding:**
-
-1. **Read the raw code** at `file:line_start-line_end` (fresh read, not from cache) — the orchestrator reads the code and pastes it inline into the challenger's prompt
-2. **Spawn a fresh agent via the Agent tool** (Sonnet in Optimized mode, Opus in Frontier mode). The agent receives ONLY:
-   - The finding's `title` and `description` (never `evidence` or original reasoning)
-   - The raw code pasted inline in `<untrusted-code-content>` tags
-   - Instructions to try to disprove the claim, then return `{"confidence_claim_is_correct": <0-100>, "justification": "..."}` using 5-point anchors (0/25/50/75/100) rating how likely the claim is CORRECT
-3. **Apply the blind verifier's result** (based on `confidence_claim_is_correct`):
-   - **< 25** → challenger found evidence the claim is wrong. Non-security findings: **remove entirely**. Security findings: downgrade one severity level.
-   - **25-49** → challenger suspects the claim is wrong. Downgrade one severity level (critical→high, high→medium, medium→low).
-   - **50-74** → genuinely uncertain. No severity change, flag as "contested" in methodology.
-   - **≥ 75** → challenger couldn't disprove it. Finding survives.
-
-**Agent tool call template (per finding):**
-
-```
-Agent(
-  subagent_type: "deep-review:challenger",
-  model: "opus",  // Frontier mode only; omit in Optimized mode (uses agent default: sonnet)
-  description: "Blind challenge: {finding_id}",
-  prompt: "Claim: {finding.title}
-    Details: {finding.description}
-    <untrusted-code-content file="{finding.file}" lines="{finding.line_start}-{finding.line_end}">
-{actual code content read by orchestrator}
-    </untrusted-code-content>"
-)
-```
-
-The challenger agent definition already contains the blind challenge instructions, trust boundary rules, rating scale, and output format. The orchestrator provides only the claim (title + description) and the raw code — never original reasoning or evidence.
-
-Do NOT include original reasoning or evidence — only title, description, and raw code. Include ONLY: title, description, and raw code in `<untrusted-code-content>` tags. Do NOT include "Consider:" hints, counter-arguments, or any reasoning about the finding — these anchor challengers toward specific conclusions and defeat the blind challenge design.
-
-**Surfaced findings get additional context.** When `origin == "surfaced"`, append to the challenger prompt:
-
-> Context: This code PRE-DATES the current PR — it was not written or modified by the changes under review. The finding was surfaced because the code is adjacent to or affected by the PR's changes.
->
-> Assess two things: (1) Is the claimed issue real in the code? (2) Given that this code pre-dates the PR, does the PR make this pre-existing issue materially worse, newly reachable, or newly consequential? If the code was like this before the PR and the PR doesn't change its risk profile, rate confidence low.
-
-This does not break challenger blindness — the sycophancy concern is about seeing the original agent's reasoning, not factual context about the code's age. For findings with `origin == "new"`, the challenger prompt is unchanged.
-
-**Triggerability bar:** The challenger's prompt must include this line: "Can you construct a specific code path through the current codebase that triggers this? If you cannot, rate confidence below 25."
-
-**Design rationale:**
-
-- Blind agents see only the claim and the code, never the original reasoning → prevents sycophancy
-- Fresh agents (not the original reviewers) → genuinely independent judgment
-- Inline code provision (orchestrator reads and pastes) removes tool round-trips and anchors challengers to the exact lines under review — deterministic grounding beats LLM-on-LLM verification
-- Challengers retain Read/Grep/Glob tools for surrounding context exploration — agents that can explore outperform agents given only pre-loaded context
-- No ADD mechanism — original agents already had their chance
-- No voting/debate protocol — majority voting captures the same gains as debate without sycophancy risk
-
-After dispatch, announce: "Dispatched N agents for Phase 7." (N must equal the number of findings that survived Phase 6 — dispatch any missing challengers before proceeding.)
-
----
-
-## Post-challenge finalization — apply_challenges.py
-
-Collect challenger outputs into a combined `[{id, score, justification}]` JSON array. **Field mapping:** challengers return `confidence_claim_is_correct` — rename to `score`, and add the `id` of the challenged finding. Write to `{output_dir}/deep-review-challenges-{head_sha_short}.json`, then run:
-
-```bash
-Bash(
-  description="Applying challenge scores — removing/downgrading challenged findings, deduplicating, ranking",
-  command="""python3 {plugin_root}/scripts/apply_challenges.py \
-  "{output_dir}/deep-review-phase6-output-{head_sha_short}.json" \
-  "{output_dir}/deep-review-challenges-{head_sha_short}.json" \
-  --output "{output_dir}/deep-review-delivery-{head_sha_short}.json"
-""")
-```
-
-The script applies challenge thresholds, re-routes surfaced findings, re-runs cross-agent dedup, and ranks findings. Output is delivery-ready JSON at `{output_dir}/deep-review-delivery-{head_sha_short}.json`.
-
-**Challenge threshold reference:**
-
-- **score < 25** → remove (non-security) or downgrade one severity level (security)
-- **score 25-49** → downgrade one severity level; surfaced findings re-routed to `"suggestion"`
-- **score 50-74** → flag `challenge_contested: true`; surfaced findings re-routed to `"suggestion"`
-- **score ≥ 75** → finding survives unchanged
-
-**Output JSON schema:**
-
-```json
-{
-    "findings": [...],
-    "eliminated": [...],
-    "stats": {
-        "total_input": 10,
-        "challenge_removed": 1,
-        "challenge_downgraded": 2,
-        "challenge_contested": 1,
-        "challenge_survived": 5,
-        "unchallenged": 1,
-        "dedup_dropped": 0,
-        "final_count": 8
-    },
-    "generated_at": "..."
-}
-```
-
-Pass `{output_dir}/deep-review-delivery-{head_sha_short}.json` to Phase 8 report generation.
-
----
-
-## Post-challenge finalization — step 5: Incremental report diffing (incremental reviews only)
-
-Runs ONLY when the review is incremental (user selected "Incremental" in Phase 1) AND a previous `deep-review-findings` comment was successfully parsed.
-
-**Findings metadata schema** (used for parsing previous findings and generating the footer in Phase 8):
-
-```json
-{"version":1,"sha":"<full_sha>","findings":[
-  {"id":"<finding.id>","file":"<finding.file>","line":<line_start>,"dim":"<dimension>","title_hash":"<first 8 chars of SHA-256 of finding.title>"}
-]}
-```
-
-**Classification against previous finding set:**
-
-- **Introduced** — no matching `title_hash` + `file` in previous set. Surface normally.
-- **Fixed** — previous finding no longer detected. Note as resolved.
-- **Preexisting** — same finding still present (same `title_hash` + `file` + line within ±5). **Suppress** from report and PR comments.
-
-After classification:
-
-- Remove "Preexisting" findings from report output
-- Keep "Introduced" findings in normal severity-ranked sections
-- Compile "Fixed" list for Incremental Review Status section
-- Generate findings metadata for Phase 8 footer
+Dispatches the `report-writer` agent to render markdown from the high-confidence + unverified buckets (carried by value — the workflow has no disk). Oversized finding payloads are segmented into per-chunk dispatches joined under titled headings. On a throw OR null result, a deterministic **minimal report** is assembled from the pipeline stats and a gap is recorded — report failure is non-fatal. The `artifact-writer` then persists findings.json + report.md + the checkpoint artifact to `{output_dir}`.
 
 ---
 
 # Operational Recovery
 
-## Rate Limit Recovery
+The workflow degrades internally and returns `gaps` rather than throwing, so most recovery is reading gaps and disclosing them. Two cases need the skill:
 
-When API rate limits are encountered during any phase:
+1. **Hard failure (`ok:false`).** An unexpected throw in the deterministic glue returns `{ ok:false, error, phaseReached, ... }`. Offer **resume-from-checkpoint**: read the checkpoint artifact at `artifactPaths.checkpoints` and re-invoke the same `Workflow` call with `args.checkpoints` set to that artifact's content. The workflow skips every completed phase (it unwraps `.phases`) and resumes at the first missing one.
+2. **Partial artifacts.** A failed artifact-writer nulls `artifactPaths` and records a partial-artifacts gap. Retry via resume-from-checkpoint; if it fails again, deliver whatever report exists via chat and disclose the gap.
 
-1. **Detection** — The orchestrator or subagent will receive a 429 rate limit error.
-2. **Graceful pause** — Stop agent dispatch and wait according to the response's Retry-After header (default 60 seconds).
-3. **Resume from checkpoint** — After waiting, resume the phase that was interrupted. Do not restart from Phase 1.
-4. **Batch reduction** — If rate limits persist, reduce batch sizes (Phase 3: dispatch 2-3 agents instead of all; Phase 5/7: reduce validation/challenge batches by 50%).
-5. **User notification** — If recovery extends beyond 5 minutes, notify the user with estimated time remaining and option to cancel the review.
-
-Rate limit recovery is transparent to the user when under 60 seconds. Extended waits (>2 minutes) warrant a status update.
-
----
-
-## Script Failure Recovery
-
-When `merge_findings.py` (Merge Phase 3 Outputs) fails:
-
-1. **Check the exit code and read stderr.** The script prints structured error messages.
-2. **Fix the most common cause.** Missing NDJSON files or malformed agent text returns are the primary failure modes — verify that `{output_dir}/deep-review-text-{agent}-{head_sha_short}.txt` files were written before calling the script.
-3. **Retry once.** If the script fails again, fall back manually:
-   - Collect each agent's text return and extract any JSON blocks inline.
-   - Manually assemble the Phase 4 input envelope using the `python3 -c "import json; ..."` pattern.
-   - Set the `agent` field on each finding to the dispatching agent name.
-   - Note in methodology: "merge_findings.py failed — Phase 4 input assembled manually from agent text returns."
-4. **Do NOT skip Phase 4.** Pass the manually assembled JSON to `verify_findings.py` as normal. Manual assembly may miss findings from truncated outputs; this is acceptable — the pipeline continues.
-
----
-
-When `verify_findings.py` (Phase 4), `apply_validations.py` (Phase 5→6), `filter_findings.py` (Phase 6), `apply_challenges.py` (Phase 7→8), or `post_review.py` (Phase 8) fail:
-
-1. **Check the exit code and read stderr.** The scripts print structured error messages (`ERROR:` for fatal, `WARNING:` for recoverable).
-2. **Fix the most common cause.** Malformed input JSON is the #1 failure mode — re-write using the `python3 -c "import json; json.dump(...)"` pattern and retry.
-3. **Retry once.** If the same script fails twice on the same input, do not retry further.
-4. **Degrade gracefully.** If the script cannot be recovered:
-   - Phase 4 failure: Follow the numbered recovery checklist in the "Phase 4 failure recovery" section above. Do NOT skip Phase 5 or substitute inline analysis — dispatch validation agents with all findings set to `origin: "new"`.
-   - Phase 5→6 failure (`apply_validations.py`): pass Phase 4 findings directly to `filter_findings.py` without confidence adjustments. Note in methodology: "Validator adjustments skipped due to script failure."
-   - Phase 6 failure (`filter_findings.py`): pass all Phase 5 findings directly to Phase 7 without filtering. Note in methodology: "Phase 6 filtering skipped due to script failure."
-   - Phase 7→8 failure (`apply_challenges.py`): apply challenge thresholds manually (remove < 25, downgrade 25-49, flag 50-74, keep ≥ 75) and proceed to Phase 8. Note in methodology: "Challenge script failed — thresholds applied inline."
-   - Phase 8 failure: deliver the report via chat only (no PR comments). Note in methodology: "PR comment delivery failed."
-5. **Never run analysis inline as a substitute.** The scripts exist because LLM-inline analysis has correlated error rates of ~60%. A skipped script with a methodology note is better than fabricated results.
+**Never reproduce a failed stage inline in the main session.** The stages exist as isolated fresh-agent dispatches precisely because LLM-inline re-analysis carries ~60% correlated error. A skipped stage with a methodology note beats fabricated results.
