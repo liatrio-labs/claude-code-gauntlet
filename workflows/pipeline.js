@@ -2216,6 +2216,247 @@ function coarsenLimits(limits, nFiles, nFindings) {
   return L;
 }
 
+// --- Phase 5: Validate ------------------------------------------------------
+
+// The validator independently re-scores a batch of findings; the documented schema
+// is a bare array [{id, confidence, justification}] (one entry per finding it chose
+// to score — it may omit some, which then keep their original confidence).
+const VALIDATE_SCHEMA = { type: 'array', items: { id: 'string', confidence: 'number', justification: 'string' } };
+
+// validateStage(ctx, input) -> { findings, gaps, stats }
+// Batches findings into limits.validateBatch chunks and dispatches ONE validator per
+// batch through parallel(). applyValidations merges the returned confidence
+// adjustments into the findings IN PLACE (id match, [0,100] clamp, original_confidence
+// captured once). parallel() nulls a failed member in place, so results are positionally
+// aligned with `batches` — attribution is by INDEX (like discover), not .filter(Boolean),
+// because a degraded batch must be traced back to the exact findings it left unvalidated.
+// A null/malformed batch means its findings went UNVALIDATED: they are kept at face value
+// (conservative — never dropped, confidence never touched) and marked validation='skipped'
+// with a loud gap. Every surviving finding ends marked validation='validated' or 'skipped'.
+async function validateStage(ctx, input) {
+  const c = ctx || defaultCtx();
+  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
+  const findings = inp.findings || [];
+  const limits = inp.limits || {};
+  const policy = inp.policy || {};
+  const batchSize = Math.max(1, limits.validateBatch || findings.length || 1);
+
+  if (findings.length === 0) {
+    return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } };
+  }
+
+  const model = resolvePolicy('deep-review:validator', {
+    frontier: policy.frontier,
+    frontierModelId: policy.frontierModelId,
+    subagentModelEnv: policy.subagentModel,
+  }).model;
+
+  const batches = [];
+  for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
+
+  const tasks = batches.map((batch, idx) => ({
+    label: `validate-batch-${idx}`,
+    agentType: 'deep-review:validator',
+    model,
+    contextPath: inp.contextPath,
+    schema: VALIDATE_SCHEMA,
+    prompt: validatePrompt(inp, batch),
+  }));
+
+  const results = await c.parallel(tasks);
+
+  const gaps = [];
+  const validations = [];
+  const skippedSet = new Set(); // finding REFERENCES (immune to a missing/duplicate id)
+  let completed = 0;
+
+  results.forEach((res, idx) => {
+    const batch = batches[idx];
+    const list = res === null || res === undefined
+      ? null
+      : (Array.isArray(res) ? res : (Array.isArray(res.validations) ? res.validations : null));
+    if (list === null) {
+      gaps.push(`validate-batch-${idx}: validator returned null/malformed — ${batch.length} finding(s) unvalidated (validation=skipped, kept conservatively)`);
+      for (const f of batch) skippedSet.add(f);
+      return;
+    }
+    completed += 1;
+    validations.push(...list);
+  });
+
+  const { adjustedCount } = applyValidations(findings, validations);
+
+  let skipped = 0;
+  for (const f of findings) {
+    if (skippedSet.has(f)) { f.validation = 'skipped'; skipped += 1; }
+    else f.validation = 'validated';
+  }
+
+  return {
+    findings,
+    gaps,
+    stats: {
+      batches_dispatched: batches.length,
+      batches_completed: completed,
+      validated: findings.length - skipped,
+      skipped,
+      adjusted: adjustedCount,
+    },
+  };
+}
+
+function validatePrompt(inp, batch) {
+  const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
+  const ids = batch.map((f) => f.id).join(', ');
+  return `${ctxLine}Independently validate this batch of findings (ids: ${ids}). Attempt to disprove each and return the array [{ id, confidence, justification }] — confidence 0-100.`;
+}
+
+// --- Phase 6: Filter --------------------------------------------------------
+
+// filterStage(input) -> applyFilterPipeline envelope. PURE and deterministic: no ctx,
+// no agents (that is the whole point of the JS twin). `reviewConfig` is the parsed
+// REVIEW.md object (thresholds + ignore list) and `exclusionPatterns` the parsed
+// exclusions list, both prepared upstream (parseReviewMd / loadExclusions). generatedAt
+// is threaded from the args waist into the envelope's generated_at — never new Date().
+function filterStage(input) {
+  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
+  const findings = inp.findings || [];
+  const config = inp.reviewConfig || {};
+  const exclusionPatterns = inp.exclusionPatterns || [];
+  return applyFilterPipeline(findings, config, exclusionPatterns, inp.generatedAt);
+}
+
+// --- Phase 7: Challenge -----------------------------------------------------
+
+const CHALLENGE_SCHEMA = { type: 'object', id: 'string', score: 'number', justification: 'string' };
+
+// blindChallengeFields(finding) -> { title, description, code }
+// STRUCTURAL blindness guarantee: the blind challenger sees ONLY these three keys.
+// Selecting them explicitly (an allowlist, not a delete-list) means no confirming
+// context — evidence, origin, cross_file_refs, corroborated_by, the original agent's
+// reasoning — can ever reach the challenger, and stays impossible even if new
+// reasoning-bearing fields are added to findings later. Unit-tested both ways: the
+// returned object has exactly these keys and the built prompt leaks none of the rest.
+function blindChallengeFields(finding) {
+  return {
+    title: finding.title || '',
+    description: finding.description || '',
+    code: finding.code || '',
+  };
+}
+
+function challengePrompt(finding) {
+  const b = blindChallengeFields(finding);
+  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
+}
+
+// challengeStage(ctx, input) -> { findings, unverified, eliminated, gaps, stats, generated_at }
+// Ranks the incoming findings and blind-challenges the top min(n, limits.challengeCap)
+// through parallel() — one challenger per finding, each fed ONLY blindChallengeFields.
+// parallel() nulls a failed member in place, so results are positionally aligned with the
+// candidate list (attribution by INDEX — a degraded member must be traced to its exact
+// finding). A finding counts as CHALLENGED only when its member returned an int-coercible
+// score; applyChallenges then applies the blind-score thresholds (remove / downgrade /
+// contest / survive), re-runs cross-agent dedup, and ranks — that ranked set is the
+// high-confidence bucket. Every UNCHALLENGED finding — cap overflow OR a null/unscored
+// member — is marked challenge='skipped' and routed to `unverified` (the pipeline-degraded
+// section); it NEVER enters the high-confidence bucket. Only genuinely-challenged findings
+// flow into applyChallenges, so its `unchallenged` pass-through (which would land a finding
+// in the high-confidence set) can never fire here. Records dispatched-vs-completed counts.
+async function challengeStage(ctx, input) {
+  const c = ctx || defaultCtx();
+  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
+  const findings = inp.findings || [];
+  const limits = inp.limits || {};
+  const policy = inp.policy || {};
+  const cap = Math.max(0, limits.challengeCap != null ? limits.challengeCap : findings.length);
+
+  if (findings.length === 0) {
+    return {
+      findings: [], unverified: [], eliminated: [], gaps: [],
+      stats: {
+        total_input: 0, dispatched: 0, completed: 0, skipped: 0,
+        challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
+        challenge_survived: 0, unchallenged: 0, dedup_dropped: 0, final_count: 0,
+      },
+      generated_at: inp.generatedAt,
+    };
+  }
+
+  const model = resolvePolicy('deep-review:challenger', {
+    frontier: policy.frontier,
+    frontierModelId: policy.frontierModelId,
+    subagentModelEnv: policy.subagentModel,
+  }).model;
+
+  // Rank first so the cap, when it bites, challenges the HIGHEST-priority findings;
+  // the lower-ranked overflow is skipped (routed to `unverified`, never dropped).
+  const ranked = rankFindings(findings);
+  const candidates = ranked.slice(0, cap);
+  const overflow = ranked.slice(cap);
+
+  const tasks = candidates.map((finding, idx) => ({
+    label: `challenge-${idx}`,
+    agentType: 'deep-review:challenger',
+    model,
+    contextPath: inp.contextPath,
+    schema: CHALLENGE_SCHEMA,
+    prompt: challengePrompt(finding),
+  }));
+
+  const results = tasks.length ? await c.parallel(tasks) : [];
+
+  const gaps = [];
+  const challenged = [];
+  const challenges = [];
+  const skipped = [];
+
+  results.forEach((res, idx) => {
+    const finding = candidates[idx];
+    const rawScore = res && typeof res === 'object' && 'score' in res ? res.score : undefined;
+    if (res === null || res === undefined || pyIntStrict(rawScore) === null) {
+      gaps.push(`challenge-${idx}: challenger returned null/unscored — finding ${finding.id} unchallenged (challenge=skipped, pipeline-degraded)`);
+      skipped.push(finding);
+      return;
+    }
+    // Pair the score with the KNOWN finding id (never trust the challenger to echo it).
+    challenges.push({ id: finding.id, score: rawScore, justification: res.justification });
+    challenged.push(finding);
+  });
+
+  for (const f of overflow) skipped.push(f);
+  if (overflow.length) {
+    gaps.push(`challenge: ${overflow.length} finding(s) over challengeCap=${cap} left unchallenged (challenge=skipped, pipeline-degraded)`);
+  }
+
+  const applied = applyChallenges(challenged, challenges);
+
+  // Mark + rank the degraded section. Shallow-clone so the caller's findings stay
+  // untouched (applyChallenges likewise clones the survivors it mutates).
+  const unverified = rankFindings(skipped.map((f) => ({ ...f, challenge: 'skipped' })));
+
+  return {
+    findings: applied.findings,
+    unverified,
+    eliminated: applied.eliminated,
+    gaps,
+    stats: {
+      total_input: findings.length,
+      dispatched: candidates.length,
+      completed: challenged.length,
+      skipped: skipped.length,
+      challenge_removed: applied.stats.challenge_removed,
+      challenge_downgraded: applied.stats.challenge_downgraded,
+      challenge_contested: applied.stats.challenge_contested,
+      challenge_survived: applied.stats.challenge_survived,
+      unchallenged: applied.stats.unchallenged,
+      dedup_dropped: applied.stats.dedup_dropped,
+      final_count: applied.stats.final_count,
+    },
+    generated_at: inp.generatedAt,
+  };
+}
+
 // --- pipeline_entry.js ---
 // pipeline_entry.js — bundle entry. Emitted LAST by build.js; its `export const meta`
 // literal and plain `const PIPELINE_VERSION` are hoisted to the top of the bundle.
