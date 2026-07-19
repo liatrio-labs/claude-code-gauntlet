@@ -709,15 +709,27 @@ export async function challengeStage(ctx, input) {
 
 const REPORT_SCHEMA = { type: 'object', report: 'string' };
 
+// Char budget for the findings payload embedded in one report-writer prompt.
+// Above this, reportStage segments findings into chunks and dispatches one
+// report-writer per chunk (the report generation would otherwise blow the
+// writer's context). 100k chars ~= a comfortably-sized single dispatch.
+const REPORT_SEGMENT_CHAR_BUDGET = 100000;
+
 // reportStage(ctx, input) -> { report, gaps }
 // Dispatches the report-writer agent to render the review markdown from the
 // high-confidence + unverified buckets (carried BY VALUE in the prompt — the
-// workflow script has no disk). The single agent() call is wrapped in try/catch:
-// a bare agent() THROWS on schema-retry-exhaustion / unknown agentType (Phase 0),
-// so the catch is what makes the "minimal report" degradation reachable — a bare
+// workflow script has no disk). Each agent() call is wrapped in try/catch: a bare
+// agent() THROWS on schema-retry-exhaustion / unknown agentType (Phase 0), so the
+// catch is what makes the "minimal report" degradation reachable — a bare
 // `null -> minimal` check could never fire because the throw would escape first.
 // On throw OR a null/empty result, a deterministic minimal report is assembled
 // from the pipeline stats and a gap is recorded; report failure is NON-FATAL.
+//
+// Segmentation: when the serialized findings payload exceeds
+// REPORT_SEGMENT_CHAR_BUDGET the findings are chunked and one report-writer is
+// dispatched PER chunk (sequentially, each with the same try/catch), then the
+// per-chunk reports are concatenated under titled segment headings. Any single
+// chunk that fails degrades to its own minimal section — the rest still render.
 export async function reportStage(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -727,22 +739,69 @@ export async function reportStage(ctx, input) {
     frontierModelId: policy.frontierModelId,
     subagentModelEnv: policy.subagentModel,
   }).model;
+
+  const findings = inp.findings || [];
+  const oversized = JSON.stringify(findings).length > REPORT_SEGMENT_CHAR_BUDGET;
+  if (!oversized) {
+    return dispatchReportSegment(c, model, inp, findings, null);
+  }
+
+  // Segment: one dispatch per chunk, sequentially, titled sections joined.
+  const chunks = chunkFindingsBySize(findings, REPORT_SEGMENT_CHAR_BUDGET);
+  const parts = [];
+  const gaps = [];
+  for (let i = 0; i < chunks.length; i += 1) {
+    const seg = { index: i, total: chunks.length };
+    const out = await dispatchReportSegment(c, model, inp, chunks[i], seg);
+    parts.push(`## Report segment ${i + 1} of ${chunks.length}\n\n${out.report}`);
+    gaps.push(...out.gaps);
+  }
+  return { report: parts.join('\n\n'), gaps };
+}
+
+// One report-writer dispatch over `findings` (a whole set or one segment). Owns
+// the try/catch + minimal-section fallback. `seg` (or null) labels the dispatch
+// and tags the gap so a segmented failure is traceable to its chunk.
+async function dispatchReportSegment(c, model, inp, findings, seg) {
+  const tag = seg ? ` segment ${seg.index}` : '';
+  const segInp = { ...inp, findings };
   try {
     const result = await c.agent({
-      label: 'report-writer',
+      label: seg ? `report-writer-${seg.index}` : 'report-writer',
       agentType: 'deep-review:report-writer',
       model,
       contextPath: inp.contextPath,
       schema: REPORT_SCHEMA,
-      prompt: reportPrompt(inp),
+      prompt: reportPrompt(segInp, seg),
     });
     if (!result || !result.report) {
-      return { report: minimalReport(inp), gaps: ['report: writer returned no report — assembled a minimal report from pipeline stats'] };
+      return { report: minimalReport(segInp), gaps: [`report${tag}: writer returned no report — assembled a minimal report from pipeline stats`] };
     }
     return { report: result.report, gaps: [] };
   } catch (e) {
-    return { report: minimalReport(inp), gaps: [`report: writer agent threw (${(e && e.message) || 'unknown'}) — assembled a minimal report from pipeline stats`] };
+    return { report: minimalReport(segInp), gaps: [`report${tag}: writer agent threw (${(e && e.message) || 'unknown'}) — assembled a minimal report from pipeline stats`] };
   }
+}
+
+// Greedy pack: accumulate findings into a chunk until adding the next would exceed
+// `budget` serialized chars, then start a new chunk. A single oversized finding
+// still goes in a chunk of its own (never dropped).
+function chunkFindingsBySize(findings, budget) {
+  const chunks = [];
+  let cur = [];
+  let curSize = 0;
+  for (const f of findings) {
+    const size = JSON.stringify(f).length;
+    if (cur.length && curSize + size > budget) {
+      chunks.push(cur);
+      cur = [];
+      curSize = 0;
+    }
+    cur.push(f);
+    curSize += size;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks.length ? chunks : [[]];
 }
 
 // Deterministic fallback report (no agent, no wall-clock) built from what the
@@ -768,15 +827,16 @@ function minimalReport(inp) {
   return lines.join('\n');
 }
 
-function reportPrompt(inp) {
+function reportPrompt(inp, seg) {
   const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
+  const segLine = seg ? `This is report segment ${seg.index + 1} of ${seg.total}; render only the findings in this segment. ` : '';
   const body = JSON.stringify({
     summary: inp.summary || '',
     findings: inp.findings || [],
-    unverified: inp.unverified || [],
+    unverified: (!seg || seg.index === 0) ? (inp.unverified || []) : [], // render the unverified bucket once, in segment 0
     stats: inp.stats || {},
   });
-  return `${ctxLine}Write the deep-review report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
+  return `${ctxLine}${segLine}Write the deep-review report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
 }
 
 // --- Persistence: writeArtifacts --------------------------------------------
@@ -826,14 +886,50 @@ export async function writeArtifacts(ctx, input) {
   }
 }
 
-function writeArtifactsPrompt(inp, paths) {
-  const payload = JSON.stringify({
-    findings: inp.findings || [],
-    unverified: inp.unverified || [],
+// The persisted findings must satisfy BOTH downstream boundaries: verify_findings.py
+// reads canonical names (file/line_start/line_end/description...) and the retained
+// post_review.py INDEXES the v2 names f["file"]/f["line"] and reads body/end_line.
+// So at the persist boundary each finding carries the v2 aliases ALONGSIDE the
+// canonical fields (a union schema): line<-line_start, end_line<-line_end,
+// body<-description. Existing v2 keys are never overwritten.
+function toV2Aliased(f) {
+  const out = { ...f };
+  if (out.line === undefined && out.line_start !== undefined) out.line = out.line_start;
+  if (out.end_line === undefined && out.line_end !== undefined) out.end_line = out.line_end;
+  if (out.body === undefined && out.description !== undefined) out.body = out.description;
+  return out;
+}
+
+// The by-value payload the writer agent persists. Findings/unverified are aliased
+// to the union schema so the persisted findings.json is consumable by BOTH boundary
+// scripts unchanged. Pure + exported so tests (and the node recorder) can assert the
+// persist output is REAL pipeline output, not a hand-authored fixture.
+export function writerPayload(inp) {
+  return {
+    findings: (inp.findings || []).map(toV2Aliased),
+    unverified: (inp.unverified || []).map(toV2Aliased),
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
-  });
-  return `Persist these deep-review artifacts to disk exactly as given (the workflow has no disk access). Write the findings JSON to ${paths.findings}, the report markdown to ${paths.report}, and the checkpoint JSON to ${paths.checkpoints}. Payload:\n${payload}\nReturn { artifactPaths } echoing the paths you wrote.`;
+  };
+}
+
+// Wire format for the writer's by-value payload: the payload is a single JSON line
+// at the END of the prompt, prefixed by this marker. The artifact-writer agent (and
+// parseWriterPayload) split on the marker to recover the exact object to persist.
+const WRITER_PAYLOAD_MARKER = 'PAYLOAD_JSON:';
+
+// parseWriterPayload(prompt) -> the payload object the writer was asked to persist.
+// Documents/round-trips the WRITER_PAYLOAD_MARKER wire format (JSON.stringify emits a
+// single physical line, so everything after the last marker is the JSON object).
+export function parseWriterPayload(prompt) {
+  const idx = (prompt || '').lastIndexOf(WRITER_PAYLOAD_MARKER);
+  if (idx === -1) return null;
+  return JSON.parse(prompt.slice(idx + WRITER_PAYLOAD_MARKER.length));
+}
+
+function writeArtifactsPrompt(inp, paths) {
+  const payload = JSON.stringify(writerPayload(inp));
+  return `Persist these deep-review artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 // --- Checkpoints ------------------------------------------------------------
@@ -848,13 +944,17 @@ export function checkpointPath(phase, sha) {
 // readCheckpoints(ctx, args) -> phase-keyed resume map ({ phase: priorOutput }).
 // Injected through the args waist on a rerun (a phase whose output is present is
 // skipped, not re-dispatched). The platform's own resume machinery caches
-// agent-level work; this is the coarser phase-level skip. Falls back to a ctx-borne
-// map (test seam) and finally to {}.
+// agent-level work; this is the coarser phase-level skip. Accepts EITHER a bare
+// { phase: output } map OR the persisted checkpoint artifact's { phases, completed,
+// phaseReached } wrapper (unwrapping .phases) so the artifact the pipeline itself
+// writes can be fed straight back. Falls back to a ctx-borne map (test seam), then {}.
 export function readCheckpoints(ctx, args) {
+  const unwrap = (cp) => {
+    if (!cp || typeof cp !== 'object') return null;
+    return (cp.phases && typeof cp.phases === 'object') ? cp.phases : cp;
+  };
   const A = args || {};
-  if (A.checkpoints && typeof A.checkpoints === 'object') return A.checkpoints;
-  if (ctx && ctx.checkpoints && typeof ctx.checkpoints === 'object') return ctx.checkpoints;
-  return {};
+  return unwrap(A.checkpoints) || (ctx && unwrap(ctx.checkpoints)) || {};
 }
 
 // --- Full orchestration: runWith --------------------------------------------
@@ -893,12 +993,15 @@ export async function runWith(ctx, rawArgs) {
 
   const gaps = [];
   const completed = [];
+  const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
 
   // Resume: a phase whose checkpoint is present reuses that output instead of
-  // dispatching. Either way the phase counts as reached.
+  // dispatching. Either way the phase counts as reached, and its output is recorded
+  // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const runPhase = async (name, thunk) => {
     const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
+    phaseOutputs[name] = out;
     completed.push(name);
     phaseReached = name;
     return out;
@@ -960,7 +1063,9 @@ export async function runWith(ctx, rawArgs) {
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
       report: reportOut.report,
-      checkpoints: { completed, phaseReached },
+      // Persist the actual per-phase outputs map (the producible resume state) plus
+      // the aggregate progress; readCheckpoints unwraps .phases when it is fed back.
+      checkpoints: { phases: phaseOutputs, completed, phaseReached },
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,

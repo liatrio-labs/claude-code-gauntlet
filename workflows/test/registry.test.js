@@ -23,3 +23,9 @@ test('CLAUDE_CODE_SUBAGENT_MODEL overrides everything and is flagged', () => {
   assert.equal(r.model, 'claude-haiku-4-5');
   assert.match(r.note, /CLAUDE_CODE_SUBAGENT_MODEL/);
 });
+test('report-writer / artifact-writer suffixes bind to STAGE_DEFAULTS (not the bare "report" key)', () => {
+  // The split(':').pop() suffix is the full 'report-writer'/'artifact-writer', so the
+  // tunable must be keyed by that or it silently never binds. Both resolve to sonnet.
+  assert.equal(resolvePolicy('deep-review:report-writer', {}).model, 'sonnet');
+  assert.equal(resolvePolicy('deep-review:artifact-writer', {}).model, 'sonnet');
+});

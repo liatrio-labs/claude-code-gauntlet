@@ -16,7 +16,12 @@ export const DIMENSIONS = [
 export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 
 // Deviations only. Frontmatter is the baseline model; this encodes S5 overrides.
-const STAGE_DEFAULTS = { validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet', report: 'sonnet' };
+// Keys are matched against `agentType.split(':').pop()`, so they must be the FULL
+// suffix — 'report-writer'/'artifact-writer', not 'report' — or the tunable never binds.
+const STAGE_DEFAULTS = {
+  validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
+  'report-writer': 'sonnet', 'artifact-writer': 'sonnet',
+};
 
 export function resolvePolicy(agentType, opts = {}) {
   if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)

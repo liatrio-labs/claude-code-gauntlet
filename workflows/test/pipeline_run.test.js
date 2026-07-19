@@ -19,105 +19,7 @@ import assert from 'node:assert/strict';
 import {
   runWith, reportStage, writeArtifacts, checkpointPath, readCheckpoints,
 } from '../src/stages.js';
-
-// A canonical discovery finding carrying every REQUIRED_FIELD (merge validates
-// against these) plus the fields the downstream filter/challenge stages read.
-// Built fresh per call so stage mutation (confidence boosts, origin, tags) never
-// leaks across dispatches or tests.
-function makeFinding(id, over = {}) {
-  return {
-    id,
-    file: `${id}.js`,
-    line_start: 10,
-    line_end: 10,
-    title: `finding ${id}`,
-    description: `a genuine correctness problem in ${id} that is described in enough words to clear the injection and threshold filters`,
-    severity: 'high',
-    confidence: 90,
-    dimension: 'bug',
-    origin: 'new',
-    evidence: '',
-    cross_file_refs: [],
-    code: `const ${id} = broken();`,
-    ...over,
-  };
-}
-
-function makeFindings() {
-  return [makeFinding('F1'), makeFinding('F2')];
-}
-
-// A fully valid args waist (every REQUIRED field from args.js). `over` patches it.
-function validArgs(over = {}) {
-  return {
-    argsVersion: 1,
-    mode: 'headless',
-    repoRoot: '/repo',
-    outputDir: '.deep-review',
-    headShaShort: 'abc1234',
-    nonce: 'nonce-xyz',
-    generatedAt: '2026-07-18T00:00:00Z',
-    diffPath: '/repo/.deep-review/diff.patch',
-    changedFilesPath: '/repo/.deep-review/changed.txt',
-    agentFlags: {},
-    policy: {},
-    limits: { validateBatch: 10, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },
-    ...over,
-  };
-}
-
-// Mock ctx. Records every dispatched task on `calls`. Each agent()/parallel()
-// member returns a coherent per-stage envelope so the happy path threads all the
-// way to report. Options:
-//   - agentThrowLabel: agent() throws when task.label === this (report/writer tests)
-//   - throwOnDiscover: parallel() throws when handed discovery tasks (top-level catch test)
-function makeCtx(args, opts = {}) {
-  const calls = [];
-  const A = args;
-
-  const agent = async (task) => {
-    calls.push(task);
-    const label = task.label || '';
-    if (opts.agentThrowLabel && label === opts.agentThrowLabel) {
-      throw new Error(`injected agent throw on ${label}`);
-    }
-    if (label === 'summarize' || label === 'summarize-merge') return { summary: 'the PR changes X' };
-    if (label.startsWith('verify-slice-')) {
-      // Echo a receipt the verify stage will TRUST: same head sha, the per-slice
-      // derived nonce `${nonce}.0` (one slice because verifySliceSize > nFindings),
-      // and n_in === the slice length. verified+eliminated must account for n_in.
-      const verified = makeFindings().map((f) => ({ ...f, origin: 'new' }));
-      return {
-        status: 'ok',
-        receipt: { sha: A.headShaShort, n_in: verified.length, nonce: `${A.nonce}.0` },
-        result: { verified, eliminated: [], batches: [], stats: {} },
-      };
-    }
-    if (label === 'report-writer') return { report: '# Deep Review\n\nHigh-confidence findings: 2' };
-    if (label === 'artifact-writer') return { artifactPaths: {} };
-    return null;
-  };
-
-  const parallel = async (tasks) => {
-    const isDiscover = tasks.some((t) => Array.isArray(t.dimensions));
-    if (isDiscover && opts.throwOnDiscover) throw new Error('injected parallel throw in discover');
-    return Promise.all(tasks.map(async (t) => {
-      calls.push(t);
-      const label = t.label || '';
-      if (label.startsWith('summarize-bucket-')) return { summary: 'partial' };
-      if (label.startsWith('validate-batch-')) return []; // no confidence adjustments
-      if (label.startsWith('challenge-')) return { score: 80, justification: 'claim holds' };
-      // discovery task: label IS the agentType. Only bug-detector yields findings.
-      if (Array.isArray(t.dimensions)) {
-        if (t.agentType === 'deep-review:bug-detector') return { findings: makeFindings(), complete: true, total_seen: 2 };
-        return { findings: [], complete: true, total_seen: 0 };
-      }
-      return null;
-    }));
-  };
-
-  return { calls, agent, parallel };
-}
+import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 // --- Happy path -------------------------------------------------------------
 
@@ -263,4 +165,63 @@ test('checkpointPath is phase-keyed and sha-scoped', () => {
   const p = checkpointPath('discover', 'abc1234');
   assert.match(p, /discover/);
   assert.match(p, /abc1234/);
+});
+
+// --- Checkpoint round-trip (the pipeline's OWN persist output resumes it) ----
+
+test('checkpoint round-trip: persisted per-phase map, fed back, skips every phase', async () => {
+  // Run 1 produces the checkpoint artifact the writer persists; capture it via onPersist.
+  const args1 = validArgs();
+  let persistedCheckpoints = null;
+  const ctx1 = makeCtx(args1, { onPersist: (payload) => { persistedCheckpoints = payload.checkpoints; } });
+  const out1 = await runWith(ctx1, args1);
+  assert.equal(out1.ok, true);
+  assert.ok(persistedCheckpoints, 'writer received a checkpoints payload');
+  assert.ok(persistedCheckpoints.phases, 'checkpoint artifact carries the per-phase outputs map');
+  for (const phase of ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report']) {
+    assert.ok(phase in persistedCheckpoints.phases, `checkpoint map has phase '${phase}'`);
+  }
+
+  // Run 2 feeds the persisted artifact straight back through the args waist. Every
+  // phase's output is present, so NO stage dispatches — only the writer runs.
+  const args2 = validArgs({ checkpoints: persistedCheckpoints });
+  const ctx2 = makeCtx(args2);
+  const out2 = await runWith(ctx2, args2);
+  assert.equal(out2.ok, true);
+  assert.equal(out2.phaseReached, 'report');
+  assert.equal(ctx2.calls.length, 1, 'only the artifact-writer dispatched on full resume');
+  assert.equal(ctx2.calls[0].label, 'artifact-writer');
+});
+
+// --- Report segmentation (oversized findings payload) -----------------------
+
+test('reportStage segments an oversized findings payload into >1 dispatch and joins sections', async () => {
+  // ~80 findings x ~2000-char description >> REPORT_SEGMENT_CHAR_BUDGET (100k).
+  const big = [];
+  for (let i = 0; i < 80; i += 1) big.push(makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
+
+  const calls = [];
+  const ctx = {
+    agent: async (t) => { calls.push(t); return { report: `segment body for ${t.label}` }; },
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: big, unverified: [], stats: {}, generatedAt: '2026-07-18T00:00:00Z' });
+
+  assert.ok(calls.length > 1, `expected >1 report-writer dispatch, got ${calls.length}`);
+  assert.ok(calls.every((t) => t.agentType === 'deep-review:report-writer'));
+  assert.match(out.report, /Report segment 1 of/);
+  assert.match(out.report, new RegExp(`Report segment ${calls.length} of ${calls.length}`));
+  assert.equal(out.gaps.length, 0, 'all segments rendered cleanly');
+});
+
+test('reportStage under the budget stays a single dispatch', async () => {
+  const calls = [];
+  const ctx = {
+    agent: async (t) => { calls.push(t); return { report: 'one report' }; },
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: makeFindings(), unverified: [], stats: {} });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].label, 'report-writer');
+  assert.equal(out.report, 'one report');
 });
