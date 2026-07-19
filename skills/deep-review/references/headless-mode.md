@@ -54,7 +54,7 @@ and stop the run with a non-zero outcome. **Never** fall back to a default and n
 - **Task board = none.** The Phase 8 task-board offer is skipped; no tasks are created.
 - **REVIEW.md setup and subdirectory prompts = skip.** Neither the root-setup offer nor the subdirectory-REVIEW.md offer is presented.
 - **`build-review-md` is never invoked.** Headless runs never launch the REVIEW.md configuration wizard.
-- **REVIEW.md is read-only.** All three write paths (root scaffold, subdirectory scaffold, dismissed-findings `## Ignore` append) are disabled. Reads run unchanged: the Phase 1 quick-check for `model_tier`/`default_delivery`, the Phase 2d hierarchical parse, and `filter_findings.py`'s `--review-md` consumption.
+- **REVIEW.md is read-only.** All three write paths (root scaffold, subdirectory scaffold, dismissed-findings `## Ignore` append) are disabled. Reads run unchanged: the Phase 1 quick-check for `model_tier`/`default_delivery`, the Phase 2d hierarchical parse, and the JS `filterStage`'s consumption of the parsed `reviewConfig`/`exclusionPatterns` (passed through the args waist).
 
 ---
 

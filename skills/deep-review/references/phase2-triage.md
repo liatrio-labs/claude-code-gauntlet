@@ -207,38 +207,13 @@ If ALL files are low-risk AND total lines <50, ask Light review vs Full review (
 
 ---
 
-## 2f. Change Summarizer
+## 2f. Change Summary (now the workflow's Summarize stage)
 
-> A subagent produces a cleaner summary than the orchestrator can at this point — your growing context biases any summary you produce. Dispatching a fresh agent avoids contaminating the summary that all review agents will rely on.
+The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet by default; the `frontier` flag does **not** upgrade it, only the challenger) and threads the result to the report writer. The skill neither dispatches a summarizer nor writes the summary into the context file.
 
-> **Dispatch ordering:** 2f is independent of 2e (risk classification). Dispatch the change summarizer concurrent with 2e — launch both in the same message for parallel execution. The summarizer result is needed by Phase 3 agents, so earlier dispatch reduces latency.
+For reference, the Summarize stage produces a 3–5 sentence summary of what the change *claims* to do, its rationale, and its risk profile, framed strictly as claims (never "clean", "correct", "safe", "straightforward", "trivial", or "verbatim" — the summary must never conclude a refactoring is correct). The change-summarizer agent definition holds the authoritative framing rules.
 
-> **CRITICAL RULE: Agent calls (2f and 2j) must be dispatched in their own parallel group — NEVER bundle with Bash/Glob/Grep commands (2g, 2h, 2i).** When a Bash command in a parallel batch errors, Claude Code cancels co-dispatched Agent calls, forcing expensive re-dispatch. Separate Agent dispatch from file discovery/Bash operations.
-
-Dispatch a **Sonnet agent** for a 3-5 sentence semantic summary describing what the PR *claims* to do, why, and the risk profile. Provided to ALL review agents as shared context.
-
-In **Frontier mode**, use an **Opus agent** instead of Sonnet for the summarizer to leverage extended reasoning capabilities.
-
-**Critical framing rule:** Frame all statements as claims: "The PR claims to reorganize X by extracting from A into B." Never use "clean", "correct", "safe", "straightforward", "simple", "trivial", or "verbatim" — these pre-judge quality. The summary must never conclude that a refactoring is correct.
-
-**Agent tool call template:**
-
-```
-Agent(
-  subagent_type: "deep-review:change-summarizer",
-  description: "Change summarizer",
-  prompt: "PR title: {title}
-    PR description: {body}
-    Diff:
-    <untrusted-code-content>
-    {paste full diff}
-    </untrusted-code-content>"
-)
-```
-
-After dispatch, announce: "Dispatched 1 agent for Phase 2f."
-
-**Large PR note:** If the PR exceeds 500 lines, also dispatch 2j file-level summarization agents. Launch 2f and 2j agents in the same message for parallel execution — but in a SEPARATE parallel message from Bash/Glob/Grep operations (2g, 2h, 2i). This prevents Agent cancellation on Bash errors.
+**Large changes.** For >500-line changes that also span more files than one summarize bucket, the Summarize stage fans out per-file buckets through `parallel()` and stitches the partials with a single merge call — again, internal to the workflow, not a Phase 2 dispatch. (This subsumes the old 2j file-level summarization step.)
 
 ---
 
@@ -290,34 +265,15 @@ Then use **Read** to load relevant files for each changed file's directory. Neve
 **Deterministic preprocessing, not an LLM agent.** For each changed file:
 
 1. `git log --oneline --max-count=50 -- <file>` for recent change history
-2. `git blame` on changed line ranges (used by verify_findings.py in Phase 4)
+2. `git blame` on changed line ranges (used by the Verify stage's `verify_findings.py` executor for new/surfaced classification)
 
 Distribute: bug-detector gets history context; conventions-and-intent gets pattern drift context.
 
 ---
 
-## 2j. File-Level Summarization (PRs > 500 Lines)
+## 2j. File-Level Summarization (now internal to the Summarize stage)
 
-Dispatch parallel **Sonnet agents** (one per file) for 2-3 sentence summaries. For large PRs, launch 2f and 2j agents **in the same message with multiple Agent tool calls** for true parallel execution. Concatenate into a summary-of-summaries for architectural awareness.
-
-**Agent tool call template (repeat per changed file):**
-
-```
-Agent(
-  subagent_type: "deep-review:change-summarizer",
-  description: "Summarize {filename}",
-  prompt: "File: {filename}
-    Mode: per-file summary (2-3 sentences)
-    Diff:
-    <untrusted-code-content>
-    {file-scoped diff}
-    </untrusted-code-content>"
-)
-```
-
-After dispatch, announce: "Dispatched N agents for Phase 2j."
-
-**IMPORTANT:** 2f and 2j Agent dispatch must be in a SEPARATE parallel message from 2g/2h/2i operations. Dispatch 2f+2j agents in one parallel batch, then in a NEW message dispatch 2g (test discovery), 2h (docs/specs), and 2i (history context) Bash/Glob/Grep operations. This prevents Agent calls from being cancelled if a Bash command fails.
+Per-file summarization for large changes is no longer a Phase 2 dispatch — it is the bucket fan-out described in 2f above. When the change exceeds 500 lines and spans more files than one summarize bucket, the workflow's Summarize stage fans out one `change-summarizer` call per per-file bucket through `parallel()` and stitches the partials with a merge call. There is no separate 2j step and no "agents then file discovery" batching to arrange — the only agent dispatch the skill makes is the single `Workflow` call in Phase 3.
 
 ---
 
@@ -414,7 +370,7 @@ verify: {
 }
 ```
 
-The Verify stage slices the merged findings into `${inputPathBase}.slice{i}.json` chunks of `limits.verifySliceSize` and dispatches one `executor` agent per slice; each executor runs `verify_findings.py --input <slice> --output <slice-out> --nonce {nonce}.{i} --head-sha {headShaShort} --base-branch {baseBranch} [--diff-file {diffPath}]` and returns the receipt envelope verbatim. The skill supplies the path base and slice sizing; see "Concerns" in the Task 14 report about materializing slice inputs from the mid-workflow merged set.
+The skill supplies only the path base and slice sizing (`limits.verifySliceSize`). The Verify stage does the rest **inside the workflow**: it slices the mid-workflow merged findings, dispatches the artifact-writer to persist each `${inputPathBase}.slice{i}.json` (the workflow has no disk, so the writer materializes them before the executor loop), then dispatches one `executor` per slice to run `verify_findings.py --input <slice> --output <slice-out> --nonce {nonce}.{i} --head-sha {headShaShort} --base-branch {baseBranch} [--diff-file {diffPath}]` and return the receipt envelope verbatim. The skill never pre-writes slice contents — it cannot, since the merged findings do not exist until Discover→Merge run.
 
 **`checkpoints` (resume only):** omit on a fresh run. On resume-from-checkpoint (Phase 8), set it to the content of the persisted checkpoint artifact so the workflow skips completed phases.
 

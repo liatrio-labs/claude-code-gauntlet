@@ -8,22 +8,26 @@ Full UX orchestration flow for Phase 8: report delivery, PR comment selection, t
 
 > **The workflow already generated the report.** The Report stage rendered `report.md` and the artifact-writer persisted it; the main session collects it, it does not re-generate it. You may output a brief summary to chat, but the full report is delivered per the method(s) selected in Phase 1.
 
-The Phase 3 `Workflow` call returned a compact object:
+The Phase 3 `Workflow` call returned a compact object that always includes a `checkpoints` field alongside `artifactPaths`:
 
 ```
-{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps }
+{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps, checkpoints }
 ```
 
-**On `ok: true`:** read the two artifacts — they are the source of truth for delivery. Do not reconstruct findings from the return value or from memory.
+**On `ok: true` (writer succeeded):** read the two artifacts — they are the source of truth for delivery. Do not reconstruct findings from the return value or from memory.
 
 - `artifactPaths.findings` — the persisted findings JSON. It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged.
 - `artifactPaths.report` — the rendered report markdown (already includes the severity-grouped findings, surfaced section, improvement suggestions, per-dimension summary, and Review Methodology).
+- The return's own `checkpoints` is just `{ completed: [...] }` (phase names). The **full** resume map (`{ phases, completed, phaseReached }`) is persisted at `artifactPaths.checkpoints` — read that file if a later re-run needs to resume a successful-but-superseded run.
 
-**On `ok: false` or a partial-artifacts gap** (writer failed, `artifactPaths.findings` null): the run reached `phaseReached` but did not finish. Offer **resume-from-checkpoint** before delivering anything partial:
+**On `ok: false`, or `ok: true` with a partial-artifacts gap** (writer failed, `artifactPaths` empty/null): the run reached `phaseReached` but did not finish, and nothing was persisted — so the resume state rides back **in the return's `checkpoints` field**, not on disk. Offer **resume-from-checkpoint** before delivering anything partial:
 
-1. Read the checkpoint artifact at `artifactPaths.checkpoints`.
-2. Re-invoke the same `Workflow(scriptPath, args)` call with `args.checkpoints` set to that artifact's content. The workflow skips every already-completed phase (it unwraps the `.phases` map) and resumes at the first missing one.
-3. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists via chat and report the `gaps`.
+1. Inspect `return.checkpoints`.
+   - Has a `.phases` map → re-invoke the same `Workflow(scriptPath, args)` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
+   - Is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~100k-char budget, so the workflow withheld the findings bulk) → there is no phase map and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`) and note the truncation in the methodology.
+2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists via chat and report the `gaps`.
+
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
 
 **Surface `gaps` in the methodology regardless of `ok`** — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 

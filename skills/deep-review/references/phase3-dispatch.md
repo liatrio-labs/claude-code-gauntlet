@@ -63,7 +63,7 @@ Each agent returns structured findings against the canonical schema (`agent()` `
 Two mechanical agents exist because the workflow script has no disk or shell:
 
 - **executor** (`tools: Bash, Read`) — runs one pinned `verify_findings.py` command exactly as given, reads the `--output` file, and returns its contents verbatim through the receipt schema. It never interprets, edits, or fabricates a success envelope; an honest `{status:'failed', ...}` is a legal answer. The Verify stage trusts a slice only when `status==='ok'` and the receipt echoes the dispatched nonce, head sha, and slice length.
-- **artifact-writer** (`tools: Write, Read`) — persists the by-value payload (findings JSON, report markdown, checkpoint JSON) to the exact paths given. The output directory already exists (Phase 2 created it). It writes exactly what it is given — no reformatting.
+- **artifact-writer** (`tools: Write, Read`) — persists a by-value payload to the exact paths given, writing exactly what it is given (no reformatting). It handles both payload shapes: the terminal artifacts (findings JSON, report markdown, checkpoint JSON) and, during the Verify stage, the per-slice `verify_findings.py` input files (the workflow has no disk, so the writer materializes them before the executor loop). The output directory already exists (Phase 2 created it).
 
 ---
 

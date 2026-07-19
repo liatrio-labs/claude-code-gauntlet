@@ -82,7 +82,7 @@ TaskUpdate(
       "confidence": <finding.confidence>,
       "evidence": "[finding.evidence]",
       "cross_file_refs": ["[finding.cross_file_refs]"],
-      "blame_classification": "<new or surfaced from Phase 4a>"
+      "blame_classification": "<new or surfaced from the Verify stage classification>"
     }
   }
 )

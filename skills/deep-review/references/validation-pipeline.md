@@ -12,7 +12,7 @@ The Python scripts are still shipped and still pass their suites (parity is prov
 
 Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
-**The executor pattern.** The stage slices the merged findings into `${verify.inputPathBase}.slice{i}.json` chunks of `limits.verifySliceSize`, then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs exactly:
+**The executor pattern.** The stage slices the merged findings into `limits.verifySliceSize` chunks and first dispatches the **artifact-writer** to persist each `${verify.inputPathBase}.slice{i}.json` (the workflow has no disk, so the writer materializes the slice inputs the script will read; a writer throw/null degrades the whole set to UNVERIFIED — never a fabricated verification). It then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs exactly:
 
 ```
 python3 {verify.scriptPath} --input {inputPathBase}.slice{i}.json --output {outputPathBase}.slice{i}.json \
@@ -100,9 +100,11 @@ Dispatches the `report-writer` agent to render markdown from the high-confidence
 
 # Operational Recovery
 
-The workflow degrades internally and returns `gaps` rather than throwing, so most recovery is reading gaps and disclosing them. Two cases need the skill:
+The workflow degrades internally and returns `gaps` rather than throwing, so most recovery is reading gaps and disclosing them. On the failure paths, nothing is persisted, so the resume state rides back **in the return's `checkpoints` field** (not on disk). Two cases need the skill:
 
-1. **Hard failure (`ok:false`).** An unexpected throw in the deterministic glue returns `{ ok:false, error, phaseReached, ... }`. Offer **resume-from-checkpoint**: read the checkpoint artifact at `artifactPaths.checkpoints` and re-invoke the same `Workflow` call with `args.checkpoints` set to that artifact's content. The workflow skips every completed phase (it unwraps `.phases`) and resumes at the first missing one.
-2. **Partial artifacts.** A failed artifact-writer nulls `artifactPaths` and records a partial-artifacts gap. Retry via resume-from-checkpoint; if it fails again, deliver whatever report exists via chat and disclose the gap.
+1. **Hard failure (`ok:false`).** An unexpected throw in the deterministic glue returns `{ ok:false, error, phaseReached, checkpoints, ... }` with `artifactPaths` empty. Offer **resume-from-checkpoint**: if `return.checkpoints` has a `.phases` map, re-invoke the same `Workflow` call with `args.checkpoints` set to `return.checkpoints` (the workflow unwraps `.phases` and resumes at the first missing phase). If it is `{ completed, truncated: true }` (phase-outputs map over the ~100k-char budget — the findings bulk is deliberately withheld from the return), re-run from scratch without `args.checkpoints`.
+2. **Partial artifacts (`ok:true`, writer failed).** A failed artifact-writer empties `artifactPaths` and records a partial-artifacts gap; the return's `checkpoints` carries the same `{ phases, completed }` (or truncated) resume state. Retry via resume-from-checkpoint as above; if it fails again, deliver whatever report exists via chat and disclose the gap.
+
+On `ok:true` **success**, resume state is NOT in the return (`checkpoints` is just `{ completed }` names) — the full `{ phases, completed, phaseReached }` map is on disk at `artifactPaths.checkpoints` for a later re-run.
 
 **Never reproduce a failed stage inline in the main session.** The stages exist as isolated fresh-agent dispatches precisely because LLM-inline re-analysis carries ~60% correlated error. A skipped stage with a methodology note beats fabricated results.

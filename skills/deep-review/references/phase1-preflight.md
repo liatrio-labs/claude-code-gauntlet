@@ -97,7 +97,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
      )
      ```
 
-     If **Incremental**: use `git diff {last_reviewed_sha}...HEAD`, parse `deep-review-findings` hidden HTML comment from previous review for report diffing (see Phase 7, post-challenge finalization).
+     If **Incremental**: use `git diff {last_reviewed_sha}...HEAD`, parse `deep-review-findings` hidden HTML comment from previous review for report diffing (applied at delivery — see the incremental-diffing note in `references/report-format.md`).
    - If no new commits:
 
      ```
