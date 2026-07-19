@@ -71,6 +71,15 @@ EXPECTED_ECHO = {
 
 _ASKUSERQUESTION_RE = re.compile(r'"(?:name|tool_name)"\s*:\s*"AskUserQuestion"')
 
+# The CLI prints this to stdout (ahead of the result envelope) when the main agent turn
+# ends while a tool it launched is still running as a background task, and that task
+# outlives the CLI's background-wait ceiling: e.g. "Background tasks still running after
+# 600s; terminating." For a headless review this means the Phase 3 Workflow ran detached
+# and was killed before Phase 8 delivered — so the config-echo receipt and payload are
+# absent for that reason, NOT a config mismatch. Matched ceiling-agnostically (the number
+# of seconds varies with CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).
+_BG_TASKS_KILLED_RE = re.compile(r"Background tasks still running after\b")
+
 # v3 drives its pipeline through the Workflow tool, first exposed by the Claude Code CLI
 # in 2.1.154. A ``--tool deep-review-v3`` run pre-flights the child CLI's version and is
 # marked ``invalid`` (never scored) on an older/unreadable CLI, rather than silently
@@ -441,6 +450,17 @@ def _has_askuserquestion(raw_text, envelope):
     return bool(_ASKUSERQUESTION_RE.search(raw_text or ""))
 
 
+def _workflow_backgrounded(raw_text):
+    """True when the CLI killed a still-running background task at its wait ceiling.
+
+    Signature: the ``Background tasks still running after <n>s; terminating`` notice the
+    CLI prints ahead of the result envelope. For a headless review it means the Phase 3
+    Workflow ran detached and was terminated before Phase 8 — a distinct outcome from a
+    genuine config-echo mismatch, so the runner labels it ``workflow_backgrounded``.
+    """
+    return bool(_BG_TASKS_KILLED_RE.search(raw_text or ""))
+
+
 def _echo_in_text(text):
     """True when *text* carries the full receipt: every expected knob line present."""
     text = text or ""
@@ -692,6 +712,20 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
             echo_ok=_echo_ok(raw_text, envelope, report_dirs),
             raw_json_path=str(raw_path),
             reason=_fail_reason(proc.returncode, envelope),
+        )
+
+    # 2b) Background-task kill: the Phase 3 Workflow ran detached and the CLI terminated it
+    #     at the background-wait ceiling before Phase 8 could deliver. The echo receipt and
+    #     payload are then absent for THIS reason, not a config mismatch -- label it distinctly
+    #     so the failure isn't conflated with a genuine echo/config problem. Invalid (unscored).
+    if _workflow_backgrounded(raw_text):
+        return InvokeResult(
+            "invalid",
+            cost_usd=cost_usd,
+            per_model=per_model,
+            echo_ok=_echo_ok(raw_text, envelope, report_dirs),
+            raw_json_path=str(raw_path),
+            reason="workflow_backgrounded",
         )
 
     # 3) Config receipt (accepted from stdout, the .result envelope, or a report .md).

@@ -178,6 +178,16 @@ def main():
         # Receipt only in the collected report markdown.
         stdout_lines = []
         write_report = True
+    elif mode == "bg_killed":
+        # The Phase 3 Workflow ran detached and the CLI killed it at its background-wait
+        # ceiling before Phase 8 -- so NO echo anywhere and no payload. The kill notice
+        # precedes a clean (is_error:false) envelope whose .result is a "still running in
+        # the background" message. Models the smoke-run workflow_backgrounded failure.
+        stdout_lines = []
+        result_text = (
+            "The deep-review workflow is now running in the background; "
+            "I'll pick up the persisted artifacts for delivery once it completes."
+        )
 
     denials = []
     if mode == "asks":
@@ -189,9 +199,15 @@ def main():
             }
         ]
 
+    if mode == "bg_killed":
+        # The CLI's background-task kill notice, printed ahead of the result envelope.
+        sys.stdout.write(
+            "Background tasks still running after 600s; terminating. "
+            "Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.\n"
+        )
     if stdout_lines:
         sys.stdout.write("\n".join(stdout_lines) + "\n")
-    if mode != "asks":
+    if mode not in ("asks", "bg_killed"):
         _write_payload()
     if write_report:
         _write_report(ECHO_LINES)

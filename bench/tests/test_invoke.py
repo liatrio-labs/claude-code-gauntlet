@@ -457,6 +457,16 @@ class InvokeReviewTest(InvokeTestBase):
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "config_echo_mismatch")
 
+    def test_backgrounded_workflow_is_distinct_reason(self):
+        # A child whose Phase 3 Workflow ran detached and got killed at the CLI's
+        # background-wait ceiling (echo + payload absent for THAT reason) must be labeled
+        # workflow_backgrounded, NOT conflated with a genuine config_echo_mismatch. The
+        # "Background tasks still running after ...; terminating" notice is the signature.
+        res = self._run("bg_killed")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "workflow_backgrounded")
+        self.assertNotEqual(res.reason, "config_echo_mismatch")
+
     def test_claude_not_found(self):
         # PATH without the fake -> claude cannot be resolved -> failed, not a crash.
         empty_bin = Path(self.tmp) / "emptybin"
