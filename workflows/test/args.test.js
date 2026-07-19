@@ -1,0 +1,38 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { ARGS_VERSION, normalizeArgs, validateArgs } from '../src/args.js';
+
+const good = {
+  argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.deep-review',
+  headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
+  diffPath: '/r/.deep-review/d.patch', changedFilesPath: '/r/.deep-review/f.json',
+  reviewConfigPath: null, agentFlags: {},
+  policy: { tier: 'optimized', frontier: false, frontierModelId: null, subagentModel: null },
+  limits: { summarizeBucketSize: 20, validateBatch: 10, challengeCap: 40, schemaFailureLimit: 3, verifySliceSize: 200 },
+};
+
+test('normalizeArgs parses a JSON string (session tool-call form)', () => {
+  assert.deepEqual(normalizeArgs(JSON.stringify(good)), good);
+});
+test('normalizeArgs passes an object through (workflow-nesting form)', () => {
+  assert.deepEqual(normalizeArgs(good), good);
+});
+test('validateArgs accepts a well-formed waist', () => {
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
+});
+test('validateArgs rejects an unknown argsVersion loudly', () => {
+  const r = validateArgs({ ...good, argsVersion: 2 });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /argsVersion/);
+});
+test('validateArgs reports every missing required field', () => {
+  const r = validateArgs({ argsVersion: 1 });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.length >= 5);
+});
+test('validateArgs rejects frontier:true without a frontierModelId', () => {
+  const r = validateArgs({ ...good, policy: { tier: 'optimized', frontier: true, frontierModelId: null, subagentModel: null } });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /frontierModelId/);
+});
+test('ARGS_VERSION is 1', () => { assert.equal(ARGS_VERSION, 1); });
