@@ -5,10 +5,15 @@
 // every agent()/parallel() dispatch (the runtime globals do not exist under
 // node:test), so these tests assert the GLUE, not the individual stages.
 //
+// Dispatch contract (Phase 0-verified + Workflow docs): agent(promptString, opts);
+// parallel(thunks) where each thunk calls agent(...). The mock ctx (helpers/pipelineMock)
+// asserts this on every dispatch, so these tests can never mask an object-vs-prompt bug.
+//
 // Degradation contract under test (Phase 0 throw contract):
-//  - A throw inside a CORE stage (discover uses parallel(), so we make parallel()
-//    itself throw) bubbles to the top-level catch -> { ok:false, error, phaseReached }.
-//    run() NEVER throws.
+//  - A catastrophic platform failure (parallel() itself throwing) inside a core stage
+//    (discover) bubbles to the top-level catch -> { ok:false, error, phaseReached }.
+//    run() NEVER throws. (Agent member failures null-isolate; single-dispatch stages
+//    catch their own throws — so a parallel() failure is the realistic catch trigger.)
 //  - reportStage / writeArtifacts each wrap their own agent() in try/catch, so an
 //    agent throw there degrades to a minimal report / partial-artifacts gap with
 //    ok:true — report/persistence failure is non-fatal.
@@ -17,7 +22,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  runWith, reportStage, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
+  runWith, summarize, reportStage, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
@@ -60,13 +65,13 @@ test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true
 
 test('a throw in a core stage (discover) is caught by the top-level try/catch', async () => {
   const args = validArgs();
-  const ctx = makeCtx(args, { throwOnDiscover: true });
+  const ctx = makeCtx(args, { parallelThrows: true });
   const out = await runWith(ctx, args);
 
   assert.equal(out.ok, false);
   assert.equal(typeof out.error, 'string');
-  assert.match(out.error, /discover/);
-  // summarize completed before discover threw.
+  assert.match(out.error, /parallel/);
+  // summarize (single agent) completed; discover's parallel() throw was caught.
   assert.equal(out.phaseReached, 'summarize');
   // The failure envelope still carries the compact keys.
   assert.ok('artifactPaths' in out);
@@ -80,7 +85,7 @@ test('a throw in a core stage (discover) is caught by the top-level try/catch', 
 
 test('run never throws out of runWith even when a stage throws', async () => {
   const args = validArgs();
-  const ctx = makeCtx(args, { throwOnDiscover: true });
+  const ctx = makeCtx(args, { parallelThrows: true });
   // Must resolve, not reject.
   await assert.doesNotReject(() => runWith(ctx, args));
 });
@@ -163,8 +168,8 @@ test('a present checkpoint for a phase skips that phase\'s dispatch', async () =
 
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
-  // No discovery task (a task carrying `dimensions`) was ever dispatched.
-  assert.ok(!ctx.calls.some((t) => Array.isArray(t.dimensions)), 'discover dispatch was skipped');
+  // No discovery dispatch (its label IS a 'deep-review:<agent>' agentType) ever happened.
+  assert.ok(!ctx.calls.some((t) => t.label.startsWith('deep-review:')), 'discover dispatch was skipped');
 });
 
 test('readCheckpoints reads the resume map injected through the args waist', () => {
@@ -215,7 +220,7 @@ test('reportStage segments an oversized findings payload into >1 dispatch and jo
 
   const calls = [];
   const ctx = {
-    agent: async (t) => { calls.push(t); return { report: `segment body for ${t.label}` }; },
+    agent: async (prompt, opts) => { calls.push(opts); return { report: `segment body for ${opts.label}` }; },
     parallel: async () => [],
   };
   const out = await reportStage(ctx, { findings: big, unverified: [], stats: {}, generatedAt: '2026-07-18T00:00:00Z' });
@@ -249,11 +254,50 @@ test('buildResumeCheckpoints truncates to names-only when the phases map exceeds
 test('reportStage under the budget stays a single dispatch', async () => {
   const calls = [];
   const ctx = {
-    agent: async (t) => { calls.push(t); return { report: 'one report' }; },
+    agent: async (prompt, opts) => { calls.push(opts); return { report: 'one report' }; },
     parallel: async () => [],
   };
   const out = await reportStage(ctx, { findings: makeFindings(), unverified: [], stats: {} });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].label, 'report-writer');
   assert.equal(out.report, 'one report');
+});
+
+// --- Structural dispatch-contract sweep (masking-proof) ---------------------
+
+test('sweep: runWith drives every stage with STRING prompts + valid JSON Schemas', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args); // its agent()/parallel() assert the platform contract
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(ctx.violations, [], `dispatch-contract violations: ${ctx.violations.join('; ')}`);
+  // Every dispatch label family was exercised (so the assertions actually ran on each).
+  const seen = ctx.calls.map((c) => c.label);
+  for (const family of ['summarize', 'deep-review:bug-detector', 'verify-input-writer', 'verify-slice-', 'validate-batch-', 'challenge-', 'report-writer', 'artifact-writer']) {
+    assert.ok(seen.some((l) => l === family || l.startsWith(family)), `swept dispatch family: ${family}`);
+  }
+  // And every recorded dispatch carried a string prompt + an object schema.
+  for (const c of ctx.calls) {
+    assert.equal(typeof c.prompt, 'string');
+    assert.equal(typeof c.schema, 'object');
+    assert.equal(typeof c.schema.type, 'string');
+  }
+});
+
+test('sweep: bucketed summarize + segmented report emit only contract-valid dispatches', async () => {
+  const args = validArgs();
+  // Bucketed summarize (parallel thunks + merge): >500 lines AND more files than the bucket.
+  const files = Array.from({ length: 50 }, (_, i) => `f${i}.js`);
+  const sctx = makeCtx(args);
+  await summarize(sctx, { changedFiles: files, changedLines: 600, limits: { summarizeBucketSize: 20 }, policy: {} });
+  assert.deepEqual(sctx.violations, [], `summarize violations: ${sctx.violations.join('; ')}`);
+  assert.ok(sctx.calls.some((c) => c.label.startsWith('summarize-bucket-')));
+  assert.ok(sctx.calls.some((c) => c.label === 'summarize-merge'));
+
+  // Segmented report (sequential per-chunk dispatches).
+  const big = Array.from({ length: 80 }, (_, i) => makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
+  const rctx = makeCtx(args);
+  await reportStage(rctx, { findings: big, unverified: [], stats: {}, policy: {} });
+  assert.deepEqual(rctx.violations, [], `report violations: ${rctx.violations.join('; ')}`);
+  assert.ok(rctx.calls.filter((c) => c.label.startsWith('report-writer-')).length > 1);
 });

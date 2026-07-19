@@ -47,8 +47,9 @@ When called for per-file summarization, produce a **2-3 sentence summary** for a
 1. What changed in this file — the functional modification
 2. Why it changed — the inferred reason given the PR context
 
-Return only the summary text. No headings, no bullet points.
+Return the structured object `{ summary }` — the prose only, no headings or bullet points.
 
 ## Output
 
-Return only the summary text — no headings, no preamble, no trailing commentary.
+Return the structured object `{ summary }` where `summary` is the prose summary
+itself — no headings, no preamble, no trailing commentary inside the string.

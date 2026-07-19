@@ -5,18 +5,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits } from '../src/stages.js';
 import { AGENTS } from '../src/registry.js';
+import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
+// Platform contract: agent(promptString, opts); parallel(thunks). The mock asserts it.
+// Discovery's per-agent result is keyed on opts.label (which IS the agentType); a
+// `nulls` label makes its thunk throw so parallel() null-isolates it (Phase 0).
 function fakeCtx({ nulls = [], byAgent = {} } = {}) {
   const calls = [];
-  return {
-    calls,
-    parallel: async (tasks) => Promise.all(tasks.map(async (t, i) => {
-      calls.push(t.label);
-      if (nulls.includes(t.label)) return null; // parallel() null-isolation
-      return byAgent[t.label] ?? { findings: [], complete: true, total_seen: 0 };
-    })),
-    agent: async () => { throw new Error('discover must use parallel(), not bare agent()'); },
+  const agent = async (prompt, opts = {}) => {
+    assertPrompt(prompt);
+    assertValidSchema(opts.schema);
+    calls.push(opts.label);
+    if (nulls.includes(opts.label)) throw new Error(`injected failure for ${opts.label}`);
+    return byAgent[opts.label] ?? { findings: [], complete: true, total_seen: 0 };
   };
+  const parallel = async (thunks) => Promise.all(thunks.map(async (thunk) => {
+    if (typeof thunk !== 'function') throw new Error('parallel() members must be zero-arg functions');
+    try { return await thunk(); } catch { return null; }
+  }));
+  return { calls, agent, parallel };
 }
 
 test('discover dispatches once per AGENT (7)', async () => {
@@ -73,14 +80,15 @@ test('coarsenLimits raises summarizeBucketSize so a pathological file count stil
 
 function summarizeCtx({ agentImpl, parallelImpl } = {}) {
   const calls = [];
-  return {
-    calls,
-    agent: agentImpl || (async (t) => { calls.push(t.label); return { summary: `S:${t.label}` }; }),
-    parallel: parallelImpl || (async (tasks) => Promise.all(tasks.map(async (t) => {
-      calls.push(t.label);
-      return { summary: `part:${t.label}` };
-    }))),
-  };
+  const agent = agentImpl || (async (prompt, opts = {}) => {
+    assertPrompt(prompt);
+    assertValidSchema(opts.schema);
+    calls.push(opts.label);
+    return { summary: `S:${opts.label}` };
+  });
+  // Default parallel CALLS each thunk (which invokes agent -> records the label).
+  const parallel = parallelImpl || (async (thunks) => Promise.all(thunks.map((thunk) => thunk())));
+  return { calls, agent, parallel };
 }
 
 test('summarize: small PR uses a single agent() call, no gaps', async () => {

@@ -8,27 +8,33 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage } from '../src/stages.js';
+import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
-// ctx.agent is the injected seam. parallel() throws: verify uses per-slice agent()
-// calls, never parallel() (the sequential order is what pairs receipts to slices).
+// Platform contract: agent(promptString, opts). verify uses SEQUENTIAL agent() calls
+// (never parallel() — the order pairs receipts to slices), so parallel() throws here.
 // Before the executor loop, verifyStage dispatches artifact-writer 'verify-input-writer-*'
-// calls to materialize the slice inputs; those are handled separately here (succeeding
-// by default, or via opts.sliceWriter) so `agentImpl` sees only executor dispatches with
-// a clean 0-based executor index.
-function verifyCtx(agentImpl, opts = {}) {
+// calls to materialize the slice inputs; those are handled separately (succeeding by
+// default, or via cfg.sliceWriter) so `agentImpl` sees only executor dispatches with a
+// clean 0-based executor index. Each recorded call is { prompt, ...opts } so tests can
+// read the embedded command from the prompt. Every dispatch asserts the contract.
+function verifyCtx(agentImpl, cfg = {}) {
   const calls = [];
   let execIdx = -1;
+  const agent = async (prompt, opts = {}) => {
+    assertPrompt(prompt);
+    assertValidSchema(opts.schema);
+    const call = { prompt, ...opts };
+    calls.push(call);
+    if ((opts.label || '').startsWith('verify-input-writer')) {
+      return cfg.sliceWriter ? cfg.sliceWriter(call) : { written: [] };
+    }
+    execIdx += 1;
+    return agentImpl(call, execIdx);
+  };
   return {
     calls,
     execCalls: () => calls.filter((t) => (t.label || '').startsWith('verify-slice-')),
-    agent: async (t) => {
-      calls.push(t);
-      if ((t.label || '').startsWith('verify-input-writer')) {
-        return opts.sliceWriter ? opts.sliceWriter(t) : { written: true };
-      }
-      execIdx += 1;
-      return agentImpl(t, execIdx);
-    },
+    agent,
     parallel: async () => { throw new Error('verifyStage must use agent() per slice, not parallel()'); },
   };
 }
@@ -173,12 +179,12 @@ test('(h2) equal-length slices cannot satisfy each other: per-slice nonces are d
   // Answer every slice with slice 0's nonce (n-1.0). Only slice 0 should be trusted;
   // slice 1 (also length 2) must NOT accept n-1.0 -> whole set UNVERIFIED.
   const ctx = verifyCtx((t, i) => {
-    commands.push(t.command);
+    commands.push(t.prompt); // the pinned command is embedded in the executor prompt
     return okEnvelope(findings.slice(0, 2), { nonce: 'n-1.0', n_in: 2 });
   });
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, false); // slice 1's receipt nonce n-1.0 != expected n-1.1
-  // The commands prove distinct per-slice nonces were dispatched.
+  // The prompts prove distinct per-slice nonces were dispatched.
   assert.match(commands[0], /--nonce n-1\.0(\s|$)/);
   assert.match(commands[1], /--nonce n-1\.1(\s|$)/);
 });

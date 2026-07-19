@@ -1826,6 +1826,9 @@ function chunkBySerializedSize(items, budget) {
 
 // --- Phase 1: Summarize -----------------------------------------------------
 
+// The change-summarizer returns its prose wrapped as { summary } (StructuredOutput).
+const SUMMARIZE_SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'] };
+
 // summarize(ctx, input) -> { summary, gaps }
 // Small PRs: one change-summarizer agent() call. Large PRs (>500 changed lines that
 // also span more files than one bucket): fan out per-file buckets of
@@ -1850,31 +1853,29 @@ async function summarize(ctx, input) {
     if (bucketed) {
       const buckets = [];
       for (let i = 0; i < changedFiles.length; i += bucketSize) buckets.push(changedFiles.slice(i, i + bucketSize));
-      const tasks = buckets.map((files, idx) => ({
+      // parallel() takes thunks; each calls agent(promptString, opts).
+      const thunks = buckets.map((files, idx) => () => c.agent(summarizePrompt(inp, files), {
         label: `summarize-bucket-${idx}`,
         agentType: 'deep-review:change-summarizer',
         model,
-        contextPath: inp.contextPath,
-        prompt: summarizePrompt(inp, files),
+        schema: SUMMARIZE_SCHEMA,
       }));
-      const partials = (await c.parallel(tasks)).filter(Boolean);
+      const partials = (await c.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await c.agent({
+      const mergeResult = await c.agent(summarizeMergePrompt(partials), {
         label: 'summarize-merge',
         agentType: 'deep-review:change-summarizer',
         model,
-        contextPath: inp.contextPath,
-        prompt: summarizeMergePrompt(partials),
+        schema: SUMMARIZE_SCHEMA,
       });
       if (!mergeResult) return { summary: '', gaps: ['summarize failed'] };
       return { summary: mergeResult.summary || '', gaps: [] };
     }
-    const result = await c.agent({
+    const result = await c.agent(summarizePrompt(inp, changedFiles), {
       label: 'summarize',
       agentType: 'deep-review:change-summarizer',
       model,
-      contextPath: inp.contextPath,
-      prompt: summarizePrompt(inp, changedFiles),
+      schema: SUMMARIZE_SCHEMA,
     });
     if (!result) return { summary: '', gaps: ['summarize failed'] };
     return { summary: result.summary || '', gaps: [] };
@@ -1917,19 +1918,36 @@ function agentActive(spec, agentFlags) {
   return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || agentFlags[flag]);
 }
 
+// Canonical finding property types (discovery emits confidence as a qualitative
+// STRING label — 'high'/'medium'/'low' — not the numeric score later stages compute).
+const FINDING_PROP_TYPES = {
+  id: 'string', file: 'string', line_start: 'number', line_end: 'number',
+  title: 'string', description: 'string', severity: 'string', confidence: 'string',
+  dimension: 'string', origin: 'string', evidence: 'string',
+};
+const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
+
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
-// per-agent result envelope { findings, complete, total_seen }.
+// per-agent result envelope { findings, complete, total_seen }. REAL JSON Schema —
+// {type, properties, required, items} — because the platform validates schemas before
+// dispatch and StructuredOutput enforces them (shorthand {id:'string'} is rejected).
+// schemaExtra is shorthand {key: typeName}; each entry becomes { type: typeName }.
 function findingSchema(spec) {
+  const props = {};
+  for (const [k, t] of Object.entries(FINDING_PROP_TYPES)) props[k] = { type: t };
+  props.cross_file_refs = { type: 'array', items: { type: 'string' } };
+  for (const [k, t] of Object.entries(spec.schemaExtra || {})) props[k] = { type: t };
   return {
     type: 'object',
-    findings: {
-      id: 'string', file: 'string', line_start: 'number', line_end: 'number',
-      title: 'string', description: 'string', severity: 'string', confidence: 'string',
-      dimension: 'string', origin: 'string', evidence: 'string', cross_file_refs: 'array',
-      ...spec.schemaExtra,
+    properties: {
+      findings: {
+        type: 'array',
+        items: { type: 'object', properties: props, required: FINDING_REQUIRED },
+      },
+      complete: { type: 'boolean' },
+      total_seen: { type: 'number' },
     },
-    complete: 'boolean',
-    total_seen: 'number',
+    required: ['findings', 'complete', 'total_seen'],
   };
 }
 
@@ -1953,31 +1971,31 @@ async function discover(ctx, input) {
   const discoveryCap = limits.discoveryCap; // optional per-agent finding ceiling
 
   const specs = agentSpecs().filter((spec) => agentActive(spec, agentFlags));
-  const tasks = specs.map((spec) => {
+  // Platform contract: parallel() takes an array of ZERO-ARG THUNKS, each calling
+  // agent(promptString, opts). label IS the agentType (identity for gaps); the prompt
+  // already names the dimensions, so no non-standard opts field is passed.
+  const thunks = specs.map((spec) => {
     const model = resolvePolicy(spec.agentType, {
       frontier: policy.frontier,
       frontierModelId: policy.frontierModelId,
       subagentModelEnv: policy.subagentModel,
     }).model;
-    return {
-      label: spec.agentType, // label IS the agentType (identity for parallel + gaps)
+    return () => c.agent(discoverPrompt(inp, spec), {
+      label: spec.agentType,
       agentType: spec.agentType,
       model,
-      dimensions: spec.dimensions,
       schema: findingSchema(spec),
-      contextPath: inp.contextPath,
-      prompt: discoverPrompt(inp, spec),
-    };
+    });
   });
 
-  const results = await c.parallel(tasks);
+  const results = await c.parallel(thunks);
 
   const gaps = [];
   const findings = [];
   const degradedDims = [];
 
   // parallel() resolves a failed member to null IN PLACE (Phase 0 verified): the
-  // results array is positionally aligned with `tasks`, so results[i] pairs with specs[i].
+  // results array is positionally aligned with `thunks`, so results[i] pairs with specs[i].
   results.forEach((res, i) => {
     const spec = specs[i];
     if (res === null || res === undefined) {
@@ -2048,11 +2066,25 @@ function mergeStage(discoverOut, meta) {
 // StructuredOutput retry pressure ({status:'failed'} is a legal answer).
 const VERIFY_SCHEMA = {
   type: 'object',
-  status: 'string', // 'ok' | 'failed'
-  receipt: { sha: 'string', n_in: 'number', nonce: 'string' },
-  result: { verified: 'array', eliminated: 'array', batches: 'array', stats: 'object' },
-  exitCode: 'number',
-  stderr: 'string',
+  properties: {
+    status: { type: 'string' }, // 'ok' | 'failed'
+    receipt: {
+      type: 'object',
+      properties: { sha: { type: 'string' }, n_in: { type: 'number' }, nonce: { type: 'string' } },
+    },
+    result: {
+      type: 'object',
+      properties: {
+        verified: { type: 'array', items: { type: 'object', properties: {} } },
+        eliminated: { type: 'array', items: { type: 'object', properties: {} } },
+        batches: { type: 'array', items: { type: 'object', properties: {} } },
+        stats: { type: 'object', properties: {} },
+      },
+    },
+    exitCode: { type: 'number' },
+    stderr: { type: 'string' },
+  },
+  required: ['status'], // discriminated union: receipt/result only present on status:'ok'
 };
 
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
@@ -2107,12 +2139,12 @@ async function verifyStage(ctx, input) {
     const sliceNonce = `${nonce}.${i}`;
     let env;
     try {
-      env = await c.agent({
+      // agent(promptString, opts); the pinned command is embedded in the prompt
+      // (verifyPrompt), which is how the executor agent receives it.
+      env = await c.agent(verifyPrompt(inp, i), {
         label: `verify-slice-${i}`,
         agentType: 'deep-review:executor',
         model,
-        command: verifyCommand(inp, i),
-        prompt: verifyPrompt(inp, i),
         schema: VERIFY_SCHEMA,
       });
     } catch (e) {
@@ -2167,11 +2199,11 @@ async function materializeVerifySlices(c, inp, slices, policy) {
   for (let g = 0; g < groups.length; g += 1) {
     let result;
     try {
-      result = await c.agent({
+      result = await c.agent(verifySliceWriterPrompt(groups[g]), {
         label: `verify-input-writer-${g}`,
         agentType: 'deep-review:artifact-writer',
         model,
-        prompt: verifySliceWriterPrompt(groups[g]),
+        schema: WRITTEN_SCHEMA,
       });
     } catch (e) {
       return { ok: false, reason: `slice-input writer threw (${(e && e.message) || 'unknown'})` };
@@ -2308,7 +2340,20 @@ function coarsenLimits(limits, nFiles, nFindings) {
 // The validator independently re-scores a batch of findings; the documented schema
 // is a bare array [{id, confidence, justification}] (one entry per finding it chose
 // to score — it may omit some, which then keep their original confidence).
-const VALIDATE_SCHEMA = { type: 'array', items: { id: 'string', confidence: 'number', justification: 'string' } };
+// The validator agent (agents/validator.md) emits an array of
+// { finding_id, confidence, justification }; the stage normalizes finding_id -> id.
+const VALIDATE_SCHEMA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      finding_id: { type: 'string' },
+      confidence: { type: 'number' },
+      justification: { type: 'string' },
+    },
+    required: ['finding_id', 'confidence'],
+  },
+};
 
 // validateStage(ctx, input) -> { findings, gaps, stats }
 // Batches findings into limits.validateBatch chunks and dispatches ONE validator per
@@ -2341,16 +2386,14 @@ async function validateStage(ctx, input) {
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
 
-  const tasks = batches.map((batch, idx) => ({
+  const thunks = batches.map((batch, idx) => () => c.agent(validatePrompt(inp, batch), {
     label: `validate-batch-${idx}`,
     agentType: 'deep-review:validator',
     model,
-    contextPath: inp.contextPath,
     schema: VALIDATE_SCHEMA,
-    prompt: validatePrompt(inp, batch),
   }));
 
-  const results = await c.parallel(tasks);
+  const results = await c.parallel(thunks);
 
   const gaps = [];
   const validations = [];
@@ -2422,7 +2465,17 @@ function filterStage(input) {
 
 // --- Phase 7: Challenge -----------------------------------------------------
 
-const CHALLENGE_SCHEMA = { type: 'object', id: 'string', score: 'number', justification: 'string' };
+// The challenger agent (agents/challenger.md) emits
+// { confidence_claim_is_correct, justification }; the stage reads that field (?? score)
+// and injects the KNOWN finding id by index (never trusts the challenger to echo it).
+const CHALLENGE_SCHEMA = {
+  type: 'object',
+  properties: {
+    confidence_claim_is_correct: { type: 'number' },
+    justification: { type: 'string' },
+  },
+  required: ['confidence_claim_is_correct'],
+};
 
 // blindChallengeFields(finding) -> { title, description, code }
 // STRUCTURAL blindness guarantee: the blind challenger sees ONLY these three keys.
@@ -2489,16 +2542,14 @@ async function challengeStage(ctx, input) {
   const candidates = ranked.slice(0, cap);
   const overflow = ranked.slice(cap);
 
-  const tasks = candidates.map((finding, idx) => ({
+  const thunks = candidates.map((finding, idx) => () => c.agent(challengePrompt(finding), {
     label: `challenge-${idx}`,
     agentType: 'deep-review:challenger',
     model,
-    contextPath: inp.contextPath,
     schema: CHALLENGE_SCHEMA,
-    prompt: challengePrompt(finding),
   }));
 
-  const results = tasks.length ? await c.parallel(tasks) : [];
+  const results = thunks.length ? await c.parallel(thunks) : [];
 
   const gaps = [];
   const challenged = [];
@@ -2558,7 +2609,7 @@ async function challengeStage(ctx, input) {
 
 // --- Phase 8: Report --------------------------------------------------------
 
-const REPORT_SCHEMA = { type: 'object', report: 'string' };
+const REPORT_SCHEMA = { type: 'object', properties: { report: { type: 'string' } }, required: ['report'] };
 
 // reportStage(ctx, input) -> { report, gaps }
 // Dispatches the report-writer agent to render the review markdown from the
@@ -2611,13 +2662,11 @@ async function dispatchReportSegment(c, model, inp, findings, seg) {
   const tag = seg ? ` segment ${seg.index}` : '';
   const segInp = { ...inp, findings };
   try {
-    const result = await c.agent({
+    const result = await c.agent(reportPrompt(segInp, seg), {
       label: seg ? `report-writer-${seg.index}` : 'report-writer',
       agentType: 'deep-review:report-writer',
       model,
-      contextPath: inp.contextPath,
       schema: REPORT_SCHEMA,
-      prompt: reportPrompt(segInp, seg),
     });
     if (!result || !result.report) {
       return { report: minimalReport(segInp), gaps: [`report${tag}: writer returned no report — assembled a minimal report from pipeline stats`] };
@@ -2665,7 +2714,15 @@ function reportPrompt(inp, seg) {
 
 // --- Persistence: writeArtifacts --------------------------------------------
 
-const WRITER_SCHEMA = { type: 'object', artifactPaths: 'object' };
+const WRITER_SCHEMA = {
+  type: 'object',
+  properties: { artifactPaths: { type: 'object', properties: {} } },
+};
+// The verify slice-input writer returns the list of paths it wrote.
+const WRITTEN_SCHEMA = {
+  type: 'object',
+  properties: { written: { type: 'array', items: { type: 'string' } } },
+};
 
 // writeArtifacts(ctx, { findings, unverified, report, checkpoints, outputDir,
 // headShaShort, policy }) -> { artifactPaths, gaps, partial }
@@ -2696,12 +2753,11 @@ async function writeArtifacts(ctx, input) {
     partial: true,
   });
   try {
-    const result = await c.agent({
+    const result = await c.agent(writeArtifactsPrompt(inp, paths), {
       label: 'artifact-writer',
       agentType: 'deep-review:artifact-writer',
       model,
       schema: WRITER_SCHEMA,
-      prompt: writeArtifactsPrompt(inp, paths),
     });
     if (!result) return partial('writer returned null');
     return { artifactPaths: paths, gaps: [], partial: false };

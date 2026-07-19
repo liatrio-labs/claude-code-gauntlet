@@ -14,22 +14,28 @@ import assert from 'node:assert/strict';
 import {
   validateStage, filterStage, challengeStage, blindChallengeFields,
 } from '../src/stages.js';
+import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
 // --- Phase 5: Validate ------------------------------------------------------
 
-// parallel() returns one array of validations per batch; a nulled index models a
-// failed member (parallel() null-isolation). agent() throws: validate uses parallel().
+// Platform contract: agent(promptString, opts); parallel(thunks). Each batch's result
+// is keyed on its opts.label ('validate-batch-N'); a nullBatches index makes that thunk
+// throw so parallel() null-isolates it (Phase 0). Every dispatch asserts the contract.
 function validateCtx({ nullBatches = [], byBatch } = {}) {
   const calls = [];
-  return {
-    calls,
-    parallel: async (tasks) => Promise.all(tasks.map(async (t, i) => {
-      calls.push(t);
-      if (nullBatches.includes(i)) return null;
-      return byBatch ? byBatch(t, i) : [];
-    })),
-    agent: async () => { throw new Error('validateStage must use parallel(), not bare agent()'); },
+  const agent = async (prompt, opts = {}) => {
+    assertPrompt(prompt);
+    assertValidSchema(opts.schema);
+    calls.push({ prompt, ...opts });
+    const i = Number((opts.label || '').replace('validate-batch-', ''));
+    if (nullBatches.includes(i)) throw new Error(`injected batch ${i} failure`);
+    return byBatch ? byBatch(opts, i) : [];
   };
+  const parallel = async (thunks) => Promise.all(thunks.map(async (thunk) => {
+    if (typeof thunk !== 'function') throw new Error('parallel() members must be zero-arg functions');
+    try { return await thunk(); } catch { return null; }
+  }));
+  return { calls, agent, parallel };
 }
 
 function vFinding(id, over = {}) {
@@ -127,15 +133,19 @@ test('filter is pure + deterministic: same input -> same output, no ctx', () => 
 
 function challengeCtx({ nulls = [], byIdx } = {}) {
   const calls = [];
-  return {
-    calls,
-    parallel: async (tasks) => Promise.all(tasks.map(async (t, i) => {
-      calls.push(t);
-      if (nulls.includes(i)) return null;
-      return byIdx ? byIdx(t, i) : { score: 80, justification: 'holds up' };
-    })),
-    agent: async () => { throw new Error('challengeStage must use parallel(), not bare agent()'); },
+  const agent = async (prompt, opts = {}) => {
+    assertPrompt(prompt);
+    assertValidSchema(opts.schema);
+    calls.push({ prompt, ...opts });
+    const i = Number((opts.label || '').replace('challenge-', ''));
+    if (nulls.includes(i)) throw new Error(`injected challenge ${i} failure`);
+    return byIdx ? byIdx(opts, i) : { score: 80, justification: 'holds up' };
   };
+  const parallel = async (thunks) => Promise.all(thunks.map(async (thunk) => {
+    if (typeof thunk !== 'function') throw new Error('parallel() members must be zero-arg functions');
+    try { return await thunk(); } catch { return null; }
+  }));
+  return { calls, agent, parallel };
 }
 
 function cFinding(id, sev, over = {}) {
