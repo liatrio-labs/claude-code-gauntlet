@@ -41,6 +41,15 @@ CONFIRMED / REFUTED / INCONCLUSIVE.
 
 Pinned empirically while building Task 1 (controller-run probes): (1) `export default` — and any `export` other than the single `export const meta` literal — is a **SyntaxError** ("Unexpected keyword 'export'"); the runtime executes the script **body top-level**, and a top-level `return <value>` is the result channel (consistent with every Phase 0 probe). (2) `meta.description` is **required non-empty** — validation fails before parse otherwise ("meta.description must be a non-empty string"). (3) Confirmed end-to-end on the built `workflows/pipeline.js`: session-invoked args arrive as a JSON string, entry normalizes, returns `{ok:true, phaseReached:'entry', pipelineVersion:'3.0.0-dev', args:{probe:true}}`. Build-system consequences: meta must be emitted as a single line (line-based hoisting) and `workflows/src/pipeline_entry.js` is build-only source (its trailing top-level return is illegal in a standalone ES module).
 
+## Addendum (2026-07-19): online validation of build/bench-phase discoveries
+
+Per owner directive, load-bearing empirical discoveries were cross-checked against online sources (CLI v2.1.214/215 tested):
+
+1. **Plugin slash-command namespacing** — CORROBORATED, and stronger than observed: the flat form is *never* reliably registered, not merely intermittent. anthropics/claude-code#15882 ("Plugin commands are always namespaced (contradicting the documentation)") and #11328 (agents hit "Unknown slash command" on flat forms); both closed not-planned. The bench harness's namespaced `/deep-review:deep-review` invocation is the correct durable form. Related live issue class: #41842 and #57737 — `skills/`-based plugin commands failing to register as slash commands in fresh/isolated configs; documented workaround is a duplicate `commands/` directory. Backlog note: consider a `commands/` shim for end users typing the flat form.
+2. **Workflow script shape** (single `export const meta` literal, top-level body, bare top-level return) — CORROBORATED structurally: every official example at code.claude.com/docs/en/workflows uses exactly this shape; no doc shows `export default` or a wrapped body. The exact SyntaxError wording is ours alone.
+3. **Session-passed args arriving as a JSON string** — the docs describe object delivery ("the script can call array and object methods on `args` directly") for the natural-language saved-workflow path; our observation covers the raw Workflow-tool-call and workflow()-nesting surfaces. Treated as surface-dependent: the shipped entry normalizes via `typeof args === 'string' ? JSON.parse(args) : args`, which is correct under both behaviors.
+4. **Classifier denying `--dangerously-skip-permissions` but allowing `--permission-mode bypassPermissions`** — partially corroborated: auto-mode docs list "auto-mode bypass" as a built-in soft_deny category (mechanism exists); the spelling asymmetry itself has no online evidence, plausibly a literal-phrase pattern match (see also #62907 for the flags being treated differently elsewhere).
+
 ## Raw observations
 
 ### Task 2 — Workflow invocation probes (2026-07-18, CLI 2.1.214)
