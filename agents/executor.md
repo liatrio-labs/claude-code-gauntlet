@@ -1,7 +1,7 @@
 ---
 name: executor
 description: Runs a single pinned command and returns its output file verbatim. No interpretation.
-tools: Bash, Read, Write
+tools: Bash, Read
 effort: low
 model: sonnet
 color: gray

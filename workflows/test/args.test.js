@@ -48,3 +48,15 @@ test('validateArgs accepts frontier:true with a valid frontierModelId', () => {
 test('normalizeArgs(undefined) returns undefined without throwing', () => {
   assert.equal(normalizeArgs(undefined), undefined);
 });
+test('validateArgs rejects a nonce with characters outside [A-Za-z0-9._-]', () => {
+  // The nonce is interpolated into the verify executor command argv (per slice as
+  // `${nonce}.${i}`); anything with whitespace or shell metacharacters could split
+  // argv or break AST-safe emission. Reject it at the waist.
+  const r = validateArgs({ ...good, nonce: 'n 1; rm -rf /' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /nonce/);
+});
+test('validateArgs accepts a dotted/hyphenated/underscored nonce (per-slice charset)', () => {
+  // `.` and `-` must be allowed: the verify stage derives per-slice nonces `n-1.0`.
+  assert.deepEqual(validateArgs({ ...good, nonce: 'n-1.0_ab' }), { ok: true, errors: [] });
+});

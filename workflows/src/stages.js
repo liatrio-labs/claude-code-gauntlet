@@ -290,6 +290,10 @@ export async function verifyStage(ctx, input) {
 
   for (let i = 0; i < slices.length && failureReason === null; i += 1) {
     const slice = slices[i];
+    // Per-slice nonce: derive `${nonce}.${i}` so two equal-length slices can never
+    // satisfy each other's receipt (a slice-confusion / replay defense on top of the
+    // base nonce). The base nonce is charset-validated at the args waist (args.js).
+    const sliceNonce = `${nonce}.${i}`;
     let env;
     try {
       env = await c.agent({
@@ -304,7 +308,7 @@ export async function verifyStage(ctx, input) {
       failureReason = `executor threw on slice ${i} (${(e && e.message) || 'unknown'})`;
       break;
     }
-    const trust = trustSlice(env, { nonce, headShaShort, n: slice.length });
+    const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length });
     if (!trust.ok) {
       failureReason = `slice ${i}: ${trust.reason}`;
       break;
@@ -330,14 +334,30 @@ export async function verifyStage(ctx, input) {
 // A slice envelope is trusted only if it is the honest success shape AND its receipt
 // echoes exactly what we dispatched: the nonce (this answer is for OUR call), the head
 // sha (same tree the workflow resolved), and n_in (the executor loaded every finding we
-// sent — a short n_in means a truncated/partial run we must not trust).
+// sent). One more guard beyond the receipt: the result arrays must actually ACCOUNT for
+// n_in findings (verified + eliminated === n_in — an invariant run_verification always
+// satisfies), so a receipt that survives transport while its result body is truncated
+// cannot silently drop findings.
+//
+// Threat model: this defends against a STALE, HALLUCINATING, or CONFUSED executor
+// (an old/wrong result, a fabricated success, or another slice's answer) — NOT a
+// Byzantine one. The nonce is argv-visible by construction, so a malicious executor
+// could always echo it back; this is a consistency/liveness check, not authentication.
 function trustSlice(env, { nonce, headShaShort, n }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
   const r = env.receipt || {};
-  if (r.nonce !== nonce) return { ok: false, reason: `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce})` };
+  if (r.nonce !== nonce) return { ok: false, reason: `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce}, expected ${nonce})` };
   if (r.sha !== headShaShort) return { ok: false, reason: `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})` };
   if (r.n_in !== n) return { ok: false, reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})` };
+  const result = env.result || {};
+  if (!Array.isArray(result.verified) || !Array.isArray(result.eliminated)) {
+    return { ok: false, reason: 'result missing verified/eliminated arrays' };
+  }
+  const accounted = result.verified.length + result.eliminated.length;
+  if (accounted !== r.n_in) {
+    return { ok: false, reason: `result incomplete: verified+eliminated=${accounted} != n_in=${r.n_in} (transport truncation)` };
+  }
   return { ok: true };
 }
 
@@ -353,7 +373,7 @@ function verifyCommand(inp, i) {
     'python3', v.scriptPath || 'scripts/verify_findings.py',
     '--input', inPath,
     '--output', outPath,
-    '--nonce', inp.nonce,
+    '--nonce', `${inp.nonce}.${i}`, // per-slice derived nonce (matches trustSlice)
     '--head-sha', inp.headShaShort,
     '--base-branch', v.baseBranch || 'main',
   ];
