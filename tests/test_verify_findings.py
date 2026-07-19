@@ -1330,5 +1330,105 @@ class TestVerifyOutputFlag(unittest.TestCase):
         self.assertIn('"verified"', result)
 
 
+class TestReceipt(unittest.TestCase):
+    """Tests for the --input/--nonce/--head-sha receipt envelope (Task 11).
+
+    The receipt path is the workflow-facing contract: the JS verify stage trusts
+    the result only when status=='ok' and the receipt echoes the nonce, head sha,
+    and input finding count it dispatched. These findings use nonexistent files
+    and carry no line_start so verification is fully deterministic with zero git
+    subprocess dependency (classify_blame short-circuits on os.path.exists; the
+    empty --diff-file makes diff validation a no-op for line-less findings).
+    """
+
+    def _findings(self):
+        return [
+            {"id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
+             "file": "nope/does-not-exist-xyz.py", "title": "t", "description": "d",
+             "evidence": "e", "cross_file_refs": []},
+            {"id": "bug-2", "dimension": "bug", "severity": "low", "confidence": 50,
+             "file": "nope/does-not-exist-abc.py", "title": "t2", "description": "d2",
+             "evidence": "e2", "cross_file_refs": []},
+        ]
+
+    def _run_main(self, argv):
+        """Invoke main() with a controlled argv, stderr suppressed."""
+        import io
+        from scripts.verify_findings import main
+        with patch.object(sys, "argv", argv), \
+                patch("sys.stderr", new_callable=io.StringIO):
+            main()
+
+    def test_receipt_envelope_shape_and_legacy_parity(self):
+        import json
+        findings = self._findings()
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"findings": findings, "base_branch": "main"}, f)
+            findings_path = f.name
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+            empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
+        legacy_out = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        receipt_out = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        try:
+            # Legacy positional path (the baseline the receipt must reproduce).
+            self._run_main([
+                "verify_findings.py", findings_path,
+                "--diff-file", empty_diff, "--output", legacy_out,
+            ])
+            with open(legacy_out) as fh:
+                legacy = json.load(fh)
+
+            # Receipt path: --input replaces the positional, --nonce/--head-sha echoed.
+            self._run_main([
+                "verify_findings.py", "--input", findings_path,
+                "--diff-file", empty_diff, "--output", receipt_out,
+                "--nonce", "NONCE-123", "--head-sha", "deadbeef",
+            ])
+            with open(receipt_out) as fh:
+                envelope = json.load(fh)
+
+            # (a) envelope shape + receipt fields
+            self.assertEqual(envelope["status"], "ok")
+            self.assertEqual(set(envelope["receipt"].keys()), {"sha", "n_in", "nonce"})
+            self.assertEqual(envelope["receipt"]["sha"], "deadbeef")
+            self.assertEqual(envelope["receipt"]["n_in"], len(findings))
+            self.assertEqual(envelope["receipt"]["nonce"], "NONCE-123")
+
+            # (b) result.verified is exactly what the legacy path produces
+            self.assertEqual(envelope["result"]["verified"], legacy["verified"])
+            self.assertEqual(envelope["result"]["stats"], legacy["stats"])
+        finally:
+            for p in (findings_path, empty_diff, legacy_out, receipt_out):
+                os.unlink(p)
+
+    def test_receipt_failure_envelope_is_schema_valid(self):
+        """An uncaught exception mid-verification yields a status=='failed' envelope
+        on stdout with exit 0 (honest failure is schema-valid, never fabricated)."""
+        import io, json
+        findings = self._findings()
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"findings": findings}, f)
+            findings_path = f.name
+        try:
+            # Force run_verification to blow up after loading, exercising the wrapper.
+            with patch("scripts.verify_findings.run_verification",
+                       side_effect=RuntimeError("boom")), \
+                    patch("sys.stderr", new_callable=io.StringIO), \
+                    patch("sys.stdout", new_callable=io.StringIO) as out, \
+                    patch.object(sys, "argv", [
+                        "verify_findings.py", "--input", findings_path,
+                        "--nonce", "N", "--head-sha", "abc",
+                    ]):
+                from scripts.verify_findings import main
+                main()  # must NOT raise; must print the failed envelope
+                printed = out.getvalue()
+            envelope = json.loads(printed)
+            self.assertEqual(envelope["status"], "failed")
+            self.assertEqual(envelope["exitCode"], 1)
+            self.assertIn("boom", envelope["stderr"])
+        finally:
+            os.unlink(findings_path)
+
+
 if __name__ == "__main__":
     unittest.main()

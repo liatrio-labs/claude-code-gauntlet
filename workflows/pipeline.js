@@ -1998,6 +1998,132 @@ function mergeStage(discoverOut, meta) {
   return merge(ndjsonContents, {}, { ...M, agents });
 }
 
+// --- Phase 4: Verify --------------------------------------------------------
+
+// The discriminated-union envelope the executor returns. Both shapes coexist so an
+// honest failure is schema-valid — the executor never fabricates a success under
+// StructuredOutput retry pressure ({status:'failed'} is a legal answer).
+const VERIFY_SCHEMA = {
+  type: 'object',
+  status: 'string', // 'ok' | 'failed'
+  receipt: { sha: 'string', n_in: 'number', nonce: 'string' },
+  result: { verified: 'array', eliminated: 'array', batches: 'array', stats: 'object' },
+  exitCode: 'number',
+  stderr: 'string',
+};
+
+// verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
+// Slices findings into limits.verifySliceSize chunks and dispatches ONE `executor`
+// agent per slice, SEQUENTIALLY (not parallel()) so each envelope pairs to its slice by
+// order. Each executor runs the pinned verify_findings.py receipt command and returns
+// VERIFY_SCHEMA. A slice is TRUSTED only when status==='ok' AND the receipt echoes the
+// dispatched nonce, head sha, and slice length (n_in — the truncation guard: proof the
+// script saw every finding we sent). ANY untrusted slice — receipt mismatch,
+// status:'failed', or an agent() throw — degrades the WHOLE set to the UNVERIFIED path:
+// every ORIGINAL finding re-emitted with origin='unknown' (surfaced-classification
+// skipped), a loud gap, verified=false. Findings are never dropped, success never faked.
+async function verifyStage(ctx, input) {
+  const c = ctx || defaultCtx();
+  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
+  const findings = inp.findings || [];
+  const limits = inp.limits || {};
+  const policy = inp.policy || {};
+  const nonce = inp.nonce;
+  const headShaShort = inp.headShaShort;
+  const sliceSize = Math.max(1, limits.verifySliceSize || findings.length || 1);
+
+  // Empty set: nothing to verify, trivially trusted (no executor dispatched).
+  if (findings.length === 0) return { findings: [], verified: true, gaps: [] };
+
+  const model = resolvePolicy('deep-review:executor', {
+    frontier: policy.frontier,
+    frontierModelId: policy.frontierModelId,
+    subagentModelEnv: policy.subagentModel,
+  }).model;
+
+  const slices = [];
+  for (let i = 0; i < findings.length; i += sliceSize) slices.push(findings.slice(i, i + sliceSize));
+
+  const verifiedOut = [];
+  let failureReason = null;
+
+  for (let i = 0; i < slices.length && failureReason === null; i += 1) {
+    const slice = slices[i];
+    let env;
+    try {
+      env = await c.agent({
+        label: `verify-slice-${i}`,
+        agentType: 'deep-review:executor',
+        model,
+        command: verifyCommand(inp, i),
+        prompt: verifyPrompt(inp, i),
+        schema: VERIFY_SCHEMA,
+      });
+    } catch (e) {
+      failureReason = `executor threw on slice ${i} (${(e && e.message) || 'unknown'})`;
+      break;
+    }
+    const trust = trustSlice(env, { nonce, headShaShort, n: slice.length });
+    if (!trust.ok) {
+      failureReason = `slice ${i}: ${trust.reason}`;
+      break;
+    }
+    // Trusted: collect the enriched verified findings (origin new/surfaced set by Python;
+    // cross_file_refs preserved verbatim for downstream surfaced-classification).
+    const verified = env.result && Array.isArray(env.result.verified) ? env.result.verified : [];
+    verifiedOut.push(...verified);
+  }
+
+  if (failureReason !== null) {
+    const unknown = findings.map((f) => ({ ...f, origin: 'unknown' }));
+    return {
+      findings: unknown,
+      verified: false,
+      gaps: [`verify: UNVERIFIED — ${failureReason}; all ${findings.length} finding(s) marked origin=unknown, surfaced-classification skipped`],
+    };
+  }
+
+  return { findings: verifiedOut, verified: true, gaps: [] };
+}
+
+// A slice envelope is trusted only if it is the honest success shape AND its receipt
+// echoes exactly what we dispatched: the nonce (this answer is for OUR call), the head
+// sha (same tree the workflow resolved), and n_in (the executor loaded every finding we
+// sent — a short n_in means a truncated/partial run we must not trust).
+function trustSlice(env, { nonce, headShaShort, n }) {
+  if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
+  if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
+  const r = env.receipt || {};
+  if (r.nonce !== nonce) return { ok: false, reason: `receipt nonce mismatch (got ${r.nonce == null ? 'missing' : r.nonce})` };
+  if (r.sha !== headShaShort) return { ok: false, reason: `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})` };
+  if (r.n_in !== n) return { ok: false, reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})` };
+  return { ok: true };
+}
+
+// The pinned command: a single `python3 <script> --flags...` invocation of plain word
+// tokens only (CLAUDE.md AST-safe emission — no command substitution, heredocs, env
+// prefix, or shell operators). Per-slice input/output paths are sha-scoped and index-
+// suffixed; the skill layer writes the slice inputs, the executor reads the slice output.
+function verifyCommand(inp, i) {
+  const v = inp.verify || {};
+  const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
+  const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
+  const parts = [
+    'python3', v.scriptPath || 'scripts/verify_findings.py',
+    '--input', inPath,
+    '--output', outPath,
+    '--nonce', inp.nonce,
+    '--head-sha', inp.headShaShort,
+    '--base-branch', v.baseBranch || 'main',
+  ];
+  if (v.diffPath) parts.push('--diff-file', v.diffPath);
+  return parts.join(' ');
+}
+
+function verifyPrompt(inp, i) {
+  return `Run exactly this command, then read the --output file and return its contents verbatim via the schema:\n${verifyCommand(inp, i)}`;
+}
+
 // --- Agent-count coarsening -------------------------------------------------
 
 const AGENT_COUNT_GUARD = 900;   // stay strictly under the platform fan-out ceiling
