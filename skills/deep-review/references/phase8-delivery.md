@@ -14,9 +14,10 @@ The Phase 3 `Workflow` call returned a compact object that always includes a `ch
 { ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, resolvedPolicy, gaps, checkpoints }
 ```
 
-**On `ok: true` (writer succeeded):** read the two artifacts — they are the source of truth for delivery. Do not reconstruct findings from the return value or from memory.
+**On `ok: true` (writer succeeded):** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
-- `artifactPaths.findings` — the persisted findings JSON. It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged.
+- `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: every challenge-survivor (main **and** suggestion tags alike), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the default PR-comment set — post it verbatim; the live agent never re-selects.
+- `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. Used by the interactive "Let me pick" walkthrough (the full candidate list).
 - `artifactPaths.report` — the rendered report markdown (already includes the severity-grouped findings, surfaced section, improvement suggestions, per-dimension summary, and Review Methodology).
 - The return's own `checkpoints` is just `{ completed: [...] }` (phase names). The **full** resume map (`{ phases, completed, phaseReached }`) is persisted at `artifactPaths.checkpoints` — read that file if a later re-run needs to resume a successful-but-superseded run.
 
@@ -60,9 +61,9 @@ Deliver using the method(s) selected in Phase 1, in this order:
 
 **Step B. PR comments** — if selected, run the PR comment selection flow before posting.
 
-Complete the selection flow below before posting any PR comments.
+The **default** delivery set is the pipeline's pre-selected `artifactPaths.postReview` payload — already ranked and capped at `limits.deliveryCap` and inclusive of both main- and suggestion-tagged survivors. The tag affects **presentation** (suggestions render in their own "Improvement Suggestions" report section) but **not inclusion** (they are posted as PR comments too). Never re-filter by tag, re-rank, or re-apply the cap to this payload.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Use selection=`default` — top `min($DEEP_REVIEW_PR_COMMENT_CAP, count)` main-report findings by severity then confidence, Improvement Suggestions excluded. The "Let me pick" walkthrough is unavailable. Posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Post the `artifactPaths.postReview` payload **verbatim** — the workflow already applied selection=`default` (rank + cap `$DEEP_REVIEW_PR_COMMENT_CAP`, both tags included). The "Let me pick" walkthrough is unavailable. Posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
@@ -71,21 +72,21 @@ AskUserQuestion(
     header: "PR Comments",
     multiSelect: false,
     options: [
-      { label: "Default — top {min(6, finding_count)} by severity", description: "Post the highest-severity findings as inline comments" },
+      { label: "Default — the pipeline's selected set ({postReview_count})", description: "Post the pre-selected postReview payload (ranked, capped, includes suggestions) verbatim" },
       { label: "Let me pick", description: "Walk through each finding and choose" }
     ]
   }]
 )
 ```
 
-- **"Default"** → top min(6, count) main-report findings by severity then confidence. Improvement Suggestions excluded.
-- **"Let me pick"** → run the **interactive finding walkthrough** (see below). Includes Improvement Suggestions. All selected findings posted — no cap.
+- **"Default"** → post the `artifactPaths.postReview` payload verbatim (already ranked, capped at `limits.deliveryCap`, and inclusive of both main and suggestion tags). Do not re-select.
+- **"Let me pick"** → run the **interactive finding walkthrough** (see below) over the full findings list. Includes Improvement Suggestions. The user hand-selects; all selected findings posted — no cap. This is user-driven deselection, not agent re-filtering.
 
 Track which findings were selected (**pr_comment_set**) for Stage 2 shortcut.
 
 **Step B.1. Write findings JSON and run post_review.py**
 
-Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script.
+Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script. For the **default** selection the "selected findings" are the `artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only wrap them with `review_body`, `owner`, `repo`, and `pr_number` (the pipeline cannot know those). For "Let me pick", they are the user's chosen subset.
 
 Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures:
 

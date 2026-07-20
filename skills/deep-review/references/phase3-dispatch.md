@@ -16,7 +16,7 @@ Workflow(
 - **One call.** The workflow orchestrates all eight stages and persists artifacts. Do not split work across calls, and do not run any review stage inline in the main session.
 - **`scriptPath` is a repo file path.** The plugin ships `workflows/pipeline.js` as a plain file; there is no native plugin-workflow component, so invocation is always by `scriptPath`. Never copy the bundle into `.claude/workflows/` (avoids version drift).
 - **Args arrive as one object.** The workflow normalizes a JSON-string-or-object waist, validates it (`validateArgs`), and rejects an unknown `argsVersion` or a missing required field before any dispatch.
-- **The return is compact:** `{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, checkpoints, resolvedPolicy, gaps }`. Full findings/report live on disk at `artifactPaths.*` — Phase 8 reads them.
+- **The return is compact:** `{ ok, phaseReached, stats, artifactPaths: { findings, report, postReview, checkpoints }, checkpoints, resolvedPolicy, gaps }`. Full findings/report and the pre-selected delivery payload live on disk at `artifactPaths.*` — Phase 8 reads them.
 
 ---
 
@@ -47,7 +47,8 @@ The workflow threads eight stages inside one top-level try/catch, checkpointing 
 | 6 | **Filter** | pure JS (no agents) — thresholds, injection filter, dedup, routing | — |
 | 7 | **Challenge** | one `challenger` per finding (blind), up to `limits.challengeCap` | overflow / null → `challenge=skipped`, routed to the unverified bucket |
 | 8 | **Report** | `report-writer` (segmented if oversized) | throw/null → deterministic minimal report + gap |
-|  | **Persist** | `artifact-writer` writes findings.json + report.md + checkpoints | throw/null → partial-artifacts gap, `artifactPaths` nulled |
+|  | **Select delivery** | pure `selectDelivery` ranks every challenge-survivor (both tags) and caps at `limits.deliveryCap` | — (deterministic glue, no dispatch) |
+|  | **Persist** | `artifact-writer` writes findings.json + report.md + post-review payload + checkpoints | throw/null → partial-artifacts gap, `artifactPaths` nulled |
 
 Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, report-writer, artifact-writer Sonnet. The `frontier` flag upgrades the challenger to `policy.frontierModelId`. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.
 
@@ -76,7 +77,7 @@ Each agent returns structured findings against the canonical schema (`agent()` `
 Two mechanical agents exist because the workflow script has no disk or shell:
 
 - **executor** (`tools: Bash, Read`) — runs one pinned `verify_findings.py` command exactly as given, reads the `--output` file, and returns its contents verbatim through the receipt schema. It never interprets, edits, or fabricates a success envelope; an honest `{status:'failed', ...}` is a legal answer. The Verify stage trusts a slice only when `status==='ok'` and the receipt echoes the dispatched nonce, head sha, and slice length.
-- **artifact-writer** (`tools: Write, Read`) — persists a by-value payload to the exact paths given, writing exactly what it is given (no reformatting). It handles both payload shapes: the terminal artifacts (findings JSON, report markdown, checkpoint JSON) and, during the Verify stage, the per-slice `verify_findings.py` input files (the workflow has no disk, so the writer materializes them before the executor loop). The output directory already exists (Phase 2 created it).
+- **artifact-writer** (`tools: Write, Read`) — persists a by-value payload to the exact paths given, writing exactly what it is given (no reformatting). It handles both payload shapes: the terminal artifacts (findings JSON, report markdown, the pre-selected post-review payload JSON, checkpoint JSON) and, during the Verify stage, the per-slice `verify_findings.py` input files (the workflow has no disk, so the writer materializes them before the executor loop). The output directory already exists (Phase 2 created it).
 
 ---
 

@@ -16,7 +16,7 @@ Read once at Phase 1 entry. Every value is echoed in a `Headless config:` block 
 | `DEEP_REVIEW_MODEL_TIER` | `optimized`\|`frontier` (`optimized`) | Phase 1 gate (a) |
 | `DEEP_REVIEW_DELIVERY` | subset of `chat,pr_comments,markdown` (`markdown`) | Phase 1 gate (b); `pr_comments` illegal for local targets |
 | `DEEP_REVIEW_POST_MODE` | `dry-run`\|`live` (`dry-run`) | whether post_review.py gets `--dry-run`; post_review.py also reads this var directly and self-enforces dry-run (belt-and-braces) |
-| `DEEP_REVIEW_PR_COMMENT_CAP` | int (`6`) | Phase 8 Stage 1 cap; bench sets 25 (flood guard) |
+| `DEEP_REVIEW_PR_COMMENT_CAP` | int (`6`) | Phase 8 Stage 1 cap; threaded into `limits.deliveryCap` so the workflow's `selectDelivery` applies it; bench sets 25 (flood guard) |
 | `DEEP_REVIEW_DRAFT_POLICY` | `review`\|`skip` (`review`) | draft-PR gate |
 | `DEEP_REVIEW_REVIEWED_POLICY` | `incremental`\|`full`\|`skip` (`full`) | both previously-reviewed variants |
 | `DEEP_REVIEW_PR_NOT_FOUND_POLICY` | `local`\|`error` (`error`) | resolution-failure gate |
@@ -48,7 +48,7 @@ and stop the run with a non-zero outcome. **Never** fall back to a default and n
 
 ## Hard rules (always true when headless — no env var toggles these)
 
-- **PR-comment selection = `default`.** The per-finding interactive walkthrough (the unbounded question loop) is structurally unreachable, which in turn makes the dismissed-findings gate unreachable.
+- **PR-comment selection = `default`.** The default set is the pipeline's pre-selected `artifactPaths.postReview` payload (ranked, capped at `limits.deliveryCap`, both main and suggestion tags included) — posted verbatim, never re-filtered or re-ranked. The per-finding interactive walkthrough (the unbounded question loop) is structurally unreachable, which in turn makes the dismissed-findings gate unreachable.
 - **Closed/merged PRs are reviewed, not skipped.** The interactive closed/merged stop does not apply — headless runs the full pipeline against the pinned head exactly as resolved. Benchmarking historical (already-merged) PRs is the primary headless use case; posting safety is governed by `DEEP_REVIEW_POST_MODE` (`dry-run` writes a payload and posts nothing), not by PR state. Phase 8 delivery follows `DEEP_REVIEW_DELIVERY` regardless of whether the PR is open, closed, or merged — the interactive chat/markdown-only restriction on closed/merged PRs does not apply headless.
 - **`gh pr checkout` is never run.** Headless never checks out, fetches, or stashes to move the working tree — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit than the one pinned.
 - **Task board = none.** The Phase 8 task-board offer is skipped; no tasks are created.
@@ -72,7 +72,7 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 | Previously reviewed (both variants) | `DEEP_REVIEW_REVIEWED_POLICY`: `incremental` reviews new commits only, `full` reviews from scratch, `skip` stops the run. |
 | Trivial / light-scope (all low-risk, <50 lines) | `DEEP_REVIEW_TRIVIAL_SCOPE`: `light` runs bugs+security only, `full` runs all dimensions. |
 | REVIEW.md detection (root setup + subdirectory offer) | Skip; root config applies; never invoke `build-review-md`. |
-| Phase 8 Stage 1 (PR comment selection) | selection=`default`, cap `DEEP_REVIEW_PR_COMMENT_CAP`; the walkthrough is unavailable. Posting obeys `DEEP_REVIEW_POST_MODE`. |
+| Phase 8 Stage 1 (PR comment selection) | Post `artifactPaths.postReview` verbatim — the workflow already applied selection=`default` (rank + cap `DEEP_REVIEW_PR_COMMENT_CAP` via `limits.deliveryCap`, both tags included); the walkthrough is unavailable. Posting obeys `DEEP_REVIEW_POST_MODE`. |
 | Phase 8 Stage 2 (task board) | Skipped. |
 | Phase 8 Stage 3 (dismissed findings) | Unreachable (no walkthrough ⇒ empty dismissed_set); never write REVIEW.md. |
 

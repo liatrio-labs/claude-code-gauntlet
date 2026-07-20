@@ -883,6 +883,25 @@ export async function challengeStage(ctx, input) {
   };
 }
 
+// --- Phase 8: Delivery selection --------------------------------------------
+
+// selectDelivery(survivors, cap) -> rank-ordered top-cap delivery set.
+// The deterministic Phase 8 delivery policy: the pipeline — not the live agent — decides
+// what gets posted. Every challenge-SURVIVOR is a delivery candidate regardless of its
+// report_tag (main AND suggestion alike — the tag is presentation metadata, never an
+// inclusion filter); rankFindings orders them (severity, confidence, risk/description) and
+// `cap` truncates. A null/undefined cap means "no cap" (deliver every survivor); a numeric
+// cap keeps the top-cap, floored at 0 (mirrors challengeStage's Math.max(0, ...) idiom so a
+// 0/negative cap yields an empty set rather than throwing). PURE — never mutates its input
+// (rankFindings copies) — and exported so the live agent consumes the result verbatim and
+// never re-filters or re-ranks. Challenge-removed / challenge-skipped findings are already
+// absent from `survivors`, so they stay excluded exactly as before.
+export function selectDelivery(survivors, cap) {
+  const ranked = rankFindings(survivors || []);
+  if (cap === undefined || cap === null) return ranked;
+  return ranked.slice(0, Math.max(0, cap));
+}
+
 // --- Phase 8: Report --------------------------------------------------------
 
 const REPORT_SCHEMA = { type: 'object', properties: { report: { type: 'string' } }, required: ['report'] };
@@ -1016,6 +1035,7 @@ export async function writeArtifacts(ctx, input) {
   const paths = {
     findings: `${outputDir}/deep-review-findings-${sha}.json`,
     report: `${outputDir}/deep-review-report-${sha}.md`,
+    postReview: `${outputDir}/deep-review-post-review-${sha}.json`,
     checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
   };
   const model = resolvePolicy('deep-review:artifact-writer', {
@@ -1024,7 +1044,7 @@ export async function writeArtifacts(ctx, input) {
     subagentModelEnv: policy.subagentModel,
   }).model;
   const partial = (reason) => ({
-    artifactPaths: { findings: null, report: null, checkpoints: null },
+    artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
     gaps: [`writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`],
     partial: true,
   });
@@ -1056,14 +1076,17 @@ function toV2Aliased(f) {
   return out;
 }
 
-// The by-value payload the writer agent persists. Findings/unverified are aliased
-// to the union schema so the persisted findings.json is consumable by BOTH boundary
-// scripts unchanged. Pure + exported so tests (and the node recorder) can assert the
-// persist output is REAL pipeline output, not a hand-authored fixture.
+// The by-value payload the writer agent persists. Findings/unverified/postReview are
+// aliased to the union schema so the persisted JSON is consumable by BOTH boundary scripts
+// unchanged. `postReview` is the deterministic delivery set (selectDelivery output): every
+// challenge-survivor, ranked and capped, each carrying its report_tag — persisted so Phase 8
+// posts it verbatim without re-selecting. Pure + exported so tests (and the node recorder)
+// can assert the persist output is REAL pipeline output, not a hand-authored fixture.
 export function writerPayload(inp) {
   return {
     findings: (inp.findings || []).map(toV2Aliased),
     unverified: (inp.unverified || []).map(toV2Aliased),
+    postReview: (inp.postReview || []).map(toV2Aliased),
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
   };
@@ -1085,7 +1108,7 @@ export function parseWriterPayload(prompt) {
 
 function writeArtifactsPrompt(inp, paths) {
   const payload = JSON.stringify(writerPayload(inp));
-  return `Persist these deep-review artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Persist these deep-review artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 // --- Checkpoints ------------------------------------------------------------
@@ -1212,6 +1235,13 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
+    // Deterministic delivery selection: EVERY challenge-survivor (main and suggestion tags
+    // alike), rank-ordered and capped at limits.deliveryCap (fed from DEEP_REVIEW_PR_COMMENT_CAP
+    // by the skill). Persisted so Phase 8 posts it verbatim — the live agent never re-filters
+    // or re-ranks. Challenge-removed (challengeOut.eliminated) and challenge-skipped
+    // (challengeOut.unverified) are already absent here, so they stay excluded.
+    const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap);
+
     const reportInput = {
       summary: summaryOut.summary,
       findings: challengeOut.findings,
@@ -1252,6 +1282,7 @@ export async function runWith(ctx, rawArgs) {
     const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       unverified: challengeOut.unverified,
+      postReview,
       report: reportOut.report,
       // Persist the actual per-phase outputs map (the producible resume state) plus
       // the aggregate progress; readCheckpoints unwraps .phases when it is fed back.
