@@ -94,6 +94,28 @@ test('discoverPrompt: no contextPath -> no dangling context-file instruction', a
   assert.doesNotMatch(ctx.prompts['deep-review:bug-detector'], /Read the shared context/);
 });
 
+// Hill-climb iter 3: the calibration paragraph (added in iter 2, then reverted when
+// applying it to all 7 agents caused a recall regression — candidate flood displaced
+// goldens in cap-bound delivery) is now scoped to bug-detector only via registry.js's
+// per-agent promptExtra. Assert the scoping is exact: bug-detector carries the markers,
+// every other agent's prompt is untouched.
+test('discoverPrompt: calibration paragraph is scoped to bug-detector only', async () => {
+  const ctx = fakeCtx();
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  const bugPrompt = ctx.prompts['deep-review:bug-detector'];
+  assert.match(bugPrompt, /deterministically verifies/);
+  assert.match(bugPrompt, /do not pre-filter borderline candidates/);
+  assert.match(bugPrompt, /honest confidence values/);
+  assert.match(bugPrompt, /total_seen must equal the number of candidates/);
+  assert.match(bugPrompt, /near zero/);
+
+  const securityPrompt = ctx.prompts['deep-review:security-reviewer'];
+  assert.doesNotMatch(securityPrompt, /deterministically verifies/);
+  assert.doesNotMatch(securityPrompt, /do not pre-filter borderline candidates/);
+  assert.doesNotMatch(securityPrompt, /honest confidence values/);
+  assert.doesNotMatch(securityPrompt, /total_seen must equal the number of candidates/);
+});
+
 test('worst-case agent count stays under 1000; coarsening lowers challengeCap and raises batch sizes', () => {
   const limits = { summarizeBucketSize: 20, validateBatch: 10, challengeCap: 40, verifySliceSize: 200 };
   assert.ok(worstCaseAgentCount(limits, 500, 3000) < 1000);

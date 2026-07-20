@@ -1,16 +1,27 @@
 // registry.js — single point of extension. Adding a dimension = one entry here + one agent .md.
+//
+// Hill-climb iter 3: `promptExtra` is an optional per-agent prompt-extension string,
+// appended verbatim to that agent's discoverPrompt (see stages.js). It is scoped by
+// agentType, not by dimension — every DIMENSIONS row for a multi-dimension agent must
+// carry the SAME promptExtra (agentSpecs() unions them; a mismatch would make the
+// dispatched prompt depend on dimension iteration order). Iter 2 found that applying a
+// candidate-calibration paragraph to all 7 agents caused a recall regression (candidate
+// flood displaced goldens in cap-bound delivery); iter 3 scopes it to bug-detector only,
+// pending evidence it generalizes.
+const CALIBRATION_PROMPT_EXTRA = 'This pipeline deterministically verifies, independently validates, threshold-filters, and blind-challenges every finding downstream — do not pre-filter borderline candidates yourself. Report every finding you judge plausible after investigation: your genuine assessment, with honest confidence values. Downstream stages remove what does not survive scrutiny. total_seen must equal the number of candidates you actually evaluated; the gap between total_seen and findings emitted should be near zero, except for candidates you conclusively refuted during investigation.';
+
 export const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'deep-review:bug-detector', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'security', agentType: 'deep-review:security-reviewer', conditionalFlag: null, schemaExtra: {}, modelOverride: 'opus' },
-  { dimension: 'cross_file_impact', agentType: 'deep-review:cross-file-impact', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'test_coverage', agentType: 'deep-review:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'convention', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'intent', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'comment_accuracy', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
+  { dimension: 'bug', agentType: 'deep-review:bug-detector', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: CALIBRATION_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'deep-review:security-reviewer', conditionalFlag: null, schemaExtra: {}, modelOverride: 'opus', promptExtra: null },
+  { dimension: 'cross_file_impact', agentType: 'deep-review:cross-file-impact', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'test_coverage', agentType: 'deep-review:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'convention', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'intent', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'comment_accuracy', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
   { dimension: 'type_design', agentType: 'deep-review:type-design-analyzer', conditionalFlag: null,
-    schemaExtra: { encapsulation: 'number', invariants: 'number', enforcement: 'number', usefulness: 'number' }, modelOverride: null },
+    schemaExtra: { encapsulation: 'number', invariants: 'number', enforcement: 'number', usefulness: 'number' }, modelOverride: null, promptExtra: null },
   { dimension: 'simplification', agentType: 'deep-review:code-simplifier', conditionalFlag: null,
-    schemaExtra: { before: 'string', after: 'string' }, modelOverride: null },
+    schemaExtra: { before: 'string', after: 'string' }, modelOverride: null, promptExtra: null },
 ];
 
 export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
