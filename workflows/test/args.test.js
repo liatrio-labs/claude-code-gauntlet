@@ -60,3 +60,24 @@ test('validateArgs accepts a dotted/hyphenated/underscored nonce (per-slice char
   // `.` and `-` must be allowed: the verify stage derives per-slice nonces `n-1.0`.
   assert.deepEqual(validateArgs({ ...good, nonce: 'n-1.0_ab' }), { ok: true, errors: [] });
 });
+test('validateArgs treats the delivery selector as optional (absent is fine)', () => {
+  // `good` carries no `delivery` field — the workflow defaults the tier to 'all'.
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
+});
+test('validateArgs accepts delivery.tier "all" and "main_only"', () => {
+  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all' } }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'main_only' } }), { ok: true, errors: [] });
+});
+test('validateArgs accepts an empty delivery object (tier defaults to all downstream)', () => {
+  assert.deepEqual(validateArgs({ ...good, delivery: {} }), { ok: true, errors: [] });
+});
+test('validateArgs rejects an unknown delivery.tier', () => {
+  const r = validateArgs({ ...good, delivery: { tier: 'suggestions_only' } });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /invalid delivery\.tier: suggestions_only/);
+});
+test('validateArgs rejects a non-object delivery field', () => {
+  const r = validateArgs({ ...good, delivery: 'all' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /delivery must be an object/);
+});

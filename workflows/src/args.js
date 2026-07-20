@@ -14,6 +14,10 @@ const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'gen
 // metacharacters that could split argv or break AST-safe emission.
 const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 
+// The optional Phase 8 delivery selector: { tier }. Absent is fine (the workflow defaults
+// the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
+const DELIVERY_TIERS = ['all', 'main_only'];
+
 export function normalizeArgs(raw) {
   return typeof raw === 'string' ? JSON.parse(raw) : raw;
 }
@@ -31,6 +35,16 @@ export function validateArgs(args) {
   // frontier:true demands an explicit full model-id string (Fable alias unconfirmed — no silent fallback).
   if (args.policy && args.policy.frontier === true && !args.policy.frontierModelId) {
     errors.push('policy.frontier is true but policy.frontierModelId is missing (a full model-id string is required)');
+  }
+  // Optional delivery selector. Absence is fine; when present it must be an object, and a
+  // present tier must be a known value — an unknown tier would otherwise fall through to the
+  // 'all' default in selectDelivery, silently ignoring an operator's narrowing intent.
+  if (args.delivery !== undefined) {
+    if (args.delivery === null || typeof args.delivery !== 'object' || Array.isArray(args.delivery)) {
+      errors.push('delivery must be an object of the form { tier } when present');
+    } else if (args.delivery.tier !== undefined && !DELIVERY_TIERS.includes(args.delivery.tier)) {
+      errors.push(`invalid delivery.tier: ${args.delivery.tier} (expected one of ${DELIVERY_TIERS.join(', ')})`);
+    }
   }
   return { ok: errors.length === 0, errors };
 }
