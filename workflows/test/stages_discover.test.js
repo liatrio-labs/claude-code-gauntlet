@@ -69,7 +69,12 @@ test('discover returns `dispatched`: every active agentType, regardless of outco
 // discovery yield ~40%. Assert the markers that replace it are present in every
 // dispatched prompt — context-file-first instruction, explicit no-cap/no-minimum
 // framing, and the agent's own dimension names (not a generic "your dimensions").
-test('discoverPrompt: elicitation markers present (context-file-first, no-cap, dimension naming)', async () => {
+//
+// Hill-climb iter 2: a probe showed agents self-censoring (total_seen=11, 1 emitted)
+// under v2-era "when in doubt, don't report" discipline. Assert the calibration markers
+// that push discovery back toward candidate recall — downstream stages, not the agent
+// itself, own precision.
+test('discoverPrompt: elicitation markers present (context-file-first, no-cap, dimension naming, calibration)', async () => {
   const ctx = fakeCtx();
   await discover(ctx, {
     changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, contextPath: '/abs/ctx.md',
@@ -81,6 +86,11 @@ test('discoverPrompt: elicitation markers present (context-file-first, no-cap, d
   assert.match(bugPrompt, /\bbug\b/); // names its own dimension
   assert.match(bugPrompt, /canonical schema/);
   assert.match(bugPrompt, /single paragraph/);
+  assert.match(bugPrompt, /deterministically verifies/);
+  assert.match(bugPrompt, /do not pre-filter borderline candidates/);
+  assert.match(bugPrompt, /honest confidence values/);
+  assert.match(bugPrompt, /total_seen must equal the number of candidates/);
+  assert.match(bugPrompt, /near zero/);
   // Multi-dimension agent names ALL of its dimensions, not just one.
   const conventionsPrompt = ctx.prompts['deep-review:conventions-and-intent'];
   assert.match(conventionsPrompt, /convention/);

@@ -269,12 +269,20 @@ export async function discover(ctx, input) {
 // agentType), no cap/no minimum on findings, and a reminder of the canonical schema's
 // single-paragraph description constraint. Kept short — StructuredOutput's `schema`
 // (findingSchema) does the actual shape enforcement, this prompt only sets behavior.
+//
+// Hill-climb iter 2: a controlled probe of bug-detector on a real PR context showed
+// total_seen=11, findings emitted=1 — agents were self-censoring under v2-era "when in
+// doubt, don't report" discipline, even though v3 moved verification/validation/
+// filtering/blind-challenge downstream where precision actually gets enforced. The
+// calibration paragraph below targets that confidence gap specifically; it does not
+// touch (and must not contradict) each agent's own false-positive exclusion list, which
+// still names concrete known-FP patterns and stays authoritative.
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextPath
     ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
     : '';
   const dims = spec.dimensions.join(', ');
-  return `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
+  return `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead. This pipeline deterministically verifies, independently validates, threshold-filters, and blind-challenges every finding downstream — do not pre-filter borderline candidates yourself. Report every finding you judge plausible after investigation: your genuine assessment, with honest confidence values. Downstream stages remove what does not survive scrutiny. total_seen must equal the number of candidates you actually evaluated; the gap between total_seen and findings emitted should be near zero, except for candidates you conclusively refuted during investigation.`;
 }
 
 // --- Phase 3: Merge ---------------------------------------------------------
