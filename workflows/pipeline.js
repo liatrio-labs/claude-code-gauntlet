@@ -1713,29 +1713,18 @@ function applyChallenges(findings, challenges) {
 
 // --- registry.js ---
 // registry.js — single point of extension. Adding a dimension = one entry here + one agent .md.
-//
-// Hill-climb iter 3: `promptExtra` is an optional per-agent prompt-extension string,
-// appended verbatim to that agent's discoverPrompt (see stages.js). It is scoped by
-// agentType, not by dimension — every DIMENSIONS row for a multi-dimension agent must
-// carry the SAME promptExtra (agentSpecs() unions them; a mismatch would make the
-// dispatched prompt depend on dimension iteration order). Iter 2 found that applying a
-// candidate-calibration paragraph to all 7 agents caused a recall regression (candidate
-// flood displaced goldens in cap-bound delivery); iter 3 scopes it to bug-detector only,
-// pending evidence it generalizes.
-const CALIBRATION_PROMPT_EXTRA = 'This pipeline deterministically verifies, independently validates, threshold-filters, and blind-challenges every finding downstream — do not pre-filter borderline candidates yourself. Report every finding you judge plausible after investigation: your genuine assessment, with honest confidence values. Downstream stages remove what does not survive scrutiny. total_seen must equal the number of candidates you actually evaluated; the gap between total_seen and findings emitted should be near zero, except for candidates you conclusively refuted during investigation.';
-
 const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'deep-review:bug-detector', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: CALIBRATION_PROMPT_EXTRA },
-  { dimension: 'security', agentType: 'deep-review:security-reviewer', conditionalFlag: null, schemaExtra: {}, modelOverride: 'opus', promptExtra: null },
-  { dimension: 'cross_file_impact', agentType: 'deep-review:cross-file-impact', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'deep-review:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
-  { dimension: 'intent', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
-  { dimension: 'comment_accuracy', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'bug', agentType: 'deep-review:bug-detector', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
+  { dimension: 'security', agentType: 'deep-review:security-reviewer', conditionalFlag: null, schemaExtra: {}, modelOverride: 'opus' },
+  { dimension: 'cross_file_impact', agentType: 'deep-review:cross-file-impact', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
+  { dimension: 'test_coverage', agentType: 'deep-review:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
+  { dimension: 'convention', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
+  { dimension: 'intent', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
+  { dimension: 'comment_accuracy', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
   { dimension: 'type_design', agentType: 'deep-review:type-design-analyzer', conditionalFlag: null,
-    schemaExtra: { encapsulation: 'number', invariants: 'number', enforcement: 'number', usefulness: 'number' }, modelOverride: null, promptExtra: null },
+    schemaExtra: { encapsulation: 'number', invariants: 'number', enforcement: 'number', usefulness: 'number' }, modelOverride: null },
   { dimension: 'simplification', agentType: 'deep-review:code-simplifier', conditionalFlag: null,
-    schemaExtra: { before: 'string', after: 'string' }, modelOverride: null, promptExtra: null },
+    schemaExtra: { before: 'string', after: 'string' }, modelOverride: null },
 ];
 
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
@@ -1929,14 +1918,11 @@ function summarizeMergePrompt(partials) {
 function agentSpecs() {
   const byAgent = new Map();
   for (const d of DIMENSIONS) {
-    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null });
+    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [] });
     const spec = byAgent.get(d.agentType);
     spec.dimensions.push(d.dimension);
     Object.assign(spec.schemaExtra, d.schemaExtra || {});
     spec.conditionalFlags.push(d.conditionalFlag);
-    // promptExtra is scoped per AGENT, not per dimension — every DIMENSIONS row for a
-    // multi-dimension agent is expected to carry the same value (see registry.js).
-    if (d.promptExtra) spec.promptExtra = d.promptExtra;
   }
   // Preserve AGENTS order (derived from DIMENSIONS) so dispatch order is deterministic.
   return AGENTS.map((a) => byAgent.get(a));
@@ -2069,18 +2055,12 @@ async function discover(ctx, input) {
 // agentType), no cap/no minimum on findings, and a reminder of the canonical schema's
 // single-paragraph description constraint. Kept short — StructuredOutput's `schema`
 // (findingSchema) does the actual shape enforcement, this prompt only sets behavior.
-//
-// Hill-climb iter 3: spec.promptExtra (registry.js) is appended verbatim when the agent
-// spec carries one — currently bug-detector only, after iter 2 found the same paragraph
-// applied to all 7 agents caused a recall regression. No agent-name special-casing here;
-// the scoping lives entirely in the registry.
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextPath
     ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
     : '';
   const dims = spec.dimensions.join(', ');
-  const base = `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
-  return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
+  return `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
 }
 
 // --- Phase 3: Merge ---------------------------------------------------------
