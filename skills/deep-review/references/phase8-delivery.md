@@ -16,7 +16,7 @@ The Phase 3 `Workflow` call returned a compact object that always includes a `ch
 
 **On `ok: true` (writer succeeded):** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
-- `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: every challenge-survivor (main **and** suggestion tags alike), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the default PR-comment set — post it verbatim; the live agent never re-selects.
+- `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: the challenge-survivors chosen by the delivery tier (`args.delivery.tier` — `all` (default) keeps every survivor, `main_only` keeps main-tagged only), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the PR-comment set — post every entry as a comment, verbatim; the live agent never re-selects.
 - `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. Used by the interactive "Let me pick" walkthrough (the full candidate list).
 - `artifactPaths.report` — the rendered report markdown (already includes the severity-grouped findings, surfaced section, improvement suggestions, per-dimension summary, and Review Methodology).
 - The return's own `checkpoints` is just `{ completed: [...] }` (phase names). The **full** resume map (`{ phases, completed, phaseReached }`) is persisted at `artifactPaths.checkpoints` — read that file if a later re-run needs to resume a successful-but-superseded run.
@@ -61,9 +61,9 @@ Deliver using the method(s) selected in Phase 1, in this order:
 
 **Step B. PR comments** — if selected, run the PR comment selection flow before posting.
 
-The **default** delivery set is the pipeline's pre-selected `artifactPaths.postReview` payload — already ranked and capped at `limits.deliveryCap` and inclusive of both main- and suggestion-tagged survivors. The tag affects **presentation** (suggestions render in their own "Improvement Suggestions" report section) but **not inclusion** (they are posted as PR comments too). Never re-filter by tag, re-rank, or re-apply the cap to this payload.
+The delivery set is the pipeline's pre-selected `artifactPaths.postReview` payload — the survivors already chosen per the Phase 1 delivery tier (`args.delivery.tier`: `all` (default) keeps every survivor, `main_only` keeps main-tagged only), then ranked and capped at `limits.deliveryCap`. **Every finding in that payload posts as a PR comment** — suggestions are not a separate delivery destination; the `report_tag` affects only where a finding renders in the report ("Improvement Suggestions" section) and, under `main_only`, whether the pipeline already withheld it. Never re-filter by tag, re-rank, or re-apply the cap to this payload.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Post the `artifactPaths.postReview` payload **verbatim** — the workflow already applied selection=`default` (rank + cap `$DEEP_REVIEW_PR_COMMENT_CAP`, both tags included). The "Let me pick" walkthrough is unavailable. Posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Post the `artifactPaths.postReview` payload **verbatim** — the workflow already applied the delivery tier (`$DEEP_REVIEW_DELIVERY_TIER`, default `all`) plus rank + cap `$DEEP_REVIEW_PR_COMMENT_CAP`. The "Let me pick" walkthrough is unavailable. Posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
@@ -72,14 +72,14 @@ AskUserQuestion(
     header: "PR Comments",
     multiSelect: false,
     options: [
-      { label: "Default — the pipeline's selected set ({postReview_count})", description: "Post the pre-selected postReview payload (ranked, capped, includes suggestions) verbatim" },
+      { label: "Default — the pipeline's selected set ({postReview_count})", description: "Post the pre-selected postReview payload (the Phase 1 tier's survivors, ranked and capped) verbatim" },
       { label: "Let me pick", description: "Walk through each finding and choose" }
     ]
   }]
 )
 ```
 
-- **"Default"** → post the `artifactPaths.postReview` payload verbatim (already ranked, capped at `limits.deliveryCap`, and inclusive of both main and suggestion tags). Do not re-select.
+- **"Default"** → post the `artifactPaths.postReview` payload verbatim (the tier's survivors, already ranked and capped at `limits.deliveryCap`). Do not re-select.
 - **"Let me pick"** → run the **interactive finding walkthrough** (see below) over the full findings list. Includes Improvement Suggestions. The user hand-selects; all selected findings posted — no cap. This is user-driven deselection, not agent re-filtering.
 
 Track which findings were selected (**pr_comment_set**) for Stage 2 shortcut.

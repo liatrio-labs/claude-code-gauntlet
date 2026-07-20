@@ -885,19 +885,30 @@ export async function challengeStage(ctx, input) {
 
 // --- Phase 8: Delivery selection --------------------------------------------
 
-// selectDelivery(survivors, cap) -> rank-ordered top-cap delivery set.
+// selectDelivery(survivors, cap, tier) -> rank-ordered top-cap delivery set.
 // The deterministic Phase 8 delivery policy: the pipeline — not the live agent — decides
-// what gets posted. Every challenge-SURVIVOR is a delivery candidate regardless of its
-// report_tag (main AND suggestion alike — the tag is presentation metadata, never an
-// inclusion filter); rankFindings orders them (severity, confidence, risk/description) and
-// `cap` truncates. A null/undefined cap means "no cap" (deliver every survivor); a numeric
-// cap keeps the top-cap, floored at 0 (mirrors challengeStage's Math.max(0, ...) idiom so a
-// 0/negative cap yields an empty set rather than throwing). PURE — never mutates its input
-// (rankFindings copies) — and exported so the live agent consumes the result verbatim and
-// never re-filters or re-ranks. Challenge-removed / challenge-skipped findings are already
-// absent from `survivors`, so they stay excluded exactly as before.
-export function selectDelivery(survivors, cap) {
-  const ranked = rankFindings(survivors || []);
+// what gets posted, honoring the user-chosen delivery TIER (resolved at Phase 1, threaded
+// through args.delivery.tier):
+//   - 'all' (the default — interactive Recommended, headless DEEP_REVIEW_DELIVERY_TIER
+//     default): every challenge-survivor is a delivery candidate regardless of its
+//     report_tag (main AND suggestion alike);
+//   - 'main_only': keep only main-tagged survivors (suggestions stay in the report but are
+//     not posted as PR comments).
+// Any tier value other than 'main_only' (including undefined/null) resolves to 'all', so the
+// no-silent-narrowing default holds. The report_tag is set by tagFindings/applyChallenges
+// (report_destination is the older alias); tagFindings itself is unchanged — the tag stays
+// meaningful metadata that this selection reads, never mutates. rankFindings then orders the
+// pool (severity, confidence, risk/description) and `cap` truncates: a null/undefined cap
+// means "no cap", a numeric cap keeps the top-cap floored at 0 (mirrors challengeStage's
+// Math.max(0, ...) idiom so a 0/negative cap yields an empty set rather than throwing). PURE
+// — never mutates its input (rankFindings copies) — and exported so the live agent consumes
+// the result verbatim and never re-filters or re-ranks. Challenge-removed / challenge-skipped
+// findings are already absent from `survivors`, so they stay excluded exactly as before.
+export function selectDelivery(survivors, cap, tier) {
+  const pool = tier === 'main_only'
+    ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
+    : (survivors || []);
+  const ranked = rankFindings(pool);
   if (cap === undefined || cap === null) return ranked;
   return ranked.slice(0, Math.max(0, cap));
 }
@@ -1235,12 +1246,14 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
-    // Deterministic delivery selection: EVERY challenge-survivor (main and suggestion tags
-    // alike), rank-ordered and capped at limits.deliveryCap (fed from DEEP_REVIEW_PR_COMMENT_CAP
-    // by the skill). Persisted so Phase 8 posts it verbatim — the live agent never re-filters
-    // or re-ranks. Challenge-removed (challengeOut.eliminated) and challenge-skipped
-    // (challengeOut.unverified) are already absent here, so they stay excluded.
-    const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap);
+    // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
+    // delivery TIER (args.delivery.tier — 'all' by default, 'main_only' to withhold
+    // suggestions), rank-ordered and capped at limits.deliveryCap (fed from
+    // DEEP_REVIEW_PR_COMMENT_CAP by the skill). Persisted so Phase 8 posts it verbatim — the
+    // live agent never re-filters or re-ranks. Challenge-removed (challengeOut.eliminated) and
+    // challenge-skipped (challengeOut.unverified) are already absent here, so they stay excluded.
+    const deliveryTier = A.delivery && A.delivery.tier;
+    const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
 
     const reportInput = {
       summary: summaryOut.summary,

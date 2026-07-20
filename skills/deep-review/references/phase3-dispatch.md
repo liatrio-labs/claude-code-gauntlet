@@ -47,7 +47,7 @@ The workflow threads eight stages inside one top-level try/catch, checkpointing 
 | 6 | **Filter** | pure JS (no agents) — thresholds, injection filter, dedup, routing | — |
 | 7 | **Challenge** | one `challenger` per finding (blind), up to `limits.challengeCap` | overflow / null → `challenge=skipped`, routed to the unverified bucket |
 | 8 | **Report** | `report-writer` (segmented if oversized) | throw/null → deterministic minimal report + gap |
-|  | **Select delivery** | pure `selectDelivery` ranks every challenge-survivor (both tags) and caps at `limits.deliveryCap` | — (deterministic glue, no dispatch) |
+|  | **Select delivery** | pure `selectDelivery` applies `args.delivery.tier` (`all` ⇒ every survivor, `main_only` ⇒ main-tagged), ranks, and caps at `limits.deliveryCap` | — (deterministic glue, no dispatch) |
 |  | **Persist** | `artifact-writer` writes findings.json + report.md + post-review payload + checkpoints | throw/null → partial-artifacts gap, `artifactPaths` nulled |
 
 Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, report-writer, artifact-writer Sonnet. The `frontier` flag upgrades the challenger to `policy.frontierModelId`. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.

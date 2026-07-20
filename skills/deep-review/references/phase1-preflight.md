@@ -122,7 +122,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 > **STOP: Complete this gate before Phase 2.** Do not skip or assume defaults — this includes preferences remembered from prior sessions or memory. Preferences change between reviews; asking takes 5 seconds, a wrong assumption wastes the entire review.
 >
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the entire gate below resolves deterministically — `model_tier` and `default_delivery` come from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, no REVIEW.md-setup question is asked, and the `Headless config:` block replaces every `AskUserQuestion` in this section (resolution logic, question templates, confirmation-only template, and combined-call example). Do not present any `AskUserQuestion`.
+> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the entire gate below resolves deterministically — `model_tier`, `default_delivery`, and `delivery_tier` (from `DEEP_REVIEW_DELIVERY_TIER`, default `all`) come from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, no REVIEW.md-setup question is asked, and the `Headless config:` block replaces every `AskUserQuestion` in this section (resolution logic, question templates, confirmation-only template, and combined-call example). Do not present any `AskUserQuestion`. Thread the resolved `delivery_tier` into `args.delivery.tier`.
 
 ### Resolution logic
 
@@ -133,6 +133,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 |---|---|---|
 | `model_tier` | REVIEW.md sets it explicitly | Review mode question (see template below) |
 | `default_delivery` | REVIEW.md sets it explicitly | Delivery preference question (see template below) |
+| `delivery_tier` | Defaults to `all` (Recommended) — no REVIEW.md key, like the other policy knobs | Delivery-tier question (see template below), asked alongside the delivery question when the target is a PR/MR |
 | REVIEW.md presence | REVIEW.md exists in repo root | REVIEW.md setup question (see template below) |
 
 3. **Dispatch based on how many questions remain:**
@@ -182,6 +183,22 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 When the review target is local changes (not a PR/MR), omit the "PR comments" option.
 
+**Delivery tier** (which challenge-survivors post as PR comments — asked alongside the delivery preference when the target is a PR/MR; omit for local reviews, which have no PR to post to):
+
+```
+{
+  question: "Which findings should post as PR comments?",
+  header: "PR Comment Tier",
+  multiSelect: false,
+  options: [
+    { label: "All challenge-surviving findings (Recommended)", description: "Post every finding that survived the blind challenge, including improvement suggestions" },
+    { label: "Main findings only", description: "Post bugs/security/correctness findings; suggestions stay in the report, not posted" }
+  ]
+}
+```
+
+**This answer threads into `args.delivery.tier` (Phase 2), consumed by the workflow's `selectDelivery`:** "All challenge-surviving findings" → `args.delivery.tier = "all"` (the default — the pipeline posts every survivor regardless of tag); "Main findings only" → `args.delivery.tier = "main_only"` (the pipeline keeps only main-tagged survivors, so suggestions render in the report but are not posted). If this question is not presented (target is local, or the delivery preference came from REVIEW.md so no delivery question runs), default `args.delivery.tier = "all"`. The tier only affects PR-comment inclusion; it never changes the report, which always shows every finding.
+
 **REVIEW.md setup** (only when no REVIEW.md found in repo root):
 
 ```
@@ -228,6 +245,10 @@ AskUserQuestion(
         { label: "PR comments", description: "Inline comments on the PR" },
         { label: "Markdown file", description: "Save as deep-review-{date}.md" }
     ]},
+    { question: "Which findings should post as PR comments?", header: "PR Comment Tier", multiSelect: false, options: [
+        { label: "All challenge-surviving findings (Recommended)", description: "Post every finding that survived the blind challenge, including improvement suggestions" },
+        { label: "Main findings only", description: "Post bugs/security/correctness findings; suggestions stay in the report, not posted" }
+    ]},
     { question: "No REVIEW.md found. Want to create one?", header: "REVIEW.md Setup", multiSelect: false, options: [
         { label: "Skip for now", description: "Continue without REVIEW.md" },
         { label: "Create one after review", description: "I'll offer to generate it at the end" }
@@ -236,7 +257,7 @@ AskUserQuestion(
 )
 ```
 
-Store the delivery selection for Phase 8. Confirm all resolved settings in output before continuing.
+Store the delivery selection and the delivery tier (`args.delivery.tier`, default `all`) for Phase 8. Confirm all resolved settings in output before continuing.
 
 ---
 

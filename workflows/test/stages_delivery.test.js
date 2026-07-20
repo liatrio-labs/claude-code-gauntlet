@@ -94,6 +94,46 @@ test('selectDelivery does not mutate its input array or elements', () => {
   assert.equal(JSON.stringify(survivors), snapshot, 'input untouched (pure)');
 });
 
+// --- selectDelivery: delivery tier ------------------------------------------
+
+function mixedSurvivors() {
+  return [
+    dFinding('MAIN_CRIT', { severity: 'critical', report_tag: 'main', report_destination: 'main' }),
+    dFinding('SUGG_HIGH', { severity: 'high', report_tag: 'suggestion', report_destination: 'suggestion' }),
+    dFinding('MAIN_MED', { severity: 'medium', report_tag: 'main', report_destination: 'main' }),
+    dFinding('SUGG_LOW', { severity: 'low', report_tag: 'suggestion', report_destination: 'suggestion' }),
+  ];
+}
+
+test("selectDelivery tier 'all' delivers every survivor regardless of tag", () => {
+  const out = selectDelivery(mixedSurvivors(), undefined, 'all');
+  assert.deepEqual(out.map((f) => f.id).sort(), ['MAIN_CRIT', 'MAIN_MED', 'SUGG_HIGH', 'SUGG_LOW']);
+});
+
+test("selectDelivery an unspecified tier (undefined/null) defaults to 'all' — no silent narrowing", () => {
+  assert.equal(selectDelivery(mixedSurvivors(), undefined, undefined).length, 4);
+  assert.equal(selectDelivery(mixedSurvivors(), undefined, null).length, 4);
+});
+
+test("selectDelivery tier 'main_only' keeps main-tagged survivors, drops suggestions", () => {
+  const out = selectDelivery(mixedSurvivors(), undefined, 'main_only');
+  assert.deepEqual(out.map((f) => f.id), ['MAIN_CRIT', 'MAIN_MED'], 'ranked main only, suggestions withheld');
+  assert.ok(!out.some((f) => f.report_tag === 'suggestion'));
+});
+
+test("selectDelivery tier 'main_only' still honors the cap and ranking", () => {
+  const out = selectDelivery(mixedSurvivors(), 1, 'main_only');
+  assert.deepEqual(out.map((f) => f.id), ['MAIN_CRIT']);
+});
+
+test("selectDelivery tier 'main_only' falls back to report_destination when report_tag is absent", () => {
+  const survivors = [
+    dFinding('D_MAIN', { report_tag: undefined, report_destination: 'main' }),
+    dFinding('D_SUGG', { report_tag: undefined, report_destination: 'suggestion' }),
+  ];
+  assert.deepEqual(selectDelivery(survivors, undefined, 'main_only').map((f) => f.id), ['D_MAIN']);
+});
+
 // --- writerPayload: carries the post-review set, v2-aliased ------------------
 
 test('writerPayload carries postReview v2-aliased with the tag preserved', () => {
@@ -147,16 +187,31 @@ test('runWith persists postReview built from every challenge-survivor, ranked an
   assert.equal(persisted.postReview[0].line, persisted.postReview[0].line_start);
 });
 
-test('runWith with no deliveryCap delivers every challenge-survivor (both tags)', async () => {
+test('runWith with no deliveryCap and no tier delivers every challenge-survivor (both tags, default all)', async () => {
   const args = validArgs({
     checkpoints: { challenge: challengeCheckpoint() },
-    // no deliveryCap in limits
+    // no deliveryCap in limits, no delivery.tier -> default 'all'
   });
   let persisted = null;
   const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
   await runWith(ctx, args);
   assert.deepEqual(persisted.postReview.map((f) => f.id), ['M1', 'S1', 'M2']);
-  assert.ok(persisted.postReview.some((f) => f.report_tag === 'suggestion'), 'suggestions included');
+  assert.ok(persisted.postReview.some((f) => f.report_tag === 'suggestion'), 'suggestions included by default');
+});
+
+test("runWith threads args.delivery.tier='main_only' into selectDelivery — suggestions withheld from delivery", async () => {
+  const args = validArgs({
+    checkpoints: { challenge: challengeCheckpoint() },
+    delivery: { tier: 'main_only' },
+  });
+  let persisted = null;
+  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
+  await runWith(ctx, args);
+  // M1 + M2 are main-tagged; S1 (suggestion) stays in the report but is not in the delivery set.
+  assert.deepEqual(persisted.postReview.map((f) => f.id), ['M1', 'M2']);
+  assert.ok(!persisted.postReview.some((f) => f.report_tag === 'suggestion'), 'suggestion withheld under main_only');
+  // The full findings artifact still carries every survivor (the report renders suggestions).
+  assert.equal(persisted.findings.length, 3);
 });
 
 test('runWith exposes the persisted post-review artifact path', async () => {
