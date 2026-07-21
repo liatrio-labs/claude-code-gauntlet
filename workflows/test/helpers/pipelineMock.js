@@ -89,7 +89,7 @@ export function validArgs(over = {}) {
     changedFilesPath: '/repo/.deep-review/changed.txt',
     agentFlags: {},
     policy: {},
-    limits: { validateBatch: 10, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },
+    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },
     ...over,
   };
 }

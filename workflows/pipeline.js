@@ -2901,7 +2901,7 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
-// writeArtifacts(ctx, { findings, unverified, report, checkpoints, outputDir,
+// writeArtifacts(ctx, { findings, postReview, report, checkpoints, outputDir,
 // headShaShort, policy }) -> { artifactPaths, gaps, partial }
 // The workflow script has NO disk access, so a writer agent persists findings.json
 // + report.md + the checkpoint/progress JSON to {output_dir}; the content is carried
@@ -2958,16 +2958,19 @@ function toV2Aliased(f) {
   return out;
 }
 
-// The by-value payload the writer agent persists. Findings/unverified/postReview are
-// aliased to the union schema so the persisted JSON is consumable by BOTH boundary scripts
-// unchanged. `postReview` is the deterministic delivery set (selectDelivery output): every
+// The by-value payload the writer agent persists. findings/postReview are aliased to the
+// union schema so the persisted JSON is consumable by BOTH boundary scripts unchanged.
+// `postReview` is the deterministic delivery set (selectDelivery output): every
 // challenge-survivor, ranked and capped, each carrying its report_tag — persisted so Phase 8
-// posts it verbatim without re-selecting. Pure + exported so tests (and the node recorder)
-// can assert the persist output is REAL pipeline output, not a hand-authored fixture.
+// posts it verbatim without re-selecting. The pipeline-degraded `unverified` bucket is NOT
+// carried here: it is persisted to no file (findings.json is the high-confidence set only),
+// the report already renders it, and the slimmed checkpoint's challenge entry carries it for
+// resume — so re-sending it in the writer prompt was dead by-value weight (each finding-scale
+// piece now crosses the writer prompt exactly once). Pure + exported so tests (and the node
+// recorder) can assert the persist output is REAL pipeline output, not a hand-authored fixture.
 function writerPayload(inp) {
   return {
     findings: (inp.findings || []).map(toV2Aliased),
-    unverified: (inp.unverified || []).map(toV2Aliased),
     postReview: (inp.postReview || []).map(toV2Aliased),
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -3029,6 +3032,44 @@ function buildResumeCheckpoints(phaseOutputs) {
   const withPhases = { phases: phaseOutputs, completed };
   if (JSON.stringify(withPhases).length <= SEGMENT_CHAR_BUDGET) return withPhases;
   return { completed, truncated: true };
+}
+
+// Phases whose FULL output a resume from the PERSISTED (successful-run) checkpoint actually
+// consumes. Traced from runWith's post-challenge tail: `challenge` carries the delivered
+// high-confidence findings/unverified that selectDelivery, the report input, and
+// writeArtifacts read by value; `filter` carries the post-filter set the empty-report guard
+// counts (postFilterCount). Every OTHER phase contributes only a count/stat to the final
+// envelope on a resume (discovered/merged/verified/validate.stats/filter.stats), never its
+// findings bulk — so those re-run on resume rather than being carried by value.
+const PERSISTED_RESUME_PHASES = ['filter', 'challenge'];
+
+// phaseFindingCount(out) -> the count summarizing one phase's output for the slim checkpoint
+// (findings-bearing stages carry `findings`; the filter stage carries `filtered`).
+function phaseFindingCount(out) {
+  if (!out || typeof out !== 'object') return 0;
+  if (Array.isArray(out.findings)) return out.findings.length;
+  if (Array.isArray(out.filtered)) return out.filtered.length;
+  return 0;
+}
+
+// slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) -> the checkpoint artifact
+// the writer persists at the end of a successful run. Only the resume-consumed phases
+// (PERSISTED_RESUME_PHASES) keep their FULL output; every phase additionally records a bare
+// count. This drops the by-value duplication where the OLD persisted checkpoint carried every
+// phase's full findings array (discover/merge/verify/validate each ~a full findings set) inside
+// the single artifact-writer prompt. readCheckpoints unwraps `.phases`, so a resume from this
+// artifact skips exactly the preserved phases (reusing the delivered findings verbatim) and
+// re-runs the rest. The in-memory failure-path resume (buildResumeCheckpoints) is intentionally
+// NOT slimmed — a crash-recovery resume still carries every phase's full output for a fast skip.
+function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
+  const outputs = phaseOutputs || {};
+  const phases = {};
+  for (const name of PERSISTED_RESUME_PHASES) {
+    if (outputs[name] !== undefined) phases[name] = outputs[name];
+  }
+  const counts = {};
+  for (const [name, out] of Object.entries(outputs)) counts[name] = phaseFindingCount(out);
+  return { phases, completed, phaseReached, counts };
 }
 
 // --- Full orchestration: runWith --------------------------------------------
@@ -3165,12 +3206,14 @@ async function runWith(ctx, rawArgs) {
     // writer failure degrades to a partial-artifacts gap rather than the top-level catch.
     const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
-      unverified: challengeOut.unverified,
       postReview,
       report: reportOut.report,
-      // Persist the actual per-phase outputs map (the producible resume state) plus
-      // the aggregate progress; readCheckpoints unwraps .phases when it is fed back.
-      checkpoints: { phases: phaseOutputs, completed, phaseReached },
+      // Persist a SLIM checkpoint: only the resume-consumed phases (filter, challenge) carry
+      // full output; every other phase is reduced to a count, so the single artifact-writer
+      // prompt no longer duplicates every phase's findings bulk by value. readCheckpoints
+      // unwraps .phases, so a resume skips exactly the preserved phases and re-runs the rest.
+      // The in-memory failure-path return below still carries the full phaseOutputs map.
+      checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,

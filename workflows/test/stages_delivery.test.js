@@ -172,7 +172,7 @@ function challengeCheckpoint() {
 test('runWith persists postReview built from every challenge-survivor, ranked and capped', async () => {
   const args = validArgs({
     checkpoints: { challenge: challengeCheckpoint() },
-    limits: { validateBatch: 10, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20, deliveryCap: 2 },
+    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20, deliveryCap: 2 },
   });
   let persisted = null;
   const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });

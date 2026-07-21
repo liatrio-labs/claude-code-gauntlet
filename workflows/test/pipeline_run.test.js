@@ -313,7 +313,7 @@ test('checkpointPath is phase-keyed and sha-scoped', () => {
 
 // --- Checkpoint round-trip (the pipeline's OWN persist output resumes it) ----
 
-test('checkpoint round-trip: persisted per-phase map, fed back, skips every phase', async () => {
+test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-consumed phases carry full output', async () => {
   // Run 1 produces the checkpoint artifact the writer persists; capture it via onPersist.
   const args1 = validArgs();
   let persistedCheckpoints = null;
@@ -321,20 +321,53 @@ test('checkpoint round-trip: persisted per-phase map, fed back, skips every phas
   const out1 = await runWith(ctx1, args1);
   assert.equal(out1.ok, true);
   assert.ok(persistedCheckpoints, 'writer received a checkpoints payload');
-  assert.ok(persistedCheckpoints.phases, 'checkpoint artifact carries the per-phase outputs map');
+
+  // The SLIM persisted checkpoint keeps FULL output only for the two resume-consumed phases
+  // (filter carries the empty-report guard's count; challenge carries the delivered findings).
+  assert.deepEqual(
+    Object.keys(persistedCheckpoints.phases).sort(), ['challenge', 'filter'],
+    'only filter + challenge keep full output in the persisted checkpoint',
+  );
+  // Every completed phase is still accounted for by NAME + a bare count (observability without
+  // the by-value findings bulk the OLD full-map checkpoint duplicated).
   for (const phase of ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report']) {
-    assert.ok(phase in persistedCheckpoints.phases, `checkpoint map has phase '${phase}'`);
+    assert.ok(persistedCheckpoints.completed.includes(phase), `completed lists phase '${phase}'`);
+    assert.equal(typeof persistedCheckpoints.counts[phase], 'number', `counts has a number for '${phase}'`);
+  }
+  // The upstream phases' full findings arrays are GONE from the persisted checkpoint.
+  for (const phase of ['summarize', 'discover', 'merge', 'verify', 'validate', 'report']) {
+    assert.ok(!(phase in persistedCheckpoints.phases), `phase '${phase}' full output dropped from the checkpoint`);
   }
 
-  // Run 2 feeds the persisted artifact straight back through the args waist. Every
-  // phase's output is present, so NO stage dispatches — only the writer runs.
+  // Run 2 feeds the slim artifact straight back. The preserved phases are SKIPPED (challenge
+  // is not re-dispatched — its delivered findings are reused verbatim) and the rest RE-RUN.
   const args2 = validArgs({ checkpoints: persistedCheckpoints });
   const ctx2 = makeCtx(args2);
   const out2 = await runWith(ctx2, args2);
   assert.equal(out2.ok, true);
   assert.equal(out2.phaseReached, 'report');
-  assert.equal(ctx2.calls.length, 1, 'only the artifact-writer dispatched on full resume');
-  assert.equal(ctx2.calls[0].label, 'artifact-writer');
+  assert.ok(!ctx2.calls.some((c) => c.label.startsWith('challenge-')), 'challenge reused from checkpoint (not re-dispatched)');
+  assert.ok(ctx2.calls.some((c) => c.label.startsWith('deep-review:bug-detector')), 'a non-preserved phase (discover) re-ran');
+  assert.ok(ctx2.calls.some((c) => c.label === 'report-writer'), 'report re-ran');
+  assert.ok(ctx2.calls.some((c) => c.label === 'artifact-writer'), 'the writer ran');
+  // The delivered high-confidence set is reproduced exactly across the resume.
+  assert.equal(out2.stats.highConfidence, 2, 'the preserved challenge findings are delivered unchanged');
+});
+
+test('slimPersistedCheckpoints keeps only filter+challenge full, counts every phase, and the writer omits unverified', async () => {
+  const args = validArgs();
+  let persisted = null;
+  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.ok(persisted, 'writer received a payload');
+  // Change 3: the pipeline-degraded `unverified` bucket is no longer carried by value in the
+  // writer prompt (it is persisted to no file; the report + checkpoint carry it).
+  assert.ok(!('unverified' in persisted), 'writer payload no longer carries the unverified bucket');
+  // Change 2: the checkpoint the writer persisted is the slim shape.
+  assert.ok(persisted.checkpoints.phases.challenge, 'challenge output preserved for resume');
+  assert.ok(persisted.checkpoints.phases.filter, 'filter output preserved for the empty-report guard count');
+  assert.ok(persisted.checkpoints.counts, 'per-phase counts present');
 });
 
 // --- Report segmentation (oversized findings payload) -----------------------
