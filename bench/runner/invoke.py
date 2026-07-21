@@ -331,11 +331,21 @@ def _kill_group(proc):
 
 # ---------------------------------------------------------------- plugin integrity
 
-# Paths in the plugin repo the CONTROLLER legitimately rewrites during a run (not child
-# contamination): the experiment ledger is appended every PR. Excluded from the mutation
-# guard so it never false-flags a clean run. Everything else changing means a child wrote
-# into the plugin (self-healing mid-run), which contaminates the measurement.
-_CONTROLLER_OWNED_PATHS = frozenset({"bench/experiments.jsonl"})
+# Paths in the plugin repo the CONTROLLER/operator legitimately rewrites during a run (not
+# child contamination), excluded from the mutation guard so they never false-flag a clean
+# run:
+#   - bench/experiments.jsonl — the experiment ledger, appended by the controller every PR.
+#   - bench/report.html — the live dashboard, regenerated from the ledger by bench/report.py
+#     (a tracked file stamped with today's date + the plugin sha, so ANY regeneration dirties
+#     it). Operators run report.py mid-run to watch progress; without this exemption that
+#     regeneration lands in REPO_ROOT's `git status` while a review child is in-flight and is
+#     mis-attributed to it — invalidating a good (often long-running, expensive) PR as
+#     'plugin_mutated_by_child' and resetting the dashboard. It is NOT written by any review
+#     child (the pipeline writes every artifact to the absolute, gitignored {output_dir}; only
+#     report.py touches report.html), so it belongs with the ledger as controller/operator-owned.
+# Everything else changing means a child wrote into the plugin (self-healing mid-run), which
+# contaminates the measurement.
+_CONTROLLER_OWNED_PATHS = frozenset({"bench/experiments.jsonl", "bench/report.html"})
 
 
 def _git(args, repo_root):

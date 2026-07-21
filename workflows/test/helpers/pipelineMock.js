@@ -107,10 +107,14 @@ export function validArgs(over = {}) {
 //     dispatch (lets a test/recorder capture the REAL persisted findings/checkpoints)
 //   - reportText: when present, the report-writer returns this exact string (drives the
 //     empty-report guard — e.g. '' or '   ' for a whitespace-only false-negative report)
+//   - findings: replaces the default makeFindings() set that bug-detector discovers AND the
+//     verify-slice executor echoes back — lets a test drive a specific finding shape (e.g. a
+//     long description) end-to-end through the pipeline and assert it survives to persist.
 export function makeCtx(args, opts = {}) {
   const calls = [];
   const violations = [];
   const A = args;
+  const seedFindings = () => (opts.findings ? opts.findings.map((f) => ({ ...f })) : makeFindings());
 
   const agent = async (prompt, dispatch = {}) => {
     try {
@@ -132,7 +136,7 @@ export function makeCtx(args, opts = {}) {
     if (label.startsWith('verify-slice-')) {
       // A receipt the verify stage will TRUST: same head sha, per-slice nonce `${nonce}.0`
       // (one slice, verifySliceSize > nFindings), n_in === slice length, arrays accounting.
-      const verified = makeFindings().map((f) => ({ ...f, origin: 'new' }));
+      const verified = seedFindings().map((f) => ({ ...f, origin: 'new' }));
       return {
         status: 'ok',
         receipt: { sha: A.headShaShort, n_in: verified.length, nonce: `${A.nonce}.0` },
@@ -152,8 +156,9 @@ export function makeCtx(args, opts = {}) {
     }
     // Discovery: label IS the agentType. Only bug-detector yields findings.
     if (DISCOVERY_AGENT_TYPES.has(dispatch.agentType)) {
+      const disc = seedFindings();
       return dispatch.agentType === 'deep-review:bug-detector'
-        ? { findings: makeFindings(), complete: true, total_seen: 2 }
+        ? { findings: disc, complete: true, total_seen: disc.length }
         : { findings: [], complete: true, total_seen: 0 };
     }
     return null;

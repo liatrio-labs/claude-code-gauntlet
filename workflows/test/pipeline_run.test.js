@@ -102,6 +102,60 @@ test('every stage dispatch uses an object-rooted schema (no array-rooted 400)', 
   assert.ok(validate.schema.properties.validations, 'validate schema wraps the array under { validations }');
 });
 
+// --- Description flows intact through every stage (regression) ---------------
+
+test('a long description survives merge->verify->validate->filter->challenge->persist unchanged', async () => {
+  // Regression for the mid-pipeline description strip: verifyStage collects the executor's
+  // result.verified BY VALUE as THE findings for every later stage, but VERIFY_SCHEMA once
+  // declared those items as { type:'object', properties:{} }. StructuredOutput leaves an
+  // empty-properties object unconstrained, so the executor dropped the (largest) `description`
+  // field when echoing the --output file "verbatim". Emptied descriptions then flowed through
+  // validate/filter, where the injection guard (short description + high confidence) false-fired
+  // and eliminated high-confidence findings (golden matches). Two guarantees are asserted here:
+  //   (1) the DATA FLOW — no stage strips a description that verify returns; and
+  //   (2) the SCHEMA SHAPE — the verify dispatch declares `description` on its verified/eliminated
+  //       items (the actual root-cause fix; a mock alone can't catch a schema regression because
+  //       it never applies StructuredOutput's field-dropping).
+  const longDescription =
+    'When authenticating via the API-key path, organization_context.member is None but line 42 '
+    + 'dereferences member.role without a guard, so any API-key request that resolves to a '
+    + 'membership-less principal raises AttributeError before the authorization check runs. The '
+    + 'same principal on the session path is guarded, so the two auth paths disagree and the '
+    + 'API-key path crashes instead of returning 403 — a security-relevant divergence that also '
+    + 'blocks every downstream handler for that request. The fix is to check member for None on '
+    + 'the API-key branch and return the same 403 the session branch returns, keeping the two '
+    + 'authentication paths behaviourally identical so neither leaks an unhandled exception to the '
+    + 'client or the logs, and so the authorization decision is reached on both paths.';
+  assert.ok(longDescription.length > 500, 'fixture description must be long enough to exercise the strip');
+
+  const finding = makeFinding('BUG1', { description: longDescription, confidence: 90 });
+  const args = validArgs();
+  let persisted = null;
+  const ctx = makeCtx(args, { findings: [finding], onPersist: (payload) => { persisted = payload; } });
+  const out = await runWith(ctx, args);
+
+  // (1) Data flow: the finding survived to persistence with its description byte-for-byte intact
+  // (and the v2 `body` alias mirrors it), NOT emptied or truncated by any stage.
+  assert.equal(out.ok, true);
+  assert.ok(persisted, 'artifact-writer received a payload');
+  const survivor = (persisted.findings || []).find((f) => f.id === 'BUG1');
+  assert.ok(survivor, 'the high-confidence finding survived the filter+challenge (its description was not emptied)');
+  assert.equal(survivor.description, longDescription, 'description reaches persist unchanged');
+  assert.equal(survivor.body, longDescription, 'the persisted v2 body alias mirrors the full description');
+
+  // (2) Schema shape: the verify dispatch must declare the FULL finding item — `description`
+  // present, and confidence typed NUMBER (verify_findings.py re-scores it) — so StructuredOutput
+  // preserves description instead of letting the executor drop it. A revert to properties:{} fails here.
+  const verifyCall = ctx.calls.find((c) => (c.label || '').startsWith('verify-slice-'));
+  assert.ok(verifyCall && verifyCall.schema, 'a verify-slice was dispatched with a schema');
+  for (const arr of ['verified', 'eliminated']) {
+    const itemProps = verifyCall.schema.properties.result.properties[arr].items.properties;
+    assert.ok(itemProps && itemProps.description, `verify ${arr} items must declare description (not properties:{})`);
+    assert.equal(itemProps.description.type, 'string', `verify ${arr} description must be typed string`);
+    assert.equal(itemProps.confidence.type, 'number', `verify ${arr} confidence must be typed number (post-verify numeric)`);
+  }
+});
+
 // --- Empty-report false-negative guard --------------------------------------
 
 test('empty report while findings survive the filter -> ok:true, empty_report gap, report path nulled', async () => {

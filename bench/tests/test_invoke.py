@@ -636,6 +636,17 @@ class PluginMutationGuardTest(InvokeTestBase):
         self.assertEqual(res.status, "ok", "a controller-owned change is not child contamination")
         self.assertNotEqual(self._porcelain(root), "", "experiments.jsonl left modified (controller owns it)")
 
+    def test_controller_owned_report_html_is_not_flagged(self):
+        # The live dashboard (regenerated from the ledger by bench/report.py, typically run
+        # mid-run to watch progress) is a tracked file stamped with today's date + sha, so any
+        # regeneration dirties it. It is operator-owned, NOT child contamination: a regeneration
+        # while a review child is in-flight must not invalidate that PR or reset the dashboard.
+        root = self._init_repo({"bench/report.html": "<html>old</html>\n"})
+        target = root / "bench" / "report.html"
+        res = self._run_mutating(root, target)
+        self.assertEqual(res.status, "ok", "a controller-owned dashboard regeneration is not child contamination")
+        self.assertNotEqual(self._porcelain(root), "", "report.html left modified (operator owns it)")
+
     def test_preexisting_local_edit_is_not_flagged_or_reset(self):
         # A dirty file that predates the child (the run's baseline) must survive untouched
         # — the guard flags DELTA, not absolute dirtiness.

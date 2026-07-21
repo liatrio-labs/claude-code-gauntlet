@@ -157,22 +157,38 @@ const FINDING_PROP_TYPES = {
 };
 const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 
+// The canonical finding ITEM schema (one array element). Declared IN FULL — every
+// canonical property with a concrete type, `description` among them — everywhere an agent
+// returns findings BY VALUE. An items schema of `{ type:'object', properties:{} }` is the
+// trap: StructuredOutput leaves an empty-properties object UNCONSTRAINED, so a model
+// transcribing findings back "verbatim via the schema" is free to drop the single largest
+// field — `description` — which is exactly what the verify executor did, emptying
+// descriptions for every downstream stage (validate/filter/challenge) and false-firing the
+// filter's short-description injection guard on high-confidence findings. `confidenceType`
+// differs by stage: discovery emits a qualitative STRING label, but verify_findings.py
+// re-scores confidence to a NUMBER, so the verify item MUST declare number or
+// StructuredOutput coerces 85 -> "85" and breaks the numeric confidence arithmetic downstream.
+function findingItemSchema(schemaExtra, confidenceType) {
+  const props = {};
+  for (const [k, t] of Object.entries(FINDING_PROP_TYPES)) props[k] = { type: t };
+  if (confidenceType) props.confidence = { type: confidenceType };
+  props.cross_file_refs = { type: 'array', items: { type: 'string' } };
+  for (const [k, t] of Object.entries(schemaExtra || {})) props[k] = { type: t };
+  return { type: 'object', properties: props, required: FINDING_REQUIRED };
+}
+
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
 // per-agent result envelope { findings, complete, total_seen }. REAL JSON Schema —
 // {type, properties, required, items} — because the platform validates schemas before
 // dispatch and StructuredOutput enforces them (shorthand {id:'string'} is rejected).
 // schemaExtra is shorthand {key: typeName}; each entry becomes { type: typeName }.
 function findingSchema(spec) {
-  const props = {};
-  for (const [k, t] of Object.entries(FINDING_PROP_TYPES)) props[k] = { type: t };
-  props.cross_file_refs = { type: 'array', items: { type: 'string' } };
-  for (const [k, t] of Object.entries(spec.schemaExtra || {})) props[k] = { type: t };
   return {
     type: 'object',
     properties: {
       findings: {
         type: 'array',
-        items: { type: 'object', properties: props, required: FINDING_REQUIRED },
+        items: findingItemSchema(spec.schemaExtra, 'string'),
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
@@ -328,8 +344,14 @@ const VERIFY_SCHEMA = {
     result: {
       type: 'object',
       properties: {
-        verified: { type: 'array', items: { type: 'object', properties: {} } },
-        eliminated: { type: 'array', items: { type: 'object', properties: {} } },
+        // verified/eliminated carry findings BY VALUE — verifyStage collects result.verified
+        // as THE findings for every later stage — so their items must declare the FULL finding
+        // shape (findingItemSchema). An empty-properties item let the executor drop `description`
+        // when echoing the --output file "verbatim", which emptied descriptions downstream and
+        // false-fired the filter's injection guard. confidence is NUMBER here (verify_findings.py
+        // re-scores it numerically), unlike the qualitative string label at discovery.
+        verified: { type: 'array', items: findingItemSchema({}, 'number') },
+        eliminated: { type: 'array', items: findingItemSchema({}, 'number') },
         batches: { type: 'array', items: { type: 'object', properties: {} } },
         stats: { type: 'object', properties: {} },
       },
