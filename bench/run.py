@@ -52,7 +52,7 @@ FIXTURE_PATH = GOLDEN_DIR / "review_md_fixture.md"
 MIN_FREE_GB = 10
 
 # `--tier subset` maps to the 15-PR gate subset; `full` is every shas.json key.
-_TIER_SUBSET_KEY = {"smoke": "smoke", "subset": "gate"}
+_TIER_SUBSET_KEY = {"smoke": "smoke", "subset": "gate", "holdout": "holdout"}
 
 # Naive anchor (spec H3): a bare single-pass review -- no --plugin-dir, prompt from the
 # PR title + full diff, a pinned turn budget so it cannot loop. Same isolation envelope
@@ -744,7 +744,7 @@ def parse_args(argv=None):
         prog="bench/run.py",
         description="Drive the deep-review skill over a tier's golden PRs and checkpoint outcomes.",
     )
-    parser.add_argument("--tier", choices=["smoke", "subset", "full"], help="which PR set to run")
+    parser.add_argument("--tier", choices=["smoke", "subset", "holdout", "full"], help="which PR set to run")
     parser.add_argument("--runs", type=int, default=1, help="number of sequential runs (own dir each)")
     parser.add_argument("--fidelity", choices=["dry-run", "live"], default="dry-run")
     parser.add_argument("--resume", metavar="RUN_ID", help="re-run only pending PRs of RUN_ID")
