@@ -798,7 +798,7 @@ def parse_args(argv=None):
     # None is the "not specified" sentinel so an explicit flag can be told apart from the
     # default and the manifest value can win on resume.
     parser.add_argument(
-        "--child-model", choices=["sonnet", "opus", "inherit"], default=None,
+        "--child-model", choices=["sonnet", "sonnet[1m]", "opus", "opus[1m]", "inherit"], default=None,
         dest="child_model",
         help="model for the child orchestrator session "
         "(default: sonnet for deep-review-v3, inherit for deep-review-v2)",
