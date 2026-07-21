@@ -200,8 +200,52 @@ def _extract_content(reply):
     return content
 
 
+# Recovery for a reply whose overall shape is the fixed verdict object but whose free-text
+# "reason" value carries model-emitted UNescaped inner double-quotes -- a `"` inside reason
+# that json.loads reads as the string's closing quote, then trips on the next char (the
+# "Expecting ',' delimiter" char-112 failure observed on the discourse-graphite#6 comment,
+# whose reason quoted the Ruby snippet `"." << website_host`). The verdict schema is small and
+# fixed: bucket is a closed enum, failed_check is 1-4|null, reason is the LAST field. Extract
+# the two load-bearing fields by anchored pattern and take reason as the trailing string, so a
+# malformed reason never costs the scorer the bucket. This repairs ONLY the adjudicator's own
+# reply -- the judged comment content is never inspected or altered here.
+_RECOVER_BUCKET_RE = re.compile(r'"bucket"\s*:\s*"(valid_extra|noise)"')
+_RECOVER_FAILED_CHECK_RE = re.compile(r'"failed_check"\s*:\s*(null|"?[1-4]"?)')
+_RECOVER_REASON_RE = re.compile(r'"reason"\s*:\s*"(.*)"\s*}\s*$', re.DOTALL)
+
+
+def _recover_verdict(text):
+    """Best-effort structured parse of a verdict reply that strict JSON rejected.
+
+    Returns the same dict shape as the strict path, or raises ValueError when the
+    load-bearing ``bucket`` cannot be recovered -- a genuinely unusable reply still
+    fails loud, preserving ``adjudicate``'s retry-then-raise contract.
+    """
+    bucket_m = _RECOVER_BUCKET_RE.search(text)
+    if not bucket_m:
+        raise ValueError("verdict recovery failed: no valid bucket found in reply")
+    failed_check = None
+    fc_m = _RECOVER_FAILED_CHECK_RE.search(text)
+    if fc_m:
+        raw = fc_m.group(1).strip('"')
+        if raw != "null":
+            failed_check = int(raw)
+    reason_m = _RECOVER_REASON_RE.search(text)
+    return {
+        "bucket": bucket_m.group(1),
+        "failed_check": failed_check,
+        "reason": reason_m.group(1) if reason_m else "",
+    }
+
+
 def _parse_verdict(content):
-    """Strip optional code fences and parse the strict verdict JSON."""
+    """Strip optional code fences and parse the verdict JSON.
+
+    Strict ``json.loads`` first -- unchanged for every well-formed reply. Only on a
+    ``JSONDecodeError`` (a malformed reply, e.g. unescaped inner quotes in "reason")
+    does it fall back to ``_recover_verdict``; a recovered dict already carries a valid
+    bucket, so it skips the object/bucket re-checks below.
+    """
     text = content.strip()
     if text.startswith("```"):
         parts = text.split("```")
@@ -209,7 +253,10 @@ def _parse_verdict(content):
         if text.startswith("json"):
             text = text[4:]
         text = text.strip()
-    data = json.loads(text)  # may raise json.JSONDecodeError
+    try:
+        data = json.loads(text)  # strict path: behavior unchanged for well-formed replies
+    except json.JSONDecodeError:
+        return _recover_verdict(text)
     if not isinstance(data, dict):
         raise ValueError(
             "verdict must be a JSON object, got {}".format(type(data).__name__)
