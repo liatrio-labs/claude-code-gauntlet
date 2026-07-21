@@ -619,13 +619,14 @@ def _resolve_child_model(tool, child_model):
 
     v3's child orchestrator session is mechanical -- it drives the Workflow pipeline while
     the review agents' models are set by the pipeline's own policy -- yet the orchestrator
-    burns ~40-45% of a run's tokens on opus[1m]. So v3 defaults to ``sonnet`` to cut that
-    cost; v2 defaults to ``inherit`` to preserve its historical baseline behavior. A None
+    burns ~40-45% of a run's tokens on opus[1m]. Measured 2026-07-21: BOTH sonnet (2x per-PR tokens) and
+    sonnet[1m] (+51%) are WORSE than the inherited opus[1m] child (its 1M context avoids
+    compaction churn), so every tool defaults to ``inherit`` now; the flag remains for experiments. A None
     ``child_model`` means the flag was not passed (take the per-tool default).
     """
     if child_model is not None:
         return child_model
-    return "sonnet" if tool == "deep-review-v3" else "inherit"
+    return "inherit"
 
 
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):

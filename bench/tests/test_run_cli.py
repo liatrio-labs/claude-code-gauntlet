@@ -620,9 +620,10 @@ class ToolWiringTest(RunTestBase):
         )
         self.assertEqual(captured["tool"], "deep-review-v2")
 
-    def test_child_model_default_sonnet_for_v3(self):
-        # v3's mechanical orchestrator session defaults to sonnet to cut the opus[1m] cost.
-        self.assertEqual(self._manifest_for(["--tier", "smoke"])["child_model"], "sonnet")
+    def test_child_model_default_inherit_for_v3(self):
+        # Measured 2026-07-21: sonnet and sonnet[1m] children both burn MORE tokens than
+        # the inherited opus[1m] child (context churn), so v3 defaults to inherit too.
+        self.assertEqual(self._manifest_for(["--tier", "smoke"])["child_model"], "inherit")
 
     def test_child_model_default_inherit_for_v2(self):
         # v2 inherits so its historical baseline model behavior is preserved.
