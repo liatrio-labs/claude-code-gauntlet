@@ -596,7 +596,8 @@ def _v3_preflight(claude_bin):
     return None
 
 
-def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                  child_model="inherit"):
     """Run the headless review for one PR and classify the outcome.
 
     ``tool`` selects the pipeline label and gates the v3 preflight: a ``deep-review-v3``
@@ -604,6 +605,11 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
     ``_v3_preflight``) and returns ``invalid`` if not; ``deep-review-v2`` skips that check.
     The invocation itself is unchanged either way -- the ``--plugin-dir`` repo is whichever
     pipeline version is checked out; ``tool`` records/gates, it does not fork the command.
+
+    ``child_model`` pins the child orchestrator session's model: any value other than
+    ``inherit`` appends ``--model <child_model>`` to the ``claude`` command; ``inherit``
+    leaves the child to its own default. The review agents' models are unaffected -- they
+    are set by the pipeline's own policy, not this flag.
 
     Returns an :class:`InvokeResult`. The isolated ``HOME``/``CLAUDE_CONFIG_DIR`` has no
     allowlist and no user, so ``--dangerously-skip-permissions`` plus the pinned context
@@ -648,6 +654,10 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
         "--plugin-dir",
         str(REPO_ROOT),
     ]
+    # Pin the child orchestrator session's model unless inheriting its default. The review
+    # agents' models are set by the pipeline policy and are unaffected by this flag.
+    if child_model != "inherit":
+        cmd += ["--model", child_model]
 
     with open(raw_path, "w") as fh:
         proc = subprocess.Popen(

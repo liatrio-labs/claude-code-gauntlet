@@ -66,7 +66,8 @@ class InvokeTestBase(unittest.TestCase):
         dst.chmod(dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return bindir
 
-    def _run(self, mode, timeout_s=30, extra_env=None, tool="deep-review-v3"):
+    def _run(self, mode, timeout_s=30, extra_env=None, tool="deep-review-v3",
+             child_model="inherit"):
         bindir = self.install_fake()
         overrides = {
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
@@ -76,7 +77,8 @@ class InvokeTestBase(unittest.TestCase):
             overrides.update(extra_env)
         with patched_environ(**overrides):
             return invoke_review(
-                self.worktree, PR, self.run_dir, timeout_s=timeout_s, tool=tool
+                self.worktree, PR, self.run_dir, timeout_s=timeout_s, tool=tool,
+                child_model=child_model,
             )
 
 
@@ -667,6 +669,41 @@ class PluginMutationGuardTest(InvokeTestBase):
             res = self._run("ok")  # no mutation
         self.assertEqual(res.status, "ok")
         self.assertEqual(self._porcelain(root), "", "clean repo stays clean")
+
+
+class ChildModelCommandTest(InvokeTestBase):
+    """child_model appends ``--model <m>`` to the child command unless inheriting."""
+
+    def _argv(self, res_env):
+        argv_file = Path(self.tmp) / "argv.txt"
+        # The fake records its argv (minus argv[0]) to FAKE_CLAUDE_ARGV_FILE on the main
+        # invocation (not the --version probe), one arg per line.
+        res_env["FAKE_CLAUDE_ARGV_FILE"] = str(argv_file)
+        return argv_file
+
+    def test_v3_command_carries_model_sonnet(self):
+        env = {}
+        argv_file = self._argv(env)
+        res = self._run("ok", tool="deep-review-v3", child_model="sonnet", extra_env=env)
+        self.assertEqual(res.status, "ok")
+        argv = argv_file.read_text().splitlines()
+        self.assertIn("--model", argv)
+        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+
+    def test_opus_child_model_carried_verbatim(self):
+        env = {}
+        argv_file = self._argv(env)
+        res = self._run("ok", child_model="opus", extra_env=env)
+        self.assertEqual(res.status, "ok")
+        argv = argv_file.read_text().splitlines()
+        self.assertEqual(argv[argv.index("--model") + 1], "opus")
+
+    def test_inherit_omits_model_flag(self):
+        env = {}
+        argv_file = self._argv(env)
+        res = self._run("ok", child_model="inherit", extra_env=env)
+        self.assertEqual(res.status, "ok")
+        self.assertNotIn("--model", argv_file.read_text().splitlines())
 
 
 if __name__ == "__main__":

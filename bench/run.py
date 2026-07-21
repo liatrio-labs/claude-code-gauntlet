@@ -485,12 +485,13 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
 
 
 def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-             tool="deep-review-v3"):
+             tool="deep-review-v3", child_model="inherit"):
     """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
 
     ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
     ``invoke.invoke_review`` so v3 can preflight the child CLI version; it is ignored on
-    the ``--anchor naive`` path, which does not run the skill.
+    the ``--anchor naive`` path, which does not run the skill. ``child_model`` is the
+    resolved child-session model pin, likewise forwarded to the skill path only.
 
     Returns ``{"counts": {status: n}, "drifted": [(url, reason), ...]}``. A DriftError
     marks the PR ``drifted`` (never scored) and the run continues to the next PR.
@@ -564,7 +565,8 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                 )
             else:
                 result = invoke.invoke_review(
-                    worktree, pr, run_dir, timeout_s=timeout_s, tool=tool
+                    worktree, pr, run_dir, timeout_s=timeout_s, tool=tool,
+                    child_model=child_model,
                 )
             _collect_artifacts(output_dir, pr_dir)
         except Exception as exc:
@@ -612,6 +614,20 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
     return {"counts": dict(counts), "drifted": drifted}
 
 
+def _resolve_child_model(tool, child_model):
+    """Effective child-session model: an explicit flag wins, else the per-tool default.
+
+    v3's child orchestrator session is mechanical -- it drives the Workflow pipeline while
+    the review agents' models are set by the pipeline's own policy -- yet the orchestrator
+    burns ~40-45% of a run's tokens on opus[1m]. So v3 defaults to ``sonnet`` to cut that
+    cost; v2 defaults to ``inherit`` to preserve its historical baseline behavior. A None
+    ``child_model`` means the flag was not passed (take the per-tool default).
+    """
+    if child_model is not None:
+        return child_model
+    return "sonnet" if tool == "deep-review-v3" else "inherit"
+
+
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 DEEP_REVIEW_* values
     env_fingerprint["timeout_s"] = timeout_s
@@ -631,6 +647,12 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         # so writing one here would mask the "naive-anchor" ledger label. A skill run records
         # the selected pipeline (deep-review-v2|v3) verbatim for the ledger row.
         "tool": None if args.anchor == "naive" else args.tool,
+        # The child-session model pin, resolved per-tool. Naive anchor runs record None
+        # (they run _invoke_naive, not the skill) -- mirrors the tool field above.
+        "child_model": (
+            None if args.anchor == "naive"
+            else _resolve_child_model(args.tool, args.child_model)
+        ),
         "fidelity": args.fidelity,
         "invocation": invocation,
         "env_fingerprint": env_fingerprint,
@@ -675,7 +697,7 @@ def _new_run(args):
     todo = cp.pending(urls)  # a fresh run -> all pending
     summary = _run_prs(
         run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data,
-        tool=args.tool,
+        tool=args.tool, child_model=_resolve_child_model(args.tool, args.child_model),
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -703,11 +725,16 @@ def _resume(run_id, args, retry):
     # with; fall back to the CLI default for pre-tool run.json files (or a naive run, whose
     # None tool is unused because the anchor path skips the skill).
     tool = manifest.get("tool") or args.tool
+    # Same precedence for the child-model pin: the manifest value wins so a resume re-runs
+    # the same model it began with; fall back to the per-tool default for pre-child_model
+    # run.json files (or a naive run, whose None value is unused by the anchor path).
+    child_model = manifest.get("child_model") or _resolve_child_model(args.tool, args.child_model)
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
     summary = _run_prs(
-        run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data, tool=tool
+        run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
+        tool=tool, child_model=child_model,
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -759,6 +786,15 @@ def parse_args(argv=None):
     parser.add_argument(
         "--tool", choices=["deep-review-v2", "deep-review-v3"], default="deep-review-v3",
         help="which deep-review pipeline to invoke/label (default: deep-review-v3)",
+    )
+    # Default is per-tool (resolved by _resolve_child_model): sonnet for v3, inherit for v2.
+    # None is the "not specified" sentinel so an explicit flag can be told apart from the
+    # default and the manifest value can win on resume.
+    parser.add_argument(
+        "--child-model", choices=["sonnet", "opus", "inherit"], default=None,
+        dest="child_model",
+        help="model for the child orchestrator session "
+        "(default: sonnet for deep-review-v3, inherit for deep-review-v2)",
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     return parser.parse_args(argv)

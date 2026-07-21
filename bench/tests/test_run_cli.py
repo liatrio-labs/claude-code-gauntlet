@@ -52,7 +52,8 @@ def drift_on(target_pr_number):
     return _make
 
 
-def fake_invoke_ok(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+def fake_invoke_ok(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                   child_model="inherit"):
     outdir = Path(run_dir) / "output"
     outdir.mkdir(parents=True, exist_ok=True)
     payload = outdir / "post-review-payload.json"
@@ -69,7 +70,8 @@ def make_invoke_first_fails():
     """An invoke fake that fails the first PR and oks the rest."""
     state = {"n": 0}
 
-    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+             child_model="inherit"):
         state["n"] += 1
         if state["n"] == 1:
             return run.invoke.InvokeResult("failed", reason="boom")
@@ -82,7 +84,8 @@ def make_invoke_raises_first(exc):
     """An invoke fake that raises *exc* on the first PR and oks the rest."""
     state = {"n": 0}
 
-    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+             child_model="inherit"):
         state["n"] += 1
         if state["n"] == 1:
             raise exc
@@ -181,7 +184,7 @@ class PrereqTest(RunTestBase):
             run_dir = self.tmp / "manifest-{}".format(anchor or "skill")
             run_dir.mkdir(parents=True)
             args = types.SimpleNamespace(
-                anchor=anchor, fidelity="dry-run", tool="deep-review-v3"
+                anchor=anchor, fidelity="dry-run", tool="deep-review-v3", child_model=None
             )
             run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
             manifest = json.loads((run_dir / "run.json").read_text())
@@ -602,7 +605,8 @@ class ToolWiringTest(RunTestBase):
     def test_run_prs_forwards_tool_to_invoke_review(self):
         captured = {}
 
-        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                child_model="inherit"):
             captured["tool"] = tool
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -615,6 +619,41 @@ class ToolWiringTest(RunTestBase):
             tool="deep-review-v2",
         )
         self.assertEqual(captured["tool"], "deep-review-v2")
+
+    def test_child_model_default_sonnet_for_v3(self):
+        # v3's mechanical orchestrator session defaults to sonnet to cut the opus[1m] cost.
+        self.assertEqual(self._manifest_for(["--tier", "smoke"])["child_model"], "sonnet")
+
+    def test_child_model_default_inherit_for_v2(self):
+        # v2 inherits so its historical baseline model behavior is preserved.
+        manifest = self._manifest_for(["--tier", "smoke", "--tool", "deep-review-v2"])
+        self.assertEqual(manifest["child_model"], "inherit")
+
+    def test_explicit_child_model_wins_over_per_tool_default(self):
+        manifest = self._manifest_for(["--tier", "smoke", "--child-model", "opus"])
+        self.assertEqual(manifest["child_model"], "opus")
+
+    def test_naive_anchor_leaves_child_model_unset(self):
+        manifest = self._manifest_for(["--tier", "smoke", "--anchor", "naive"])
+        self.assertIsNone(manifest["child_model"])
+
+    def test_run_prs_forwards_child_model_to_invoke_review(self):
+        captured = {}
+
+        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                child_model="inherit"):
+            captured["child_model"] = child_model
+            return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+        self._install_runner_fakes(invoke_fn=spy)
+        run_dir = self.runs_root / "child-model-forward"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        run._run_prs(
+            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data,
+            tool="deep-review-v3", child_model="opus",
+        )
+        self.assertEqual(captured["child_model"], "opus")
 
 
 class ResumeTest(RunTestBase):
@@ -652,7 +691,8 @@ class ResumeTest(RunTestBase):
 
         captured = []
 
-        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3"):
+        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                child_model="inherit"):
             captured.append(tool)
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -662,6 +702,35 @@ class ResumeTest(RunTestBase):
         # Every re-invoked (pending) PR used the manifest's v2 tool, never the v3 default.
         self.assertTrue(captured)
         self.assertTrue(all(t == "deep-review-v2" for t in captured))
+
+    def test_resume_prefers_manifest_child_model_over_default(self):
+        # A run started with --child-model opus then interrupted (all PRs left pending) must,
+        # on resume with default args (child_model resolves to the v3 default sonnet),
+        # re-invoke with the manifest's recorded opus -- the same precedence as tool
+        # (`manifest.get("child_model") or _resolve_child_model(...)`).
+        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        opus_args = run.parse_args(["--tier", "smoke", "--child-model", "opus"])
+        with self.assertRaises(KeyboardInterrupt):
+            run._new_run(opus_args)  # writes the opus manifest, then interrupts on PR 1
+        run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
+        run_id = run_dir.name
+        self.assertEqual(
+            json.loads((run_dir / "run.json").read_text())["child_model"], "opus"
+        )
+
+        captured = []
+
+        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                child_model="inherit"):
+            captured.append(child_model)
+            return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+        default_args = run.parse_args(["--tier", "smoke"])  # no --child-model -> sonnet
+        with patch.object(run.invoke, "invoke_review", spy):
+            run._resume(run_id, default_args, retry=False)
+        # Every re-invoked PR used the manifest's opus pin, never the resolved v3 sonnet.
+        self.assertTrue(captured)
+        self.assertTrue(all(m == "opus" for m in captured))
 
 
 # ----------------------------------------------------------------------------- cli guard
