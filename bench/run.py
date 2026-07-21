@@ -657,6 +657,9 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         "invocation": invocation,
         "env_fingerprint": env_fingerprint,
         "pr_urls": list(urls),
+        # The explicit --prs override list (None for a tier-resolved run). When set, tier
+        # is "custom" and pr_urls carries the same URLs, so resume works from the manifest.
+        "prs": list(args.prs) if getattr(args, "prs", None) else None,
     }
     (Path(run_dir) / "run.json").write_text(json.dumps(manifest, indent=2))
 
@@ -683,11 +686,15 @@ def _exit_code(final, urls):
 
 
 def _new_run(args):
-    tier = args.tier
     subsets = _load_json(GOLDEN_DIR / "subsets.json")
     shas = _load_json(GOLDEN_DIR / "shas.json")
     bench_data = _load_json(GOLDEN_DIR / "benchmark_data.min.json")
-    urls = _resolve_tier(tier, subsets, shas)
+    # An explicit --prs list overrides --tier's subset resolution and labels the run
+    # "custom"; the URLs were validated against shas.json at parse time.
+    if args.prs:
+        tier, urls = "custom", list(args.prs)
+    else:
+        tier, urls = args.tier, _resolve_tier(args.tier, subsets, shas)
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     timeout_s = args.timeout_mins * 60
 
@@ -797,7 +804,26 @@ def parse_args(argv=None):
         "(default: sonnet for deep-review-v3, inherit for deep-review-v2)",
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--prs", metavar="URL[,URL...]",
+        help="explicit comma-separated golden PR list; overrides --tier's subset "
+        "resolution and labels the run 'custom'. Every URL must exist in shas.json.",
+    )
+    args = parser.parse_args(argv)
+    # Validate --prs against the golden set at parse time so an unknown URL is a hard
+    # argparse error (exit 2), never a mid-run surprise; normalize the string to a list.
+    if args.prs is not None:
+        urls = [u.strip() for u in args.prs.split(",") if u.strip()]
+        if not urls:
+            parser.error("--prs was given but parsed no URLs")
+        shas = _load_json(GOLDEN_DIR / "shas.json")
+        unknown = [u for u in urls if u not in shas]
+        if unknown:
+            parser.error(
+                "--prs contains URL(s) not in shas.json: {}".format(", ".join(unknown))
+            )
+        args.prs = urls
+    return args
 
 
 def main(argv=None):
@@ -827,8 +853,12 @@ def main(argv=None):
     if args.retry_failed:
         return _resume(args.retry_failed, args, retry=True)
 
-    if not args.tier:
-        print("--tier is required for a new run (smoke|subset|full).", file=sys.stderr)
+    if not args.tier and not args.prs:
+        print(
+            "--tier or --prs is required for a new run "
+            "(smoke|subset|holdout|full, or an explicit --prs list).",
+            file=sys.stderr,
+        )
         return 2
 
     rc = 0

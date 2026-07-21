@@ -656,6 +656,68 @@ class ToolWiringTest(RunTestBase):
         self.assertEqual(captured["child_model"], "opus")
 
 
+class PrsListTest(RunTestBase):
+    """--prs overrides --tier with an explicit, shas.json-validated golden PR list."""
+
+    def test_parses_comma_list_and_strips_whitespace(self):
+        args = run.parse_args(["--prs", "{},{}".format(FIXTURE_URL, PLAIN_URL)])
+        self.assertEqual(args.prs, [FIXTURE_URL, PLAIN_URL])
+        # Surrounding whitespace around each URL is trimmed.
+        spaced = run.parse_args(["--prs", " {} , {} ".format(FIXTURE_URL, PLAIN_URL)])
+        self.assertEqual(spaced.prs, [FIXTURE_URL, PLAIN_URL])
+
+    def test_unknown_url_is_argparse_error(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            with self.assertRaises(SystemExit) as cm:
+                run.parse_args(["--prs", "https://github.com/nope/nope/pull/999999"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("not in shas.json", err.getvalue())
+
+    def test_manifest_round_trip_labels_custom(self):
+        self._install_runner_fakes()
+        urls = [FIXTURE_URL, PLAIN_URL]
+        args = run.parse_args(["--prs", ",".join(urls)])
+        run._new_run(args)
+        run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
+        manifest = json.loads((run_dir / "run.json").read_text())
+        self.assertEqual(manifest["tier"], "custom")
+        self.assertEqual(manifest["prs"], urls)
+        self.assertEqual(manifest["pr_urls"], urls)
+        # run_id is prefixed with the custom tier label.
+        self.assertTrue(run_dir.name.startswith("custom-"))
+
+    def test_tier_run_records_null_prs(self):
+        self._install_runner_fakes()
+        args = run.parse_args(["--tier", "smoke"])
+        run._new_run(args)
+        run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
+        manifest = json.loads((run_dir / "run.json").read_text())
+        self.assertIsNone(manifest["prs"])
+        self.assertEqual(manifest["tier"], "smoke")
+
+    def test_resume_reruns_manifest_urls(self):
+        # A --prs run interrupted (all PRs left pending) resumes from the manifest's
+        # recorded URLs -- tier is "custom" so there is no subset to re-resolve; resume
+        # reads pr_urls exactly like a tier run does.
+        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        urls = [FIXTURE_URL, PLAIN_URL]
+        with self.assertRaises(KeyboardInterrupt):
+            run._new_run(run.parse_args(["--prs", ",".join(urls)]))
+        run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
+        run_id = run_dir.name
+
+        seen = []
+
+        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                child_model="inherit"):
+            seen.append(pr["url"])
+            return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+        with patch.object(run.invoke, "invoke_review", spy):
+            run._resume(run_id, run.parse_args(["--resume", run_id]), retry=False)
+        self.assertEqual(set(seen), set(urls))
+
+
 class ResumeTest(RunTestBase):
     def test_resume_skips_completed_prs(self):
         # First pass: everything succeeds.
