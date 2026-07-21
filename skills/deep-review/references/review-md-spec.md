@@ -126,9 +126,9 @@ The minimum severity level to include in the report:
 
 ### Confidence Threshold
 
-An integer from 0-100. Findings below this confidence score are filtered out before the report. Default is 70. Higher values (e.g., 85) are stricter but may miss some real issues. Lower values surface more findings but may include more false positives.
+An integer from 0-100. Findings below this confidence score are filtered out before the report. When you do not set it, non-security dimensions default to **55** and security to **70**. Higher values (e.g., 85) are stricter but may miss some real issues. Lower values surface more findings but may include more false positives.
 
-**Important:** By default, security findings use the same threshold as other dimensions (70). You can set `security_min_confidence` in REVIEW.md to give security a lower bar — security false negatives are costlier than false positives. Setting `confidence_threshold: 90` raises the bar for all dimensions to 90, but if `security_min_confidence` is set lower (e.g., 60), security findings would still be included at that level.
+**Important:** The default security bar (70) is stricter than the default non-security bar (55) — security false negatives are costlier, but a low-confidence security guess is still noise. Setting an explicit `confidence_threshold` applies it to all non-security dimensions; the security bar is then `min(confidence_threshold, security_min_confidence)`. So `confidence_threshold: 90` raises the non-security bar to 90, but if `security_min_confidence` is set lower (e.g., 60), security findings are still included at that level.
 
 **Per-dimension thresholds:** You can override the threshold for individual dimensions using a YAML-like key:value format. This is useful when some dimensions (e.g., conventions) generate more noise than others (e.g., bugs).
 

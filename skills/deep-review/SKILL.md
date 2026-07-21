@@ -122,6 +122,8 @@ Discover REVIEW.md hierarchically (`references/review-md-spec.md`). Schema-valid
 - `args.exclusionPatterns` — the exclusion-pattern list.
 - `args.reviewConfigPath` — the REVIEW.md path (or `null` if none), carried for provenance.
 
+> **Threshold defaults.** Only put `confidence_threshold` / `security_min_confidence` in `reviewConfig` when REVIEW.md actually sets them — do **not** pin a numeric default. When they are absent the Filter stage applies its built-in defaults (non-security **55**, security **70**); pinning an explicit `70` would silently raise the non-security bar back to 70 and undo the default.
+
 ### Write the shared agent context file
 
 Write the shared context to `{output_dir}/deep-review-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. Contents: CLAUDE.md/REVIEW.md rules, risk classification (2e), and the full diff inside `<untrusted-code-content>` tags. The workflow's discovery, validate, and challenge agents Read this file at `{output_dir}/deep-review-context-{head_sha_short}.md` — the workflow threads exactly this path to them, so the filename must match. (The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.)

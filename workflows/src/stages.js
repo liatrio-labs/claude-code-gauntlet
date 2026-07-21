@@ -132,11 +132,15 @@ function summarizeMergePrompt(partials) {
 function agentSpecs() {
   const byAgent = new Map();
   for (const d of DIMENSIONS) {
-    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [] });
+    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null });
     const spec = byAgent.get(d.agentType);
     spec.dimensions.push(d.dimension);
     Object.assign(spec.schemaExtra, d.schemaExtra || {});
     spec.conditionalFlags.push(d.conditionalFlag);
+    // promptExtra is scoped per AGENT, not per dimension — every DIMENSIONS row for a
+    // multi-dimension agent is expected to carry the same value (see registry.js), so a
+    // truthy value on any of an agent's rows sets it for the whole spec.
+    if (d.promptExtra) spec.promptExtra = d.promptExtra;
   }
   // Preserve AGENTS order (derived from DIMENSIONS) so dispatch order is deterministic.
   return AGENTS.map((a) => byAgent.get(a));
@@ -285,12 +289,22 @@ export async function discover(ctx, input) {
 // agentType), no cap/no minimum on findings, and a reminder of the canonical schema's
 // single-paragraph description constraint. Kept short — StructuredOutput's `schema`
 // (findingSchema) does the actual shape enforcement, this prompt only sets behavior.
+//
+// Hill-climb iter 5: two additions. (1) A dimension-agnostic EVIDENCE DISCIPLINE clause
+// in the base prompt — every finding must cite concrete, investigated evidence, and any
+// absence/"missing" claim must name the specific file or path checked (the
+// unverifiable-claim source the challenger later gates on). (2) spec.promptExtra
+// (registry.js) is appended verbatim when the agent carries one — the per-agent
+// discovery-breadth sweeps (security: SSRF/postMessage/string-bypass; bug-detector +
+// conventions-and-intent: typo/naming). Scoping lives entirely in the registry; no
+// agent-name special-casing here.
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextPath
     ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
     : '';
   const dims = spec.dimensions.join(', ');
-  return `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
+  const base = `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
+  return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
 }
 
 // --- Phase 3: Merge ---------------------------------------------------------
@@ -790,9 +804,16 @@ export function blindChallengeFields(finding) {
   };
 }
 
+// Hill-climb iter 5: teeth + unverifiable-claim gate. The challenger must VERIFY the
+// claim's central factual assertion against the raw code, and score any claim it cannot
+// confirm from the code+context at or below 25 (below 25 removes non-security findings
+// downstream; see applyChallenges thresholds). This targets the two noise clusters the
+// subset diagnosis surfaced: test-coverage "no test exists" negatives and
+// cross_file_impact claims that cite no in-diff evidence. Still fully blind — only
+// {title, description, code} reach the challenger.
 function challengePrompt(finding) {
   const b = blindChallengeFields(finding);
-  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
+  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code below: find the specific lines it rests on and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context you were given — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
 }
 
 // challengeStage(ctx, input) -> { findings, unverified, eliminated, gaps, stats, generated_at }

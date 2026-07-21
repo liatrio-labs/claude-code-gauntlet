@@ -180,6 +180,21 @@ test('challenge prompt carries only title/description/code — no evidence/reaso
   assert.equal(ctx.calls[0].agentType, 'deep-review:challenger');
 });
 
+// Hill-climb iter 5: challenge teeth + unverifiable-claim gate. The prompt must demand the
+// challenger VERIFY the claim's central assertion against the code and score any claim it
+// cannot confirm at or below 25 — naming the two noise clusters (test-coverage negatives,
+// cross_file_impact claims with no in-diff evidence). Blindness is unchanged (asserted above).
+test('challenge prompt has teeth: verify-assertion + unverifiable-claim gate markers', async () => {
+  const ctx = challengeCtx();
+  await challengeStage(ctx, { findings: [cFinding('F1', 'high')], limits: { challengeCap: 40 }, policy: {} });
+  const prompt = ctx.calls[0].prompt;
+  assert.match(prompt, /VERIFY the claim's central factual assertion/);
+  assert.match(prompt, /UNVERIFIABLE/);
+  assert.match(prompt, /score it 25 or below/);
+  assert.match(prompt, /no test exists/);
+  assert.match(prompt, /no in-diff evidence/);
+});
+
 test('cap overflow -> challenge=skipped, excluded from the high-confidence bucket', async () => {
   const findings = [cFinding('F1', 'critical'), cFinding('F2', 'high'), cFinding('F3', 'low')];
   const ctx = challengeCtx(); // every challenger returns score 80 (survives)

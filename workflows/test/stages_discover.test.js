@@ -94,6 +94,46 @@ test('discoverPrompt: no contextPath -> no dangling context-file instruction', a
   assert.doesNotMatch(ctx.prompts['deep-review:bug-detector'], /Read the shared context/);
 });
 
+// Hill-climb iter 5 (evidence discipline): the base discoverPrompt now demands concrete,
+// inspected evidence on every finding and names-the-path proof for any absence claim.
+// Dimension-agnostic -> present in EVERY dispatched agent prompt.
+test('discoverPrompt: evidence-discipline clause present in every agent prompt', async () => {
+  const ctx = fakeCtx();
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  for (const agentType of AGENTS) {
+    const p = ctx.prompts[agentType];
+    assert.match(p, /evidence field must be non-empty/, `${agentType} missing evidence clause`);
+    assert.match(p, /absence or "missing" claim/, `${agentType} missing absence clause`);
+    assert.match(p, /name in evidence the specific file or path/, `${agentType} missing name-the-path clause`);
+  }
+});
+
+// Hill-climb iter 5 (discovery breadth): per-agent promptExtra sweeps, scoped via
+// registry.js. security-reviewer carries the security sweep; bug-detector and
+// conventions-and-intent carry the typo/naming sweep; the other agents carry neither.
+test('discoverPrompt: per-agent sweeps are scoped (security vs typo/naming vs none)', async () => {
+  const ctx = fakeCtx();
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+
+  const security = ctx.prompts['deep-review:security-reviewer'];
+  assert.match(security, /SSRF and unvalidated-URL fetches/);
+  assert.match(security, /postMessage handlers that do not validate event\.origin/);
+  assert.match(security, /string-matching bypass patterns/);
+  assert.doesNotMatch(security, /typo and naming sweep/);
+
+  for (const agentType of ['deep-review:bug-detector', 'deep-review:conventions-and-intent']) {
+    const p = ctx.prompts[agentType];
+    assert.match(p, /explicit typo and naming sweep/, `${agentType} missing typo/naming sweep`);
+    assert.match(p, /case-sensitivity mistakes in string comparisons/, `${agentType} missing case-sensitivity clause`);
+    assert.doesNotMatch(p, /SSRF and unvalidated-URL fetches/, `${agentType} should not carry the security sweep`);
+  }
+
+  // An agent with no promptExtra carries neither sweep.
+  const crossFile = ctx.prompts['deep-review:cross-file-impact'];
+  assert.doesNotMatch(crossFile, /SSRF and unvalidated-URL fetches/);
+  assert.doesNotMatch(crossFile, /explicit typo and naming sweep/);
+});
+
 test('worst-case agent count stays under 1000; coarsening lowers challengeCap and raises batch sizes', () => {
   const limits = { summarizeBucketSize: 20, validateBatch: 10, challengeCap: 40, verifySliceSize: 200 };
   assert.ok(worstCaseAgentCount(limits, 500, 3000) < 1000);

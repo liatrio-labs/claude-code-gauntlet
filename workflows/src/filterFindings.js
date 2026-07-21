@@ -37,7 +37,18 @@ export function normalizeFieldNames(findings) {
 // one there) collided as "already been declared" — a runtime SyntaxError. filterFindings.js
 // is emitted before applyChallenges.js (build.js ORDER), so the export is in scope there.
 export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+// DEFAULT_CONFIDENCE_THRESHOLD is the Python-parity-pinned default: parseReviewMd
+// substitutes it when REVIEW.md omits confidence_threshold (the parse_review_md
+// `missing_defaults` fixture pins 70), and the SECURITY branch of
+// applyThresholdFilter uses it so an unconfigured security bar stays min(70,70)=70.
+// The NON-security runtime default is decoupled below (hill-climb iter 5): when the
+// skill's reviewConfig omits confidence_threshold, non-security dimensions filter at
+// 55 (rescues conf-55-68 goldens) while security is unchanged at 70. Only the
+// config-absent fallback differs; an EXPLICIT confidence_threshold (user REVIEW.md
+// override) still applies to BOTH branches, so parity fixtures — all of which pass an
+// explicit config — are untouched, and REVIEW.md override semantics stay intact.
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
+const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
 const DEFAULT_SEVERITY_THRESHOLD = 'low';
 const CONTESTATION_DROP_THRESHOLD = 25;
@@ -115,7 +126,11 @@ export function parseReviewMd(text) {
 // Math.min(confidence_threshold, security_min_confidence) — faithful to the
 // Python `min()` call even though it makes the security bar the LOWER of the
 // two configured numbers (pinned by parity-map §3; not a naming bug to fix
-// in a port).
+// in a port). The one intentional v3 divergence from Python is the CONFIG-ABSENT
+// fallback: non-security dimensions default to 55 (DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD),
+// security stays at 70. An explicit confidence_threshold in `config` overrides
+// both branches identically, so this divergence is invisible to the parity
+// fixtures (all of which pass an explicit config).
 export function applyThresholdFilter(findings, config) {
   const kept = [];
   const eliminated = [];
@@ -135,7 +150,9 @@ export function applyThresholdFilter(findings, config) {
       const minConf = cfgGet(config, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
       effectiveThreshold = Math.min(cfgGet(config, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
     } else {
-      effectiveThreshold = cfgGet(config, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD);
+      // Non-security config-absent fallback is 55 (iter 5), decoupled from the
+      // security branch above (which keeps the 70 fallback via DEFAULT_CONFIDENCE_THRESHOLD).
+      effectiveThreshold = cfgGet(config, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
     }
 
     // Validator contestation check (V5-09C): strict `> 25`, not `>=` — an

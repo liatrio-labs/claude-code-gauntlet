@@ -66,7 +66,18 @@ function normalizeFieldNames(findings) {
 // one there) collided as "already been declared" — a runtime SyntaxError. filterFindings.js
 // is emitted before applyChallenges.js (build.js ORDER), so the export is in scope there.
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+// DEFAULT_CONFIDENCE_THRESHOLD is the Python-parity-pinned default: parseReviewMd
+// substitutes it when REVIEW.md omits confidence_threshold (the parse_review_md
+// `missing_defaults` fixture pins 70), and the SECURITY branch of
+// applyThresholdFilter uses it so an unconfigured security bar stays min(70,70)=70.
+// The NON-security runtime default is decoupled below (hill-climb iter 5): when the
+// skill's reviewConfig omits confidence_threshold, non-security dimensions filter at
+// 55 (rescues conf-55-68 goldens) while security is unchanged at 70. Only the
+// config-absent fallback differs; an EXPLICIT confidence_threshold (user REVIEW.md
+// override) still applies to BOTH branches, so parity fixtures — all of which pass an
+// explicit config — are untouched, and REVIEW.md override semantics stay intact.
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
+const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
 const DEFAULT_SEVERITY_THRESHOLD = 'low';
 const CONTESTATION_DROP_THRESHOLD = 25;
@@ -144,7 +155,11 @@ function parseReviewMd(text) {
 // Math.min(confidence_threshold, security_min_confidence) — faithful to the
 // Python `min()` call even though it makes the security bar the LOWER of the
 // two configured numbers (pinned by parity-map §3; not a naming bug to fix
-// in a port).
+// in a port). The one intentional v3 divergence from Python is the CONFIG-ABSENT
+// fallback: non-security dimensions default to 55 (DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD),
+// security stays at 70. An explicit confidence_threshold in `config` overrides
+// both branches identically, so this divergence is invisible to the parity
+// fixtures (all of which pass an explicit config).
 function applyThresholdFilter(findings, config) {
   const kept = [];
   const eliminated = [];
@@ -164,7 +179,9 @@ function applyThresholdFilter(findings, config) {
       const minConf = cfgGet(config, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
       effectiveThreshold = Math.min(cfgGet(config, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
     } else {
-      effectiveThreshold = cfgGet(config, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD);
+      // Non-security config-absent fallback is 55 (iter 5), decoupled from the
+      // security branch above (which keeps the 70 fallback via DEFAULT_CONFIDENCE_THRESHOLD).
+      effectiveThreshold = cfgGet(config, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
     }
 
     // Validator contestation check (V5-09C): strict `> 25`, not `>=` — an
@@ -1713,18 +1730,29 @@ function applyChallenges(findings, challenges) {
 
 // --- registry.js ---
 // registry.js — single point of extension. Adding a dimension = one entry here + one agent .md.
+//
+// `promptExtra` is an optional per-agent prompt-extension string appended verbatim to that
+// agent's discoverPrompt (see stages.js). It is scoped by agentType, not by dimension —
+// every DIMENSIONS row for a multi-dimension agent (conventions-and-intent) must carry the
+// SAME value (agentSpecs() unions them; a mismatch would make the dispatched prompt depend
+// on dimension iteration order). Hill-climb iter 5 uses it for two discovery-breadth
+// sweeps grounded in the subset diagnosis (~21 never-discovered goldens): a security sweep
+// on security-reviewer, and a typo/naming sweep on bug-detector and conventions-and-intent.
+const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
+const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
+
 const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'deep-review:bug-detector', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'security', agentType: 'deep-review:security-reviewer', conditionalFlag: null, schemaExtra: {}, modelOverride: 'opus' },
-  { dimension: 'cross_file_impact', agentType: 'deep-review:cross-file-impact', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'test_coverage', agentType: 'deep-review:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'convention', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'intent', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
-  { dimension: 'comment_accuracy', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null },
+  { dimension: 'bug', agentType: 'deep-review:bug-detector', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'deep-review:security-reviewer', conditionalFlag: null, schemaExtra: {}, modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+  { dimension: 'cross_file_impact', agentType: 'deep-review:cross-file-impact', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'test_coverage', agentType: 'deep-review:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'convention', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'intent', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'comment_accuracy', agentType: 'deep-review:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'type_design', agentType: 'deep-review:type-design-analyzer', conditionalFlag: null,
-    schemaExtra: { encapsulation: 'number', invariants: 'number', enforcement: 'number', usefulness: 'number' }, modelOverride: null },
+    schemaExtra: { encapsulation: 'number', invariants: 'number', enforcement: 'number', usefulness: 'number' }, modelOverride: null, promptExtra: null },
   { dimension: 'simplification', agentType: 'deep-review:code-simplifier', conditionalFlag: null,
-    schemaExtra: { before: 'string', after: 'string' }, modelOverride: null },
+    schemaExtra: { before: 'string', after: 'string' }, modelOverride: null, promptExtra: null },
 ];
 
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
@@ -1932,11 +1960,15 @@ function summarizeMergePrompt(partials) {
 function agentSpecs() {
   const byAgent = new Map();
   for (const d of DIMENSIONS) {
-    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [] });
+    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null });
     const spec = byAgent.get(d.agentType);
     spec.dimensions.push(d.dimension);
     Object.assign(spec.schemaExtra, d.schemaExtra || {});
     spec.conditionalFlags.push(d.conditionalFlag);
+    // promptExtra is scoped per AGENT, not per dimension — every DIMENSIONS row for a
+    // multi-dimension agent is expected to carry the same value (see registry.js), so a
+    // truthy value on any of an agent's rows sets it for the whole spec.
+    if (d.promptExtra) spec.promptExtra = d.promptExtra;
   }
   // Preserve AGENTS order (derived from DIMENSIONS) so dispatch order is deterministic.
   return AGENTS.map((a) => byAgent.get(a));
@@ -2085,12 +2117,22 @@ async function discover(ctx, input) {
 // agentType), no cap/no minimum on findings, and a reminder of the canonical schema's
 // single-paragraph description constraint. Kept short — StructuredOutput's `schema`
 // (findingSchema) does the actual shape enforcement, this prompt only sets behavior.
+//
+// Hill-climb iter 5: two additions. (1) A dimension-agnostic EVIDENCE DISCIPLINE clause
+// in the base prompt — every finding must cite concrete, investigated evidence, and any
+// absence/"missing" claim must name the specific file or path checked (the
+// unverifiable-claim source the challenger later gates on). (2) spec.promptExtra
+// (registry.js) is appended verbatim when the agent carries one — the per-agent
+// discovery-breadth sweeps (security: SSRF/postMessage/string-bypass; bug-detector +
+// conventions-and-intent: typo/naming). Scoping lives entirely in the registry; no
+// agent-name special-casing here.
 function discoverPrompt(inp, spec) {
   const ctxLine = inp.contextPath
     ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
     : '';
   const dims = spec.dimensions.join(', ');
-  return `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
+  const base = `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
+  return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
 }
 
 // --- Phase 3: Merge ---------------------------------------------------------
@@ -2590,9 +2632,16 @@ function blindChallengeFields(finding) {
   };
 }
 
+// Hill-climb iter 5: teeth + unverifiable-claim gate. The challenger must VERIFY the
+// claim's central factual assertion against the raw code, and score any claim it cannot
+// confirm from the code+context at or below 25 (below 25 removes non-security findings
+// downstream; see applyChallenges thresholds). This targets the two noise clusters the
+// subset diagnosis surfaced: test-coverage "no test exists" negatives and
+// cross_file_impact claims that cite no in-diff evidence. Still fully blind — only
+// {title, description, code} reach the challenger.
 function challengePrompt(finding) {
   const b = blindChallengeFields(finding);
-  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
+  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code below: find the specific lines it rests on and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context you were given — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
 }
 
 // challengeStage(ctx, input) -> { findings, unverified, eliminated, gaps, stats, generated_at }

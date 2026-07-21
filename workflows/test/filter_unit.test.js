@@ -3,7 +3,7 @@
 // determinism invariants). Parity-backed behavior lives in parity.test.js.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pyRound, applyFilterPipeline } from '../src/filterFindings.js';
+import { pyRound, applyFilterPipeline, applyThresholdFilter } from '../src/filterFindings.js';
 
 test('pyRound is banker\'s rounding (half-to-even)', () => {
   assert.equal(pyRound(2.5), 2); // 25/10 -> bucket 20, NOT 30
@@ -46,4 +46,30 @@ test('applyFilterPipeline composes stages consistently on a small mixed batch', 
   // P1 and P2 share a proximity bucket with different agents -> consensus boost.
   assert.equal(out.stats.consensus_boosted, 2);
   assert.equal(out.stats.tagged_main + out.stats.tagged_suggestion, out.filtered.length);
+});
+
+// Hill-climb iter 5 (threshold default). When reviewConfig omits confidence_threshold,
+// the filter's built-in fallbacks apply: non-security dimensions default to 55 (rescuing
+// the conf-55-68 goldens the subset diagnosis found were being killed), while security
+// stays at 70 via min(70,70). This is a JS/v3-only divergence in the CONFIG-ABSENT path;
+// an explicit confidence_threshold (parity fixtures always pass one) is unaffected.
+test('config-absent default: non-security bar is 55, security stays 70', () => {
+  const findings = [
+    { id: 'B60', dimension: 'bug', severity: 'high', confidence: 60, title: 't', description: 'd' },      // 60 >= 55 -> keep
+    { id: 'B50', dimension: 'bug', severity: 'high', confidence: 50, title: 't', description: 'd' },      // 50 <  55 -> drop
+    { id: 'S60', dimension: 'security', severity: 'high', confidence: 60, title: 't', description: 'd' }, // 60 <  70 -> drop
+    { id: 'S70', dimension: 'security', severity: 'high', confidence: 70, title: 't', description: 'd' }, // 70 >= 70 -> keep
+  ];
+  const { kept, eliminated } = applyThresholdFilter(findings, {}); // no confidence_threshold set
+  assert.deepEqual(kept.map((f) => f.id).sort(), ['B60', 'S70']);
+  assert.deepEqual(eliminated.map((f) => f.id).sort(), ['B50', 'S60']);
+});
+
+test('explicit confidence_threshold still applies to BOTH branches (REVIEW.md override intact)', () => {
+  // Only the config-ABSENT fallback moved. An explicit 55 lowers the security bar too via
+  // min(55, 70) = 55, so the 60-conf security finding is kept here — unlike the absent path
+  // above where security stays 70 and the same finding drops.
+  const findings = [{ id: 'S60', dimension: 'security', severity: 'high', confidence: 60, title: 't', description: 'd' }];
+  const { kept } = applyThresholdFilter(findings, { confidence_threshold: 55 });
+  assert.deepEqual(kept.map((f) => f.id), ['S60']);
 });
