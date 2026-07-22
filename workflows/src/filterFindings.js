@@ -82,6 +82,10 @@ export function parseReviewMd(text) {
   // block. DOTALL is `[\s\S]*?` (JS regex has no /s-independent dotall flag
   // pre-ES2018 semantics issue here — `[\s\S]` is used for portability).
   const blockPatterns = [
+    /```(?:yaml|)[\s]*#?\s*code-gauntlet(?:[^\n]*)?\n([\s\S]*?)```/i,
+    /<!--\s*code-gauntlet-config\s*\n([\s\S]*?)-->/i,
+    // Legacy pre-rename markers -- same current-before-legacy order as the Python
+    // twin's block_patterns so both pick the same block when several match.
     /```(?:yaml|)[\s]*#?\s*deep-review(?:[^\n]*)?\n([\s\S]*?)```/i,
     /<!--\s*deep-review-config\s*\n([\s\S]*?)-->/i,
   ];

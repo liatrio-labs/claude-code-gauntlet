@@ -1,4 +1,4 @@
-# CLAUDE.md — claude-deep-review
+# CLAUDE.md — claude-code-gauntlet
 
 ## Scripts
 
@@ -38,17 +38,17 @@ The canonical schema is defined once in `workflows/src/registry.js` (`DIMENSIONS
 
 ## Plugin structure
 
-Scripts and agents live at the plugin root, not under `skills/deep-review/`:
+Scripts and agents live at the plugin root, not under `skills/code-gauntlet/`:
 
 ```
-claude-deep-review/          <- plugin root ({plugin_root})
+claude-code-gauntlet/          <- plugin root ({plugin_root})
 ├── agents/
 ├── scripts/                  <- retained Python (verify_findings.py, post_review.py, ...)
 ├── workflows/                <- JS pipeline: src/*.js, build.js, pipeline.js (bundle), test/
 ├── bench/                    <- benchmark harness (stdlib-exempt; not touched by the v3 build)
 ├── tests/                    <- pytest suite (Python side, incl. parity + bundle-freshness)
 └── skills/
-    └── deep-review/          <- skill base directory
+    └── code-gauntlet/          <- skill base directory
 ```
 
 SKILL.md derives `{plugin_root}` as two levels above the skill base directory. Script invocations use `{plugin_root}/scripts/`; the workflow entry is `{plugin_root}/workflows/pipeline.js`.
@@ -60,8 +60,8 @@ SKILL.md derives `{plugin_root}` as two levels above the skill base directory. S
 
 ## Output directory convention
 
-- `{output_dir}` in SKILL.md and references defaults to `.deep-review/` (repo-local, gitignored). Override with `$DEEP_REVIEW_OUTPUT_DIR` for CI or custom environments.
-- **File-based context handoff.** Shared context (diff, rules, summary, risk) is written to `{output_dir}/deep-review-context-{head_sha_short}.md` during Phase 2. Agent dispatch prompts contain only the context file path and findings file path (~100 tokens each), ensuring all 7 fit in a single response. Agents Read the context file at startup.
+- `{output_dir}` in SKILL.md and references defaults to `.code-gauntlet/` (repo-local, gitignored). Override with `$CODE_GAUNTLET_OUTPUT_DIR` for CI or custom environments.
+- **File-based context handoff.** Shared context (diff, rules, summary, risk) is written to `{output_dir}/code-gauntlet-context-{head_sha_short}.md` during Phase 2. Agent dispatch prompts contain only the context file path and findings file path (~100 tokens each), ensuring all 7 fit in a single response. Agents Read the context file at startup.
 - **AST-safe emission.** Agents use `printf '%s\n' '...' >> "literal_path"` (not `echo` — zsh's builtin `echo` interprets `\n` as newlines even in single quotes, breaking NDJSON). For apostrophes in JSON values, use `\u0027` (valid JSON Unicode escape). Avoid `$'...'` ANSI-C quoting, `$VAR`, heredocs, `python3 -c`, and command substitution — the tree-sitter-bash AST parser treats these as unrecognized nodes and they get silently denied in subagent sessions running with sandbox auto-approval.
 - **NDJSON one-line contract.** Every JSON object an agent emits must be a single physical line. Literal newlines, tabs, and carriage returns inside JSON string values must be written as the two-character escapes `\n`, `\t`, `\r` — a raw byte 0x0A inside a string splits one finding into two corrupt physical lines. The `description` field is constrained to single-paragraph prose (≤500 chars, no fenced code blocks, no multi-line snippets, no bullet lists); code references go in `evidence` and `cross_file_refs`. Canonical contract: `references/ndjson-emission-contract.md`. The contract is duplicated verbatim into each of the 7 discovery agent files (same rationale as the false-positive exclusion list).
 - **Final-step NDJSON validation.** Phase 3 agents run `python3 "{plugin_root}/scripts/validate_ndjson.py" "<findings_file>"` as their last action. The validator path is written into the context file's `## Validator` section by Phase 2. A standalone script invocation is AST-safe (three plain word tokens) where `python3 -c "..."` is not. Non-zero exit means the agent must re-emit any flagged findings before returning.

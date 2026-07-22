@@ -93,7 +93,7 @@ for (const c of loadCases('apply_validations')) {
 function mapByAgent(files) {
   const out = {};
   for (const [name, text] of Object.entries(files || {})) {
-    const agent = name.replace(/^deep-review-(text-)?/, '').replace(/-[^-]+\.(ndjson|txt)$/, '');
+    const agent = name.replace(/^(?:code-gauntlet|deep-review)-(text-)?/, '').replace(/-[^-]+\.(ndjson|txt)$/, '');
     out[agent] = text;
   }
   return out;

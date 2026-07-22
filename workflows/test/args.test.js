@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { ARGS_VERSION, normalizeArgs, validateArgs } from '../src/args.js';
 
 const good = {
-  argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.deep-review',
+  argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
   headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
-  diffPath: '/r/.deep-review/d.patch', changedFilesPath: '/r/.deep-review/f.json',
+  diffPath: '/r/.code-gauntlet/d.patch', changedFilesPath: '/r/.code-gauntlet/f.json',
   reviewConfigPath: null, agentFlags: {},
   policy: { tier: 'optimized', frontier: false, frontierModelId: null, subagentModel: null },
   limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 },

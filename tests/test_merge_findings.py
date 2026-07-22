@@ -582,10 +582,10 @@ class TestMerge(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _ndjson_path(self, agent):
-        return os.path.join(self.tmpdir, f"deep-review-{agent}-{self.session_sha}.ndjson")
+        return os.path.join(self.tmpdir, f"code-gauntlet-{agent}-{self.session_sha}.ndjson")
 
     def _text_path(self, agent):
-        return os.path.join(self.tmpdir, f"deep-review-text-{agent}-{self.session_sha}.txt")
+        return os.path.join(self.tmpdir, f"code-gauntlet-text-{agent}-{self.session_sha}.txt")
 
     def _run_merge(self):
         return merge(
@@ -756,7 +756,7 @@ class TestMain(unittest.TestCase):
         self.session_sha = "deadbeef"
         self.agent = "bug-detector"
         ndjson_path = os.path.join(
-            self.tmpdir, f"deep-review-{self.agent}-{self.session_sha}.ndjson"
+            self.tmpdir, f"code-gauntlet-{self.agent}-{self.session_sha}.ndjson"
         )
         _write_ndjson(ndjson_path, [_make_finding(id="bug-1")])
         self.output_path = os.path.join(self.tmpdir, "output.json")
@@ -812,7 +812,7 @@ class TestMain(unittest.TestCase):
     def test_cli_multiple_agents(self):
         second_agent = "security-reviewer"
         ndjson_path2 = os.path.join(
-            self.tmpdir, f"deep-review-{second_agent}-{self.session_sha}.ndjson"
+            self.tmpdir, f"code-gauntlet-{second_agent}-{self.session_sha}.ndjson"
         )
         _write_ndjson(ndjson_path2, [_make_finding(id="sec-1", dimension="security")])
         rc = main(self._argv(**{"--agents": [self.agent, second_agent]}))

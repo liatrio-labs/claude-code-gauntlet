@@ -81,12 +81,12 @@ export function validArgs(over = {}) {
     argsVersion: 1,
     mode: 'headless',
     repoRoot: '/repo',
-    outputDir: '.deep-review',
+    outputDir: '.code-gauntlet',
     headShaShort: 'abc1234',
     nonce: 'nonce-xyz',
     generatedAt: '2026-07-18T00:00:00Z',
-    diffPath: '/repo/.deep-review/diff.patch',
-    changedFilesPath: '/repo/.deep-review/changed.txt',
+    diffPath: '/repo/.code-gauntlet/diff.patch',
+    changedFilesPath: '/repo/.code-gauntlet/changed.txt',
     agentFlags: {},
     policy: {},
     limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },
@@ -148,7 +148,7 @@ export function makeCtx(args, opts = {}) {
     if (label === 'report-writer' || label.startsWith('report-writer-')) {
       // reportText override lets a test drive the empty-report guard (e.g. a
       // whitespace-only report the writer returned as a false negative).
-      return { report: 'reportText' in opts ? opts.reportText : `# Deep Review\n\nrendered ${label}` };
+      return { report: 'reportText' in opts ? opts.reportText : `# Code Gauntlet\n\nrendered ${label}` };
     }
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
@@ -157,7 +157,7 @@ export function makeCtx(args, opts = {}) {
     // Discovery: label IS the agentType. Only bug-detector yields findings.
     if (DISCOVERY_AGENT_TYPES.has(dispatch.agentType)) {
       const disc = seedFindings();
-      return dispatch.agentType === 'deep-review:bug-detector'
+      return dispatch.agentType === 'code-gauntlet:bug-detector'
         ? { findings: disc, complete: true, total_seen: disc.length }
         : { findings: [], complete: true, total_seen: 0 };
     }

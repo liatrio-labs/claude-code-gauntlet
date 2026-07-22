@@ -4,7 +4,7 @@
 
 ## Overview
 
-claude-deep-review is an open source Claude Code plugin that runs entirely on your local machine. We do not collect, store, or transmit any user data.
+claude-code-gauntlet is an open source Claude Code plugin that runs entirely on your local machine. We do not collect, store, or transmit any user data.
 
 ## What We Collect
 
@@ -13,7 +13,7 @@ Nothing.
 ## How the Plugin Works
 
 - All skills, agents, and scripts are markdown and Python stdlib files loaded locally by Claude Code
-- Review output files (`.deep-review/`) are stored in your project directory on your machine
+- Review output files (`.code-gauntlet/`) are stored in your project directory on your machine
 - All code analysis happens locally via your existing Claude Code session
 - No data is sent to any external server, API, or analytics service operated by this plugin
 - No telemetry, no tracking, no cookies
@@ -24,8 +24,8 @@ This plugin does not connect to any third-party services of its own. It operates
 
 ## Data Storage
 
-The only files created are within the `.deep-review/` directory in your local project (configurable via `$DEEP_REVIEW_OUTPUT_DIR`). These contain review context, findings (NDJSON), and intermediate pipeline artifacts. You control these files entirely — you can read, edit, delete, or gitignore them at any time. The directory is gitignored by default.
+The only files created are within the `.code-gauntlet/` directory in your local project (configurable via `$CODE_GAUNTLET_OUTPUT_DIR`). These contain review context, findings (NDJSON), and intermediate pipeline artifacts. You control these files entirely — you can read, edit, delete, or gitignore them at any time. The directory is gitignored by default.
 
 ## Contact
 
-If you have questions about this privacy policy, open an issue at https://github.com/liatrio-labs/claude-deep-review/issues.
+If you have questions about this privacy policy, open an issue at https://github.com/liatrio-labs/claude-code-gauntlet/issues.

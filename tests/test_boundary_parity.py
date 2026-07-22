@@ -177,7 +177,7 @@ class TestPostReviewBoundary(unittest.TestCase):
         with open(self.findings_path, "w") as fh:
             json.dump({
                 "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-                "review_body": "Deep review summary", "findings": findings,
+                "review_body": "Code gauntlet summary", "findings": findings,
             }, fh)
 
     def test_post_review_consumes_pipeline_findings_without_error(self):

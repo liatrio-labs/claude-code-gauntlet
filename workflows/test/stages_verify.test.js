@@ -54,7 +54,7 @@ function baseInput(overrides = {}) {
       inputPathBase: '/out/phase4-input-abc123',
       outputPathBase: '/out/phase4-output-abc123',
       baseBranch: 'main',
-      diffPath: '/out/deep-review-diff-abc123.patch',
+      diffPath: '/out/code-gauntlet-diff-abc123.patch',
     },
     ...overrides,
   };
@@ -215,7 +215,7 @@ test('(j) slice inputs are materialized by the artifact-writer BEFORE any execut
   await verifyStage(ctx, input);
   // The first dispatch is the slice-input writer; the executor(s) come after.
   assert.match(ctx.calls[0].label, /^verify-input-writer/);
-  assert.equal(ctx.calls[0].agentType, 'deep-review:artifact-writer');
+  assert.equal(ctx.calls[0].agentType, 'code-gauntlet:artifact-writer');
   const firstExecIdx = ctx.calls.findIndex((t) => (t.label || '').startsWith('verify-slice-'));
   const writerIdx = ctx.calls.findIndex((t) => (t.label || '').startsWith('verify-input-writer'));
   assert.ok(writerIdx >= 0 && writerIdx < firstExecIdx, 'writer dispatched before executors');
@@ -272,5 +272,5 @@ test('the executor command is a single AST-safe python3 word-token invocation', 
   assert.match(cmd, /--head-sha abc123/);
   // No shell substitution / heredocs / env-prefix (CLAUDE.md AST-safe emission).
   assert.doesNotMatch(cmd, /\$\(|`|<<|\$\{|&&|\|\|/);
-  assert.equal(t.agentType, 'deep-review:executor');
+  assert.equal(t.agentType, 'code-gauntlet:executor');
 });

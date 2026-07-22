@@ -83,7 +83,7 @@ class TestParseReviewMd(unittest.TestCase):
         content = (
             "# My Review\n\n"
             "```yaml\n"
-            "# deep-review\n"
+            "# code-gauntlet\n"
             "confidence_threshold: 70\n"
             "severity_threshold: high\n"
             "security_min_confidence: 70\n"
@@ -107,7 +107,7 @@ class TestParseReviewMd(unittest.TestCase):
     def test_html_comment_block(self):
         content = (
             "# PR Review\n\n"
-            "<!-- deep-review-config\n"
+            "<!-- code-gauntlet-config\n"
             "confidence_threshold: 85\n"
             "severity_threshold: medium\n"
             "-->\n"
@@ -158,7 +158,7 @@ class TestParseReviewMd(unittest.TestCase):
     def test_malformed_yaml_partial_parse(self):
         content = (
             "```yaml\n"
-            "# deep-review\n"
+            "# code-gauntlet\n"
             "confidence_threshold: notanumber\n"
             "severity_threshold: medium\n"
             "```\n"
@@ -178,7 +178,7 @@ class TestParseReviewMd(unittest.TestCase):
     def test_ignore_list_with_mixed_indentation(self):
         content = (
             "```yaml\n"
-            "# deep-review\n"
+            "# code-gauntlet\n"
             "ignore:\n"
             "  - first pattern\n"
             "    - second pattern\n"

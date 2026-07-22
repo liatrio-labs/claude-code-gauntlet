@@ -49,7 +49,7 @@ test('validate batches findings at limits.validateBatch (ceil(n/batch) dispatche
   assert.equal(ctx.calls.length, 3); // ceil(5/2)
   assert.equal(out.stats.batches_dispatched, 3);
   assert.deepEqual(ctx.calls.map((t) => t.label), ['validate-batch-0', 'validate-batch-1', 'validate-batch-2']);
-  assert.equal(ctx.calls[0].agentType, 'deep-review:validator');
+  assert.equal(ctx.calls[0].agentType, 'code-gauntlet:validator');
 });
 
 test('a null validator member marks its findings validation=skipped, kept conservatively', async () => {
@@ -189,7 +189,7 @@ test('challenge prompt carries only title/description/code — no evidence/reaso
   assert.doesNotMatch(prompt, /SENTINEL_REASONING_LEAK/);
   assert.doesNotMatch(prompt, /SENTINEL_XREF_LEAK/);
   assert.doesNotMatch(prompt, /surfaced/);
-  assert.equal(ctx.calls[0].agentType, 'deep-review:challenger');
+  assert.equal(ctx.calls[0].agentType, 'code-gauntlet:challenger');
 });
 
 // Hill-climb iter 5: challenge teeth + unverifiable-claim gate. The prompt must demand the

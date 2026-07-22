@@ -1,6 +1,6 @@
 # REVIEW.md Specification
 
-A `REVIEW.md` file lets project maintainers customize how deep-review behaves. It can live at the repository root and in subdirectories alongside CLAUDE.md files. It's optional — sensible defaults apply when absent.
+A `REVIEW.md` file lets project maintainers customize how code-gauntlet behaves. It can live at the repository root and in subdirectories alongside CLAUDE.md files. It's optional — sensible defaults apply when absent.
 
 ## Contents
 
@@ -167,7 +167,7 @@ Controls how review results are delivered. A comma-separated list of delivery me
 
 - `chat` — Display the full report in the conversation
 - `pr_comments` — Post findings as inline PR/MR comments
-- `markdown` — Save as `deep-review-{date}.md`
+- `markdown` — Save as `code-gauntlet-{date}.md`
 
 When set in REVIEW.md, the delivery preference prompt is skipped during Phase 1. When not set, the user is prompted at the start of each review. Task creation is always offered separately after delivery, regardless of this setting.
 
@@ -250,13 +250,13 @@ For a file in `legacy/`:
 
 ### Discovery
 
-REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Deep-review checks each CLAUDE.md location for a matching REVIEW.md during Phase 2c context gathering.
+REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Code-gauntlet checks each CLAUDE.md location for a matching REVIEW.md during Phase 2c context gathering.
 
 #### Detection flow (Phase 2c)
 
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): skip both REVIEW.md-setup `AskUserQuestion` prompts below — root config applies, `build-review-md` is never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is created. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip both REVIEW.md-setup `AskUserQuestion` prompts below — root config applies, `build-review-md` is never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is created. See `references/headless-mode.md`.
 
 - **No REVIEW.md anywhere:**
 
@@ -337,8 +337,8 @@ When the user opts to create a REVIEW.md during Phase 2c, use these templates. T
 ```markdown
 # Review Configuration
 
-<!-- Customizes how deep-review analyzes this repository.
-     See references/review-md-spec.md in the deep-review skill for all options. -->
+<!-- Customizes how code-gauntlet analyzes this repository.
+     See references/review-md-spec.md in the code-gauntlet skill for all options. -->
 
 ## Confidence Threshold
 

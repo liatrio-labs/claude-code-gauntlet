@@ -52,7 +52,7 @@ If the SHA matches → proceed to 2c.
 | Branch name | `git checkout <branch>` |
 | Local changes | no-op |
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): never run any checkout command from
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never run any checkout command from
 > this table — the harness pre-places the working tree at the pinned head. If the
 > step-2 SHA comparison mismatches, print `HEADLESS INPUT ERROR: working tree HEAD
 > <sha> != PR head <sha>` and stop with a non-zero outcome; never silently review
@@ -84,7 +84,7 @@ Computed after checkout so the SHA reflects the actual PR HEAD, not whatever bra
 **2. Ensure `{output_dir}` is gitignored** (skip if using env var override):
 
 ```bash
-Bash(command="git check-ignore -q .deep-review 2>/dev/null || echo '/.deep-review/' >> .gitignore")
+Bash(command="git check-ignore -q .code-gauntlet 2>/dev/null || echo '/.code-gauntlet/' >> .gitignore")
 ```
 
 Added after checkout to avoid stash/pop loss from `gh pr checkout` — if this ran before checkout, the gitignore modification would be stashed and potentially lost.
@@ -92,7 +92,7 @@ Added after checkout to avoid stash/pop loss from `gh pr checkout` — if this r
 **3. Truncate stale files** from prior sessions with the same SHA:
 
 ```bash
-Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/deep-review-*-{head_sha_short}.*')]\"")
+Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/code-gauntlet-*-{head_sha_short}.*')]\"")
 ```
 
 Prevents echo-append (`>>`) from accumulating findings across sessions. Without truncation, re-running a review on the same SHA would append duplicate findings to existing NDJSON files.
@@ -111,13 +111,13 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
-1. **Diff** → `{output_dir}/deep-review-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff; for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
-2. **Changed files** → `{output_dir}/deep-review-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file.
+1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff; for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+2. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file.
 
 ```bash
 # PR/MR mode: server-computed diff + name-only file list
-gh pr diff {pr_number} > "{output_dir}/deep-review-diff-{head_sha_short}.patch"
-gh pr diff {pr_number} --name-only  # capture into deep-review-files-{sha}.json as a JSON array
+gh pr diff {pr_number} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
+gh pr diff {pr_number} --name-only  # capture into code-gauntlet-files-{sha}.json as a JSON array
 ```
 
 Validate the saved diff before relying on it:
@@ -154,7 +154,7 @@ Never use `find` from Bash for locating these files.
 
 Complete this check before proceeding to 2e. REVIEW.md settings cascade to all thresholds, rules, and ignore patterns for the entire review.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): skip both REVIEW.md-setup prompts below (the "No REVIEW.md found" build-review-md suggestion and the subdirectory-REVIEW.md `AskUserQuestion`). Root config applies to all directories; never invoke `build-review-md`. REVIEW.md is read-only in headless mode — the hierarchical parse still runs, but no REVIEW.md is created. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip both REVIEW.md-setup prompts below (the "No REVIEW.md found" build-review-md suggestion and the subdirectory-REVIEW.md `AskUserQuestion`). Root config applies to all directories; never invoke `build-review-md`. REVIEW.md is read-only in headless mode — the hierarchical parse still runs, but no REVIEW.md is created. See `references/headless-mode.md`.
 
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
@@ -203,7 +203,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not ask — use `$DEEP_REVIEW_TRIVIAL_SCOPE` (`light` runs bugs+security only, `full` runs all dimensions). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` runs bugs+security only, `full` runs all dimensions). See `references/headless-mode.md`.
 
 ---
 
@@ -311,7 +311,7 @@ Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no
 
 ## Shared Agent Context File
 
-The workflow's discovery, validate, and challenge agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/deep-review-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file.
+The workflow's discovery, validate, and challenge agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/code-gauntlet-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file.
 
 Write it with `python3 -c "import json; ..."`. Contents:
 
@@ -332,20 +332,20 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | Field | Value |
 |---|---|
 | `argsVersion` | `1` |
-| `mode` | `"headless"` under `DEEP_REVIEW_HEADLESS=1`, else `"interactive"` |
+| `mode` | `"headless"` under `CODE_GAUNTLET_HEADLESS=1`, else `"interactive"` |
 | `repoRoot` | `git rev-parse --show-toplevel` |
 | `outputDir` | resolved `{output_dir}` (absolute) |
 | `headShaShort` | `head_sha_short` from 2b-post |
 | `nonce` | freshly generated, matching `^[A-Za-z0-9._-]+$` (interpolated into the verify executor argv per slice — no whitespace/shell metacharacters) |
 | `generatedAt` | current wall-clock as an ISO8601 string — the workflow's injected clock (it never calls `new Date()`) |
-| `diffPath` | `{output_dir}/deep-review-diff-{head_sha_short}.patch` |
-| `changedFilesPath` | `{output_dir}/deep-review-files-{head_sha_short}.json` |
+| `diffPath` | `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch` |
+| `changedFilesPath` | `{output_dir}/code-gauntlet-files-{head_sha_short}.json` |
 | `agentFlags` | map of conditional-dimension flags (all nine dimensions are unconditional today, so `{}` unless REVIEW.md gates a future conditional dimension) |
 | `policy` | `{ tier, frontier, frontierModelId, subagentModel }` — see below |
 | `limits` | `{ summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, schemaFailureLimit: 3, verifySliceSize: 200, deliveryCap }` (override from REVIEW.md if set) |
 | `delivery` | `{ tier: "all" \| "main_only" }` — the Phase 8 PR-comment tier (default `all`); optional (absent ⇒`all`) |
 
-`limits.deliveryCap` is the Phase 8 PR-comment cap, threaded from `DEEP_REVIEW_PR_COMMENT_CAP` (the same knob echoed as `pr_comment_cap`; headless default `6`, bench `25`) — the **workflow cannot read `process.env`**, so passing it through the waist is the only path. `delivery.tier` is the Phase 8 delivery tier from the Phase 1 answer (interactive) or `DEEP_REVIEW_DELIVERY_TIER` (headless, default `all`); same env-blindness, same reason it rides the waist. The Challenge stage hands every survivor to the workflow's `selectDelivery(survivors, deliveryCap, tier)`, which applies the tier (`all` keeps every survivor, `main_only` keeps main-tagged only), ranks, and keeps the top `deliveryCap` as the persisted post-review payload (`artifactPaths.postReview`) Phase 8 posts verbatim. Omit `deliveryCap` (or leave it `null`) to deliver uncapped; omit `delivery` to default the tier to `all`.
+`limits.deliveryCap` is the Phase 8 PR-comment cap, threaded from `CODE_GAUNTLET_PR_COMMENT_CAP` (the same knob echoed as `pr_comment_cap`; headless default `6`, bench `25`) — the **workflow cannot read `process.env`**, so passing it through the waist is the only path. `delivery.tier` is the Phase 8 delivery tier from the Phase 1 answer (interactive) or `CODE_GAUNTLET_DELIVERY_TIER` (headless, default `all`); same env-blindness, same reason it rides the waist. The Challenge stage hands every survivor to the workflow's `selectDelivery(survivors, deliveryCap, tier)`, which applies the tier (`all` keeps every survivor, `main_only` keeps main-tagged only), ranks, and keeps the top `deliveryCap` as the persisted post-review payload (`artifactPaths.postReview`) Phase 8 posts verbatim. Omit `deliveryCap` (or leave it `null`) to deliver uncapped; omit `delivery` to default the tier to `all`.
 
 **`policy` (model policy the workflow runs under):**
 
@@ -368,8 +368,8 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 ```
 verify: {
   scriptPath: "{plugin_root}/scripts/verify_findings.py",
-  inputPathBase: "{output_dir}/deep-review-phase4-input-{head_sha_short}",
-  outputPathBase: "{output_dir}/deep-review-phase4-output-{head_sha_short}"
+  inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
+  outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"
 }
 ```
 

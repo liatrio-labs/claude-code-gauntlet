@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-verify_findings.py — Deterministic finding verification for deep-review Phase 4.
+verify_findings.py — Deterministic finding verification for code-gauntlet Phase 4.
 
 Usage:
     python3 verify_findings.py <findings_json> [--base-branch main] [--diff-file path]
@@ -1018,7 +1018,7 @@ def _run_receipt(args):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Deterministic finding verification for deep-review Phase 4. "
+            "Deterministic finding verification for code-gauntlet Phase 4. "
             "Takes Phase 3 agent findings JSON, classifies new vs. surfaced via "
             "git blame, verifies factual accuracy against file content, validates "
             "line references against the diff, and batches results for Phase 5."

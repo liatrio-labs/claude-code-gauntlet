@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-post_review.py — Deterministic PR/MR comment delivery for deep-review.
+post_review.py — Deterministic PR/MR comment delivery for code-gauntlet.
 
 Usage:
     python3 post_review.py <findings_json_path> [--dry-run]
@@ -350,7 +350,7 @@ def build_footer(findings_count, sha):
         "findings_count": findings_count,
         "sha": sha,
     }
-    return f"\n\n<!-- deep-review-findings: {json.dumps(metadata, separators=(',', ':'))} -->"
+    return f"\n\n<!-- code-gauntlet-findings: {json.dumps(metadata, separators=(',', ':'))} -->"
 
 
 def get_head_sha():
@@ -614,7 +614,7 @@ def main():
     global DRY_RUN
 
     parser = argparse.ArgumentParser(
-        description="Post deep-review findings as PR/MR comments."
+        description="Post code-gauntlet findings as PR/MR comments."
     )
     parser.add_argument(
         "findings_json",
@@ -629,10 +629,10 @@ def main():
     )
     args = parser.parse_args()
 
-    # Defense-in-depth: DEEP_REVIEW_POST_MODE=dry-run self-enforces dry-run so a
+    # Defense-in-depth: CODE_GAUNTLET_POST_MODE=dry-run self-enforces dry-run so a
     # headless Phase 8 invocation that omits --dry-run cannot live-post. The flag wins
     # when present; env "live" or unset changes nothing without the flag.
-    DRY_RUN = args.dry_run or os.environ.get("DEEP_REVIEW_POST_MODE") == "dry-run"
+    DRY_RUN = args.dry_run or os.environ.get("CODE_GAUNTLET_POST_MODE") == "dry-run"
     _CAPTURED.clear()
     _SKIP_WARNINGS.clear()
 

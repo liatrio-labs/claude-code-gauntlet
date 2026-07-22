@@ -36,8 +36,8 @@ test('discover dispatches once per AGENT (7)', async () => {
 });
 
 test('null member becomes a gap + degrades its dimension, siblings survive', async () => {
-  const ctx = fakeCtx({ nulls: ['deep-review:security-reviewer'],
-    byAgent: { 'deep-review:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } } });
+  const ctx = fakeCtx({ nulls: ['code-gauntlet:security-reviewer'],
+    byAgent: { 'code-gauntlet:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } } });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.ok(out.gaps.some((g) => /security-reviewer/.test(g)));
   assert.equal(out.findings.length, 1);
@@ -46,11 +46,11 @@ test('null member becomes a gap + degrades its dimension, siblings survive', asy
 });
 
 // Bug 3 regression: discover must inject the SHORT agent name ('bug-detector'), not the
-// full dispatch agentType ('deep-review:bug-detector') — filterFindings and mergeStage
+// full dispatch agentType ('code-gauntlet:bug-detector') — filterFindings and mergeStage
 // both match/regroup on the short name, and the prefix silently broke both live.
 test('discover injects the SHORT agent name onto findings, not the dispatch agentType', async () => {
   const ctx = fakeCtx({
-    byAgent: { 'deep-review:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } },
+    byAgent: { 'code-gauntlet:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } },
   });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   const f1 = out.findings.find((f) => f.id === 'F1');
@@ -58,20 +58,20 @@ test('discover injects the SHORT agent name onto findings, not the dispatch agen
 });
 
 test('a nulled multi-dimension agent degrades every dimension it covers', async () => {
-  const ctx = fakeCtx({ nulls: ['deep-review:conventions-and-intent'] });
+  const ctx = fakeCtx({ nulls: ['code-gauntlet:conventions-and-intent'] });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.deepEqual([...out.degraded].sort(), ['comment_accuracy', 'convention', 'intent']);
 });
 
 test('complete=false is a SOFT possibly-incomplete gap, not degradation', async () => {
-  const ctx = fakeCtx({ byAgent: { 'deep-review:bug-detector': { findings: [], complete: false, total_seen: 999 } } });
+  const ctx = fakeCtx({ byAgent: { 'code-gauntlet:bug-detector': { findings: [], complete: false, total_seen: 999 } } });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.ok(out.gaps.some((g) => /possibly incomplete|bug-detector/.test(g)));
   assert.equal(out.degraded.length, 0); // a live-but-incomplete agent did not fail -> not degraded
 });
 
 test('discover returns `dispatched`: every active agentType, regardless of outcome', async () => {
-  const ctx = fakeCtx({ nulls: ['deep-review:security-reviewer'] });
+  const ctx = fakeCtx({ nulls: ['code-gauntlet:security-reviewer'] });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   // Includes the nulled (failed) agent too — a dispatch attempt happened even though it failed.
   assert.deepEqual([...out.dispatched].sort(), [...AGENTS].sort());
@@ -86,7 +86,7 @@ test('discoverPrompt: elicitation markers present (context-file-first, no-cap, d
   await discover(ctx, {
     changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, contextPath: '/abs/ctx.md',
   });
-  const bugPrompt = ctx.prompts['deep-review:bug-detector'];
+  const bugPrompt = ctx.prompts['code-gauntlet:bug-detector'];
   assert.match(bugPrompt, /Read the shared context at \/abs\/ctx\.md first/);
   assert.match(bugPrompt, /no cap and no minimum/);
   assert.match(bugPrompt, /genuine post-investigation absence/);
@@ -94,7 +94,7 @@ test('discoverPrompt: elicitation markers present (context-file-first, no-cap, d
   assert.match(bugPrompt, /canonical schema/);
   assert.match(bugPrompt, /single paragraph/);
   // Multi-dimension agent names ALL of its dimensions, not just one.
-  const conventionsPrompt = ctx.prompts['deep-review:conventions-and-intent'];
+  const conventionsPrompt = ctx.prompts['code-gauntlet:conventions-and-intent'];
   assert.match(conventionsPrompt, /convention/);
   assert.match(conventionsPrompt, /intent/);
   assert.match(conventionsPrompt, /comment_accuracy/);
@@ -103,7 +103,7 @@ test('discoverPrompt: elicitation markers present (context-file-first, no-cap, d
 test('discoverPrompt: no contextPath -> no dangling context-file instruction', async () => {
   const ctx = fakeCtx();
   await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
-  assert.doesNotMatch(ctx.prompts['deep-review:bug-detector'], /Read the shared context/);
+  assert.doesNotMatch(ctx.prompts['code-gauntlet:bug-detector'], /Read the shared context/);
 });
 
 // Hill-climb iter 5 (evidence discipline): the base discoverPrompt now demands concrete,
@@ -127,13 +127,13 @@ test('discoverPrompt: per-agent sweeps are scoped (security vs typo/naming vs no
   const ctx = fakeCtx();
   await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
 
-  const security = ctx.prompts['deep-review:security-reviewer'];
+  const security = ctx.prompts['code-gauntlet:security-reviewer'];
   assert.match(security, /SSRF and unvalidated-URL fetches/);
   assert.match(security, /postMessage handlers that do not validate event\.origin/);
   assert.match(security, /string-matching bypass patterns/);
   assert.doesNotMatch(security, /typo and naming sweep/);
 
-  for (const agentType of ['deep-review:bug-detector', 'deep-review:conventions-and-intent']) {
+  for (const agentType of ['code-gauntlet:bug-detector', 'code-gauntlet:conventions-and-intent']) {
     const p = ctx.prompts[agentType];
     assert.match(p, /explicit typo and naming sweep/, `${agentType} missing typo/naming sweep`);
     assert.match(p, /case-sensitivity mistakes in string comparisons/, `${agentType} missing case-sensitivity clause`);
@@ -141,7 +141,7 @@ test('discoverPrompt: per-agent sweeps are scoped (security vs typo/naming vs no
   }
 
   // An agent with no promptExtra carries neither sweep.
-  const crossFile = ctx.prompts['deep-review:cross-file-impact'];
+  const crossFile = ctx.prompts['code-gauntlet:cross-file-impact'];
   assert.doesNotMatch(crossFile, /SSRF and unvalidated-URL fetches/);
   assert.doesNotMatch(crossFile, /explicit typo and naming sweep/);
 });
@@ -219,8 +219,8 @@ test('summarize: bucketed PR with every bucket nulled degrades to a gap', async 
 test('mergeStage: consumes merge() as-is and produces the Phase-4 envelope', () => {
   const discoverOut = {
     findings: [
-      { id: 'F1', file: 'a.js', line_start: 1, title: 't1', description: 'd1', severity: 'high', confidence: 'high', dimension: 'bug', agent: 'deep-review:bug-detector' },
-      { id: 'F2', file: 'b.js', line_start: 2, title: 't2', description: 'd2', severity: 'low', confidence: 'low', dimension: 'security', agent: 'deep-review:security-reviewer' },
+      { id: 'F1', file: 'a.js', line_start: 1, title: 't1', description: 'd1', severity: 'high', confidence: 'high', dimension: 'bug', agent: 'code-gauntlet:bug-detector' },
+      { id: 'F2', file: 'b.js', line_start: 2, title: 't2', description: 'd2', severity: 'low', confidence: 'low', dimension: 'security', agent: 'code-gauntlet:security-reviewer' },
     ],
     gaps: [],
     degraded: [],
@@ -231,16 +231,16 @@ test('mergeStage: consumes merge() as-is and produces the Phase-4 envelope', () 
   assert.equal(env.base_branch, 'main');
   assert.equal(env.head_sha, 'abc123');
   assert.ok(env.methodology);
-  assert.ok(env.methodology.agents_dispatched.includes('deep-review:bug-detector'));
+  assert.ok(env.methodology.agents_dispatched.includes('code-gauntlet:bug-detector'));
   // agent field survives the round-trip (re-injected by merge()).
   assert.ok(env.findings.every((f) => typeof f.agent === 'string'));
 });
 
 test('mergeStage: agents_dispatched counts a zero-finding agent, distinct from never-dispatched', () => {
-  // deep-review:code-simplifier was dispatched (discover() attempted it) but produced
-  // zero findings; deep-review:type-design-analyzer was never in `dispatched` at all
+  // code-gauntlet:code-simplifier was dispatched (discover() attempted it) but produced
+  // zero findings; code-gauntlet:type-design-analyzer was never in `dispatched` at all
   // (e.g. disabled via agentFlags). agents_dispatched must include the former, not the latter.
-  // `dispatched` mirrors discover()'s real output (full 'deep-review:' agentType strings,
+  // `dispatched` mirrors discover()'s real output (full 'code-gauntlet:' agentType strings,
   // unaffected by FIX 1); mergeStage normalizes it to the SHORT form to match findings'
   // own (short, post-FIX-1) .agent field, so agents_dispatched comes out short too.
   const discoverOut = {
@@ -249,7 +249,7 @@ test('mergeStage: agents_dispatched counts a zero-finding agent, distinct from n
     ],
     gaps: [],
     degraded: [],
-    dispatched: ['deep-review:bug-detector', 'deep-review:code-simplifier'],
+    dispatched: ['code-gauntlet:bug-detector', 'code-gauntlet:code-simplifier'],
   };
   const meta = { base_branch: 'main', head_sha: 'abc123', pr_number: 7, owner: 'o', repo: 'r' };
   const env = mergeStage(discoverOut, meta);

@@ -1,13 +1,13 @@
-# claude-deep-review
+# claude-code-gauntlet
 
-[![CI](https://github.com/liatrio-labs/claude-deep-review/actions/workflows/ci.yml/badge.svg)](https://github.com/liatrio-labs/claude-deep-review/actions/workflows/ci.yml)
+[![CI](https://github.com/liatrio-labs/claude-code-gauntlet/actions/workflows/ci.yml/badge.svg)](https://github.com/liatrio-labs/claude-code-gauntlet/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-A research-backed code review plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that orchestrates parallel concern-specialized agents, cross-validates findings with deterministic verification, and produces unified review reports.
+A research-backed code review plugin for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that runs your PR through a gauntlet: parallel concern-specialized agents, deterministic verification, skeptical validation, and a blind challenge — only findings that survive get delivered. *Formerly published as **deep-review**.*
 
 ## What it does
 
-Deep Review dispatches up to seven specialized agents in parallel, each examining your code changes through a different lens:
+Code Gauntlet dispatches up to seven specialized agents in parallel, each examining your code changes through a different lens:
 
 | Agent | Optimized | Frontier | Focus |
 |-------|-----------|----------|-------|
@@ -51,14 +51,14 @@ Between stages, findings live on disk as JSON. There is no LLM JSON reconstructi
 Add the marketplace and install the plugin:
 
 ```bash
-claude plugin marketplace add https://github.com/liatrio-labs/claude-deep-review.git
-claude plugin install deep-review@deep-review
+claude plugin marketplace add https://github.com/liatrio-labs/claude-code-gauntlet.git
+claude plugin install code-gauntlet@code-gauntlet
 ```
 
 To update later:
 
 ```bash
-claude plugin update deep-review@deep-review
+claude plugin update code-gauntlet@code-gauntlet
 ```
 
 ## Usage
@@ -67,7 +67,7 @@ The skill triggers automatically when you ask for a code review in Claude Code:
 
 ```
 # Review a PR (GitHub)
-deep review PR #42
+code gauntlet PR #42
 
 # Review a merge request (GitLab)
 review MR !89 thoroughly
@@ -76,13 +76,13 @@ review MR !89 thoroughly
 comprehensive review of my changes
 
 # Focused review
-deep review PR #42, focus only on security and error handling
+code gauntlet PR #42, focus only on security and error handling
 ```
 
 Or invoke it directly:
 
 ```
-/deep-review
+/code-gauntlet
 ```
 
 ## How it works
@@ -100,7 +100,7 @@ The review runs through eight phases:
 
 ## REVIEW.md configuration
 
-Deep Review will offer to scaffold a `REVIEW.md` when it doesn't find one. The file mirrors your CLAUDE.md locations — if you have subdirectory CLAUDE.md files, the skill offers to create matching REVIEW.md files at the same levels.
+Code Gauntlet will offer to scaffold a `REVIEW.md` when it doesn't find one. The file mirrors your CLAUDE.md locations — if you have subdirectory CLAUDE.md files, the skill offers to create matching REVIEW.md files at the same levels.
 
 A **root REVIEW.md** sets global defaults. **Subdirectory REVIEW.md** files can set different standards per area (for example, stricter security for `src/auth/`). Settings (thresholds) override from child to parent; rules and ignore patterns accumulate.
 
@@ -110,7 +110,7 @@ A **root REVIEW.md** sets global defaults. **Subdirectory REVIEW.md** files can 
 - Public API endpoints must validate request body schema
 
 ## Ignore
-# Suppress known findings. Deep Review suggests additions when you dismiss findings.
+# Suppress known findings. Code Gauntlet suggests additions when you dismiss findings.
 - security:"prompt injection via template tokens" (not exploitable in current architecture, 2026-03-24)
 
 ## Skip
@@ -122,16 +122,16 @@ A **root REVIEW.md** sets global defaults. **Subdirectory REVIEW.md** files can 
 70
 ```
 
-See [skills/deep-review/references/review-md-spec.md](skills/deep-review/references/review-md-spec.md) for the full specification including hierarchy rules.
+See [skills/code-gauntlet/references/review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md) for the full specification including hierarchy rules.
 
 ## Why this design
 
-The architecture choices behind Deep Review — concern decomposition, deterministic verification, blind-challenge rounds, context-pulling, hierarchical config, and the rest — are documented in [`docs/research/`](docs/research/README.md). Each design decision is paired with the research artifact that informed it, so the rationale travels with the code.
+The architecture choices behind Code Gauntlet — concern decomposition, deterministic verification, blind-challenge rounds, context-pulling, hierarchical config, and the rest — are documented in [`docs/research/`](docs/research/README.md). Each design decision is paired with the research artifact that informed it, so the rationale travels with the code.
 
 ## Project structure
 
 ```
-claude-deep-review/
+claude-code-gauntlet/
 ├── .claude-plugin/
 │   ├── plugin.json                       # Plugin manifest
 │   └── marketplace.json                  # Marketplace manifest
@@ -156,7 +156,7 @@ claude-deep-review/
 │   └── validate_ndjson.py                #   Agent-side NDJSON self-validation
 ├── tests/                                # pytest suite for all pipeline scripts
 ├── skills/
-│   ├── deep-review/
+│   ├── code-gauntlet/
 │   │   ├── SKILL.md                      # Main orchestration (8 phases)
 │   │   └── references/                   # Phase-specific reference files
 │   └── build-review-md/                  # Companion skill: REVIEW.md configuration wizard

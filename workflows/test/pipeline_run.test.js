@@ -314,7 +314,7 @@ test('writeArtifacts in isolation: a bare agent() throw yields a partial-artifac
     agent: async () => { throw new Error('disk on fire'); },
     parallel: async () => [],
   };
-  const out = await writeArtifacts(ctx, { findings: [makeFinding('F1')], report: '# r', checkpoints: {}, outputDir: '.deep-review', headShaShort: 'abc1234' });
+  const out = await writeArtifacts(ctx, { findings: [makeFinding('F1')], report: '# r', checkpoints: {}, outputDir: '.code-gauntlet', headShaShort: 'abc1234' });
   assert.ok(out.gaps.some((g) => /partial|artifact/i.test(g)));
   assert.equal(out.artifactPaths.findings, null);
 });
@@ -337,15 +337,15 @@ test('argsVersion mismatch is rejected immediately with an ok:false envelope', a
 test('a present checkpoint for a phase skips that phase\'s dispatch', async () => {
   // Inject a checkpoint for discover: its output is reused, and NO discovery agent
   // is dispatched. The rest of the pipeline still runs on the checkpointed findings.
-  const discoverCheckpoint = { findings: makeFindings().map((f) => ({ ...f, agent: 'deep-review:bug-detector' })), gaps: [], degraded: [] };
+  const discoverCheckpoint = { findings: makeFindings().map((f) => ({ ...f, agent: 'code-gauntlet:bug-detector' })), gaps: [], degraded: [] };
   const args = validArgs({ checkpoints: { discover: discoverCheckpoint } });
   const ctx = makeCtx(args);
   const out = await runWith(ctx, args);
 
   assert.equal(out.ok, true);
   assert.equal(out.phaseReached, 'report');
-  // No discovery dispatch (its label IS a 'deep-review:<agent>' agentType) ever happened.
-  assert.ok(!ctx.calls.some((t) => t.label.startsWith('deep-review:')), 'discover dispatch was skipped');
+  // No discovery dispatch (its label IS a 'code-gauntlet:<agent>' agentType) ever happened.
+  assert.ok(!ctx.calls.some((t) => t.label.startsWith('code-gauntlet:')), 'discover dispatch was skipped');
 });
 
 test('readCheckpoints reads the resume map injected through the args waist', () => {
@@ -397,7 +397,7 @@ test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-co
   assert.equal(out2.ok, true);
   assert.equal(out2.phaseReached, 'report');
   assert.ok(!ctx2.calls.some((c) => c.label.startsWith('challenge-')), 'challenge reused from checkpoint (not re-dispatched)');
-  assert.ok(ctx2.calls.some((c) => c.label.startsWith('deep-review:bug-detector')), 'a non-preserved phase (discover) re-ran');
+  assert.ok(ctx2.calls.some((c) => c.label.startsWith('code-gauntlet:bug-detector')), 'a non-preserved phase (discover) re-ran');
   assert.ok(ctx2.calls.some((c) => c.label === 'report-writer'), 'report re-ran');
   assert.ok(ctx2.calls.some((c) => c.label === 'artifact-writer'), 'the writer ran');
   // The delivered high-confidence set is reproduced exactly across the resume.
@@ -435,7 +435,7 @@ test('reportStage segments an oversized findings payload into >1 dispatch and jo
   const out = await reportStage(ctx, { findings: big, unverified: [], stats: {}, generatedAt: '2026-07-18T00:00:00Z' });
 
   assert.ok(calls.length > 1, `expected >1 report-writer dispatch, got ${calls.length}`);
-  assert.ok(calls.every((t) => t.agentType === 'deep-review:report-writer'));
+  assert.ok(calls.every((t) => t.agentType === 'code-gauntlet:report-writer'));
   assert.match(out.report, /Report segment 1 of/);
   assert.match(out.report, new RegExp(`Report segment ${calls.length} of ${calls.length}`));
   assert.equal(out.gaps.length, 0, 'all segments rendered cleanly');
@@ -482,7 +482,7 @@ test('sweep: runWith drives every stage with STRING prompts + valid JSON Schemas
   assert.deepEqual(ctx.violations, [], `dispatch-contract violations: ${ctx.violations.join('; ')}`);
   // Every dispatch label family was exercised (so the assertions actually ran on each).
   const seen = ctx.calls.map((c) => c.label);
-  for (const family of ['summarize', 'deep-review:bug-detector', 'verify-input-writer', 'verify-slice-', 'validate-batch-', 'challenge-', 'report-writer', 'artifact-writer']) {
+  for (const family of ['summarize', 'code-gauntlet:bug-detector', 'verify-input-writer', 'verify-slice-', 'validate-batch-', 'challenge-', 'report-writer', 'artifact-writer']) {
     assert.ok(seen.some((l) => l === family || l.startsWith(family)), `swept dispatch family: ${family}`);
   }
   // And every recorded dispatch carried a string prompt + an object schema.

@@ -1,4 +1,4 @@
-# Live smoke-tier run of the deep-review benchmark harness (bench/).
+# Live smoke-tier run of the code-gauntlet benchmark harness (bench/).
 #
 # Manual only: this workflow spends real Anthropic API credit and drives the
 # Claude Code CLI + gh CLI against live PRs, so it runs on workflow_dispatch

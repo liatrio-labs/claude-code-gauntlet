@@ -1,4 +1,4 @@
-// stages.js — orchestration stage functions for the deep-review v3 pipeline,
+// stages.js — orchestration stage functions for the code-gauntlet v3 pipeline,
 // phases 1-3 (Summarize -> Discover -> Merge) plus the agent-count coarsening
 // formula that keeps the whole run's worst-case fan-out under the platform guard.
 //
@@ -82,7 +82,7 @@ export async function summarize(ctx, input) {
   const limits = inp.limits || {};
   const policy = inp.policy || {};
   const bucketSize = Math.max(1, limits.summarizeBucketSize || 20);
-  const model = modelFor('deep-review:change-summarizer', policy);
+  const model = modelFor('code-gauntlet:change-summarizer', policy);
 
   const bucketed = changedLines > 500 && changedFiles.length > bucketSize;
   try {
@@ -92,7 +92,7 @@ export async function summarize(ctx, input) {
       // parallel() takes thunks; each calls agent(promptString, opts).
       const thunks = buckets.map((files, idx) => () => c.agent(summarizePrompt(inp, files), {
         label: `summarize-bucket-${idx}`,
-        agentType: 'deep-review:change-summarizer',
+        agentType: 'code-gauntlet:change-summarizer',
         model,
         schema: SUMMARIZE_SCHEMA,
       }));
@@ -100,7 +100,7 @@ export async function summarize(ctx, input) {
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
       const mergeResult = await c.agent(summarizeMergePrompt(partials), {
         label: 'summarize-merge',
-        agentType: 'deep-review:change-summarizer',
+        agentType: 'code-gauntlet:change-summarizer',
         model,
         schema: SUMMARIZE_SCHEMA,
       });
@@ -109,7 +109,7 @@ export async function summarize(ctx, input) {
     }
     const result = await c.agent(summarizePrompt(inp, changedFiles), {
       label: 'summarize',
-      agentType: 'deep-review:change-summarizer',
+      agentType: 'code-gauntlet:change-summarizer',
       model,
       schema: SUMMARIZE_SCHEMA,
     });
@@ -270,7 +270,7 @@ export async function discover(ctx, input) {
     }
     for (const f of list) {
       // Inject the SHORT agent name (canonical schema: 'bug-detector', not the dispatch
-      // agentType 'deep-review:bug-detector'). filterFindings matches short names for
+      // agentType 'code-gauntlet:bug-detector'). filterFindings matches short names for
       // disagreement suppression / security escalation, and mergeStage regroups on this —
       // the full prefix silently broke both on the live path.
       f.agent = spec.agentType.split(':').pop();
@@ -312,7 +312,7 @@ function discoverPrompt(inp, spec) {
     ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
     : '';
   const dims = spec.dimensions.join(', ');
-  const base = `${ctxLine}This is a deep review built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
+  const base = `${ctxLine}This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
   return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
 }
 
@@ -342,11 +342,11 @@ export function mergeStage(discoverOut, meta) {
   // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched — and
   // merge()'s injectAgentField RE-STAMPS every finding's `.agent` to whichever string is
   // in this list. discover() now injects the SHORT agent name onto findings (FIX 1: the
-  // full 'deep-review:' prefix broke filterFindings' short-name matching), so this list
+  // full 'code-gauntlet:' prefix broke filterFindings' short-name matching), so this list
   // must match that short form too, or the `nd[agent]` lookup below misses for every
   // agent (silently dropping all its findings) and injectAgentField would re-inject the
   // long prefix, undoing FIX 1 downstream. discover()'s own fan-out list (`dispatched`)
-  // is still the full 'deep-review:<agent>' agentType (unaffected by FIX 1), so it is
+  // is still the full 'code-gauntlet:<agent>' agentType (unaffected by FIX 1), so it is
   // normalized here — Object.keys(ndjsonContents) is already short (built straight from
   // findings' own .agent) and needs no normalization.
   //
@@ -419,7 +419,7 @@ export async function verifyStage(ctx, input) {
   // Empty set: nothing to verify, trivially trusted (no executor dispatched).
   if (findings.length === 0) return { findings: [], verified: true, gaps: [] };
 
-  const model = modelFor('deep-review:executor', policy);
+  const model = modelFor('code-gauntlet:executor', policy);
 
   const slices = [];
   for (let i = 0; i < findings.length; i += sliceSize) slices.push(findings.slice(i, i + sliceSize));
@@ -448,7 +448,7 @@ export async function verifyStage(ctx, input) {
       // (verifyPrompt), which is how the executor agent receives it.
       env = await c.agent(verifyPrompt(inp, i), {
         label: `verify-slice-${i}`,
-        agentType: 'deep-review:executor',
+        agentType: 'code-gauntlet:executor',
         model,
         schema: VERIFY_SCHEMA,
       });
@@ -511,7 +511,7 @@ function pinNumericFields(finding) {
 async function materializeVerifySlices(c, inp, slices, policy) {
   const v = inp.verify || {};
   const inputPathBase = v.inputPathBase || 'phase4-input';
-  const model = modelFor('deep-review:artifact-writer', policy);
+  const model = modelFor('code-gauntlet:artifact-writer', policy);
   const entries = slices.map((slice, i) => ({
     path: `${inputPathBase}.slice${i}.json`,
     content: { findings: slice.map(pinNumericFields), base_branch: v.baseBranch },
@@ -522,7 +522,7 @@ async function materializeVerifySlices(c, inp, slices, policy) {
     try {
       result = await c.agent(verifySliceWriterPrompt(groups[g]), {
         label: `verify-input-writer-${g}`,
-        agentType: 'deep-review:artifact-writer',
+        agentType: 'code-gauntlet:artifact-writer',
         model,
         schema: WRITTEN_SCHEMA,
       });
@@ -705,14 +705,14 @@ export async function validateStage(ctx, input) {
     return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } };
   }
 
-  const model = modelFor('deep-review:validator', policy);
+  const model = modelFor('code-gauntlet:validator', policy);
 
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
 
   const thunks = batches.map((batch, idx) => () => c.agent(validatePrompt(inp, batch), {
     label: `validate-batch-${idx}`,
-    agentType: 'deep-review:validator',
+    agentType: 'code-gauntlet:validator',
     model,
     schema: VALIDATE_SCHEMA,
   }));
@@ -872,7 +872,7 @@ export async function challengeStage(ctx, input) {
     };
   }
 
-  const model = modelFor('deep-review:challenger', policy);
+  const model = modelFor('code-gauntlet:challenger', policy);
 
   // Rank first so the cap, when it bites, challenges the HIGHEST-priority findings;
   // the lower-ranked overflow is skipped (routed to `unverified`, never dropped).
@@ -882,7 +882,7 @@ export async function challengeStage(ctx, input) {
 
   const thunks = candidates.map((finding, idx) => () => c.agent(challengePrompt(finding), {
     label: `challenge-${idx}`,
-    agentType: 'deep-review:challenger',
+    agentType: 'code-gauntlet:challenger',
     model,
     schema: CHALLENGE_SCHEMA,
   }));
@@ -951,7 +951,7 @@ export async function challengeStage(ctx, input) {
 // The deterministic Phase 8 delivery policy: the pipeline — not the live agent — decides
 // what gets posted, honoring the user-chosen delivery TIER (resolved at Phase 1, threaded
 // through args.delivery.tier):
-//   - 'all' (the default — interactive Recommended, headless DEEP_REVIEW_DELIVERY_TIER
+//   - 'all' (the default — interactive Recommended, headless CODE_GAUNTLET_DELIVERY_TIER
 //     default): every challenge-survivor is a delivery candidate regardless of its
 //     report_tag (main AND suggestion alike);
 //   - 'main_only': keep only main-tagged survivors (suggestions stay in the report but are
@@ -998,7 +998,7 @@ export async function reportStage(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const policy = inp.policy || {};
-  const model = modelFor('deep-review:report-writer', policy);
+  const model = modelFor('code-gauntlet:report-writer', policy);
 
   const findings = inp.findings || [];
   const oversized = JSON.stringify(findings).length > SEGMENT_CHAR_BUDGET;
@@ -1028,7 +1028,7 @@ async function dispatchReportSegment(c, model, inp, findings, seg) {
   try {
     const result = await c.agent(reportPrompt(segInp, seg), {
       label: seg ? `report-writer-${seg.index}` : 'report-writer',
-      agentType: 'deep-review:report-writer',
+      agentType: 'code-gauntlet:report-writer',
       model,
       schema: REPORT_SCHEMA,
     });
@@ -1047,7 +1047,7 @@ function minimalReport(inp) {
   const findings = inp.findings || [];
   const unverified = inp.unverified || [];
   const lines = [
-    '# Deep Review (minimal report)',
+    '# Code Gauntlet (minimal report)',
     '',
     'The report-writer agent was unavailable; this fallback was assembled deterministically from pipeline results.',
     '',
@@ -1073,7 +1073,7 @@ function reportPrompt(inp, seg) {
     unverified: (!seg || seg.index === 0) ? (inp.unverified || []) : [], // render the unverified bucket once, in segment 0
     stats: inp.stats || {},
   });
-  return `${ctxLine}${segLine}Write the deep-review report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
+  return `${ctxLine}${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
 }
 
 // --- Persistence: writeArtifacts --------------------------------------------
@@ -1098,16 +1098,16 @@ const WRITTEN_SCHEMA = {
 export async function writeArtifacts(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
-  const outputDir = inp.outputDir || '.deep-review';
+  const outputDir = inp.outputDir || '.code-gauntlet';
   const sha = inp.headShaShort || 'head';
   const policy = inp.policy || {};
   const paths = {
-    findings: `${outputDir}/deep-review-findings-${sha}.json`,
-    report: `${outputDir}/deep-review-report-${sha}.md`,
-    postReview: `${outputDir}/deep-review-post-review-${sha}.json`,
+    findings: `${outputDir}/code-gauntlet-findings-${sha}.json`,
+    report: `${outputDir}/code-gauntlet-report-${sha}.md`,
+    postReview: `${outputDir}/code-gauntlet-post-review-${sha}.json`,
     checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
   };
-  const model = modelFor('deep-review:artifact-writer', policy);
+  const model = modelFor('code-gauntlet:artifact-writer', policy);
   const partial = (reason) => ({
     artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
     gaps: [`writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`],
@@ -1116,7 +1116,7 @@ export async function writeArtifacts(ctx, input) {
   try {
     const result = await c.agent(writeArtifactsPrompt(inp, paths), {
       label: 'artifact-writer',
-      agentType: 'deep-review:artifact-writer',
+      agentType: 'code-gauntlet:artifact-writer',
       model,
       schema: WRITER_SCHEMA,
     });
@@ -1176,7 +1176,7 @@ export function parseWriterPayload(prompt) {
 
 function writeArtifactsPrompt(inp, paths) {
   const payload = JSON.stringify(writerPayload(inp));
-  return `Persist these deep-review artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
 // --- Checkpoints ------------------------------------------------------------
@@ -1185,7 +1185,7 @@ function writeArtifactsPrompt(inp, paths) {
 // The skill layer reads these on a rerun and injects the recovered outputs into
 // the args waist (args.checkpoints); the pipeline has no disk access of its own.
 export function checkpointPath(phase, sha) {
-  return `deep-review-checkpoint-${phase}-${sha}.json`;
+  return `code-gauntlet-checkpoint-${phase}-${sha}.json`;
 }
 
 // readCheckpoints(ctx, args) -> phase-keyed resume map ({ phase: priorOutput }).
@@ -1292,7 +1292,7 @@ export async function runWith(ctx, rawArgs) {
   const nChangedFiles = (A.changedFiles || []).length;
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0);
   const policy = A.policy || {};
-  const contextPath = `${A.outputDir}/deep-review-context-${A.headShaShort}.md`;
+  const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   const checkpoints = readCheckpoints(c, A);
 
   const gaps = [];
@@ -1354,7 +1354,7 @@ export async function runWith(ctx, rawArgs) {
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
     // delivery TIER (args.delivery.tier — 'all' by default, 'main_only' to withhold
     // suggestions), rank-ordered and capped at limits.deliveryCap (fed from
-    // DEEP_REVIEW_PR_COMMENT_CAP by the skill). Persisted so Phase 8 posts it verbatim — the
+    // CODE_GAUNTLET_PR_COMMENT_CAP by the skill). Persisted so Phase 8 posts it verbatim — the
     // live agent never re-filters or re-ranks. Challenge-removed (challengeOut.eliminated) and
     // challenge-skipped (challengeOut.unverified) are already absent here, so they stay excluded.
     const deliveryTier = A.delivery && A.delivery.tier;

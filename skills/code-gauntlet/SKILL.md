@@ -1,14 +1,14 @@
 ---
-name: deep-review
+name: code-gauntlet
 description: |
-  Prefer this skill for code review requests — it runs a multi-agent pipeline with blind challenge verification for high-confidence results. Trigger for ANY of these situations: (1) user says "review" in the context of code, PRs, MRs, branches, diffs, or changes, (2) user references a PR/MR number and wants feedback or quality assessment, (3) user says "deep review", "full review", or "thorough review", (4) user describes code changes and asks you to check, look over, or catch issues before merging/committing, (5) user wants to find bugs, security issues, or problems in their changes, (6) user wants to review uncommitted changes, local changes, staged changes, or a working tree diff. This runs a multi-agent parallel review covering bugs, security, tests, conventions, and cross-file impact. Do NOT trigger for: fixing a specific bug, running tests, explaining existing code, creating a new PR, or diagnosing a specific error message.
+  Prefer this skill for code review requests — it runs a multi-agent pipeline with blind challenge verification for high-confidence results. Trigger for ANY of these situations: (1) user says "review" in the context of code, PRs, MRs, branches, diffs, or changes, (2) user references a PR/MR number and wants feedback or quality assessment, (3) user says "code gauntlet", "full review", or "thorough review", (4) user describes code changes and asks you to check, look over, or catch issues before merging/committing, (5) user wants to find bugs, security issues, or problems in their changes, (6) user wants to review uncommitted changes, local changes, staged changes, or a working tree diff. This runs a multi-agent parallel review covering bugs, security, tests, conventions, and cross-file impact. Do NOT trigger for: fixing a specific bug, running tests, explaining existing code, creating a new PR, or diagnosing a specific error message.
 ---
 
-# Deep Review
+# Code Gauntlet
 
 Concern-parallel agents with context-pulling and deterministic verification. When in doubt about whether something is a real issue, err on the side of not reporting it. A review with 5 real issues is far more valuable than one with 5 real issues buried in 20 false positives.
 
-**This is a deep review tool built for thoroughness, not speed.** The user chose this tool because they want aggressive, high-confidence review. Cost and time concerns do not justify skipping any phase — especially the blind-challenge stage, which requires spawning sub-agents. Every stage exists for a reason; skipping any of them degrades the result.
+**This is a code gauntlet tool built for thoroughness, not speed.** The user chose this tool because they want aggressive, high-confidence review. Cost and time concerns do not justify skipping any phase — especially the blind-challenge stage, which requires spawning sub-agents. Every stage exists for a reason; skipping any of them degrades the result.
 
 ## How v3 runs
 
@@ -25,21 +25,21 @@ Inline checks before any workflow run — no subagent dispatch. Read `references
 Before anything else, confirm the **`Workflow` tool is present in this session's available tools**. v3 orchestration is a single `Workflow` invocation; there is no in-session fallback. If `Workflow` is not available, print exactly:
 
 ```
-deep-review v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install deep-review v2.x for older CLIs.
+code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install code-gauntlet v2.x for older CLIs.
 ```
 
 and STOP. Do not attempt to reproduce the pipeline inline — the clean break to the workflow runtime is intentional.
 
 ### Plugin root resolution
 
-Resolve `plugin_root` from this SKILL.md's path — go up two directories from `skills/deep-review/`. Confirm with `ls {plugin_root}/scripts/ {plugin_root}/agents/ {plugin_root}/workflows/`. The workflow entry is `{plugin_root}/workflows/pipeline.js`; retained scripts (`verify_findings.py`, `post_review.py`) live under `{plugin_root}/scripts/`.
+Resolve `plugin_root` from this SKILL.md's path — go up two directories from `skills/code-gauntlet/`. Confirm with `ls {plugin_root}/scripts/ {plugin_root}/agents/ {plugin_root}/workflows/`. The workflow entry is `{plugin_root}/workflows/pipeline.js`; retained scripts (`verify_findings.py`, `post_review.py`) live under `{plugin_root}/scripts/`.
 
 ### Resolve output directory
 
 Resolve the output directory for artifacts. The workflow's artifact-writer persists into it, so it must exist before Phase 3.
 
 ```bash
-Bash(command="echo ${DEEP_REVIEW_OUTPUT_DIR:-.deep-review}")  # Store as `output_dir`
+Bash(command="echo ${CODE_GAUNTLET_OUTPUT_DIR:-.code-gauntlet}")  # Store as `output_dir`
 Bash(command="mkdir -p {output_dir}")
 ```
 
@@ -55,22 +55,22 @@ Parse the user's input to determine the review target before eligibility checks 
 
 1. **Closed/merged?** → Stop.
 
-   > Headless exception (`DEEP_REVIEW_HEADLESS=1`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Benchmarking historical merged PRs is the headless use case; posting safety is governed by `DEEP_REVIEW_POST_MODE` (`dry-run` posts nothing) and delivery follows `DEEP_REVIEW_DELIVERY`, not PR state. See `references/headless-mode.md`.
+   > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE` (`dry-run` posts nothing) and delivery follows `CODE_GAUNTLET_DELIVERY`, not PR state. See `references/headless-mode.md`.
 2. **Draft?** → Ask user (template in `references/phase1-preflight.md`).
-3. **Previously reviewed?** → Check for `Generated by deep-review` footer / `Reviewed up to: {sha}`. Ask incremental vs full vs skip (templates in reference).
+3. **Previously reviewed?** → Check for `Generated by code-gauntlet` footer (or the legacy `Generated by deep-review`) / `Reviewed up to: {sha}`. Ask incremental vs full vs skip (templates in reference).
 4. **Trivially simple?** → If ONLY lockfile/generated/auto-formatted changes, stop.
 
 ### Pre-flight configuration gate — MANDATORY GATE
 
-> **Headless branch (`DEEP_REVIEW_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`, `post_mode`, `pr_comment_cap`, `delivery_tier`, `draft_policy`, `reviewed_policy`, `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and continue. Do NOT call `AskUserQuestion` anywhere in this run — every gate below resolves deterministically from the environment. An invalid value fails loud per the validation rule in that reference; it never falls back and never asks.
+> **Headless branch (`CODE_GAUNTLET_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`, `post_mode`, `pr_comment_cap`, `delivery_tier`, `draft_policy`, `reviewed_policy`, `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and continue. Do NOT call `AskUserQuestion` anywhere in this run — every gate below resolves deterministically from the environment. An invalid value fails loud per the validation rule in that reference; it never falls back and never asks.
 
 > **STOP: Complete this gate before Phase 2.** Never assume defaults from remembered preferences.
 >
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): this gate is satisfied by the headless resolution above — the printed `Headless config:` block stands in for the interactive answers; do not present `AskUserQuestion`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this gate is satisfied by the headless resolution above — the printed `Headless config:` block stands in for the interactive answers; do not present `AskUserQuestion`.
 
 Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUserQuestion` containing the unresolved items (review mode, delivery preference, REVIEW.md setup if missing). The **review-mode** answer sets the model policy the workflow runs under: **Optimized** → `policy.tier="optimized"`, `policy.frontier=false`; **Frontier** → `policy.tier="frontier"`, `policy.frontier=true`. When `frontier` is on you must also supply `policy.frontierModelId` (a full model-id string) in Phase 2 — the workflow rejects `frontier:true` without it. If REVIEW.md pre-configures both `model_tier` and `default_delivery`, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 2 (args) and Phase 8 (delivery).
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` (which sets `policy.tier`/`policy.frontier`) and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` (which sets `policy.tier`/`policy.frontier`) and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
 
 ---
 
@@ -78,13 +78,13 @@ Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUser
 
 > **Entry check:** If no `AskUserQuestion` was presented during Phase 1, STOP — the configuration gate was missed. Return to Phase 1 and complete it before proceeding.
 >
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): this check passes if the `Headless config:` block was printed during Phase 1; no `AskUserQuestion` is expected, so do not return to the gate.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this check passes if the `Headless config:` block was printed during Phase 1; no `AskUserQuestion` is expected, so do not return to the gate.
 
 Identify the review target, gather the git artifacts the workflow consumes, and assemble the args object. This is a fast pass in the main context — the review stages run later, inside the workflow. Read `references/phase2-triage.md` for the full sub-steps (VCS detection, checkout, risk classification, REVIEW.md parse) and the args-preparation walkthrough.
 
 ### Resolve head SHA, gitignore, and clean stale files (after checkout)
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): never run `gh pr checkout` (or any checkout/fetch/stash) — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never run `gh pr checkout` (or any checkout/fetch/stash) — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit. See `references/headless-mode.md`.
 
 Now that we're on the correct branch, compute the short SHA for filename uniqueness:
 
@@ -95,23 +95,23 @@ Bash(command="git rev-parse --short=8 HEAD")  # Store as `head_sha_short`
 **Ensure `{output_dir}` is gitignored** (skip if using env var override). This runs after checkout so the gitignore addition is not stashed by `gh pr checkout`:
 
 ```bash
-Bash(command="git check-ignore -q .deep-review 2>/dev/null || echo '/.deep-review/' >> .gitignore")
+Bash(command="git check-ignore -q .code-gauntlet 2>/dev/null || echo '/.code-gauntlet/' >> .gitignore")
 ```
 
 **Truncate stale files** from prior sessions with the same SHA, so a re-run does not blend old artifacts with new:
 
 ```bash
-Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/deep-review-*-{head_sha_short}.*')]\"")
+Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/code-gauntlet-*-{head_sha_short}.*')]\"")
 ```
 
-All workflow-facing files use `{output_dir}/deep-review-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list). The workflow's artifact-writer produces: `findings-*.json`, `report-*.md`, `checkpoint-all-*.json`.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list). The workflow's artifact-writer produces: `findings-*.json`, `report-*.md`, `checkpoint-all-*.json`.
 
 ### Gather the git artifacts the workflow consumes
 
 The workflow has no shell or git access, so Phase 2 produces the git-derived inputs on disk and threads their content/paths into the args.
 
-1. **Diff** → save the merge-base diff to `{output_dir}/deep-review-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed diff (`gh pr diff {pr_number}` / `glab mr diff {pr_number}`), which is fork-safe; for branch/local targets use `git diff <base>...HEAD` / `git diff HEAD`. Validate: non-empty and starts with `diff --git`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
-2. **Changed files** → write the changed-file list to `{output_dir}/deep-review-files-{head_sha_short}.json` as a JSON array, and keep the same array inline for `args.changedFiles` (the summarize stage reads it by value — the workflow cannot open the file). This path becomes `args.changedFilesPath`.
+1. **Diff** → save the merge-base diff to `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed diff (`gh pr diff {pr_number}` / `glab mr diff {pr_number}`), which is fork-safe; for branch/local targets use `git diff <base>...HEAD` / `git diff HEAD`. Validate: non-empty and starts with `diff --git`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+2. **Changed files** → write the changed-file list to `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array, and keep the same array inline for `args.changedFiles` (the summarize stage reads it by value — the workflow cannot open the file). This path becomes `args.changedFilesPath`.
 3. **Risk classification (2e)** and **AI-generated-code detection (2k)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file.
 
 ### Parse REVIEW.md into the review config
@@ -126,13 +126,13 @@ Discover REVIEW.md hierarchically (`references/review-md-spec.md`). Schema-valid
 
 ### Write the shared agent context file
 
-Write the shared context to `{output_dir}/deep-review-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. Contents: CLAUDE.md/REVIEW.md rules, risk classification (2e), and the full diff inside `<untrusted-code-content>` tags. The workflow's discovery, validate, and challenge agents Read this file at `{output_dir}/deep-review-context-{head_sha_short}.md` — the workflow threads exactly this path to them, so the filename must match. (The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.)
+Write the shared context to `{output_dir}/code-gauntlet-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. Contents: CLAUDE.md/REVIEW.md rules, risk classification (2e), and the full diff inside `<untrusted-code-content>` tags. The workflow's discovery, validate, and challenge agents Read this file at `{output_dir}/code-gauntlet-context-{head_sha_short}.md` — the workflow threads exactly this path to them, so the filename must match. (The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.)
 
 > **NDJSON/AST-safe emission machinery is retained but vestigial in v3.** Discovery agents now return findings through structured output (`agent()`/`parallel()` schema), not by appending NDJSON via `printf`. Their `.md` bodies still carry the emission prose (its removal is the deferred S8 migration); the `references/ndjson-emission-contract.md` and validator machinery still ship for that reason.
 
 ### Assemble the args object and record environment overrides
 
-Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). **If it is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Set `policy.frontierModelId` to a full model-id string when `policy.frontier` is true. Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `DEEP_REVIEW_DELIVERY_TIER`) and `deliveryCap` (from `DEEP_REVIEW_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path.
+Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). **If it is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Set `policy.frontierModelId` to a full model-id string when `policy.frontier` is true. Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `CODE_GAUNTLET_DELIVERY_TIER`) and `deliveryCap` (from `CODE_GAUNTLET_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path.
 
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 
@@ -153,13 +153,13 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   // verify handoff (sha-scoped) for the executor's pinned command:
   verify: {
     scriptPath: "{plugin_root}/scripts/verify_findings.py",
-    inputPathBase: "{output_dir}/deep-review-phase4-input-{head_sha_short}",
-    outputPathBase: "{output_dir}/deep-review-phase4-output-{head_sha_short}"
+    inputPathBase: "{output_dir}/code-gauntlet-phase4-input-{head_sha_short}",
+    outputPathBase: "{output_dir}/code-gauntlet-phase4-output-{head_sha_short}"
   }
 }
 ```
 
-`mode` is `"headless"` under `DEEP_REVIEW_HEADLESS=1`, else `"interactive"`. Never call `new Date()` inside the workflow — `generatedAt` is the only clock.
+`mode` is `"headless"` under `CODE_GAUNTLET_HEADLESS=1`, else `"interactive"`. Never call `new Date()` inside the workflow — `generatedAt` is the only clock.
 
 ---
 
@@ -221,11 +221,11 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
    - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) via chat and report the `gaps`.
 3. **Surface `gaps`** in the methodology regardless of `ok` — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 
-> **Headless hard rules (`DEEP_REVIEW_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — a headless `-p` child session backgrounds the workflow and is killed at the CLI's 600s ceiling if it yields its turn, so headless runs must **poll the task output file to a terminal result before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `DEEP_REVIEW_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`DEEP_REVIEW_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$DEEP_REVIEW_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap (the interactive walkthrough is unavailable); posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
+> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — a headless `-p` child session backgrounds the workflow and is killed at the CLI's 600s ceiling if it yields its turn, so headless runs must **poll the task output file to a terminal result before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap (the interactive walkthrough is unavailable); posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
 
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver via chat/markdown only).
 >
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivery follows `DEEP_REVIEW_DELIVERY` regardless of PR state (posting still obeys `DEEP_REVIEW_POST_MODE`). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
 
 ### Deliver
 
@@ -233,11 +233,11 @@ Deliver using the method(s) selected in Phase 1. **PR-comment selection is now t
 
 > **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting. The default PR-comment set is that payload verbatim; only the interactive "Let me pick" walkthrough (Stage 1 Step B in `references/phase8-delivery.md`) lets the user deselect from it.**
 >
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): post `artifactPaths.postReview` verbatim; the walkthrough is unavailable and no `AskUserQuestion` is presented.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): post `artifactPaths.postReview` verbatim; the walkthrough is unavailable and no `AskUserQuestion` is presented.
 
 > **MANDATORY GATE: Do not finish without completing the task board offer (Stage 2) in `references/phase8-delivery.md`.**
 >
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the task board is skipped; do not present the offer.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped; do not present the offer.
 
 ### Print methodology
 

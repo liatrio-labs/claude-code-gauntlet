@@ -1,6 +1,6 @@
 ---
 name: artifact-writer
-description: Persists deep-review artifacts (findings JSON, report markdown, checkpoint JSON) to the output directory. Mechanical — writes exactly what it is given.
+description: Persists code-gauntlet artifacts (findings JSON, report markdown, checkpoint JSON) to the output directory. Mechanical — writes exactly what it is given.
 tools: Write, Read
 effort: low
 model: sonnet

@@ -28,7 +28,7 @@ The Phase 3 `Workflow` call returned a compact object that always includes a `ch
    - Is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~100k-char budget, so the workflow withheld the findings bulk) → there is no phase map and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`) and note the truncation in the methodology.
 2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists via chat and report the `gaps`.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
 
 **Surface `gaps` in the methodology regardless of `ok`** — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 
@@ -53,7 +53,7 @@ Always use the full 40-character SHA from `git rev-parse HEAD`.
 
 **Re-check eligibility** — verify the PR is still open. If closed/merged: deliver via chat/markdown only.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivers per `DEEP_REVIEW_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `DEEP_REVIEW_POST_MODE`. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivers per `CODE_GAUNTLET_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `CODE_GAUNTLET_POST_MODE`. See `references/headless-mode.md`.
 
 Deliver using the method(s) selected in Phase 1, in this order:
 
@@ -63,7 +63,7 @@ Deliver using the method(s) selected in Phase 1, in this order:
 
 The delivery set is the pipeline's pre-selected `artifactPaths.postReview` payload — the survivors already chosen per the Phase 1 delivery tier (`args.delivery.tier`: `all` (default) keeps every survivor, `main_only` keeps main-tagged only), then ranked and capped at `limits.deliveryCap`. **Every finding in that payload posts as a PR comment** — suggestions are not a separate delivery destination; the `report_tag` affects only where a finding renders in the report ("Improvement Suggestions" section) and, under `main_only`, whether the pipeline already withheld it. Never re-filter by tag, re-rank, or re-apply the cap to this payload.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): do not present this `AskUserQuestion`. Post the `artifactPaths.postReview` payload **verbatim** — the workflow already applied the delivery tier (`$DEEP_REVIEW_DELIVERY_TIER`, default `all`) plus rank + cap `$DEEP_REVIEW_PR_COMMENT_CAP`. The "Let me pick" walkthrough is unavailable. Posting obeys `$DEEP_REVIEW_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not present this `AskUserQuestion`. Post the `artifactPaths.postReview` payload **verbatim** — the workflow already applied the delivery tier (`$CODE_GAUNTLET_DELIVERY_TIER`, default `all`) plus rank + cap `$CODE_GAUNTLET_PR_COMMENT_CAP`. The "Let me pick" walkthrough is unavailable. Posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
@@ -114,17 +114,17 @@ findings = {
 }
 with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)
-" "{output_dir}/deep-review-post-review-input-{head_sha_short}.json"
+" "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json"
 
-python3 {plugin_root}/scripts/post_review.py "{output_dir}/deep-review-post-review-input-{head_sha_short}.json"
+python3 {plugin_root}/scripts/post_review.py "{output_dir}/code-gauntlet-post-review-input-{head_sha_short}.json"
 """)
 ```
 
-> Headless carve-out (`DEEP_REVIEW_POST_MODE=dry-run`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `DEEP_REVIEW_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
+> Headless carve-out (`CODE_GAUNTLET_POST_MODE=dry-run`): append `--dry-run` to the `post_review.py` invocation so it captures the payload instead of posting. `post_review.py` self-enforces this regardless — it reads `CODE_GAUNTLET_POST_MODE` directly and treats `dry-run` as `--dry-run` even when the flag is omitted (belt-and-braces) — but pass the flag explicitly so the dry-run intent is visible in the command.
 
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
-**Step C. Markdown file** — if selected, write to `./deep-review-{date}.md`.
+**Step C. Markdown file** — if selected, write to `./code-gauntlet-{date}.md`.
 
 ---
 
@@ -132,7 +132,7 @@ See `references/delivery-guide.md` for the findings JSON schema and validation d
 
 The user decides whether to create tasks — always ask before finishing.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the task board is skipped — present neither `AskUserQuestion` below and create no tasks. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped — present neither `AskUserQuestion` below and create no tasks. See `references/headless-mode.md`.
 
 **If pr_comment_set exists:**
 
@@ -183,7 +183,7 @@ See `references/delivery-guide.md` for the full dismissed findings flow (AskUser
 
 **Stage 3 self-check:** After delivery and task board, verify Stage 3 (dismissed findings -> REVIEW.md suppression offer) was offered to the user. If dismissed_set is non-empty and you did not present the suppression prompt, go back and present it now before finishing the review.
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): Stage 3 is unreachable — selection=`default` means no walkthrough runs, so dismissed_set is always empty. Skip the self-check and never write REVIEW.md (read-only in headless mode). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): Stage 3 is unreachable — selection=`default` means no walkthrough runs, so dismissed_set is always empty. Skip the self-check and never write REVIEW.md (read-only in headless mode). See `references/headless-mode.md`.
 
 ---
 
@@ -191,7 +191,7 @@ See `references/delivery-guide.md` for the full dismissed findings flow (AskUser
 
 Reusable selection pattern for both PR comment selection (Stage 1 Step B) and task board selection (Stage 2).
 
-> Headless exception (`DEEP_REVIEW_HEADLESS=1`): the walkthrough is unreachable — Stage 1 uses selection=`default` and Stage 2 (task board) is skipped, so neither caller invokes it. The per-finding `AskUserQuestion` below is never presented and dismissed_set stays empty. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the walkthrough is unreachable — Stage 1 uses selection=`default` and Stage 2 (task board) is skipped, so neither caller invokes it. The per-finding `AskUserQuestion` below is never presented and dismissed_set stays empty. See `references/headless-mode.md`.
 
 ### Step 1: Show Summary Table
 
