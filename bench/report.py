@@ -59,13 +59,33 @@ TIER_INFO = (
     ("smoke", "smoke", "3 PRs / 4 goldens — directional only"),
     ("subset", "subset", "15 PRs / 59 goldens — gate-grade"),
     ("holdout", "holdout", "10 fresh PRs — confirmation"),
+    ("custom", "custom", "8 PRs, pre-registered paired design — Gate-2 efficiency"),
 )
 
+# Tiers whose recall/noise are graded against the two live bars (top-anchor +
+# noise ceiling). Smoke is directional-only; the rest are gate-grade.
+GATE_TIERS = ("subset", "holdout", "custom")
+
+# Child-model experiments: CLAUDE_CODE_SUBAGENT_MODEL was pinned to a sonnet
+# child, and the pin cascaded onto the pipeline agents — dragging the [1m]
+# context variant with it (visible as claude-sonnet-5[1m] in one run's per_model).
+# That confounds their token deltas, so both were reverted and are shown faded.
+# They carry no hypothesis/change annotation and are metrically indistinguishable
+# from a clean smoke, so the two run_ids are named here explicitly; every NUMBER
+# rendered for them (recall, noise, tokens, the child-model label) is still read
+# from the ledger row. Source: the Gate-2 custom run's change note.
+CONFOUNDED_RUNS = frozenset({
+    "smoke-20260721-160606-83eadfe",   # sonnet child pin
+    "smoke-20260721-172943-0b24d95",   # sonnet[1m] child pin
+})
+
 # vs-anchors bars: (label, CSS var, emphasized, source key). "v3" pulls from the
-# latest v3 gate subset row, "v2" from baseline_v2, the rest from
-# baselines.anchors.rows[<key>]. Our two tools lead and are emphasized.
+# latest v3 gate subset row, "v3_holdout" from the holdout confirmation row, "v2"
+# from baseline_v2, the rest from baselines.anchors.rows[<key>]. Our tool leads on
+# both the gate and the fresh-PR holdout, and both are emphasized.
 ANCHOR_TOOLS = (
     ("deep-review v3", "--tool-v3", True, "v3"),
+    ("v3 · holdout", "--tool-v3", True, "v3_holdout"),
     ("deep-review v2", "--tool-deepreview", True, "v2"),
     ("claude", "--tool-claude", False, "claude"),
     ("claude-code", "--tool-claude-code", False, "claude-code"),
@@ -183,6 +203,30 @@ def _metric_signature(row):
     return tuple(row.get(k) for k in METRIC_KEYS)
 
 
+def _dominant_model(row):
+    """The per_model key that burned the most tokens — the run's de-facto workhorse."""
+    pm = row.get("per_model") or {}
+    if not pm:
+        return None
+    return max(pm.items(), key=lambda kv: (kv[1] or {}).get("tokens", 0) or 0)[0]
+
+
+def _short_model(name):
+    """"claude-sonnet-5[1m]" -> "sonnet[1m]"; "claude-opus-4-8[1m]" -> "opus[1m]"."""
+    if not name:
+        return None
+    variant = ""
+    base = name
+    if base.endswith("[1m]"):
+        variant = "[1m]"
+        base = base[: -len("[1m]")]
+    core = base[len("claude-"):] if base.startswith("claude-") else base
+    for fam in ("sonnet", "opus", "haiku"):
+        if core.startswith(fam):
+            return fam + variant
+    return core.split("-")[0] + variant
+
+
 # ---------------------------------------------------------------------------
 # Grouping
 # ---------------------------------------------------------------------------
@@ -278,9 +322,13 @@ def classify(row, top_anchor, ceiling):
     noise = row.get("noise_rate")
     if tool.startswith("anchor") or tool == "naive-anchor":
         return ("anchor", "◇", "external anchor — reference only")
+    if row.get("run_id") in CONFOUNDED_RUNS:
+        return ("reverted", "✕",
+                "confounded child-model experiment — the subagent-model pin cascaded "
+                "the [1m] variant onto the pipeline agents; reverted")
     if "REVERT" in change.upper():
         return ("reverted", "✕", "regressed and was reverted")
-    if tier in ("subset", "holdout") and recall is not None and noise is not None:
+    if tier in GATE_TIERS and recall is not None and noise is not None:
         if recall >= top_anchor and noise <= ceiling:
             return ("gate", "★",
                     "gate milestone — recall over the top-anchor bar, noise under the ceiling")
@@ -299,8 +347,12 @@ def short_label(pt):
         return "naive"
     if tool == "deep-review-v2":
         return "v2 base" if tier == "subset" else "v2 smoke"
+    if pt.get("child_model"):        # confounded child-model experiment
+        return pt["child_model"]     # e.g. "sonnet" / "sonnet[1m]"
     if tier == "holdout":
         return "Holdout"
+    if tier == "custom":
+        return "Gate-2"
     if tier == "subset":
         return "Gate-1" if pt["kind"] == "gate" else "v3 subset"
     m = re.search(r"iter\s*(\d+)", pt.get("hypothesis") or "")
@@ -343,6 +395,7 @@ def scored_run_points(rows, top_anchor, ceiling):
         grp = groups[key]
         rep = sorted(grp, key=lambda r: r.get("ts", ""))[0]
         kind, _glyph, _desc = classify(rep, top_anchor, ceiling)
+        confounded = rep.get("run_id") in CONFOUNDED_RUNS
         points.append(
             {
                 "run_id": key[0],
@@ -358,6 +411,7 @@ def scored_run_points(rows, top_anchor, ceiling):
                 "kind": kind,
                 "headline": kind == "gate",
                 "reverted": kind == "reverted",
+                "child_model": _short_model(_dominant_model(rep)) if confounded else None,
             }
         )
     points.sort(key=lambda p: p["ts"])
@@ -405,6 +459,13 @@ def _run_marker(x, y, tier, var, reverted, headline):
         d = (f"M{x:.1f},{y - r:.1f} L{x + r:.1f},{y:.1f} "
              f"L{x:.1f},{y + r:.1f} L{x - r:.1f},{y:.1f} Z")
         g.append(f'<path class="mk mk-fill" d="{d}" style="fill:var({var})" />')
+    elif tier == "custom":
+        s = 5.0
+        g.append(
+            f'<rect class="mk mk-fill" x="{x - s:.1f}" y="{y - s:.1f}" '
+            f'width="{2 * s:.1f}" height="{2 * s:.1f}" rx="1.2" '
+            f'style="fill:var({var})" />'
+        )
     else:  # subset
         g.append(
             f'<circle class="mk mk-fill" cx="{x:.1f}" cy="{y:.1f}" r="5.6" '
@@ -535,12 +596,21 @@ def build_runs_svg(points, top_anchor, v2_base, ceiling):
                 f'tabindex="0" role="img" aria-label="{tip}" data-tip="{tip}" />'
             )
 
-    # Direct labels on the two gate headlines (recall panel only).
+    # Direct labels on the gate headlines (recall panel only). Headlines that crowd
+    # together horizontally (Gate-1 + its holdout sit ~35px apart) get their labels
+    # stacked upward so they never overlap; isolated ones (Gate-2) reset the stack.
+    prev_x = None
+    level = 0
     for i, p in enumerate(points):
         if not p["headline"] or p["recall"] is None:
             continue
         x = x_of(i)
-        y = yA(p["recall"]) - 10
+        if prev_x is not None and abs(x - prev_x) < 74:
+            level += 1
+        else:
+            level = 0
+        prev_x = x
+        y = max(aY + 4, yA(p["recall"]) - 10 - level * 12)
         last = i == n - 1
         anchor = "start" if last else "end"
         dx = 9 if last else -9
@@ -608,9 +678,11 @@ def build_anchor_svg(title, bars):
     return "\n".join(parts)
 
 
-def _anchor_value(src, v2v3_key, anchor_key, bv2, v3_row, anchor_rows):
+def _anchor_value(src, v2v3_key, anchor_key, bv2, v3_row, v3_holdout_row, anchor_rows):
     if src == "v3":
         return (v3_row or {}).get(v2v3_key)
+    if src == "v3_holdout":
+        return (v3_holdout_row or {}).get(v2v3_key)
     if src == "v2":
         return bv2.get(v2v3_key)
     return anchor_rows.get(src, {}).get(anchor_key)
@@ -627,6 +699,8 @@ _TIER_GLYPH_SVG = {
               '<circle cx="6" cy="6" r="4" fill="currentColor"/></svg>',
     "holdout": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
                '<path d="M6 1.6 L10.4 6 L6 10.4 L1.6 6 Z" fill="currentColor"/></svg>',
+    "custom": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
+              '<rect x="2" y="2" width="8" height="8" rx="1.4" fill="currentColor"/></svg>',
 }
 
 
@@ -712,8 +786,14 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
         f'<ul class="def-list">{tiers}</ul>'
         '<p class="explainer-foot">Smoke numbers are directional and never pass or '
         'fail a gate; a subset run is gate-grade; a holdout run confirms it on fresh '
-        'PRs. By owner decision v3 delivers ~4× the comments of v2, so its lower '
-        'precision is a bigger denominator, not weaker findings.</p></div>'
+        'PRs; a custom run is the pre-registered paired design behind Gate-2. By owner '
+        'decision v3 delivers ~4× the comments of v2, so its lower precision is a '
+        'bigger denominator, not weaker findings. Gate-2 re-baselined its token target '
+        'to the v2 baseline on 2026-07-21: the original −20%-vs-Gate-1 target was '
+        'self-referential (it measured only −1.8%) and was retired. Two child-model '
+        'smokes render faded because they are confounded experiments — a subagent-model '
+        'pin cascaded the [1m] context variant onto the pipeline agents — and were '
+        'reverted.</p></div>'
         "</div></section>"
     )
 
@@ -835,6 +915,8 @@ def build_verdict_html(rows, baselines, ceiling):
         f"{'still under' if noise_ok else 'OVER'} the {fmt_pct(ceiling, 0)} ceiling."
     )
 
+    n_prs = v2_row.get("n_prs") or v3_row.get("n_prs")
+    subset_desc = f"{n_prs}-PR / {n_goldens}-golden" if n_prs else f"{n_goldens}-golden"
     return (
         '<section class="verdict-panel card" aria-label="v2 versus v3 verdict">'
         '<div class="verdict-head">'
@@ -843,12 +925,119 @@ def build_verdict_html(rows, baselines, ceiling):
         "</div>"
         '<div class="table-wrap"><table class="verdict-table">'
         '<thead><tr><th scope="col">Metric</th><th scope="col">v2 baseline</th>'
-        '<th scope="col">v3 gate</th><th scope="col">Change</th></tr></thead>'
+        '<th scope="col">v3 gate (Gate-1)</th><th scope="col">Change</th></tr></thead>'
         f'<tbody>{"".join(body)}</tbody></table></div>'
-        '<p class="verdict-foot">Same 15-PR / 59-golden subset, judge-pinned. '
+        f'<p class="verdict-foot">Same {html.escape(subset_desc)} subset, judge-pinned. '
         "Efficiency rows divide by <b>goldens found</b> (distinct known issues caught, "
         "the recall numerator) so v3's larger comment volume can't flatter or penalise "
         "it. Green = better; noise rose slightly but cleared the gate.</p>"
+        "</section>"
+    )
+
+
+def latest_holdout_row(rows):
+    """Most recent v3 holdout-tier run — the fresh-PR confirmation of the gate."""
+    cands = [
+        r for r in rows
+        if str(r.get("tool", "")).startswith("deep-review") and r.get("tier") == "holdout"
+    ]
+    return max(cands, key=lambda r: r.get("ts", "")) if cands else None
+
+
+def latest_custom_row(rows):
+    """Most recent v3 custom-tier run — the Gate-2 final-config efficiency pass."""
+    cands = [
+        r for r in rows
+        if str(r.get("tool", "")).startswith("deep-review") and r.get("tier") == "custom"
+    ]
+    return max(cands, key=lambda r: r.get("ts", "")) if cands else None
+
+
+def _tokens_per_pr(row):
+    if not row:
+        return None
+    tok = row.get("tokens_total")
+    n = row.get("n_prs")
+    return tok / n if (tok and n) else None
+
+
+def build_gate2_html(rows, baselines, top_anchor, ceiling):
+    """Second verdict panel: the FINAL config (Gate-2 custom run) beside the v2
+    baseline. Gate-2 ran a different 8-PR set, so its win is stated per-PR-token
+    against the owner-amended v2 baseline (recall/noise are graded against the two
+    live bars, not v2). Returns "" when no custom run is in the ledger."""
+    g2 = latest_custom_row(rows)
+    if not g2:
+        return ""
+    bv2 = baselines.get("baseline_v2", {})
+    v2_row = next(
+        (r for r in rows
+         if r.get("tool") == "deep-review-v2" and r.get("run_id") == bv2.get("run_id")),
+        None,
+    )
+    g2_tpp = _tokens_per_pr(g2)
+    v2_tpp = _tokens_per_pr(v2_row)
+    recall = g2.get("golden_recall")
+    noise = g2.get("noise_rate")
+    n_prs = g2.get("n_prs")
+
+    tok_delta = (
+        f"{(g2_tpp - v2_tpp) / v2_tpp * 100:+.1f}%"
+        if (g2_tpp and v2_tpp) else "—"
+    )
+    recall_ok = recall is not None and top_anchor is not None and recall >= top_anchor
+    noise_ok = noise is not None and ceiling is not None and noise <= ceiling
+
+    # (label, baseline/bar text, gate-2 text, verdict text, arrow, kind, note)
+    metric_rows = [
+        ("Tokens per PR", fmt_millions(v2_tpp, 2), fmt_millions(g2_tpp, 2), tok_delta,
+         ("▼" if (g2_tpp and v2_tpp and g2_tpp < v2_tpp) else "▲"), "good",
+         "vs the v2 baseline, PR-normalised"),
+        ("Golden recall", fmt_pct(top_anchor), fmt_pct(recall),
+         "held" if recall_ok else "under", ("✓" if recall_ok else "○"),
+         "good" if recall_ok else "neutral", "over the top-anchor bar"),
+        ("Noise rate", fmt_pct(ceiling), fmt_pct(noise),
+         "under" if noise_ok else "OVER", ("✓" if noise_ok else "○"),
+         "good" if noise_ok else "neutral", "under the noise ceiling"),
+    ]
+    body = []
+    for label, base_s, g2_s, verdict, arr, kind, note in metric_rows:
+        note_html = f'<span class="verdict-note">{html.escape(note)}</span>' if note else ""
+        body.append(
+            "<tr>"
+            f'<th scope="row">{html.escape(label)}{note_html}</th>'
+            f'<td class="vnum">{html.escape(base_s)}</td>'
+            f'<td class="vnum vnum-new">{html.escape(g2_s)}</td>'
+            f'<td class="vdelta vdelta-{kind}">{arr} {html.escape(verdict)}</td>'
+            "</tr>"
+        )
+
+    takeaway = (
+        f"The final config reviews at {fmt_millions(g2_tpp, 2)} tokens/PR against the "
+        f"v2 baseline's {fmt_millions(v2_tpp, 2)} ({tok_delta}), while holding the bars "
+        f"at {fmt_pct(recall)} recall and {fmt_pct(noise)} noise across {n_prs} fresh "
+        "PRs — the Gate-2 pass."
+    )
+    # Footnote quotes the amendment verbatim from the run's ledger change note.
+    amendment = str(g2.get("change") or "").strip()
+    foot = (
+        "Gate-2 ran a different 8-PR set, so the win is stated as tokens per PR against "
+        "the <b>owner-amended v2 baseline</b> (recall and noise are graded against the "
+        "two live bars, not v2)."
+    )
+    if amendment:
+        foot += f' Amendment, quoted from the ledger: <q>{html.escape(amendment)}</q>'
+    return (
+        '<section class="verdict-panel card" aria-label="Gate-2 final config efficiency">'
+        '<div class="verdict-head">'
+        "<h2>Final config — Gate-2 token efficiency</h2>"
+        f'<p class="verdict-takeaway">{html.escape(takeaway)}</p>'
+        "</div>"
+        '<div class="table-wrap"><table class="verdict-table">'
+        '<thead><tr><th scope="col">Metric</th><th scope="col">Baseline / bar</th>'
+        '<th scope="col">Gate-2 final</th><th scope="col">Verdict</th></tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table></div>'
+        f'<p class="verdict-foot">{foot}</p>'
         "</section>"
     )
 
@@ -885,14 +1074,15 @@ def build_tiles_html(row, baselines):
     return f'<div class="tiles">{cells}</div>'
 
 
-def build_anchor_section_html(baselines, v3_row):
+def build_anchor_section_html(baselines, v3_row, v3_holdout_row):
     anchor_rows = baselines.get("anchors", {}).get("rows", {})
     bv2 = baselines.get("baseline_v2", {})
     figs = []
     for v2v3_key, anchor_key, title in ANCHOR_METRICS:
         bars = [
             (label, var, emph,
-             _anchor_value(src, v2v3_key, anchor_key, bv2, v3_row, anchor_rows))
+             _anchor_value(src, v2v3_key, anchor_key, bv2, v3_row, v3_holdout_row,
+                           anchor_rows))
             for label, var, emph, src in ANCHOR_TOOLS
         ]
         bars = [b for b in bars if b[3] is not None]
@@ -900,11 +1090,18 @@ def build_anchor_section_html(baselines, v3_row):
             f'<figure class="anchor-chart"><figcaption>{html.escape(title)}</figcaption>'
             f"{build_anchor_svg(title, bars)}</figure>"
         )
+    gate_n = (v3_row or {}).get("n_prs")
+    gate_desc = f"the same {gate_n}-PR gate" if gate_n else "the same gate"
+    holdout_n = (v3_holdout_row or {}).get("n_prs")
+    corroboration = (
+        f" The <em>v3 · holdout</em> bar ({holdout_n} fresh PRs) corroborates the lead "
+        "on unseen PRs." if v3_holdout_row else ""
+    )
     caption = (
-        "Every tool judged on the same 15-PR gate. <em>deep-review v3</em> leads on "
+        f"Every tool judged on {gate_desc}. <em>deep-review v3</em> leads on "
         "recall while holding noise far below the external tools; <em>claude</em> is "
         "the published Claude Code CLI row. Anchors are the upstream tools’ stored "
-        "candidates re-judged under our pinned judge."
+        "candidates re-judged under our pinned judge." + corroboration
     )
     return (
         f'<div class="anchor-row">{"".join(figs)}</div>'
@@ -931,12 +1128,21 @@ def build_table_html(groups, top_anchor, ceiling):
         delivered = sum(pb.values()) if pb else r.get("total_candidates")
         kind, glyph, desc = classify(r, top_anchor, ceiling)
         # "What changed" cell: the outcome line, else the hypothesis; full text on hover.
+        # Confounded child-model experiments carry no annotation — synthesize one from
+        # the reverted verdict and the run's own dominant (child) model.
         changed_full = r.get("change") or r.get("hypothesis") or ""
         parts_full = []
         if r.get("hypothesis"):
             parts_full.append("Hypothesis: " + r["hypothesis"])
         if r.get("change"):
             parts_full.append("Change: " + r["change"])
+        if not changed_full and rid in CONFOUNDED_RUNS:
+            child = _short_model(_dominant_model(r)) or "child model"
+            changed_full = (
+                f"Confounded experiment ({child} subagent pin cascaded the [1m] variant "
+                "onto the pipeline agents); reverted."
+            )
+            parts_full.append(changed_full)
         title_full = html.escape(TIP_BREAK.join(parts_full)) if parts_full else ""
         changed_cell = (
             f'<td class="changed" title="{title_full}">'
@@ -1554,6 +1760,7 @@ def render_html(rows, baselines, sha, generated):
     ).replace("<", "\\u003c")
 
     _v2_row, v3_gate_row, _ng = subset_comparison(rows, baselines)
+    v3_holdout_row = latest_holdout_row(rows)
 
     src_label = ""
     if subset_row:
@@ -1568,10 +1775,11 @@ def render_html(rows, baselines, sha, generated):
 
     runs_caption = (
         "Every scored run in time order — the v2 baseline, then the v3 hill-climb. "
-        "Colour is the tool, marker shape is the run type; faded markers were reverted, "
-        "and the two haloed markers are the Gate-1 subset and its holdout confirmation. "
-        "The labelled reference lines are the v2 baseline, the top-anchor bar to beat, "
-        "and the noise ceiling. Hover or focus any point for its hypothesis and result."
+        "Colour is the tool, marker shape is the run type; faded markers were reverted "
+        "(including two confounded child-model smokes), and the haloed markers are the "
+        "Gate-1 subset, its holdout confirmation, and the Gate-2 final config. The "
+        "labelled reference lines are the v2 baseline, the top-anchor bar to beat, and "
+        "the noise ceiling. Hover or focus any point for its hypothesis and result."
     )
 
     body = [
@@ -1582,6 +1790,7 @@ def render_html(rows, baselines, sha, generated):
         f'<p class="subtitle">{subtitle}</p>',
         "</header>",
         build_verdict_html(rows, baselines, ceiling),
+        build_gate2_html(rows, baselines, top_anchor, ceiling),
         build_explainer_html(top_anchor, v2_base, ceiling),
         src_label,
         build_tiles_html(subset_row, baselines),
@@ -1591,8 +1800,8 @@ def render_html(rows, baselines, sha, generated):
         build_runs_svg(points, top_anchor, v2_base, ceiling),
         "</div>",
         f'<p class="caption">{runs_caption}</p>',
-        "<h2>vs anchors (judge-only, 15-PR gate)</h2>",
-        build_anchor_section_html(baselines, v3_gate_row),
+        "<h2>vs anchors (judge-only)</h2>",
+        build_anchor_section_html(baselines, v3_gate_row, v3_holdout_row),
         "<h2>Run ledger</h2>",
         build_table_html(groups, top_anchor, ceiling),
         "<h2>Notes</h2>",
