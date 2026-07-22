@@ -244,6 +244,8 @@ Store the delivery selection and the delivery tier (`args.delivery.tier`, defaul
 
 > **Note:** This template is triggered during Phase 2d (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
 
+> **v3.0 limitation:** dimension gating is not yet wired in the workflow (every registry dimension is unconditional), so a `light` answer currently still runs all dimensions — the user gets a full review, never a reduced one. Announce it as a full review when this happens. Wiring the gate is tracked in issue #17.
+
 Used when ALL files are low-risk AND total lines <50:
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not present this `AskUserQuestion`. Apply `CODE_GAUNTLET_TRIVIAL_SCOPE` — `light` runs bugs+security only, `full` runs all dimensions. See `references/headless-mode.md`.

@@ -21,7 +21,7 @@ Read once at Phase 1 entry. Every value is echoed in a `Headless config:` block 
 | `CODE_GAUNTLET_DRAFT_POLICY` | `review`\|`skip` (`review`) | draft-PR gate |
 | `CODE_GAUNTLET_REVIEWED_POLICY` | `incremental`\|`full`\|`skip` (`full`) | both previously-reviewed variants |
 | `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` | `local`\|`error` (`error`) | resolution-failure gate |
-| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light`\|`full` (`full`) | trivial-PR scope gate |
+| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light`\|`full` (`full`) | trivial-PR scope gate — v3.0: `light` is recorded but dimension gating is not yet wired, so all dimensions still run (issue #17) |
 
 ---
 
@@ -71,7 +71,7 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 | Closed / merged PR (eligibility) | Proceed — do not stop. Review the pinned head as resolved; posting still obeys `CODE_GAUNTLET_POST_MODE` and delivery follows `CODE_GAUNTLET_DELIVERY`. (Interactive mode stops here; headless does not.) |
 | Draft PR | `CODE_GAUNTLET_DRAFT_POLICY`: `review` proceeds; `skip` stops the run. |
 | Previously reviewed (both variants) | `CODE_GAUNTLET_REVIEWED_POLICY`: `incremental` reviews new commits only, `full` reviews from scratch, `skip` stops the run. |
-| Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE`: `light` runs bugs+security only, `full` runs all dimensions. |
+| Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE`: intended — `light` runs bugs+security only, `full` runs all dimensions. v3.0: gating unwired, both values run all dimensions (issue #17). |
 | REVIEW.md detection (root setup + subdirectory offer) | Skip; root config applies; never invoke `build-review-md`. |
 | Phase 8 Stage 1 (PR comment selection) | Post `artifactPaths.postReview` verbatim — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all`) plus rank + cap `CODE_GAUNTLET_PR_COMMENT_CAP` (via `limits.deliveryCap`); the walkthrough is unavailable. Posting obeys `CODE_GAUNTLET_POST_MODE`. |
 | Phase 8 Stage 2 (task board) | Skipped. |

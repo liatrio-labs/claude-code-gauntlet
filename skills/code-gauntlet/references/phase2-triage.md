@@ -201,7 +201,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. **v3.0 limitation:** dimension gating is not yet wired in the workflow, so a `light` answer still runs all dimensions — announce the full dimension list, never a reduced one (issue #17 tracks the gate).
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` runs bugs+security only, `full` runs all dimensions). See `references/headless-mode.md`.
 
