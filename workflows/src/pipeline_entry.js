@@ -8,7 +8,7 @@
 // contract, and args arrive via the runtime-injected `args` global, not a parameter.
 import { runWith } from './stages.js';
 
-export const meta = { name: 'deep-review', description: 'deep-review v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', version: '3.0.0-dev', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
+export const meta = { name: 'deep-review', description: 'deep-review v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
 const PIPELINE_VERSION = '3.0.0-dev';
 
 // run(rawArgs) — the thin public entry. Builds the real-globals ctx and delegates to
