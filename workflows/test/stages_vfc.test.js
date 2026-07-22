@@ -149,20 +149,20 @@ function challengeCtx({ nulls = [], byIdx } = {}) {
 }
 
 function cFinding(id, sev, over = {}) {
-  return { id, file: `${id}.js`, line_start: 5, title: `t-${id}`, description: `d-${id}`, code: `code-${id}`, severity: sev, confidence: 80, dimension: 'bug', ...over };
+  return { id, file: `${id}.js`, line_start: 5, line_end: 7, title: `t-${id}`, description: `d-${id}`, severity: sev, confidence: 80, dimension: 'bug', ...over };
 }
 
-test('blindChallengeFields exposes EXACTLY {title, description, code} — structural blindness', () => {
+test('blindChallengeFields exposes EXACTLY {title, description, file, line_start, line_end} — structural blindness', () => {
   const finding = cFinding('F1', 'high', {
     evidence: 'SENTINEL_EVIDENCE_LEAK', origin: 'surfaced', cross_file_refs: ['SENTINEL_XREF_LEAK.js:9'],
     reasoning: 'SENTINEL_REASONING_LEAK', corroborated_by: ['bug-detector'],
   });
-  assert.deepEqual(Object.keys(blindChallengeFields(finding)), ['title', 'description', 'code']);
+  assert.deepEqual(Object.keys(blindChallengeFields(finding)), ['title', 'description', 'file', 'line_start', 'line_end']);
 });
 
-test('challenge prompt carries only title/description/code — no evidence/reasoning content leaks', async () => {
+test('challenge prompt carries only title/description/location — no evidence/reasoning content leaks', async () => {
   const finding = cFinding('F1', 'high', {
-    title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC', code: 'SENTINEL_CODE',
+    title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC', file: 'SENTINEL_FILE.js',
     evidence: 'SENTINEL_EVIDENCE_LEAK', origin: 'surfaced', cross_file_refs: ['SENTINEL_XREF_LEAK.js:9'],
     reasoning: 'SENTINEL_REASONING_LEAK',
   });
@@ -171,7 +171,7 @@ test('challenge prompt carries only title/description/code — no evidence/reaso
   const prompt = ctx.calls[0].prompt;
   assert.match(prompt, /SENTINEL_TITLE/);
   assert.match(prompt, /SENTINEL_DESC/);
-  assert.match(prompt, /SENTINEL_CODE/);
+  assert.match(prompt, /SENTINEL_FILE\.js/);
   // No confirming context reaches the challenger.
   assert.doesNotMatch(prompt, /SENTINEL_EVIDENCE_LEAK/);
   assert.doesNotMatch(prompt, /SENTINEL_REASONING_LEAK/);
