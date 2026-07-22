@@ -83,7 +83,7 @@ export function build() {
     parts.push(`// --- ${file} ---`);
     parts.push(strip(readFileSync(join(SRC, file), 'utf8')));
   }
-  const bundle = parts.join('\n') + '\n';
+  const bundle = parts.join('\n').replace(/\n+$/, '') + '\n';
 
   // 3) Fail the build on any top-level identifier collision (see above).
   const collisions = detectTopLevelCollisions(bundle);
