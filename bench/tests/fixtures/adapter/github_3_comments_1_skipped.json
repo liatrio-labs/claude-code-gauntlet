@@ -3,20 +3,20 @@
   "endpoint": "repos/withastro/astro/pulls/1234/reviews",
   "method": "POST",
   "payload": {
-    "body": "Automated review summary.\n\n<!-- deep-review-findings: {\"version\":\"3.0\",\"findings_count\":4,\"sha\":\"deadbeefcafe1234deadbeefcafe1234deadbeef\"} -->",
+    "body": "Automated review summary.\n\n<!-- code-gauntlet-findings: {\"version\":\"3.0\",\"findings_count\":4,\"sha\":\"deadbeefcafe1234deadbeefcafe1234deadbeef\"} -->",
     "event": "COMMENT",
     "comments": [
       {
         "path": "src/auth/session.py",
         "line": 42,
         "side": "RIGHT",
-        "body": "**🟠 [HIGH] Missing null check on token**\n\nload_token() returns None when the cookie is absent; the next line dereferences it and raises AttributeError."
+        "body": "**\ud83d\udfe0 [HIGH] Missing null check on token**\n\nload_token() returns None when the cookie is absent; the next line dereferences it and raises AttributeError."
       },
       {
         "path": "src/auth/session.py",
         "line": 92,
         "side": "RIGHT",
-        "body": "**🟡 [MEDIUM] Password hashed twice**\n\nhash_password() runs here and again in save(); the double hash makes the stored value fail verification.",
+        "body": "**\ud83d\udfe1 [MEDIUM] Password hashed twice**\n\nhash_password() runs here and again in save(); the double hash makes the stored value fail verification.",
         "start_line": 88,
         "start_side": "RIGHT"
       },
@@ -24,11 +24,11 @@
         "path": "src/api/routes.py",
         "line": 15,
         "side": "RIGHT",
-        "body": "**🔴 [CRITICAL] SQL injection via f-string**\n\nThe user-supplied uid is interpolated straight into the SQL string.\n\n```suggestion\ncursor.execute(\"SELECT * FROM users WHERE id = %s\", (uid,))\n```"
+        "body": "**\ud83d\udd34 [CRITICAL] SQL injection via f-string**\n\nThe user-supplied uid is interpolated straight into the SQL string.\n\n```suggestion\ncursor.execute(\"SELECT * FROM users WHERE id = %s\", (uid,))\n```"
       }
     ]
   },
   "skipped": [
-    "Skipping finding 'Docs typo' at README.md:999 — line not found in diff. Valid lines for this file: [3, 4, 5]"
+    "Skipping finding 'Docs typo' at README.md:999 \u2014 line not found in diff. Valid lines for this file: [3, 4, 5]"
   ]
 }

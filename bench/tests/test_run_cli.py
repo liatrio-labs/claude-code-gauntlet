@@ -179,7 +179,7 @@ class PrereqTest(RunTestBase):
 
         for anchor, expected in (
             ("naive", "naive:single-pass max-turns={}".format(run.NAIVE_MAX_TURNS)),
-            (None, "headless:/deep-review"),
+            (None, "headless:/code-gauntlet"),
         ):
             run_dir = self.tmp / "manifest-{}".format(anchor or "skill")
             run_dir.mkdir(parents=True)
@@ -574,8 +574,8 @@ class MultiRunTest(RunTestBase):
         manifest = json.loads((run_dir / "run.json").read_text())
         self.assertEqual(manifest["tier"], "smoke")
         fingerprint = manifest["env_fingerprint"]
-        self.assertEqual(fingerprint["DEEP_REVIEW_HEADLESS"], "1")
-        self.assertEqual(fingerprint["DEEP_REVIEW_MODEL_TIER"], "optimized")
+        self.assertEqual(fingerprint["CODE_GAUNTLET_HEADLESS"], "1")
+        self.assertEqual(fingerprint["CODE_GAUNTLET_MODEL_TIER"], "optimized")
         self.assertEqual(fingerprint["timeout_s"], 45 * 60)
 
 

@@ -115,19 +115,19 @@ class PrDirNameTest(unittest.TestCase):
 class BuildEnvTest(InvokeTestBase):
     def test_sets_nine_bench_values(self):
         env = build_env(PR, self.run_dir, {})
-        self.assertEqual(env["DEEP_REVIEW_HEADLESS"], "1")
-        self.assertEqual(env["DEEP_REVIEW_MODEL_TIER"], "optimized")
-        self.assertEqual(env["DEEP_REVIEW_DELIVERY"], "pr_comments,markdown")
-        self.assertEqual(env["DEEP_REVIEW_POST_MODE"], "dry-run")
-        self.assertEqual(env["DEEP_REVIEW_PR_COMMENT_CAP"], "25")
-        self.assertEqual(env["DEEP_REVIEW_DRAFT_POLICY"], "review")
-        self.assertEqual(env["DEEP_REVIEW_REVIEWED_POLICY"], "full")
-        self.assertEqual(env["DEEP_REVIEW_PR_NOT_FOUND_POLICY"], "error")
-        self.assertEqual(env["DEEP_REVIEW_TRIVIAL_SCOPE"], "full")
+        self.assertEqual(env["CODE_GAUNTLET_HEADLESS"], "1")
+        self.assertEqual(env["CODE_GAUNTLET_MODEL_TIER"], "optimized")
+        self.assertEqual(env["CODE_GAUNTLET_DELIVERY"], "pr_comments,markdown")
+        self.assertEqual(env["CODE_GAUNTLET_POST_MODE"], "dry-run")
+        self.assertEqual(env["CODE_GAUNTLET_PR_COMMENT_CAP"], "25")
+        self.assertEqual(env["CODE_GAUNTLET_DRAFT_POLICY"], "review")
+        self.assertEqual(env["CODE_GAUNTLET_REVIEWED_POLICY"], "full")
+        self.assertEqual(env["CODE_GAUNTLET_PR_NOT_FOUND_POLICY"], "error")
+        self.assertEqual(env["CODE_GAUNTLET_TRIVIAL_SCOPE"], "full")
 
     def test_output_dir_and_gh_repo(self):
         env = build_env(PR, self.run_dir, {})
-        self.assertEqual(env["DEEP_REVIEW_OUTPUT_DIR"], str(self.run_dir / "output"))
+        self.assertEqual(env["CODE_GAUNTLET_OUTPUT_DIR"], str(self.run_dir / "output"))
         self.assertEqual(env["GH_REPO"], "octo/widget")
 
     def test_gh_repo_from_url_fallback(self):
@@ -429,9 +429,9 @@ class InvokeReviewTest(InvokeTestBase):
 
     def test_invokes_namespace_qualified_skill_command(self):
         # Regression: the child must be invoked with the NAMESPACE-QUALIFIED slash command
-        # ``/deep-review:deep-review <n>``, not the flat ``/deep-review <n>``. In the pinned
+        # ``/code-gauntlet:code-gauntlet <n>``, not the flat ``/code-gauntlet <n>``. In the pinned
         # isolated --plugin-dir context the flat alias is not reliably registered and
-        # resolves to "Unknown command: /deep-review" (num_turns 0), which sank real smoke
+        # resolves to "Unknown command" (num_turns 0), which sank real smoke runs pre-rename
         # children. See invoke.SKILL_COMMAND and artifact 33 (P2b).
         argv_file = Path(self.tmp) / "argv.txt"
         res = self._run("ok", extra_env={"FAKE_CLAUDE_ARGV_FILE": str(argv_file)})
@@ -440,9 +440,9 @@ class InvokeReviewTest(InvokeTestBase):
         argv = argv_file.read_text().splitlines()
         self.assertIn("-p", argv)
         prompt = argv[argv.index("-p") + 1]
-        self.assertEqual(prompt, "/deep-review:deep-review {}".format(PR["pr_number"]))
+        self.assertEqual(prompt, "/code-gauntlet:code-gauntlet {}".format(PR["pr_number"]))
         # Guard the exact regression: the bare/flat command must not reappear.
-        self.assertNotEqual(prompt, "/deep-review {}".format(PR["pr_number"]))
+        self.assertNotEqual(prompt, "/code-gauntlet {}".format(PR["pr_number"]))
 
     def test_hang_times_out_and_kills_group(self):
         pidfile = Path(self.tmp) / "pgid.txt"

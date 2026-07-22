@@ -1,11 +1,11 @@
 {
   "platform": "gitlab",
   "summary": {
-    "body": "Automated review summary.\n\n<!-- deep-review-findings: {\"version\":\"3.0\",\"findings_count\":2,\"sha\":\"deadbeefcafe1234deadbeefcafe1234deadbeef\"} -->"
+    "body": "Automated review summary.\n\n<!-- code-gauntlet-findings: {\"version\":\"3.0\",\"findings_count\":2,\"sha\":\"deadbeefcafe1234deadbeefcafe1234deadbeef\"} -->"
   },
   "discussions": [
     {
-      "body": "**🟠 [HIGH] N+1 query in loop**\n\nuser.posts is queried inside the each loop; preload before iterating.",
+      "body": "**\ud83d\udfe0 [HIGH] N+1 query in loop**\n\nuser.posts is queried inside the each loop; preload before iterating.",
       "position": {
         "position_type": "text",
         "base_sha": "ba5e0000000000000000000000000000000000ba",
@@ -17,7 +17,7 @@
       }
     },
     {
-      "body": "**💡 [LOW] Unused parameter**\n\nThe redirect_to param is never read.",
+      "body": "**\ud83d\udca1 [LOW] Unused parameter**\n\nThe redirect_to param is never read.",
       "position": {
         "position_type": "text",
         "base_sha": "ba5e0000000000000000000000000000000000ba",

@@ -1,12 +1,12 @@
 """Headless invoker for a single golden PR (spec H3 "Per-PR flow", H8 hang guard).
 
 ``build_env`` assembles the pinned, isolated invocation context: the 9 bench
-``DEEP_REVIEW_*`` knobs, the per-run output dir, ``GH_REPO``, and an isolated
+``CODE_GAUNTLET_*`` knobs, the per-run output dir, ``GH_REPO``, and an isolated
 ``HOME``/``CLAUDE_CONFIG_DIR`` so operator config can never leak in. It also pre-seeds
 the isolated ``.claude.json`` with the worktree marked trusted -- a headless run cannot
 answer a first-run trust dialog, so it must be accepted ahead of time.
 
-``invoke_review`` runs ``claude -p "/deep-review:deep-review <n>"`` under that context in its own
+``invoke_review`` runs ``claude -p "/code-gauntlet:code-gauntlet <n>"`` under that context in its own
 process session, with a watchdog that kills the whole process group on timeout (no
 orphans), scans the output for AskUserQuestion (defense-in-depth -> ``invalid``),
 verifies the ``Headless config:`` echo receipt (accepted from raw stdout, the result
@@ -34,7 +34,7 @@ __all__ = [
     "pr_dir_name",
 ]
 
-# Repo root == the deep-review plugin dir. bench/runner/invoke.py -> parents[2].
+# Repo root == the code-gauntlet plugin dir. bench/runner/invoke.py -> parents[2].
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The metered-key .env (repo-root-relative). build_env loads ANTHROPIC_API_KEY from
@@ -44,19 +44,19 @@ ENV_PATH = REPO_ROOT / "bench" / ".env"
 # The 9 bench values (spec H2 table, bench overrides): pinned explicitly on every run
 # so the harness is drift-immune even though the skill defines its own defaults.
 BENCH_ENV = {
-    "DEEP_REVIEW_HEADLESS": "1",
-    "DEEP_REVIEW_MODEL_TIER": "optimized",
-    "DEEP_REVIEW_DELIVERY": "pr_comments,markdown",
-    "DEEP_REVIEW_POST_MODE": "dry-run",
-    "DEEP_REVIEW_PR_COMMENT_CAP": "25",
-    "DEEP_REVIEW_DRAFT_POLICY": "review",
-    "DEEP_REVIEW_REVIEWED_POLICY": "full",
-    "DEEP_REVIEW_PR_NOT_FOUND_POLICY": "error",
-    "DEEP_REVIEW_TRIVIAL_SCOPE": "full",
+    "CODE_GAUNTLET_HEADLESS": "1",
+    "CODE_GAUNTLET_MODEL_TIER": "optimized",
+    "CODE_GAUNTLET_DELIVERY": "pr_comments,markdown",
+    "CODE_GAUNTLET_POST_MODE": "dry-run",
+    "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+    "CODE_GAUNTLET_DRAFT_POLICY": "review",
+    "CODE_GAUNTLET_REVIEWED_POLICY": "full",
+    "CODE_GAUNTLET_PR_NOT_FOUND_POLICY": "error",
+    "CODE_GAUNTLET_TRIVIAL_SCOPE": "full",
 }
 
 # The resolved-config receipt the runner asserts against (Task 3 echo format). Keys are
-# the 8 knob lines under the "Headless config:" header; DEEP_REVIEW_HEADLESS itself is
+# the 8 knob lines under the "Headless config:" header; CODE_GAUNTLET_HEADLESS itself is
 # the master switch and is not echoed as a knob. Values are the bench expectations.
 EXPECTED_ECHO = {
     "model_tier": "optimized",
@@ -88,15 +88,15 @@ V3_MIN_CLAUDE_VERSION = (2, 1, 154)
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 # The slash command that triggers the review skill. It MUST be namespace-qualified as
-# ``<plugin>:<skill>`` (both are "deep-review"): in the harness's pinned isolated context
+# ``<plugin>:<skill>`` (both are "code-gauntlet"): in the harness's pinned isolated context
 # (isolated HOME/CLAUDE_CONFIG_DIR + --plugin-dir, no --bare), Claude Code registers a
-# plugin skill's slash command only under its namespaced name. The bare/flat ``/deep-review``
-# alias is not reliably registered there and resolves to "Unknown command: /deep-review"
+# plugin skill's slash command only under its namespaced name. The bare/flat ``/code-gauntlet``
+# alias is not reliably registered there and resolves to "Unknown command: /code-gauntlet"
 # (num_turns 0, $0), which the runner then classes ``invalid``/``config_echo_mismatch`` --
 # the intermittent registration is why some children in a run failed and others did not.
 # Namespace-qualifying makes command resolution deterministic. See references/artifact 33
 # (P2b): skills are namespace-qualified in this isolation mode, unlike the flat --bare mode.
-SKILL_COMMAND = "deep-review:deep-review"
+SKILL_COMMAND = "code-gauntlet:code-gauntlet"
 
 
 @dataclass
@@ -295,7 +295,7 @@ def build_env(pr, run_dir, base_env):
     api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
     if api_key:
         env["ANTHROPIC_API_KEY"] = api_key
-    env["DEEP_REVIEW_OUTPUT_DIR"] = str(run_dir / "output")
+    env["CODE_GAUNTLET_OUTPUT_DIR"] = str(run_dir / "output")
     env["GH_REPO"] = "{}/{}".format(_owner(pr), _repo(pr))
     # Uncap the CLI's "background tasks at exit" wait. A ``-p`` run blocks on any background
     # task still running when the main turn ends, but only up to CLAUDE_CODE_PRINT_BG_WAIT_
@@ -695,7 +695,7 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
     envelope = parse_result_envelope(raw_text)
     # The receipt may live in stdout, the envelope .result, or a report .md — collected
     # into pr_dir by run.py, or still in the shared output dir at echo-check time.
-    report_dirs = (env.get("DEEP_REVIEW_OUTPUT_DIR"), str(pr_dir))
+    report_dirs = (env.get("CODE_GAUNTLET_OUTPUT_DIR"), str(pr_dir))
 
     # 0) Plugin-repo integrity (measurement guard): a child that self-healed the plugin
     #    mid-run leaves REPO_ROOT dirty and contaminates this and every later PR. Reset
@@ -770,8 +770,8 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
         )
 
     # 4) Dry-run payload (the scored candidate set).
-    payload_path = _find_payload(env["DEEP_REVIEW_OUTPUT_DIR"])
-    delivery = env.get("DEEP_REVIEW_DELIVERY", "")
+    payload_path = _find_payload(env["CODE_GAUNTLET_OUTPUT_DIR"])
+    delivery = env.get("CODE_GAUNTLET_DELIVERY", "")
     if payload_path is None and "pr_comments" in [d.strip() for d in delivery.split(",")]:
         return InvokeResult(
             "failed",

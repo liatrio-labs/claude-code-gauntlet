@@ -5,7 +5,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   ok             -> canned "Headless config:" echo (8 bench knobs) + a success result
                     envelope (total_cost_usd 1.23, modelUsage, usage, empty
                     permission_denials), and a fake post-review-payload.json under
-                    $DEEP_REVIEW_OUTPUT_DIR.
+                    $CODE_GAUNTLET_OUTPUT_DIR.
   hang           -> record our process-group id, then sleep well past any test timeout.
   asks           -> echo + envelope whose permission_denials names AskUserQuestion.
   badecho        -> partial echo (missing trivial_scope) in BOTH stdout and the envelope
@@ -13,7 +13,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   echo_in_result -> NO echo in stdout; the full block lives only in the envelope .result
                     (models a ``-p --output-format json`` run). + payload.
   echo_in_report -> NO echo in stdout or .result; the full block lives only in a collected
-                    report .md under $DEEP_REVIEW_OUTPUT_DIR. + payload.
+                    report .md under $CODE_GAUNTLET_OUTPUT_DIR. + payload.
   mutate_repo    -> write to FAKE_CLAUDE_MUTATE_PATH (inside the plugin repo), then behave
                     like ``ok`` — models a child self-healing the plugin mid-run.
 
@@ -29,7 +29,7 @@ import os
 import sys
 import time
 
-# The exact echo the real skill prints under DEEP_REVIEW_HEADLESS=1 (Task 3 format:
+# The exact echo the real skill prints under CODE_GAUNTLET_HEADLESS=1 (Task 3 format:
 # two-space indent, key=value (source), 8 knob lines under the header).
 ECHO_LINES = [
     "Headless config:",
@@ -74,7 +74,7 @@ def _envelope(permission_denials, result_text="Review complete. 3 findings poste
 
 
 def _write_payload():
-    output_dir = os.environ.get("DEEP_REVIEW_OUTPUT_DIR")
+    output_dir = os.environ.get("CODE_GAUNTLET_OUTPUT_DIR")
     if not output_dir:
         return
     os.makedirs(output_dir, exist_ok=True)
@@ -127,7 +127,7 @@ def _record_argv():
 
 def _write_report(lines):
     """Write a report .md carrying the echo block in its methodology section."""
-    output_dir = os.environ.get("DEEP_REVIEW_OUTPUT_DIR")
+    output_dir = os.environ.get("CODE_GAUNTLET_OUTPUT_DIR")
     if not output_dir:
         return
     os.makedirs(output_dir, exist_ok=True)

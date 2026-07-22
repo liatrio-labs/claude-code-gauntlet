@@ -129,7 +129,7 @@ def _clear_dir(directory):
 def _collect_artifacts(output_dir, pr_dir):
     """Move every produced artifact from the shared output dir into ``pr_dir``.
 
-    build_env points DEEP_REVIEW_OUTPUT_DIR at ``{run_dir}/output`` which is SHARED across
+    build_env points CODE_GAUNTLET_OUTPUT_DIR at ``{run_dir}/output`` which is SHARED across
     PRs; moving the artifacts out (payload, findings, report) leaves it empty for the next
     PR. Returns the moved names.
     """
@@ -630,12 +630,12 @@ def _resolve_child_model(tool, child_model):
 
 
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
-    env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 DEEP_REVIEW_* values
+    env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 CODE_GAUNTLET_* values
     env_fingerprint["timeout_s"] = timeout_s
     invocation = (
         "naive:single-pass max-turns={}".format(NAIVE_MAX_TURNS)
         if args.anchor == "naive"
-        else "headless:/deep-review"
+        else "headless:/code-gauntlet"
     )
     manifest = {
         "run_id": run_id,
@@ -777,7 +777,7 @@ def _score_only(run_id):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="bench/run.py",
-        description="Drive the deep-review skill over a tier's golden PRs and checkpoint outcomes.",
+        description="Drive the code-gauntlet skill over a tier's golden PRs and checkpoint outcomes. Tool labels and scorer keys keep their pre-rename deep-review-* names for measurement continuity.",
     )
     parser.add_argument("--tier", choices=["smoke", "subset", "holdout", "full"], help="which PR set to run")
     parser.add_argument("--runs", type=int, default=1, help="number of sequential runs (own dir each)")
