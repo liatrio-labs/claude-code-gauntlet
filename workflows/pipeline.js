@@ -2092,7 +2092,11 @@ async function discover(ctx, input) {
       return;
     }
     for (const f of list) {
-      f.agent = spec.agentType; // orchestrator-injected; mergeStage regroups on this
+      // Inject the SHORT agent name (canonical schema: 'bug-detector', not the dispatch
+      // agentType 'deep-review:bug-detector'). filterFindings matches short names for
+      // disagreement suppression / security escalation, and mergeStage regroups on this —
+      // the full prefix silently broke both on the live path.
+      f.agent = spec.agentType.split(':').pop();
       findings.push(f);
     }
     const nearCap = discoveryCap != null && (res.total_seen >= discoveryCap || list.length >= discoveryCap);
@@ -2158,15 +2162,26 @@ function mergeStage(discoverOut, meta) {
     ndjsonContents[a] = group.map((f) => JSON.stringify(f)).join('\n');
   }
 
-  // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched.
+  // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched — and
+  // merge()'s injectAgentField RE-STAMPS every finding's `.agent` to whichever string is
+  // in this list. discover() now injects the SHORT agent name onto findings (FIX 1: the
+  // full 'deep-review:' prefix broke filterFindings' short-name matching), so this list
+  // must match that short form too, or the `nd[agent]` lookup below misses for every
+  // agent (silently dropping all its findings) and injectAgentField would re-inject the
+  // long prefix, undoing FIX 1 downstream. discover()'s own fan-out list (`dispatched`)
+  // is still the full 'deep-review:<agent>' agentType (unaffected by FIX 1), so it is
+  // normalized here — Object.keys(ndjsonContents) is already short (built straight from
+  // findings' own .agent) and needs no normalization.
+  //
   // Prefer discover()'s own fan-out list (`dispatched`) so a zero-finding agent is
   // still counted as dispatched, distinguishable from one never dispatched at all
   // (disabled via agentFlags). Older/synthetic callers that omit `dispatched` fall back
   // to the agents that actually produced findings, and finally the full roster so an
   // empty run still yields an envelope.
+  const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
   const agents = Array.isArray(out.dispatched)
-    ? out.dispatched
-    : (Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.slice());
+    ? out.dispatched.map(shortAgentName)
+    : (Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.map(shortAgentName));
   return merge(ndjsonContents, {}, { ...M, agents });
 }
 
@@ -2583,9 +2598,20 @@ async function validateStage(ctx, input) {
 }
 
 function validatePrompt(inp, batch) {
-  const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
-  const ids = batch.map((f) => f.id).join(', ');
-  return `${ctxLine}Independently validate this batch of findings (ids: ${ids}). Attempt to disprove each and return { validations: [{ finding_id, confidence, justification }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
+  const ctxLine = inp.contextPath
+    ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
+    : '';
+  // Each finding carries its location + claim so the validator can open the right code
+  // (validator.md step 1: "Read the code at the file and line range specified"). Passing
+  // only ids left validators unable to locate anything — they scored blind.
+  const block = batch.map((f) => {
+    const range = f.line_end != null && f.line_end !== f.line_start
+      ? `${f.line_start}-${f.line_end}`
+      : `${f.line_start != null ? f.line_start : '?'}`;
+    const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}`;
+  }).join('\n');
+  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ finding_id, confidence, justification }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
 }
 
 // --- Phase 6: Filter --------------------------------------------------------
@@ -2617,18 +2643,24 @@ const CHALLENGE_SCHEMA = {
   required: ['confidence_claim_is_correct'],
 };
 
-// blindChallengeFields(finding) -> { title, description, code }
-// STRUCTURAL blindness guarantee: the blind challenger sees ONLY these three keys.
-// Selecting them explicitly (an allowlist, not a delete-list) means no confirming
-// context — evidence, origin, cross_file_refs, corroborated_by, the original agent's
-// reasoning — can ever reach the challenger, and stays impossible even if new
-// reasoning-bearing fields are added to findings later. Unit-tested both ways: the
-// returned object has exactly these keys and the built prompt leaks none of the rest.
+// blindChallengeFields(finding) -> { title, description, file, line_start, line_end }
+// STRUCTURAL blindness guarantee: the blind challenger sees ONLY these keys — the claim
+// (title/description) plus the LOCATION so it can open the raw code itself (challenger.md
+// has Read/Grep/LSP and is told to read the code at the location). Selecting them
+// explicitly (an allowlist, not a delete-list) means no confirming context — evidence,
+// origin, cross_file_refs, corroborated_by, the original agent's reasoning — can ever
+// reach the challenger, and stays impossible even if new reasoning-bearing fields are
+// added to findings later. The prior `code` field was never populated anywhere in the
+// pipeline, so the challenger always received an empty code block; location + the agent's
+// own tools replaces that dead field. Unit-tested both ways: the returned object has
+// exactly these keys and the built prompt leaks none of the rest.
 function blindChallengeFields(finding) {
   return {
     title: finding.title || '',
     description: finding.description || '',
-    code: finding.code || '',
+    file: finding.file || '',
+    line_start: finding.line_start != null ? finding.line_start : '',
+    line_end: finding.line_end != null ? finding.line_end : '',
   };
 }
 
@@ -2638,10 +2670,11 @@ function blindChallengeFields(finding) {
 // downstream; see applyChallenges thresholds). This targets the two noise clusters the
 // subset diagnosis surfaced: test-coverage "no test exists" negatives and
 // cross_file_impact claims that cite no in-diff evidence. Still fully blind — only
-// {title, description, code} reach the challenger.
+// {title, description, file, line_start, line_end} reach the challenger.
 function challengePrompt(finding) {
   const b = blindChallengeFields(finding);
-  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code below: find the specific lines it rests on and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context you were given — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
+  const range = b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`;
+  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code: the claim concerns ${b.file}:${range} — open that location and enough surrounding context yourself (Read/Grep/LSP), find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
 }
 
 // challengeStage(ctx, input) -> { findings, unverified, eliminated, gaps, stats, generated_at }
