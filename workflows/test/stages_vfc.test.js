@@ -104,6 +104,18 @@ test('validate: empty finding set dispatches nothing', async () => {
   assert.equal(out.stats.batches_dispatched, 0);
 });
 
+// Bug 1 regression: the dispatched prompt must embed each finding's file/line/description
+// so the validator can locate the code (validator.md step 1), not just its bare id.
+test('validate prompt embeds finding file, line, and description — not just the id', async () => {
+  const findings = [vFinding('F1', { file: 'SENTINEL_VALIDATE_FILE.js', line_start: 42, description: 'SENTINEL_VALIDATE_DESC' })];
+  const ctx = validateCtx();
+  await validateStage(ctx, { findings, limits: { validateBatch: 10 }, policy: {} });
+  const prompt = ctx.calls[0].prompt;
+  assert.match(prompt, /SENTINEL_VALIDATE_FILE\.js/);
+  assert.match(prompt, /42/);
+  assert.match(prompt, /SENTINEL_VALIDATE_DESC/);
+});
+
 // --- Phase 6: Filter --------------------------------------------------------
 
 function freshFilterInput() {

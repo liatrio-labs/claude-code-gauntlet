@@ -264,7 +264,11 @@ export async function discover(ctx, input) {
       return;
     }
     for (const f of list) {
-      f.agent = spec.agentType; // orchestrator-injected; mergeStage regroups on this
+      // Inject the SHORT agent name (canonical schema: 'bug-detector', not the dispatch
+      // agentType 'deep-review:bug-detector'). filterFindings matches short names for
+      // disagreement suppression / security escalation, and mergeStage regroups on this —
+      // the full prefix silently broke both on the live path.
+      f.agent = spec.agentType.split(':').pop();
       findings.push(f);
     }
     const nearCap = discoveryCap != null && (res.total_seen >= discoveryCap || list.length >= discoveryCap);
@@ -330,15 +334,26 @@ export function mergeStage(discoverOut, meta) {
     ndjsonContents[a] = group.map((f) => JSON.stringify(f)).join('\n');
   }
 
-  // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched.
+  // agents drives merge()'s per-agent iteration AND methodology.agents_dispatched — and
+  // merge()'s injectAgentField RE-STAMPS every finding's `.agent` to whichever string is
+  // in this list. discover() now injects the SHORT agent name onto findings (FIX 1: the
+  // full 'deep-review:' prefix broke filterFindings' short-name matching), so this list
+  // must match that short form too, or the `nd[agent]` lookup below misses for every
+  // agent (silently dropping all its findings) and injectAgentField would re-inject the
+  // long prefix, undoing FIX 1 downstream. discover()'s own fan-out list (`dispatched`)
+  // is still the full 'deep-review:<agent>' agentType (unaffected by FIX 1), so it is
+  // normalized here — Object.keys(ndjsonContents) is already short (built straight from
+  // findings' own .agent) and needs no normalization.
+  //
   // Prefer discover()'s own fan-out list (`dispatched`) so a zero-finding agent is
   // still counted as dispatched, distinguishable from one never dispatched at all
   // (disabled via agentFlags). Older/synthetic callers that omit `dispatched` fall back
   // to the agents that actually produced findings, and finally the full roster so an
   // empty run still yields an envelope.
+  const shortAgentName = (a) => (typeof a === 'string' ? a.split(':').pop() : a);
   const agents = Array.isArray(out.dispatched)
-    ? out.dispatched
-    : (Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.slice());
+    ? out.dispatched.map(shortAgentName)
+    : (Object.keys(ndjsonContents).length ? Object.keys(ndjsonContents) : AGENTS.map(shortAgentName));
   return merge(ndjsonContents, {}, { ...M, agents });
 }
 
@@ -755,9 +770,20 @@ export async function validateStage(ctx, input) {
 }
 
 function validatePrompt(inp, batch) {
-  const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
-  const ids = batch.map((f) => f.id).join(', ');
-  return `${ctxLine}Independently validate this batch of findings (ids: ${ids}). Attempt to disprove each and return { validations: [{ finding_id, confidence, justification }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
+  const ctxLine = inp.contextPath
+    ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
+    : '';
+  // Each finding carries its location + claim so the validator can open the right code
+  // (validator.md step 1: "Read the code at the file and line range specified"). Passing
+  // only ids left validators unable to locate anything — they scored blind.
+  const block = batch.map((f) => {
+    const range = f.line_end != null && f.line_end !== f.line_start
+      ? `${f.line_start}-${f.line_end}`
+      : `${f.line_start != null ? f.line_start : '?'}`;
+    const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
+    return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}`;
+  }).join('\n');
+  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ finding_id, confidence, justification }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
 }
 
 // --- Phase 6: Filter --------------------------------------------------------

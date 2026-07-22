@@ -45,6 +45,18 @@ test('null member becomes a gap + degrades its dimension, siblings survive', asy
   assert.ok(out.degraded.includes('security'));
 });
 
+// Bug 3 regression: discover must inject the SHORT agent name ('bug-detector'), not the
+// full dispatch agentType ('deep-review:bug-detector') — filterFindings and mergeStage
+// both match/regroup on the short name, and the prefix silently broke both live.
+test('discover injects the SHORT agent name onto findings, not the dispatch agentType', async () => {
+  const ctx = fakeCtx({
+    byAgent: { 'deep-review:bug-detector': { findings: [{ id: 'F1' }], complete: true, total_seen: 1 } },
+  });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  const f1 = out.findings.find((f) => f.id === 'F1');
+  assert.equal(f1.agent, 'bug-detector');
+});
+
 test('a nulled multi-dimension agent degrades every dimension it covers', async () => {
   const ctx = fakeCtx({ nulls: ['deep-review:conventions-and-intent'] });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
@@ -228,9 +240,12 @@ test('mergeStage: agents_dispatched counts a zero-finding agent, distinct from n
   // deep-review:code-simplifier was dispatched (discover() attempted it) but produced
   // zero findings; deep-review:type-design-analyzer was never in `dispatched` at all
   // (e.g. disabled via agentFlags). agents_dispatched must include the former, not the latter.
+  // `dispatched` mirrors discover()'s real output (full 'deep-review:' agentType strings,
+  // unaffected by FIX 1); mergeStage normalizes it to the SHORT form to match findings'
+  // own (short, post-FIX-1) .agent field, so agents_dispatched comes out short too.
   const discoverOut = {
     findings: [
-      { id: 'F1', file: 'a.js', line_start: 1, title: 't1', description: 'd1', severity: 'high', confidence: 'high', dimension: 'bug', agent: 'deep-review:bug-detector' },
+      { id: 'F1', file: 'a.js', line_start: 1, title: 't1', description: 'd1', severity: 'high', confidence: 'high', dimension: 'bug', agent: 'bug-detector' },
     ],
     gaps: [],
     degraded: [],
@@ -238,6 +253,6 @@ test('mergeStage: agents_dispatched counts a zero-finding agent, distinct from n
   };
   const meta = { base_branch: 'main', head_sha: 'abc123', pr_number: 7, owner: 'o', repo: 'r' };
   const env = mergeStage(discoverOut, meta);
-  assert.deepEqual([...env.methodology.agents_dispatched].sort(), ['deep-review:bug-detector', 'deep-review:code-simplifier']);
-  assert.ok(!env.methodology.agents_dispatched.includes('deep-review:type-design-analyzer'));
+  assert.deepEqual([...env.methodology.agents_dispatched].sort(), ['bug-detector', 'code-simplifier']);
+  assert.ok(!env.methodology.agents_dispatched.includes('type-design-analyzer'));
 });
