@@ -19,9 +19,10 @@ The dispatch prompt names the target path(s) and carries a payload as a single J
 line after the `PAYLOAD_JSON:` marker. Parse that line, then persist. Two payload
 shapes occur:
 
-- **Final artifacts** — an object `{ findings, report, checkpoints }`: write `findings`
-  as pretty JSON to the findings path, `report` verbatim to the report markdown path,
-  and `checkpoints` as JSON to the checkpoint path.
+- **Final artifacts** — an object `{ findings, postReview, report, checkpoints }`: write
+  `findings` as pretty JSON to the findings path, `postReview` (the pre-selected PR-comment
+  delivery set) as pretty JSON to the post-review path, `report` verbatim to the report
+  markdown path, and `checkpoints` as JSON to the checkpoint path.
 - **Verify slice inputs** — an array of `{ path, content }` entries: for each entry,
   write its `content` as JSON to its `path`.
 
