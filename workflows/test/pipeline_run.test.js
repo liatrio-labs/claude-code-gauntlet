@@ -23,6 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   runWith, summarize, reportStage, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
+  coarsenLimits,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
@@ -83,6 +84,55 @@ test('sandbox parity: full pipeline runs ok with node-only globals (structuredCl
 });
 
 // --- Validate dispatch schema is object-rooted (Messages API contract) -------
+
+// --- Agent-count guard wiring (coarsenLimits applied by runWith) -------------
+
+test('agent-count guard: benchmark-scale inputs leave the limits untouched (coarsening is inert)', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  // 2 findings against validateBatch 25 / verifySliceSize 100 / challengeCap 40: the
+  // dispatch counts are exactly what the RAW limits produce — the guard never fired.
+  assert.equal(ctx.calls.filter((t) => (t.label || '').startsWith('verify-slice-')).length, 1);
+  assert.equal(ctx.calls.filter((t) => (t.label || '').startsWith('validate-batch-')).length, 1);
+  assert.equal(ctx.calls.filter((t) => (t.label || '').startsWith('challenge-')).length, 2);
+});
+
+test('agent-count guard: a pathological changed-file count coarsens the summarize bucket at entry', async () => {
+  const changedFiles = Array.from({ length: 20000 }, (_, i) => `src/f${i}.js`);
+  const args = validArgs({
+    changedFiles,
+    changedLines: 100000,
+    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 1 },
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  const eff = coarsenLimits(args.limits, changedFiles.length, 0);
+  assert.ok(eff.summarizeBucketSize > 1, 'guard must fire for this input');
+  const bucketCalls = ctx.calls.filter((t) => (t.label || '').startsWith('summarize-bucket-')).length;
+  assert.equal(bucketCalls, Math.ceil(changedFiles.length / eff.summarizeBucketSize));
+  assert.ok(bucketCalls + 10 < 900, 'summarize fan-out stays under the platform guard');
+});
+
+test('agent-count guard: a pathological finding count coarsens validate batches after merge', async () => {
+  // 1000 distinct findings, verifySliceSize large enough for ONE slice (the mock echo
+  // only trusts single-slice runs), validateBatch 1 so the validate term (1000) alone
+  // trips the guard. Post-merge coarsening must shrink the validate fan-out.
+  const findings = Array.from({ length: 1000 }, (_, i) => makeFinding(`F${i}`));
+  const args = validArgs({
+    limits: { validateBatch: 1, verifySliceSize: 2000, challengeCap: 40, summarizeBucketSize: 20 },
+  });
+  const ctx = makeCtx(args, { findings });
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  const eff = coarsenLimits(args.limits, 0, findings.length);
+  assert.ok(eff.validateBatch > 1, 'guard must fire for this input');
+  const batchCalls = ctx.calls.filter((t) => (t.label || '').startsWith('validate-batch-')).length;
+  assert.equal(batchCalls, Math.ceil(findings.length / eff.validateBatch));
+  assert.ok(batchCalls < 900, 'validate fan-out stays under the platform guard');
+});
 
 test('every stage dispatch uses an object-rooted schema (no array-rooted 400)', async () => {
   // The Messages API rejects an array-rooted tool input_schema (the VALIDATE_SCHEMA 400

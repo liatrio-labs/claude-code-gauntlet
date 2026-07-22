@@ -3112,7 +3112,13 @@ async function runWith(ctx, rawArgs) {
   }
 
   const c = ctx || defaultCtx();
-  const limits = A.limits || {};
+  // Agent-count guard: coarsenLimits is applied at the two points its inputs exist.
+  // The changed-file count is known at entry (bounds the summarize term); the finding
+  // count exists only after merge, where the verify/validate/challenge terms get
+  // re-coarsened. At or below benchmark scale the worst case sits far under the guard,
+  // so both calls return the limits values unchanged.
+  const nChangedFiles = (A.changedFiles || []).length;
+  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/deep-review-context-${A.headShaShort}.md`;
   const checkpoints = readCheckpoints(c, A);
@@ -3147,6 +3153,10 @@ async function runWith(ctx, rawArgs) {
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
     }));
+
+    // The finding count now exists — re-coarsen so verify slices, validate batches,
+    // and the challenge cap keep the remaining worst-case fan-out under the guard.
+    limits = coarsenLimits(limits, nChangedFiles, (mergeOut.findings || []).length);
 
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
