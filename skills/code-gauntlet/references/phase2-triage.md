@@ -303,7 +303,7 @@ Never use `grep` or `find` from Bash for AI detection.
 
 ## 2l. Determine Review Dimensions
 
-All on by default unless REVIEW.md disables them. In **Optimized** mode, all agents use Sonnet except security-reviewer (always Opus). In **Frontier** mode, all agents use Opus.
+All on by default unless REVIEW.md disables them. In **Optimized** mode, all agents use Sonnet except security-reviewer (always Opus). In **Frontier** mode the `frontier` flag currently upgrades only the blind challenger (per `resolvePolicy`); discovery agents keep their Optimized models. Wider frontier coverage is research-pending.
 
 Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no new types).
 

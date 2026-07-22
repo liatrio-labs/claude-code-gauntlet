@@ -61,6 +61,28 @@ jobs:
       - name: Run pytest
         run: python -m pytest tests/ -q
 
+  workflow-tests:
+    name: Run Workflow JS Tests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Run node test suite
+        run: node --test workflows/test/*.test.js
+
+      - name: Verify committed bundle matches a fresh build
+        run: |
+          node workflows/build.js
+          git diff --exit-code workflows/pipeline.js
+
   bench-tests:
     name: Run Bench Self-Tests
     runs-on: ubuntu-latest

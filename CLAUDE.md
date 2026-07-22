@@ -56,7 +56,7 @@ SKILL.md derives `{plugin_root}` as two levels above the skill base directory. S
 ## Tests
 
 - **Python:** pytest with `unittest.TestCase` style. Run: `python -m pytest tests/ -q`. The suite covers every retained pipeline script (`verify_findings.py`, `filter_findings.py`, `post_review.py`, `merge_findings.py`, `finding_dedup.py`, `apply_validations.py`, `apply_challenges.py`, `validate_ndjson.py`) plus the JS/Python boundary: `tests/test_parity_fixtures.py` (Python twin == golden), `tests/test_bundle_fresh.py` (committed bundle == fresh build, import-free), `tests/test_boundary_parity.py`, `tests/test_dimensions_registry.py` (CLAUDE.md dimensions ⇄ registry).
-- **JS:** `node --test workflows/test/` (unit + orchestration-contract + parity). Dual-runtime golden fixtures live in `tests/fixtures/parity/<script>/<case>/{input,expected}.json`; the recorder is `workflows/test/tools/record_parity.py`.
+- **JS:** `node --test workflows/test/*.test.js` (unit + orchestration-contract + parity; the bare directory form is not a valid `node --test` target on node 24). Dual-runtime golden fixtures live in `tests/fixtures/parity/<script>/<case>/{input,expected}.json`; the recorder is `workflows/test/tools/record_parity.py`.
 
 ## Output directory convention
 
