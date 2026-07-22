@@ -99,7 +99,7 @@ Generate a root REVIEW.md with 8–10 rules drawn from the detected stack and se
 medium
 
 ## Model Tier
-frontier
+optimized
 ```
 
 The research consensus: start at confidence 85 and severity medium for the first 2–4 weeks. Lower thresholds after reviewing acceptance rates. Document this in a comment above the thresholds block.

@@ -13,7 +13,7 @@ Read once at Phase 1 entry. Every value is echoed in a `Headless config:` block 
 | Variable | Values (headless default) | Pins |
 |---|---|---|
 | `CODE_GAUNTLET_HEADLESS` | `1` | master switch |
-| `CODE_GAUNTLET_MODEL_TIER` | `optimized`\|`frontier` (`optimized`) | Phase 1 gate (a) |
+| `CODE_GAUNTLET_MODEL_TIER` | `optimized` (`optimized`) — the single benchmarked policy; any other value fails loud | Phase 1 gate (a) |
 | `CODE_GAUNTLET_DELIVERY` | subset of `chat,pr_comments,markdown` (`markdown`) | Phase 1 gate (b); `pr_comments` illegal for local targets |
 | `CODE_GAUNTLET_POST_MODE` | `dry-run`\|`live` (`dry-run`) | whether post_review.py gets `--dry-run`; post_review.py also reads this var directly and self-enforces dry-run (belt-and-braces) |
 | `CODE_GAUNTLET_PR_COMMENT_CAP` | int (`6`) | Phase 8 Stage 1 cap; threaded into `limits.deliveryCap` so the workflow's `selectDelivery` applies it; bench sets 25 (flood guard) |
@@ -96,7 +96,7 @@ Headless config:
   trivial_scope=full (env)
 ```
 
-The nine echoed knobs are every variable except the master switch `CODE_GAUNTLET_HEADLESS`. The example shows a bench-configured run (env overrides throughout) except `delivery_tier`, which bench leaves unset so it resolves to the `all` default — the benchmark posts every challenge-survivor, which is the intended default. A run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `model_tier=frontier (review_md)`.
+The nine echoed knobs are every variable except the master switch `CODE_GAUNTLET_HEADLESS`. The example shows a bench-configured run (env overrides throughout) except `delivery_tier`, which bench leaves unset so it resolves to the `all` default — the benchmark posts every challenge-survivor, which is the intended default. A run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `pr_comment_cap=10 (review_md)`.
 
 **Emit the block in three places, verbatim and identical:** (1) Phase 1 stdout (as above); (2) the markdown report's methodology section; and (3) the **final response message** of the run. The three copies must be byte-identical. The final-response copy is the machine-parsed receipt for `-p --output-format json` runs: intermediate-turn stdout is not captured in the result envelope, so only the last message survives in `.result`. A runner that cannot see Phase 1 stdout therefore recovers the receipt from the final message, or from the collected report markdown — all three carry the same block so the receipt is verifiable regardless of which output the runner can observe.
 

@@ -39,11 +39,9 @@ export function resolvePolicy(agentType, opts = {}) {
     return { model: opts.subagentModelEnv, note: 'CLAUDE_CODE_SUBAGENT_MODEL override — model policy bypassed' };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);
-  let model = dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet';
-  let note = '';
-  if (opts.frontier && (agentType.endsWith('challenger'))) { // frontier stage set: challenger (dormant; research-pending others)
-    model = opts.frontierModelId || model; // full model-id string only (Fable alias Phase-0 test 8 deferred)
-    note = 'frontier upgrade';
-  }
-  return { model, note };
+  // Single benchmarked policy: discovery on sonnet with security-reviewer's opus
+  // override, stage agents per STAGE_DEFAULTS. Alternate model modes (fable) are
+  // roadmap work (issue #17 V3.2) and land behind their own paired measurement.
+  const model = dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet';
+  return { model, note: '' };
 }

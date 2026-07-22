@@ -209,7 +209,7 @@ If ALL files are low-risk AND total lines <50, ask Light review vs Full review (
 
 ## 2f. Change Summary (now the workflow's Summarize stage)
 
-The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet by default; the `frontier` flag does **not** upgrade it, only the challenger) and threads the result to the report writer. The skill neither dispatches a summarizer nor writes the summary into the context file.
+The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet) and threads the result to the report writer. The skill neither dispatches a summarizer nor writes the summary into the context file.
 
 For reference, the Summarize stage produces a 3–5 sentence summary of what the change *claims* to do, its rationale, and its risk profile, framed strictly as claims (never "clean", "correct", "safe", "straightforward", "trivial", or "verbatim" — the summary must never conclude a refactoring is correct). The change-summarizer agent definition holds the authoritative framing rules.
 
@@ -303,7 +303,7 @@ Never use `grep` or `find` from Bash for AI detection.
 
 ## 2l. Determine Review Dimensions
 
-All on by default unless REVIEW.md disables them. In **Optimized** mode, all agents use Sonnet except security-reviewer (always Opus). In **Frontier** mode the `frontier` flag currently upgrades only the blind challenger (per `resolvePolicy`); discovery agents keep their Optimized models. Wider frontier coverage is research-pending.
+All on by default unless REVIEW.md disables them. All agents use Sonnet except security-reviewer (always Opus) — the single benchmarked model policy.
 
 Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no new types).
 
@@ -341,7 +341,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `diffPath` | `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch` |
 | `changedFilesPath` | `{output_dir}/code-gauntlet-files-{head_sha_short}.json` |
 | `agentFlags` | map of conditional-dimension flags (all nine dimensions are unconditional today, so `{}` unless REVIEW.md gates a future conditional dimension) |
-| `policy` | `{ tier, frontier, frontierModelId, subagentModel }` — see below |
+| `policy` | `{ tier, subagentModel }` — see below |
 | `limits` | `{ summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, schemaFailureLimit: 3, verifySliceSize: 200, deliveryCap }` (override from REVIEW.md if set) |
 | `delivery` | `{ tier: "all" \| "main_only" }` — the Phase 8 PR-comment tier (default `all`); optional (absent ⇒`all`) |
 
@@ -349,9 +349,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 
 **`policy` (model policy the workflow runs under):**
 
-- `tier` — `"optimized"` or `"frontier"`, from the Phase 1 review-mode answer.
-- `frontier` — `false` for Optimized, `true` for Frontier.
-- `frontierModelId` — `null` for Optimized; a **full model-id string** for Frontier (`validateArgs` rejects `frontier:true` with a missing id).
+- `tier` — always `"optimized"`, the single benchmarked policy (recorded from the `model_tier` knob; any other value fails loud in Phase 1). Alternate model modes are roadmap work (issue #17).
 - `subagentModel` — read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment (or `null`). **The workflow cannot read `process.env`**, so this capture is the only path for it. If set, warn the user and record it in the methodology — it silently overrides the entire per-stage model policy.
 
 **By-value inputs the in-memory stages need (the workflow has no disk, so paths alone are not enough):**

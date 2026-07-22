@@ -86,7 +86,7 @@ Start here. Loosen only after reviewing acceptance rate data.
 |---------|--------------|-----------|
 | Confidence Threshold | 85 | Above default 70 — surfaces only high-conviction findings while calibrating |
 | Severity Threshold | medium | Avoids the firehose of low-severity noise during week 1 |
-| Model Tier | frontier | Reasoning-heavy review agents require frontier capability |
+| Model Tier | optimized | The single benchmarked policy (Sonnet discovery, Opus for security) |
 
 Add this comment block above the thresholds in the generated REVIEW.md:
 
@@ -174,7 +174,7 @@ Root `REVIEW.md`:
 medium
 
 ## Model Tier
-frontier
+optimized
 
 ## Skip
 **/node_modules/**
@@ -220,7 +220,7 @@ Frontend subdirectory `src/REVIEW.md` (or `frontend/REVIEW.md`):
 
 ```markdown
 ## Model Tier
-frontier
+optimized
 
 ## Skip
 **/__mocks__/**/*.json
@@ -272,7 +272,7 @@ Root `REVIEW.md`:
 medium
 
 ## Model Tier
-frontier
+optimized
 
 ## Skip
 **/__pycache__/**
@@ -317,7 +317,7 @@ Backend subdirectory `backend/REVIEW.md`:
 
 ```markdown
 ## Model Tier
-frontier
+optimized
 
 ## Skip
 **/fixtures/**/*.json
@@ -372,7 +372,7 @@ Root `REVIEW.md`:
 medium
 
 ## Model Tier
-frontier
+optimized
 
 ## Skip
 **/vendor/**
@@ -439,7 +439,7 @@ Root `REVIEW.md`:
 medium
 
 ## Model Tier
-frontier
+optimized
 
 ## Skip
 **/target/**
@@ -490,7 +490,7 @@ Backend subdirectory (e.g., `src/main/java/REVIEW.md`):
 
 ```markdown
 ## Model Tier
-frontier
+optimized
 
 ## Skip
 **/test/**/*.sql

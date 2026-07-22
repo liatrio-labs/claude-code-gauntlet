@@ -131,7 +131,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 | Config key | Resolved when | Question if unresolved |
 |---|---|---|
-| `model_tier` | REVIEW.md sets it explicitly | Review mode question (see template below) |
+| `model_tier` | Always resolved — fixed to `optimized`, the single benchmarked policy (a REVIEW.md/env value other than `optimized` fails loud; alternate modes are roadmap #17) | Never asked |
 | `default_delivery` | REVIEW.md sets it explicitly | Delivery preference question (see template below) |
 | `delivery_tier` | Defaults to `all` (Recommended) — no REVIEW.md key, like the other policy knobs | Delivery-tier question (see template below), asked alongside the delivery question when the target is a PR/MR |
 | REVIEW.md presence | REVIEW.md exists in repo root | REVIEW.md setup question (see template below) |
@@ -147,24 +147,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ### Question templates
 
-**Review mode** (when `model_tier` not set in REVIEW.md):
-
-```
-{
-  question: "Which review mode?",
-  header: "Review Mode",
-  multiSelect: false,
-  options: [
-    { label: "Optimized", description: "Sonnet for most agents, Opus for security. Faster and ~40% cheaper." },
-    { label: "Frontier", description: "Frontier model behind the frontier flag (challenger upgraded). Maximum depth for high-stakes reviews." }
-  ]
-}
-```
-
-**This answer sets the workflow's model policy (the `frontier` flag).** It is not cosmetic — it is threaded into `args.policy` in Phase 2:
-
-- **Optimized** → `policy.tier = "optimized"`, `policy.frontier = false`, `policy.frontierModelId = null`.
-- **Frontier** → `policy.tier = "frontier"`, `policy.frontier = true`, and `policy.frontierModelId` **must** be set to a full model-id string. The workflow's `validateArgs` rejects `frontier: true` with a missing `frontierModelId` (no silent alias fallback — the Fable alias is Phase-0-deferred). The `frontier` flag currently upgrades the **challenger** stage only; discovery security-reviewer stays Opus and the other stages stay Sonnet.
+**Model policy** (never asked): `policy.tier = "optimized"` always — discovery agents on Sonnet with security-reviewer on Opus, the single configuration the benchmark numbers were measured under. A `model_tier` value other than `optimized` (from REVIEW.md or `CODE_GAUNTLET_MODEL_TIER`) fails loud. Alternate model modes (fable) are roadmap work tracked in issue #17 and will land behind their own paired measurement.
 
 **Delivery preference** (when `default_delivery` not set in REVIEW.md):
 
@@ -213,12 +196,12 @@ When the review target is local changes (not a PR/MR), omit the "PR comments" op
 }
 ```
 
-### Confirmation-only template (when REVIEW.md pre-configures both `model_tier` and `default_delivery`)
+### Confirmation-only template (when REVIEW.md pre-configures `default_delivery`)
 
 ```
 AskUserQuestion(
   questions: [{
-    question: "Ready to start. REVIEW.md configured: [mode] mode, delivering via [method]. Proceed?",
+    question: "Ready to start. REVIEW.md configured: delivering via [method]. Proceed?",
     header: "Review Configuration",
     multiSelect: false,
     options: [
@@ -229,17 +212,13 @@ AskUserQuestion(
 )
 ```
 
-If "No — change settings": clear REVIEW.md-resolved values and re-run the gate with all three questions (mode, delivery, REVIEW.md setup).
+If "No — change settings": clear REVIEW.md-resolved values and re-run the gate with the remaining questions (delivery, delivery tier, REVIEW.md setup).
 
 ### Combined call example (worst case — nothing pre-configured, no REVIEW.md)
 
 ```
 AskUserQuestion(
   questions: [
-    { question: "Which review mode?", header: "Review Mode", multiSelect: false, options: [
-        { label: "Optimized", description: "Sonnet for most agents, Opus for security. Faster and ~40% cheaper." },
-        { label: "Frontier", description: "All Opus agents. Maximum depth for high-stakes reviews." }
-    ]},
     { question: "How should I deliver the review results?", header: "Delivery", multiSelect: true, options: [
         { label: "Chat (Recommended)", description: "Full report in the conversation" },
         { label: "PR comments", description: "Inline comments on the PR" },

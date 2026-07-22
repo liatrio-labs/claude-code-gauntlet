@@ -25,7 +25,7 @@ Inline checks before any workflow run — no subagent dispatch. Read `references
 Before anything else, confirm the **`Workflow` tool is present in this session's available tools**. v3 orchestration is a single `Workflow` invocation; there is no in-session fallback. If `Workflow` is not available, print exactly:
 
 ```
-code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install code-gauntlet v2.x for older CLIs.
+code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
 ```
 
 and STOP. Do not attempt to reproduce the pipeline inline — the clean break to the workflow runtime is intentional.
@@ -68,9 +68,9 @@ Parse the user's input to determine the review target before eligibility checks 
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this gate is satisfied by the headless resolution above — the printed `Headless config:` block stands in for the interactive answers; do not present `AskUserQuestion`.
 
-Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUserQuestion` containing the unresolved items (review mode, delivery preference, REVIEW.md setup if missing). The **review-mode** answer sets the model policy the workflow runs under: **Optimized** → `policy.tier="optimized"`, `policy.frontier=false`; **Frontier** → `policy.tier="frontier"`, `policy.frontier=true`. When `frontier` is on you must also supply `policy.frontierModelId` (a full model-id string) in Phase 2 — the workflow rejects `frontier:true` without it. If REVIEW.md pre-configures both `model_tier` and `default_delivery`, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 2 (args) and Phase 8 (delivery).
+Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUserQuestion` containing the unresolved items (delivery preference, REVIEW.md setup if missing). The model policy is fixed: `policy.tier="optimized"` — the single benchmarked configuration (discovery on Sonnet with security-reviewer on Opus); a REVIEW.md/env `model_tier` value other than `optimized` fails loud. Alternate model modes are roadmap work (issue #17). If REVIEW.md pre-configures `default_delivery`, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 2 (args) and Phase 8 (delivery).
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` (which sets `policy.tier`/`policy.frontier`) and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` (which sets `policy.tier`; only `optimized` is valid) and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
 
 ---
 
@@ -132,7 +132,7 @@ Write the shared context to `{output_dir}/code-gauntlet-context-{head_sha_short}
 
 ### Assemble the args object and record environment overrides
 
-Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). **If it is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Set `policy.frontierModelId` to a full model-id string when `policy.frontier` is true. Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `CODE_GAUNTLET_DELIVERY_TIER`) and `deliveryCap` (from `CODE_GAUNTLET_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path.
+Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). **If it is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `CODE_GAUNTLET_DELIVERY_TIER`) and `deliveryCap` (from `CODE_GAUNTLET_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path.
 
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 
@@ -143,7 +143,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   repoRoot, outputDir, headShaShort, nonce, generatedAt,
   diffPath, changedFilesPath, reviewConfigPath,
   agentFlags: { ...conditional-dimension flags... },
-  policy: { tier, frontier, frontierModelId, subagentModel },
+  policy: { tier, subagentModel },
   limits: { summarizeBucketSize, validateBatch, challengeCap, schemaFailureLimit, verifySliceSize, deliveryCap },
   delivery: { tier: "all" | "main_only" },   // Phase 8 PR-comment tier (default "all"); consumed by selectDelivery
 
@@ -241,7 +241,7 @@ Deliver using the method(s) selected in Phase 1. **PR-comment selection is now t
 
 ### Print methodology
 
-After delivery, print the review methodology: **plugin version** (`.claude-plugin/plugin.json` `version`), **PIPELINE_VERSION** (the `version` in `workflows/pipeline.js` `meta`), **per-stage models** (derived from `resolvedPolicy` — `subagentModel` override if present, `frontier`/`frontierModelId`, else the S5 defaults: discovery Sonnet with security-reviewer Opus, validator/challenger/executor/report Sonnet), the **effective config** (mode, delivery, limits), and the `stats`/`gaps` from the return. If `CLAUDE_CODE_SUBAGENT_MODEL` was set, disclose it prominently — it overrode every per-stage model.
+After delivery, print the review methodology: **plugin version** (`.claude-plugin/plugin.json` `version`), **PIPELINE_VERSION** (the `PIPELINE_VERSION` constant in `workflows/pipeline.js`), **per-stage models** (derived from `resolvedPolicy` — `subagentModel` override if present, else the S5 defaults: discovery Sonnet with security-reviewer Opus, validator/challenger/executor/report Sonnet), the **effective config** (delivery, limits), and the `stats`/`gaps` from the return. If `CLAUDE_CODE_SUBAGENT_MODEL` was set, disclose it prominently — it overrode every per-stage model.
 
 ---
 

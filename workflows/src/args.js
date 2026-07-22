@@ -1,7 +1,8 @@
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
-// policy shape: { tier, frontier, frontierModelId, subagentModel }.
+// policy shape: { tier, subagentModel } — tier records the resolved model_tier knob
+// (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
 //   - policy.subagentModel is passed to registry.js's resolvePolicy() as opts.subagentModelEnv.
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
@@ -31,10 +32,6 @@ export function validateArgs(args) {
   // Only charset-check a present nonce (absence is already a REQUIRED error above).
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
-  }
-  // frontier:true demands an explicit full model-id string (Fable alias unconfirmed — no silent fallback).
-  if (args.policy && args.policy.frontier === true && !args.policy.frontierModelId) {
-    errors.push('policy.frontier is true but policy.frontierModelId is missing (a full model-id string is required)');
   }
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the

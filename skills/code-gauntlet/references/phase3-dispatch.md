@@ -50,7 +50,7 @@ The workflow threads eight stages inside one top-level try/catch, checkpointing 
 |  | **Select delivery** | pure `selectDelivery` applies `args.delivery.tier` (`all` ⇒ every survivor, `main_only` ⇒ main-tagged), ranks, and caps at `limits.deliveryCap` | — (deterministic glue, no dispatch) |
 |  | **Persist** | `artifact-writer` writes findings.json + report.md + post-review payload + checkpoints | throw/null → partial-artifacts gap, `artifactPaths` nulled |
 
-Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, report-writer, artifact-writer Sonnet. The `frontier` flag upgrades the challenger to `policy.frontierModelId`. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.
+Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, report-writer, artifact-writer Sonnet. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.
 
 ---
 

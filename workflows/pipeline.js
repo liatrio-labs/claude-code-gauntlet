@@ -1774,20 +1774,19 @@ function resolvePolicy(agentType, opts = {}) {
     return { model: opts.subagentModelEnv, note: 'CLAUDE_CODE_SUBAGENT_MODEL override — model policy bypassed' };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);
-  let model = dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet';
-  let note = '';
-  if (opts.frontier && (agentType.endsWith('challenger'))) { // frontier stage set: challenger (dormant; research-pending others)
-    model = opts.frontierModelId || model; // full model-id string only (Fable alias Phase-0 test 8 deferred)
-    note = 'frontier upgrade';
-  }
-  return { model, note };
+  // Single benchmarked policy: discovery on sonnet with security-reviewer's opus
+  // override, stage agents per STAGE_DEFAULTS. Alternate model modes (fable) are
+  // roadmap work (issue #17 V3.2) and land behind their own paired measurement.
+  const model = dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet';
+  return { model, note: '' };
 }
 
 // --- args.js ---
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
-// policy shape: { tier, frontier, frontierModelId, subagentModel }.
+// policy shape: { tier, subagentModel } — tier records the resolved model_tier knob
+// (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
 //   - policy.subagentModel is passed to registry.js's resolvePolicy() as opts.subagentModelEnv.
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
@@ -1817,10 +1816,6 @@ function validateArgs(args) {
   // Only charset-check a present nonce (absence is already a REQUIRED error above).
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
-  }
-  // frontier:true demands an explicit full model-id string (Fable alias unconfirmed — no silent fallback).
-  if (args.policy && args.policy.frontier === true && !args.policy.frontierModelId) {
-    errors.push('policy.frontier is true but policy.frontierModelId is missing (a full model-id string is required)');
   }
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the
@@ -1862,11 +1857,7 @@ function defaultCtx() {
 // Resolve the dispatch model for an agent type from the args-waist policy object —
 // the single place the policy shape maps onto resolvePolicy's opts.
 function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel }).model;
 }
 
 // Shared char budget for a single agent's by-value prompt payload. Above it, stages
@@ -3266,8 +3257,6 @@ async function runWith(ctx, rawArgs) {
       artifactPaths: writeOut.artifactPaths,
       resolvedPolicy: {
         subagentModel: policy.subagentModel || null,
-        frontier: !!policy.frontier,
-        frontierModelId: policy.frontierModelId || null,
       },
       // On persist success the resume state lives in artifactPaths.checkpoints — the
       // compact return carries only phase NAMES (never the findings bulk). If the writer

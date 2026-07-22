@@ -59,8 +59,8 @@ medium
 75
 
 ## Model Tier
-<!-- Default review mode. When set, skips the mode selection prompt. -->
-<!-- Options: optimized (Sonnet default, Opus for security) or frontier (all Opus) -->
+<!-- Only supported value: optimized (Sonnet default, Opus for security) — the single
+     benchmarked policy. Alternate modes are roadmap work (issue #17). -->
 optimized
 
 ## Default Delivery
@@ -154,12 +154,9 @@ Rules for per-dimension thresholds:
 
 ### Model Tier
 
-Controls which LLM models are used for review agents. Two modes are available:
+Records the model policy the review runs under. One value is supported:
 
-- `optimized` (default) — Sonnet for most agents, Opus only for security-reviewer. Faster and ~40% cheaper. Research shows the SWE-bench Verified gap between Opus and Sonnet is just 1.2 percentage points.
-- `frontier` — All agents use Opus. Maximum depth for high-stakes reviews.
-
-When set in REVIEW.md, the mode selection prompt is skipped during Phase 1. When not set, the user is prompted at the start of each review.
+- `optimized` (default and only valid value) — Sonnet for most agents, Opus for security-reviewer. This is the exact configuration the benchmark numbers were measured under; any other value fails loud. Alternate model modes are roadmap work (issue #17) and will land behind their own paired benchmark measurement.
 
 ### Default Delivery
 
@@ -216,7 +213,7 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 |---------|----------|-----------|
 | `confidence_threshold` | **Override** — subdirectory value replaces root | A module may need stricter or looser thresholds |
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
-| `model_tier` | **Override** — subdirectory value replaces root | A security-critical directory might always use frontier |
+| `model_tier` | **Override** — subdirectory value replaces root | Single valid value today (`optimized`), so effectively fixed; the override slot exists for future modes |
 | `default_delivery` | **Override** — subdirectory value replaces root | Unlikely to vary by directory, but supported for consistency |
 | `rules` | **Accumulate** — subdirectory rules add to root rules | Directory-specific conventions supplement project-wide ones |
 | `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |

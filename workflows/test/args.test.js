@@ -7,7 +7,7 @@ const good = {
   headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
   diffPath: '/r/.code-gauntlet/d.patch', changedFilesPath: '/r/.code-gauntlet/f.json',
   reviewConfigPath: null, agentFlags: {},
-  policy: { tier: 'optimized', frontier: false, frontierModelId: null, subagentModel: null },
+  policy: { tier: 'optimized', subagentModel: null },
   limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 },
 };
 
@@ -30,20 +30,11 @@ test('validateArgs reports every missing required field', () => {
   assert.equal(r.ok, false);
   assert.ok(r.errors.length >= 5);
 });
-test('validateArgs rejects frontier:true without a frontierModelId', () => {
-  const r = validateArgs({ ...good, policy: { tier: 'optimized', frontier: true, frontierModelId: null, subagentModel: null } });
-  assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /frontierModelId/);
-});
 test('ARGS_VERSION is 1', () => { assert.equal(ARGS_VERSION, 1); });
 test('validateArgs rejects an unrecognized mode', () => {
   const r = validateArgs({ ...good, mode: 'bogus' });
   assert.equal(r.ok, false);
   assert.match(r.errors.join(' '), /invalid mode: bogus/);
-});
-test('validateArgs accepts frontier:true with a valid frontierModelId', () => {
-  const r = validateArgs({ ...good, policy: { tier: 'optimized', frontier: true, frontierModelId: 'claude-fable-5', subagentModel: null } });
-  assert.deepEqual(r, { ok: true, errors: [] });
 });
 test('normalizeArgs(undefined) returns undefined without throwing', () => {
   assert.equal(normalizeArgs(undefined), undefined);

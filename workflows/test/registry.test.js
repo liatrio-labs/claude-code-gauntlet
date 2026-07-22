@@ -14,9 +14,10 @@ test('security-reviewer default is opus (S5 deviation)', () => {
 test('discovery default is sonnet', () => {
   assert.equal(resolvePolicy('code-gauntlet:bug-detector', {}).model, 'sonnet');
 });
-test('frontier upgrades challenger to the full model-id string (Fable alias unconfirmed)', () => {
-  const r = resolvePolicy('code-gauntlet:challenger', { frontier: true, frontierModelId: 'claude-fable-5' });
-  assert.equal(r.model, 'claude-fable-5');
+test('challenger resolves sonnet — the single benchmarked policy; no mode flag changes it (fable mode is roadmap #17 V3.2)', () => {
+  assert.equal(resolvePolicy('code-gauntlet:challenger', {}).model, 'sonnet');
+  // A stray legacy frontier flag in opts must be ignored, not resurrect an upgrade path.
+  assert.equal(resolvePolicy('code-gauntlet:challenger', { frontier: true, frontierModelId: 'claude-fable-5' }).model, 'sonnet');
 });
 test('CLAUDE_CODE_SUBAGENT_MODEL overrides everything and is flagged', () => {
   const r = resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5' });
