@@ -144,7 +144,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   diffPath, changedFilesPath, reviewConfigPath,
   agentFlags: { ...conditional-dimension flags... },
   policy: { tier, subagentModel },
-  limits: { summarizeBucketSize, validateBatch, challengeCap, schemaFailureLimit, verifySliceSize, deliveryCap },
+  limits: { summarizeBucketSize, validateBatch, challengeCap, verifySliceSize, deliveryCap },
   delivery: { tier: "all" | "main_only" },   // Phase 8 PR-comment tier (default "all"); consumed by selectDelivery
 
   // by-value inputs the in-memory stages need (the workflow has no disk):

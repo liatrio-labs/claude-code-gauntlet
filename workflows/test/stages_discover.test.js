@@ -167,6 +167,24 @@ test('coarsenLimits raises summarizeBucketSize so a pathological file count stil
   assert.ok(worstCaseAgentCount(coarse, 20000, 3000) < 900);          // converges despite the file count
 });
 
+test('absent challengeCap counts as challenge-every-finding (mirrors challengeStage), never as zero', () => {
+  // challengeStage defaults a missing/null cap to findings.length; the guard must
+  // count the same fan-out or it can skip coarsening the stage actually needs.
+  const noCap = { summarizeBucketSize: 20, validateBatch: 25, verifySliceSize: 200 };
+  const withCap = { ...noCap, challengeCap: 1000 };
+  assert.equal(worstCaseAgentCount(noCap, 0, 1000), worstCaseAgentCount(withCap, 0, 1000));
+  // 0 is a REAL cap of zero (also mirrors the stage), distinct from absent.
+  assert.ok(worstCaseAgentCount({ ...noCap, challengeCap: 0 }, 0, 1000) < worstCaseAgentCount(noCap, 0, 1000));
+  // With the cap absent and a pathological finding count, coarsening must fire and
+  // converge — under the old `|| 0` semantics the challenge term was invisible here.
+  const coarse = coarsenLimits(noCap, 0, 5000);
+  assert.ok(coarse.challengeCap != null, 'coarsening pins a concrete cap');
+  assert.ok(worstCaseAgentCount(coarse, 0, 5000) < 900);
+  // Present-cap behavior is byte-identical to the pre-fix semantics (benchmark shape).
+  const bench = { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 };
+  assert.deepEqual(coarsenLimits(bench, 23, 40), { ...bench });
+});
+
 // --- Supplementary: summarize (single vs bucketed) + mergeStage envelope ------
 
 function summarizeCtx({ agentImpl, parallelImpl } = {}) {

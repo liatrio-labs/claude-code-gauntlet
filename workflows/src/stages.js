@@ -598,6 +598,12 @@ const CHALLENGE_CAP_FLOOR = 5;    // never challenge fewer than this many findin
 
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 
+// Mirror challengeStage's cap semantics EXACTLY: an absent/null challengeCap means
+// "challenge every finding" (the stage defaults to findings.length), while 0 is a real
+// cap of zero. The guard math must never undercount the stage's actual fan-out.
+const effectiveChallengeCap = (L, findings) =>
+  Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
+
 // worstCaseAgentCount(limits, nFiles, nFindings) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate
 // batches + min(nFindings, challengeCap) challengers + 2 (report + writer).
@@ -608,7 +614,7 @@ export function worstCaseAgentCount(limits, nFiles, nFindings) {
   const summarizeCalls = ceilDiv(files, L.summarizeBucketSize) + 1;
   const verifyCalls = ceilDiv(findings, L.verifySliceSize);
   const validateCalls = ceilDiv(findings, L.validateBatch);
-  const challengeCalls = Math.min(findings, Math.max(0, L.challengeCap || 0));
+  const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
 }
 
@@ -638,15 +644,15 @@ export function coarsenLimits(limits, nFiles, nFindings) {
     }
     const verifyTerm = ceilDiv(findings, L.verifySliceSize);
     const validateTerm = ceilDiv(findings, L.validateBatch);
-    const challengeTerm = Math.min(findings, Math.max(0, L.challengeCap || 0));
+    const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     if (validateTerm >= verifyTerm && validateTerm >= challengeTerm) {
       L.validateBatch = Math.max(1, L.validateBatch || 1) * 2;
     } else if (verifyTerm >= validateTerm && verifyTerm >= challengeTerm) {
       L.verifySliceSize = Math.max(1, L.verifySliceSize || 1) * 2;
     } else {
       // Halve the EFFECTIVE cap (min(cap, findings)) so C strictly decreases even when
-      // the nominal cap already exceeds nFindings.
-      L.challengeCap = Math.max(CHALLENGE_CAP_FLOOR, Math.floor(Math.min(L.challengeCap || 0, findings) / 2));
+      // the nominal cap already exceeds nFindings — or is absent (= findings).
+      L.challengeCap = Math.max(CHALLENGE_CAP_FLOOR, Math.floor(Math.min(effectiveChallengeCap(L, findings), findings) / 2));
     }
   }
   return L;
