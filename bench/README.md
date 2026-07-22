@@ -1,6 +1,6 @@
-# bench — deep-review benchmark harness
+# bench — code-gauntlet benchmark harness
 
-`bench/` drives the deep-review skill headlessly against a curated set of
+`bench/` drives the code-gauntlet skill (formerly deep-review) headlessly against a curated set of
 golden PRs from [withmartian/code-review-benchmark](https://github.com/withmartian/code-review-benchmark)
 (MIT — see [`vendor/VENDORED.md`](vendor/VENDORED.md)), then scores the
 results in three buckets against a pinned LLM judge. It exists to give every
@@ -10,8 +10,8 @@ hurt," instead of vibes.
 ## Quickstart
 
 ```bash
-git clone https://github.com/liatrio-labs/claude-deep-review.git
-cd claude-deep-review
+git clone https://github.com/liatrio-labs/claude-code-gauntlet.git
+cd claude-code-gauntlet
 cp bench/.env.example bench/.env
 # edit bench/.env and set ANTHROPIC_API_KEY=sk-ant-...
 python3 bench/run.py --tier smoke
@@ -34,7 +34,7 @@ touches every repo in the golden set; `--tier smoke`/`--tier subset` touch a
 subset. `bench/workspace/` is gitignored — nothing here is committed.
 
 It also spends real API credit. Measured on the smoke tier (3 PRs): a
-full-skill deep-review pass costs roughly **$8/PR**, a `--anchor naive`
+full-skill code-gauntlet pass costs roughly **$8/PR**, a `--anchor naive`
 bare single-pass review costs roughly **$0.50/PR**, and scoring one run
 (dedup + judge + adjudicator) costs roughly **$2**. `--tier subset` (15
 PRs) and `--tier full` (50 PRs) scale up from there — budget accordingly
@@ -71,7 +71,7 @@ python3 bench/run.py --tier smoke|subset|full [--runs N] [--fidelity dry-run|liv
 | `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted`). |
 | `--retry-failed` | `RUN_ID` | — | Re-run only the `timeout`/`failed` PRs of `RUN_ID`. |
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
-| `--anchor` | `naive` | — | Instead of the deep-review skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
+| `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
 | `--score-only` | `RUN_ID` | — | Re-score an already-captured run's candidates without re-invoking `claude`/`gh` (used for repeated judge re-scoring of the same candidate set). |
 
 At most one of `--resume` / `--retry-failed` / `--score-only` may be given

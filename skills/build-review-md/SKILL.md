@@ -1,7 +1,7 @@
 ---
 name: build-review-md
 description: |
-  Use this skill when the user wants to create or set up a REVIEW.md configuration file for their repository. Trigger for ANY of these: (1) user says "create REVIEW.md", "set up REVIEW.md", or "configure review rules", (2) deep-review Phase 2c detects no REVIEW.md and suggests creating one, (3) user wants to customize what the deep-review skill focuses on or ignores, (4) user asks "how do I configure the reviewer" or "how do I set review rules". Do NOT trigger for: reviewing code (use deep-review), explaining what REVIEW.md does in the abstract, or editing an already-complete REVIEW.md the user is satisfied with. This skill NEVER loads into the main deep-review context — it is a standalone configuration wizard.
+  Use this skill when the user wants to create or set up a REVIEW.md configuration file for their repository. Trigger for ANY of these: (1) user says "create REVIEW.md", "set up REVIEW.md", or "configure review rules", (2) code-gauntlet Phase 2c detects no REVIEW.md and suggests creating one, (3) user wants to customize what the code-gauntlet skill focuses on or ignores, (4) user asks "how do I configure the reviewer" or "how do I set review rules". Do NOT trigger for: reviewing code (use code-gauntlet), explaining what REVIEW.md does in the abstract, or editing an already-complete REVIEW.md the user is satisfied with. This skill NEVER loads into the main code-gauntlet context — it is a standalone configuration wizard.
 ---
 
 # REVIEW.md Builder
@@ -99,7 +99,7 @@ Generate a root REVIEW.md with 8–10 rules drawn from the detected stack and se
 medium
 
 ## Model Tier
-frontier
+optimized
 ```
 
 The research consensus: start at confidence 85 and severity medium for the first 2–4 weeks. Lower thresholds after reviewing acceptance rates. Document this in a comment above the thresholds block.
@@ -204,10 +204,10 @@ Files written:
 Thresholds are conservative for week 1. After 2–4 weeks, review your acceptance rate:
 - If >60% of findings result in fixes, lower severity threshold to "low"
 - If false positives accumulate, raise confidence threshold to 90
-- Run `deep-review` on any open PR to see results immediately
+- Run `code-gauntlet` on any open PR to see results immediately
 ```
 
-Do not offer to run a review or explain the review process. The user can trigger deep-review separately.
+Do not offer to run a review or explain the review process. The user can trigger code-gauntlet separately.
 
 ---
 

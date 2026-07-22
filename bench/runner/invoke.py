@@ -1,12 +1,12 @@
 """Headless invoker for a single golden PR (spec H3 "Per-PR flow", H8 hang guard).
 
 ``build_env`` assembles the pinned, isolated invocation context: the 9 bench
-``DEEP_REVIEW_*`` knobs, the per-run output dir, ``GH_REPO``, and an isolated
+``CODE_GAUNTLET_*`` knobs, the per-run output dir, ``GH_REPO``, and an isolated
 ``HOME``/``CLAUDE_CONFIG_DIR`` so operator config can never leak in. It also pre-seeds
 the isolated ``.claude.json`` with the worktree marked trusted -- a headless run cannot
 answer a first-run trust dialog, so it must be accepted ahead of time.
 
-``invoke_review`` runs ``claude -p "/deep-review <n>"`` under that context in its own
+``invoke_review`` runs ``claude -p "/code-gauntlet:code-gauntlet <n>"`` under that context in its own
 process session, with a watchdog that kills the whole process group on timeout (no
 orphans), scans the output for AskUserQuestion (defense-in-depth -> ``invalid``),
 verifies the ``Headless config:`` echo receipt (accepted from raw stdout, the result
@@ -20,6 +20,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,7 +34,7 @@ __all__ = [
     "pr_dir_name",
 ]
 
-# Repo root == the deep-review plugin dir. bench/runner/invoke.py -> parents[2].
+# Repo root == the code-gauntlet plugin dir. bench/runner/invoke.py -> parents[2].
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # The metered-key .env (repo-root-relative). build_env loads ANTHROPIC_API_KEY from
@@ -43,19 +44,19 @@ ENV_PATH = REPO_ROOT / "bench" / ".env"
 # The 9 bench values (spec H2 table, bench overrides): pinned explicitly on every run
 # so the harness is drift-immune even though the skill defines its own defaults.
 BENCH_ENV = {
-    "DEEP_REVIEW_HEADLESS": "1",
-    "DEEP_REVIEW_MODEL_TIER": "optimized",
-    "DEEP_REVIEW_DELIVERY": "pr_comments,markdown",
-    "DEEP_REVIEW_POST_MODE": "dry-run",
-    "DEEP_REVIEW_PR_COMMENT_CAP": "25",
-    "DEEP_REVIEW_DRAFT_POLICY": "review",
-    "DEEP_REVIEW_REVIEWED_POLICY": "full",
-    "DEEP_REVIEW_PR_NOT_FOUND_POLICY": "error",
-    "DEEP_REVIEW_TRIVIAL_SCOPE": "full",
+    "CODE_GAUNTLET_HEADLESS": "1",
+    "CODE_GAUNTLET_MODEL_TIER": "optimized",
+    "CODE_GAUNTLET_DELIVERY": "pr_comments,markdown",
+    "CODE_GAUNTLET_POST_MODE": "dry-run",
+    "CODE_GAUNTLET_PR_COMMENT_CAP": "25",
+    "CODE_GAUNTLET_DRAFT_POLICY": "review",
+    "CODE_GAUNTLET_REVIEWED_POLICY": "full",
+    "CODE_GAUNTLET_PR_NOT_FOUND_POLICY": "error",
+    "CODE_GAUNTLET_TRIVIAL_SCOPE": "full",
 }
 
 # The resolved-config receipt the runner asserts against (Task 3 echo format). Keys are
-# the 8 knob lines under the "Headless config:" header; DEEP_REVIEW_HEADLESS itself is
+# the 8 knob lines under the "Headless config:" header; CODE_GAUNTLET_HEADLESS itself is
 # the master switch and is not echoed as a knob. Values are the bench expectations.
 EXPECTED_ECHO = {
     "model_tier": "optimized",
@@ -69,6 +70,33 @@ EXPECTED_ECHO = {
 }
 
 _ASKUSERQUESTION_RE = re.compile(r'"(?:name|tool_name)"\s*:\s*"AskUserQuestion"')
+
+# The CLI prints this to stdout (ahead of the result envelope) when the main agent turn
+# ends while a tool it launched is still running as a background task, and that task
+# outlives the CLI's background-wait ceiling: e.g. "Background tasks still running after
+# 600s; terminating." For a headless review this means the Phase 3 Workflow ran detached
+# and was killed before Phase 8 delivered — so the config-echo receipt and payload are
+# absent for that reason, NOT a config mismatch. Matched ceiling-agnostically (the number
+# of seconds varies with CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS).
+_BG_TASKS_KILLED_RE = re.compile(r"Background tasks still running after\b")
+
+# v3 drives its pipeline through the Workflow tool, first exposed by the Claude Code CLI
+# in 2.1.154. A ``--tool deep-review-v3`` run pre-flights the child CLI's version and is
+# marked ``invalid`` (never scored) on an older/unreadable CLI, rather than silently
+# running a degraded review or hanging. v2 needs no such gate. See ``_v3_preflight``.
+V3_MIN_CLAUDE_VERSION = (2, 1, 154)
+_VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+# The slash command that triggers the review skill. It MUST be namespace-qualified as
+# ``<plugin>:<skill>`` (both are "code-gauntlet"): in the harness's pinned isolated context
+# (isolated HOME/CLAUDE_CONFIG_DIR + --plugin-dir, no --bare), Claude Code registers a
+# plugin skill's slash command only under its namespaced name. The bare/flat ``/code-gauntlet``
+# alias is not reliably registered there and resolves to "Unknown command: /code-gauntlet"
+# (num_turns 0, $0), which the runner then classes ``invalid``/``config_echo_mismatch`` --
+# the intermittent registration is why some children in a run failed and others did not.
+# Namespace-qualifying makes command resolution deterministic. See references/artifact 33
+# (P2b): skills are namespace-qualified in this isolation mode, unlike the flat --bare mode.
+SKILL_COMMAND = "code-gauntlet:code-gauntlet"
 
 
 @dataclass
@@ -267,8 +295,17 @@ def build_env(pr, run_dir, base_env):
     api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
     if api_key:
         env["ANTHROPIC_API_KEY"] = api_key
-    env["DEEP_REVIEW_OUTPUT_DIR"] = str(run_dir / "output")
+    env["CODE_GAUNTLET_OUTPUT_DIR"] = str(run_dir / "output")
     env["GH_REPO"] = "{}/{}".format(_owner(pr), _repo(pr))
+    # Uncap the CLI's "background tasks at exit" wait. A ``-p`` run blocks on any background
+    # task still running when the main turn ends, but only up to CLAUDE_CODE_PRINT_BG_WAIT_
+    # CEILING_MS (default 600000 = 600s since v2.1.182; docs: code.claude.com/docs/en/headless
+    # "Background tasks at exit"). The Phase 3 review Workflow can run detached and legitimately
+    # exceed 600s, so the default ceiling terminates it before Phase 8 delivers -- the whole run
+    # in smoke-20260719-190902-a14b4cc failed this way (all 3 PRs "workflow_backgrounded"). "0"
+    # waits without limit; the per-PR watchdog (invoke_review's timeout_s -> _kill_group) remains
+    # the sole time bound, so an unbounded wait cannot hang the run past that budget.
+    env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"] = "0"
 
     claude_home = _claude_home(run_dir, base_env)
     config_dir = claude_home / "config"
@@ -290,6 +327,101 @@ def _kill_group(proc):
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError, OSError):
         pass
+
+
+# ---------------------------------------------------------------- plugin integrity
+
+# Paths in the plugin repo the CONTROLLER/operator legitimately rewrites during a run (not
+# child contamination), excluded from the mutation guard so they never false-flag a clean
+# run:
+#   - bench/experiments.jsonl — the experiment ledger, appended by the controller every PR.
+#   - bench/report.html — the live dashboard, regenerated from the ledger by bench/report.py
+#     (a tracked file stamped with today's date + the plugin sha, so ANY regeneration dirties
+#     it). Operators run report.py mid-run to watch progress; without this exemption that
+#     regeneration lands in REPO_ROOT's `git status` while a review child is in-flight and is
+#     mis-attributed to it — invalidating a good (often long-running, expensive) PR as
+#     'plugin_mutated_by_child' and resetting the dashboard. It is NOT written by any review
+#     child (the pipeline writes every artifact to the absolute, gitignored {output_dir}; only
+#     report.py touches report.html), so it belongs with the ledger as controller/operator-owned.
+# Everything else changing means a child wrote into the plugin (self-healing mid-run), which
+# contaminates the measurement.
+_CONTROLLER_OWNED_PATHS = frozenset({"bench/experiments.jsonl", "bench/report.html"})
+
+
+def _git(args, repo_root):
+    """Run a git command in ``repo_root``; return ``(stdout, returncode)`` (rc=-1 on
+    launch failure). Never raises — the guard degrades to "cannot judge" instead."""
+    try:
+        proc = subprocess.run(
+            ["git", *args], cwd=str(repo_root), capture_output=True, text=True
+        )
+    except OSError:
+        return ("", -1)
+    return (proc.stdout, proc.returncode)
+
+
+def _parse_porcelain(text):
+    """Parse ``git status --porcelain`` into ``[(status_xy, path)]``.
+
+    Resolves rename/copy targets (``orig -> new`` -> ``new``) and strips the quotes git
+    adds around paths with special characters. Blank lines are ignored.
+    """
+    entries = []
+    for line in (text or "").splitlines():
+        if not line.strip():
+            continue
+        status, path = line[:2], line[3:]
+        if " -> " in path:  # rename/copy entry: 'orig -> new'
+            path = path.split(" -> ", 1)[1]
+        entries.append((status, path.strip().strip('"')))
+    return entries
+
+
+def _plugin_dirty_paths(repo_root):
+    """Set of paths currently dirty in the plugin repo — the pre-run BASELINE for the
+    mutation guard. Empty set on a clean repo; ``None`` when ``git status`` can't be read.
+
+    The guard compares against this so a legitimate pre-existing local edit (a dev's WIP,
+    or the controller's experiments.jsonl already modified) is never mistaken for — or
+    reset as — child contamination. Only NEW dirtiness a child introduces is flagged.
+    """
+    out, rc = _git(["status", "--porcelain"], repo_root)
+    if rc != 0:
+        return None
+    return {p for _s, p in _parse_porcelain(out)}
+
+
+def _plugin_mutations(repo_root, baseline_paths=frozenset()):
+    """Return child-caused changes ``[(status, path)]`` in the plugin repo: paths dirty
+    now that were NOT dirty in ``baseline_paths`` and are not controller-owned. ``None``
+    when ``git status`` can't be read (cannot judge — the caller then does not flag/reset)."""
+    out, rc = _git(["status", "--porcelain"], repo_root)
+    if rc != 0:
+        return None
+    baseline = baseline_paths or frozenset()
+    return [
+        (s, p) for (s, p) in _parse_porcelain(out)
+        if p not in _CONTROLLER_OWNED_PATHS and p not in baseline
+    ]
+
+
+def _reset_plugin_repo(repo_root, mutations):
+    """Undo child mutations to the plugin repo: delete untracked files/dirs, revert
+    tracked edits with ``git checkout --``. Controller-owned paths were already filtered
+    out (``_plugin_mutations``), so experiments.jsonl is never reverted."""
+    repo_root = Path(repo_root)
+    for status, path in mutations:
+        target = repo_root / path
+        if status.strip() == "??":  # untracked — checkout won't remove it
+            if target.is_dir():
+                shutil.rmtree(target, ignore_errors=True)
+            else:
+                try:
+                    target.unlink()
+                except OSError:
+                    pass
+        else:
+            _git(["checkout", "--", path], repo_root)
 
 
 def parse_result_envelope(text):
@@ -335,6 +467,17 @@ def _has_askuserquestion(raw_text, envelope):
             elif denial == "AskUserQuestion":
                 return True
     return bool(_ASKUSERQUESTION_RE.search(raw_text or ""))
+
+
+def _workflow_backgrounded(raw_text):
+    """True when the CLI killed a still-running background task at its wait ceiling.
+
+    Signature: the ``Background tasks still running after <n>s; terminating`` notice the
+    CLI prints ahead of the result envelope. For a headless review it means the Phase 3
+    Workflow ran detached and was terminated before Phase 8 — a distinct outcome from a
+    genuine config-echo mismatch, so the runner labels it ``workflow_backgrounded``.
+    """
+    return bool(_BG_TASKS_KILLED_RE.search(raw_text or ""))
 
 
 def _echo_in_text(text):
@@ -410,8 +553,63 @@ def _fail_reason(returncode, envelope):
     return "failed"
 
 
-def invoke_review(worktree, pr, run_dir, timeout_s=1800):
+def _claude_version(claude_bin):
+    """Return the child ``claude`` CLI version as ``(major, minor, patch)``, or None.
+
+    Runs ``claude --version`` and parses the first ``N.N.N`` it prints (real output is
+    ``2.1.154 (Claude Code)``). Any launch/parse failure yields None -- the caller treats
+    an unreadable version as "cannot confirm v3 support" and fails the run rather than
+    guessing which pipeline the CLI can honor.
+    """
+    try:
+        out = subprocess.run(
+            [claude_bin, "--version"], capture_output=True, text=True, timeout=10
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = _VERSION_RE.search((out.stdout or "") + (out.stderr or ""))
+    if not m:
+        return None
+    return tuple(int(g) for g in m.groups())
+
+
+def _fmt_version(version):
+    return ".".join(str(part) for part in version) if version else "unknown"
+
+
+def _v3_preflight(claude_bin):
+    """Return a failure reason when the child CLI cannot drive v3, else None.
+
+    v3 dispatches its pipeline through the Workflow tool, first exposed in Claude Code
+    ``2.1.154`` (``V3_MIN_CLAUDE_VERSION``). An older -- or unreadable -- CLI cannot honor
+    the v3 SKILL.md, so the caller marks the PR ``invalid`` (never scored) with this reason
+    instead of running a degraded review or deadlocking.
+    """
+    required = _fmt_version(V3_MIN_CLAUDE_VERSION)
+    version = _claude_version(claude_bin)
+    if version is None:
+        return "v3_workflow_unsupported: claude --version unreadable, need >= {}".format(required)
+    if version < V3_MIN_CLAUDE_VERSION:
+        return "v3_workflow_unsupported: claude {} < required {}".format(
+            _fmt_version(version), required
+        )
+    return None
+
+
+def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                  child_model="inherit"):
     """Run the headless review for one PR and classify the outcome.
+
+    ``tool`` selects the pipeline label and gates the v3 preflight: a ``deep-review-v3``
+    run first asserts the child CLI is new enough to expose the Workflow tool (see
+    ``_v3_preflight``) and returns ``invalid`` if not; ``deep-review-v2`` skips that check.
+    The invocation itself is unchanged either way -- the ``--plugin-dir`` repo is whichever
+    pipeline version is checked out; ``tool`` records/gates, it does not fork the command.
+
+    ``child_model`` pins the child orchestrator session's model: any value other than
+    ``inherit`` appends ``--model <child_model>`` to the ``claude`` command; ``inherit``
+    leaves the child to its own default. The review agents' models are unaffected -- they
+    are set by the pipeline's own policy, not this flag.
 
     Returns an :class:`InvokeResult`. The isolated ``HOME``/``CLAUDE_CONFIG_DIR`` has no
     allowlist and no user, so ``--dangerously-skip-permissions`` plus the pinned context
@@ -434,16 +632,32 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
     if not claude_bin:
         return InvokeResult("failed", raw_json_path=str(raw_path), reason="claude_not_found")
 
+    # v3 preflight: the pipeline runs through the Workflow tool (Claude Code >= 2.1.154).
+    # An older/unreadable CLI cannot honor the v3 skill, so fail the PR invalid (never
+    # scored) with a clear reason rather than silently degrading. v2 needs no such gate.
+    if tool == "deep-review-v3":
+        reason = _v3_preflight(claude_bin)
+        if reason:
+            return InvokeResult("invalid", raw_json_path=str(raw_path), reason=reason)
+
+    # Snapshot the plugin repo's pre-run dirty state so the post-run integrity guard flags
+    # only NEW mutations the child introduced — never a pre-existing local edit.
+    baseline_dirty = _plugin_dirty_paths(REPO_ROOT) or frozenset()
+
     cmd = [
         claude_bin,
         "-p",
-        "/deep-review {}".format(number),
+        "/{} {}".format(SKILL_COMMAND, number),
         "--output-format",
         "json",
         "--dangerously-skip-permissions",
         "--plugin-dir",
         str(REPO_ROOT),
     ]
+    # Pin the child orchestrator session's model unless inheriting its default. The review
+    # agents' models are set by the pipeline policy and are unaffected by this flag.
+    if child_model != "inherit":
+        cmd += ["--model", child_model]
 
     with open(raw_path, "w") as fh:
         proc = subprocess.Popen(
@@ -462,6 +676,17 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
+            # A killed child may have left the plugin repo dirty; reset so the NEXT PR
+            # starts from a clean plugin (this PR is already invalid via 'timeout').
+            leftover = _plugin_mutations(REPO_ROOT, baseline_dirty)
+            if leftover:
+                _reset_plugin_repo(REPO_ROOT, leftover)
+                print(
+                    "PLUGIN MUTATED BY CHILD (timed-out PR {}) — reset {}: {}".format(
+                        number, REPO_ROOT, ", ".join(p for _s, p in leftover)
+                    ),
+                    file=sys.stderr,
+                )
             return InvokeResult(
                 "timeout", raw_json_path=str(raw_path), reason="watchdog_timeout"
             )
@@ -470,7 +695,29 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
     envelope = parse_result_envelope(raw_text)
     # The receipt may live in stdout, the envelope .result, or a report .md — collected
     # into pr_dir by run.py, or still in the shared output dir at echo-check time.
-    report_dirs = (env.get("DEEP_REVIEW_OUTPUT_DIR"), str(pr_dir))
+    report_dirs = (env.get("CODE_GAUNTLET_OUTPUT_DIR"), str(pr_dir))
+
+    # 0) Plugin-repo integrity (measurement guard): a child that self-healed the plugin
+    #    mid-run leaves REPO_ROOT dirty and contaminates this and every later PR. Reset
+    #    the repo and invalidate BEFORE any outcome gate — the run is no longer trustworthy.
+    mutations = _plugin_mutations(REPO_ROOT, baseline_dirty)
+    if mutations:
+        _reset_plugin_repo(REPO_ROOT, mutations)
+        print(
+            "PLUGIN MUTATED BY CHILD during PR {} — invalidated + reset {}: {}".format(
+                number, REPO_ROOT, ", ".join(p for _s, p in mutations)
+            ),
+            file=sys.stderr,
+        )
+        costs = parse_costs(envelope or {})
+        return InvokeResult(
+            "invalid",
+            cost_usd=costs["cost_usd"],
+            per_model=costs["per_model"],
+            echo_ok=_echo_ok(raw_text, envelope, report_dirs),
+            raw_json_path=str(raw_path),
+            reason="plugin_mutated_by_child",
+        )
 
     # 1) AskUserQuestion (safety) wins even over a clean-looking envelope.
     if _has_askuserquestion(raw_text, envelope):
@@ -496,6 +743,20 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
             reason=_fail_reason(proc.returncode, envelope),
         )
 
+    # 2b) Background-task kill: the Phase 3 Workflow ran detached and the CLI terminated it
+    #     at the background-wait ceiling before Phase 8 could deliver. The echo receipt and
+    #     payload are then absent for THIS reason, not a config mismatch -- label it distinctly
+    #     so the failure isn't conflated with a genuine echo/config problem. Invalid (unscored).
+    if _workflow_backgrounded(raw_text):
+        return InvokeResult(
+            "invalid",
+            cost_usd=cost_usd,
+            per_model=per_model,
+            echo_ok=_echo_ok(raw_text, envelope, report_dirs),
+            raw_json_path=str(raw_path),
+            reason="workflow_backgrounded",
+        )
+
     # 3) Config receipt (accepted from stdout, the .result envelope, or a report .md).
     echo_ok = _echo_ok(raw_text, envelope, report_dirs)
     if not echo_ok:
@@ -509,8 +770,8 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800):
         )
 
     # 4) Dry-run payload (the scored candidate set).
-    payload_path = _find_payload(env["DEEP_REVIEW_OUTPUT_DIR"])
-    delivery = env.get("DEEP_REVIEW_DELIVERY", "")
+    payload_path = _find_payload(env["CODE_GAUNTLET_OUTPUT_DIR"])
+    delivery = env.get("CODE_GAUNTLET_DELIVERY", "")
     if payload_path is None and "pr_comments" in [d.strip() for d in delivery.split(",")]:
         return InvokeResult(
             "failed",

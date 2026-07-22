@@ -5,7 +5,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   ok             -> canned "Headless config:" echo (8 bench knobs) + a success result
                     envelope (total_cost_usd 1.23, modelUsage, usage, empty
                     permission_denials), and a fake post-review-payload.json under
-                    $DEEP_REVIEW_OUTPUT_DIR.
+                    $CODE_GAUNTLET_OUTPUT_DIR.
   hang           -> record our process-group id, then sleep well past any test timeout.
   asks           -> echo + envelope whose permission_denials names AskUserQuestion.
   badecho        -> partial echo (missing trivial_scope) in BOTH stdout and the envelope
@@ -13,10 +13,15 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   echo_in_result -> NO echo in stdout; the full block lives only in the envelope .result
                     (models a ``-p --output-format json`` run). + payload.
   echo_in_report -> NO echo in stdout or .result; the full block lives only in a collected
-                    report .md under $DEEP_REVIEW_OUTPUT_DIR. + payload.
+                    report .md under $CODE_GAUNTLET_OUTPUT_DIR. + payload.
+  mutate_repo    -> write to FAKE_CLAUDE_MUTATE_PATH (inside the plugin repo), then behave
+                    like ``ok`` — models a child self-healing the plugin mid-run.
 
-All CLI args are ignored. If FAKE_CLAUDE_PIDFILE is set, the process-group id is written
-there at startup so the watchdog test can prove the group was killed.
+All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
+process-group id is written there at startup so the watchdog test can prove the group was
+killed. If FAKE_CLAUDE_ARGV_FILE is set, the review invocation's argv is recorded there
+(one arg per line) so a test can assert the exact ``-p`` command the runner built -- the
+``--version`` preflight probe does not record (it returns before reaching main's body).
 """
 
 import json
@@ -24,7 +29,7 @@ import os
 import sys
 import time
 
-# The exact echo the real skill prints under DEEP_REVIEW_HEADLESS=1 (Task 3 format:
+# The exact echo the real skill prints under CODE_GAUNTLET_HEADLESS=1 (Task 3 format:
 # two-space indent, key=value (source), 8 knob lines under the header).
 ECHO_LINES = [
     "Headless config:",
@@ -69,7 +74,7 @@ def _envelope(permission_denials, result_text="Review complete. 3 findings poste
 
 
 def _write_payload():
-    output_dir = os.environ.get("DEEP_REVIEW_OUTPUT_DIR")
+    output_dir = os.environ.get("CODE_GAUNTLET_OUTPUT_DIR")
     if not output_dir:
         return
     os.makedirs(output_dir, exist_ok=True)
@@ -99,9 +104,30 @@ def _record_pgid():
             fh.write(str(os.getpgrp()))
 
 
+def _mutate_repo():
+    """Write to a path inside the plugin repo — models a child self-healing the plugin
+    mid-run (the contamination the invoke.py integrity guard must catch and reset).
+    The target path is given by FAKE_CLAUDE_MUTATE_PATH."""
+    path = os.environ.get("FAKE_CLAUDE_MUTATE_PATH")
+    if not path:
+        return
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write("// self-healed by child mid-run\n")
+
+
+def _record_argv():
+    argv_file = os.environ.get("FAKE_CLAUDE_ARGV_FILE")
+    if argv_file:
+        with open(argv_file, "w") as fh:
+            fh.write("\n".join(sys.argv[1:]))
+
+
 def _write_report(lines):
     """Write a report .md carrying the echo block in its methodology section."""
-    output_dir = os.environ.get("DEEP_REVIEW_OUTPUT_DIR")
+    output_dir = os.environ.get("CODE_GAUNTLET_OUTPUT_DIR")
     if not output_dir:
         return
     os.makedirs(output_dir, exist_ok=True)
@@ -111,8 +137,23 @@ def _write_report(lines):
 
 
 def main():
+    # A --version probe (the v3 preflight) prints only the version and exits, before any
+    # mode handling -- so it never records a pgid, hangs, or emits a review envelope. The
+    # default clears V3_MIN_CLAUDE_VERSION; FAKE_CLAUDE_VERSION can drive an older CLI.
+    if "--version" in sys.argv:
+        version = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.154")
+        sys.stdout.write("{} (Claude Code)\n".format(version))
+        return
+
     _record_pgid()
+    _record_argv()
     mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
+
+    if mode == "mutate_repo":
+        # Write into the plugin repo, then otherwise behave like a normal 'ok' run so the
+        # only anomaly is the dirty repo — exactly the self-healing-child contamination.
+        _mutate_repo()
+        mode = "ok"
 
     if mode == "hang":
         time.sleep(60)
@@ -137,6 +178,16 @@ def main():
         # Receipt only in the collected report markdown.
         stdout_lines = []
         write_report = True
+    elif mode == "bg_killed":
+        # The Phase 3 Workflow ran detached and the CLI killed it at its background-wait
+        # ceiling before Phase 8 -- so NO echo anywhere and no payload. The kill notice
+        # precedes a clean (is_error:false) envelope whose .result is a "still running in
+        # the background" message. Models the smoke-run workflow_backgrounded failure.
+        stdout_lines = []
+        result_text = (
+            "The deep-review workflow is now running in the background; "
+            "I'll pick up the persisted artifacts for delivery once it completes."
+        )
 
     denials = []
     if mode == "asks":
@@ -148,9 +199,15 @@ def main():
             }
         ]
 
+    if mode == "bg_killed":
+        # The CLI's background-task kill notice, printed ahead of the result envelope.
+        sys.stdout.write(
+            "Background tasks still running after 600s; terminating. "
+            "Set CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 to wait indefinitely.\n"
+        )
     if stdout_lines:
         sys.stdout.write("\n".join(stdout_lines) + "\n")
-    if mode != "asks":
+    if mode not in ("asks", "bg_killed"):
         _write_payload()
     if write_report:
         _write_report(ECHO_LINES)

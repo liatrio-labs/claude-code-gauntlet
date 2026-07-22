@@ -1,0 +1,8 @@
+{
+  "fn": "_route_by_dimension",
+  "finding": {
+    "dimension": "convention",
+    "title": "naming style",
+    "description": "variable names should use snake_case per style guide"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 80,
+      "description": "A much longer description with far more detail than the other finding in this comparison set.",
+      "dimension": "bug",
+      "file": "rank2/a.py",
+      "id": "A-null-risk-long-desc",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "new",
+      "report_destination": "main",
+      "report_tag": "main",
+      "risk_level": null,
+      "severity": "high",
+      "title": "Null risk_level, long description"
+    },
+    {
+      "agent": "bug-detector",
+      "confidence": 80,
+      "description": "Short.",
+      "dimension": "bug",
+      "file": "rank2/b.py",
+      "id": "B-absent-risk-short-desc",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "new",
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "title": "Absent risk_level, short description"
+    }
+  ],
+  "stats": {
+    "challenge_contested": 0,
+    "challenge_downgraded": 0,
+    "challenge_removed": 0,
+    "challenge_survived": 0,
+    "dedup_dropped": 0,
+    "final_count": 2,
+    "total_input": 2,
+    "unchallenged": 2
+  }
+}

@@ -5,6 +5,7 @@ context builders (``slice_hunk`` boundary/nearest/missing-path behavior and
 ``file_context`` clamping) and the ``adjudicate`` parse/retry contract.
 """
 
+import json
 import sys
 import unittest
 from pathlib import Path
@@ -18,6 +19,18 @@ from bench.adjudicator.adjudicate import (  # noqa: E402
     adjudicate,
     file_context,
     slice_hunk,
+)
+from bench.adjudicator.adjudicate import _parse_verdict, _recover_verdict  # noqa: E402
+
+# The exact reply that sank --score-only smoke-20260721-172943-0b24d95: the adjudicator's
+# "reason" quotes the Ruby snippet `"." << website_host` with an UNescaped inner double-quote
+# (the `"` after the first `.`), which json.loads reads as the closing quote -> the next char
+# `<` trips "Expecting ',' delimiter: line 1 column 113 (char 112)". Captured verbatim.
+FAILING_REPLY = (
+    '{"bucket":"valid_extra","failed_check":null,"reason":"The comment correctly '
+    'identifies that line 147 uses `\\"." << website_host\\"` which is the mutating '
+    'String#<< operator on a string literal, and the concern about '
+    'readability/unintentional mutation appearance is concrete and actionable."}'
 )
 
 # Two-hunk unified diff for one file. New-file spans: hunk 1 = lines 10..14,
@@ -214,6 +227,61 @@ class AdjudicateTests(unittest.TestCase):
         prompt_path = REPO_ROOT / "bench" / "adjudicator" / "prompt.txt"
         self.assertEqual(FROZEN_PROMPT, prompt_path.read_text(encoding="utf-8"))
         self.assertIn("strict review-comment auditor", FROZEN_PROMPT)
+
+
+class VerdictRecoveryTests(unittest.TestCase):
+    """Recovery of a malformed reply (unescaped inner quotes in "reason") — the
+    owner-approved (2026-07-21) fix for the 172943 deterministic parse failure."""
+
+    def test_captured_failing_reply_is_genuinely_malformed(self):
+        # Guard the fixture: it must actually break strict JSON at the observed spot,
+        # else the recovery path below would never be exercised.
+        with self.assertRaises(json.JSONDecodeError) as ctx:
+            json.loads(FAILING_REPLY)
+        self.assertIn("delimiter", str(ctx.exception))
+
+    def test_recovery_extracts_bucket_from_failing_reply(self):
+        verdict = _parse_verdict(FAILING_REPLY)
+        self.assertEqual(verdict["bucket"], "valid_extra")
+        self.assertIsNone(verdict["failed_check"])
+        self.assertIn("mutating String#<< operator", verdict["reason"])
+
+    def test_adjudicate_recovers_on_first_reply_no_retry(self):
+        # Recovery succeeds on the first attempt, so no retry is spent (unlike the
+        # old behavior, which retried once then raised on the second identical reply).
+        transport = FakeTransport([FAILING_REPLY])
+        verdict = adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
+        self.assertEqual(verdict["bucket"], "valid_extra")
+        self.assertEqual(len(transport.calls), 1)
+
+    def test_recover_verdict_reads_string_typed_failed_check(self):
+        text = '{"bucket":"noise","failed_check":"3","reason":"has "quotes" inside"}'
+        verdict = _recover_verdict(text)
+        self.assertEqual(verdict["bucket"], "noise")
+        self.assertEqual(verdict["failed_check"], 3)
+
+    def test_unrecoverable_reply_without_bucket_still_raises(self):
+        # No valid bucket anywhere -> recovery raises -> the retry-then-raise contract
+        # is preserved (two attempts, then ValueError), not silently bucketed.
+        transport = FakeTransport(['{"reason":"broken', '{"reason":"still broken'])
+        with self.assertRaises(ValueError) as ctx:
+            adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
+        self.assertIn("unparseable JSON twice", str(ctx.exception))
+        self.assertEqual(len(transport.calls), 2)
+
+    def test_wellformed_replies_use_strict_path_unchanged(self):
+        # The strict json.loads path must be byte-identical for well-formed replies,
+        # including one with PROPERLY escaped inner quotes (valid JSON, no recovery).
+        cases = [
+            ('{"bucket":"noise","failed_check":3,"reason":"vague"}',
+             {"bucket": "noise", "failed_check": 3, "reason": "vague"}),
+            ('{"bucket":"valid_extra","failed_check":null,"reason":"ok"}',
+             {"bucket": "valid_extra", "failed_check": None, "reason": "ok"}),
+            (r'{"bucket":"noise","failed_check":1,"reason":"uses \"foo\" here"}',
+             {"bucket": "noise", "failed_check": 1, "reason": 'uses "foo" here'}),
+        ]
+        for reply, expected in cases:
+            self.assertEqual(_parse_verdict(reply), expected)
 
 
 if __name__ == "__main__":

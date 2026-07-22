@@ -1,0 +1,27 @@
+{
+  "fn": "dedup_cross_agent",
+  "findings": [
+    {
+      "id": "C3",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "file": "g.py",
+      "line_start": 20,
+      "severity": "low",
+      "confidence": 50,
+      "title": "t3",
+      "description": "d"
+    },
+    {
+      "id": "C4",
+      "agent": "code-simplifier",
+      "dimension": "convention",
+      "file": "g.py",
+      "line_start": 21,
+      "severity": "low",
+      "confidence": 80,
+      "title": "t4",
+      "description": "d2"
+    }
+  ]
+}

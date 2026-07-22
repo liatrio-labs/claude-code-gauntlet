@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-apply_validations.py — Phase 5→6 bridge for deep-review.
+apply_validations.py — Phase 5→6 bridge for code-gauntlet.
 
 Reads Phase 4 output (full findings with descriptions intact) from disk,
 applies validator confidence adjustments from a [{id, confidence}] JSON array,
@@ -233,7 +233,7 @@ def apply_validations(findings, validations):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Phase 5→6 bridge for deep-review. "
+            "Phase 5→6 bridge for code-gauntlet. "
             "Applies validator confidence adjustments to Phase 4 findings on disk "
             "without passing descriptions through the orchestrator."
         )

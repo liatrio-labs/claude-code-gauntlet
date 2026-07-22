@@ -1,0 +1,20 @@
+{
+  "fn": "apply_threshold_filter",
+  "findings": [
+    {
+      "id": "T3",
+      "dimension": "bug",
+      "confidence": 80,
+      "severity": "low",
+      "title": "t3",
+      "description": "d3",
+      "file": "a.py",
+      "line_start": 3
+    }
+  ],
+  "config": {
+    "confidence_threshold": 70,
+    "security_min_confidence": 70,
+    "severity_threshold": "medium"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {
+      "blame_tag": "old-origin",
+      "body": "legacy desc value",
+      "confidence": 50,
+      "description": "canonical desc value",
+      "file": "src/b.py",
+      "id": "N2",
+      "line": 5,
+      "line_start": 99,
+      "origin": "surfaced",
+      "severity": "low"
+    }
+  ]
+}

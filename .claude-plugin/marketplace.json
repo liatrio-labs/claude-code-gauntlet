@@ -1,16 +1,16 @@
 {
-  "name": "deep-review",
+  "name": "code-gauntlet",
   "owner": {
     "name": "Liatrio"
   },
   "metadata": {
-    "description": "Multi-agent code review plugin for Claude Code",
+    "description": "Adversarial multi-agent code review for Claude Code",
     "version": "1.0.0"
   },
   "plugins": [
     {
-      "name": "deep-review",
-      "description": "Multi-agent code review plugin. Dispatches up to seven concern-specialized agents with deterministic verification, prompt injection defense, and flexible delivery (PR/MR comments, markdown, chat). Supports GitHub and GitLab.",
+      "name": "code-gauntlet",
+      "description": "Adversarial multi-agent code review. Your PR runs a gauntlet of up to seven concern-specialized agents, then survives deterministic verification, skeptical validation, and a blind challenge before anything reaches you. Prompt injection defense and flexible delivery (PR/MR comments, markdown, chat). Supports GitHub and GitLab. Formerly deep-review.",
       "source": "./",
       "strict": true
     }

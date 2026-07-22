@@ -1,0 +1,27 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "D1",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "a.py",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 95,
+      "title": "t1",
+      "description": "d1"
+    },
+    {
+      "id": "D2",
+      "agent": "security-reviewer",
+      "dimension": "security",
+      "file": "a.py",
+      "line_start": 12,
+      "severity": "high",
+      "confidence": 70,
+      "title": "t2",
+      "description": "d2"
+    }
+  ]
+}

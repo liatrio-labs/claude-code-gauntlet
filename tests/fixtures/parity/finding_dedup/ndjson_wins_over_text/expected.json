@@ -1,0 +1,11 @@
+{
+  "dropped_no_id": 0,
+  "duplicates_resolved": 1,
+  "merged": [
+    {
+      "confidence": 90,
+      "id": "F1",
+      "title": "ndjson"
+    }
+  ]
+}

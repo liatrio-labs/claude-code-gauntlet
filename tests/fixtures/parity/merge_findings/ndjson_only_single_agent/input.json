@@ -1,0 +1,17 @@
+{
+  "findings_dir_files": {
+    "deep-review-bug-detector-abc123.ndjson": "{\"id\": \"F1\", \"file\": \"src/app.py\", \"line_start\": 10, \"title\": \"example finding\", \"description\": \"a description of the finding\", \"severity\": \"medium\", \"confidence\": \"high\", \"dimension\": \"bug\"}\n{\"id\": \"F2\", \"file\": \"src/app.py\", \"line_start\": 20, \"title\": \"example finding\", \"description\": \"a description of the finding\", \"severity\": \"medium\", \"confidence\": \"high\", \"dimension\": \"bug\"}"
+  },
+  "text_dir_files": {},
+  "args": {
+    "session_sha": "abc123",
+    "agents": [
+      "bug-detector"
+    ],
+    "base_branch": "main",
+    "head_sha": "abc123",
+    "pr_number": 1,
+    "owner": "o",
+    "repo": "r"
+  }
+}

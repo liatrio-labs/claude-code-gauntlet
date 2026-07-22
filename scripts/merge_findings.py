@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-merge_findings.py — Deterministic Phase 3→4 merge for deep-review.
+merge_findings.py — Deterministic Phase 3→4 merge for code-gauntlet.
 
 Reads agent findings from two channels:
   Channel 1 (primary): NDJSON files on disk at
-      {findings_dir}/deep-review-{agent}-{session_sha}.ndjson
+      {findings_dir}/code-gauntlet-{agent}-{session_sha}.ndjson
   Channel 2 (fallback): Agent text returns at
-      {text_dir}/deep-review-text-{agent}-{session_sha}.txt
+      {text_dir}/code-gauntlet-text-{agent}-{session_sha}.txt
 
 Processing: parse both channels, deduplicate by finding ID (NDJSON preferred),
 inject agent field, validate dimension and required fields, detect truncation,
@@ -14,11 +14,11 @@ assemble Phase 4 input envelope with methodology diagnostics.
 
 Usage:
     python3 merge_findings.py \\
-      --findings-dir .deep-review \\
+      --findings-dir .code-gauntlet \\
       --session-sha abc12345 \\
       --agents bug-detector security-reviewer cross-file-impact test-analyzer \\
                conventions-and-intent type-design-analyzer code-simplifier \\
-      --text-dir .deep-review \\
+      --text-dir .code-gauntlet \\
       --base-branch main \\
       --head-sha abc123 \\
       --pr-number 42 \\
@@ -77,7 +77,14 @@ REQUIRED_FIELDS = {"id", "file", "line_start", "title", "description", "severity
 # ---------------------------------------------------------------------------
 
 def _ndjson_path(findings_dir: str, agent: str, session_sha: str) -> str:
-    return os.path.join(findings_dir, f"deep-review-{agent}-{session_sha}.ndjson")
+    # Prefer the current filename; fall back to the pre-rename deep-review filename
+    # so a resume over a pre-rename output dir (and the frozen parity fixtures,
+    # recorded before the rename) still resolves its channel files.
+    path = os.path.join(findings_dir, f"code-gauntlet-{agent}-{session_sha}.ndjson")
+    if os.path.exists(path):
+        return path
+    legacy = os.path.join(findings_dir, f"deep-review-{agent}-{session_sha}.ndjson")
+    return legacy if os.path.exists(legacy) else path
 
 
 def parse_ndjson_file(path: str, agent: str) -> tuple[list[dict], list[str]]:
@@ -115,7 +122,12 @@ def parse_ndjson_file(path: str, agent: str) -> tuple[list[dict], list[str]]:
 # ---------------------------------------------------------------------------
 
 def _text_path(text_dir: str, agent: str, session_sha: str) -> str:
-    return os.path.join(text_dir, f"deep-review-text-{agent}-{session_sha}.txt")
+    # Same current-then-legacy resolution as _ndjson_path.
+    path = os.path.join(text_dir, f"code-gauntlet-text-{agent}-{session_sha}.txt")
+    if os.path.exists(path):
+        return path
+    legacy = os.path.join(text_dir, f"deep-review-text-{agent}-{session_sha}.txt")
+    return legacy if os.path.exists(legacy) else path
 
 
 def _extract_json_blocks(text: str) -> list[dict]:

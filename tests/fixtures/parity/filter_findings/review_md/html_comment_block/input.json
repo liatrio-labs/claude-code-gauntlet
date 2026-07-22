@@ -1,0 +1,4 @@
+{
+  "fn": "parse_review_md",
+  "markdown": "# REVIEW.md\n\n<!-- deep-review-config\nconfidence_threshold: 60\nseverity_threshold: HIGH\n-->\n\nMore text below.\n"
+}

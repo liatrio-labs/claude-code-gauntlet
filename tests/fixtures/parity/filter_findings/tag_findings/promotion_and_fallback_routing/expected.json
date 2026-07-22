@@ -1,0 +1,71 @@
+{
+  "dedup_dropped": [],
+  "main_count": 3,
+  "suggestion_count": 2,
+  "tagged": [
+    {
+      "agent": "test-analyzer",
+      "confidence": 70,
+      "description": "the counter increment is not synchronized",
+      "file": "k1.py",
+      "id": "G1",
+      "line_start": 100,
+      "promoted_from": "test-analyzer",
+      "promotion_reason": "test-analyzer finding describes a functional correctness issue that exists today (not a missing-coverage gap)",
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "medium",
+      "title": "race condition in worker pool"
+    },
+    {
+      "agent": "conventions-and-intent",
+      "confidence": 60,
+      "description": "comment says X but code does Y",
+      "dimension": "comment-accuracy",
+      "file": "k2.py",
+      "id": "G2",
+      "line_start": 200,
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "routed_by": "dimension",
+      "severity": "low",
+      "title": "stale comment"
+    },
+    {
+      "agent": "conventions-and-intent",
+      "confidence": 65,
+      "description": "uses camelCase instead of snake_case",
+      "file": "k3.py",
+      "id": "G3",
+      "line_start": 300,
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "medium",
+      "title": "violates naming convention documented in style guide"
+    },
+    {
+      "agent": "some-unknown-agent",
+      "confidence": 75,
+      "description": "unclear origin",
+      "file": "k4.py",
+      "id": "G4",
+      "line_start": 400,
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "title": "weird finding"
+    },
+    {
+      "agent": "code-simplifier",
+      "confidence": 55,
+      "description": "this block can be simplified",
+      "file": "k5.py",
+      "id": "G5",
+      "line_start": 500,
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "low",
+      "title": "redundant code"
+    }
+  ]
+}

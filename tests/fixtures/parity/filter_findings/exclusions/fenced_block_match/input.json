@@ -1,0 +1,4 @@
+{
+  "fn": "load_exclusions",
+  "markdown": "# Exclusions\n\n```\nconsole.log debug statement\n# this is a comment, skip\nsample placeholder text\n```\n\nAdditional notes after the block are ignored.\n"
+}

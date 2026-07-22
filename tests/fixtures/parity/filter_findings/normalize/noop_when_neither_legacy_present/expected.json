@@ -1,0 +1,13 @@
+{
+  "findings": [
+    {
+      "confidence": 50,
+      "description": "already canonical text",
+      "file": "src/c.py",
+      "id": "N3",
+      "line_start": 42,
+      "origin": "surfaced",
+      "severity": "low"
+    }
+  ]
+}

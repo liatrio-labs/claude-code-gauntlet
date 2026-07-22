@@ -1,4 +1,4 @@
-# Contributing to claude-deep-review
+# Contributing to claude-code-gauntlet
 
 Thanks for your interest in contributing! This guide explains how to set up your environment, follow our style and commit conventions, run tests and linters, and submit pull requests.
 

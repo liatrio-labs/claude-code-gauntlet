@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "id": "f1",
+      "file": "src/auth.py",
+      "line_start": 20,
+      "line_end": 24,
+      "severity": "high",
+      "confidence": 75,
+      "title": "Possible auth bypass",
+      "description": "The token check appears to skip validation under some conditions.",
+      "agent": "security-reviewer",
+      "dimension": "security",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    }
+  ],
+  "challenges": [
+    { "id": "f1", "score": 10 }
+  ]
+}

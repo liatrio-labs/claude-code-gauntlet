@@ -1,0 +1,38 @@
+{
+  "findings": [
+    {
+      "id": "f1",
+      "file": "src/foo.py",
+      "line_start": 10,
+      "line_end": 12,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Real bug",
+      "description": "The function does not handle null input correctly at runtime.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    },
+    {
+      "id": "f2",
+      "file": "src/bar.py",
+      "line_start": 30,
+      "line_end": 32,
+      "severity": "medium",
+      "confidence": 70,
+      "title": "Another finding",
+      "description": "A second finding whose challenge entry is missing its score field.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    }
+  ],
+  "challenges": [
+    { "score": 80 },
+    { "id": "f2" }
+  ]
+}

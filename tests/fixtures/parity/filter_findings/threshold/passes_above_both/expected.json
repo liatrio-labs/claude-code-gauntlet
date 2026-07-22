@@ -1,0 +1,16 @@
+{
+  "contested_count": 0,
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 80,
+      "description": "d1",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "T1",
+      "line_start": 1,
+      "severity": "high",
+      "title": "t1"
+    }
+  ]
+}

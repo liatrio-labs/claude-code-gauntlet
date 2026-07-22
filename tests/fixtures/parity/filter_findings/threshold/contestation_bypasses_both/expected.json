@@ -1,0 +1,20 @@
+{
+  "contested_count": 1,
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 10,
+      "contestation_drop": 60,
+      "contestation_reason": "validator dropped confidence by 60 points (original: 70, current: 10)",
+      "contested": true,
+      "description": "d5",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "T5",
+      "line_start": 6,
+      "original_confidence": 70,
+      "severity": "low",
+      "title": "t5"
+    }
+  ]
+}

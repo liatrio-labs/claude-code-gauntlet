@@ -1,0 +1,34 @@
+{
+  "eliminated": [
+    {
+      "agent": "security-reviewer",
+      "challenge_contested": false,
+      "challenge_score": 5,
+      "confidence": 60,
+      "description": "A defensive check could be tightened here, but it is already low severity.",
+      "dimension": "security",
+      "eliminated_by": "challenge:removed",
+      "elimination_reason": "challenge score 5 < 25; security finding severity already 'low' (lowest) \u2014 finding removed",
+      "file": "src/auth.py",
+      "id": "f1",
+      "line_end": 24,
+      "line_start": 20,
+      "origin": "new",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "low",
+      "title": "Minor auth nit"
+    }
+  ],
+  "findings": [],
+  "stats": {
+    "challenge_contested": 0,
+    "challenge_downgraded": 0,
+    "challenge_removed": 1,
+    "challenge_survived": 0,
+    "dedup_dropped": 0,
+    "final_count": 0,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

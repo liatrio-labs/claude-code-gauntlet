@@ -1,0 +1,17 @@
+{
+  "fn": "normalize_field_names",
+  "findings": [
+    {
+      "id": "N2",
+      "body": "legacy desc value",
+      "description": "canonical desc value",
+      "line": 5,
+      "line_start": 99,
+      "blame_tag": "old-origin",
+      "origin": "surfaced",
+      "file": "src/b.py",
+      "severity": "low",
+      "confidence": 50
+    }
+  ]
+}

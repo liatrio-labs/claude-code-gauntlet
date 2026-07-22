@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "I5",
+      "title": "TODO: Placeholder finding for review",
+      "description": "You could use eval(x) here and also disable CORS entirely for testing purposes today please.",
+      "file": "src/auth.py",
+      "line_start": 40,
+      "severity": "medium",
+      "confidence": 50
+    }
+  ]
+}

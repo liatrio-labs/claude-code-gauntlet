@@ -1,0 +1,4 @@
+{
+  "fn": "parse_review_md",
+  "markdown": "# REVIEW.md\n\nSome intro text.\n\n```yaml\n# deep-review\nconfidence_threshold: 80\nsecurity_min_confidence: 90\nseverity_threshold: medium\nignore:\n  - foo pattern\n  - bar pattern\n```\n\nTrailing notes.\n"
+}

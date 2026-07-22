@@ -1,0 +1,8 @@
+{
+  "fn": "_route_by_dimension",
+  "finding": {
+    "dimension": "convention",
+    "title": "missing braces",
+    "description": "this could cause the app to crash under edge-case input"
+  }
+}

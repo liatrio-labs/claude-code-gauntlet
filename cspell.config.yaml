@@ -34,8 +34,11 @@ ignorePaths:
   - .venv/**
   - __pycache__/**
   - .pytest_cache/**
+  # deep-review-* entries retained for pre-rename local dirs
   - deep-review-workspace/**
+  - code-gauntlet-workspace/**
   - .deep-review/**
+  - .code-gauntlet/**
   - docs/temp/**
 
 ignoreRegExpList:

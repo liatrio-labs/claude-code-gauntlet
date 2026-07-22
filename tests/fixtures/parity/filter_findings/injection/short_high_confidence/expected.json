@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 90,
+      "description": "Bug here maybe.",
+      "eliminated_by": "injection",
+      "elimination_reason": "suspiciously short description (3 words) with high confidence (90)",
+      "file": "src/app.py",
+      "id": "I4",
+      "line_start": 5,
+      "severity": "low",
+      "title": "Possible issue"
+    }
+  ],
+  "kept": []
+}

@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 # Import via the intended package path regardless of how pytest is invoked.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -65,7 +66,8 @@ class InvokeTestBase(unittest.TestCase):
         dst.chmod(dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return bindir
 
-    def _run(self, mode, timeout_s=30, extra_env=None):
+    def _run(self, mode, timeout_s=30, extra_env=None, tool="deep-review-v3",
+             child_model="inherit"):
         bindir = self.install_fake()
         overrides = {
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
@@ -74,7 +76,10 @@ class InvokeTestBase(unittest.TestCase):
         if extra_env:
             overrides.update(extra_env)
         with patched_environ(**overrides):
-            return invoke_review(self.worktree, PR, self.run_dir, timeout_s=timeout_s)
+            return invoke_review(
+                self.worktree, PR, self.run_dir, timeout_s=timeout_s, tool=tool,
+                child_model=child_model,
+            )
 
 
 # ------------------------------------------------------------------------ pr_dir_name
@@ -110,25 +115,32 @@ class PrDirNameTest(unittest.TestCase):
 class BuildEnvTest(InvokeTestBase):
     def test_sets_nine_bench_values(self):
         env = build_env(PR, self.run_dir, {})
-        self.assertEqual(env["DEEP_REVIEW_HEADLESS"], "1")
-        self.assertEqual(env["DEEP_REVIEW_MODEL_TIER"], "optimized")
-        self.assertEqual(env["DEEP_REVIEW_DELIVERY"], "pr_comments,markdown")
-        self.assertEqual(env["DEEP_REVIEW_POST_MODE"], "dry-run")
-        self.assertEqual(env["DEEP_REVIEW_PR_COMMENT_CAP"], "25")
-        self.assertEqual(env["DEEP_REVIEW_DRAFT_POLICY"], "review")
-        self.assertEqual(env["DEEP_REVIEW_REVIEWED_POLICY"], "full")
-        self.assertEqual(env["DEEP_REVIEW_PR_NOT_FOUND_POLICY"], "error")
-        self.assertEqual(env["DEEP_REVIEW_TRIVIAL_SCOPE"], "full")
+        self.assertEqual(env["CODE_GAUNTLET_HEADLESS"], "1")
+        self.assertEqual(env["CODE_GAUNTLET_MODEL_TIER"], "optimized")
+        self.assertEqual(env["CODE_GAUNTLET_DELIVERY"], "pr_comments,markdown")
+        self.assertEqual(env["CODE_GAUNTLET_POST_MODE"], "dry-run")
+        self.assertEqual(env["CODE_GAUNTLET_PR_COMMENT_CAP"], "25")
+        self.assertEqual(env["CODE_GAUNTLET_DRAFT_POLICY"], "review")
+        self.assertEqual(env["CODE_GAUNTLET_REVIEWED_POLICY"], "full")
+        self.assertEqual(env["CODE_GAUNTLET_PR_NOT_FOUND_POLICY"], "error")
+        self.assertEqual(env["CODE_GAUNTLET_TRIVIAL_SCOPE"], "full")
 
     def test_output_dir_and_gh_repo(self):
         env = build_env(PR, self.run_dir, {})
-        self.assertEqual(env["DEEP_REVIEW_OUTPUT_DIR"], str(self.run_dir / "output"))
+        self.assertEqual(env["CODE_GAUNTLET_OUTPUT_DIR"], str(self.run_dir / "output"))
         self.assertEqual(env["GH_REPO"], "octo/widget")
 
     def test_gh_repo_from_url_fallback(self):
         pr = {"url": "https://github.com/acme/thing/pull/9", "pr_number": 9}
         env = build_env(pr, self.run_dir, {})
         self.assertEqual(env["GH_REPO"], "acme/thing")
+
+    def test_uncaps_background_wait_ceiling(self):
+        # The child must carry CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS="0" so the CLI does not
+        # terminate a still-running Phase 3 Workflow at its default 600s background-wait cap
+        # (which sank smoke-20260719-190902-a14b4cc). The per-PR watchdog bounds total time.
+        env = build_env(PR, self.run_dir, {})
+        self.assertEqual(env["CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS"], "0")
 
     def test_home_and_config_dir_isolated(self):
         env = build_env(PR, self.run_dir, {})
@@ -415,6 +427,23 @@ class InvokeReviewTest(InvokeTestBase):
         self.assertTrue(Path(res.raw_json_path).exists())
         self.assertIn("claude-opus-4-8", res.per_model)
 
+    def test_invokes_namespace_qualified_skill_command(self):
+        # Regression: the child must be invoked with the NAMESPACE-QUALIFIED slash command
+        # ``/code-gauntlet:code-gauntlet <n>``, not the flat ``/code-gauntlet <n>``. In the pinned
+        # isolated --plugin-dir context the flat alias is not reliably registered and
+        # resolves to "Unknown command" (num_turns 0), which sank real smoke runs pre-rename
+        # children. See invoke.SKILL_COMMAND and artifact 33 (P2b).
+        argv_file = Path(self.tmp) / "argv.txt"
+        res = self._run("ok", extra_env={"FAKE_CLAUDE_ARGV_FILE": str(argv_file)})
+        self.assertEqual(res.status, "ok")
+        self.assertTrue(argv_file.exists())
+        argv = argv_file.read_text().splitlines()
+        self.assertIn("-p", argv)
+        prompt = argv[argv.index("-p") + 1]
+        self.assertEqual(prompt, "/code-gauntlet:code-gauntlet {}".format(PR["pr_number"]))
+        # Guard the exact regression: the bare/flat command must not reappear.
+        self.assertNotEqual(prompt, "/code-gauntlet {}".format(PR["pr_number"]))
+
     def test_hang_times_out_and_kills_group(self):
         pidfile = Path(self.tmp) / "pgid.txt"
         res = self._run("hang", timeout_s=2, extra_env={"FAKE_CLAUDE_PIDFILE": str(pidfile)})
@@ -436,6 +465,16 @@ class InvokeReviewTest(InvokeTestBase):
         res = self._run("badecho")
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "config_echo_mismatch")
+
+    def test_backgrounded_workflow_is_distinct_reason(self):
+        # A child whose Phase 3 Workflow ran detached and got killed at the CLI's
+        # background-wait ceiling (echo + payload absent for THAT reason) must be labeled
+        # workflow_backgrounded, NOT conflated with a genuine config_echo_mismatch. The
+        # "Background tasks still running after ...; terminating" notice is the signature.
+        res = self._run("bg_killed")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "workflow_backgrounded")
+        self.assertNotEqual(res.reason, "config_echo_mismatch")
 
     def test_claude_not_found(self):
         # PATH without the fake -> claude cannot be resolved -> failed, not a crash.
@@ -475,6 +514,196 @@ class EchoReceiptSourceTest(InvokeTestBase):
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "config_echo_mismatch")
         self.assertFalse(res.echo_ok)
+
+
+class V3PreflightTest(InvokeTestBase):
+    """A deep-review-v3 run preflights the child CLI's Workflow-tool support.
+
+    v3 dispatches through the Workflow tool (Claude Code >= 2.1.154). An older or
+    unreadable CLI is marked ``invalid`` (never scored) with a clear reason, before the
+    review is even launched; v2 skips the gate. The version probe is mocked so the check
+    is exercised without depending on the fake binary's --version output.
+    """
+
+    def test_old_cli_marks_invalid(self):
+        with patch.object(invoke, "_claude_version", lambda _bin: (2, 1, 100)):
+            res = self._run("ok")  # tool defaults to deep-review-v3
+        self.assertEqual(res.status, "invalid")
+        self.assertIn("v3_workflow_unsupported", res.reason)
+        self.assertIn("2.1.154", res.reason)
+        self.assertIn("2.1.100", res.reason)
+
+    def test_unreadable_version_marks_invalid(self):
+        with patch.object(invoke, "_claude_version", lambda _bin: None):
+            res = self._run("ok")
+        self.assertEqual(res.status, "invalid")
+        self.assertIn("v3_workflow_unsupported", res.reason)
+
+    def test_new_enough_cli_passes_preflight(self):
+        with patch.object(invoke, "_claude_version", lambda _bin: (2, 1, 154)):
+            res = self._run("ok")
+        self.assertEqual(res.status, "ok")
+
+    def test_v2_tool_skips_preflight_even_on_old_cli(self):
+        # A v2-labelled run needs no Workflow tool, so an old CLI still runs to completion.
+        with patch.object(invoke, "_claude_version", lambda _bin: (2, 1, 100)):
+            res = self._run("ok", tool="deep-review-v2")
+        self.assertEqual(res.status, "ok")
+
+    def test_preflight_reads_version_via_fake_binary(self):
+        # End-to-end through the real _claude_version + fake claude --version (no mock):
+        # FAKE_CLAUDE_VERSION drives an old CLI, proving the probe actually shells out.
+        res = self._run("ok", extra_env={"FAKE_CLAUDE_VERSION": "2.1.100"})
+        self.assertEqual(res.status, "invalid")
+        self.assertIn("2.1.100", res.reason)
+
+
+class ClaudeVersionParseTest(InvokeTestBase):
+    """_claude_version parses the CLI's --version output via the fake binary."""
+
+    def _bin(self, version=None):
+        bindir = self.install_fake()
+        if version is not None:
+            self.addCleanup(os.environ.pop, "FAKE_CLAUDE_VERSION", None)
+            os.environ["FAKE_CLAUDE_VERSION"] = version
+        return str(bindir / "claude")
+
+    def test_parses_semver_tuple(self):
+        self.assertEqual(invoke._claude_version(self._bin("2.1.154")), (2, 1, 154))
+
+    def test_unparseable_returns_none(self):
+        self.assertIsNone(invoke._claude_version(self._bin("no-version-here")))
+
+    def test_missing_binary_returns_none(self):
+        self.assertIsNone(invoke._claude_version(str(Path(self.tmp) / "nope" / "claude")))
+
+
+class PluginMutationGuardTest(InvokeTestBase):
+    """invoke.py's plugin-repo integrity guard. A child that writes into REPO_ROOT
+    mid-run (self-healing the plugin) contaminates the measurement: the PR is marked
+    invalid ('plugin_mutated_by_child') and the repo is reset. Pre-existing local edits
+    (captured as the baseline) and the controller-owned experiments.jsonl are exempt.
+    Each test points invoke.REPO_ROOT at a throwaway git repo so the real plugin is
+    never touched."""
+
+    def _init_repo(self, files):
+        import subprocess
+        root = Path(self.tmp) / "plugin"
+        root.mkdir()
+        for rel, content in files.items():
+            p = root / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        env = {
+            **os.environ,
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+        }
+        for cmd in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-q", "-m", "baseline"]):
+            subprocess.run(cmd, cwd=str(root), check=True, capture_output=True, env=env)
+        return root
+
+    def _porcelain(self, root):
+        import subprocess
+        return subprocess.run(
+            ["git", "status", "--porcelain"], cwd=str(root), capture_output=True, text=True
+        ).stdout.strip()
+
+    def _run_mutating(self, root, mutate_path):
+        with patch.object(invoke, "REPO_ROOT", root):
+            return self._run("mutate_repo", extra_env={"FAKE_CLAUDE_MUTATE_PATH": str(mutate_path)})
+
+    def test_untracked_file_mutation_marks_invalid_and_removes_file(self):
+        root = self._init_repo({"README.md": "base\n"})
+        injected = root / "workflows" / "src" / "injected.js"
+        res = self._run_mutating(root, injected)
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_mutated_by_child")
+        self.assertFalse(injected.exists(), "untracked child file removed on reset")
+        self.assertEqual(self._porcelain(root), "", "plugin repo clean after reset")
+
+    def test_tracked_file_modification_marks_invalid_and_reverts(self):
+        root = self._init_repo({"workflows/src/filterFindings.js": "ORIGINAL\n"})
+        target = root / "workflows" / "src" / "filterFindings.js"
+        res = self._run_mutating(root, target)
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_mutated_by_child")
+        self.assertEqual(target.read_text(), "ORIGINAL\n", "tracked edit reverted on reset")
+        self.assertEqual(self._porcelain(root), "")
+
+    def test_controller_owned_experiments_jsonl_is_not_flagged(self):
+        root = self._init_repo({"bench/experiments.jsonl": "{}\n"})
+        target = root / "bench" / "experiments.jsonl"
+        res = self._run_mutating(root, target)
+        self.assertEqual(res.status, "ok", "a controller-owned change is not child contamination")
+        self.assertNotEqual(self._porcelain(root), "", "experiments.jsonl left modified (controller owns it)")
+
+    def test_controller_owned_report_html_is_not_flagged(self):
+        # The live dashboard (regenerated from the ledger by bench/report.py, typically run
+        # mid-run to watch progress) is a tracked file stamped with today's date + sha, so any
+        # regeneration dirties it. It is operator-owned, NOT child contamination: a regeneration
+        # while a review child is in-flight must not invalidate that PR or reset the dashboard.
+        root = self._init_repo({"bench/report.html": "<html>old</html>\n"})
+        target = root / "bench" / "report.html"
+        res = self._run_mutating(root, target)
+        self.assertEqual(res.status, "ok", "a controller-owned dashboard regeneration is not child contamination")
+        self.assertNotEqual(self._porcelain(root), "", "report.html left modified (operator owns it)")
+
+    def test_preexisting_local_edit_is_not_flagged_or_reset(self):
+        # A dirty file that predates the child (the run's baseline) must survive untouched
+        # — the guard flags DELTA, not absolute dirtiness.
+        root = self._init_repo({"workflows/src/stages.js": "COMMITTED\n"})
+        preexisting = root / "workflows" / "src" / "stages.js"
+        preexisting.write_text("LOCAL WIP\n")  # dirty BEFORE the child runs
+        injected = root / "agents" / "injected.md"
+        res = self._run_mutating(root, injected)
+        # The child's NEW file is flagged + removed; the pre-existing edit is preserved.
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_mutated_by_child")
+        self.assertFalse(injected.exists())
+        self.assertEqual(preexisting.read_text(), "LOCAL WIP\n", "pre-existing local edit untouched")
+
+    def test_clean_run_is_not_flagged(self):
+        root = self._init_repo({"README.md": "base\n"})
+        with patch.object(invoke, "REPO_ROOT", root):
+            res = self._run("ok")  # no mutation
+        self.assertEqual(res.status, "ok")
+        self.assertEqual(self._porcelain(root), "", "clean repo stays clean")
+
+
+class ChildModelCommandTest(InvokeTestBase):
+    """child_model appends ``--model <m>`` to the child command unless inheriting."""
+
+    def _argv(self, res_env):
+        argv_file = Path(self.tmp) / "argv.txt"
+        # The fake records its argv (minus argv[0]) to FAKE_CLAUDE_ARGV_FILE on the main
+        # invocation (not the --version probe), one arg per line.
+        res_env["FAKE_CLAUDE_ARGV_FILE"] = str(argv_file)
+        return argv_file
+
+    def test_v3_command_carries_model_sonnet(self):
+        env = {}
+        argv_file = self._argv(env)
+        res = self._run("ok", tool="deep-review-v3", child_model="sonnet", extra_env=env)
+        self.assertEqual(res.status, "ok")
+        argv = argv_file.read_text().splitlines()
+        self.assertIn("--model", argv)
+        self.assertEqual(argv[argv.index("--model") + 1], "sonnet")
+
+    def test_opus_child_model_carried_verbatim(self):
+        env = {}
+        argv_file = self._argv(env)
+        res = self._run("ok", child_model="opus", extra_env=env)
+        self.assertEqual(res.status, "ok")
+        argv = argv_file.read_text().splitlines()
+        self.assertEqual(argv[argv.index("--model") + 1], "opus")
+
+    def test_inherit_omits_model_flag(self):
+        env = {}
+        argv_file = self._argv(env)
+        res = self._run("ok", child_model="inherit", extra_env=env)
+        self.assertEqual(res.status, "ok")
+        self.assertNotIn("--model", argv_file.read_text().splitlines())
 
 
 if __name__ == "__main__":

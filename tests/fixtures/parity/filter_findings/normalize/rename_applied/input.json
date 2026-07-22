@@ -1,0 +1,14 @@
+{
+  "fn": "normalize_field_names",
+  "findings": [
+    {
+      "id": "N1",
+      "body": "legacy body text describing the issue",
+      "line": 10,
+      "blame_tag": "new",
+      "file": "src/a.py",
+      "severity": "low",
+      "confidence": 50
+    }
+  ]
+}

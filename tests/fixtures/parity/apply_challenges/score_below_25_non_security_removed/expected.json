@@ -1,0 +1,33 @@
+{
+  "eliminated": [
+    {
+      "agent": "bug-detector",
+      "challenge_score": 15,
+      "confidence": 80,
+      "description": "The function does not handle null input correctly at runtime.",
+      "dimension": "bug",
+      "eliminated_by": "challenge:removed",
+      "elimination_reason": "challenge score 15 < 25; finding does not survive blind challenge",
+      "file": "src/foo.py",
+      "id": "f1",
+      "line_end": 12,
+      "line_start": 10,
+      "origin": "new",
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "high",
+      "title": "Real bug"
+    }
+  ],
+  "findings": [],
+  "stats": {
+    "challenge_contested": 0,
+    "challenge_downgraded": 0,
+    "challenge_removed": 1,
+    "challenge_survived": 0,
+    "dedup_dropped": 0,
+    "final_count": 0,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

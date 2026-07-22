@@ -1,0 +1,10 @@
+{
+  "dropped_no_id": 0,
+  "duplicates_resolved": 1,
+  "merged": [
+    {
+      "id": "F1",
+      "title": "first-seen-agent-a"
+    }
+  ]
+}

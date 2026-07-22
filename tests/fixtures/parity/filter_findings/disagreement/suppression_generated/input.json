@@ -1,0 +1,27 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "D6",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "file": "d.py",
+      "line_start": 20,
+      "severity": "medium",
+      "confidence": 70,
+      "title": "missing test",
+      "description": "d6"
+    },
+    {
+      "id": "D7",
+      "agent": "conventions-and-intent",
+      "dimension": "intent",
+      "file": "d.py",
+      "line_start": 21,
+      "severity": "low",
+      "confidence": 60,
+      "title": "t7",
+      "description": "this file is auto-generated scaffolding, do not add tests"
+    }
+  ]
+}

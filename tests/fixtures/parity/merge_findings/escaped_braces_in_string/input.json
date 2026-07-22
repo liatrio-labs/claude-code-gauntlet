@@ -1,0 +1,17 @@
+{
+  "findings_dir_files": {},
+  "text_dir_files": {
+    "deep-review-text-bug-detector-abc123.txt": "Report: {\"id\": \"F1\", \"file\": \"src/app.py\", \"line_start\": 10, \"title\": \"a } brace \\\" here\", \"description\": \"a description of the finding\", \"severity\": \"medium\", \"confidence\": \"high\", \"dimension\": \"bug\"}"
+  },
+  "args": {
+    "session_sha": "abc123",
+    "agents": [
+      "bug-detector"
+    ],
+    "base_branch": "main",
+    "head_sha": "abc123",
+    "pr_number": 1,
+    "owner": "o",
+    "repo": "r"
+  }
+}

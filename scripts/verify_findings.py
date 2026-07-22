@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-verify_findings.py — Deterministic finding verification for deep-review Phase 4.
+verify_findings.py — Deterministic finding verification for code-gauntlet Phase 4.
 
 Usage:
     python3 verify_findings.py <findings_json> [--base-branch main] [--diff-file path]
@@ -838,6 +838,33 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # Main pipeline
 # ---------------------------------------------------------------------------
 
+# Numeric finding fields this script does arithmetic/comparisons on. A value that
+# arrives as a string ("153") — e.g. from JS-written JSON where a number was quoted —
+# makes `line_start - 1`, `line_start < 1`, or `range(line_start, line_end + 1)` raise a
+# TypeError ("unsupported operand type(s) for -: 'str' and 'int'" / "'<' not supported
+# between instances of 'str' and 'int'"), which in receipt mode surfaces as
+# status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
+_NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
+_INT_RE = re.compile(r"[+-]?\d+")
+
+
+def _coerce_numeric_fields(finding):
+    """Best-effort int-cast of numeric finding fields at the input boundary.
+
+    Casts a string that is a clean integer (optionally signed) to ``int``; leaves
+    everything else untouched — ``None``, real numbers, and non-numeric junk pass
+    through so the script's own range/existence guards still fire as before. Bools
+    are numbers in Python but never legitimately appear in these fields; guard anyway.
+    """
+    if not isinstance(finding, dict):
+        return finding
+    for key in _NUMERIC_FIELDS:
+        value = finding.get(key)
+        if isinstance(value, str) and _INT_RE.fullmatch(value.strip()):
+            finding[key] = int(value.strip())
+    return finding
+
+
 def load_input(findings_json_path):
     """Load and validate the input JSON file."""
     try:
@@ -855,6 +882,11 @@ def load_input(findings_json_path):
     if not isinstance(data["findings"], list):
         die("'findings' must be an array.")
 
+    # Defensive int-cast at the --input boundary: numbers that arrived quoted must not
+    # crash the arithmetic downstream (see _coerce_numeric_fields).
+    for finding in data["findings"]:
+        _coerce_numeric_fields(finding)
+
     return data
 
 
@@ -867,10 +899,126 @@ def _write_output(output, output_path):
         print(json.dumps(output, indent=2, ensure_ascii=False))
 
 
+def _resolve_head_sha():
+    """Resolve the short HEAD sha, or None if git is unavailable.
+
+    Used only as a fallback for the receipt when --head-sha is not passed; the
+    workflow always passes --head-sha (the resolved head_sha_short) so the
+    receipt echoes exactly the value its trust check compares against.
+    """
+    stdout, _stderr, rc = run(["git", "rev-parse", "--short", "HEAD"])
+    if rc == 0 and stdout.strip():
+        return stdout.strip()
+    return None
+
+
+def run_verification(findings, base_branch, diff_file=None, verbose=False):
+    """Run the full verify pipeline over ``findings`` and return the result dict
+    ``{verified, eliminated, batches, stats}``.
+
+    Mutates each finding in place (adds ``origin``, ``blame_metadata``,
+    ``factual_verification``, ``diff_validation``). This is the shared core the
+    legacy positional CLI and the receipt path both call, so the receipt's
+    ``result.verified`` is byte-for-byte what the legacy path produces.
+
+    ``verbose=True`` emits the phase-by-phase progress to stderr (the legacy CLI
+    behavior); the receipt path runs quiet.
+    """
+    total = len(findings)
+
+    # Phase 2: Classify (blame)
+    if verbose:
+        print(f"Classifying findings against base branch '{base_branch}'...", file=sys.stderr)
+    for f in findings:
+        f["origin"] = classify_blame(f, base_branch)
+
+    # Phase 3: Verify (factual)
+    if verbose:
+        print("Verifying factual accuracy...", file=sys.stderr)
+    verified = []
+    eliminated = []
+    for f in findings:
+        if verify_factual(f):
+            verified.append(f)
+        else:
+            f["elimination_reason"] = "evidence does not match file content"
+            eliminated.append(f)
+
+    # Phase 4: Validate diff lines (V4-10). Findings outside the diff are tagged
+    # "surfaced" (not eliminated) so cross-file context is preserved for Phase 5.
+    if verbose:
+        print("Validating finding line numbers against diff...", file=sys.stderr)
+    diff_text = get_diff(base_branch, diff_file)
+    valid_lines = parse_diff_lines(diff_text)
+    if valid_lines is None and verbose:
+        warn("Diff validation skipped — all findings passed through.")
+
+    diff_surfaced_count = 0
+    for f in verified:
+        origin_before = f.get("origin", "new")
+        validate_diff_lines(f, valid_lines)
+        if f.get("origin") == "surfaced" and origin_before != "surfaced":
+            diff_surfaced_count += 1
+
+    if diff_surfaced_count and verbose:
+        print(
+            f"  Tagged {diff_surfaced_count} finding(s) as surfaced "
+            "(outside diff range).",
+            file=sys.stderr,
+        )
+
+    # Phase 5: Batch (groups of 3-5 by file proximity)
+    if verbose:
+        print(f"Batching {len(verified)} verified finding(s)...", file=sys.stderr)
+    batches = batch_findings(verified)
+
+    new_count = sum(1 for f in verified if f.get("origin") == "new")
+    surfaced_count = sum(1 for f in verified if f.get("origin") == "surfaced")
+    stats = {
+        "total": total,
+        "new": new_count,
+        "surfaced": surfaced_count,
+        "eliminated": len(eliminated),
+    }
+
+    return {
+        "verified": verified,
+        "eliminated": eliminated,
+        "batches": batches,
+        "stats": stats,
+    }
+
+
+def _run_receipt(args):
+    """Receipt mode (Task 11): load findings, run the shared verification, and emit
+    the discriminated-union envelope the JS verify stage trusts.
+
+    On success:  ``{status:'ok', receipt:{sha, n_in, nonce}, result:{...}}``.
+    On an uncaught exception during the body: ``{status:'failed', exitCode:1,
+    stderr:str(e)}`` — written with exit 0 because an honest failure is
+    schema-valid; the workflow routes it to the UNVERIFIED path rather than
+    trusting a fabricated success under retry pressure.
+    """
+    sha = args.head_sha or _resolve_head_sha() or ""
+    try:
+        data = load_input(args.input)
+        findings = data["findings"]
+        base_branch = data.get("base_branch") or args.base_branch
+        result = run_verification(findings, base_branch, args.diff_file, verbose=False)
+        envelope = {
+            "status": "ok",
+            "receipt": {"sha": sha, "n_in": len(findings), "nonce": args.nonce},
+            "result": result,
+        }
+    except Exception as e:  # noqa: BLE001 — honest failure is the contract
+        envelope = {"status": "failed", "exitCode": 1, "stderr": str(e)}
+    _write_output(envelope, args.output)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Deterministic finding verification for deep-review Phase 4. "
+            "Deterministic finding verification for code-gauntlet Phase 4. "
             "Takes Phase 3 agent findings JSON, classifies new vs. surfaced via "
             "git blame, verifies factual accuracy against file content, validates "
             "line references against the diff, and batches results for Phase 5."
@@ -878,6 +1026,8 @@ def main():
     )
     parser.add_argument(
         "findings_json",
+        nargs="?",
+        default=None,
         help="Path to input findings JSON (Phase 3 agent outputs merged).",
     )
     parser.add_argument(
@@ -908,81 +1058,65 @@ def main():
             "If omitted, output goes to stdout."
         ),
     )
+    parser.add_argument(
+        "--input",
+        default=None,
+        metavar="PATH",
+        help=(
+            "Receipt mode: path to input findings JSON (replaces the positional "
+            "argument). Emits a {status, receipt, result} envelope the workflow "
+            "verify stage trusts only when the receipt matches."
+        ),
+    )
+    parser.add_argument(
+        "--nonce",
+        default=None,
+        metavar="STR",
+        help=(
+            "Receipt mode: opaque nonce echoed back verbatim in the receipt so "
+            "the workflow can confirm this output answers its dispatch."
+        ),
+    )
+    parser.add_argument(
+        "--head-sha",
+        default=None,
+        metavar="SHA",
+        help=(
+            "Receipt mode: head sha echoed into the receipt. "
+            "Falls back to 'git rev-parse --short HEAD' when omitted."
+        ),
+    )
     args = parser.parse_args()
 
+    # Receipt mode (Task 11) — discriminated-union envelope for the JS verify stage.
+    if args.input is not None:
+        return _run_receipt(args)
+
+    # Legacy positional path (unchanged behavior).
+    source = args.findings_json
+    if source is None:
+        parser.error(
+            "a findings JSON path is required (positional), "
+            "or use --input for receipt mode"
+        )
+
     # Phase 1: Load
-    data = load_input(args.findings_json)
+    data = load_input(source)
     findings = data["findings"]
     base_branch = data.get("base_branch") or args.base_branch
     total = len(findings)
-    print(f"Loaded {total} finding(s) from {args.findings_json}", file=sys.stderr)
+    print(f"Loaded {total} finding(s) from {source}", file=sys.stderr)
 
-    # Phase 2: Classify (blame)
-    print(f"Classifying findings against base branch '{base_branch}'...", file=sys.stderr)
-    for f in findings:
-        f["origin"] = classify_blame(f, base_branch)
-
-    # Phase 3: Verify (factual)
-    print("Verifying factual accuracy...", file=sys.stderr)
-    verified = []
-    eliminated = []
-    for f in findings:
-        if verify_factual(f):
-            verified.append(f)
-        else:
-            f["elimination_reason"] = "evidence does not match file content"
-            eliminated.append(f)
-
-    # Phase 4: Validate diff lines (V4-10)
-    # Findings outside the diff are tagged as "surfaced" (not eliminated) so
-    # that cross-file context findings are preserved for Phase 5 reporting.
-    print("Validating finding line numbers against diff...", file=sys.stderr)
-    diff_text = get_diff(base_branch, args.diff_file)
-    valid_lines = parse_diff_lines(diff_text)
-    if valid_lines is None:
-        warn("Diff validation skipped — all findings passed through.")
-
-    diff_surfaced_count = 0
-    for f in verified:
-        origin_before = f.get("origin", "new")
-        validate_diff_lines(f, valid_lines)
-        if f.get("origin") == "surfaced" and origin_before != "surfaced":
-            diff_surfaced_count += 1
-
-    if diff_surfaced_count:
-        print(
-            f"  Tagged {diff_surfaced_count} finding(s) as surfaced "
-            "(outside diff range).",
-            file=sys.stderr,
-        )
-
-    # Phase 5: Batch (groups of 3-5 by file proximity)
-    print(f"Batching {len(verified)} verified finding(s)...", file=sys.stderr)
-    batches = batch_findings(verified)
-
-    # Build stats
-    new_count = sum(1 for f in verified if f.get("origin") == "new")
-    surfaced_count = sum(1 for f in verified if f.get("origin") == "surfaced")
-    stats = {
-        "total": total,
-        "new": new_count,
-        "surfaced": surfaced_count,
-        "eliminated": len(eliminated),
-    }
-
-    output = {
-        "verified": verified,
-        "eliminated": eliminated,
-        "batches": batches,
-        "stats": stats,
-    }
-
+    # Phases 2-5 (classify -> verify -> validate -> batch) run in the shared core.
+    output = run_verification(findings, base_branch, args.diff_file, verbose=True)
     _write_output(output, args.output)
 
     # Summary to stderr
+    stats = output["stats"]
     print(
-        f"Done: {len(verified)} verified ({new_count} new, {surfaced_count} surfaced), "
-        f"{len(eliminated)} eliminated, {len(batches)} batch(es).",
+        f"Done: {len(output['verified'])} verified "
+        f"({stats['new']} new, {stats['surfaced']} surfaced), "
+        f"{stats['eliminated']} eliminated, {len(output['batches'])} batch(es).",
         file=sys.stderr,
     )
 

@@ -1,0 +1,23 @@
+{
+  "findings": [
+    {
+      "id": "F1",
+      "confidence": 30
+    },
+    {
+      "id": "F2",
+      "confidence": 40
+    }
+  ],
+  "validations": [
+    {
+      "id": "F1",
+      "confidence": 60,
+      "justification": "Confirmed reachable via public API."
+    },
+    {
+      "id": "F2",
+      "confidence": 20
+    }
+  ]
+}

@@ -52,7 +52,7 @@ FIXTURE_PATH = GOLDEN_DIR / "review_md_fixture.md"
 MIN_FREE_GB = 10
 
 # `--tier subset` maps to the 15-PR gate subset; `full` is every shas.json key.
-_TIER_SUBSET_KEY = {"smoke": "smoke", "subset": "gate"}
+_TIER_SUBSET_KEY = {"smoke": "smoke", "subset": "gate", "holdout": "holdout"}
 
 # Naive anchor (spec H3): a bare single-pass review -- no --plugin-dir, prompt from the
 # PR title + full diff, a pinned turn budget so it cannot loop. Same isolation envelope
@@ -129,7 +129,7 @@ def _clear_dir(directory):
 def _collect_artifacts(output_dir, pr_dir):
     """Move every produced artifact from the shared output dir into ``pr_dir``.
 
-    build_env points DEEP_REVIEW_OUTPUT_DIR at ``{run_dir}/output`` which is SHARED across
+    build_env points CODE_GAUNTLET_OUTPUT_DIR at ``{run_dir}/output`` which is SHARED across
     PRs; moving the artifacts out (payload, findings, report) leaves it empty for the next
     PR. Returns the moved names.
     """
@@ -484,8 +484,14 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
 # ------------------------------------------------------------------------- per-PR flow
 
 
-def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data):
+def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
+             tool="deep-review-v3", child_model="inherit"):
     """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
+
+    ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
+    ``invoke.invoke_review`` so v3 can preflight the child CLI version; it is ignored on
+    the ``--anchor naive`` path, which does not run the skill. ``child_model`` is the
+    resolved child-session model pin, likewise forwarded to the skill path only.
 
     Returns ``{"counts": {status: n}, "drifted": [(url, reason), ...]}``. A DriftError
     marks the PR ``drifted`` (never scored) and the run continues to the next PR.
@@ -558,7 +564,10 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                     worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s
                 )
             else:
-                result = invoke.invoke_review(worktree, pr, run_dir, timeout_s=timeout_s)
+                result = invoke.invoke_review(
+                    worktree, pr, run_dir, timeout_s=timeout_s, tool=tool,
+                    child_model=child_model,
+                )
             _collect_artifacts(output_dir, pr_dir)
         except Exception as exc:
             # PR-granular progress: an unexpected error (bad JSON, an OSError during
@@ -605,13 +614,28 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
     return {"counts": dict(counts), "drifted": drifted}
 
 
+def _resolve_child_model(tool, child_model):
+    """Effective child-session model: an explicit flag wins, else the per-tool default.
+
+    v3's child orchestrator session is mechanical -- it drives the Workflow pipeline while
+    the review agents' models are set by the pipeline's own policy -- yet the orchestrator
+    burns ~40-45% of a run's tokens on opus[1m]. Measured 2026-07-21: BOTH sonnet (2x per-PR tokens) and
+    sonnet[1m] (+51%) are WORSE than the inherited opus[1m] child (its 1M context avoids
+    compaction churn), so every tool defaults to ``inherit`` now; the flag remains for experiments. A None
+    ``child_model`` means the flag was not passed (take the per-tool default).
+    """
+    if child_model is not None:
+        return child_model
+    return "inherit"
+
+
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
-    env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 DEEP_REVIEW_* values
+    env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 CODE_GAUNTLET_* values
     env_fingerprint["timeout_s"] = timeout_s
     invocation = (
         "naive:single-pass max-turns={}".format(NAIVE_MAX_TURNS)
         if args.anchor == "naive"
-        else "headless:/deep-review"
+        else "headless:/code-gauntlet"
     )
     manifest = {
         "run_id": run_id,
@@ -619,10 +643,24 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         "git_sha": _git_short_sha(),
         "started": _utc_iso(),
         "anchor": args.anchor,
+        # The naive anchor is its own baseline (not a deep-review pipeline), so it carries
+        # no tool label -- score._tool_label gives an explicit tool precedence over anchor,
+        # so writing one here would mask the "naive-anchor" ledger label. A skill run records
+        # the selected pipeline (deep-review-v2|v3) verbatim for the ledger row.
+        "tool": None if args.anchor == "naive" else args.tool,
+        # The child-session model pin, resolved per-tool. Naive anchor runs record None
+        # (they run _invoke_naive, not the skill) -- mirrors the tool field above.
+        "child_model": (
+            None if args.anchor == "naive"
+            else _resolve_child_model(args.tool, args.child_model)
+        ),
         "fidelity": args.fidelity,
         "invocation": invocation,
         "env_fingerprint": env_fingerprint,
         "pr_urls": list(urls),
+        # The explicit --prs override list (None for a tier-resolved run). When set, tier
+        # is "custom" and pr_urls carries the same URLs, so resume works from the manifest.
+        "prs": list(args.prs) if getattr(args, "prs", None) else None,
     }
     (Path(run_dir) / "run.json").write_text(json.dumps(manifest, indent=2))
 
@@ -649,11 +687,15 @@ def _exit_code(final, urls):
 
 
 def _new_run(args):
-    tier = args.tier
     subsets = _load_json(GOLDEN_DIR / "subsets.json")
     shas = _load_json(GOLDEN_DIR / "shas.json")
     bench_data = _load_json(GOLDEN_DIR / "benchmark_data.min.json")
-    urls = _resolve_tier(tier, subsets, shas)
+    # An explicit --prs list overrides --tier's subset resolution and labels the run
+    # "custom"; the URLs were validated against shas.json at parse time.
+    if args.prs:
+        tier, urls = "custom", list(args.prs)
+    else:
+        tier, urls = args.tier, _resolve_tier(args.tier, subsets, shas)
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     timeout_s = args.timeout_mins * 60
 
@@ -661,7 +703,10 @@ def _new_run(args):
     _write_manifest(run_dir, run_id, tier, urls, timeout_s, args)
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.pending(urls)  # a fresh run -> all pending
-    summary = _run_prs(run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data)
+    summary = _run_prs(
+        run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data,
+        tool=args.tool, child_model=_resolve_child_model(args.tool, args.child_model),
+    )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
 
@@ -684,10 +729,21 @@ def _resume(run_id, args, retry):
     fingerprint = manifest.get("env_fingerprint") or {}
     timeout_s = fingerprint.get("timeout_s") or args.timeout_mins * 60
     anchor = manifest.get("anchor") if manifest.get("anchor") is not None else args.anchor
+    # Prefer the manifest's recorded pipeline so a resume re-runs the same tool it began
+    # with; fall back to the CLI default for pre-tool run.json files (or a naive run, whose
+    # None tool is unused because the anchor path skips the skill).
+    tool = manifest.get("tool") or args.tool
+    # Same precedence for the child-model pin: the manifest value wins so a resume re-runs
+    # the same model it began with; fall back to the per-tool default for pre-child_model
+    # run.json files (or a naive run, whose None value is unused by the anchor path).
+    child_model = manifest.get("child_model") or _resolve_child_model(args.tool, args.child_model)
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
-    summary = _run_prs(run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data)
+    summary = _run_prs(
+        run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
+        tool=tool, child_model=child_model,
+    )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
 
@@ -721,9 +777,9 @@ def _score_only(run_id):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         prog="bench/run.py",
-        description="Drive the deep-review skill over a tier's golden PRs and checkpoint outcomes.",
+        description="Drive the code-gauntlet skill over a tier's golden PRs and checkpoint outcomes. Tool labels and scorer keys keep their pre-rename deep-review-* names for measurement continuity.",
     )
-    parser.add_argument("--tier", choices=["smoke", "subset", "full"], help="which PR set to run")
+    parser.add_argument("--tier", choices=["smoke", "subset", "holdout", "full"], help="which PR set to run")
     parser.add_argument("--runs", type=int, default=1, help="number of sequential runs (own dir each)")
     parser.add_argument("--fidelity", choices=["dry-run", "live"], default="dry-run")
     parser.add_argument("--resume", metavar="RUN_ID", help="re-run only pending PRs of RUN_ID")
@@ -735,8 +791,40 @@ def parse_args(argv=None):
     # 971-1345s, peaking at 75% of the original 30-min budget (plan threshold: >50%).
     parser.add_argument("--timeout-mins", type=int, default=45, dest="timeout_mins")
     parser.add_argument("--anchor", choices=["naive"], help="bare single-pass anchor review")
+    parser.add_argument(
+        "--tool", choices=["deep-review-v2", "deep-review-v3"], default="deep-review-v3",
+        help="which deep-review pipeline to invoke/label (default: deep-review-v3)",
+    )
+    # Default is per-tool (resolved by _resolve_child_model): sonnet for v3, inherit for v2.
+    # None is the "not specified" sentinel so an explicit flag can be told apart from the
+    # default and the manifest value can win on resume.
+    parser.add_argument(
+        "--child-model", choices=["sonnet", "sonnet[1m]", "opus", "opus[1m]", "inherit"], default=None,
+        dest="child_model",
+        help="model for the child orchestrator session "
+        "(default: sonnet for deep-review-v3, inherit for deep-review-v2)",
+    )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--prs", metavar="URL[,URL...]",
+        help="explicit comma-separated golden PR list; overrides --tier's subset "
+        "resolution and labels the run 'custom'. Every URL must exist in shas.json.",
+    )
+    args = parser.parse_args(argv)
+    # Validate --prs against the golden set at parse time so an unknown URL is a hard
+    # argparse error (exit 2), never a mid-run surprise; normalize the string to a list.
+    if args.prs is not None:
+        urls = [u.strip() for u in args.prs.split(",") if u.strip()]
+        if not urls:
+            parser.error("--prs was given but parsed no URLs")
+        shas = _load_json(GOLDEN_DIR / "shas.json")
+        unknown = [u for u in urls if u not in shas]
+        if unknown:
+            parser.error(
+                "--prs contains URL(s) not in shas.json: {}".format(", ".join(unknown))
+            )
+        args.prs = urls
+    return args
 
 
 def main(argv=None):
@@ -766,8 +854,12 @@ def main(argv=None):
     if args.retry_failed:
         return _resume(args.retry_failed, args, retry=True)
 
-    if not args.tier:
-        print("--tier is required for a new run (smoke|subset|full).", file=sys.stderr)
+    if not args.tier and not args.prs:
+        print(
+            "--tier or --prs is required for a new run "
+            "(smoke|subset|holdout|full, or an explicit --prs list).",
+            file=sys.stderr,
+        )
         return 2
 
     rc = 0

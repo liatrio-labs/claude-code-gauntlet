@@ -1,0 +1,35 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "challenge_contested": false,
+      "challenge_justification": "Partially disproven under blind review.",
+      "challenge_score": 35,
+      "confidence": 80,
+      "description": "The function does not handle null input correctly at runtime.",
+      "dimension": "bug",
+      "file": "dc/a.py",
+      "id": "f1",
+      "line_end": 1,
+      "line_start": 1,
+      "origin": "new",
+      "original_severity": "high",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "medium",
+      "severity_downgraded": true,
+      "title": "Real bug"
+    }
+  ],
+  "stats": {
+    "challenge_contested": 0,
+    "challenge_downgraded": 1,
+    "challenge_removed": 0,
+    "challenge_survived": 0,
+    "dedup_dropped": 0,
+    "final_count": 1,
+    "total_input": 1,
+    "unchallenged": 0
+  }
+}

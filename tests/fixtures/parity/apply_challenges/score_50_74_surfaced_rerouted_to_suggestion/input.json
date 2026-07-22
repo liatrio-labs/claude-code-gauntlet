@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "id": "f1",
+      "file": "src/foo.py",
+      "line_start": 10,
+      "line_end": 12,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Surfaced finding",
+      "description": "This finding was surfaced by the automatic-surfacing pass rather than an agent.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "surfaced"
+    }
+  ],
+  "challenges": [
+    { "id": "f1", "score": 60 }
+  ]
+}

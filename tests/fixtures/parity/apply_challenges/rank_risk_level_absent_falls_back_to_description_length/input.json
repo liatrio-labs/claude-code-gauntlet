@@ -1,0 +1,36 @@
+{
+  "findings": [
+    {
+      "id": "A-null-risk-long-desc",
+      "file": "rank2/a.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "high",
+      "confidence": 80,
+      "risk_level": null,
+      "title": "Null risk_level, long description",
+      "description": "A much longer description with far more detail than the other finding in this comparison set.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    },
+    {
+      "id": "B-absent-risk-short-desc",
+      "file": "rank2/b.py",
+      "line_start": 1,
+      "line_end": 1,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Absent risk_level, short description",
+      "description": "Short.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    }
+  ],
+  "challenges": []
+}

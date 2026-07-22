@@ -1,0 +1,42 @@
+{
+  "active": [
+    {
+      "agent": "bug-detector",
+      "confidence": 80,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": false,
+      "corroborated_by": [
+        "cross-file-impact"
+      ],
+      "description": "d12",
+      "dimension": "bug",
+      "file": "n.py",
+      "id": "D12",
+      "line_start": 25.7,
+      "security_escalation": false,
+      "severity": "medium",
+      "title": "t12"
+    },
+    {
+      "agent": "cross-file-impact",
+      "confidence": 70,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": false,
+      "corroborated_by": [
+        "bug-detector"
+      ],
+      "description": "d13",
+      "dimension": "cross_file_impact",
+      "file": "n.py",
+      "id": "D13",
+      "line_start": 20,
+      "security_escalation": false,
+      "severity": "medium",
+      "title": "t13"
+    }
+  ],
+  "boosted_count": 2,
+  "suppressed": []
+}

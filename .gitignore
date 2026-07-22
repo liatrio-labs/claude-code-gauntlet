@@ -1,8 +1,9 @@
-# Eval workspace outputs
+# Eval workspace outputs (deep-review-workspace/ retained for pre-rename local dirs)
 deep-review-workspace/
 *-workspace/
 
-# Review output files
+# Review output files (deep-review-* entries retained for pre-rename local files)
+code-gauntlet-*.md
 deep-review-*.md
 
 # OS files
@@ -29,6 +30,9 @@ docs/temp/
 docs/design/
 docs/superpowers/
 docs/improvement-backlog.md
+/.code-gauntlet/
+# pre-rename output dir, retained for local files
 /.deep-review/
 bench/workspace/
 bench/.env
+probes/

@@ -1,0 +1,30 @@
+{
+  "dropped": [
+    {
+      "agent": "code-simplifier",
+      "confidence": 95,
+      "description": "a much longer description explaining the simplification opportunity in detail",
+      "dimension": "convention",
+      "eliminated_by": "dedup:cross-agent",
+      "elimination_reason": "cross-agent dedup: finding at f.py:12 (agent='code-simplifier', dim='convention', conf=95) lost to agent='bug-detector' at line 10 within 5 lines",
+      "file": "f.py",
+      "id": "C2",
+      "line_start": 12,
+      "severity": "low",
+      "title": "t2"
+    }
+  ],
+  "kept": [
+    {
+      "agent": "bug-detector",
+      "confidence": 60,
+      "description": "short bug desc",
+      "dimension": "bug",
+      "file": "f.py",
+      "id": "C1",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "t1"
+    }
+  ]
+}

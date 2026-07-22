@@ -1,0 +1,19 @@
+{
+  "fn": "apply_threshold_filter",
+  "findings": [
+    {
+      "id": "F1",
+      "dimension": "bug",
+      "confidence": 40,
+      "original_confidence": 65,
+      "severity": "low",
+      "title": "t",
+      "description": "d"
+    }
+  ],
+  "config": {
+    "confidence_threshold": 70,
+    "security_min_confidence": 70,
+    "severity_threshold": "low"
+  }
+}

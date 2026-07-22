@@ -1,0 +1,27 @@
+{
+  "fn": "dedup_cross_agent",
+  "findings": [
+    {
+      "id": "C5",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "file": "h.py",
+      "line_start": 30,
+      "severity": "low",
+      "confidence": 70,
+      "title": "t5",
+      "description": "short"
+    },
+    {
+      "id": "C6",
+      "agent": "code-simplifier",
+      "dimension": "convention",
+      "file": "h.py",
+      "line_start": 31,
+      "severity": "low",
+      "confidence": 70,
+      "title": "t6",
+      "description": "this description is considerably longer than the other one"
+    }
+  ]
+}

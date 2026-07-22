@@ -1,0 +1,23 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "I6a",
+      "title": "Null check missing",
+      "description": "The function does not validate the pointer before dereferencing it in this code branch today.",
+      "file": "src/util.py",
+      "line_start": 20,
+      "severity": "medium",
+      "confidence": 40
+    },
+    {
+      "id": "I6b",
+      "title": "NULL CHECK MISSING",
+      "description": "Same issue appears again here in this duplicate detection test case for parity fixtures now.",
+      "file": "src/util.py",
+      "line_start": 20,
+      "severity": "medium",
+      "confidence": 40
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "config": {
+    "confidence_threshold": 65,
+    "ignore": [
+      "two space pattern",
+      "four space pattern",
+      "tab pattern",
+      "zero space pattern"
+    ],
+    "security_min_confidence": 70,
+    "severity_threshold": "low"
+  }
+}

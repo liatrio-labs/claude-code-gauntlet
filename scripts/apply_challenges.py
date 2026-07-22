@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-apply_challenges.py — Phase 7→8 bridge for deep-review.
+apply_challenges.py — Phase 7→8 bridge for code-gauntlet.
 
 Reads Phase 6 output (filter_findings.py) from disk, applies blind-challenge
 scores to each finding, re-routes and culls according to the challenge
@@ -413,7 +413,7 @@ def rank_findings(findings):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Phase 7→8 bridge for deep-review. "
+            "Phase 7→8 bridge for code-gauntlet. "
             "Applies blind-challenge scores to Phase 6 findings, re-runs "
             "cross-agent dedup, ranks the final set, and writes "
             "delivery-ready JSON."

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-filter_findings.py — Deterministic Phase 6 filtering for deep-review.
+filter_findings.py — Deterministic Phase 6 filtering for code-gauntlet.
 
 Usage:
     python3 filter_findings.py <findings_json> [--review-md path] [--exclusions-md path]
@@ -182,15 +182,20 @@ def parse_review_md(path):
         warn(f"Could not read REVIEW.md: {e}; using default thresholds.")
         return config
 
-    # Match a YAML-style deep-review config block.
+    # Match a YAML-style code-gauntlet config block.
     # Accepts:
-    #   ```yaml\n# deep-review\n...\n```
-    #   <!-- deep-review-config\n...\n-->
-    #   ## deep-review config\nkey: value (until blank line or next heading)
+    #   ```yaml\n# code-gauntlet\n...\n```
+    #   <!-- code-gauntlet-config\n...\n-->
+    #   ## code-gauntlet config\nkey: value (until blank line or next heading)
     block_patterns = [
         # Fenced code block (yaml or plain)
-        r"```(?:yaml|)[\s]*#?\s*deep-review(?:[^\n]*)?\n(.*?)```",
+        r"```(?:yaml|)[\s]*#?\s*code-gauntlet(?:[^\n]*)?\n(.*?)```",
         # HTML comment block
+        r"<!--\s*code-gauntlet-config\s*\n(.*?)-->",
+        # Legacy pre-rename markers -- user repos written against deep-review keep
+        # working. Order (current before legacy) must stay in lockstep with the JS
+        # twin's blockPatterns so both pick the same block when several match.
+        r"```(?:yaml|)[\s]*#?\s*deep-review(?:[^\n]*)?\n(.*?)```",
         r"<!--\s*deep-review-config\s*\n(.*?)-->",
     ]
 
@@ -203,7 +208,7 @@ def parse_review_md(path):
 
     # Also scan the whole file for bare key: value lines if no block found
     if not block_text:
-        warn(f"REVIEW.md at {path!r}: no deep-review config block found; falling back to whole-file scan.")
+        warn(f"REVIEW.md at {path!r}: no code-gauntlet config block found; falling back to whole-file scan.")
         block_text = text
 
     # confidence_threshold
@@ -1243,7 +1248,7 @@ def apply_exclusions(findings, exclusion_patterns):
 def main():
     parser = argparse.ArgumentParser(
         description=(
-            "Deterministic Phase 6 filter for deep-review findings. "
+            "Deterministic Phase 6 filter for code-gauntlet findings. "
             "Applies confidence/severity thresholds, injection detection, "
             "disagreement scoring, and output tagging."
         )

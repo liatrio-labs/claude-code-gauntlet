@@ -1,0 +1,30 @@
+{
+  "fn": "apply_threshold_filter",
+  "findings": [
+    {
+      "id": "TB1",
+      "dimension": "security",
+      "confidence": 60,
+      "severity": "low",
+      "title": "boundary-sec",
+      "description": "d",
+      "file": "a.py",
+      "line_start": 7
+    },
+    {
+      "id": "TB2",
+      "dimension": "bug",
+      "confidence": 70,
+      "severity": "low",
+      "title": "boundary-bug",
+      "description": "d",
+      "file": "a.py",
+      "line_start": 8
+    }
+  ],
+  "config": {
+    "confidence_threshold": 70,
+    "security_min_confidence": 60,
+    "severity_threshold": "low"
+  }
+}

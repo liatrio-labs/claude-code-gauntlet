@@ -1,0 +1,26 @@
+{
+  "eliminated": [
+    {
+      "confidence": 40,
+      "description": "Same issue appears again here in this duplicate detection test case for parity fixtures now.",
+      "eliminated_by": "injection",
+      "elimination_reason": "duplicate of finding 'I6a'",
+      "file": "src/util.py",
+      "id": "I6b",
+      "line_start": 20,
+      "severity": "medium",
+      "title": "NULL CHECK MISSING"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 40,
+      "description": "The function does not validate the pointer before dereferencing it in this code branch today.",
+      "file": "src/util.py",
+      "id": "I6a",
+      "line_start": 20,
+      "severity": "medium",
+      "title": "Null check missing"
+    }
+  ]
+}

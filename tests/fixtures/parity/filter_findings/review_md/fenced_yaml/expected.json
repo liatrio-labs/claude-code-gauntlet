@@ -1,0 +1,11 @@
+{
+  "config": {
+    "confidence_threshold": 80,
+    "ignore": [
+      "foo pattern",
+      "bar pattern"
+    ],
+    "security_min_confidence": 90,
+    "severity_threshold": "medium"
+  }
+}

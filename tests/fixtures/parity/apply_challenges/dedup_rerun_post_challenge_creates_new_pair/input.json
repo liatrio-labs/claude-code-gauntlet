@@ -1,0 +1,38 @@
+{
+  "findings": [
+    {
+      "id": "bug-1",
+      "file": "a.py",
+      "line_start": 10,
+      "line_end": 10,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Real bug",
+      "description": "The loop index is off by one and skips the last element.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    },
+    {
+      "id": "test-1",
+      "file": "a.py",
+      "line_start": 12,
+      "line_end": 12,
+      "severity": "high",
+      "confidence": 90,
+      "title": "Missing test coverage",
+      "description": "This loop boundary is not covered by any existing test case.",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    }
+  ],
+  "challenges": [
+    { "id": "bug-1", "score": 80 },
+    { "id": "test-1", "score": 80 }
+  ]
+}

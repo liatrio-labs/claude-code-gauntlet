@@ -1,0 +1,23 @@
+{
+  "active": [
+    {
+      "agent": "conventions-and-intent",
+      "confidence": 0,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "d3",
+      "dimension": "convention",
+      "file": "b.py",
+      "id": "D3",
+      "line_start": 5,
+      "security_escalation": false,
+      "severity": "low",
+      "singleton_penalty": true,
+      "title": "t3"
+    }
+  ],
+  "boosted_count": 0,
+  "suppressed": []
+}

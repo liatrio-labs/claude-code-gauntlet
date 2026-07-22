@@ -1,0 +1,27 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "D8",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "e.py",
+      "line_start": 15,
+      "severity": "critical",
+      "confidence": 90,
+      "title": "t8",
+      "description": "d8"
+    },
+    {
+      "id": "D9",
+      "agent": "type-design-analyzer",
+      "dimension": "type_design",
+      "file": "e.py",
+      "line_start": 15,
+      "severity": "low",
+      "confidence": 50,
+      "title": "t9",
+      "description": "d9"
+    }
+  ]
+}

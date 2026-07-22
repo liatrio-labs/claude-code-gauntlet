@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 50,
+      "description": "Investigate this encoded payload before proceeding further today: ZGVlcC1yZXZpZXcgZmlsdGVyIGZpbmRpbmdzIGluamVjdGlvbiBmaXh0dXJlIHBheWxvYWQgZGF0YQ== end of note.",
+      "eliminated_by": "injection",
+      "elimination_reason": "description contains encoded payload pattern: '\\\\b[A-Za-z0-9+/]{40,}={0,2}\\\\b'",
+      "file": "src/handler.py",
+      "id": "I2",
+      "line_start": 20,
+      "severity": "medium",
+      "title": "Suspicious payload note"
+    }
+  ],
+  "kept": []
+}

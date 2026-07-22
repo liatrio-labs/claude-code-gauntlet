@@ -1,0 +1,17 @@
+{
+  "ndjson_findings": {
+    "agent-a": [
+      {
+        "id": "F1",
+        "title": "first-seen-agent-a"
+      }
+    ],
+    "agent-b": [
+      {
+        "id": "F1",
+        "title": "second-agent-b"
+      }
+    ]
+  },
+  "text_findings": {}
+}

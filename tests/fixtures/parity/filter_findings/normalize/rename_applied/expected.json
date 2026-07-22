@@ -1,0 +1,13 @@
+{
+  "findings": [
+    {
+      "confidence": 50,
+      "description": "legacy body text describing the issue",
+      "file": "src/a.py",
+      "id": "N1",
+      "line_start": 10,
+      "origin": "new",
+      "severity": "low"
+    }
+  ]
+}

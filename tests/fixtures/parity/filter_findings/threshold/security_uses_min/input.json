@@ -1,0 +1,30 @@
+{
+  "fn": "apply_threshold_filter",
+  "findings": [
+    {
+      "id": "T4a",
+      "dimension": "security",
+      "confidence": 65,
+      "severity": "low",
+      "title": "sec",
+      "description": "d",
+      "file": "a.py",
+      "line_start": 4
+    },
+    {
+      "id": "T4b",
+      "dimension": "bug",
+      "confidence": 65,
+      "severity": "low",
+      "title": "bug",
+      "description": "d",
+      "file": "a.py",
+      "line_start": 5
+    }
+  ],
+  "config": {
+    "confidence_threshold": 90,
+    "security_min_confidence": 60,
+    "severity_threshold": "low"
+  }
+}

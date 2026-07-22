@@ -339,7 +339,7 @@ class AdjudicateBucketIdentityTests(unittest.TestCase):
             "/tmp/r", metrics, costs,
             {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": None},
             "pin", "pin", "sha")
-        self.assertEqual(row["envelope"]["invocation"], "headless:/deep-review")
+        self.assertEqual(row["envelope"]["invocation"], "headless:/code-gauntlet")
 
     def test_string_line_is_normalized_not_crashing(self):
         url = "https://github.com/o/r/pull/1"

@@ -1,0 +1,8 @@
+{
+  "config": {
+    "confidence_threshold": 70,
+    "ignore": [],
+    "security_min_confidence": 70,
+    "severity_threshold": "low"
+  }
+}

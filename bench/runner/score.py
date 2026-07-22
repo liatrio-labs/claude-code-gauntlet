@@ -709,7 +709,7 @@ def _build_ledger_row(run_dir, metrics, costs, manifest, pin, adjudicator_pin, s
         or (
             "naive:single-pass"
             if manifest.get("anchor") == "naive"
-            else "headless:/deep-review"
+            else "headless:/code-gauntlet"
         ),
     }
     return {

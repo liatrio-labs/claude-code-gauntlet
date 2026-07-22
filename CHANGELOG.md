@@ -227,7 +227,6 @@
   ([#15](https://github.com/liatrio-labs/claude-deep-review/pull/15),
   [`fa8aa35`](https://github.com/liatrio-labs/claude-deep-review/commit/fa8aa353d1df40ce027158ee705d6357d8c22e7d))
 
-
 ## v2.5.0 (2026-07-16)
 
 ### Bug Fixes

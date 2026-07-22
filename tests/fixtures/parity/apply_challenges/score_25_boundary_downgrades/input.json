@@ -1,0 +1,22 @@
+{
+  "findings": [
+    {
+      "id": "f1",
+      "file": "src/foo.py",
+      "line_start": 10,
+      "line_end": 12,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Real bug",
+      "description": "The function does not handle null input correctly at runtime.",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "report_destination": "main",
+      "report_tag": "main",
+      "origin": "new"
+    }
+  ],
+  "challenges": [
+    { "id": "f1", "score": 25 }
+  ]
+}

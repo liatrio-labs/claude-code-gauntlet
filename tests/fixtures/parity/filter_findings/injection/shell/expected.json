@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 50,
+      "description": "The build script executes rm -rf /var/cache during startup which seems dangerous behavior overall.",
+      "eliminated_by": "injection",
+      "elimination_reason": "contains shell command pattern: '\\\\brm\\\\s+-[rf]'",
+      "file": "src/build.sh",
+      "id": "I1",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "Build script check"
+    }
+  ],
+  "kept": []
+}

@@ -1,0 +1,14 @@
+{
+  "fn": "normalize_field_names",
+  "findings": [
+    {
+      "id": "N3",
+      "description": "already canonical text",
+      "line_start": 42,
+      "origin": "surfaced",
+      "file": "src/c.py",
+      "severity": "low",
+      "confidence": 50
+    }
+  ]
+}
