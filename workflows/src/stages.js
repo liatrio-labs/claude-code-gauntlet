@@ -27,6 +27,16 @@ function defaultCtx() {
   };
 }
 
+// Resolve the dispatch model for an agent type from the args-waist policy object —
+// the single place the policy shape maps onto resolvePolicy's opts.
+function modelFor(agentType, policy) {
+  return resolvePolicy(agentType, {
+    frontier: policy.frontier,
+    frontierModelId: policy.frontierModelId,
+    subagentModelEnv: policy.subagentModel,
+  }).model;
+}
+
 // Shared char budget for a single agent's by-value prompt payload. Above it, stages
 // that carry findings by value (report generation, verify slice-input writing) segment
 // into multiple dispatches to stay under the writer's context.
@@ -72,11 +82,7 @@ export async function summarize(ctx, input) {
   const limits = inp.limits || {};
   const policy = inp.policy || {};
   const bucketSize = Math.max(1, limits.summarizeBucketSize || 20);
-  const model = resolvePolicy('deep-review:change-summarizer', {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  const model = modelFor('deep-review:change-summarizer', policy);
 
   const bucketed = changedLines > 500 && changedFiles.length > bucketSize;
   try {
@@ -152,8 +158,10 @@ function agentActive(spec, agentFlags) {
   return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || agentFlags[flag]);
 }
 
-// Canonical finding property types (discovery emits confidence as a qualitative
-// STRING label — 'high'/'medium'/'low' — not the numeric score later stages compute).
+// Canonical finding property types (discovery declares confidence as a STRING in the
+// by-value schema: agents emit a numeric 0-100 score per their .md contracts, which
+// StructuredOutput renders as its string form "85" — pinNumericFields restores the
+// number at the verify boundary before any downstream arithmetic).
 const FINDING_PROP_TYPES = {
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
   title: 'string', description: 'string', severity: 'string', confidence: 'string',
@@ -169,9 +177,10 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 // field — `description` — which is exactly what the verify executor did, emptying
 // descriptions for every downstream stage (validate/filter/challenge) and false-firing the
 // filter's short-description injection guard on high-confidence findings. `confidenceType`
-// differs by stage: discovery emits a qualitative STRING label, but verify_findings.py
-// re-scores confidence to a NUMBER, so the verify item MUST declare number or
-// StructuredOutput coerces 85 -> "85" and breaks the numeric confidence arithmetic downstream.
+// differs by stage: discovery declares string (agents emit numeric 0-100, which
+// StructuredOutput renders as "85"), but verify_findings.py re-scores confidence to a
+// NUMBER, so the verify item MUST declare number or StructuredOutput coerces 85 -> "85"
+// and breaks the numeric confidence arithmetic downstream.
 function findingItemSchema(schemaExtra, confidenceType) {
   const props = {};
   for (const [k, t] of Object.entries(FINDING_PROP_TYPES)) props[k] = { type: t };
@@ -228,11 +237,7 @@ export async function discover(ctx, input) {
   // agent(promptString, opts). label IS the agentType (identity for gaps); the prompt
   // already names the dimensions, so no non-standard opts field is passed.
   const thunks = specs.map((spec) => {
-    const model = resolvePolicy(spec.agentType, {
-      frontier: policy.frontier,
-      frontierModelId: policy.frontierModelId,
-      subagentModelEnv: policy.subagentModel,
-    }).model;
+    const model = modelFor(spec.agentType, policy);
     return () => c.agent(discoverPrompt(inp, spec), {
       label: spec.agentType,
       agentType: spec.agentType,
@@ -414,11 +419,7 @@ export async function verifyStage(ctx, input) {
   // Empty set: nothing to verify, trivially trusted (no executor dispatched).
   if (findings.length === 0) return { findings: [], verified: true, gaps: [] };
 
-  const model = resolvePolicy('deep-review:executor', {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  const model = modelFor('deep-review:executor', policy);
 
   const slices = [];
   for (let i = 0; i < findings.length; i += sliceSize) slices.push(findings.slice(i, i + sliceSize));
@@ -474,10 +475,14 @@ export async function verifyStage(ctx, input) {
 // The UNVERIFIED degradation: every ORIGINAL finding re-emitted with origin='unknown'
 // (surfaced-classification skipped), verified=false, a loud gap. Findings are never
 // dropped and success is never fabricated. Reached by an untrusted slice, an executor
-// throw, OR a slice-input writer failure.
+// throw, OR a slice-input writer failure. Numeric-string fields are pinned here for the
+// same reason they are pinned on the slice-input path: the trusted path returns the
+// script's re-scored numbers, but this path re-emits discovery-shaped findings whose
+// confidence is the schema's numeric STRING ("85") — leaked downstream, the filter's
+// consensus `+` boost concatenates ("85" + 10 -> "8510" -> clamped to 100).
 function unverifiedResult(findings, reason) {
   return {
-    findings: findings.map((f) => ({ ...f, origin: 'unknown' })),
+    findings: findings.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' })),
     verified: false,
     gaps: [`verify: UNVERIFIED — ${reason}; all ${findings.length} finding(s) marked origin=unknown, surfaced-classification skipped`],
   };
@@ -506,11 +511,7 @@ function pinNumericFields(finding) {
 async function materializeVerifySlices(c, inp, slices, policy) {
   const v = inp.verify || {};
   const inputPathBase = v.inputPathBase || 'phase4-input';
-  const model = resolvePolicy('deep-review:artifact-writer', {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  const model = modelFor('deep-review:artifact-writer', policy);
   const entries = slices.map((slice, i) => ({
     path: `${inputPathBase}.slice${i}.json`,
     content: { findings: slice.map(pinNumericFields), base_branch: v.baseBranch },
@@ -704,11 +705,7 @@ export async function validateStage(ctx, input) {
     return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } };
   }
 
-  const model = resolvePolicy('deep-review:validator', {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  const model = modelFor('deep-review:validator', policy);
 
   const batches = [];
   for (let i = 0; i < findings.length; i += batchSize) batches.push(findings.slice(i, i + batchSize));
@@ -875,11 +872,7 @@ export async function challengeStage(ctx, input) {
     };
   }
 
-  const model = resolvePolicy('deep-review:challenger', {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  const model = modelFor('deep-review:challenger', policy);
 
   // Rank first so the cap, when it bites, challenges the HIGHEST-priority findings;
   // the lower-ranked overflow is skipped (routed to `unverified`, never dropped).
@@ -1005,11 +998,7 @@ export async function reportStage(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const policy = inp.policy || {};
-  const model = resolvePolicy('deep-review:report-writer', {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  const model = modelFor('deep-review:report-writer', policy);
 
   const findings = inp.findings || [];
   const oversized = JSON.stringify(findings).length > SEGMENT_CHAR_BUDGET;
@@ -1118,11 +1107,7 @@ export async function writeArtifacts(ctx, input) {
     postReview: `${outputDir}/deep-review-post-review-${sha}.json`,
     checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
   };
-  const model = resolvePolicy('deep-review:artifact-writer', {
-    frontier: policy.frontier,
-    frontierModelId: policy.frontierModelId,
-    subagentModelEnv: policy.subagentModel,
-  }).model;
+  const model = modelFor('deep-review:artifact-writer', policy);
   const partial = (reason) => ({
     artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
     gaps: [`writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`],

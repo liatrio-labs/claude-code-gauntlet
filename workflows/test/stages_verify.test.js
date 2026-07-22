@@ -102,6 +102,26 @@ test('(c) status:failed -> UNVERIFIED path, findings preserved (never dropped)',
   assert.ok(out.gaps.some((g) => /unverified|verify/i.test(g)));
 });
 
+test('(c2) UNVERIFIED path pins numeric-string fields — confidence "85" leaves as 85, never fuel for downstream string concatenation', async () => {
+  const input = baseInput();
+  // Discovery-shaped findings: the by-value schema declares confidence as a string,
+  // so StructuredOutput renders the agents' numeric score as "85". line_start gets the
+  // same treatment. Non-numeric values must pass through untouched.
+  input.findings = [
+    { id: 'F1', file: 'a.js', line_start: '3', confidence: '85', origin: 'new', dimension: 'bug', cross_file_refs: [] },
+    { id: 'F2', file: 'a.js', line_start: 4, confidence: 90, origin: 'new', dimension: 'bug', cross_file_refs: [] },
+    { id: 'F3', file: 'b.js', line_start: 5, confidence: null, origin: 'new', dimension: 'bug', cross_file_refs: [] },
+  ];
+  const ctx = verifyCtx(() => ({ status: 'failed', exitCode: 1, stderr: 'boom' }));
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  const byId = Object.fromEntries(out.findings.map((f) => [f.id, f]));
+  assert.strictEqual(byId.F1.confidence, 85);
+  assert.strictEqual(byId.F1.line_start, 3);
+  assert.strictEqual(byId.F2.confidence, 90);
+  assert.strictEqual(byId.F3.confidence, null);
+});
+
 test('(d) receipt sha mismatch -> UNVERIFIED', async () => {
   const input = baseInput();
   // Correct per-slice nonce so the sha check is the one that trips.
