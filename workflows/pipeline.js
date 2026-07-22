@@ -2643,24 +2643,18 @@ const CHALLENGE_SCHEMA = {
   required: ['confidence_claim_is_correct'],
 };
 
-// blindChallengeFields(finding) -> { title, description, file, line_start, line_end }
-// STRUCTURAL blindness guarantee: the blind challenger sees ONLY these keys — the claim
-// (title/description) plus the LOCATION so it can open the raw code itself (challenger.md
-// has Read/Grep/LSP and is told to read the code at the location). Selecting them
-// explicitly (an allowlist, not a delete-list) means no confirming context — evidence,
-// origin, cross_file_refs, corroborated_by, the original agent's reasoning — can ever
-// reach the challenger, and stays impossible even if new reasoning-bearing fields are
-// added to findings later. The prior `code` field was never populated anywhere in the
-// pipeline, so the challenger always received an empty code block; location + the agent's
-// own tools replaces that dead field. Unit-tested both ways: the returned object has
-// exactly these keys and the built prompt leaks none of the rest.
+// blindChallengeFields(finding) -> { title, description, code }
+// STRUCTURAL blindness guarantee: the blind challenger sees ONLY these three keys.
+// Selecting them explicitly (an allowlist, not a delete-list) means no confirming
+// context — evidence, origin, cross_file_refs, corroborated_by, the original agent's
+// reasoning — can ever reach the challenger, and stays impossible even if new
+// reasoning-bearing fields are added to findings later. Unit-tested both ways: the
+// returned object has exactly these keys and the built prompt leaks none of the rest.
 function blindChallengeFields(finding) {
   return {
     title: finding.title || '',
     description: finding.description || '',
-    file: finding.file || '',
-    line_start: finding.line_start != null ? finding.line_start : '',
-    line_end: finding.line_end != null ? finding.line_end : '',
+    code: finding.code || '',
   };
 }
 
@@ -2670,11 +2664,10 @@ function blindChallengeFields(finding) {
 // downstream; see applyChallenges thresholds). This targets the two noise clusters the
 // subset diagnosis surfaced: test-coverage "no test exists" negatives and
 // cross_file_impact claims that cite no in-diff evidence. Still fully blind — only
-// {title, description, file, line_start, line_end} reach the challenger.
+// {title, description, code} reach the challenger.
 function challengePrompt(finding) {
   const b = blindChallengeFields(finding);
-  const range = b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`;
-  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code: the claim concerns ${b.file}:${range} — open that location and enough surrounding context yourself (Read/Grep/LSP), find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
+  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code below: find the specific lines it rests on and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context you were given — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
 }
 
 // challengeStage(ctx, input) -> { findings, unverified, eliminated, gaps, stats, generated_at }
