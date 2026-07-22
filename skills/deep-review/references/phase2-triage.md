@@ -343,7 +343,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `agentFlags` | map of conditional-dimension flags (all nine dimensions are unconditional today, so `{}` unless REVIEW.md gates a future conditional dimension) |
 | `policy` | `{ tier, frontier, frontierModelId, subagentModel }` — see below |
 | `limits` | `{ summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, schemaFailureLimit: 3, verifySliceSize: 200, deliveryCap }` (override from REVIEW.md if set) |
-| `delivery` | `{ tier: "all" | "main_only" }` — the Phase 8 PR-comment tier (default `all`); optional (absent ⇒ `all`) |
+| `delivery` | `{ tier: "all" \| "main_only" }` — the Phase 8 PR-comment tier (default `all`); optional (absent ⇒`all`) |
 
 `limits.deliveryCap` is the Phase 8 PR-comment cap, threaded from `DEEP_REVIEW_PR_COMMENT_CAP` (the same knob echoed as `pr_comment_cap`; headless default `6`, bench `25`) — the **workflow cannot read `process.env`**, so passing it through the waist is the only path. `delivery.tier` is the Phase 8 delivery tier from the Phase 1 answer (interactive) or `DEEP_REVIEW_DELIVERY_TIER` (headless, default `all`); same env-blindness, same reason it rides the waist. The Challenge stage hands every survivor to the workflow's `selectDelivery(survivors, deliveryCap, tier)`, which applies the tier (`all` keeps every survivor, `main_only` keeps main-tagged only), ranks, and keeps the top `deliveryCap` as the persisted post-review payload (`artifactPaths.postReview`) Phase 8 posts verbatim. Omit `deliveryCap` (or leave it `null`) to deliver uncapped; omit `delivery` to default the tier to `all`.
 

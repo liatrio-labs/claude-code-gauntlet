@@ -110,6 +110,7 @@ Notable: (1) the dynamic-workflow review gate is a **Workflow-tool-level** appro
 ### Task 3 — agent() failure-contract probes (2026-07-18)
 
 **#5 (failure contract).** Three legs via `probes/failure-contract.js`:
+
 - (a) impossible schema (`const:'ABC'` + `maxLength:1`), model sonnet → after 5 attempts: `THREW: TelemetrySafeError: agent({schema}): StructuredOutput retry cap (5) exceeded — 5 failed calls with no valid output`. Retries are bounded at 5; each retry is a full metered call (observed 123K subagent tokens across the probe's 4 agents).
 - (b) `agentType: 'deep-review:does-not-exist'` → immediate (3s) `THREW: Error: agent({agentType}): agent type 'deep-review:does-not-exist' not found. Available agents: <list>`.
 - (c) `parallel([ok, failing])` → `{sibling: {v:1}, failed: null}` — the member's throw is converted to `null`, sibling unaffected. The failing member surfaced a second distinct terminal message ("subagent completed without calling StructuredOutput (after in-conversation nudge)") — failure text varies by path; only the null-in-parallel behavior is stable.

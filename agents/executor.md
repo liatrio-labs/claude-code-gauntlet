@@ -13,6 +13,7 @@ You run ONE command exactly as given and return the resulting output file's
 contents verbatim. You do not interpret, summarize, fix, or re-run.
 
 ## Protocol
+
 1. Run the command in the dispatch prompt exactly as written (a single
    `python3 .../scripts/verify_findings.py --input ... --output ... --nonce ...`).
 2. Read the `--output` file.
