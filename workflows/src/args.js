@@ -35,6 +35,22 @@ export function validateArgs(args) {
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
+  // agentFlags is the scope-gating map consumed by agentActive (stages.js): OPT-OUT, so an
+  // empty/absent-keyed map leaves every dimension on and only an explicit `false` disables a
+  // gated dimension (e.g. light scope stamps { deep: false }). It is a REQUIRED waist field
+  // (the skill always stamps it, {} for full scope), but shape-guard it so a malformed map
+  // cannot silently gate dimensions: it must be a plain object and every value a boolean —
+  // a non-boolean (a truthy "0"/"no" string, say) would slip past the strict `!== false`
+  // check and read as ON, hiding an operator's intent to disable.
+  if (args.agentFlags !== undefined) {
+    if (args.agentFlags === null || typeof args.agentFlags !== 'object' || Array.isArray(args.agentFlags)) {
+      errors.push('agentFlags must be an object of the form { <flag>: boolean } when present');
+    } else {
+      for (const [k, v] of Object.entries(args.agentFlags)) {
+        if (typeof v !== 'boolean') errors.push(`invalid agentFlags.${k}: must be a boolean (got ${typeof v})`);
+      }
+    }
+  }
   // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
   if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
     errors.push('changedFiles must be an array of repo-relative paths');

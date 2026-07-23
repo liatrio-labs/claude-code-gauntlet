@@ -1745,6 +1745,21 @@ function applyChallenges(findings, challenges) {
 const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
 const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
 
+// `conditionalFlag` is the SCOPE-GATING key for a dimension (consumed by agentActive in
+// stages.js). Semantics are OPT-OUT, never opt-in, so the default full-scope run is
+// unchanged when the caller stamps no flags:
+//   - null   => UNGATEABLE. The dimension is always on and cannot be disabled by any
+//               agentFlags entry. The two CORE dimensions (bug, security) carry null so a
+//               light-scope run always still includes them ("bugs+security only").
+//   - 'name' => gated on agentFlags['name']. agentActive treats a MISSING key or any value
+//               other than the literal `false` as ON — so absent/empty agentFlags leaves
+//               every gated dimension enabled (byte-identical to the pre-flag behavior).
+//               A light-scope run disables the dimension by stamping agentFlags['name'] = false.
+// The seven extended dimensions share the single 'deep' flag: light scope stamps
+// { deep: false } to drop them, full scope stamps {} (or omits the key) to keep them.
+// Finer scopes later = introduce additional flag tokens here; no agentActive change needed.
+const DEEP = 'deep';
+
 // `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema —
 // the extras each agent's .md output contract actually emits (findingItemSchema in stages.js
 // unions them onto that agent's discovery item schema, and the verify echo item schema unions
@@ -1760,15 +1775,15 @@ const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and na
 const DIMENSIONS = [
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
-  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: null,
+  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: null,
+  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
     schemaExtra: { invalid_state_example: 'string' }, modelOverride: null, promptExtra: null },
-  { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: null,
+  { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
     schemaExtra: { behavior_preserved: 'string' }, modelOverride: null, promptExtra: null },
 ];
 
@@ -1831,6 +1846,22 @@ function validateArgs(args) {
   // Only charset-check a present nonce (absence is already a REQUIRED error above).
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
+  }
+  // agentFlags is the scope-gating map consumed by agentActive (stages.js): OPT-OUT, so an
+  // empty/absent-keyed map leaves every dimension on and only an explicit `false` disables a
+  // gated dimension (e.g. light scope stamps { deep: false }). It is a REQUIRED waist field
+  // (the skill always stamps it, {} for full scope), but shape-guard it so a malformed map
+  // cannot silently gate dimensions: it must be a plain object and every value a boolean —
+  // a non-boolean (a truthy "0"/"no" string, say) would slip past the strict `!== false`
+  // check and read as ON, hiding an operator's intent to disable.
+  if (args.agentFlags !== undefined) {
+    if (args.agentFlags === null || typeof args.agentFlags !== 'object' || Array.isArray(args.agentFlags)) {
+      errors.push('agentFlags must be an object of the form { <flag>: boolean } when present');
+    } else {
+      for (const [k, v] of Object.entries(args.agentFlags)) {
+        if (typeof v !== 'boolean') errors.push(`invalid agentFlags.${k}: must be a boolean (got ${typeof v})`);
+      }
+    }
   }
   // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
   if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
@@ -1995,10 +2026,15 @@ function agentSpecs() {
   return AGENTS.map((a) => byAgent.get(a));
 }
 
-// An agent is active when at least one of its dimensions is enabled: the dimension's
-// conditionalFlag is null (always on) or the corresponding agentFlags entry is truthy.
+// An agent is active when at least one of its dimensions is enabled. A dimension is
+// enabled when its conditionalFlag is null/undefined (UNGATEABLE — always on, e.g. the
+// core bug/security dimensions) OR its agentFlags entry is not the literal `false`.
+// OPT-OUT semantics: a MISSING key counts as enabled, so absent/empty agentFlags leaves
+// every dimension on — byte-identical to the pre-flag behavior where all flags were null.
+// Only an explicit `false` (stamped by a light-scope run, e.g. { deep: false }) disables.
 function agentActive(spec, agentFlags) {
-  return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || agentFlags[flag]);
+  const flags = agentFlags || {};
+  return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || flags[flag] !== false);
 }
 
 // Canonical finding property types. confidence is a NUMBER end-to-end: agents emit a

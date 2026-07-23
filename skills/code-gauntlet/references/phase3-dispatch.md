@@ -56,7 +56,7 @@ Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **securit
 
 ## Discovery Agent Roster
 
-The Discover stage groups the nine dimensions by agent and fans out one task per **active** agent (a dimension is active when its `conditionalFlag` is null or the matching `agentFlags` entry is truthy — all nine are unconditional today):
+The Discover stage groups the nine dimensions by agent and fans out one task per **active** agent (a dimension is active when its `conditionalFlag` is null — the ungateable core dims `bug`, `security` — or its `agentFlags` entry is not the literal `false`; the seven extended dims share the `deep` flag, so a light-scope `{ deep: false }` leaves only bug-detector + security-reviewer):
 
 1. **bug-detector** — logic errors, edge cases, null handling, race conditions, API misuse. Dimension: `bug`.
 2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Dimension: `security`.

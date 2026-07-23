@@ -73,6 +73,25 @@ test('validateArgs rejects a non-object delivery field', () => {
   assert.equal(r.ok, false);
   assert.match(r.errors.join(' '), /delivery must be an object/);
 });
+// agentFlags scope-gating map (item 7). Empty ({}) = full scope; { deep: false } = light.
+test('validateArgs accepts the light-scope agentFlags map { deep: false }', () => {
+  assert.deepEqual(validateArgs({ ...good, agentFlags: { deep: false } }), { ok: true, errors: [] });
+});
+test('validateArgs rejects a non-object agentFlags map', () => {
+  const r = validateArgs({ ...good, agentFlags: 'deep' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /agentFlags must be an object/);
+  const r2 = validateArgs({ ...good, agentFlags: ['deep'] });
+  assert.equal(r2.ok, false);
+  assert.match(r2.errors.join(' '), /agentFlags must be an object/);
+});
+test('validateArgs rejects a non-boolean agentFlags value (only literal false gates)', () => {
+  // A truthy-string like "false" would slip past agentActive's strict `!== false` and read
+  // as ON, silently ignoring an operator's intent to disable — the waist rejects it.
+  const r = validateArgs({ ...good, agentFlags: { deep: 'false' } });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /invalid agentFlags\.deep: must be a boolean/);
+});
 test('validateArgs requires the consumed by-value fields changedFiles + changedLines', () => {
   // REQUIRED mirrors consumption: summarize bucketing and the agent-count guard read
   // these by value; a waist without them dispatches on garbage instead of failing loud.

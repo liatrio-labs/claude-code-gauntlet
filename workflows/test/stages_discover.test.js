@@ -3,8 +3,8 @@
 // ctx is injected {agent, parallel}; the mock ctx is the testability seam.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits } from '../src/stages.js';
-import { AGENTS } from '../src/registry.js';
+import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs } from '../src/stages.js';
+import { AGENTS, DIMENSIONS } from '../src/registry.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
 // Platform contract: agent(promptString, opts); parallel(thunks). The mock asserts it.
@@ -33,6 +33,76 @@ test('discover dispatches once per AGENT (7)', async () => {
   const ctx = fakeCtx();
   await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.equal(new Set(ctx.calls).size, AGENTS.length);
+});
+
+// --- Light scope (item 7): agentFlags gating -------------------------------
+// The two CORE dimensions stay on in light scope; the seven extended dimensions
+// (conditionalFlag 'deep') drop out. bug + security -> bug-detector + security-reviewer.
+const CORE_AGENTS = ['code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer'];
+
+// BYTE-IDENTICAL guarantee (fingerprint over EVERY spec): with agentFlags absent, empty,
+// or an unrelated key, agentActive returns exactly what it returned before flags existed —
+// TRUE for every agent. Any spec silently gated off here would be silent under-delivery on
+// the full path. Both the absent (undefined) and empty ({}) forms must match.
+test('agentActive: full-scope path is byte-identical — every spec active when flags absent/empty', () => {
+  for (const spec of agentSpecs()) {
+    assert.equal(agentActive(spec, undefined), true, `${spec.agentType} inactive with agentFlags undefined`);
+    assert.equal(agentActive(spec, {}), true, `${spec.agentType} inactive with agentFlags {}`);
+    // An unrelated/unknown flag key must not disable anything either (opt-out: missing key = on).
+    assert.equal(agentActive(spec, { someOtherFlag: false }), true, `${spec.agentType} inactive with an unrelated flag`);
+  }
+});
+
+// Light scope stamps { deep: false }: exactly the two core agents survive.
+test('agentActive: light scope { deep:false } keeps ONLY bug + security agents active', () => {
+  for (const spec of agentSpecs()) {
+    const expected = CORE_AGENTS.includes(spec.agentType);
+    assert.equal(agentActive(spec, { deep: false }), expected, `${spec.agentType} light-scope active=${!expected}`);
+  }
+});
+
+// Core dimensions are UNGATEABLE (conditionalFlag null): even a hostile flag map that tries
+// to name them cannot disable bug/security, and a stray non-`false` deep value keeps all on.
+test('agentActive: core (bug/security) cannot be disabled; only literal false gates a deep dim', () => {
+  const byType = new Map(agentSpecs().map((s) => [s.agentType, s]));
+  // Hostile map: bug/security have null conditionalFlag, so no agentFlags key reaches them.
+  assert.equal(agentActive(byType.get('code-gauntlet:bug-detector'), { deep: false, bug: false, security: false }), true);
+  assert.equal(agentActive(byType.get('code-gauntlet:security-reviewer'), { deep: false }), true);
+  // A non-`false` deep value (truthy, null, 0, or the string 'false') leaves deep dims ON —
+  // only the literal boolean false gates. This is why the args waist boolean-checks the map.
+  const crossFile = byType.get('code-gauntlet:cross-file-impact');
+  assert.equal(agentActive(crossFile, { deep: true }), true);
+  assert.equal(agentActive(crossFile, { deep: 0 }), true);
+  assert.equal(agentActive(crossFile, { deep: null }), true);
+  assert.equal(agentActive(crossFile, { deep: 'false' }), true);
+  assert.equal(agentActive(crossFile, { deep: false }), false);
+});
+
+// End-to-end through discover(): light scope fans out to exactly the two core agents.
+test('discover: light scope { deep:false } dispatches ONLY bug-detector + security-reviewer', async () => {
+  const ctx = fakeCtx();
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: { deep: false }, limits: {}, policy: {} });
+  assert.deepEqual([...new Set(ctx.calls)].sort(), [...CORE_AGENTS].sort());
+  assert.deepEqual([...out.dispatched].sort(), [...CORE_AGENTS].sort());
+});
+
+// The disabled dimensions are NOT reported as gaps/degradation — a scoped-out dimension is
+// intentionally uncovered, distinct from a dispatched-but-failed one (the report gap section
+// only surfaces dispatched agents, so light scope produces no false "uncovered" noise).
+test('discover: light scope reports no gaps/degradation for the scoped-out dimensions', async () => {
+  const ctx = fakeCtx();
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: { deep: false }, limits: {}, policy: {} });
+  assert.equal(out.gaps.length, 0);
+  assert.equal(out.degraded.length, 0);
+});
+
+// The DEEP flag covers precisely the non-core dimensions (registry ⇄ scope invariant): the
+// set of dimensions gated by 'deep' must be exactly {all dimensions} minus {bug, security}.
+test('registry: the deep flag gates exactly the non-core dimensions', () => {
+  const gated = DIMENSIONS.filter((d) => d.conditionalFlag === 'deep').map((d) => d.dimension).sort();
+  const core = DIMENSIONS.filter((d) => d.conditionalFlag === null).map((d) => d.dimension).sort();
+  assert.deepEqual(core, ['bug', 'security']);
+  assert.deepEqual(gated, DIMENSIONS.map((d) => d.dimension).filter((d) => !['bug', 'security'].includes(d)).sort());
 });
 
 test('null member becomes a gap + degrades its dimension, siblings survive', async () => {

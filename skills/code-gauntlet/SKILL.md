@@ -134,6 +134,8 @@ Write the shared context to `{output_dir}/code-gauntlet-context-{head_sha_short}
 
 Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). **If it is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `CODE_GAUNTLET_DELIVERY_TIER`) and `deliveryCap` (from `CODE_GAUNTLET_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path.
 
+Stamp `agentFlags` from the **review-scope decision** (Phase 2d light/full — the interactive "Light review" answer, or headless `CODE_GAUNTLET_TRIVIAL_SCOPE`; see `references/phase2-triage.md`). The map is **opt-out**, so full scope stamps `{}` (every dimension on — byte-identical to no flags) and **light** scope stamps `{ deep: false }`, which disables the seven extended dimensions and leaves only the two core ones (`bug`, `security`) — the "bugs+security only" light review actually running two agents. Never stamp a non-boolean value: `agentActive` gates only on the literal `false`, and the args waist rejects anything else.
+
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 
 ```
@@ -142,7 +144,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   mode: "interactive" | "headless",
   repoRoot, outputDir, headShaShort, nonce, generatedAt,
   diffPath, changedFilesPath, reviewConfigPath,
-  agentFlags: { ...conditional-dimension flags... },
+  agentFlags: { ...scope-gating flags: {} for full scope, { deep: false } for light... },
   policy: { tier, subagentModel },
   limits: { summarizeBucketSize, validateBatch, challengeCap, verifySliceSize, deliveryCap },
   delivery: { tier: "all" | "main_only" },   // Phase 8 PR-comment tier (default "all"); consumed by selectDelivery

@@ -201,9 +201,9 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. **v3.0 limitation:** dimension gating is not yet wired in the workflow, so a `light` answer still runs all dimensions — announce the full dimension list, never a reduced one (issue #17 tracks the gate).
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. A `light` answer stamps `agentFlags: { deep: false }`, which the Discover stage honours by dispatching only the two core agents (`bug-detector`, `security-reviewer`); `full` stamps `{}` and runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` runs bugs+security only, `full` runs all dimensions). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` stamps `agentFlags: { deep: false }` → bugs+security only, `full` stamps `{}` → all dimensions). See `references/headless-mode.md`.
 
 ---
 
@@ -340,7 +340,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `generatedAt` | current wall-clock as an ISO8601 string — the workflow's injected clock (it never calls `new Date()`) |
 | `diffPath` | `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch` |
 | `changedFilesPath` | `{output_dir}/code-gauntlet-files-{head_sha_short}.json` |
-| `agentFlags` | map of conditional-dimension flags (all nine dimensions are unconditional today, so `{}` unless REVIEW.md gates a future conditional dimension) |
+| `agentFlags` | scope-gating flag map (opt-out): `{}` for full scope (all dimensions on), `{ deep: false }` for light scope (bugs+security only). Values must be booleans; only literal `false` disables |
 | `policy` | `{ tier, subagentModel }` — see below |
 | `limits` | `{ summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200, deliveryCap }` (override from REVIEW.md if set) |
 | `delivery` | `{ tier: "all" \| "main_only" }` — the Phase 8 PR-comment tier (default `all`); optional (absent ⇒`all`) |

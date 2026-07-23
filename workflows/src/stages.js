@@ -131,7 +131,7 @@ function summarizeMergePrompt(partials) {
 // Group DIMENSIONS by agentType, unioning each agent's per-dimension schemaExtra into
 // one finding schema. One task per unique AGENT (7) — agents covering several
 // dimensions (conventions-and-intent -> convention/intent/comment_accuracy) dispatch once.
-function agentSpecs() {
+export function agentSpecs() {
   const byAgent = new Map();
   for (const d of DIMENSIONS) {
     if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null });
@@ -148,10 +148,15 @@ function agentSpecs() {
   return AGENTS.map((a) => byAgent.get(a));
 }
 
-// An agent is active when at least one of its dimensions is enabled: the dimension's
-// conditionalFlag is null (always on) or the corresponding agentFlags entry is truthy.
-function agentActive(spec, agentFlags) {
-  return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || agentFlags[flag]);
+// An agent is active when at least one of its dimensions is enabled. A dimension is
+// enabled when its conditionalFlag is null/undefined (UNGATEABLE — always on, e.g. the
+// core bug/security dimensions) OR its agentFlags entry is not the literal `false`.
+// OPT-OUT semantics: a MISSING key counts as enabled, so absent/empty agentFlags leaves
+// every dimension on — byte-identical to the pre-flag behavior where all flags were null.
+// Only an explicit `false` (stamped by a light-scope run, e.g. { deep: false }) disables.
+export function agentActive(spec, agentFlags) {
+  const flags = agentFlags || {};
+  return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || flags[flag] !== false);
 }
 
 // Canonical finding property types. confidence is a NUMBER end-to-end: agents emit a
