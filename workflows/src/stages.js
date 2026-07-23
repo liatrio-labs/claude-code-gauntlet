@@ -94,7 +94,7 @@ export async function summarize(ctx, input) {
       }));
       const partials = (await c.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await c.agent(summarizeMergePrompt(partials), {
+      const mergeResult = await c.agent(summarizeMergePrompt(inp, partials), {
         label: 'summarize-merge',
         agentType: 'code-gauntlet:change-summarizer',
         model,
@@ -127,9 +127,15 @@ function summarizePrompt(inp, files) {
   return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 
-function summarizeMergePrompt(partials) {
+// The merge call produces the FINAL summary on the bucketed path, so it needs the same
+// changedLines pin as summarizePrompt — without it the merge step can re-drift the size
+// number the per-bucket prompts were pinned to (Bugbot PR-20 wave 2).
+function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
-  return `Combine these per-bucket change summaries into one concise semantic summary. Partials:\n${joined}\nReturn { summary }.`;
+  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
+    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it.`
+    : '';
+  return `Combine these per-bucket change summaries into one concise semantic summary.${countLine} Partials:\n${joined}\nReturn { summary }.`;
 }
 
 // --- Phase 2: Discover ------------------------------------------------------

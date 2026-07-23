@@ -332,6 +332,17 @@ test('summarize: the prompt carries the authoritative changedLines count verbati
   assert.match(prompts[0], /never re-estimate/);
 });
 
+test('summarize: the bucketed path pins changedLines in EVERY prompt including the merge (Bugbot w2)', async () => {
+  // The merge call produces the FINAL summary on the bucketed path — without the pin
+  // there, the merge step can re-drift the size number the bucket prompts were pinned to.
+  const prompts = [];
+  const ctx = summarizeCtx({ agentImpl: async (prompt) => { prompts.push(prompt); return { summary: 's' }; } });
+  const files = Array.from({ length: 50 }, (_, i) => `f${i}.js`);
+  await summarize(ctx, { changedFiles: files, changedLines: 1211, limits: { summarizeBucketSize: 20 }, policy: {} });
+  assert.ok(prompts.length > 1, 'bucketed path fans out');
+  for (const p of prompts) assert.match(p, /authoritative changed-line count is 1211/);
+});
+
 test('summarize: an agent() throw degrades to empty summary + a gap', async () => {
   const ctx = summarizeCtx({ agentImpl: async () => { throw new Error('schema exhausted'); } });
   const out = await summarize(ctx, { changedFiles: ['a.js'], changedLines: 10, limits: { summarizeBucketSize: 20 }, policy: {} });
