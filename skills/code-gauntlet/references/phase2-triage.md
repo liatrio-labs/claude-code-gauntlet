@@ -339,7 +339,8 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `nonce` | freshly generated, matching `^[A-Za-z0-9._-]+$` (interpolated into the verify executor argv per slice — no whitespace/shell metacharacters) |
 | `generatedAt` | current wall-clock as an ISO8601 string — the workflow's injected clock (it never calls `new Date()`) |
 | `diffPath` | `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch` |
-| `changedFilesPath` | `{output_dir}/code-gauntlet-files-{head_sha_short}.json` |
+| `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
+| `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `agentFlags` | scope-gating flag map (opt-out): `{}` for full scope (all dimensions on), `{ deep: false }` for light scope (bugs+security only). Values must be booleans; only literal `false` disables |
 | `policy` | `{ tier, subagentModel }` — see below |
 | `limits` | `{ summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200, deliveryCap }` (override from REVIEW.md if set) |
@@ -349,13 +350,12 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 
 **`policy` (model policy the workflow runs under):**
 
-- `tier` — always `"optimized"`, the single benchmarked policy (recorded from the `model_tier` knob; any other value fails loud in Phase 1). Alternate model modes are roadmap work (issue #17).
+- `tier` — always `"optimized"`, the single benchmarked policy (recorded from the `model_tier` knob). A REVIEW.md `Model Tier` value other than `optimized` self-heals to `optimized` with a loud methodology warning (never a question, never an abort); the env knob `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. See Phase 1 for the exact resolution split. Alternate model modes are roadmap work (issue #17).
 - `subagentModel` — read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment (or `null`). **The workflow cannot read `process.env`**, so this capture is the only path for it. If set, warn the user and record it in the methodology — it silently overrides the entire per-stage model policy.
 
-**By-value inputs the in-memory stages need (the workflow has no disk, so paths alone are not enough):**
+**Other inputs (optional unless noted):**
 
-- `changedFiles` — the changed-file array (Summarize).
-- `changedLines` — total changed line count (Summarize bucketing threshold).
+- `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
 - `reviewConfig` — the parsed REVIEW.md object (thresholds + `ignore`), consumed by the Filter stage.
 - `exclusionPatterns` — the parsed exclusion-pattern list, consumed by the Filter stage.

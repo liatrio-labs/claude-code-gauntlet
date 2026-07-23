@@ -126,6 +126,24 @@ test('validateArgs rejects a non-object reviewConfig and a non-array ignore', ()
   assert.ok(r2.errors.some((e) => e.includes('reviewConfig.ignore')));
 });
 
+// exclusionPatterns waist validation: consumed identically to reviewConfig.ignore (both feed
+// escapeRegExp in the Filter stage's applyFilterPipeline), so it gets the same shape guard.
+test('validateArgs rejects a non-string exclusionPatterns entry and a non-array exclusionPatterns', () => {
+  const r = validateArgs({ ...good, exclusionPatterns: [{ pattern: 'x' }] });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('exclusionPatterns')));
+  const r2 = validateArgs({ ...good, exclusionPatterns: 'foo' });
+  assert.equal(r2.ok, false);
+  assert.match(r2.errors.join(' '), /exclusionPatterns must be an array/);
+});
+test('validateArgs accepts exclusionPatterns as an array of flat strings (and absent exclusionPatterns)', () => {
+  assert.deepEqual(
+    validateArgs({ ...good, exclusionPatterns: ['literal one', 'literal two'] }),
+    { ok: true, errors: [] },
+  );
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
+});
+
 // agentFlags scope-gating map (item 7). Empty ({}) = full scope; { deep: false } = light.
 test('validateArgs accepts the light-scope agentFlags map { deep: false }', () => {
   assert.deepEqual(validateArgs({ ...good, agentFlags: { deep: false } }), { ok: true, errors: [] });

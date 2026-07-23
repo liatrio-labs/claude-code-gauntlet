@@ -1915,6 +1915,22 @@ function validateArgs(args) {
       }
     }
   }
+  // Optional exclusionPatterns (the parsed exclusion-pattern list threaded alongside
+  // reviewConfig). It feeds the same escapeRegExp path as reviewConfig.ignore — both are
+  // concatenated in applyFilterPipeline (filterFindings.js) before the Filter stage builds
+  // its regexes — so it is exposed to the same crash class (same live-run L2) and gets the
+  // identical present-then-shape-checked treatment: absent is fine, malformed fails loud.
+  if (args.exclusionPatterns !== undefined) {
+    if (!Array.isArray(args.exclusionPatterns)) {
+      errors.push('exclusionPatterns must be an array of flat pattern strings');
+    } else {
+      for (let i = 0; i < args.exclusionPatterns.length; i++) {
+        if (typeof args.exclusionPatterns[i] !== 'string') {
+          errors.push(`exclusionPatterns[${i}] must be a flat pattern string (got ${typeof args.exclusionPatterns[i]})`);
+        }
+      }
+    }
+  }
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the
   // 'all' default in selectDelivery, silently ignoring an operator's narrowing intent.
