@@ -1527,5 +1527,43 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
                 os.unlink(p)
 
 
+class TestEliminationReasonStamp(unittest.TestCase):
+    """Cross-runtime invariant (V3.1 item 2, D1): every eliminated finding carries a
+    non-empty elimination_reason stamp.
+
+    The JS verify-echo fidelity gate (trustSlice in workflows/src/stages.js) keys on
+    this stamp: an eliminated[] entry without a non-empty elimination_reason is treated
+    as a fabricated elimination and degrades the whole slice to UNVERIFIED. If this
+    script ever grows an elimination branch that omits the stamp, honest eliminations
+    would silently start degrading — this test pins the contract on the Python side.
+    """
+
+    def test_every_eliminated_finding_carries_elimination_reason_stamp(self):
+        import json
+        from scripts.verify_findings import run_verification
+
+        # Nonexistent file -> classify_blame short-circuits on os.path.exists and
+        # verify_factual eliminates deterministically (no git subprocess dependency).
+        finding = {
+            "id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
+            "file": "nope/does-not-exist-xyz.py", "line_start": 1, "title": "t",
+            "description": "d", "evidence": "e", "cross_file_refs": [],
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+            empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
+        try:
+            import io
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = run_verification([finding], "main", diff_file=empty_diff)
+            verified, eliminated = result["verified"], result["eliminated"]
+            self.assertEqual(verified, [])
+            self.assertEqual(len(eliminated), 1)
+            reason = eliminated[0].get("elimination_reason")
+            self.assertIsInstance(reason, str)
+            self.assertTrue(reason.strip())
+        finally:
+            os.unlink(empty_diff)
+
+
 if __name__ == "__main__":
     unittest.main()

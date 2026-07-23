@@ -7,7 +7,7 @@
 // verified=false — findings are never dropped and success is never fabricated.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyStage } from '../src/stages.js';
+import { verifyStage, parseWriterPayload } from '../src/stages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
 // Platform contract: agent(promptString, opts). verify uses SEQUENTIAL agent() calls
@@ -26,7 +26,10 @@ function verifyCtx(agentImpl, cfg = {}) {
     const call = { prompt, ...opts };
     calls.push(call);
     if ((opts.label || '').startsWith('verify-input-writer')) {
-      return cfg.sliceWriter ? cfg.sliceWriter(call) : { written: [] };
+      if (cfg.sliceWriter) return cfg.sliceWriter(call);
+      // Faithful default: echo the exact slice-input paths so the write-proof gate passes.
+      const entries = parseWriterPayload(prompt) || [];
+      return { written: entries.map((e) => e.path) };
     }
     execIdx += 1;
     return agentImpl(call, execIdx);
@@ -257,6 +260,127 @@ test('(i) empty finding set -> trivially verified, no executor calls', async () 
   assert.equal(out.verified, true);
   assert.equal(out.findings.length, 0);
   assert.equal(ctx.calls.length, 0);
+});
+
+// --- Item 2: echo content-fidelity gate -------------------------------------
+// trustSlice must reject a slice whose eliminated[] entries lack the elimination_reason
+// stamp run_verification() ALWAYS writes on a real elimination. Observed live: the script
+// disk had 10 verified/0 eliminated, but the echo claimed 7 verified/3 eliminated with a
+// valid receipt and a passing count-sum — the 3 fabricated eliminations carried no stamp.
+function stampedEliminated(f) {
+  return { ...f, elimination_reason: 'evidence does not match file content' };
+}
+
+test('(m1) stamped eliminations -> slice TRUSTED: verified findings threaded, verified===true', async () => {
+  const input = baseInput(); // F1, F2; one slice
+  const ctx = verifyCtx((_t, i) => ({
+    status: 'ok',
+    receipt: { sha: 'abc123', nonce: `n-1.${i}`, n_in: 2 },
+    result: {
+      verified: [{ ...input.findings[0], origin: 'new' }],
+      eliminated: [stampedEliminated(input.findings[1])], // script-stamped real elimination
+      batches: [], stats: {},
+    },
+  }));
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.findings.length, 1); // only the verified finding is threaded onward
+  assert.equal(out.findings[0].id, 'F1');
+  assert.ok(out.findings.every((f) => f.origin !== 'unknown'));
+  assert.equal(out.gaps.length, 0);
+});
+
+test('(m2) an UNSTAMPED elimination (fabricated verified->eliminated move) -> whole set UNVERIFIED', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => ({
+    status: 'ok',
+    receipt: { sha: 'abc123', nonce: `n-1.${i}`, n_in: 2 }, // receipt + count-sum both PASS
+    result: {
+      verified: [{ ...input.findings[0], origin: 'new' }],
+      eliminated: [{ ...input.findings[1] }], // NO elimination_reason — the script never omits it
+      batches: [], stats: {},
+    },
+  }));
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.equal(out.findings.length, 2); // conservative: BOTH originals kept, never dropped
+  assert.ok(out.findings.every((f) => f.origin === 'unknown'));
+  assert.ok(out.gaps.some((g) => /elimination_reason|fabricated/.test(g)));
+});
+
+test('(m3) a blank-string elimination_reason is also rejected (not a real stamp)', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => ({
+    status: 'ok',
+    receipt: { sha: 'abc123', nonce: `n-1.${i}`, n_in: 2 },
+    result: {
+      verified: [{ ...input.findings[0], origin: 'new' }],
+      eliminated: [{ ...input.findings[1], elimination_reason: '   ' }],
+      batches: [], stats: {},
+    },
+  }));
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.ok(out.findings.every((f) => f.origin === 'unknown'));
+});
+
+// --- Item 4: verify echo item schema declares agent + reconciled extras -------
+
+test('(m4) verify echo item schema declares agent + reconciled per-dimension extras (array types) + elimination_reason', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  await verifyStage(ctx, input);
+  const schema = ctx.execCalls()[0].schema;
+  for (const arr of ['verified', 'eliminated']) {
+    const props = schema.properties.result.properties[arr].items.properties;
+    // agent: merge injects it; detectDisagreement routes suppression/escalation on it, so it
+    // MUST be declared or it survives the echo only by luck (observed agent:null on 2/3 PRs).
+    assert.equal(props.agent.type, 'string');
+    assert.equal(props.confidence.type, 'number');
+    // elimination_reason must be declarable so an honest script stamp survives transcription
+    // (else the item-2 fidelity gate would false-fire on real eliminations).
+    assert.equal(props.elimination_reason.type, 'string');
+    // Reconciled per-dimension extras (union across all agents), matching the .md contracts:
+    assert.equal(props.hidden_errors.type, 'string', 'bug -> hidden_errors');
+    assert.equal(props.attack_vector.type, 'string', 'security -> attack_vector');
+    assert.equal(props.invalid_state_example.type, 'string', 'type_design -> invalid_state_example');
+    assert.equal(props.behavior_preserved.type, 'string', 'simplification -> behavior_preserved');
+    // cross_file_impact -> affected_consumers is an ARRAY of strings (array support).
+    assert.equal(props.affected_consumers.type, 'array');
+    assert.equal(props.affected_consumers.items.type, 'string');
+    // The pre-reconciliation phantom fields (never emitted, never consumed) are gone.
+    for (const ghost of ['encapsulation', 'invariants', 'enforcement', 'usefulness', 'before', 'after']) {
+      assert.ok(!(ghost in props), `phantom field ${ghost} must not be declared`);
+    }
+  }
+});
+
+test('(m5) the injected agent field survives the verify echo (data flow — detectDisagreement input)', async () => {
+  const findings = [
+    { id: 'F1', file: 'a.js', line_start: 1, origin: 'new', dimension: 'bug', agent: 'bug-detector', cross_file_refs: [] },
+    { id: 'F2', file: 'a.js', line_start: 2, origin: 'new', dimension: 'convention', agent: 'conventions-and-intent', cross_file_refs: [] },
+  ];
+  const input = baseInput({ findings });
+  const ctx = verifyCtx((_t, i) => okEnvelope(findings.map((f) => ({ ...f })), { nonce: `n-1.${i}` }));
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.findings.map((f) => f.agent), ['bug-detector', 'conventions-and-intent']);
+});
+
+// --- Item 5: slice-input writer write-proof ---------------------------------
+
+test('(k2) slice-input writer echo that omits a dispatched path -> whole set UNVERIFIED', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx(
+    () => { throw new Error('executor must not run when slice inputs were not proven written'); },
+    { sliceWriter: () => ({ written: ['/unrelated/path.json'] }) }, // does not cover the dispatched slice path
+  );
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.equal(out.findings.length, 2); // preserved, never dropped
+  assert.ok(out.findings.every((f) => f.origin === 'unknown'));
+  assert.ok(out.gaps.some((g) => /write proof|cover/i.test(g)));
+  assert.equal(ctx.execCalls().length, 0, 'no executor ran without write proof');
 });
 
 test('the executor command is a single AST-safe python3 word-token invocation', async () => {

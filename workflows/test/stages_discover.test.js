@@ -202,6 +202,33 @@ test('absent size limits mirror stage defaults — the guard never goes NaN-sile
   );
 });
 
+// Item 3: confidence is declared NUMBER end-to-end — the discovery finding schema must
+// declare confidence:number so the string form ("85") the filter's consensus boost could
+// string-concatenate never exists. Item 4 (array support): a schemaExtra with an array-valued
+// fragment (cross-file-impact -> affected_consumers) reaches the per-agent item schema intact.
+test('discovery finding schema declares confidence NUMBER + reconciled schemaExtra (array support)', async () => {
+  const schemas = {};
+  const ctx = {
+    calls: [],
+    agent: async (prompt, opts = {}) => {
+      assertPrompt(prompt);
+      assertValidSchema(opts.schema); // recursively validates the array fragment declares items
+      schemas[opts.label] = opts.schema;
+      return { findings: [], complete: true, total_seen: 0 };
+    },
+    parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())),
+  };
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+
+  const bugItem = schemas['code-gauntlet:bug-detector'].properties.findings.items.properties;
+  assert.equal(bugItem.confidence.type, 'number', 'confidence declared NUMBER at discovery (no string form)');
+  assert.equal(bugItem.hidden_errors.type, 'string', "bug-detector's reconciled extra");
+
+  const cfItem = schemas['code-gauntlet:cross-file-impact'].properties.findings.items.properties;
+  assert.equal(cfItem.affected_consumers.type, 'array', 'array-valued schemaExtra survives to the item schema');
+  assert.equal(cfItem.affected_consumers.items.type, 'string');
+});
+
 // --- Supplementary: summarize (single vs bucketed) + mergeStage envelope ------
 
 function summarizeCtx({ agentImpl, parallelImpl } = {}) {

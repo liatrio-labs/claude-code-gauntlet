@@ -1745,18 +1745,31 @@ function applyChallenges(findings, challenges) {
 const SECURITY_SWEEP_PROMPT_EXTRA = 'Additionally sweep explicitly for: SSRF and unvalidated-URL fetches (user-influenced URLs reaching http/request/fetch clients without allowlist validation); frame and embedding policy gaps (missing X-Frame-Options or frame-ancestors, clickjacking exposure); postMessage handlers that do not validate event.origin or check it with weak substring matching; and string-matching bypass patterns where a security decision uses containment checks (indexOf/includes/startsWith/contains) on a host, origin, path, or scheme instead of exact parsing — these are bypassable (e.g. a host "evil.com/trusted.com" still contains "trusted.com").';
 const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and naming sweep: identifier misspellings; typos in user-facing strings, messages, and log output; case-sensitivity mistakes in string comparisons (comparing mixed-case values without normalizing case); and copy-paste plural/singular or off-by-one naming mismatches (a field, key, or variable named for one thing but holding another).';
 
+// `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema —
+// the extras each agent's .md output contract actually emits (findingItemSchema in stages.js
+// unions them onto that agent's discovery item schema, and the verify echo item schema unions
+// them ALL). A value is EITHER a type-name shorthand string ('string'/'number', expanded to
+// { type: <name> }) OR a full JSON-Schema fragment used verbatim, which is how array-valued
+// extras (cross_file_impact's affected_consumers) are declared. Each row MUST match its
+// contract (agents/<agent>.md output line) or the executor drops the field when transcribing
+// findings "verbatim via the schema": bug -> hidden_errors, security -> attack_vector,
+// cross_file_impact -> affected_consumers (ARRAY), type_design -> invalid_state_example,
+// simplification -> behavior_preserved. The pre-reconciliation declarations (type_design
+// encapsulation/invariants/enforcement/usefulness; simplification before/after) named fields
+// no agent ever emitted top-level and no code consumes — pure schema noise now removed.
 const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: {}, modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
-  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+  { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: null,
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: null },
   { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: null, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: null,
-    schemaExtra: { encapsulation: 'number', invariants: 'number', enforcement: 'number', usefulness: 'number' }, modelOverride: null, promptExtra: null },
+    schemaExtra: { invalid_state_example: 'string' }, modelOverride: null, promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: null,
-    schemaExtra: { before: 'string', after: 'string' }, modelOverride: null, promptExtra: null },
+    schemaExtra: { behavior_preserved: 'string' }, modelOverride: null, promptExtra: null },
 ];
 
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
@@ -1988,13 +2001,15 @@ function agentActive(spec, agentFlags) {
   return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || agentFlags[flag]);
 }
 
-// Canonical finding property types (discovery declares confidence as a STRING in the
-// by-value schema: agents emit a numeric 0-100 score per their .md contracts, which
-// StructuredOutput renders as its string form "85" — pinNumericFields restores the
-// number at the verify boundary before any downstream arithmetic).
+// Canonical finding property types. confidence is a NUMBER end-to-end: agents emit a
+// numeric 0-100 score per their .md contracts, so declaring it `number` here makes
+// StructuredOutput return the number at EVERY by-value boundary (discovery included) —
+// the string form "85" the schema used to declare simply never exists, so the filter's
+// consensus `+` boost can never string-concatenate ("85"+10 -> "8510"). pinNumericFields
+// stays as defense-in-depth for legacy/checkpoint-resume findings that predate this pin.
 const FINDING_PROP_TYPES = {
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
-  title: 'string', description: 'string', severity: 'string', confidence: 'string',
+  title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
 };
 const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
@@ -2006,32 +2021,59 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 // transcribing findings back "verbatim via the schema" is free to drop the single largest
 // field — `description` — which is exactly what the verify executor did, emptying
 // descriptions for every downstream stage (validate/filter/challenge) and false-firing the
-// filter's short-description injection guard on high-confidence findings. `confidenceType`
-// differs by stage: discovery declares string (agents emit numeric 0-100, which
-// StructuredOutput renders as "85"), but verify_findings.py re-scores confidence to a
-// NUMBER, so the verify item MUST declare number or StructuredOutput coerces 85 -> "85"
-// and breaks the numeric confidence arithmetic downstream.
-function findingItemSchema(schemaExtra, confidenceType) {
+// filter's short-description injection guard on high-confidence findings. confidence is
+// NUMBER everywhere now (FINDING_PROP_TYPES), so there is no per-stage confidence override.
+// `schemaExtra` entries are EITHER a type-name shorthand string ({ k: 'string' } ->
+// { type:'string' }) OR a full JSON-Schema fragment used verbatim (how array-valued extras
+// like affected_consumers are declared); the shorthand keeps the common case terse while
+// the fragment form supports arrays the platform's schema validator requires `items` on.
+function findingItemSchema(schemaExtra) {
   const props = {};
   for (const [k, t] of Object.entries(FINDING_PROP_TYPES)) props[k] = { type: t };
-  if (confidenceType) props.confidence = { type: confidenceType };
   props.cross_file_refs = { type: 'array', items: { type: 'string' } };
-  for (const [k, t] of Object.entries(schemaExtra || {})) props[k] = { type: t };
+  for (const [k, t] of Object.entries(schemaExtra || {})) props[k] = typeof t === 'string' ? { type: t } : t;
   return { type: 'object', properties: props, required: FINDING_REQUIRED };
+}
+
+// The union of EVERY dimension's schemaExtra. The verify slice carries findings from ALL
+// agents mixed together (post-merge), so its echo item schema must declare every agent's
+// per-dimension extras — not one agent's — or a field one agent emitted is dropped when the
+// executor transcribes the --output file "verbatim via the schema" (the same field-dropping
+// class the empty-properties trap caused for description).
+function allSchemaExtras() {
+  const out = {};
+  for (const d of DIMENSIONS) for (const [k, t] of Object.entries(d.schemaExtra || {})) out[k] = t;
+  return out;
+}
+
+// The verify echo item schema: the full canonical finding shape (numeric confidence) PLUS
+// (1) `agent` — injected by merge, and detectDisagreement keys suppression / security-
+// escalation / test-correctness routing on it, so it MUST survive the echo or that routing
+// fires stochastically; (2) the union of all per-dimension extras; and (3) elimination_reason
+// — run_verification() ALWAYS stamps it on a real elimination (verify_findings.py), and
+// trustSlice's content-fidelity gate requires it on every eliminated[] entry, so it must be
+// declarable or an honest elimination's stamp is dropped in transcription and the gate false-
+// fires. (eliminated_by is a JS-pipeline-only field the verify script never sets — declaring
+// it would only invite the executor to fabricate it, so it is intentionally NOT declared.)
+function verifyItemSchema() {
+  const item = findingItemSchema(allSchemaExtras());
+  item.properties.agent = { type: 'string' };
+  item.properties.elimination_reason = { type: 'string' };
+  return item;
 }
 
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
 // per-agent result envelope { findings, complete, total_seen }. REAL JSON Schema —
 // {type, properties, required, items} — because the platform validates schemas before
 // dispatch and StructuredOutput enforces them (shorthand {id:'string'} is rejected).
-// schemaExtra is shorthand {key: typeName}; each entry becomes { type: typeName }.
+// schemaExtra is shorthand {key: typeName} (or a full JSON-Schema fragment for arrays).
 function findingSchema(spec) {
   return {
     type: 'object',
     properties: {
       findings: {
         type: 'array',
-        items: findingItemSchema(spec.schemaExtra, 'string'),
+        items: findingItemSchema(spec.schemaExtra),
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
@@ -2210,12 +2252,13 @@ const VERIFY_SCHEMA = {
       properties: {
         // verified/eliminated carry findings BY VALUE — verifyStage collects result.verified
         // as THE findings for every later stage — so their items must declare the FULL finding
-        // shape (findingItemSchema). An empty-properties item let the executor drop `description`
+        // shape (verifyItemSchema). An empty-properties item let the executor drop `description`
         // when echoing the --output file "verbatim", which emptied descriptions downstream and
-        // false-fired the filter's injection guard. confidence is NUMBER here (verify_findings.py
-        // re-scores it numerically), unlike the qualitative string label at discovery.
-        verified: { type: 'array', items: findingItemSchema({}, 'number') },
-        eliminated: { type: 'array', items: findingItemSchema({}, 'number') },
+        // false-fired the filter's injection guard. verifyItemSchema declares numeric confidence,
+        // the injected `agent` field (detectDisagreement routes on it), every per-dimension extra,
+        // and elimination_reason (the script's real-elimination stamp, gated by trustSlice).
+        verified: { type: 'array', items: verifyItemSchema() },
+        eliminated: { type: 'array', items: verifyItemSchema() },
         batches: { type: 'array', items: { type: 'object', properties: {} } },
         stats: { type: 'object', properties: {} },
       },
@@ -2360,6 +2403,16 @@ async function materializeVerifySlices(c, inp, slices, policy) {
       return { ok: false, reason: `slice-input writer threw (${(e && e.message) || 'unknown'})` };
     }
     if (!result) return { ok: false, reason: 'slice-input writer returned null' };
+    // Write-proof: the echoed `written` list must cover every slice-input path this group
+    // dispatched. WRITTEN_SCHEMA declares no `required`, so an empty { written: [] } is
+    // schema-valid — without this a writer that persisted nothing would pass and the
+    // executor would then read slice-input files that were never written. An uncovered
+    // path degrades the WHOLE set to UNVERIFIED (findings kept), never a fabricated verify.
+    const written = new Set(Array.isArray(result.written) ? result.written : []);
+    const dispatchedPaths = groups[g].map((e) => e.path);
+    if (!dispatchedPaths.every((p) => written.has(p))) {
+      return { ok: false, reason: 'slice-input writer echo did not cover all dispatched slice paths (no write proof)' };
+    }
   }
   return { ok: true };
 }
@@ -2372,10 +2425,22 @@ function verifySliceWriterPrompt(entries) {
 // A slice envelope is trusted only if it is the honest success shape AND its receipt
 // echoes exactly what we dispatched: the nonce (this answer is for OUR call), the head
 // sha (same tree the workflow resolved), and n_in (the executor loaded every finding we
-// sent). One more guard beyond the receipt: the result arrays must actually ACCOUNT for
-// n_in findings (verified + eliminated === n_in — an invariant run_verification always
-// satisfies), so a receipt that survives transport while its result body is truncated
-// cannot silently drop findings.
+// sent). Two guards beyond the receipt:
+//   (1) COUNT — the result arrays must ACCOUNT for n_in findings (verified + eliminated
+//       === n_in — an invariant run_verification always satisfies), so a receipt that
+//       survives transport while its result body is truncated cannot silently drop findings.
+//   (2) CONTENT FIDELITY — every eliminated[] entry must carry the elimination_reason stamp
+//       that run_verification() ALWAYS writes before pushing a finding to eliminated[]
+//       (verify_findings.py sets f['elimination_reason'] = 'evidence does not match file
+//       content'). An executor that moves a finding verified->eliminated in its ECHO never
+//       ran the script's elimination path for it, so it cannot carry the stamp — the receipt
+//       and count both still pass (observed live: script disk 10v/0e, echo 7v/3e with a valid
+//       receipt), but an unstamped elimination proves the echo is not the script's output.
+//       (The stamp is elimination_reason, NOT eliminated_by: the verify script never sets
+//       eliminated_by — that is a JS-pipeline-only field — so requiring it would reject every
+//       honest elimination.) A failed fidelity check degrades the WHOLE slice to UNVERIFIED,
+//       which is conservative: every original finding is KEPT (origin=unknown), so an
+//       executor claiming a spurious elimination cannot use it to drop a real finding.
 //
 // Threat model: this defends against a STALE, HALLUCINATING, or CONFUSED executor
 // (an old/wrong result, a fabricated success, or another slice's answer) — NOT a
@@ -2395,6 +2460,12 @@ function trustSlice(env, { nonce, headShaShort, n }) {
   const accounted = result.verified.length + result.eliminated.length;
   if (accounted !== r.n_in) {
     return { ok: false, reason: `result incomplete: verified+eliminated=${accounted} != n_in=${r.n_in} (transport truncation)` };
+  }
+  for (const e of result.eliminated) {
+    const reason = e && typeof e === 'object' ? e.elimination_reason : undefined;
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      return { ok: false, reason: 'eliminated entry missing elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)' };
+    }
   }
   return { ok: true };
 }
@@ -2935,6 +3006,30 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
+// The four artifacts writeArtifacts plans (and asks the writer to echo). Exported so a
+// faithful mock/recorder echoes the SAME paths the write-proof gate checks against — the
+// gate rejects any echo that fails to account for all four planned paths.
+function plannedArtifactPaths(outputDir, sha) {
+  return {
+    findings: `${outputDir}/code-gauntlet-findings-${sha}.json`,
+    report: `${outputDir}/code-gauntlet-report-${sha}.md`,
+    postReview: `${outputDir}/code-gauntlet-post-review-${sha}.json`,
+    checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
+  };
+}
+const ARTIFACT_PATH_KEYS = ['findings', 'report', 'postReview', 'checkpoints'];
+
+// Write-proof: the echoed artifactPaths must account for EVERY planned path (each key
+// present and echoing the exact path we dispatched). WRITER_SCHEMA declares no `required`,
+// so an empty {} echo is schema-valid — a writer under StructuredOutput retry pressure can
+// return one having written nothing. Same threat model as trustSlice: a self-reported echo
+// is a consistency/liveness check, not proof-of-write, but requiring the four exact paths
+// stops a degenerate {} (or a partial echo) from passing as a full persist.
+function writerEchoCoversPaths(echoed, paths) {
+  if (!echoed || typeof echoed !== 'object') return false;
+  return ARTIFACT_PATH_KEYS.every((k) => echoed[k] === paths[k]);
+}
+
 // writeArtifacts(ctx, { findings, postReview, report, checkpoints, outputDir,
 // headShaShort, policy }) -> { artifactPaths, gaps, partial }
 // The workflow script has NO disk access, so a writer agent persists findings.json
@@ -2948,12 +3043,7 @@ async function writeArtifacts(ctx, input) {
   const outputDir = inp.outputDir || '.code-gauntlet';
   const sha = inp.headShaShort || 'head';
   const policy = inp.policy || {};
-  const paths = {
-    findings: `${outputDir}/code-gauntlet-findings-${sha}.json`,
-    report: `${outputDir}/code-gauntlet-report-${sha}.md`,
-    postReview: `${outputDir}/code-gauntlet-post-review-${sha}.json`,
-    checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
-  };
+  const paths = plannedArtifactPaths(outputDir, sha);
   const model = modelFor('code-gauntlet:artifact-writer', policy);
   const partial = (reason) => ({
     artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
@@ -2968,6 +3058,9 @@ async function writeArtifacts(ctx, input) {
       schema: WRITER_SCHEMA,
     });
     if (!result) return partial('writer returned null');
+    if (!writerEchoCoversPaths(result.artifactPaths, paths)) {
+      return partial('writer echo did not account for all four planned artifact paths (no write proof)');
+    }
     return { artifactPaths: paths, gaps: [], partial: false };
   } catch (e) {
     return partial(`writer agent threw (${(e && e.message) || 'unknown'})`);
