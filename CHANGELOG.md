@@ -2,6 +2,98 @@
 
 <!-- version list -->
 
+## v3.1.0 (2026-07-23)
+
+### Bug Fixes
+
+- **agents**: Schema-declared extras are omit-not-null; changelog markdownlint fix (Bugbot PR-20
+  wave 1)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **args,docs**: Shape-guard exclusionPatterns like reviewConfig.ignore; correct stale post-c8 doc
+  claims (adversarial review)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **guard**: Mirror stage defaults for absent size limits — agent-count guard can never go
+  NaN-silent (#17 item 8)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **skill**: AgentFlags is a derivation rule at assembly time + pre-dispatch light-scope check (M4
+  live miss)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **skill**: Ground the light-scope answer in a fresh env re-read at assembly (M4 second miss)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **summarize**: Pin changedLines in the bucketed-path merge prompt too (Bugbot PR-20 wave 2)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+### Chores
+
+- **bench**: Ledger + report for M3 union smoke (smoke-20260723-033811-6ea1737)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **bench**: Ledger + report for M3-of-record smoke-20260723-051739-1c6a310
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **bench**: Ledger + report for mini-subset A (custom-20260723-070640-c1dd46f, FAILED paired bar ->
+  item-4 surgical revert)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **bench**: Ledger + report for mini-subset A re-run (custom-20260723-102149-381e9ff) — V3.1
+  comparison row
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+### Documentation
+
+- Qualify anchor noise-rate comparability in benchmark results
+  ([#18](https://github.com/liatrio-labs/claude-code-gauntlet/pull/18),
+  [`9090838`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9090838301f974bbeadb8fdd4b62b0fdb6db29ab))
+
+- **bench**: Reframe the report as a release-progression artifact; README results as v2 -> v3.0 ->
+  v3.1
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **delivery**: Let-me-pick deselections apply to the prIdentity wrapper path too (Bugbot PR-20)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **readme**: Add the v3.1 paired mini-subset row to the benchmark table
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+### Features
+
+- Code-gauntlet v3.1 benchmark-gated hardening + orchestrator-model pinning
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **agents**: Remove v2 NDJSON emission contract from discovery agents — v3 by-value output is the
+  sole path (live-run L10)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **args**: Validation mirrors consumption — require changedFiles/changedLines, demote
+  changedFilesPath to optional provenance (#17 item 6)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **challenge**: Structured blind location (file/line) replaces dead code field; prompt return-shape
+  matches schema (#17 item 1 + wave-3 rider)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **hardening**: Waist validation for reviewConfig, entry-args guard, PR-identity delivery wrapper,
+  legacy REVIEW.md self-heal, info/exclude, failingPhase (live-run L1-L9)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **policy**: Pin explicit full model IDs through resolvePolicy — agent pins immune to orchestrator
+  session variant (#17 V3.1)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **scope**: Wire light scope — deep flag gates the seven non-core dimensions, full scope
+  byte-identical (#17 item 7)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+- **verify**: Echo content-fidelity gate, numeric confidence end-to-end, deterministic agent/extras
+  echo, writer write-proof (#17 items 2,3,4,5)
+  ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
+
+
 ## v3.0.0 (2026-07-23)
 
 ### Bug Fixes
