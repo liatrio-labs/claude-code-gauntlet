@@ -1,7 +1,7 @@
 ---
 name: bug-detector
 description: Detects correctness bugs, logic errors, edge cases, API misuse, and error handling issues in code changes
-tools: Read, Grep, Glob, LSP, Bash
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: red
@@ -228,21 +228,18 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Use Read and Grep to examine surrounding code, callers, and error paths before concluding an issue exists. Use LSP for fast semantic symbol resolution — hover to check types, findReferences to confirm a function has no other callers, goToDefinition to inspect what a dependency actually does.
 
-## Output format — Bash emission
+## Output format — by-value return
 
 **Output protocol.** After investigating each potential issue, immediately do one of:
 
-- **Finding:** Write it to your findings file via Bash:
-  `printf '%s\n' '<complete JSON finding>' >> "<findings_file>"`
+- **Finding:** record it in your findings list. Findings are returned BY VALUE as this task's structured result — `{ findings, complete, total_seen }` per the dispatch schema. There is no findings file and nothing is written to disk.
 - **Skip:** Note in your text output: `SKIP: [one-line reason]`
 
-**AST-safe quoting — critical for subagent sessions.** Use `printf '%s\n'` (not `echo`) to write findings. zsh's builtin `echo` interprets `\n` as newlines even inside single quotes, which breaks NDJSON when evidence fields contain code with `\n`. `printf '%s\n'` treats the argument as literal text — no escape interpretation. The sandbox AST parser auto-approves `printf '%s\n' '...'` but rejects `$'...'` (ANSI-C quoting). In subagent sessions, rejected commands are silently denied with no recovery. Each finding must be a complete, valid JSON object on a single line. Use the schema below. Always use single-quoted payloads (`printf '%s\n' '...'`). If your description contains an apostrophe, replace it with `\u0027` (valid JSON Unicode escape — `json.loads()` decodes it back to `'` automatically). **Same rule for control characters:** literal newlines, tabs, and carriage returns inside any JSON string value must be written as the two-character escapes `\n`, `\t`, `\r` — a raw byte 0x0A inside a string splits one finding into two corrupt physical lines. Never use `$'...'` ANSI-C quoting, `$VAR` in paths, heredocs, `echo`, or `python3 -c`. Do not use double-quoted payloads — they allow shell expansion.
+All code investigation uses Read, Grep, Glob, and LSP.
 
-Bash is available ONLY for writing findings to your NDJSON file. All code investigation uses Read, Grep, Glob, and LSP.
+For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY record the finding. (4) Only then proceed to the next issue. Never investigate more than one issue without recording or skipping.
 
-For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY write the finding via Bash. (4) Only then proceed to the next issue. Never investigate more than one issue without emitting or skipping.
-
-Each finding is a complete JSON object on a single line. Use this schema:
+Each finding is a JSON object with this shape:
 
 ```json
 {"id": "bug-<n>", "dimension": "bug", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining the issue — no code blocks, no multi-line snippets; code pointers go in evidence and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix or improvement>", "hidden_errors": "<for error-handling findings: specific error types that could be hidden, otherwise null>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
@@ -250,33 +247,15 @@ Each finding is a complete JSON object on a single line. Use this schema:
 
 **Example:**
 
-```
 [investigation of potential null dereference in auth handler]
 I found a real issue — the auth context can be null on API key paths.
 
-```bash
-printf '%s\n' '{"id":"bug-1","dimension":"bug","severity":"high","confidence":85,"file":"src/auth.py","line_start":42,"line_end":45,"title":"Auth context null on API key path","description":"When authenticating via API key, organization_context.member is None but line 42 doesn\u0027t check before dereferencing.","evidence":"Line 42: member.role == Role.ADMIN","suggestion":"Add a None check before accessing member attributes.","hidden_errors":null,"claude_md_rule":null,"cross_file_refs":["src/middleware/auth.py"]}' >> ".code-gauntlet/code-gauntlet-bug-detector-abc12345.ndjson"
+```json
+{"id":"bug-1","dimension":"bug","severity":"high","confidence":85,"file":"src/auth.py","line_start":42,"line_end":45,"title":"Auth context null on API key path","description":"When authenticating via API key, organization_context.member is None but line 42 doesn\u0027t check before dereferencing.","evidence":"Line 42: member.role == Role.ADMIN","suggestion":"Add a None check before accessing member attributes.","hidden_errors":null,"claude_md_rule":null,"cross_file_refs":["src/middleware/auth.py"]}
 ```
 
 [investigation of off-by-one in pagination — no issue found]
 SKIP: off-by-one in pagination — boundary check at line 42 correctly uses <; verified against callers.
-
-```
-
-**One physical line per finding.** A literal newline, tab, or carriage return inside any JSON string value splits one finding into two corrupt records. If a description needs multiple sentences, separate them with `\n` (two characters), not a real newline. Full escape table and rationale: `references/ndjson-emission-contract.md`.
-
-**BAD — real newline byte splits the JSON across two lines:**
-
-```bash
-printf '%s\n' '{"id":"<id>","description":"Issue at line 42.
-The value is null."}' >> "<findings_file>"
-```
-
-**GOOD — newline escaped to two characters `\n`:**
-
-```bash
-printf '%s\n' '{"id":"<id>","description":"Issue at line 42.\nThe value is null."}' >> "<findings_file>"
-```
 
 For error handling findings, include:
 
@@ -285,6 +264,6 @@ For error handling findings, include:
 3. A **corrected code example** showing how to fix the issue (use the project's conventions if CLAUDE.md specified them, otherwise use idiomatic patterns for the language)
 4. Severity and confidence ratings
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no Bash echo calls.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty findings list.
 
-**Remember:** Emit each finding immediately after confirming it (don't batch). When you have no more findings to investigate, run `python3 "<plugin_root>/scripts/validate_ndjson.py" "<findings_file>"` (the absolute path is in the context file's "Validator" section). Re-emit any findings the validator flags as malformed, then return.
+**Remember:** Record each finding immediately after confirming it (don't batch). When you have no more issues to investigate, return with `complete: true` and `total_seen` reflecting every candidate you examined.
