@@ -8,7 +8,7 @@
 //   agent(prompt, opts)   — prompt is a STRING; opts = { label, agentType, model, schema }
 //   parallel(thunks)      — thunks is an array of ZERO-ARG FUNCTIONS each calling agent(...);
 //                           a thrown member resolves to null (siblings unaffected).
-import { parseWriterPayload } from '../../src/stages.js';
+import { parseWriterPayload, plannedArtifactPaths } from '../../src/stages.js';
 import { AGENTS } from '../../src/registry.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
@@ -87,6 +87,8 @@ export function validArgs(over = {}) {
     generatedAt: '2026-07-18T00:00:00Z',
     diffPath: '/repo/.code-gauntlet/diff.patch',
     changedFilesPath: '/repo/.code-gauntlet/changed.txt',
+    changedFiles: ['a.js'],
+    changedLines: 1,
     agentFlags: {},
     policy: {},
     limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },
@@ -132,7 +134,13 @@ export function makeCtx(args, opts = {}) {
     if (label === 'summarize' || label === 'summarize-merge' || label.startsWith('summarize-bucket-')) {
       return { summary: 'the PR changes X' };
     }
-    if (label.startsWith('verify-input-writer')) return { written: [] };
+    if (label.startsWith('verify-input-writer')) {
+      // Faithful slice-input writer: echo back the exact paths it was asked to write, so
+      // materializeVerifySlices' write-proof gate (written must cover the dispatched paths)
+      // passes on the happy path. The dispatched entries ride after the payload marker.
+      const entries = parseWriterPayload(prompt) || [];
+      return { written: entries.map((e) => e.path) };
+    }
     if (label.startsWith('verify-slice-')) {
       // A receipt the verify stage will TRUST: same head sha, per-slice nonce `${nonce}.0`
       // (one slice, verifySliceSize > nFindings), n_in === slice length, arrays accounting.
@@ -152,7 +160,10 @@ export function makeCtx(args, opts = {}) {
     }
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
-      return { artifactPaths: {} };
+      // Faithful writer: echo the exact planned paths so writeArtifacts' write-proof gate
+      // (echo must account for all four planned paths) passes. plannedArtifactPaths is the
+      // single source of truth shared by writeArtifacts and this mock.
+      return { artifactPaths: plannedArtifactPaths(A.outputDir, A.headShaShort) };
     }
     // Discovery: label IS the agentType. Only bug-detector yields findings.
     if (DISCOVERY_AGENT_TYPES.has(dispatch.agentType)) {

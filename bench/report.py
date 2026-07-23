@@ -59,7 +59,7 @@ TIER_INFO = (
     ("smoke", "smoke", "3 PRs / 4 goldens — directional only"),
     ("subset", "subset", "15 PRs / 59 goldens — gate-grade"),
     ("holdout", "holdout", "10 fresh PRs — confirmation"),
-    ("custom", "custom", "8 PRs, pre-registered paired design — Gate-2 efficiency"),
+    ("custom", "custom", "variable PRs, efficiency & mini-subset runs — pre-registered paired design"),
 )
 
 # Tiers whose recall/noise are graded against the two live bars (top-anchor +
@@ -78,6 +78,85 @@ CONFOUNDED_RUNS = frozenset({
     "smoke-20260721-160606-83eadfe",   # sonnet child pin
     "smoke-20260721-172943-0b24d95",   # sonnet[1m] child pin
 })
+
+# Superseded runs, measured but voided post-hoc for reasons unrelated to a
+# child-model confound (see CONFOUNDED_RUNS above) — one environment-contaminated
+# smoke, one custom-tier mini-subset attempt that failed its paired bar and was
+# followed by a surgical revert + re-run (the re-run is custom-20260723-102149-381e9ff,
+# the v3.1 run of record). Same faded/"reverted" chart-and-table treatment as
+# CONFOUNDED_RUNS, keyed to their own tooltip text rather than the child-model one.
+VOID_RUNS = {
+    "smoke-20260723-033811-6ea1737": "contamination-void — environment-contaminated run, discard",
+    "custom-20260723-070640-c1dd46f": "failed paired bar → item-4 revert → re-run",
+}
+
+# x-axis / tooltip label overrides for milestone runs that would otherwise collide
+# under the generic per-tier label in short_label() — three custom-tier runs now
+# exist (Gate-2, its failed mini-subset attempt, and the v3.1 mini-subset of
+# record), so "custom" -> "Gate-2" is no longer a safe default for all of them.
+MILESTONE_LABELS = {
+    "custom-20260721-220637-5337f6c": "Gate-2",
+    "custom-20260723-070640-c1dd46f": "mini-A (failed)",
+    "custom-20260723-102149-381e9ff": "v3.1",
+}
+
+# The Gate-2 final-config run, pinned explicitly. Before v3.1, it was also the
+# *only* custom-tier row, so "most recent custom row" and "the Gate-2 run" were
+# the same thing; that's no longer true, so the History section below looks this
+# run_id up directly rather than taking whatever custom-tier row is newest.
+GATE2_RUN_ID = "custom-20260721-220637-5337f6c"
+
+# Long-term release-progression ledger — the headline section of the report.
+# Newest first. Each release lists the ledger run_id(s) that define it; every
+# number rendered for a leg (recall, noise, tokens, cost) is read live from the
+# ledger via row_by_run_id(), never hardcoded here. Only what the ledger cannot
+# supply — prose describing what changed, and one owner-supplied paired-context
+# comparison that has no ledger row of its own — is a literal string below.
+# Adding a future release is one more entry in this list.
+RELEASES = (
+    {
+        "label": "v3.1",
+        "legs": (
+            {
+                "name": "mini-subset A · paired, 6 PRs",
+                "run_id": "custom-20260723-102149-381e9ff",
+                "n_goldens": 30,
+            },
+        ),
+        "what_changed": (
+            "Schema-fidelity hardening (echo fidelity gate, numeric confidence, "
+            "write-proofs), a location-based blind challenger, light scope, "
+            "orchestrator full-ID pinning, and an NDJSON contract scrub."
+        ),
+        "bar_check": True,
+        "extra_note": (
+            "Small-N caveat: a single 6-PR mini-subset pass. Paired same-6-PR "
+            "context: 18/30 goldens here vs v3.0's 20/30 on the identical 6 PRs."
+        ),
+    },
+    {
+        "label": "v3.0",
+        "legs": (
+            {"name": "gate · 15 PRs", "run_id": "subset-20260721-015119-639e4bc", "n_goldens": 59},
+            {"name": "holdout · 10 fresh PRs", "run_id": "holdout-20260721-085348-eec15be"},
+        ),
+        "what_changed": (
+            "Full workflow-native rewrite: an 8-stage pipeline running in the "
+            "Workflow runtime, −49% tokens vs v2."
+        ),
+        "bar_check": False,
+        "extra_note": "",
+    },
+    {
+        "label": "v2",
+        "legs": (
+            {"name": "baseline · 15 PRs", "run_id": "subset-20260718-031746-27875ca", "n_goldens": 59},
+        ),
+        "what_changed": "The starting architecture.",
+        "bar_check": False,
+        "extra_note": "",
+    },
+)
 
 # vs-anchors bars: (label, CSS var, emphasized, source key). "v3" pulls from the
 # latest v3 gate subset row, "v3_holdout" from the holdout confirmation row, "v2"
@@ -281,6 +360,28 @@ def latest_subset_row(rows):
     return max(subset, key=lambda r: r.get("ts", ""))
 
 
+def row_by_run_id(rows, run_id):
+    """Exact-match ledger row for a frozen release run_id.
+
+    Earliest ts wins on a k=5 re-score (byte-identical per judge_sd=0), matching
+    the "representative row" convention used everywhere else in this module.
+    """
+    cands = [r for r in rows if r.get("run_id") == run_id]
+    return sorted(cands, key=lambda r: r.get("ts", ""))[0] if cands else None
+
+
+def current_release_leg(rows, releases=RELEASES):
+    """(release, leg, row) for the newest release whose defining leg is actually
+    present in the loaded ledger — lets the dashboard degrade gracefully against
+    a smaller/offline fixture instead of rendering a release with no numbers."""
+    for rel in releases:
+        for leg in rel["legs"]:
+            row = row_by_run_id(rows, leg["run_id"])
+            if row is not None:
+                return rel, leg, row
+    return None, None, None
+
+
 def ledger_groups(rows):
     """Table rows: collapse identical re-scores of the same (run_id, tool)."""
     groups = {}
@@ -326,6 +427,8 @@ def classify(row, top_anchor, ceiling):
         return ("reverted", "✕",
                 "confounded child-model experiment — the subagent-model pin cascaded "
                 "the [1m] variant onto the pipeline agents; reverted")
+    if row.get("run_id") in VOID_RUNS:
+        return ("reverted", "✕", VOID_RUNS[row.get("run_id")])
     if "REVERT" in change.upper():
         return ("reverted", "✕", "regressed and was reverted")
     if tier in GATE_TIERS and recall is not None and noise is not None:
@@ -341,6 +444,8 @@ def classify(row, top_anchor, ceiling):
 
 def short_label(pt):
     """Compact x-axis tag for one run point (semantic, not a raw id)."""
+    if pt.get("run_id") in MILESTONE_LABELS:
+        return MILESTONE_LABELS[pt["run_id"]]
     tool = pt["tool"]
     tier = pt["tier"]
     if tool == "naive-anchor":
@@ -352,7 +457,7 @@ def short_label(pt):
     if tier == "holdout":
         return "Holdout"
     if tier == "custom":
-        return "Gate-2"
+        return "custom"              # no override registered — generic fallback
     if tier == "subset":
         return "Gate-1" if pt["kind"] == "gate" else "v3 subset"
     m = re.search(r"iter\s*(\d+)", pt.get("hypothesis") or "")
@@ -798,6 +903,76 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
     )
 
 
+def _release_leg_html(rows, leg):
+    """One measurement line inside a release card, or "" if its run is missing
+    from the loaded ledger (offline fixture, or a future release not yet run)."""
+    row = row_by_run_id(rows, leg["run_id"])
+    if row is None:
+        return ""
+    recall = row.get("golden_recall")
+    noise = row.get("noise_rate")
+    tokens = row.get("tokens_total")
+    cost = row.get("cost_usd")
+    n_goldens = leg.get("n_goldens")
+    metrics = [f"recall {fmt_pct(recall)}", f"noise {fmt_pct(noise)}"]
+    if n_goldens and recall is not None:
+        metrics[0] += f" ({round(recall * n_goldens)}/{n_goldens})"
+    if tokens:
+        metrics.append(f"{fmt_millions(tokens)} tokens")
+    if cost:
+        metrics.append(fmt_money(cost))
+    return (
+        '<div class="release-leg">'
+        f'<span class="release-leg-name">{html.escape(leg["name"])}</span>'
+        f'<span class="release-leg-metrics">{html.escape(" · ".join(metrics))}</span>'
+        f'<span class="release-leg-run mono">{html.escape(leg["run_id"])}</span>'
+        "</div>"
+    )
+
+
+def build_releases_html(rows, top_anchor, v2_base, ceiling):
+    """The headline section: one card per release, newest first, each with its
+    release-defining measurement leg(s) and a one-line "what changed". This is
+    the long-term progression record; the v2->v3 rewrite is one chapter of it,
+    demoted to the "History" section below (see build_verdict_html/build_gate2_html).
+    Adding a future release is one more RELEASES entry — nothing here hardcodes
+    a release count or a specific number of legs.
+    """
+    cards = []
+    for rel in RELEASES:
+        leg_htmls = [_release_leg_html(rows, leg) for leg in rel["legs"]]
+        leg_htmls = [h for h in leg_htmls if h]
+        note_bits = []
+        if rel.get("bar_check") and rel["legs"]:
+            head_row = row_by_run_id(rows, rel["legs"][0]["run_id"])
+            recall = (head_row or {}).get("golden_recall")
+            noise = (head_row or {}).get("noise_rate")
+            if recall is not None and noise is not None and top_anchor is not None:
+                clears = recall >= top_anchor and (ceiling is None or noise <= ceiling)
+                note_bits.append(
+                    ("Clears both hard bars (" if clears else "Misses a hard bar (") +
+                    f"top-anchor {fmt_pct(top_anchor)}"
+                    + (f", v2 {fmt_pct(v2_base)}" if v2_base is not None else "")
+                    + ")."
+                )
+        if rel.get("extra_note"):
+            note_bits.append(rel["extra_note"])
+        note_html = (
+            f'<p class="release-note">{html.escape(" ".join(note_bits))}</p>'
+            if note_bits else ""
+        )
+        cards.append(
+            '<article class="release-card">'
+            f'<h3 class="release-label">{html.escape(rel["label"])}</h3>'
+            f'<div class="release-legs">{"".join(leg_htmls)}</div>'
+            f'<p class="release-changed"><b>What changed:</b> '
+            f'{html.escape(rel["what_changed"])}</p>'
+            f"{note_html}"
+            "</article>"
+        )
+    return f'<div class="release-progression">{"".join(cards)}</div>'
+
+
 def subset_comparison(rows, baselines):
     """The two rows the verdict panel compares: the v2 baseline subset and the
     latest v3 subset run on the SAME subset size (same PRs / goldens).
@@ -944,8 +1119,18 @@ def latest_holdout_row(rows):
     return max(cands, key=lambda r: r.get("ts", "")) if cands else None
 
 
-def latest_custom_row(rows):
-    """Most recent v3 custom-tier run — the Gate-2 final-config efficiency pass."""
+def gate2_row(rows):
+    """The Gate-2 final-config run, pinned by run_id (GATE2_RUN_ID).
+
+    Before v3.1, "most recent custom-tier row" and "the Gate-2 run" were the same
+    thing; the v3.1 mini-subset experiments are also custom-tier and newer, so that
+    heuristic would silently pick one of them up instead. Falls back to the old
+    most-recent-custom-row heuristic only when the pinned id isn't in the ledger
+    at all (e.g. an offline test fixture predating Gate-2).
+    """
+    row = row_by_run_id(rows, GATE2_RUN_ID)
+    if row is not None:
+        return row
     cands = [
         r for r in rows
         if str(r.get("tool", "")).startswith("deep-review") and r.get("tier") == "custom"
@@ -966,7 +1151,7 @@ def build_gate2_html(rows, baselines, top_anchor, ceiling):
     baseline. Gate-2 ran a different 8-PR set, so its win is stated per-PR-token
     against the owner-amended v2 baseline (recall/noise are graded against the two
     live bars, not v2). Returns "" when no custom run is in the ledger."""
-    g2 = latest_custom_row(rows)
+    g2 = gate2_row(rows)
     if not g2:
         return ""
     bv2 = baselines.get("baseline_v2", {})
@@ -1042,18 +1227,18 @@ def build_gate2_html(rows, baselines, top_anchor, ceiling):
     )
 
 
-def build_tiles_html(row, baselines):
-    bv2 = baselines.get("baseline_v2", {})
+def build_tiles_html(row, n_prs, n_goldens, runs=1):
+    """Headline stat tiles for one measurement row. Release-aware: the caller
+    picks ``row``/``n_prs``/``n_goldens`` — normally the current release's
+    defining leg (see current_release_leg) — rather than this function assuming
+    any particular tier or baseline source."""
     per_bucket = (row or {}).get("per_bucket", {})
     total = sum(per_bucket.values()) if per_bucket else None
     total_txt = str(total) if total is not None else "—"
-    n_prs = (row or {}).get("n_prs", "—")
-    n_goldens = bv2.get("n_goldens", "—")
-    runs = bv2.get("runs", 1)
     g = (row or {}).get
     tiles = [
         (fmt_pct(g("golden_recall")), "Golden recall",
-         f"{n_prs} gate PRs · {n_goldens} goldens · N={runs}"),
+         f"{n_prs} PRs · {n_goldens} goldens · N={runs}"),
         (fmt_pct(g("noise_rate")), "Noise rate",
          f"{total_txt} candidates scored · N={runs}"),
         (fmt_pct(g("precision_strict")), "Precision (strict) †",
@@ -1061,7 +1246,7 @@ def build_tiles_html(row, baselines):
         (fmt_pct(g("f1_strict")), "F1 (strict)",
          "recall + precision blend"),
         (fmt_money(g("cost_usd")), "Run cost",
-         "one subset pass · review spend"),
+         "one review pass · review spend"),
     ]
     cells = "".join(
         '<div class="tile">'
@@ -1142,6 +1327,9 @@ def build_table_html(groups, top_anchor, ceiling):
                 f"Confounded experiment ({child} subagent pin cascaded the [1m] variant "
                 "onto the pipeline agents); reverted."
             )
+            parts_full.append(changed_full)
+        if not changed_full and rid in VOID_RUNS:
+            changed_full = VOID_RUNS[rid]
             parts_full.append(changed_full)
         title_full = html.escape(TIP_BREAK.join(parts_full)) if parts_full else ""
         changed_cell = (
@@ -1365,6 +1553,81 @@ body {
   color: var(--ink-secondary);
 }
 .tiles-source b { color: var(--ink-primary); }
+/* Release progression (headline section) */
+.release-progression {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 22px;
+}
+.release-card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 14px 16px 12px;
+}
+.release-card:first-child {
+  border-color: var(--ref-goal);
+}
+.release-label {
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.release-legs { display: grid; gap: 4px; margin-bottom: 8px; }
+.release-leg {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 12.5px;
+}
+.release-leg-name { color: var(--ink-secondary); font-weight: 600; min-width: 15ch; }
+.release-leg-metrics {
+  color: var(--ink-primary);
+  font-variant-numeric: tabular-nums;
+}
+.release-leg-run {
+  color: var(--ink-muted);
+  font-size: 11px;
+}
+.release-changed {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-primary);
+  max-width: 74ch;
+}
+.release-changed b { color: var(--ink-secondary); font-weight: 650; }
+.release-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-muted);
+  max-width: 74ch;
+}
+/* History (demoted v2->v3 rewrite panels) */
+.history-section {
+  margin: 0 0 22px;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--surface);
+  padding: 4px 16px;
+}
+.history-section summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ink-secondary);
+}
+.history-section[open] summary { color: var(--ink-primary); }
+.history-body { padding: 4px 0 14px; }
+.history-body .verdict-panel {
+  border: none;
+  background: transparent;
+  padding: 10px 0 0;
+}
 /* Verdict panel (v2 vs v3 headline) */
 .verdict-panel { margin: 0 0 22px; padding: 18px 18px 14px; }
 .verdict-head h2 { margin: 0 0 6px; font-size: 17px; font-weight: 650; }
@@ -1747,7 +2010,6 @@ def _thresholds(baselines):
 def render_html(rows, baselines, sha, generated):
     top_anchor, v2_base, ceiling = _thresholds(baselines)
     points = scored_run_points(rows, top_anchor, ceiling)
-    subset_row = latest_subset_row(rows)
     groups = ledger_groups(rows)
     judge = html.escape(str(baselines.get("judge_pin", "—")))
     subtitle = (
@@ -1762,38 +2024,75 @@ def render_html(rows, baselines, sha, generated):
     _v2_row, v3_gate_row, _ng = subset_comparison(rows, baselines)
     v3_holdout_row = latest_holdout_row(rows)
 
-    src_label = ""
-    if subset_row:
-        tname = TOOL_STYLE.get(subset_row.get("tool"), (str(subset_row.get("tool")), ""))[0]
+    # Headline stat tiles track the current release's defining measurement (the
+    # v3.1 mini-subset, once it's in the ledger) rather than a fixed tier; this
+    # falls back to the pre-v3.1 "latest gate-grade subset" behaviour when none
+    # of the RELEASES run_ids are present (e.g. an offline test fixture).
+    rel, leg, release_row = current_release_leg(rows)
+    bv2 = baselines.get("baseline_v2", {})
+    if release_row is not None:
         src_label = (
-            '<p class="tiles-source">Headline numbers below are the latest gate-grade '
-            f"run: <b>{html.escape(tname)}</b> · {html.escape(str(subset_row.get('tier', '')))}"
-            " tier · run "
-            f'<span class="mono">{html.escape(truncate_middle(str(subset_row.get("run_id", "")), 32))}</span>'
-            f" · {html.escape(fmt_date(subset_row.get('ts', '')))}</p>"
+            '<p class="tiles-source">Headline numbers below are the current release: '
+            f'<b>{html.escape(rel["label"])}</b> · {html.escape(leg["name"])} · run '
+            f'<span class="mono">{html.escape(truncate_middle(str(leg["run_id"]), 32))}</span>'
+            f" · {html.escape(fmt_date(release_row.get('ts', '')))}</p>"
+        )
+        tiles_html = build_tiles_html(
+            release_row,
+            release_row.get("n_prs", "—"),
+            leg.get("n_goldens", bv2.get("n_goldens", "—")),
+        )
+    else:
+        subset_row = latest_subset_row(rows)
+        src_label = ""
+        if subset_row:
+            tname = TOOL_STYLE.get(
+                subset_row.get("tool"), (str(subset_row.get("tool")), "")
+            )[0]
+            src_label = (
+                '<p class="tiles-source">Headline numbers below are the latest gate-grade '
+                f"run: <b>{html.escape(tname)}</b> · {html.escape(str(subset_row.get('tier', '')))}"
+                " tier · run "
+                f'<span class="mono">{html.escape(truncate_middle(str(subset_row.get("run_id", "")), 32))}</span>'
+                f" · {html.escape(fmt_date(subset_row.get('ts', '')))}</p>"
+            )
+        tiles_html = build_tiles_html(
+            subset_row, (subset_row or {}).get("n_prs", "—"), bv2.get("n_goldens", "—")
         )
 
     runs_caption = (
-        "Every scored run in time order — the v2 baseline, then the v3 hill-climb. "
-        "Colour is the tool, marker shape is the run type; faded markers were reverted "
-        "(including two confounded child-model smokes), and the haloed markers are the "
-        "Gate-1 subset, its holdout confirmation, and the Gate-2 final config. The "
-        "labelled reference lines are the v2 baseline, the top-anchor bar to beat, and "
-        "the noise ceiling. Hover or focus any point for its hypothesis and result."
+        "Every scored run in time order — the v2 baseline, then the v3 hill-climb, "
+        "then the v3.1 mini-subset experiments. Colour is the tool, marker shape is "
+        "the run type; faded markers were reverted or voided (confounded child-model "
+        "smokes, a contaminated smoke, and a mini-subset attempt that failed its "
+        "paired bar), and the haloed markers are the Gate-1 subset, its holdout "
+        "confirmation, the Gate-2 final config, and the v3.1 mini-subset of record. "
+        "The labelled reference lines are the v2 baseline, the top-anchor bar to "
+        "beat, and the noise ceiling. Hover or focus any point for its hypothesis "
+        "and result."
+    )
+
+    history_html = (
+        '<details class="history-section">'
+        "<summary>History: the v2→v3 rewrite</summary>"
+        '<div class="history-body">'
+        + build_verdict_html(rows, baselines, ceiling)
+        + build_gate2_html(rows, baselines, top_anchor, ceiling)
+        + "</div></details>"
     )
 
     body = [
         '<div class="viz-root">',
         '<div id="viz-tooltip" class="tooltip" role="status" aria-live="polite"></div>',
         "<header>",
-        "<h1>deep-review bench — performance</h1>",
+        "<h1>code-gauntlet bench — release progression</h1>",
         f'<p class="subtitle">{subtitle}</p>',
         "</header>",
-        build_verdict_html(rows, baselines, ceiling),
-        build_gate2_html(rows, baselines, top_anchor, ceiling),
+        "<h2>Release progression</h2>",
+        build_releases_html(rows, top_anchor, v2_base, ceiling),
         build_explainer_html(top_anchor, v2_base, ceiling),
         src_label,
-        build_tiles_html(subset_row, baselines),
+        tiles_html,
         "<h2>Performance over runs</h2>",
         '<div class="card">',
         build_runs_legend_html(),
@@ -1802,6 +2101,7 @@ def render_html(rows, baselines, sha, generated):
         f'<p class="caption">{runs_caption}</p>',
         "<h2>vs anchors (judge-only)</h2>",
         build_anchor_section_html(baselines, v3_gate_row, v3_holdout_row),
+        history_html,
         "<h2>Run ledger</h2>",
         build_table_html(groups, top_anchor, ceiling),
         "<h2>Notes</h2>",
@@ -1816,7 +2116,7 @@ def render_html(rows, baselines, sha, generated):
         "<head>",
         '<meta charset="utf-8">',
         '<meta name="viewport" content="width=device-width, initial-scale=1">',
-        "<title>deep-review bench — performance</title>",
+        "<title>code-gauntlet bench — release progression</title>",
         f"<style>{CSS}</style>",
         "</head>",
         "<body>",

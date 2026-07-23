@@ -1,7 +1,7 @@
 ---
 name: cross-file-impact
 description: Analyzes how changes in one file affect consumers across the codebase, catching cross-file breakage from signature changes, interface violations, and broken references
-tools: Read, Grep, Glob, LSP, Bash
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: orange
@@ -159,21 +159,18 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context — cross-file impact analysis demands active codebase exploration. Prefer LSP for semantic resolution: findReferences to locate every consumer of a changed symbol, and goToDefinition to trace interface hierarchies and check whether implementors still satisfy the contract. Fall back to Grep if LSP is unavailable, then Read each caller site to verify compatibility.
 
-## Output format — Bash emission
+## Output format — by-value return
 
 **Output protocol.** After investigating each potential issue, immediately do one of:
 
-- **Finding:** Write it to your findings file via Bash:
-  `printf '%s\n' '<complete JSON finding>' >> "<findings_file>"`
+- **Finding:** record it in your findings list. Findings are returned BY VALUE as this task's structured result — `{ findings, complete, total_seen }` per the dispatch schema. There is no findings file and nothing is written to disk.
 - **Skip:** Note in your text output: `SKIP: [one-line reason]`
 
-**AST-safe quoting — critical for subagent sessions.** Use `printf '%s\n'` (not `echo`) to write findings. zsh's builtin `echo` interprets `\n` as newlines even inside single quotes, which breaks NDJSON when evidence fields contain code with `\n`. `printf '%s\n'` treats the argument as literal text — no escape interpretation. The sandbox AST parser auto-approves `printf '%s\n' '...'` but rejects `$'...'` (ANSI-C quoting). In subagent sessions, rejected commands are silently denied with no recovery. Each finding must be a complete, valid JSON object on a single line. Use the schema below. Always use single-quoted payloads (`printf '%s\n' '...'`). If your description contains an apostrophe, replace it with `\u0027` (valid JSON Unicode escape — `json.loads()` decodes it back to `'` automatically). **Same rule for control characters:** literal newlines, tabs, and carriage returns inside any JSON string value must be written as the two-character escapes `\n`, `\t`, `\r` — a raw byte 0x0A inside a string splits one finding into two corrupt physical lines. Never use `$'...'` ANSI-C quoting, `$VAR` in paths, heredocs, `echo`, or `python3 -c`. Do not use double-quoted payloads — they allow shell expansion.
+All code investigation uses Read, Grep, Glob, and LSP.
 
-Bash is available ONLY for writing findings to your NDJSON file. All code investigation uses Read, Grep, Glob, and LSP.
+For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY record the finding. (4) Only then proceed to the next issue. Never investigate more than one issue without recording or skipping.
 
-For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY write the finding via Bash. (4) Only then proceed to the next issue. Never investigate more than one issue without emitting or skipping.
-
-Each finding is a complete JSON object on a single line. Use this schema:
+Each finding is a JSON object with this shape:
 
 ```json
 {"id": "cross-file-<n>", "dimension": "cross_file_impact", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path of the changed file causing the impact>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining what breaks and why — no code blocks, no multi-line snippets; affected files go in affected_consumers and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — update the caller, implementor, or dependent>", "affected_consumers": ["<file paths of callers, implementors, or consumers that break>"], "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
@@ -181,33 +178,15 @@ Each finding is a complete JSON object on a single line. Use this schema:
 
 **Example:**
 
-```
 [investigation of changed return type on getUserById — tracing callers]
 Found real impact — billing module caller at src/billing/invoice.py:103 still expects the old return type.
 
-```bash
-printf '%s\n' '{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 doesn\u0027t check for None before dereferencing, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"claude_md_rule":null,"cross_file_refs":["src/billing/invoice.py"]}' >> ".code-gauntlet/code-gauntlet-cross-file-impact-abc12345.ndjson"
+```json
+{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 doesn\u0027t check for None before dereferencing, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"claude_md_rule":null,"cross_file_refs":["src/billing/invoice.py"]}
 ```
 
 [investigation of renamed config key DATABASE_URL — no issue found]
 SKIP: DATABASE_URL rename — all 3 consumers in src/config/ updated in same PR; verified with grep.
-
-```
-
-**One physical line per finding.** A literal newline, tab, or carriage return inside any JSON string value splits one finding into two corrupt records. If a description needs multiple sentences, separate them with `\n` (two characters), not a real newline. Full escape table and rationale: `references/ndjson-emission-contract.md`.
-
-**BAD — real newline byte splits the JSON across two lines:**
-
-```bash
-printf '%s\n' '{"id":"<id>","description":"Issue at line 42.
-The value is null."}' >> "<findings_file>"
-```
-
-**GOOD — newline escaped to two characters `\n`:**
-
-```bash
-printf '%s\n' '{"id":"<id>","description":"Issue at line 42.\nThe value is null."}' >> "<findings_file>"
-```
 
 For each finding, include:
 
@@ -216,6 +195,6 @@ For each finding, include:
 3. A **concrete fix** for both the changed code and the affected consumers
 4. Severity and confidence ratings
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no Bash echo calls.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty findings list.
 
-**Remember:** Emit each finding immediately after confirming it (don't batch). When you have no more findings to investigate, run `python3 "<plugin_root>/scripts/validate_ndjson.py" "<findings_file>"` (the absolute path is in the context file's "Validator" section). Re-emit any findings the validator flags as malformed, then return.
+**Remember:** Record each finding immediately after confirming it (don't batch). When you have no more issues to investigate, return with `complete: true` and `total_seen` reflecting every candidate you examined.

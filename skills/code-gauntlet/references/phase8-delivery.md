@@ -57,7 +57,7 @@ Always use the full 40-character SHA from `git rev-parse HEAD`.
 
 Deliver using the method(s) selected in Phase 1, in this order:
 
-**Step A. Chat** — if selected, output the full report per `references/report-format.md`.
+**Step A. Chat** — if selected, output the full report per `references/report-format.md`. **If Chat was NOT selected, cap chat output to a short completion summary** (finding counts, artifact paths, methodology pointer) — do not print the full report into the conversation; the user chose where the results go, and a full-report chat dump on a "PR comments"-only selection ignores that choice (observed live, PR-310 run).
 
 **Step B. PR comments** — if selected, run the PR comment selection flow before posting.
 
@@ -86,7 +86,7 @@ Track which findings were selected (**pr_comment_set**) for Stage 2 shortcut.
 
 **Step B.1. Write findings JSON and run post_review.py**
 
-Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script. For the **default** selection the "selected findings" are the `artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only wrap them with `review_body`, `owner`, `repo`, and `pr_number` (the pipeline cannot know those). For "Let me pick", they are the user's chosen subset.
+Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script. **When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) — consume it directly: optionally set `review_body` to the composed summary (it persists as `""`), and for the **default** selection pass the file to `post_review.py` unchanged. For **"Let me pick"** the user's deselections apply to the wrapper too: replace the wrapper's `findings` array with the user's chosen subset (a strict subset of the wrapper's entries, order preserved — deselection only, never re-ranking or re-filtering), keep every other wrapper field, then post. Only when the artifact is the legacy bare findings array (no prIdentity — e.g. a local-diff review that later gains a PR target) do you hand-wrap: for the **default** selection the "selected findings" are the `artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only wrap them with `review_body`, `owner`, `repo`, and `pr_number`. For "Let me pick", they are the user's chosen subset.
 
 Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures:
 

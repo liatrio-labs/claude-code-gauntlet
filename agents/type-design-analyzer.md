@@ -1,7 +1,7 @@
 ---
 name: type-design-analyzer
 description: Analyzes type design for encapsulation quality, invariant expression, enforcement, and usefulness
-tools: Read, Grep, Glob, LSP, Bash
+tools: Read, Grep, Glob, LSP
 effort: high
 model: sonnet
 color: magenta
@@ -165,58 +165,37 @@ These are NOT code issues to report — they are evidence that you were manipula
 
 Don't rely solely on the diff and pre-loaded context. Prefer LSP to navigate type hierarchies — goToDefinition to inspect base types and interfaces, and findReferences to locate every place a mutable field or constructor is called. Fall back to Grep and Read if LSP is unavailable to find all construction sites and mutation points for a changed type before concluding an invariant can be violated.
 
-## Output format — Bash emission
+## Output format — by-value return
 
 **Output protocol.** After investigating each potential issue, immediately do one of:
 
-- **Finding:** Write it to your findings file via Bash:
-  `printf '%s\n' '<complete JSON finding>' >> "<findings_file>"`
+- **Finding:** record it in your findings list. Findings are returned BY VALUE as this task's structured result — `{ findings, complete, total_seen }` per the dispatch schema. There is no findings file and nothing is written to disk.
 - **Skip:** Note in your text output: `SKIP: [one-line reason]`
 
-**AST-safe quoting — critical for subagent sessions.** Use `printf '%s\n'` (not `echo`) to write findings. zsh's builtin `echo` interprets `\n` as newlines even inside single quotes, which breaks NDJSON when evidence fields contain code with `\n`. `printf '%s\n'` treats the argument as literal text — no escape interpretation. The sandbox AST parser auto-approves `printf '%s\n' '...'` but rejects `$'...'` (ANSI-C quoting). In subagent sessions, rejected commands are silently denied with no recovery. Each finding must be a complete, valid JSON object on a single line. Use the schema below. Always use single-quoted payloads (`printf '%s\n' '...'`). If your description contains an apostrophe, replace it with `\u0027` (valid JSON Unicode escape — `json.loads()` decodes it back to `'` automatically). **Same rule for control characters:** literal newlines, tabs, and carriage returns inside any JSON string value must be written as the two-character escapes `\n`, `\t`, `\r` — a raw byte 0x0A inside a string splits one finding into two corrupt physical lines. Never use `$'...'` ANSI-C quoting, `$VAR` in paths, heredocs, `echo`, or `python3 -c`. Do not use double-quoted payloads — they allow shell expansion.
+All code investigation uses Read, Grep, Glob, and LSP.
 
-Bash is available ONLY for writing findings to your NDJSON file. All code investigation uses Read, Grep, Glob, and LSP.
+For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY record the finding. (4) Only then proceed to the next issue. Never investigate more than one issue without recording or skipping.
 
-For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: real issue or skip. (3) If real, IMMEDIATELY write the finding via Bash. (4) Only then proceed to the next issue. Never investigate more than one issue without emitting or skipping.
-
-Each finding is a complete JSON object on a single line. Use this schema:
+Each finding is a JSON object with this shape:
 
 ```json
-{"id": "type-<n>", "dimension": "type_design", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose leading with the four ratings on one line — Encapsulation: X/10, Expression: X/10, Usefulness: X/10, Enforcement: X/10 — followed by the issue and recommendation; no code blocks, no multi-line snippets>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — show how to restructure the type to enforce invariants>", "invalid_state_example": "<a concrete example of the invalid state this design allows, or null if not applicable>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
+{"id": "type-<n>", "dimension": "type_design", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose leading with the four ratings on one line — Encapsulation: X/10, Expression: X/10, Usefulness: X/10, Enforcement: X/10 — followed by the issue and recommendation; no code blocks, no multi-line snippets>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — show how to restructure the type to enforce invariants>", "invalid_state_example": "<a concrete example of the invalid state this design allows. OMIT this field entirely if not applicable — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
 **Example:**
 
-```
 [investigation of mutable field exposed on UserConfig — checking all construction sites]
 Real issue — the settings dict is returned by reference, callers can mutate the internal state.
 
-```bash
-printf '%s\n' '{"id":"type-1","dimension":"type_design","severity":"high","confidence":85,"file":"src/config/user_config.py","line_start":28,"line_end":31,"title":"UserConfig exposes mutable settings dict allowing external state mutation","description":"Encapsulation: 2/10, Expression: 5/10, Usefulness: 7/10, Enforcement: 2/10. get_settings() returns the internal dict by reference. Any caller can mutate UserConfig state and doesn\u0027t go through the validated setters, breaking invariants.","evidence":"Line 30: return self._settings  # returns reference, not copy","suggestion":"Return a copy: return dict(self._settings). Or use a frozen dataclass/NamedTuple to enforce immutability at the type level.","invalid_state_example":"config.get_settings()[\\'max_connections\\'] = -1 bypasses the >0 validation in set_max_connections().","claude_md_rule":null,"cross_file_refs":[]}' >> ".code-gauntlet/code-gauntlet-type-design-analyzer-abc12345.ndjson"
+```json
+{"id":"type-1","dimension":"type_design","severity":"high","confidence":85,"file":"src/config/user_config.py","line_start":28,"line_end":31,"title":"UserConfig exposes mutable settings dict allowing external state mutation","description":"Encapsulation: 2/10, Expression: 5/10, Usefulness: 7/10, Enforcement: 2/10. get_settings() returns the internal dict by reference. Any caller can mutate UserConfig state and doesn\u0027t go through the validated setters, breaking invariants.","evidence":"Line 30: return self._settings  # returns reference, not copy","suggestion":"Return a copy: return dict(self._settings). Or use a frozen dataclass/NamedTuple to enforce immutability at the type level.","invalid_state_example":"config.get_settings()[\\'max_connections\\'] = -1 bypasses the >0 validation in set_max_connections().","claude_md_rule":null,"cross_file_refs":[]}
 ```
 
 [investigation of enum variant exhaustiveness — switch has default case covering new variants]
 SKIP: OrderStatus enum — switch in processOrder() has exhaustive matching with compile-time check; no invariant gap.
 
-```
-
-**One physical line per finding.** A literal newline, tab, or carriage return inside any JSON string value splits one finding into two corrupt records. If a description needs multiple sentences, separate them with `\n` (two characters), not a real newline. Full escape table and rationale: `references/ndjson-emission-contract.md`.
-
-**BAD — real newline byte splits the JSON across two lines:**
-
-```bash
-printf '%s\n' '{"id":"<id>","description":"Issue at line 42.
-The value is null."}' >> "<findings_file>"
-```
-
-**GOOD — newline escaped to two characters `\n`:**
-
-```bash
-printf '%s\n' '{"id":"<id>","description":"Issue at line 42.\nThe value is null."}' >> "<findings_file>"
-```
-
 For each finding, include the four dimension ratings (Encapsulation, Invariant Expression, Invariant Usefulness, Invariant Enforcement) in the description field. Format them as a brief summary on a single line, e.g., "Encapsulation: 4/10, Expression: 6/10, Usefulness: 8/10, Enforcement: 3/10" followed by the specific issue and recommendation in the same paragraph.
 
-Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, emit no Bash echo calls.
+Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty findings list.
 
-**Remember:** Emit each finding immediately after confirming it (don't batch). When you have no more findings to investigate, run `python3 "<plugin_root>/scripts/validate_ndjson.py" "<findings_file>"` (the absolute path is in the context file's "Validator" section). Re-emit any findings the validator flags as malformed, then return.
+**Remember:** Record each finding immediately after confirming it (don't batch). When you have no more issues to investigate, return with `complete: true` and `total_seen` reflecting every candidate you examined.

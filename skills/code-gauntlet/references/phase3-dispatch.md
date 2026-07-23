@@ -56,7 +56,7 @@ Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **securit
 
 ## Discovery Agent Roster
 
-The Discover stage groups the nine dimensions by agent and fans out one task per **active** agent (a dimension is active when its `conditionalFlag` is null or the matching `agentFlags` entry is truthy — all nine are unconditional today):
+The Discover stage groups the nine dimensions by agent and fans out one task per **active** agent (a dimension is active when its `conditionalFlag` is null — the ungateable core dims `bug`, `security` — or its `agentFlags` entry is not the literal `false`; the seven extended dims share the `deep` flag, so a light-scope `{ deep: false }` leaves only bug-detector + security-reviewer):
 
 1. **bug-detector** — logic errors, edge cases, null handling, race conditions, API misuse. Dimension: `bug`.
 2. **security-reviewer** — OWASP top 10, injection, auth bypass, data exposure, crypto. Always Opus. Dimension: `security`.
@@ -68,7 +68,7 @@ The Discover stage groups the nine dimensions by agent and fans out one task per
 
 Each agent returns structured findings against the canonical schema (`agent()` `schema`), wrapped in the per-agent envelope `{ findings, complete, total_seen }`. The orchestrator injects the `agent` field during Merge. Discovery agents receive only the **context file path** (`{output_dir}/code-gauntlet-context-{head_sha_short}.md`) and their target dimension(s) in the prompt — all shared context (rules, risk, diff) lives in that file, which Phase 2 wrote.
 
-> **NDJSON emission is vestigial in v3.** Discovery agent `.md` bodies still carry the `printf`-NDJSON emission prose, but the workflow collects findings through structured output, not disk files. The bodies are untouched this plan (their cleanup is the deferred S8 migration). If a discovery agent hits the schema-retry throw because the vestigial "emit NDJSON" instructions conflict with structured-output dispatch, that surfaces as a discover-stage gap — pull the S8 prose removal forward if it recurs.
+> **NDJSON emission has been removed in v3.** The `printf`-NDJSON emission prose was stripped from all 7 discovery agent `.md` bodies, and Bash is no longer granted to discovery agents — the by-value structured-output return (`{ findings, complete, total_seen }`) is the sole output path. If a discovery agent hits the schema-retry throw, that surfaces as a discover-stage gap unrelated to emission prose.
 
 ---
 

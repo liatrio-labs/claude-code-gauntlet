@@ -131,7 +131,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 | Config key | Resolved when | Question if unresolved |
 |---|---|---|
-| `model_tier` | Always resolved — fixed to `optimized`, the single benchmarked policy (a REVIEW.md/env value other than `optimized` fails loud; alternate modes are roadmap #17) | Never asked |
+| `model_tier` | Always resolved — fixed to `optimized`, the single benchmarked policy (a legacy REVIEW.md value self-heals to `optimized` with a loud warning; an env value other than `optimized` fails loud; alternate modes are roadmap #17) | Never asked |
 | `default_delivery` | REVIEW.md sets it explicitly | Delivery preference question (see template below) |
 | `delivery_tier` | Defaults to `all` (Recommended) — no REVIEW.md key, like the other policy knobs | Delivery-tier question (see template below), asked alongside the delivery question when the target is a PR/MR |
 | REVIEW.md presence | REVIEW.md exists in repo root | REVIEW.md setup question (see template below) |
@@ -147,7 +147,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ### Question templates
 
-**Model policy** (never asked): `policy.tier = "optimized"` always — discovery agents on Sonnet with security-reviewer on Opus, the single configuration the benchmark numbers were measured under. A `model_tier` value other than `optimized` (from REVIEW.md or `CODE_GAUNTLET_MODEL_TIER`) fails loud. Alternate model modes (fable) are roadmap work tracked in issue #17 and will land behind their own paired measurement.
+**Model policy** (never asked): `policy.tier = "optimized"` always — discovery agents on Sonnet with security-reviewer on Opus, the single configuration the benchmark numbers were measured under. A **REVIEW.md** `Model Tier` value other than `optimized` (legacy v2-era files in the wild say `frontier`) **self-heals to `optimized`** — never ask, never abort on this field, in both interactive and headless modes; print a loud methodology warning naming the ignored value and recommending a REVIEW.md update, and record it in the report methodology. An **env** `CODE_GAUNTLET_MODEL_TIER` value other than `optimized` keeps the fail-loud contract (an explicit operator pin is an error, not a preference to heal). Alternate model modes (fable) are roadmap work tracked in issue #17 and will land behind their own paired measurement.
 
 **Delivery preference** (when `default_delivery` not set in REVIEW.md):
 
@@ -244,7 +244,7 @@ Store the delivery selection and the delivery tier (`args.delivery.tier`, defaul
 
 > **Note:** This template is triggered during Phase 2d (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
 
-> **v3.0 limitation:** dimension gating is not yet wired in the workflow (every registry dimension is unconditional), so a `light` answer currently still runs all dimensions — the user gets a full review, never a reduced one. Announce it as a full review when this happens. Wiring the gate is tracked in issue #17.
+> A `light` answer stamps `args.agentFlags = { deep: false }`, which the Discover stage honours by dispatching only the two core agents (`bug-detector`, `security-reviewer`); `full` stamps `{}` and runs all seven. Announce the actual dimensions that will run.
 
 Used when ALL files are low-risk AND total lines <50:
 

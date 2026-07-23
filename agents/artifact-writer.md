@@ -32,6 +32,9 @@ shapes occur:
    named paths; no directory creation is needed.
 2. Write each artifact to its named path exactly as given.
 3. Do not add, drop, or alter any field. Do not rename paths.
+4. Your tools are Write and Read ONLY — do not probe for Glob/Grep/Bash (they are not
+   granted and the probe wastes a turn). Never Read a directory path (it errors with
+   EISDIR); every path you need is named in the prompt.
 
 ## Output
 

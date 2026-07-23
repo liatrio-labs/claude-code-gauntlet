@@ -94,7 +94,7 @@ export async function summarize(ctx, input) {
       }));
       const partials = (await c.parallel(thunks)).filter(Boolean);
       if (partials.length === 0) return { summary: '', gaps: ['summarize failed'] };
-      const mergeResult = await c.agent(summarizeMergePrompt(partials), {
+      const mergeResult = await c.agent(summarizeMergePrompt(inp, partials), {
         label: 'summarize-merge',
         agentType: 'code-gauntlet:change-summarizer',
         model,
@@ -118,12 +118,24 @@ export async function summarize(ctx, input) {
 
 function summarizePrompt(inp, files) {
   const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
-  return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}. Return { summary }.`;
+  // Single-source the size number (live-run L7): triage said 1211 changed lines, the
+  // report said ~1218 because the summarizer re-derived it from the diff. The waist's
+  // changedLines is the one authoritative count.
+  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
+    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it from the diff.`
+    : '';
+  return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 
-function summarizeMergePrompt(partials) {
+// The merge call produces the FINAL summary on the bucketed path, so it needs the same
+// changedLines pin as summarizePrompt — without it the merge step can re-drift the size
+// number the per-bucket prompts were pinned to (Bugbot PR-20 wave 2).
+function summarizeMergePrompt(inp, partials) {
   const joined = partials.map((p) => p.summary || '').filter(Boolean).join('\n---\n');
-  return `Combine these per-bucket change summaries into one concise semantic summary. Partials:\n${joined}\nReturn { summary }.`;
+  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
+    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it.`
+    : '';
+  return `Combine these per-bucket change summaries into one concise semantic summary.${countLine} Partials:\n${joined}\nReturn { summary }.`;
 }
 
 // --- Phase 2: Discover ------------------------------------------------------
@@ -131,7 +143,7 @@ function summarizeMergePrompt(partials) {
 // Group DIMENSIONS by agentType, unioning each agent's per-dimension schemaExtra into
 // one finding schema. One task per unique AGENT (7) — agents covering several
 // dimensions (conventions-and-intent -> convention/intent/comment_accuracy) dispatch once.
-function agentSpecs() {
+export function agentSpecs() {
   const byAgent = new Map();
   for (const d of DIMENSIONS) {
     if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null });
@@ -148,19 +160,26 @@ function agentSpecs() {
   return AGENTS.map((a) => byAgent.get(a));
 }
 
-// An agent is active when at least one of its dimensions is enabled: the dimension's
-// conditionalFlag is null (always on) or the corresponding agentFlags entry is truthy.
-function agentActive(spec, agentFlags) {
-  return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || agentFlags[flag]);
+// An agent is active when at least one of its dimensions is enabled. A dimension is
+// enabled when its conditionalFlag is null/undefined (UNGATEABLE — always on, e.g. the
+// core bug/security dimensions) OR its agentFlags entry is not the literal `false`.
+// OPT-OUT semantics: a MISSING key counts as enabled, so absent/empty agentFlags leaves
+// every dimension on — byte-identical to the pre-flag behavior where all flags were null.
+// Only an explicit `false` (stamped by a light-scope run, e.g. { deep: false }) disables.
+export function agentActive(spec, agentFlags) {
+  const flags = agentFlags || {};
+  return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || flags[flag] !== false);
 }
 
-// Canonical finding property types (discovery declares confidence as a STRING in the
-// by-value schema: agents emit a numeric 0-100 score per their .md contracts, which
-// StructuredOutput renders as its string form "85" — pinNumericFields restores the
-// number at the verify boundary before any downstream arithmetic).
+// Canonical finding property types. confidence is a NUMBER end-to-end: agents emit a
+// numeric 0-100 score per their .md contracts, so declaring it `number` here makes
+// StructuredOutput return the number at EVERY by-value boundary (discovery included) —
+// the string form "85" the schema used to declare simply never exists, so the filter's
+// consensus `+` boost can never string-concatenate ("85"+10 -> "8510"). pinNumericFields
+// stays as defense-in-depth for legacy/checkpoint-resume findings that predate this pin.
 const FINDING_PROP_TYPES = {
   id: 'string', file: 'string', line_start: 'number', line_end: 'number',
-  title: 'string', description: 'string', severity: 'string', confidence: 'string',
+  title: 'string', description: 'string', severity: 'string', confidence: 'number',
   dimension: 'string', origin: 'string', evidence: 'string',
 };
 const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
@@ -172,32 +191,65 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 // transcribing findings back "verbatim via the schema" is free to drop the single largest
 // field — `description` — which is exactly what the verify executor did, emptying
 // descriptions for every downstream stage (validate/filter/challenge) and false-firing the
-// filter's short-description injection guard on high-confidence findings. `confidenceType`
-// differs by stage: discovery declares string (agents emit numeric 0-100, which
-// StructuredOutput renders as "85"), but verify_findings.py re-scores confidence to a
-// NUMBER, so the verify item MUST declare number or StructuredOutput coerces 85 -> "85"
-// and breaks the numeric confidence arithmetic downstream.
-function findingItemSchema(schemaExtra, confidenceType) {
+// filter's short-description injection guard on high-confidence findings. confidence is
+// NUMBER everywhere now (FINDING_PROP_TYPES), so there is no per-stage confidence override.
+// `schemaExtra` entries are EITHER a type-name shorthand string ({ k: 'string' } ->
+// { type:'string' }) OR a full JSON-Schema fragment used verbatim (how array-valued extras
+// like affected_consumers are declared); the shorthand keeps the common case terse while
+// the fragment form supports arrays the platform's schema validator requires `items` on.
+function findingItemSchema(schemaExtra) {
   const props = {};
   for (const [k, t] of Object.entries(FINDING_PROP_TYPES)) props[k] = { type: t };
-  if (confidenceType) props.confidence = { type: confidenceType };
   props.cross_file_refs = { type: 'array', items: { type: 'string' } };
-  for (const [k, t] of Object.entries(schemaExtra || {})) props[k] = { type: t };
+  for (const [k, t] of Object.entries(schemaExtra || {})) props[k] = typeof t === 'string' ? { type: t } : t;
   return { type: 'object', properties: props, required: FINDING_REQUIRED };
+}
+
+// The union of EVERY dimension's schemaExtra. The verify slice carries findings from ALL
+// agents mixed together (post-merge), so its echo item schema must declare every agent's
+// per-dimension extras — not one agent's — or a field one agent emitted is dropped when the
+// executor transcribes the --output file "verbatim via the schema" (the same field-dropping
+// class the empty-properties trap caused for description).
+function allSchemaExtras() {
+  const out = {};
+  for (const d of DIMENSIONS) for (const [k, t] of Object.entries(d.schemaExtra || {})) out[k] = t;
+  return out;
+}
+
+// The verify echo item schema: the full canonical finding shape (numeric confidence) PLUS
+// (1) the union of all per-dimension extras; and (2) elimination_reason —
+// run_verification() ALWAYS stamps it on a real elimination (verify_findings.py), and
+// trustSlice's content-fidelity gate requires it on every eliminated[] entry, so it must be
+// declarable or an honest elimination's stamp is dropped in transcription and the gate false-
+// fires. (eliminated_by is a JS-pipeline-only field the verify script never sets — declaring
+// it would only invite the executor to fabricate it, so it is intentionally NOT declared.)
+//
+// `agent` is intentionally NOT declared (V3.1 item 4, REVERTED after mini-subset A):
+// declaring it made the merge-injected agent identity survive the echo deterministically,
+// which activated the filter's proximity-keyed cross-agent dedup everywhere (it requires
+// 2+ distinct agents in a 5-line bucket — starved when agent is absent). Measured on the
+// pre-registered 6-PR subset: dedup eliminations 7 -> 33 and same-6 recall 0.667 -> 0.433
+// (-7 goldens), with dedup firing on exactly the Gate-1 PRs where agent happened to
+// survive. Deterministic agent identity re-lands ONLY together with the cross-dimension
+// consolidation redesign (issue #17, D20 entry) — they are one design problem.
+function verifyItemSchema() {
+  const item = findingItemSchema(allSchemaExtras());
+  item.properties.elimination_reason = { type: 'string' };
+  return item;
 }
 
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
 // per-agent result envelope { findings, complete, total_seen }. REAL JSON Schema —
 // {type, properties, required, items} — because the platform validates schemas before
 // dispatch and StructuredOutput enforces them (shorthand {id:'string'} is rejected).
-// schemaExtra is shorthand {key: typeName}; each entry becomes { type: typeName }.
+// schemaExtra is shorthand {key: typeName} (or a full JSON-Schema fragment for arrays).
 function findingSchema(spec) {
   return {
     type: 'object',
     properties: {
       findings: {
         type: 'array',
-        items: findingItemSchema(spec.schemaExtra, 'string'),
+        items: findingItemSchema(spec.schemaExtra),
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
@@ -376,12 +428,13 @@ const VERIFY_SCHEMA = {
       properties: {
         // verified/eliminated carry findings BY VALUE — verifyStage collects result.verified
         // as THE findings for every later stage — so their items must declare the FULL finding
-        // shape (findingItemSchema). An empty-properties item let the executor drop `description`
+        // shape (verifyItemSchema). An empty-properties item let the executor drop `description`
         // when echoing the --output file "verbatim", which emptied descriptions downstream and
-        // false-fired the filter's injection guard. confidence is NUMBER here (verify_findings.py
-        // re-scores it numerically), unlike the qualitative string label at discovery.
-        verified: { type: 'array', items: findingItemSchema({}, 'number') },
-        eliminated: { type: 'array', items: findingItemSchema({}, 'number') },
+        // false-fired the filter's injection guard. verifyItemSchema declares numeric confidence,
+        // the injected `agent` field (detectDisagreement routes on it), every per-dimension extra,
+        // and elimination_reason (the script's real-elimination stamp, gated by trustSlice).
+        verified: { type: 'array', items: verifyItemSchema() },
+        eliminated: { type: 'array', items: verifyItemSchema() },
         batches: { type: 'array', items: { type: 'object', properties: {} } },
         stats: { type: 'object', properties: {} },
       },
@@ -526,6 +579,16 @@ async function materializeVerifySlices(c, inp, slices, policy) {
       return { ok: false, reason: `slice-input writer threw (${(e && e.message) || 'unknown'})` };
     }
     if (!result) return { ok: false, reason: 'slice-input writer returned null' };
+    // Write-proof: the echoed `written` list must cover every slice-input path this group
+    // dispatched. WRITTEN_SCHEMA declares no `required`, so an empty { written: [] } is
+    // schema-valid — without this a writer that persisted nothing would pass and the
+    // executor would then read slice-input files that were never written. An uncovered
+    // path degrades the WHOLE set to UNVERIFIED (findings kept), never a fabricated verify.
+    const written = new Set(Array.isArray(result.written) ? result.written : []);
+    const dispatchedPaths = groups[g].map((e) => e.path);
+    if (!dispatchedPaths.every((p) => written.has(p))) {
+      return { ok: false, reason: 'slice-input writer echo did not cover all dispatched slice paths (no write proof)' };
+    }
   }
   return { ok: true };
 }
@@ -538,10 +601,22 @@ function verifySliceWriterPrompt(entries) {
 // A slice envelope is trusted only if it is the honest success shape AND its receipt
 // echoes exactly what we dispatched: the nonce (this answer is for OUR call), the head
 // sha (same tree the workflow resolved), and n_in (the executor loaded every finding we
-// sent). One more guard beyond the receipt: the result arrays must actually ACCOUNT for
-// n_in findings (verified + eliminated === n_in — an invariant run_verification always
-// satisfies), so a receipt that survives transport while its result body is truncated
-// cannot silently drop findings.
+// sent). Two guards beyond the receipt:
+//   (1) COUNT — the result arrays must ACCOUNT for n_in findings (verified + eliminated
+//       === n_in — an invariant run_verification always satisfies), so a receipt that
+//       survives transport while its result body is truncated cannot silently drop findings.
+//   (2) CONTENT FIDELITY — every eliminated[] entry must carry the elimination_reason stamp
+//       that run_verification() ALWAYS writes before pushing a finding to eliminated[]
+//       (verify_findings.py sets f['elimination_reason'] = 'evidence does not match file
+//       content'). An executor that moves a finding verified->eliminated in its ECHO never
+//       ran the script's elimination path for it, so it cannot carry the stamp — the receipt
+//       and count both still pass (observed live: script disk 10v/0e, echo 7v/3e with a valid
+//       receipt), but an unstamped elimination proves the echo is not the script's output.
+//       (The stamp is elimination_reason, NOT eliminated_by: the verify script never sets
+//       eliminated_by — that is a JS-pipeline-only field — so requiring it would reject every
+//       honest elimination.) A failed fidelity check degrades the WHOLE slice to UNVERIFIED,
+//       which is conservative: every original finding is KEPT (origin=unknown), so an
+//       executor claiming a spurious elimination cannot use it to drop a real finding.
 //
 // Threat model: this defends against a STALE, HALLUCINATING, or CONFUSED executor
 // (an old/wrong result, a fabricated success, or another slice's answer) — NOT a
@@ -561,6 +636,12 @@ function trustSlice(env, { nonce, headShaShort, n }) {
   const accounted = result.verified.length + result.eliminated.length;
   if (accounted !== r.n_in) {
     return { ok: false, reason: `result incomplete: verified+eliminated=${accounted} != n_in=${r.n_in} (transport truncation)` };
+  }
+  for (const e of result.eliminated) {
+    const reason = e && typeof e === 'object' ? e.elimination_reason : undefined;
+    if (typeof reason !== 'string' || reason.trim() === '') {
+      return { ok: false, reason: 'eliminated entry missing elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)' };
+    }
   }
   return { ok: true };
 }
@@ -604,6 +685,14 @@ const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
 
+// Mirror each stage's own absent/zero-size default EXACTLY (summarize: bucket 20;
+// verify/validate: ONE slice/batch over all findings) so the guard arithmetic can
+// never go NaN (Math.max(1, undefined) is NaN — a NaN worst case silently disables
+// the coarsening loop) and never counts a different fan-out than the stage dispatches.
+const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || 20);
+const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
+const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
+
 // worstCaseAgentCount(limits, nFiles, nFindings) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate
 // batches + min(nFindings, challengeCap) challengers + 2 (report + writer).
@@ -611,9 +700,9 @@ export function worstCaseAgentCount(limits, nFiles, nFindings) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = Math.max(0, nFindings || 0);
-  const summarizeCalls = ceilDiv(files, L.summarizeBucketSize) + 1;
-  const verifyCalls = ceilDiv(findings, L.verifySliceSize);
-  const validateCalls = ceilDiv(findings, L.validateBatch);
+  const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
+  const verifyCalls = ceilDiv(findings, effectiveSliceSize(L, findings));
+  const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
 }
@@ -637,18 +726,21 @@ export function coarsenLimits(limits, nFiles, nFindings) {
   const findings = Math.max(0, nFindings || 0);
 
   while (worstCaseAgentCount(L, files, findings) >= AGENT_COUNT_GUARD) {
-    const summarizeTerm = ceilDiv(files, L.summarizeBucketSize) + 1;
+    const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND) {
-      L.summarizeBucketSize = Math.max(1, L.summarizeBucketSize || 1) * 2;
+      // Double from the EFFECTIVE size (pinning a concrete value): doubling from a raw
+      // absent field (|| 1 -> 2) would LOWER the effective bucket below the stage's
+      // default of 20 and move the term the wrong way.
+      L.summarizeBucketSize = effectiveBucketSize(L) * 2;
       continue;
     }
-    const verifyTerm = ceilDiv(findings, L.verifySliceSize);
-    const validateTerm = ceilDiv(findings, L.validateBatch);
+    const verifyTerm = ceilDiv(findings, effectiveSliceSize(L, findings));
+    const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     if (validateTerm >= verifyTerm && validateTerm >= challengeTerm) {
-      L.validateBatch = Math.max(1, L.validateBatch || 1) * 2;
+      L.validateBatch = effectiveBatchSize(L, findings) * 2;
     } else if (verifyTerm >= validateTerm && verifyTerm >= challengeTerm) {
-      L.verifySliceSize = Math.max(1, L.verifySliceSize || 1) * 2;
+      L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
     } else {
       // Halve the EFFECTIVE cap (min(cap, findings)) so C strictly decreases even when
       // the nominal cap already exceeds nFindings — or is absent (= findings).
@@ -814,18 +906,24 @@ const CHALLENGE_SCHEMA = {
   required: ['confidence_claim_is_correct'],
 };
 
-// blindChallengeFields(finding) -> { title, description, code }
-// STRUCTURAL blindness guarantee: the blind challenger sees ONLY these three keys.
-// Selecting them explicitly (an allowlist, not a delete-list) means no confirming
-// context — evidence, origin, cross_file_refs, corroborated_by, the original agent's
-// reasoning — can ever reach the challenger, and stays impossible even if new
-// reasoning-bearing fields are added to findings later. Unit-tested both ways: the
-// returned object has exactly these keys and the built prompt leaks none of the rest.
+// blindChallengeFields(finding) -> { title, description, file, line_start, line_end }
+// STRUCTURAL blindness guarantee: the blind challenger sees ONLY these keys — the claim
+// (title/description) plus the LOCATION so it can open the raw code itself (challenger.md
+// has Read/Grep/LSP and is told to read the code at the location). Selecting them
+// explicitly (an allowlist, not a delete-list) means no confirming context — evidence,
+// origin, cross_file_refs, corroborated_by, the original agent's reasoning — can ever
+// reach the challenger, and stays impossible even if new reasoning-bearing fields are
+// added to findings later. The prior `code` field was never populated anywhere in the
+// pipeline, so the challenger always received an empty code block; location + the agent's
+// own tools replaces that dead field. Unit-tested both ways: the returned object has
+// exactly these keys and the built prompt leaks none of the rest.
 export function blindChallengeFields(finding) {
   return {
     title: finding.title || '',
     description: finding.description || '',
-    code: finding.code || '',
+    file: finding.file || '',
+    line_start: finding.line_start != null ? finding.line_start : '',
+    line_end: finding.line_end != null ? finding.line_end : '',
   };
 }
 
@@ -835,10 +933,11 @@ export function blindChallengeFields(finding) {
 // downstream; see applyChallenges thresholds). This targets the two noise clusters the
 // subset diagnosis surfaced: test-coverage "no test exists" negatives and
 // cross_file_impact claims that cite no in-diff evidence. Still fully blind — only
-// {title, description, code} reach the challenger.
+// {title, description, file, line_start, line_end} reach the challenger.
 function challengePrompt(finding) {
   const b = blindChallengeFields(finding);
-  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code below: find the specific lines it rests on and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context you were given — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nRaw code under review:\n${b.code}\nReturn { id, score, justification }; score 0-100 (higher = the claim holds).`;
+  const range = b.line_end !== '' && b.line_end !== b.line_start ? `${b.line_start}-${b.line_end}` : `${b.line_start}`;
+  return `You are a blind challenger. You have NOT seen the original reviewer's rationale — assess this claim on its own merits and try to disprove it. First VERIFY the claim's central factual assertion against the raw code: the claim concerns ${b.file}:${range} — open that location and enough surrounding context yourself (Read/Grep/LSP), find the specific lines the claim rests on, and confirm they actually say what the claim needs them to say. If that central assertion cannot be verified from the code and context — for example a test-coverage "no test exists" or missing-coverage claim you cannot confirm, or a cross-file-impact claim that cites no in-diff evidence — treat the claim as UNVERIFIABLE and score it 25 or below (below 25 when nothing in the code confirms it, so it does not survive). Reserve scores above 25 for claims whose central assertion you positively confirmed in the code.\nClaim: ${b.title}\n${b.description}\nLocation to inspect: ${b.file}:${range}\nReturn { confidence_claim_is_correct, justification }; confidence_claim_is_correct 0-100 (higher = the claim holds).`;
 }
 
 // challengeStage(ctx, input) -> { findings, unverified, eliminated, gaps, stats, generated_at }
@@ -1090,6 +1189,30 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
+// The four artifacts writeArtifacts plans (and asks the writer to echo). Exported so a
+// faithful mock/recorder echoes the SAME paths the write-proof gate checks against — the
+// gate rejects any echo that fails to account for all four planned paths.
+export function plannedArtifactPaths(outputDir, sha) {
+  return {
+    findings: `${outputDir}/code-gauntlet-findings-${sha}.json`,
+    report: `${outputDir}/code-gauntlet-report-${sha}.md`,
+    postReview: `${outputDir}/code-gauntlet-post-review-${sha}.json`,
+    checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
+  };
+}
+const ARTIFACT_PATH_KEYS = ['findings', 'report', 'postReview', 'checkpoints'];
+
+// Write-proof: the echoed artifactPaths must account for EVERY planned path (each key
+// present and echoing the exact path we dispatched). WRITER_SCHEMA declares no `required`,
+// so an empty {} echo is schema-valid — a writer under StructuredOutput retry pressure can
+// return one having written nothing. Same threat model as trustSlice: a self-reported echo
+// is a consistency/liveness check, not proof-of-write, but requiring the four exact paths
+// stops a degenerate {} (or a partial echo) from passing as a full persist.
+function writerEchoCoversPaths(echoed, paths) {
+  if (!echoed || typeof echoed !== 'object') return false;
+  return ARTIFACT_PATH_KEYS.every((k) => echoed[k] === paths[k]);
+}
+
 // writeArtifacts(ctx, { findings, postReview, report, checkpoints, outputDir,
 // headShaShort, policy }) -> { artifactPaths, gaps, partial }
 // The workflow script has NO disk access, so a writer agent persists findings.json
@@ -1103,12 +1226,7 @@ export async function writeArtifacts(ctx, input) {
   const outputDir = inp.outputDir || '.code-gauntlet';
   const sha = inp.headShaShort || 'head';
   const policy = inp.policy || {};
-  const paths = {
-    findings: `${outputDir}/code-gauntlet-findings-${sha}.json`,
-    report: `${outputDir}/code-gauntlet-report-${sha}.md`,
-    postReview: `${outputDir}/code-gauntlet-post-review-${sha}.json`,
-    checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
-  };
+  const paths = plannedArtifactPaths(outputDir, sha);
   const model = modelFor('code-gauntlet:artifact-writer', policy);
   const partial = (reason) => ({
     artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
@@ -1123,6 +1241,9 @@ export async function writeArtifacts(ctx, input) {
       schema: WRITER_SCHEMA,
     });
     if (!result) return partial('writer returned null');
+    if (!writerEchoCoversPaths(result.artifactPaths, paths)) {
+      return partial('writer echo did not account for all four planned artifact paths (no write proof)');
+    }
     return { artifactPaths: paths, gaps: [], partial: false };
   } catch (e) {
     return partial(`writer agent threw (${(e && e.message) || 'unknown'})`);
@@ -1154,9 +1275,22 @@ function toV2Aliased(f) {
 // piece now crosses the writer prompt exactly once). Pure + exported so tests (and the node
 // recorder) can assert the persist output is REAL pipeline output, not a hand-authored fixture.
 export function writerPayload(inp) {
+  const postReviewSet = (inp.postReview || []).map(toV2Aliased);
+  const id = inp.prIdentity;
   return {
     findings: (inp.findings || []).map(toV2Aliased),
-    postReview: (inp.postReview || []).map(toV2Aliased),
+    // With a PR identity (delivery.prIdentity, live-run L3) the persisted post-review
+    // artifact IS the post_review.py input wrapper — Phase 8 posts it without hand-
+    // assembling { owner, repo, pr_number, ... } around a bare array (the wrap was
+    // documented but got reverse-engineered anyway, ~8 turns in the PR-310 run).
+    // review_body is intentionally '' — Phase 8 composes the summary narrative and may
+    // fill it before posting; post_review.py treats '' as a valid empty summary. sha is
+    // provenance (post_review.py resolves its own HEAD); platform stays absent so
+    // post_review.py auto-detects. The findings SET is byte-identical either way —
+    // the wrapper only changes the envelope, never the scored content (D16).
+    postReview: id
+      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '', findings: postReviewSet }
+      : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
   };
@@ -1279,6 +1413,7 @@ export async function runWith(ctx, rawArgs) {
       ok: false,
       error: `invalid args: ${check.errors.join('; ')}`,
       phaseReached: 'args',
+      failingPhase: 'args',
       artifactPaths: {},
       stats: {},
       gaps: check.errors,
@@ -1301,11 +1436,17 @@ export async function runWith(ctx, rawArgs) {
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
+  // The phase currently being ATTEMPTED — distinct from phaseReached (last COMPLETED).
+  // On a throw, phaseReached names the phase BEFORE the one that blew up; narrating the
+  // crash from it misattributes the failure (live run: a Filter throw reported as
+  // "failed during Validate"). The catch envelope carries both.
+  let phaseAttempting = null;
 
   // Resume: a phase whose checkpoint is present reuses that output instead of
   // dispatching. Either way the phase counts as reached, and its output is recorded
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const runPhase = async (name, thunk) => {
+    phaseAttempting = name;
     const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
     phaseOutputs[name] = out;
     completed.push(name);
@@ -1402,6 +1543,7 @@ export async function runWith(ctx, rawArgs) {
     const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       postReview,
+      prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       report: reportOut.report,
       // Persist a SLIM checkpoint: only the resume-consumed phases (filter, challenge) carry
       // full output; every other phase is reduced to a count, so the single artifact-writer
@@ -1452,6 +1594,7 @@ export async function runWith(ctx, rawArgs) {
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
+      failingPhase: phaseAttempting,
       artifactPaths: {},
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),

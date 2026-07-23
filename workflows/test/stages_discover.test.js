@@ -3,8 +3,8 @@
 // ctx is injected {agent, parallel}; the mock ctx is the testability seam.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits } from '../src/stages.js';
-import { AGENTS } from '../src/registry.js';
+import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs } from '../src/stages.js';
+import { AGENTS, DIMENSIONS } from '../src/registry.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
 // Platform contract: agent(promptString, opts); parallel(thunks). The mock asserts it.
@@ -33,6 +33,76 @@ test('discover dispatches once per AGENT (7)', async () => {
   const ctx = fakeCtx();
   await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   assert.equal(new Set(ctx.calls).size, AGENTS.length);
+});
+
+// --- Light scope (item 7): agentFlags gating -------------------------------
+// The two CORE dimensions stay on in light scope; the seven extended dimensions
+// (conditionalFlag 'deep') drop out. bug + security -> bug-detector + security-reviewer.
+const CORE_AGENTS = ['code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer'];
+
+// BYTE-IDENTICAL guarantee (fingerprint over EVERY spec): with agentFlags absent, empty,
+// or an unrelated key, agentActive returns exactly what it returned before flags existed —
+// TRUE for every agent. Any spec silently gated off here would be silent under-delivery on
+// the full path. Both the absent (undefined) and empty ({}) forms must match.
+test('agentActive: full-scope path is byte-identical — every spec active when flags absent/empty', () => {
+  for (const spec of agentSpecs()) {
+    assert.equal(agentActive(spec, undefined), true, `${spec.agentType} inactive with agentFlags undefined`);
+    assert.equal(agentActive(spec, {}), true, `${spec.agentType} inactive with agentFlags {}`);
+    // An unrelated/unknown flag key must not disable anything either (opt-out: missing key = on).
+    assert.equal(agentActive(spec, { someOtherFlag: false }), true, `${spec.agentType} inactive with an unrelated flag`);
+  }
+});
+
+// Light scope stamps { deep: false }: exactly the two core agents survive.
+test('agentActive: light scope { deep:false } keeps ONLY bug + security agents active', () => {
+  for (const spec of agentSpecs()) {
+    const expected = CORE_AGENTS.includes(spec.agentType);
+    assert.equal(agentActive(spec, { deep: false }), expected, `${spec.agentType} light-scope active=${!expected}`);
+  }
+});
+
+// Core dimensions are UNGATEABLE (conditionalFlag null): even a hostile flag map that tries
+// to name them cannot disable bug/security, and a stray non-`false` deep value keeps all on.
+test('agentActive: core (bug/security) cannot be disabled; only literal false gates a deep dim', () => {
+  const byType = new Map(agentSpecs().map((s) => [s.agentType, s]));
+  // Hostile map: bug/security have null conditionalFlag, so no agentFlags key reaches them.
+  assert.equal(agentActive(byType.get('code-gauntlet:bug-detector'), { deep: false, bug: false, security: false }), true);
+  assert.equal(agentActive(byType.get('code-gauntlet:security-reviewer'), { deep: false }), true);
+  // A non-`false` deep value (truthy, null, 0, or the string 'false') leaves deep dims ON —
+  // only the literal boolean false gates. This is why the args waist boolean-checks the map.
+  const crossFile = byType.get('code-gauntlet:cross-file-impact');
+  assert.equal(agentActive(crossFile, { deep: true }), true);
+  assert.equal(agentActive(crossFile, { deep: 0 }), true);
+  assert.equal(agentActive(crossFile, { deep: null }), true);
+  assert.equal(agentActive(crossFile, { deep: 'false' }), true);
+  assert.equal(agentActive(crossFile, { deep: false }), false);
+});
+
+// End-to-end through discover(): light scope fans out to exactly the two core agents.
+test('discover: light scope { deep:false } dispatches ONLY bug-detector + security-reviewer', async () => {
+  const ctx = fakeCtx();
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: { deep: false }, limits: {}, policy: {} });
+  assert.deepEqual([...new Set(ctx.calls)].sort(), [...CORE_AGENTS].sort());
+  assert.deepEqual([...out.dispatched].sort(), [...CORE_AGENTS].sort());
+});
+
+// The disabled dimensions are NOT reported as gaps/degradation — a scoped-out dimension is
+// intentionally uncovered, distinct from a dispatched-but-failed one (the report gap section
+// only surfaces dispatched agents, so light scope produces no false "uncovered" noise).
+test('discover: light scope reports no gaps/degradation for the scoped-out dimensions', async () => {
+  const ctx = fakeCtx();
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: { deep: false }, limits: {}, policy: {} });
+  assert.equal(out.gaps.length, 0);
+  assert.equal(out.degraded.length, 0);
+});
+
+// The DEEP flag covers precisely the non-core dimensions (registry ⇄ scope invariant): the
+// set of dimensions gated by 'deep' must be exactly {all dimensions} minus {bug, security}.
+test('registry: the deep flag gates exactly the non-core dimensions', () => {
+  const gated = DIMENSIONS.filter((d) => d.conditionalFlag === 'deep').map((d) => d.dimension).sort();
+  const core = DIMENSIONS.filter((d) => d.conditionalFlag === null).map((d) => d.dimension).sort();
+  assert.deepEqual(core, ['bug', 'security']);
+  assert.deepEqual(gated, DIMENSIONS.map((d) => d.dimension).filter((d) => !['bug', 'security'].includes(d)).sort());
 });
 
 test('null member becomes a gap + degrades its dimension, siblings survive', async () => {
@@ -185,6 +255,50 @@ test('absent challengeCap counts as challenge-every-finding (mirrors challengeSt
   assert.deepEqual(coarsenLimits(bench, 23, 40), { ...bench });
 });
 
+test('absent size limits mirror stage defaults — the guard never goes NaN-silent', () => {
+  // Math.max(1, undefined) is NaN; a NaN worst case made `NaN >= 900` false and
+  // silently disabled coarsening. The guard now mirrors each stage's own default:
+  // summarize bucket 20, verify/validate ONE slice/batch over all findings.
+  const n = worstCaseAgentCount({}, 20000, 1000);
+  assert.ok(Number.isFinite(n), 'worst case must be a real number');
+  assert.equal(n, (1000 + 1) + 7 + 1 + 1 + 1000 + 2); // 20000/20 buckets +merge, 7 discovery, 1 slice, 1 batch, challenge-all, report+writer
+  // Coarsening fires and converges from fully-absent limits.
+  const coarse = coarsenLimits({}, 20000, 5000);
+  assert.ok(worstCaseAgentCount(coarse, 20000, 5000) < 900);
+  // 0-valued sizes mirror the stages too (summarize treats 0 as 20; verify/validate as one slice/batch).
+  assert.equal(
+    worstCaseAgentCount({ summarizeBucketSize: 0, verifySliceSize: 0, validateBatch: 0, challengeCap: 40 }, 200, 100),
+    worstCaseAgentCount({ verifySliceSize: 100, validateBatch: 100, challengeCap: 40 }, 200, 100),
+  );
+});
+
+// Item 3: confidence is declared NUMBER end-to-end — the discovery finding schema must
+// declare confidence:number so the string form ("85") the filter's consensus boost could
+// string-concatenate never exists. Item 4 (array support): a schemaExtra with an array-valued
+// fragment (cross-file-impact -> affected_consumers) reaches the per-agent item schema intact.
+test('discovery finding schema declares confidence NUMBER + reconciled schemaExtra (array support)', async () => {
+  const schemas = {};
+  const ctx = {
+    calls: [],
+    agent: async (prompt, opts = {}) => {
+      assertPrompt(prompt);
+      assertValidSchema(opts.schema); // recursively validates the array fragment declares items
+      schemas[opts.label] = opts.schema;
+      return { findings: [], complete: true, total_seen: 0 };
+    },
+    parallel: async (thunks) => Promise.all(thunks.map((thunk) => thunk())),
+  };
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+
+  const bugItem = schemas['code-gauntlet:bug-detector'].properties.findings.items.properties;
+  assert.equal(bugItem.confidence.type, 'number', 'confidence declared NUMBER at discovery (no string form)');
+  assert.equal(bugItem.hidden_errors.type, 'string', "bug-detector's reconciled extra");
+
+  const cfItem = schemas['code-gauntlet:cross-file-impact'].properties.findings.items.properties;
+  assert.equal(cfItem.affected_consumers.type, 'array', 'array-valued schemaExtra survives to the item schema');
+  assert.equal(cfItem.affected_consumers.items.type, 'string');
+});
+
 // --- Supplementary: summarize (single vs bucketed) + mergeStage envelope ------
 
 function summarizeCtx({ agentImpl, parallelImpl } = {}) {
@@ -206,6 +320,27 @@ test('summarize: small PR uses a single agent() call, no gaps', async () => {
   assert.equal(ctx.calls.length, 1);
   assert.equal(out.gaps.length, 0);
   assert.ok(out.summary.length > 0);
+});
+
+// L7: the prompt single-sources the change-size number — the summarizer must cite the
+// waist's changedLines verbatim, never re-estimate from the diff (live run: 1211 vs ~1218).
+test('summarize: the prompt carries the authoritative changedLines count verbatim', async () => {
+  const prompts = [];
+  const ctx = summarizeCtx({ agentImpl: async (prompt) => { prompts.push(prompt); return { summary: 's' }; } });
+  await summarize(ctx, { changedFiles: ['a.js'], changedLines: 1211, limits: { summarizeBucketSize: 20 }, policy: {} });
+  assert.match(prompts[0], /authoritative changed-line count is 1211/);
+  assert.match(prompts[0], /never re-estimate/);
+});
+
+test('summarize: the bucketed path pins changedLines in EVERY prompt including the merge (Bugbot w2)', async () => {
+  // The merge call produces the FINAL summary on the bucketed path — without the pin
+  // there, the merge step can re-drift the size number the bucket prompts were pinned to.
+  const prompts = [];
+  const ctx = summarizeCtx({ agentImpl: async (prompt) => { prompts.push(prompt); return { summary: 's' }; } });
+  const files = Array.from({ length: 50 }, (_, i) => `f${i}.js`);
+  await summarize(ctx, { changedFiles: files, changedLines: 1211, limits: { summarizeBucketSize: 20 }, policy: {} });
+  assert.ok(prompts.length > 1, 'bucketed path fans out');
+  for (const p of prompts) assert.match(p, /authoritative changed-line count is 1211/);
 });
 
 test('summarize: an agent() throw degrades to empty summary + a gap', async () => {

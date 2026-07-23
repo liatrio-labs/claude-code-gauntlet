@@ -256,5 +256,109 @@ class TestRealData(unittest.TestCase):
             self.assertTrue(out.exists())
 
 
+class TestReleaseProgression(unittest.TestCase):
+    """The release-progression headline section: RELEASES is data over the real
+    ledger (frozen run_ids), so these tests exercise it against REAL_LEDGER rather
+    than the small offline FIXTURE_ROWS."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rows = report.load_ledger(REAL_LEDGER)
+        cls.baselines = report.load_baselines(REAL_BASELINES)
+
+    def test_row_by_run_id_finds_exact_match(self):
+        row = report.row_by_run_id(self.rows, "custom-20260723-102149-381e9ff")
+        self.assertIsNotNone(row)
+        self.assertEqual(row["golden_recall"], 0.6333333333333333)
+
+    def test_row_by_run_id_missing_returns_none(self):
+        self.assertIsNone(report.row_by_run_id(self.rows, "no-such-run-id"))
+
+    def test_current_release_leg_picks_v31_on_real_ledger(self):
+        rel, leg, row = report.current_release_leg(self.rows)
+        self.assertEqual(rel["label"], "v3.1")
+        self.assertEqual(leg["run_id"], "custom-20260723-102149-381e9ff")
+        self.assertEqual(row["run_id"], "custom-20260723-102149-381e9ff")
+
+    def test_current_release_leg_falls_back_on_fixture(self):
+        # None of RELEASES' frozen run_ids exist in the small offline fixture —
+        # the dashboard must degrade to (None, None, None), not raise.
+        rel, leg, row = report.current_release_leg(FIXTURE_ROWS)
+        self.assertIsNone(rel)
+        self.assertIsNone(leg)
+        self.assertIsNone(row)
+
+    def test_releases_html_contains_every_release_and_run_id(self):
+        top_anchor, v2_base, ceiling = report._thresholds(self.baselines)
+        out = report.build_releases_html(self.rows, top_anchor, v2_base, ceiling)
+        for label in ("v3.1", "v3.0", "v2"):
+            self.assertIn(label, out)
+        for run_id in (
+            "custom-20260723-102149-381e9ff",
+            "subset-20260721-015119-639e4bc",
+            "holdout-20260721-085348-eec15be",
+            "subset-20260718-031746-27875ca",
+        ):
+            self.assertIn(run_id, out)
+        # v3.1 clears both hard bars on this ledger.
+        self.assertIn("Clears both hard bars", out)
+
+    def test_rendered_page_has_release_progression_ahead_of_history(self):
+        out = report.render_html(self.rows, self.baselines, "abc1234", "2026-07-18")
+        self.assertIn("Release progression", out)
+        self.assertIn('<details class="history-section">', out)
+        self.assertIn("History: the v2→v3 rewrite", out)
+        # Progression heads the flow: it appears before the collapsed history.
+        self.assertLess(
+            out.index("Release progression"), out.index('class="history-section"')
+        )
+
+    def test_tiles_are_release_aware_on_real_ledger(self):
+        out = report.render_html(self.rows, self.baselines, "abc1234", "2026-07-18")
+        self.assertIn("current release", out)
+        self.assertIn("custom-20260723-102149-381e9ff", out)
+        # The v3.1 mini-subset's own numbers, not the stale Gate-1 subset tile.
+        self.assertIn("63.3%", out)
+
+
+class TestVoidRunsAndMilestones(unittest.TestCase):
+    """The two superseded runs (contaminated smoke, failed mini-subset attempt)
+    fade like CONFOUNDED_RUNS; the three custom-tier runs get distinct labels."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.rows = report.load_ledger(REAL_LEDGER)
+
+    def _row(self, run_id):
+        return report.row_by_run_id(self.rows, run_id)
+
+    def test_void_runs_classify_as_reverted(self):
+        for run_id in report.VOID_RUNS:
+            row = self._row(run_id)
+            self.assertIsNotNone(row, run_id)
+            kind, glyph, desc = report.classify(row, top_anchor=0.6271, ceiling=0.24)
+            self.assertEqual(kind, "reverted")
+            self.assertEqual(desc, report.VOID_RUNS[run_id])
+
+    def test_milestone_labels_disambiguate_the_three_custom_runs(self):
+        labels = {
+            run_id: report.short_label(
+                {"run_id": run_id, "tool": "deep-review-v3", "tier": "custom",
+                 "kind": "gate", "hypothesis": None}
+            )
+            for run_id in report.MILESTONE_LABELS
+        }
+        self.assertEqual(labels["custom-20260721-220637-5337f6c"], "Gate-2")
+        self.assertEqual(labels["custom-20260723-070640-c1dd46f"], "mini-A (failed)")
+        self.assertEqual(labels["custom-20260723-102149-381e9ff"], "v3.1")
+
+    def test_gate2_row_pins_to_the_original_gate2_run(self):
+        # Two newer custom-tier runs exist (both v3.1 mini-subset experiments);
+        # gate2_row must not pick either of them up as "most recent custom".
+        row = report.gate2_row(self.rows)
+        self.assertEqual(row["run_id"], report.GATE2_RUN_ID)
+        self.assertEqual(row["run_id"], "custom-20260721-220637-5337f6c")
+
+
 if __name__ == "__main__":
     unittest.main()

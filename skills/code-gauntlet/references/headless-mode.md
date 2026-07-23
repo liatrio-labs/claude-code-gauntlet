@@ -21,7 +21,7 @@ Read once at Phase 1 entry. Every value is echoed in a `Headless config:` block 
 | `CODE_GAUNTLET_DRAFT_POLICY` | `review`\|`skip` (`review`) | draft-PR gate |
 | `CODE_GAUNTLET_REVIEWED_POLICY` | `incremental`\|`full`\|`skip` (`full`) | both previously-reviewed variants |
 | `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` | `local`\|`error` (`error`) | resolution-failure gate |
-| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light`\|`full` (`full`) | trivial-PR scope gate — v3.0: `light` is recorded but dimension gating is not yet wired, so all dimensions still run (issue #17) |
+| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light`\|`full` (`full`) | trivial-PR scope gate — `light` stamps `agentFlags: { deep: false }` (Discover runs bugs+security only), `full` stamps `{}` (all dimensions) |
 
 ---
 
@@ -44,6 +44,16 @@ HEADLESS CONFIG ERROR: <VAR>=<value> not in {<allowed>,<values>}
 ```
 
 and stop the run with a non-zero outcome. **Never** fall back to a default and never ask. `<VAR>` is the full environment variable name (e.g. `CODE_GAUNTLET_MODEL_TIER`); `<value>` is the offending value; `{…}` lists the allowed values. `CODE_GAUNTLET_PR_COMMENT_CAP` must parse as a positive integer. `CODE_GAUNTLET_DELIVERY` is a comma-separated subset of `chat,pr_comments,markdown`; `pr_comments` is invalid when the review target is local (no PR/MR to post to). `CODE_GAUNTLET_DELIVERY_TIER` must be `all` or `main_only`.
+
+---
+
+## Orchestrator model & per-agent pins (V3.1)
+
+The **orchestrator** (the session running this skill and the workflow's own reasoning) is simply the session's model — there is no skill-level knob for it. In bench harness runs it is selected with `--child-model`; in real use it is whatever model the user's session runs.
+
+**Per-agent pins are explicit full model IDs** (`resolvePolicy` maps the policy aliases through a `MODEL_IDS` table: `sonnet` → `claude-sonnet-5`, `opus` → `claude-opus-4-8`, `haiku` → `claude-haiku-4-5-20251001`). Bare aliases resolve against the *session's* model variant at dispatch time — a session pinned to `sonnet[1m]` used to cascade the `[1m]` variant into every agent whose policy said `sonnet`. With full-ID pins, agent models are immune to the orchestrator's session variant.
+
+**Behavior change (intended):** the `CLAUDE_CODE_SUBAGENT_MODEL` override maps through the same pin — a bare `sonnet` now pins plain `claude-sonnet-5` instead of inheriting the session variant. Pass an explicit full/dated model ID if you need a specific variant.
 
 ---
 
@@ -71,7 +81,7 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 | Closed / merged PR (eligibility) | Proceed — do not stop. Review the pinned head as resolved; posting still obeys `CODE_GAUNTLET_POST_MODE` and delivery follows `CODE_GAUNTLET_DELIVERY`. (Interactive mode stops here; headless does not.) |
 | Draft PR | `CODE_GAUNTLET_DRAFT_POLICY`: `review` proceeds; `skip` stops the run. |
 | Previously reviewed (both variants) | `CODE_GAUNTLET_REVIEWED_POLICY`: `incremental` reviews new commits only, `full` reviews from scratch, `skip` stops the run. |
-| Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE`: intended — `light` runs bugs+security only, `full` runs all dimensions. v3.0: gating unwired, both values run all dimensions (issue #17). |
+| Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE`: `light` stamps `agentFlags: { deep: false }` → Discover runs bugs+security only (2 agents); `full` stamps `{}` → all dimensions. |
 | REVIEW.md detection (root setup + subdirectory offer) | Skip; root config applies; never invoke `build-review-md`. |
 | Phase 8 Stage 1 (PR comment selection) | Post `artifactPaths.postReview` verbatim — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all`) plus rank + cap `CODE_GAUNTLET_PR_COMMENT_CAP` (via `limits.deliveryCap`); the walkthrough is unavailable. Posting obeys `CODE_GAUNTLET_POST_MODE`. |
 | Phase 8 Stage 2 (task board) | Skipped. |
