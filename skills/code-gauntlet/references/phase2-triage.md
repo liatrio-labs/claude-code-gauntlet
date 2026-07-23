@@ -203,7 +203,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. A `light` answer stamps `agentFlags: { deep: false }`, which the Discover stage honours by dispatching only the two core agents (`bug-detector`, `security-reviewer`); `full` stamps `{}` and runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` stamps `agentFlags: { deep: false }` → bugs+security only, `full` stamps `{}` → all dimensions). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` stamps `agentFlags: { deep: false }` → bugs+security only, `full` stamps `{}` → all dimensions). At args assembly, **re-read the variable with a fresh `echo`** — never recall its value from earlier context (a live run recalled `full` while the actual value was `light`). See `references/headless-mode.md` and the assembly rule in SKILL.md.
 
 ---
 

@@ -144,13 +144,18 @@ Write the shared context to `{output_dir}/code-gauntlet-context-{head_sha_short}
 
 Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). **If it is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `CODE_GAUNTLET_DELIVERY_TIER`) and `deliveryCap` (from `CODE_GAUNTLET_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path. For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full }` (from the resolved PR and `git rev-parse HEAD`) — the artifact-writer then persists the post-review artifact as the `post_review.py`-ready wrapper and Phase 8 posts it without hand-assembly. Omit `prIdentity` entirely for local-diff reviews.
 
-Stamp `agentFlags` by evaluating this rule **at assembly time** (do not carry it as a remembered intention from Phase 2d — derive it here, from the recorded scope decision):
+Stamp `agentFlags` by evaluating this rule **at assembly time**, from fresh inputs — never from a remembered knob value (a live verification run recalled `full` at this step while its own Phase-1 echo said `light`):
+
+```bash
+Bash(command="echo ${CODE_GAUNTLET_TRIVIAL_SCOPE:-full}")  # headless: re-read NOW; interactive: use the recorded "Light review" answer
+```
 
 ```
-agentFlags = (the 2d trivial gate fired AND the scope answer was light) ? { "deep": false } : {}
+trivial_gate_fired = (every changed file classified LOW risk in 2e) AND (changedLines < 50)
+agentFlags = (trivial_gate_fired AND scope answer == light) ? { "deep": false } : {}
 ```
 
-The scope answer is the interactive "Light review" choice, or headless `CODE_GAUNTLET_TRIVIAL_SCOPE`. The map is **opt-out**: `{}` = full scope (every dimension on — byte-identical to no flags); `{ "deep": false }` = light scope (only the two core dimensions `bug`, `security` run — two discovery agents). Stamping `{}` after a light decision silently runs a full 7-agent review the user/operator declined — that exact miss occurred in live verification, which is why this is a derivation rule, not prose. Never stamp a non-boolean value: `agentActive` gates only on the literal `false`, and the args waist rejects anything else.
+All three inputs are on hand at this step: the 2e risk table, the `changedLines` value being stamped two lines up, and the fresh echo above. (This scope gate is distinct from Phase 1's eligibility check #4 — "only lockfile/generated changes → stop" — which aborts; this one narrows dimensions.) The map is **opt-out**: `{}` = full scope (every dimension on — byte-identical to no flags); `{ "deep": false }` = light scope (only the two core dimensions `bug`, `security` run — two discovery agents). Stamping `{}` after a light decision silently runs a full 7-agent review the user/operator declined — that exact miss occurred in live verification, which is why this is a derivation rule, not prose. Never stamp a non-boolean value: `agentActive` gates only on the literal `false`, and the args waist rejects anything else.
 
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 
