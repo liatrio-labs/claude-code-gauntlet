@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.1.1 (2026-07-23)
+
+### Bug Fixes
+
+- Apply markdownlint fix to CHANGELOG blank lines
+  ([`bcd543b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/bcd543b4b131b0b4ada93260b2c43aa995b767f9))
+
+### Documentation
+
+- Add AGENTS.md with Cursor Cloud dev environment setup
+  ([`bcd543b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/bcd543b4b131b0b4ada93260b2c43aa995b767f9))
+
+- Add AGENTS.md with Cursor Cloud setup instructions
+  ([`bcd543b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/bcd543b4b131b0b4ada93260b2c43aa995b767f9))
+
+- Clarify markdownlint-fix CHANGELOG gotcha in AGENTS.md
+  ([`bcd543b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/bcd543b4b131b0b4ada93260b2c43aa995b767f9))
+
+
 ## v3.1.0 (2026-07-23)
 
 ### Bug Fixes
