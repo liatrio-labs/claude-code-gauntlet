@@ -185,6 +185,23 @@ test('absent challengeCap counts as challenge-every-finding (mirrors challengeSt
   assert.deepEqual(coarsenLimits(bench, 23, 40), { ...bench });
 });
 
+test('absent size limits mirror stage defaults — the guard never goes NaN-silent', () => {
+  // Math.max(1, undefined) is NaN; a NaN worst case made `NaN >= 900` false and
+  // silently disabled coarsening. The guard now mirrors each stage's own default:
+  // summarize bucket 20, verify/validate ONE slice/batch over all findings.
+  const n = worstCaseAgentCount({}, 20000, 1000);
+  assert.ok(Number.isFinite(n), 'worst case must be a real number');
+  assert.equal(n, (1000 + 1) + 7 + 1 + 1 + 1000 + 2); // 20000/20 buckets +merge, 7 discovery, 1 slice, 1 batch, challenge-all, report+writer
+  // Coarsening fires and converges from fully-absent limits.
+  const coarse = coarsenLimits({}, 20000, 5000);
+  assert.ok(worstCaseAgentCount(coarse, 20000, 5000) < 900);
+  // 0-valued sizes mirror the stages too (summarize treats 0 as 20; verify/validate as one slice/batch).
+  assert.equal(
+    worstCaseAgentCount({ summarizeBucketSize: 0, verifySliceSize: 0, validateBatch: 0, challengeCap: 40 }, 200, 100),
+    worstCaseAgentCount({ verifySliceSize: 100, validateBatch: 100, challengeCap: 40 }, 200, 100),
+  );
+});
+
 // --- Supplementary: summarize (single vs bucketed) + mergeStage envelope ------
 
 function summarizeCtx({ agentImpl, parallelImpl } = {}) {

@@ -2431,6 +2431,14 @@ const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
 
+// Mirror each stage's own absent/zero-size default EXACTLY (summarize: bucket 20;
+// verify/validate: ONE slice/batch over all findings) so the guard arithmetic can
+// never go NaN (Math.max(1, undefined) is NaN — a NaN worst case silently disables
+// the coarsening loop) and never counts a different fan-out than the stage dispatches.
+const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || 20);
+const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
+const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
+
 // worstCaseAgentCount(limits, nFiles, nFindings) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate
 // batches + min(nFindings, challengeCap) challengers + 2 (report + writer).
@@ -2438,9 +2446,9 @@ function worstCaseAgentCount(limits, nFiles, nFindings) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = Math.max(0, nFindings || 0);
-  const summarizeCalls = ceilDiv(files, L.summarizeBucketSize) + 1;
-  const verifyCalls = ceilDiv(findings, L.verifySliceSize);
-  const validateCalls = ceilDiv(findings, L.validateBatch);
+  const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
+  const verifyCalls = ceilDiv(findings, effectiveSliceSize(L, findings));
+  const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
 }
@@ -2464,18 +2472,21 @@ function coarsenLimits(limits, nFiles, nFindings) {
   const findings = Math.max(0, nFindings || 0);
 
   while (worstCaseAgentCount(L, files, findings) >= AGENT_COUNT_GUARD) {
-    const summarizeTerm = ceilDiv(files, L.summarizeBucketSize) + 1;
+    const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND) {
-      L.summarizeBucketSize = Math.max(1, L.summarizeBucketSize || 1) * 2;
+      // Double from the EFFECTIVE size (pinning a concrete value): doubling from a raw
+      // absent field (|| 1 -> 2) would LOWER the effective bucket below the stage's
+      // default of 20 and move the term the wrong way.
+      L.summarizeBucketSize = effectiveBucketSize(L) * 2;
       continue;
     }
-    const verifyTerm = ceilDiv(findings, L.verifySliceSize);
-    const validateTerm = ceilDiv(findings, L.validateBatch);
+    const verifyTerm = ceilDiv(findings, effectiveSliceSize(L, findings));
+    const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     if (validateTerm >= verifyTerm && validateTerm >= challengeTerm) {
-      L.validateBatch = Math.max(1, L.validateBatch || 1) * 2;
+      L.validateBatch = effectiveBatchSize(L, findings) * 2;
     } else if (verifyTerm >= validateTerm && verifyTerm >= challengeTerm) {
-      L.verifySliceSize = Math.max(1, L.verifySliceSize || 1) * 2;
+      L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
     } else {
       // Halve the EFFECTIVE cap (min(cap, findings)) so C strictly decreases even when
       // the nominal cap already exceeds nFindings — or is absent (= findings).
