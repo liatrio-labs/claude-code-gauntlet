@@ -242,7 +242,7 @@ For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: 
 Each finding is a JSON object with this shape:
 
 ```json
-{"id": "bug-<n>", "dimension": "bug", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining the issue — no code blocks, no multi-line snippets; code pointers go in evidence and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix or improvement>", "hidden_errors": "<for error-handling findings: specific error types that could be hidden, otherwise null>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
+{"id": "bug-<n>", "dimension": "bug", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining the issue — no code blocks, no multi-line snippets; code pointers go in evidence and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix or improvement>", "hidden_errors": "<for error-handling findings ONLY: specific error types that could be hidden. OMIT this field entirely for other findings — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
 **Example:**
@@ -251,7 +251,7 @@ Each finding is a JSON object with this shape:
 I found a real issue — the auth context can be null on API key paths.
 
 ```json
-{"id":"bug-1","dimension":"bug","severity":"high","confidence":85,"file":"src/auth.py","line_start":42,"line_end":45,"title":"Auth context null on API key path","description":"When authenticating via API key, organization_context.member is None but line 42 doesn\u0027t check before dereferencing.","evidence":"Line 42: member.role == Role.ADMIN","suggestion":"Add a None check before accessing member attributes.","hidden_errors":null,"claude_md_rule":null,"cross_file_refs":["src/middleware/auth.py"]}
+{"id":"bug-1","dimension":"bug","severity":"high","confidence":85,"file":"src/auth.py","line_start":42,"line_end":45,"title":"Auth context null on API key path","description":"When authenticating via API key, organization_context.member is None but line 42 doesn\u0027t check before dereferencing.","evidence":"Line 42: member.role == Role.ADMIN","suggestion":"Add a None check before accessing member attributes.","claude_md_rule":null,"cross_file_refs":["src/middleware/auth.py"]}
 ```
 
 [investigation of off-by-one in pagination — no issue found]

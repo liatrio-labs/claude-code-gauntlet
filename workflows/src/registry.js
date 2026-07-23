@@ -37,6 +37,10 @@ const DEEP = 'deep';
 // simplification -> behavior_preserved. The pre-reconciliation declarations (type_design
 // encapsulation/invariants/enforcement/usefulness; simplification before/after) named fields
 // no agent ever emitted top-level and no code consumes — pure schema noise now removed.
+// Extras are OPTIONAL by construction (never in FINDING_REQUIRED) and NOT nullable: the
+// platform schema contract pins `type` to a single string (no union types), so a
+// not-applicable extra must be OMITTED, never emitted as null — the agent contracts say
+// "OMIT this field", and a null here is the same retry-storm class as string confidence.
 export const DIMENSIONS = [
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },

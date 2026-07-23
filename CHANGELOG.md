@@ -340,7 +340,6 @@
   ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
   [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
 
-
 ## v2.6.0 (2026-07-18)
 
 ### Bug Fixes

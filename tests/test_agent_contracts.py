@@ -49,6 +49,21 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
         executor = (REPO / "agents" / "executor.md").read_text()
         self.assertIn("Bash", executor)
 
+    def test_schema_declared_extras_are_omit_not_null(self):
+        # Bugbot PR-20 wave 1: hidden_errors / invalid_state_example are typed
+        # `string` in schemaExtra; a contract that says "otherwise null" makes agents
+        # emit null against a string-typed schema — the same StructuredOutput
+        # retry-storm class as string-typed confidence. Not-applicable extras must be
+        # OMITTED. (claude_md_rule is not schema-declared, so its null is fine.)
+        for name, field in [("bug-detector", "hidden_errors"),
+                            ("type-design-analyzer", "invalid_state_example")]:
+            text = (REPO / "agents" / f"{name}.md").read_text()
+            self.assertIn("OMIT this field", text, name)
+            self.assertNotIn(f'"{field}":null', text,
+                             f"{name} example emits null for schema-declared {field}")
+            self.assertNotIn("otherwise null", text.split(field)[1][:120],
+                             f"{name} contract still offers a null branch for {field}")
+
 
 if __name__ == "__main__":
     unittest.main()
