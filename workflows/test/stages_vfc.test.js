@@ -161,20 +161,20 @@ function challengeCtx({ nulls = [], byIdx } = {}) {
 }
 
 function cFinding(id, sev, over = {}) {
-  return { id, file: `${id}.js`, line_start: 5, title: `t-${id}`, description: `d-${id}`, code: `code-${id}`, severity: sev, confidence: 80, dimension: 'bug', ...over };
+  return { id, file: `${id}.js`, line_start: 5, line_end: 7, title: `t-${id}`, description: `d-${id}`, severity: sev, confidence: 80, dimension: 'bug', ...over };
 }
 
-test('blindChallengeFields exposes EXACTLY {title, description, code} — structural blindness', () => {
+test('blindChallengeFields exposes EXACTLY {title, description, file, line_start, line_end} — structural blindness', () => {
   const finding = cFinding('F1', 'high', {
     evidence: 'SENTINEL_EVIDENCE_LEAK', origin: 'surfaced', cross_file_refs: ['SENTINEL_XREF_LEAK.js:9'],
     reasoning: 'SENTINEL_REASONING_LEAK', corroborated_by: ['bug-detector'],
   });
-  assert.deepEqual(Object.keys(blindChallengeFields(finding)), ['title', 'description', 'code']);
+  assert.deepEqual(Object.keys(blindChallengeFields(finding)), ['title', 'description', 'file', 'line_start', 'line_end']);
 });
 
-test('challenge prompt carries only title/description/code — no evidence/reasoning content leaks', async () => {
+test('challenge prompt carries only title/description/location — no evidence/reasoning content leaks', async () => {
   const finding = cFinding('F1', 'high', {
-    title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC', code: 'SENTINEL_CODE',
+    title: 'SENTINEL_TITLE', description: 'SENTINEL_DESC', file: 'SENTINEL_FILE.js',
     evidence: 'SENTINEL_EVIDENCE_LEAK', origin: 'surfaced', cross_file_refs: ['SENTINEL_XREF_LEAK.js:9'],
     reasoning: 'SENTINEL_REASONING_LEAK',
   });
@@ -183,7 +183,7 @@ test('challenge prompt carries only title/description/code — no evidence/reaso
   const prompt = ctx.calls[0].prompt;
   assert.match(prompt, /SENTINEL_TITLE/);
   assert.match(prompt, /SENTINEL_DESC/);
-  assert.match(prompt, /SENTINEL_CODE/);
+  assert.match(prompt, /SENTINEL_FILE\.js/);
   // No confirming context reaches the challenger.
   assert.doesNotMatch(prompt, /SENTINEL_EVIDENCE_LEAK/);
   assert.doesNotMatch(prompt, /SENTINEL_REASONING_LEAK/);
@@ -205,6 +205,30 @@ test('challenge prompt has teeth: verify-assertion + unverifiable-claim gate mar
   assert.match(prompt, /score it 25 or below/);
   assert.match(prompt, /no test exists/);
   assert.match(prompt, /no in-diff evidence/);
+});
+
+// The prompt's return-shape sentence must name the SAME field CHALLENGE_SCHEMA enforces and
+// challengeStage reads (confidence_claim_is_correct ?? score) — the stale `{ id, score, ... }`
+// prose contradicted the schema and could burn StructuredOutput retries.
+test('challenge prompt return-shape sentence matches CHALLENGE_SCHEMA (confidence_claim_is_correct)', async () => {
+  const ctx = challengeCtx();
+  await challengeStage(ctx, { findings: [cFinding('F1', 'high')], limits: { challengeCap: 40 }, policy: {} });
+  const prompt = ctx.calls[0].prompt;
+  assert.match(prompt, /Return \{ confidence_claim_is_correct, justification \}/);
+  assert.doesNotMatch(prompt, /Return \{ id, score/);
+});
+
+// Location surfacing: the prompt must carry the finding's file:line range so the blind
+// challenger can open the code itself (single-line findings render as just the start line).
+test('challenge prompt surfaces file:line_start-line_end location', async () => {
+  const ctx = challengeCtx();
+  await challengeStage(ctx, { findings: [cFinding('F1', 'high', { file: 'src/pay.js', line_start: 12, line_end: 20 })], limits: { challengeCap: 40 }, policy: {} });
+  assert.match(ctx.calls[0].prompt, /src\/pay\.js:12-20/);
+
+  const ctx2 = challengeCtx();
+  await challengeStage(ctx2, { findings: [cFinding('F2', 'high', { file: 'src/one.js', line_start: 9, line_end: 9 })], limits: { challengeCap: 40 }, policy: {} });
+  assert.match(ctx2.calls[0].prompt, /src\/one\.js:9\b/);
+  assert.doesNotMatch(ctx2.calls[0].prompt, /src\/one\.js:9-9/);
 });
 
 test('cap overflow -> challenge=skipped, excluded from the high-confidence bucket', async () => {
