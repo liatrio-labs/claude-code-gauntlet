@@ -8,8 +8,12 @@
 name: Publish to Marketplace
 
 on:
-  release:
-    types: [published]
+  # HOLD (owner decision 2026-07-22): automatic publish-on-release is disabled
+  # until v3.1.0 — v3.0.0 must NOT deploy to the company-wide marketplace.
+  # Marketplace deployment is a manual owner action via workflow_dispatch.
+  # Re-enable automatic publishing by restoring:
+  #   release:
+  #     types: [published]
   workflow_dispatch:
     inputs:
       tag:

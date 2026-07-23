@@ -1,6 +1,12 @@
 issuer: https://token.actions.githubusercontent.com
 
-subject: repo:liatrio-labs/claude-code-gauntlet:ref:refs/heads/main
+# Immutable OIDC subject format: the 2026-07 rename (claude-deep-review ->
+# claude-code-gauntlet) permanently moved this repo onto GitHub's owner-ID/
+# repo-ID-qualified sub format (rollout for repos created/renamed after
+# 2026-07-15). Value copied verbatim from the token presented in run
+# 29962444808; the IDs are immutable, but a future rename would change the
+# slug portions — update them here if that ever happens.
+subject: repo:liatrio-labs@223510100/claude-code-gauntlet@1190928743:ref:refs/heads/main
 
 permissions:
   contents: write
