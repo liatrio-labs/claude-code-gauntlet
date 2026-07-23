@@ -93,7 +93,6 @@
   echo, writer write-proof (#17 items 2,3,4,5)
   ([`08da653`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/08da6532142a624197cd4c3e4612d2b140eb5140))
 
-
 ## v3.0.0 (2026-07-23)
 
 ### Bug Fixes
