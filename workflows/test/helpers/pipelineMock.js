@@ -87,6 +87,8 @@ export function validArgs(over = {}) {
     generatedAt: '2026-07-18T00:00:00Z',
     diffPath: '/repo/.code-gauntlet/diff.patch',
     changedFilesPath: '/repo/.code-gauntlet/changed.txt',
+    changedFiles: ['a.js'],
+    changedLines: 1,
     agentFlags: {},
     policy: {},
     limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },

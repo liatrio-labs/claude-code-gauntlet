@@ -7,7 +7,9 @@
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
 export const ARGS_VERSION = 1;
-const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFilesPath', 'agentFlags', 'policy', 'limits'];
+// REQUIRED mirrors consumption: changedFiles/changedLines feed summarize bucketing and
+// the agent-count guard; changedFilesPath is on-disk provenance the workflow never opens.
+const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'agentFlags', 'policy', 'limits'];
 
 // The nonce is interpolated into the verify executor command argv (the verify stage
 // derives one per slice as `${nonce}.${i}`), so it must be a single AST-safe,
@@ -33,6 +35,11 @@ export function validateArgs(args) {
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
+  // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
+  if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
+    errors.push('changedFiles must be an array of repo-relative paths');
+  if (args.changedLines !== undefined && typeof args.changedLines !== 'number')
+    errors.push('changedLines must be a number');
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the
   // 'all' default in selectDelivery, silently ignoring an operator's narrowing intent.

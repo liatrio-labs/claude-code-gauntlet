@@ -6,6 +6,7 @@ const good = {
   argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
   headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
   diffPath: '/r/.code-gauntlet/d.patch', changedFilesPath: '/r/.code-gauntlet/f.json',
+  changedFiles: ['a.js'], changedLines: 1,
   reviewConfigPath: null, agentFlags: {},
   policy: { tier: 'optimized', subagentModel: null },
   limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 },
@@ -71,4 +72,24 @@ test('validateArgs rejects a non-object delivery field', () => {
   const r = validateArgs({ ...good, delivery: 'all' });
   assert.equal(r.ok, false);
   assert.match(r.errors.join(' '), /delivery must be an object/);
+});
+test('validateArgs requires the consumed by-value fields changedFiles + changedLines', () => {
+  // REQUIRED mirrors consumption: summarize bucketing and the agent-count guard read
+  // these by value; a waist without them dispatches on garbage instead of failing loud.
+  const a = { ...good }; delete a.changedFiles; delete a.changedLines;
+  const r = validateArgs(a);
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('changedFiles')));
+  assert.ok(r.errors.some((e) => e.includes('changedLines')));
+});
+test('validateArgs accepts an args waist without changedFilesPath (optional provenance)', () => {
+  const a = { ...good, changedFiles: ['a.js'], changedLines: 3 }; delete a.changedFilesPath;
+  assert.deepEqual(validateArgs(a), { ok: true, errors: [] });
+});
+test('validateArgs type-checks changedFiles (array) and changedLines (number)', () => {
+  const a = { ...good, changedFiles: 'a.js,b.js', changedLines: '3' };
+  const r = validateArgs(a);
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('changedFiles')));
+  assert.ok(r.errors.some((e) => e.includes('changedLines')));
 });
