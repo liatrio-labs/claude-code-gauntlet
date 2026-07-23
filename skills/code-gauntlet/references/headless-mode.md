@@ -47,6 +47,16 @@ and stop the run with a non-zero outcome. **Never** fall back to a default and n
 
 ---
 
+## Orchestrator model & per-agent pins (V3.1)
+
+The **orchestrator** (the session running this skill and the workflow's own reasoning) is simply the session's model — there is no skill-level knob for it. In bench harness runs it is selected with `--child-model`; in real use it is whatever model the user's session runs.
+
+**Per-agent pins are explicit full model IDs** (`resolvePolicy` maps the policy aliases through a `MODEL_IDS` table: `sonnet` → `claude-sonnet-5`, `opus` → `claude-opus-4-8`, `haiku` → `claude-haiku-4-5-20251001`). Bare aliases resolve against the *session's* model variant at dispatch time — a session pinned to `sonnet[1m]` used to cascade the `[1m]` variant into every agent whose policy said `sonnet`. With full-ID pins, agent models are immune to the orchestrator's session variant.
+
+**Behavior change (intended):** the `CLAUDE_CODE_SUBAGENT_MODEL` override maps through the same pin — a bare `sonnet` now pins plain `claude-sonnet-5` instead of inheriting the session variant. Pass an explicit full/dated model ID if you need a specific variant.
+
+---
+
 ## Hard rules (always true when headless — no env var toggles these)
 
 - **PR-comment selection is deterministic.** The set posted is the pipeline's pre-selected `artifactPaths.postReview` payload — the challenge-survivors filtered by the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`: `all` by default → every survivor, main and suggestion tags alike; `main_only` → main-tagged only), then ranked and capped at `limits.deliveryCap`. Posted verbatim, never re-filtered or re-ranked. The default `all` is deliberate — headless posts everything that survives the blind challenge. The per-finding interactive walkthrough (the unbounded question loop) is structurally unreachable, which in turn makes the dismissed-findings gate unreachable.

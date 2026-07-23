@@ -1797,15 +1797,25 @@ const STAGE_DEFAULTS = {
   'report-writer': 'sonnet', 'artifact-writer': 'sonnet',
 };
 
+// Explicit full model IDs. Aliases like 'sonnet' resolve against the SESSION's model
+// variant at dispatch time — a child session pinned to 'sonnet[1m]' cascades the [1m]
+// variant into every agent whose policy says 'sonnet' (measured: cache reads 15.6M→28.7M,
+// zero plain-sonnet rows). Pinning full IDs makes agent pins immune to the orchestrator's
+// session model. Model migrations update this one map.
+const MODEL_IDS = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-4-8', haiku: 'claude-haiku-4-5-20251001' };
+const toModelId = (m) => MODEL_IDS[m] || m;
+
 function resolvePolicy(agentType, opts = {}) {
   if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
-    return { model: opts.subagentModelEnv, note: 'CLAUDE_CODE_SUBAGENT_MODEL override — model policy bypassed' };
+    // The override maps through the same full-ID pin: a bare alias pins the plain full ID
+    // (it can no longer inherit the session variant — intended; see headless-mode.md).
+    return { model: toModelId(opts.subagentModelEnv), note: 'CLAUDE_CODE_SUBAGENT_MODEL override — model policy bypassed' };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);
   // Single benchmarked policy: discovery on sonnet with security-reviewer's opus
   // override, stage agents per STAGE_DEFAULTS. Alternate model modes (fable) are
   // roadmap work (issue #17 V3.2) and land behind their own paired measurement.
-  const model = dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet';
+  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet');
   return { model, note: '' };
 }
 
