@@ -249,6 +249,9 @@ test('a throw in a core stage (discover) is caught by the top-level try/catch', 
   assert.match(out.error, /parallel/);
   // summarize (single agent) completed; discover's parallel() throw was caught.
   assert.equal(out.phaseReached, 'summarize');
+  // L6: the envelope names the phase that actually THREW — narrating from phaseReached
+  // misattributed a Filter crash as "failed during Validate" in the live run.
+  assert.equal(out.failingPhase, 'discover');
   // The failure envelope still carries the compact keys.
   assert.ok('artifactPaths' in out);
   assert.ok('stats' in out);

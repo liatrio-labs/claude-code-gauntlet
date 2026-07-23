@@ -156,7 +156,7 @@ Rules for per-dimension thresholds:
 
 Records the model policy the review runs under. One value is supported:
 
-- `optimized` (default and only valid value) — Sonnet for most agents, Opus for security-reviewer. This is the exact configuration the benchmark numbers were measured under; any other value fails loud. Alternate model modes are roadmap work (issue #17) and will land behind their own paired benchmark measurement.
+- `optimized` (default and only valid value) — Sonnet for most agents, Opus for security-reviewer. This is the exact configuration the benchmark numbers were measured under. Any other value in REVIEW.md (legacy v2-era files say `frontier`) **self-heals to `optimized`** with a loud methodology warning — never a question, never an abort. Alternate model modes are roadmap work (issue #17) and will land behind their own paired benchmark measurement.
 
 ### Default Delivery
 

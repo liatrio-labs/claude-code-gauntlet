@@ -150,6 +150,34 @@ test('writerPayload postReview defaults to an empty array', () => {
   assert.deepEqual(out.postReview, []);
 });
 
+// --- writerPayload: PR-identity wrapper (live-run L3, D16) -------------------
+
+test('writerPayload with prIdentity emits the post_review-ready wrapper; without, the bare array', () => {
+  const pr = [{ id: 'D1', line_start: 7, line_end: 9, description: 'body text', report_tag: 'main' }];
+  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'deadbeefcafe' };
+  const wrapped = writerPayload({ findings: [], postReview: pr, prIdentity: id });
+  assert.deepEqual(Object.keys(wrapped.postReview), ['owner', 'repo', 'pr_number', 'sha', 'review_body', 'findings']);
+  assert.equal(wrapped.postReview.owner, 'o');
+  assert.equal(wrapped.postReview.repo, 'r');
+  assert.equal(wrapped.postReview.pr_number, 310);
+  assert.equal(wrapped.postReview.sha, 'deadbeefcafe');
+  assert.equal(wrapped.postReview.review_body, '');
+  const bare = writerPayload({ findings: [], postReview: pr });
+  assert.ok(Array.isArray(bare.postReview));
+});
+
+test('writerPayload wrapper is scoring-inert: findings byte-identical to the bare form (D16)', () => {
+  const pr = [
+    { id: 'D1', line_start: 7, line_end: 9, description: 'body', confidence: 88, report_tag: 'main' },
+    { id: 'D2', line_start: 3, description: 'other', confidence: 71, report_tag: 'suggestion' },
+  ];
+  const id = { owner: 'o', repo: 'r', pr_number: 5, sha_full: 'abc' };
+  const wrapped = writerPayload({ findings: [], postReview: pr, prIdentity: id });
+  const bare = writerPayload({ findings: [], postReview: pr });
+  // The wrapper only changes the envelope — the findings SET is byte-identical.
+  assert.equal(JSON.stringify(wrapped.postReview.findings), JSON.stringify(bare.postReview));
+});
+
 // --- runWith: persists the post-review payload from challenge survivors ------
 
 // A challenge checkpoint lets us pin the exact survivor set (both tags, distinct

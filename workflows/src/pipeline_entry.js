@@ -7,6 +7,7 @@
 // bundle body as a wrapped async function — top-level `await`/`return` are the entry
 // contract, and args arrive via the runtime-injected `args` global, not a parameter.
 import { runWith } from './stages.js';
+import { parseEntryArgs } from './args.js';
 
 export const meta = { name: 'code-gauntlet', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
 const PIPELINE_VERSION = '3.0.0';
@@ -19,5 +20,5 @@ async function run(rawArgs) {
   return runWith(undefined, rawArgs);
 }
 
-const __args = typeof args === 'string' ? JSON.parse(args) : args;
+const __args = parseEntryArgs(typeof args === 'undefined' ? undefined : args);
 return await run(__args);

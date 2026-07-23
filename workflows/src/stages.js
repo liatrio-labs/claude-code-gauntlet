@@ -118,7 +118,13 @@ export async function summarize(ctx, input) {
 
 function summarizePrompt(inp, files) {
   const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
-  return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}. Return { summary }.`;
+  // Single-source the size number (live-run L7): triage said 1211 changed lines, the
+  // report said ~1218 because the summarizer re-derived it from the diff. The waist's
+  // changedLines is the one authoritative count.
+  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
+    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it from the diff.`
+    : '';
+  return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 
 function summarizeMergePrompt(partials) {
@@ -1257,9 +1263,22 @@ function toV2Aliased(f) {
 // piece now crosses the writer prompt exactly once). Pure + exported so tests (and the node
 // recorder) can assert the persist output is REAL pipeline output, not a hand-authored fixture.
 export function writerPayload(inp) {
+  const postReviewSet = (inp.postReview || []).map(toV2Aliased);
+  const id = inp.prIdentity;
   return {
     findings: (inp.findings || []).map(toV2Aliased),
-    postReview: (inp.postReview || []).map(toV2Aliased),
+    // With a PR identity (delivery.prIdentity, live-run L3) the persisted post-review
+    // artifact IS the post_review.py input wrapper — Phase 8 posts it without hand-
+    // assembling { owner, repo, pr_number, ... } around a bare array (the wrap was
+    // documented but got reverse-engineered anyway, ~8 turns in the PR-310 run).
+    // review_body is intentionally '' — Phase 8 composes the summary narrative and may
+    // fill it before posting; post_review.py treats '' as a valid empty summary. sha is
+    // provenance (post_review.py resolves its own HEAD); platform stays absent so
+    // post_review.py auto-detects. The findings SET is byte-identical either way —
+    // the wrapper only changes the envelope, never the scored content (D16).
+    postReview: id
+      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '', findings: postReviewSet }
+      : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
   };
@@ -1382,6 +1401,7 @@ export async function runWith(ctx, rawArgs) {
       ok: false,
       error: `invalid args: ${check.errors.join('; ')}`,
       phaseReached: 'args',
+      failingPhase: 'args',
       artifactPaths: {},
       stats: {},
       gaps: check.errors,
@@ -1404,11 +1424,17 @@ export async function runWith(ctx, rawArgs) {
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
+  // The phase currently being ATTEMPTED — distinct from phaseReached (last COMPLETED).
+  // On a throw, phaseReached names the phase BEFORE the one that blew up; narrating the
+  // crash from it misattributes the failure (live run: a Filter throw reported as
+  // "failed during Validate"). The catch envelope carries both.
+  let phaseAttempting = null;
 
   // Resume: a phase whose checkpoint is present reuses that output instead of
   // dispatching. Either way the phase counts as reached, and its output is recorded
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const runPhase = async (name, thunk) => {
+    phaseAttempting = name;
     const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
     phaseOutputs[name] = out;
     completed.push(name);
@@ -1505,6 +1531,7 @@ export async function runWith(ctx, rawArgs) {
     const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       postReview,
+      prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       report: reportOut.report,
       // Persist a SLIM checkpoint: only the resume-consumed phases (filter, challenge) carry
       // full output; every other phase is reduced to a count, so the single artifact-writer
@@ -1555,6 +1582,7 @@ export async function runWith(ctx, rawArgs) {
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
+      failingPhase: phaseAttempting,
       artifactPaths: {},
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),

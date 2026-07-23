@@ -1847,6 +1847,18 @@ function normalizeArgs(raw) {
   return typeof raw === 'string' ? JSON.parse(raw) : raw;
 }
 
+// The bundle entry's args guard (live-run L1): a direct Workflow invocation with a raw
+// string ("PR 310") used to die in JSON.parse with a native stack and no guidance. The
+// entry cannot be unit-tested itself (its body ends in a top-level `return`), so the
+// guard lives here and the entry calls it.
+function parseEntryArgs(raw) {
+  try {
+    return normalizeArgs(raw);
+  } catch (e) {
+    throw new Error(`args must be the assembled argsVersion:1 waist object — do not invoke this workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Got: ${String(raw).slice(0, 80)}`);
+  }
+}
+
 function validateArgs(args) {
   const errors = [];
   if (!args || typeof args !== 'object') return { ok: false, errors: ['args is not an object'] };
@@ -1878,14 +1890,52 @@ function validateArgs(args) {
     errors.push('changedFiles must be an array of repo-relative paths');
   if (args.changedLines !== undefined && typeof args.changedLines !== 'number')
     errors.push('changedLines must be a number');
+  // Optional reviewConfig (the parsed REVIEW.md shape, see parseReviewMd in
+  // filterFindings.js). Its `ignore` list feeds escapeRegExp in the Filter stage, which
+  // assumes flat strings — a session that assembles entries as {pattern, reason} objects
+  // crashes there AFTER five paid stages (observed live, PR-310 run). Same
+  // present-then-shape-checked pattern as `delivery`: absent is fine, malformed fails loud
+  // at the waist before anything is dispatched.
+  if (args.reviewConfig !== undefined) {
+    if (args.reviewConfig === null || typeof args.reviewConfig !== 'object' || Array.isArray(args.reviewConfig)) {
+      errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
+    } else if (args.reviewConfig.ignore !== undefined) {
+      if (!Array.isArray(args.reviewConfig.ignore)) {
+        errors.push('reviewConfig.ignore must be an array of flat pattern strings');
+      } else {
+        for (let i = 0; i < args.reviewConfig.ignore.length; i++) {
+          if (typeof args.reviewConfig.ignore[i] !== 'string') {
+            errors.push(`reviewConfig.ignore[${i}] must be a flat pattern string (got ${typeof args.reviewConfig.ignore[i]}) — parseReviewMd emits strings, never objects`);
+          }
+        }
+      }
+    }
+  }
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the
   // 'all' default in selectDelivery, silently ignoring an operator's narrowing intent.
   if (args.delivery !== undefined) {
     if (args.delivery === null || typeof args.delivery !== 'object' || Array.isArray(args.delivery)) {
       errors.push('delivery must be an object of the form { tier } when present');
-    } else if (args.delivery.tier !== undefined && !DELIVERY_TIERS.includes(args.delivery.tier)) {
-      errors.push(`invalid delivery.tier: ${args.delivery.tier} (expected one of ${DELIVERY_TIERS.join(', ')})`);
+    } else {
+      if (args.delivery.tier !== undefined && !DELIVERY_TIERS.includes(args.delivery.tier)) {
+        errors.push(`invalid delivery.tier: ${args.delivery.tier} (expected one of ${DELIVERY_TIERS.join(', ')})`);
+      }
+      // Optional PR identity (live-run L3): when present, the artifact-writer persists the
+      // post_review-ready wrapper { owner, repo, pr_number, sha, review_body, findings }
+      // instead of the bare findings array — Phase 8 consumes it without hand-assembly.
+      // ABSENT for local-diff reviews (the waist stays target-agnostic).
+      const id = args.delivery.prIdentity;
+      if (id !== undefined) {
+        if (id === null || typeof id !== 'object' || Array.isArray(id)) {
+          errors.push('delivery.prIdentity must be an object { owner, repo, pr_number, sha_full } when present');
+        } else {
+          if (typeof id.owner !== 'string' || !id.owner) errors.push('delivery.prIdentity.owner must be a non-empty string');
+          if (typeof id.repo !== 'string' || !id.repo) errors.push('delivery.prIdentity.repo must be a non-empty string');
+          if (typeof id.pr_number !== 'number') errors.push('delivery.prIdentity.pr_number must be a number');
+          if (typeof id.sha_full !== 'string' || !id.sha_full) errors.push('delivery.prIdentity.sha_full must be a non-empty string');
+        }
+      }
     }
   }
   return { ok: errors.length === 0, errors };
@@ -2006,7 +2056,13 @@ async function summarize(ctx, input) {
 
 function summarizePrompt(inp, files) {
   const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
-  return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}. Return { summary }.`;
+  // Single-source the size number (live-run L7): triage said 1211 changed lines, the
+  // report said ~1218 because the summarizer re-derived it from the diff. The waist's
+  // changedLines is the one authoritative count.
+  const countLine = typeof inp.changedLines === 'number' && inp.changedLines > 0
+    ? ` The authoritative changed-line count is ${inp.changedLines}; cite that number verbatim if you mention change size — never re-estimate it from the diff.`
+    : '';
+  return `${ctxLine}Summarize the semantic intent of these changed files for downstream reviewers: ${files.join(', ')}.${countLine} Return { summary }.`;
 }
 
 function summarizeMergePrompt(partials) {
@@ -3145,9 +3201,22 @@ function toV2Aliased(f) {
 // piece now crosses the writer prompt exactly once). Pure + exported so tests (and the node
 // recorder) can assert the persist output is REAL pipeline output, not a hand-authored fixture.
 function writerPayload(inp) {
+  const postReviewSet = (inp.postReview || []).map(toV2Aliased);
+  const id = inp.prIdentity;
   return {
     findings: (inp.findings || []).map(toV2Aliased),
-    postReview: (inp.postReview || []).map(toV2Aliased),
+    // With a PR identity (delivery.prIdentity, live-run L3) the persisted post-review
+    // artifact IS the post_review.py input wrapper — Phase 8 posts it without hand-
+    // assembling { owner, repo, pr_number, ... } around a bare array (the wrap was
+    // documented but got reverse-engineered anyway, ~8 turns in the PR-310 run).
+    // review_body is intentionally '' — Phase 8 composes the summary narrative and may
+    // fill it before posting; post_review.py treats '' as a valid empty summary. sha is
+    // provenance (post_review.py resolves its own HEAD); platform stays absent so
+    // post_review.py auto-detects. The findings SET is byte-identical either way —
+    // the wrapper only changes the envelope, never the scored content (D16).
+    postReview: id
+      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '', findings: postReviewSet }
+      : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
   };
@@ -3270,6 +3339,7 @@ async function runWith(ctx, rawArgs) {
       ok: false,
       error: `invalid args: ${check.errors.join('; ')}`,
       phaseReached: 'args',
+      failingPhase: 'args',
       artifactPaths: {},
       stats: {},
       gaps: check.errors,
@@ -3292,11 +3362,17 @@ async function runWith(ctx, rawArgs) {
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
+  // The phase currently being ATTEMPTED — distinct from phaseReached (last COMPLETED).
+  // On a throw, phaseReached names the phase BEFORE the one that blew up; narrating the
+  // crash from it misattributes the failure (live run: a Filter throw reported as
+  // "failed during Validate"). The catch envelope carries both.
+  let phaseAttempting = null;
 
   // Resume: a phase whose checkpoint is present reuses that output instead of
   // dispatching. Either way the phase counts as reached, and its output is recorded
   // into phaseOutputs so the persisted checkpoint artifact is a producible resume map.
   const runPhase = async (name, thunk) => {
+    phaseAttempting = name;
     const out = checkpoints[name] !== undefined ? checkpoints[name] : await thunk();
     phaseOutputs[name] = out;
     completed.push(name);
@@ -3393,6 +3469,7 @@ async function runWith(ctx, rawArgs) {
     const writeOut = await writeArtifacts(c, {
       findings: challengeOut.findings,
       postReview,
+      prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       report: reportOut.report,
       // Persist a SLIM checkpoint: only the resume-consumed phases (filter, challenge) carry
       // full output; every other phase is reduced to a count, so the single artifact-writer
@@ -3443,6 +3520,7 @@ async function runWith(ctx, rawArgs) {
       ok: false,
       error: (e && e.message) || String(e),
       phaseReached,
+      failingPhase: phaseAttempting,
       artifactPaths: {},
       stats: {},
       checkpoints: buildResumeCheckpoints(phaseOutputs),
@@ -3470,5 +3548,5 @@ async function run(rawArgs) {
   return runWith(undefined, rawArgs);
 }
 
-const __args = typeof args === 'string' ? JSON.parse(args) : args;
+const __args = parseEntryArgs(typeof args === 'undefined' ? undefined : args);
 return await run(__args);

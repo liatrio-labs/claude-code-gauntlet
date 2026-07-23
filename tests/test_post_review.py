@@ -941,5 +941,59 @@ class TestPostModeEnv(_DryRunTestBase):
         self.assertFalse(self._payload_exists())
 
 
+class TestWriterWrapperByteParity(_DryRunTestBase):
+    """V3.1 L3/D16 acceptance: the writer-persisted post_review wrapper drives
+    post_review.py to a byte-identical --dry-run payload vs the manually-assembled
+    Phase-8 wrap, for identical findings and identity.
+
+    The writer's wrapper is { owner, repo, pr_number, sha, review_body, findings }
+    (see writerPayload in workflows/src/stages.js): `sha` is provenance the script
+    ignores (it resolves its own HEAD), `platform` is absent (auto-detected from the
+    git remote — mocked github here), review_body matches what Phase 8 would set.
+    Byte-identical payloads prove the wrapper only changes the envelope, never the
+    delivery content — the persist-boundary change is scoring-inert.
+    """
+
+    FINDINGS = [
+        {"file": "foo.py", "line": 2, "severity": "high",
+         "title": "Bug A", "body": "Body A"},
+        {"file": "foo.py", "line": 1, "end_line": 2, "severity": "low",
+         "title": "Bug B", "body": "Body B"},
+    ]
+
+    def _dry_run_payload_bytes(self, data):
+        self._write(data)
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)):
+            post_review.main()
+        payload_path = os.path.join(self.tmp, "post-review-payload.json")
+        with open(payload_path, "rb") as f:
+            raw = f.read()
+        os.unlink(payload_path)
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+        post_review.DRY_RUN = False
+        return raw
+
+    def test_wrapper_and_manual_wrap_produce_byte_identical_payloads(self):
+        manual = {
+            "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary", "findings": self.FINDINGS,
+        }
+        # The writer-emitted wrapper: same fields plus the provenance sha the
+        # script ignores. Key order intentionally matches writerPayload's emission.
+        wrapper = {
+            "owner": "o", "repo": "r", "pr_number": 5, "sha": "deadbeefcafe",
+            "review_body": "Summary", "findings": self.FINDINGS,
+        }
+        self.assertEqual(
+            self._dry_run_payload_bytes(manual),
+            self._dry_run_payload_bytes(wrapper),
+            "wrapper form must drive a byte-identical dry-run payload",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -322,6 +322,16 @@ test('summarize: small PR uses a single agent() call, no gaps', async () => {
   assert.ok(out.summary.length > 0);
 });
 
+// L7: the prompt single-sources the change-size number — the summarizer must cite the
+// waist's changedLines verbatim, never re-estimate from the diff (live run: 1211 vs ~1218).
+test('summarize: the prompt carries the authoritative changedLines count verbatim', async () => {
+  const prompts = [];
+  const ctx = summarizeCtx({ agentImpl: async (prompt) => { prompts.push(prompt); return { summary: 's' }; } });
+  await summarize(ctx, { changedFiles: ['a.js'], changedLines: 1211, limits: { summarizeBucketSize: 20 }, policy: {} });
+  assert.match(prompts[0], /authoritative changed-line count is 1211/);
+  assert.match(prompts[0], /never re-estimate/);
+});
+
 test('summarize: an agent() throw degrades to empty summary + a gap', async () => {
   const ctx = summarizeCtx({ agentImpl: async () => { throw new Error('schema exhausted'); } });
   const out = await summarize(ctx, { changedFiles: ['a.js'], changedLines: 10, limits: { summarizeBucketSize: 20 }, policy: {} });
