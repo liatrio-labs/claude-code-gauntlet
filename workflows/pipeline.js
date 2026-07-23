@@ -2175,17 +2175,23 @@ function allSchemaExtras() {
 }
 
 // The verify echo item schema: the full canonical finding shape (numeric confidence) PLUS
-// (1) `agent` — injected by merge, and detectDisagreement keys suppression / security-
-// escalation / test-correctness routing on it, so it MUST survive the echo or that routing
-// fires stochastically; (2) the union of all per-dimension extras; and (3) elimination_reason
-// — run_verification() ALWAYS stamps it on a real elimination (verify_findings.py), and
+// (1) the union of all per-dimension extras; and (2) elimination_reason —
+// run_verification() ALWAYS stamps it on a real elimination (verify_findings.py), and
 // trustSlice's content-fidelity gate requires it on every eliminated[] entry, so it must be
 // declarable or an honest elimination's stamp is dropped in transcription and the gate false-
 // fires. (eliminated_by is a JS-pipeline-only field the verify script never sets — declaring
 // it would only invite the executor to fabricate it, so it is intentionally NOT declared.)
+//
+// `agent` is intentionally NOT declared (V3.1 item 4, REVERTED after mini-subset A):
+// declaring it made the merge-injected agent identity survive the echo deterministically,
+// which activated the filter's proximity-keyed cross-agent dedup everywhere (it requires
+// 2+ distinct agents in a 5-line bucket — starved when agent is absent). Measured on the
+// pre-registered 6-PR subset: dedup eliminations 7 -> 33 and same-6 recall 0.667 -> 0.433
+// (-7 goldens), with dedup firing on exactly the Gate-1 PRs where agent happened to
+// survive. Deterministic agent identity re-lands ONLY together with the cross-dimension
+// consolidation redesign (issue #17, D20 entry) — they are one design problem.
 function verifyItemSchema() {
   const item = findingItemSchema(allSchemaExtras());
-  item.properties.agent = { type: 'string' };
   item.properties.elimination_reason = { type: 'string' };
   return item;
 }

@@ -326,16 +326,17 @@ test('(m3) a blank-string elimination_reason is also rejected (not a real stamp)
 
 // --- Item 4: verify echo item schema declares agent + reconciled extras -------
 
-test('(m4) verify echo item schema declares agent + reconciled per-dimension extras (array types) + elimination_reason', async () => {
+test('(m4) verify echo item schema declares reconciled per-dimension extras (array types) + elimination_reason — and NOT agent', async () => {
   const input = baseInput();
   const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
   await verifyStage(ctx, input);
   const schema = ctx.execCalls()[0].schema;
   for (const arr of ['verified', 'eliminated']) {
     const props = schema.properties.result.properties[arr].items.properties;
-    // agent: merge injects it; detectDisagreement routes suppression/escalation on it, so it
-    // MUST be declared or it survives the echo only by luck (observed agent:null on 2/3 PRs).
-    assert.equal(props.agent.type, 'string');
+    // agent is INTENTIONALLY not declared (item 4 reverted after mini-subset A): a
+    // deterministic agent echo activated proximity-keyed cross-agent dedup and cost
+    // -7 same-6 goldens. Re-lands only with the #17/D20 consolidation redesign.
+    assert.ok(!('agent' in props), 'agent must not be declared until the D20 redesign');
     assert.equal(props.confidence.type, 'number');
     // elimination_reason must be declarable so an honest script stamp survives transcription
     // (else the item-2 fidelity gate would false-fire on real eliminations).
@@ -355,7 +356,10 @@ test('(m4) verify echo item schema declares agent + reconciled per-dimension ext
   }
 });
 
-test('(m5) the injected agent field survives the verify echo (data flow — detectDisagreement input)', async () => {
+// With `agent` undeclared in the echo schema (item-4 revert), survival is stochastic in
+// production; this pins the PASS-THROUGH: when the executor does echo it, the stage
+// threads it onward untouched (detectDisagreement's input when present).
+test('(m5) an echoed agent field is threaded through the verify stage untouched', async () => {
   const findings = [
     { id: 'F1', file: 'a.js', line_start: 1, origin: 'new', dimension: 'bug', agent: 'bug-detector', cross_file_refs: [] },
     { id: 'F2', file: 'a.js', line_start: 2, origin: 'new', dimension: 'convention', agent: 'conventions-and-intent', cross_file_refs: [] },
