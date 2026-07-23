@@ -2,6 +2,345 @@
 
 <!-- version list -->
 
+## v3.0.0 (2026-07-23)
+
+### Bug Fixes
+
+- **adjudicator**: Recover verdict replies with unescaped inner quotes [owner-approved]
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Child-model default back to inherit — both sonnet variants measured worse
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Classify killed-background workflow distinctly (not config_echo_mismatch)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Invoke namespace-qualified /deep-review:deep-review
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Uncap CLI background-wait ceiling so long Workflows aren't killed
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **build**: Strip duplicate trailing newline in generated bundle
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: CRLF bug in loadExclusions bullet-list fallback + review nits
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: PyIntStrict accepts booleans, matching Python int(bool)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **pipeline**: Apply the agent-count guard — wire coarsenLimits into runWith (Bugbot)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **pipeline**: Guard counts absent challengeCap as challenge-all, matching the stage (Bugbot)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **pipeline**: Land Bugbot #1 (validate content) and #3 (agent short-name)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **pipeline**: Land final-review findings — pin numerics on UNVERIFIED path, extract modelFor
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **release**: Bump PIPELINE_VERSION at its source, not just the bundle
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **release**: Remove unused meta.version instead of patching its drift
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Preserve finding description through verify; exempt dashboard from mutation guard
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Repair five smoke-revealed runtime defects + runner integrity guard
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Align every dispatch to the platform agent()/parallel() contract
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Args-waist rename contract comments + 3 tests
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Correct entry contract per live Workflow-tool probe
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Make discover degradation reachable (null agent -> dims degraded)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Materialize verify slice inputs; resume state on failure paths
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Normalize agent field names in validate/challenge stages
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Persist v2 aliases, checkpoint round-trip, report segmentation
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+### Chores
+
+- Fix pre-commit formatting (markdownlint, end-of-file-fixer)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: BUILD_GATE — fresh bundle, all suites green
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+### Continuous Integration
+
+- Fix semantic-release OIDC subject after repo rename
+  ([#19](https://github.com/liatrio-labs/claude-code-gauntlet/pull/19),
+  [`8893dcd`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8893dcd8b65839f1a0dd11062a51c31b2a1e4d7c))
+
+### Documentation
+
+- Add Phase 3 workflow wait protocol to SKILL (poll to terminal before Phase 8)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- Fix markdownlint failures blocking merge
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- Full README pass for the v3 launch + CI job for the JS suite
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- Reconcile SKILL v3 prose to workflow behavior (triage descriptive, resume state, phase refs)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- SKILL.md v3 workflow invocation + CLAUDE.md JS rules
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **artifact-writer**: Document postReview in the final-artifacts payload shape
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Addendum — workflow entry contract pinned during build
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Draft provisional D2 pending owner confirmation
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Finalize Phase 0 gate — decisions D1-D3 recorded
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Online validation addendum for build/bench discoveries
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Record agent() failure-contract and queueing probes (tests 5, 10)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Record headless executor permission matrix (test 4, five legs)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Record model/effort routing probes and D3 (tests 6, 7, 16)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Record semantic-release lockstep probe (test 14)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Record size-limit and owner-gated probe results (tests 8, 9, 11, 12, 15)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Record unattended executor-permission data point (test 4 partial)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Record workflow invocation probe results (tests 1-3, 13)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **research**: Scaffold v3 Phase 0 smoke-test findings artifact
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **skill**: Include top-level checkpoints in the compact-return shape
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **skill**: Mark light/trivial scope as unwired in v3.0 (Bugbot)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+### Features
+
+- Code-gauntlet v3 (formerly deep-review) — workflow-native pipeline
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- Rename plugin to code-gauntlet (formerly deep-review)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Add --prs explicit golden-PR list override
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Add v2-vs-v3 verdict panel + normalized efficiency
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Allow 1m-context child-model variants
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Bring every dashboard section current with the full ledger
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Expose holdout tier in run.py CLI
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Make the report dashboard legible to share
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Pin child-session model per tool (Gate-2 config)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **bench**: Wire deep-review-v3 into the frozen bench harness
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Calibrate discoverPrompt against agent self-censoring (hill-climb iter 2)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Deliver all challenge-survivors, deterministic Phase 8 selection (hill-climb iter 4)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Delivery tier as a user choice, default all (hill-climb iter 4, refined)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Enrich discovery dispatch prompt to v2-grade elicitation
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Iter-5 quality — non-security threshold 55, challenge teeth, discovery sweeps
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: Scope calibration paragraph to bug-detector only (hill-climb iter 3)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **v3**: ValidateArgs accepts optional delivery selector (iter 4 delta)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **verify**: Receipt + executor agent + UNVERIFIED degradation path
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Args waist + argsVersion validation
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Bundle build system, entry contract, and version_variables
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: DIMENSIONS registry + S5 policy resolver
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Report/writer/checkpoints, top-level orchestration, boundary parity
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Stages 1-3 (summarize/discover/merge) with degradation + agent-count coarsening
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **workflows**: Validate/filter/challenge stages with degradation semantics
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+### Performance Improvements
+
+- **pipeline**: Gate-2 overhead-only token cuts (validate batch, slim checkpoint, writer dedup)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+### Refactoring
+
+- **policy**: Remove the frontier mode — ship the single benchmarked policy
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+### Testing
+
+- **bench**: Resume honors manifest tool over CLI default
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: ApplyChallenges twin (comparator/deep-clone/dedup reuse)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: ApplyValidations twin (int-strictness trap)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: Dual-runtime parity harness + findingDedup twin
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: FilterFindings twin part 1 (thresholds/injection/exclusions)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: FilterFindings twin part 2 (disagreement/dedup_cross_agent, pyRound)
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: MergeFindings twin
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+- **parity**: Scanner edge fixtures + divergence notes
+  ([#16](https://github.com/liatrio-labs/claude-code-gauntlet/pull/16),
+  [`cdf19f8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cdf19f81f6ca04c6f1bedf2d85deff0a8f4a02c9))
+
+
 ## v2.6.0 (2026-07-18)
 
 ### Bug Fixes
