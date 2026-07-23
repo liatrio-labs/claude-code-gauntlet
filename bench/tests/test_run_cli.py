@@ -218,12 +218,19 @@ class PrereqTest(RunTestBase):
 class TierResolutionTest(RunTestBase):
     def test_counts(self):
         self.assertEqual(len(run._resolve_tier("smoke", self.subsets, self.shas)), 3)
+        self.assertEqual(len(run._resolve_tier("mini", self.subsets, self.shas)), 6)
         self.assertEqual(len(run._resolve_tier("subset", self.subsets, self.shas)), 15)
+        self.assertEqual(len(run._resolve_tier("holdout", self.subsets, self.shas)), 10)
         self.assertEqual(len(run._resolve_tier("full", self.subsets, self.shas)), 50)
 
     def test_subset_maps_to_gate(self):
         self.assertEqual(
             run._resolve_tier("subset", self.subsets, self.shas), self.subsets["gate"]
+        )
+
+    def test_mini_maps_to_mini_subset(self):
+        self.assertEqual(
+            run._resolve_tier("mini", self.subsets, self.shas), self.subsets["mini"]
         )
 
     def test_full_is_all_sha_keys(self):
@@ -666,6 +673,10 @@ class PrsListTest(RunTestBase):
         # Surrounding whitespace around each URL is trimmed.
         spaced = run.parse_args(["--prs", " {} , {} ".format(FIXTURE_URL, PLAIN_URL)])
         self.assertEqual(spaced.prs, [FIXTURE_URL, PLAIN_URL])
+
+    def test_prs_mini_alias_expands_to_mini_subset(self):
+        args = run.parse_args(["--prs", "mini"])
+        self.assertEqual(args.prs, self.subsets["mini"])
 
     def test_unknown_url_is_argparse_error(self):
         with contextlib.redirect_stderr(io.StringIO()) as err:

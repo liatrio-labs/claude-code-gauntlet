@@ -7,6 +7,12 @@ results in three buckets against a pinned LLM judge. It exists to give every
 change to the skill a repeatable, quantified answer to "did this help or
 hurt," instead of vibes.
 
+**Measurement policy:** paired bench runs are *not* the default gate for every
+change. See the canonical runbook [`MEASUREMENT.md`](MEASUREMENT.md) for the
+ratcheted four-tier ladder (always-on suites → functional smoke → owner-triggered
+mini-subset → owner-triggered full-15/holdout), ledger costs, and pre-registered
+owner options.
+
 ## Quickstart
 
 ```bash
@@ -58,14 +64,16 @@ run's captured candidates and needs no `claude`/`gh`/disk headroom.
 ## CLI reference
 
 ```
-python3 bench/run.py --tier smoke|subset|full [--runs N] [--fidelity dry-run|live]
+python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelity dry-run|live]
                       [--resume RUN_ID] [--retry-failed RUN_ID]
                       [--timeout-mins 45] [--anchor naive] [--score-only RUN_ID]
+                      [--check RUN_ID] [--prs URL[,URL...]|mini]
 ```
 
 | Flag | Values | Default | What it does |
 |---|---|---|---|
-| `--tier` | `smoke` \| `subset` \| `full` | — (required for a new run) | Which PR set to run. `smoke` = 3 PRs (quick check). `subset` = the 15-PR gate (the primary benchmark set). `full` = all 50 golden PRs. |
+| `--tier` | `smoke` \| `mini` \| `subset` \| `holdout` \| `full` | — (required for a new run unless `--prs`) | Which PR set to run. `smoke` = 3 PRs (functional smoke). `mini` = 6-PR paired cut. `subset` = 15-PR gate. `holdout` = 10-PR confirmation set (sealed for V3.2). `full` = all 50 golden PRs. |
+| `--prs` | URL list or `mini` | — | Explicit golden PR list; labels the run `custom`. The alias `mini` expands to the pre-registered 6-PR mini subset. |
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
 | `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted`). |
@@ -73,6 +81,7 @@ python3 bench/run.py --tier smoke|subset|full [--runs N] [--fidelity dry-run|liv
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
 | `--score-only` | `RUN_ID` | — | Re-score an already-captured run's candidates without re-invoking `claude`/`gh` (used for repeated judge re-scoring of the same candidate set). |
+| `--check` | `RUN_ID` | — | Mechanical functional-smoke checker (payload/schema, no silent degrade, plugin `scriptPath`, ≥1 comment). Exit 0 = pass. Never invokes the judge. See [`MEASUREMENT.md`](MEASUREMENT.md). |
 
 At most one of `--resume` / `--retry-failed` / `--score-only` may be given
 per invocation. A killed pass loses at most the one PR that was mid-flight;

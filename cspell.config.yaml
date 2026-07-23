@@ -63,3 +63,19 @@ overrides:
       - autoupdate
       - commitlint
       - markdownlint
+
+  - filename: bench/MEASUREMENT.md
+    words:
+      - discourse
+      - graphite
+      - calcom
+      - grafana
+      - sentry
+      - holdout
+      - runbook
+      - simplifier
+      - StructuredOutput
+
+  - filename: docs/maintainer-issues.md
+    words:
+      - runbook

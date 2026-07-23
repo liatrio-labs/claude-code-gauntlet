@@ -1,20 +1,11 @@
-# Live smoke-tier run of the code-gauntlet benchmark harness (bench/).
+# Live smoke-tier run + mechanical functional-smoke checker (Issue #28).
+# workflow_dispatch ONLY — owner/release-manager triggered; never auto-scheduled.
+# Job fails if either run.py or the checker fails. The checker never invokes the judge.
 #
-# Manual only: this workflow spends real Anthropic API credit and drives the
-# Claude Code CLI + gh CLI against live PRs, so it runs on workflow_dispatch
-# ONLY — never on push or pull_request.
-#
-# Required repository secret:
-#   BENCH_ANTHROPIC_API_KEY — Anthropic API key for the smoke-tier runs.
-#     Mapped into bench/.env as ANTHROPIC_API_KEY for bench/run.py to read.
-#
-# Runner prerequisites (bench/run.py's prereq check fails fast with a fix
-# message if any of these are missing):
-#   - `claude` CLI on PATH — installed below via the official install script.
-#   - `gh` CLI authenticated — satisfied via GH_TOKEN using the default
-#     GITHUB_TOKEN (no extra secret needed).
-#   - `uv` on PATH — installed below via astral-sh/setup-uv, used to run the
-#     vendored scorer in its own isolated environment.
+# Mirror cache: bare clones under bench/workspace/mirrors/ are several GB per upstream
+# (smoke touches grafana + discourse-graphite + cal.com). Caching them on GH-hosted
+# runners avoids a cold multi-GB clone on every dispatch. A cache miss remains correct
+# but slower; cache is best-effort and never required for the smoke verdict.
 name: Bench Smoke (live)
 
 on:
@@ -26,20 +17,15 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # upload-artifact needs the actions scope; naming only `contents` would
-      # clear it and fail the always() upload after real API spend.
       actions: write
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+      - uses: astral-sh/setup-uv@v8.3.2
 
       - name: Install Claude Code CLI
         run: |
@@ -52,10 +38,29 @@ jobs:
         run: |
           echo "ANTHROPIC_API_KEY=${BENCH_ANTHROPIC_API_KEY}" > bench/.env
 
+      - name: Cache bare mirrors
+        uses: actions/cache@v4
+        with:
+          path: bench/workspace/mirrors
+          key: bench-mirrors-${{ runner.os }}-v1
+          restore-keys: |
+            bench-mirrors-${{ runner.os }}-
+
       - name: Run smoke-tier benchmark
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 bench/run.py --tier smoke
+
+      - name: Functional smoke check
+        run: |
+          set -euo pipefail
+          RUN_ID="$(ls -1t bench/workspace/runs | head -1)"
+          if [ -z "${RUN_ID}" ]; then
+            echo "No run directory found under bench/workspace/runs" >&2
+            exit 1
+          fi
+          echo "Checking run: ${RUN_ID}"
+          python3 bench/run.py --check "${RUN_ID}"
 
       - name: Upload run artifacts
         if: always()

@@ -74,10 +74,11 @@ class TestGoldenData(unittest.TestCase):
         self.assertEqual(len(self.subsets["gate"]), 15)
         self.assertEqual(len(self.subsets["holdout"]), 10)
         self.assertEqual(len(self.subsets["smoke"]), 3)
+        self.assertEqual(len(self.subsets["mini"]), 6)
         self.assertEqual(len(self.subsets["review_md_fixtures"]), 2)
 
     def test_subsets_have_no_internal_duplicates(self):
-        for name in ("gate", "holdout", "smoke", "review_md_fixtures"):
+        for name in ("gate", "holdout", "smoke", "mini", "review_md_fixtures"):
             urls = self.subsets[name]
             self.assertEqual(len(urls), len(set(urls)), f"{name} has duplicates")
 
@@ -90,13 +91,28 @@ class TestGoldenData(unittest.TestCase):
     def test_gate_smoke_disjoint(self):
         self.assertEqual(set(self.subsets["gate"]) & set(self.subsets["smoke"]), set())
 
+    def test_mini_is_subset_of_gate(self):
+        # mini is a gate cut (highest-golden-density PRs), not a disjoint tier.
+        self.assertTrue(set(self.subsets["mini"]) <= set(self.subsets["gate"]))
+
+    def test_mini_urls_match_pre_registered_order(self):
+        expected = [
+            "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4",
+            "https://github.com/calcom/cal.com/pull/11059",
+            "https://github.com/calcom/cal.com/pull/14740",
+            "https://github.com/getsentry/sentry/pull/93824",
+            "https://github.com/grafana/grafana/pull/79265",
+            "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10",
+        ]
+        self.assertEqual(self.subsets["mini"], expected)
+
     def test_review_md_fixtures_subset_of_gate(self):
         self.assertTrue(
             set(self.subsets["review_md_fixtures"]) <= set(self.subsets["gate"])
         )
 
     def test_every_subset_url_exists_in_golden_data(self):
-        for name in ("gate", "holdout", "smoke", "review_md_fixtures"):
+        for name in ("gate", "holdout", "smoke", "mini", "review_md_fixtures"):
             for url in self.subsets[name]:
                 self.assertIn(url, self.minf, f"{name} url not in golden data: {url}")
 
