@@ -295,6 +295,32 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
     return failures
 
 
+def _judge_key_note(env_path, child_auth, env=None):
+    """A non-fatal note when a subscription run has no key the judge could later use.
+
+    Relaxing the ``ANTHROPIC_API_KEY`` requirement is the point of subscription mode -- the
+    review children genuinely do not need it, and the mechanical ``--check`` gate never
+    invokes the judge. But scoring still does, hours later and in a separate invocation, so
+    saying nothing here lets an operator finish a long leg and only then discover it is
+    unscoreable. A note rather than a failure: making it fatal would re-impose exactly the
+    requirement the mode exists to drop.
+
+    Mirrors ``score._judge_api_key``'s resolution (ambient first, then ``bench/.env``) as
+    an existence question only -- no credential value is read into this process.
+    """
+    if child_auth != "subscription":
+        return None
+    env = os.environ if env is None else env
+    for name in ("BENCH_JUDGE_API_KEY", "ANTHROPIC_API_KEY"):
+        if env.get(name) or _read_env_key(env_path, name):
+            return None
+    return (
+        "NOTE: no BENCH_JUDGE_API_KEY or ANTHROPIC_API_KEY found. This subscription run "
+        "will complete and can be gated with --check, but scoring it (--score-only) needs "
+        "an API key for the judge."
+    )
+
+
 # ----------------------------------------------------------------------- naive anchor
 
 # The output contract appended to the naive prompt: the bare review has no plugin to
@@ -707,40 +733,55 @@ def _resolve_child_auth(child_auth):
     return child_auth if child_auth is not None else DEFAULT_CHILD_AUTH
 
 
-def _child_auth_for(args, manifest=None):
+def _recorded_child_auth(run_id):
+    """The mode ``run_id``'s manifest committed to, or None when there is none to honour.
+
+    An existing ``run.json`` without ``child_auth`` predates the flag and therefore spent
+    the metered key, so it reads as ``DEFAULT_CHILD_AUTH`` -- NOT as "unset". The
+    ``env_fingerprint`` copy is the same fallback chain ``score._auth_mode`` reads, so the
+    mode a run is resumed on cannot diverge from the ``auth_mode`` its ledger row gets.
+
+    None means "nothing recorded to honour", for two distinct states that both leave the
+    choice to the flag: no manifest at all (``_make_run_dir`` created the dir but the
+    process died before ``_write_manifest``, which happens before the first PR is invoked,
+    so no credential has been spent), and an unreadable one (nothing can be claimed about
+    what it recorded; ``_resume`` fails on it independently).
+    """
+    path = RUNS_ROOT / run_id / "run.json"
+    if not path.is_file():
+        return None
+    try:
+        manifest = _load_json(path)
+    except (ValueError, OSError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    fingerprint = manifest.get("env_fingerprint")
+    fingerprint = fingerprint if isinstance(fingerprint, dict) else {}
+    return manifest.get("child_auth") or fingerprint.get("child_auth") or DEFAULT_CHILD_AUTH
+
+
+def _child_auth_for(args, run_id=None):
     """The credential mode this invocation will actually spend.
 
     The one place the resume precedence lives, because three callers must agree on it or
     the run breaks: ``_resume`` (which spends the credential), ``main``'s preflight (which
     validates it), and ``main``'s conflict guard. Preflighting the flag's default while
     resuming a subscription run would demand a metered key the run does not use and skip
-    the token/apiKeyHelper checks it does, turning a clear prereq failure into a mid-run
-    ``build_env`` raise.
+    the token/apiKeyHelper checks it does; preflighting subscription for a run that then
+    spends the metered key is the same bug mirrored. So the resolution is read from disk
+    once here rather than from whatever the caller happens to hold -- ``_resume`` passes
+    only the id, never its own already-loaded manifest, so the two cannot drift apart.
 
-    A resumed run's OWN mode always wins, and a manifest with no ``child_auth`` counts as
-    ``api`` rather than deferring to the flag: those run.json files predate the flag, so
-    their completed PRs really did spend the metered key. Deferring would let
+    A resumed run's own recorded mode always wins. ``main`` refuses an explicit flag that
+    contradicts it rather than ignoring it, because unlike the ``tool``/``child_model``
+    labels this decides which credential is charged: honouring the flag would let
     ``--retry-failed X --child-auth subscription`` bill the remaining PRs the other way
-    while ``score`` -- reading the same silent manifest -- labels the summed total
-    ``api``. ``main`` refuses an explicit flag that contradicts the resolved mode rather
-    than ignoring it, because unlike the ``tool``/``child_model`` labels this decides
-    which credential is charged.
-
-    Pass ``manifest`` when the caller already loaded it. Otherwise a ``--resume`` /
-    ``--retry-failed`` id is read from disk here; an id with no readable ``run.json`` has
-    no recorded mode to honour, so the flag applies and the resume path reports the
-    missing run on its own terms.
+    while the single ledger row can only carry one ``auth_mode``.
     """
-    if manifest is None:
-        run_id = args.resume or args.retry_failed
-        path = (RUNS_ROOT / run_id / "run.json") if run_id else None
-        if path is None or not path.is_file():
-            return _resolve_child_auth(args.child_auth)
-        try:
-            manifest = _load_json(path)
-        except (ValueError, OSError):
-            manifest = {}
-    return manifest.get("child_auth") or DEFAULT_CHILD_AUTH
+    run_id = run_id or args.resume or args.retry_failed
+    recorded = _recorded_child_auth(run_id) if run_id else None
+    return recorded or _resolve_child_auth(args.child_auth)
 
 
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
@@ -860,10 +901,11 @@ def _resume(run_id, args, retry):
     # run.json files (or a naive run, whose None value is unused by the anchor path).
     child_model = manifest.get("child_model") or _resolve_child_model(args.tool, args.child_model)
     # And again for the credential mode, where the stakes are higher than a label: letting
-    # a flag override the manifest would bill half a run's PRs one way and half the other,
-    # under a single ledger row that can only carry one auth_mode. A pre-child_auth
-    # run.json falls back to the CLI default (api), which is what those runs used.
-    child_auth = _child_auth_for(args, manifest)
+    # a flag override the recorded mode would bill half a run's PRs one way and half the
+    # other, under a single ledger row that can only carry one auth_mode. Resolved from
+    # the run id, not the manifest loaded above, so this answer and the one main()
+    # preflighted come from the same read (main refuses a contradicting flag outright).
+    child_auth = _child_auth_for(args, run_id)
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
@@ -1063,6 +1105,10 @@ def main(argv=None):
         for failure in failures:
             print("  - " + failure, file=sys.stderr)
         return 2
+
+    note = _judge_key_note(ENV_PATH, child_auth)
+    if note:
+        print(note, file=sys.stderr)
 
     if args.resume:
         return _resume(args.resume, args, retry=False)

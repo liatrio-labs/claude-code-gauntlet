@@ -908,6 +908,67 @@ class ChildAuthCliTest(RunTestBase):
     def test_default_child_auth_is_a_valid_mode(self):
         self.assertIn(run.DEFAULT_CHILD_AUTH, run.invoke.CHILD_AUTH_MODES)
 
+    def _resume_modes(self, run_id, argv):
+        """The mode main() preflights and the mode _resume resolves, for one argv.
+
+        They must be equal: main validates the credential the run then spends, so any
+        disagreement preflights one credential and charges the other.
+        """
+        args = run.parse_args(argv)
+        return (self._spy_prereq_mode(argv), run._child_auth_for(args, run_id))
+
+    def test_preflight_and_resume_agree_for_an_orphan_run_dir(self):
+        # A run dir with no run.json: _make_run_dir created it and the process died
+        # before _write_manifest, so no PR ran and no credential was spent. Whatever the
+        # rule is, both halves must reach the same answer -- preflighting subscription
+        # and then spending the metered key is the silent swap the guard exists to stop.
+        (self.runs_root / "smoke-orphan").mkdir(parents=True)
+        preflighted, resumed = self._resume_modes(
+            "smoke-orphan", ["--resume", "smoke-orphan", "--child-auth", "subscription"]
+        )
+        self.assertEqual(preflighted, resumed)
+
+    def test_preflight_and_resume_agree_for_a_corrupt_manifest(self):
+        run_dir = self.runs_root / "smoke-corrupt"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text("{not json")
+        preflighted, resumed = self._resume_modes(
+            "smoke-corrupt", ["--resume", "smoke-corrupt", "--child-auth", "subscription"]
+        )
+        self.assertEqual(preflighted, resumed)
+
+    def test_preflight_and_resume_agree_for_a_recorded_mode(self):
+        self._write_resumable("smoke-recorded", "subscription")
+        preflighted, resumed = self._resume_modes(
+            "smoke-recorded", ["--resume", "smoke-recorded"]
+        )
+        self.assertEqual(preflighted, resumed)
+        self.assertEqual(resumed, "subscription")
+
+    def test_preflight_and_resume_agree_for_a_legacy_manifest(self):
+        self._write_resumable("smoke-legacy-agree", None)
+        preflighted, resumed = self._resume_modes(
+            "smoke-legacy-agree", ["--resume", "smoke-legacy-agree"]
+        )
+        self.assertEqual(preflighted, resumed)
+        self.assertEqual(resumed, "api")
+
+    def test_env_fingerprint_only_manifest_is_honoured_like_score_reads_it(self):
+        # score._auth_mode falls back to env_fingerprint.child_auth, so the resume path
+        # must read the same chain: otherwise a manifest carrying only the fingerprint
+        # copy would be resumed on the metered key while its ledger row says subscription
+        # and the cost-honesty gate drops real spend.
+        run_dir = self.runs_root / "smoke-fingerprint-only"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps({
+                "tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None,
+                "env_fingerprint": {"child_auth": "subscription"},
+            })
+        )
+        args = run.parse_args(["--resume", "smoke-fingerprint-only"])
+        self.assertEqual(run._child_auth_for(args, "smoke-fingerprint-only"), "subscription")
+
 
 class ChildAuthPrereqTest(RunTestBase):
     """Subscription mode swaps the credential prereq -- and only that.
@@ -1003,6 +1064,57 @@ class ChildAuthPrereqTest(RunTestBase):
         self._write_helper()
         joined = "\n".join(self._failures("api", {}))
         self.assertNotIn("apiKeyHelper", joined)
+
+
+class ChildAuthJudgeKeyNoteTest(RunTestBase):
+    """Subscription mode warns -- never fails -- when no judge key is in sight.
+
+    Dropping the ANTHROPIC_API_KEY requirement is the point of the mode, and --check needs
+    no judge at all. But scoring does, and it happens hours later, so silence lets an
+    operator finish a long leg and only then find it unscoreable. Making it fatal would
+    re-impose the very requirement the mode relaxes.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.missing_env = self.tmp / "nope.env"
+
+    def _note(self, child_auth, env, env_path=None):
+        return run._judge_key_note(
+            self.missing_env if env_path is None else env_path, child_auth, env=env
+        )
+
+    def test_subscription_with_no_key_anywhere_gets_a_note(self):
+        note = self._note("subscription", {})
+        self.assertIsNotNone(note)
+        self.assertIn("--score-only", note)
+        self.assertIn("--check", note)
+
+    def test_ambient_judge_key_silences_it(self):
+        self.assertIsNone(self._note("subscription", {"BENCH_JUDGE_API_KEY": "k"}))
+
+    def test_ambient_api_key_silences_it(self):
+        self.assertIsNone(self._note("subscription", {"ANTHROPIC_API_KEY": "k"}))
+
+    def test_dotenv_key_silences_it(self):
+        env_file = self.tmp / "bench.env"
+        env_file.write_text("ANTHROPIC_API_KEY=sk-dotenv\n")
+        self.assertIsNone(self._note("subscription", {}, env_path=env_file))
+
+    def test_api_mode_is_silent(self):
+        # api mode already hard-fails on a missing key; a note would be noise.
+        self.assertIsNone(self._note("api", {}))
+
+    def test_main_prints_the_note_once_prereqs_pass(self):
+        stderr = io.StringIO()
+        with patch.object(run, "check_prereqs", lambda **kwargs: []):
+            with patch.object(run, "_new_run", lambda args: 0):
+                with patch.dict(os.environ, {}, clear=True):
+                    self._patch_global("ENV_PATH", self.missing_env)
+                    with contextlib.redirect_stderr(stderr):
+                        rc = run.main(["--tier", "smoke", "--child-auth", "subscription"])
+        self.assertEqual(rc, 0)
+        self.assertIn("judge", stderr.getvalue().lower())
 
 
 class ChildAuthWiringTest(RunTestBase):
