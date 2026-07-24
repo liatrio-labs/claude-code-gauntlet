@@ -319,7 +319,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
             "refused": True,
         }
 
-    # G0: every declared pr_urls entry must have a terminal ok checkpoint.
+    # G1: every declared pr_urls entry must have a terminal ok checkpoint.
     # Absence of a state file means pending (crash/kill mid-run) — must fail.
     statuses = _checkpoint_statuses(run_dir)
     declared = list((manifest or {}).get("pr_urls") or [])
@@ -360,7 +360,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     for pr_dir in pr_dirs:
         label = pr_dir.name
 
-        # --- G1: payload ---
+        # --- G2: payload ---
         payload_path = pr_dir / "post-review-payload.json"
         if not payload_path.is_file():
             failures.append("{}: missing post-review-payload.json".format(label))
@@ -377,7 +377,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 failures.extend(_validate_payload_fields(payload, label))
                 total_comments += _count_delivered_comments(payload)
 
-        # --- G1: findings required + union schema ---
+        # --- G2: findings required + union schema ---
         findings_files = _iter_findings_files(pr_dir)
         if not findings_files:
             failures.append(
@@ -406,14 +406,14 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
             for i, finding in enumerate(findings):
                 flabel = "{}:{}[{}]".format(label, findings_path.name, i)
                 failures.extend(_check_union_schema(finding, flabel))
-                # --- G2: origin=unknown ---
+                # --- G3: origin=unknown ---
                 if isinstance(finding, dict) and finding.get("origin") == "unknown":
                     stats["unknown_origin"] += 1
                     failures.append(
                         "{}: origin=unknown (verify/slice degrade)".format(flabel)
                     )
 
-        # --- G2: writer no-write-proof / partial-artifacts ---
+        # --- G3: writer no-write-proof / partial-artifacts ---
         for hit in _scan_degrade_text(pr_dir):
             failures.append(
                 "{}: writer degrade signal in {} (no-write-proof / partial-artifacts)".format(
@@ -421,7 +421,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 )
             )
 
-        # --- G3: scriptPath from collected workflow records (not raw.json) ---
+        # --- G4: scriptPath from collected workflow records (not raw.json) ---
         wf_records = _iter_workflow_records(pr_dir)
         stats["workflow_records"] += len(wf_records)
         if not wf_records:
@@ -451,7 +451,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
 
     stats["delivered_comments"] = total_comments
 
-    # --- G4: ≥1 delivered comment across the set ---
+    # --- G5: ≥1 delivered comment across the set ---
     if total_comments < 1:
         failures.append("delivered comments across run: 0 (want ≥1)")
 

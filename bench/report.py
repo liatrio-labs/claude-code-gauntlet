@@ -62,7 +62,7 @@ TIER_INFO = (
     ("mini", "mini", "6 PRs / ~30 goldens — paired measurement cut"),
     ("subset", "subset", "15 PRs / 59 goldens — gate-grade"),
     ("holdout", "holdout", "10 fresh PRs — confirmation"),
-    ("custom", "custom", "variable PRs / pre-``mini`` paired legs — explicit --prs lists"),
+    ("custom", "custom", "variable PRs / pre-mini paired legs — explicit --prs lists"),
 )
 
 # Tiers whose recall/noise are graded against the two live bars (top-anchor +
@@ -569,6 +569,14 @@ def _run_marker(x, y, tier, var, reverted, headline):
         d = (f"M{x:.1f},{y - r:.1f} L{x + r:.1f},{y:.1f} "
              f"L{x:.1f},{y + r:.1f} L{x - r:.1f},{y:.1f} Z")
         g.append(f'<path class="mk mk-fill" d="{d}" style="fill:var({var})" />')
+    elif tier == "mini":
+        # Pointy-top hexagon — matches _TIER_GLYPH_SVG["mini"].
+        ox = (0.0, 4.6, 4.6, 0.0, -4.6, -4.6)
+        oy = (-4.6, -1.8, 1.8, 4.6, 1.8, -1.8)
+        d = "M" + " L".join(
+            f"{x + dx:.1f},{y + dy:.1f}" for dx, dy in zip(ox, oy)
+        ) + " Z"
+        g.append(f'<path class="mk mk-fill" d="{d}" style="fill:var({var})" />')
     elif tier == "custom":
         s = 5.0
         g.append(
@@ -900,7 +908,7 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
         '<p class="explainer-foot">Smoke numbers are directional and never pass or '
         'fail a gate; a mini run is the 6-PR paired cut; a subset run is gate-grade; '
         'a holdout run confirms it on fresh PRs; a custom run is an explicit --prs '
-        'list (including pre-``mini`` paired legs such as Gate-2). By owner '
+        'list (including pre-mini paired legs such as Gate-2). By owner '
         'decision v3 delivers ~4× the comments of v2, so its lower precision is a '
         'bigger denominator, not weaker findings. Gate-2 re-baselined its token target '
         'to the v2 baseline on 2026-07-21: the original −20%-vs-Gate-1 target was '

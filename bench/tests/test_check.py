@@ -47,6 +47,27 @@ def _ok_payload(n_comments=1):
     }
 
 
+def _ok_gitlab_payload(n_discussions=1):
+    """Minimal GitLab dry-run payload shape (platform + discussions)."""
+    discussions = [
+        {
+            "body": "finding {}".format(i),
+            "position": {
+                "position_type": "text",
+                "new_path": "a.py",
+                "new_line": 10 + i,
+                "old_path": "a.py",
+            },
+        }
+        for i in range(n_discussions)
+    ]
+    return {
+        "platform": "gitlab",
+        "discussions": discussions,
+        "skipped": [],
+    }
+
+
 def _ok_finding(origin="new"):
     # Real persist output is a bare list of union-schema findings.
     return {
@@ -168,6 +189,39 @@ class CheckRunTest(unittest.TestCase):
         self.assertGreaterEqual(result["stats"]["delivered_comments"], 1)
         self.assertGreaterEqual(result["stats"]["workflow_records"], 1)
 
+    def test_gitlab_payload_happy_path_passes(self):
+        _build_ok_run(self.run_dir)
+        _write_json(
+            self.run_dir / "pr-example-repo-1" / "post-review-payload.json",
+            _ok_gitlab_payload(n_discussions=2),
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(result["stats"]["delivered_comments"], 2)
+
+    def test_gitlab_payload_missing_position_fails_g2(self):
+        _build_ok_run(self.run_dir)
+        bad = _ok_gitlab_payload()
+        del bad["discussions"][0]["position"]["new_path"]
+        _write_json(
+            self.run_dir / "pr-example-repo-1" / "post-review-payload.json",
+            bad,
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("new_path/new_line" in f for f in result["failures"])
+        )
+
+    def test_dict_wrapped_findings_accepted(self):
+        _build_ok_run(self.run_dir)
+        _write_json(
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-findings-deadbeef.json",
+            {"findings": [_ok_finding()]},
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
     def test_bare_list_unknown_origin_fails_g3(self):
         _build_ok_run(self.run_dir, origin="unknown")
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
@@ -280,6 +334,45 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("description/body" in f for f in result["failures"]))
 
+    def test_union_schema_missing_line_identity_fails_g2(self):
+        _build_ok_run(self.run_dir)
+        bad = _ok_finding()
+        del bad["line_start"]
+        del bad["line"]
+        _write_json(
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-findings-deadbeef.json",
+            [bad],
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("line identity" in f for f in result["failures"]))
+
+    def test_union_schema_missing_file_fails_g2(self):
+        _build_ok_run(self.run_dir)
+        bad = _ok_finding()
+        del bad["file"]
+        _write_json(
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-findings-deadbeef.json",
+            [bad],
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("missing required field group file" in f for f in result["failures"]))
+
+    def test_union_schema_missing_origin_fails_g2(self):
+        _build_ok_run(self.run_dir)
+        bad = _ok_finding()
+        del bad["origin"]
+        _write_json(
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-findings-deadbeef.json",
+            [bad],
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("missing required field group origin" in f for f in result["failures"])
+        )
+
     def test_relative_pipeline_script_path_accepted(self):
         _build_ok_run(self.run_dir, script_path="workflows/pipeline.js")
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
@@ -354,6 +447,27 @@ class WorkflowRecordCollectionTest(unittest.TestCase):
         copied = invoke.collect_workflow_records(self.home, self.pr_dir, baseline)
         self.assertEqual(copied, [])
         self.assertFalse((self.pr_dir / "workflows").exists())
+
+    def test_filename_collision_gets_numeric_suffix(self):
+        # Same basename from two project slugs — second copy must not overwrite.
+        self._plant(
+            "projects/slug-a/session/workflows/wf_same.json",
+            _wf_record(PIPELINE),
+        )
+        self._plant(
+            "projects/slug-b/session/workflows/wf_same.json",
+            _wf_record("/other/workflows/pipeline.js"),
+        )
+        copied = invoke.collect_workflow_records(self.home, self.pr_dir, {})
+        self.assertEqual(set(copied), {"wf_same.json", "wf_same-2.json"})
+        dest = self.pr_dir / "workflows"
+        self.assertTrue((dest / "wf_same.json").is_file())
+        self.assertTrue((dest / "wf_same-2.json").is_file())
+        paths = {
+            json.loads((dest / name).read_text())["scriptPath"]
+            for name in copied
+        }
+        self.assertEqual(paths, {PIPELINE, "/other/workflows/pipeline.js"})
 
 
 class CheckCliTest(unittest.TestCase):

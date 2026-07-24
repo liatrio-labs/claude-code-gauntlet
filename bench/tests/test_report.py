@@ -355,6 +355,23 @@ class TestMiniTierGraded(unittest.TestCase):
         )
         self.assertEqual(kind, "gate")
 
+    def test_tier_info_and_explainer_have_no_double_backticks(self):
+        for _key, _label, meaning in report.TIER_INFO:
+            self.assertNotIn("``", meaning)
+        # Explainer foot is assembled from plain strings — no reST leftovers.
+        html_out = report.build_explainer_html(0.6271, 0.5, 0.24)
+        self.assertNotIn("``", html_out)
+        self.assertIn("pre-mini paired legs", html_out)
+
+    def test_mini_run_marker_is_hexagon_not_subset_circle(self):
+        mini = report._run_marker(10, 20, "mini", "--v3", False, False)
+        subset = report._run_marker(10, 20, "subset", "--v3", False, False)
+        self.assertIn("path", mini)
+        self.assertIn("mk-fill", mini)
+        self.assertNotIn("<circle", mini)
+        self.assertIn("<circle", subset)
+        self.assertNotEqual(mini, subset)
+
 
 class TestVoidRunsAndMilestones(unittest.TestCase):
     """The two superseded runs (contaminated smoke, failed mini-subset attempt)
