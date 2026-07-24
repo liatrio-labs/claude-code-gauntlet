@@ -314,7 +314,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
         self.addCleanup(setattr, invoke, "ENV_PATH", saved)
 
     def test_mode_constants(self):
-        self.assertEqual(invoke.CHILD_AUTH_MODES, ("api", "subscription"))
+        # The mode names are the ledger's vocabulary, imported rather than restated -- see
+        # test_ledger.py for the canonical definition and its drift guards.
+        self.assertEqual(invoke.AUTH_MODES, ("api", "subscription"))
         self.assertEqual(invoke.OAUTH_TOKEN_VAR, "CLAUDE_CODE_OAUTH_TOKEN")
         self.assertEqual(
             invoke._OUTRANKING_CREDENTIAL_VARS,

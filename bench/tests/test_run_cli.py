@@ -906,7 +906,7 @@ class ChildAuthCliTest(RunTestBase):
         self.assertEqual(self._spy_prereq_mode(["--resume", "smoke-legacy-noflag"]), "api")
 
     def test_default_child_auth_is_a_valid_mode(self):
-        self.assertIn(run.DEFAULT_CHILD_AUTH, run.invoke.CHILD_AUTH_MODES)
+        self.assertIn(run.ledger.DEFAULT_AUTH_MODE, run.ledger.AUTH_MODES)
 
     def _resume_modes(self, run_id, argv):
         """The mode main() preflights and the mode _resume resolves, for one argv.

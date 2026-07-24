@@ -26,6 +26,7 @@ from bench.runner.score import (  # noqa: E402
     resolve_judge_pin,
     score_run,
 )
+from bench.runner import ledger  # noqa: E402
 from bench.runner.ledger import REQUIRED_KEYS  # noqa: E402
 
 
@@ -613,23 +614,11 @@ class AuthModeTests(unittest.TestCase):
             "/tmp/r", self.METRICS, self.COSTS, manifest, "pin", "pin", "sha"
         )
 
-    def test_manifest_child_auth_wins(self):
-        self.assertEqual(score._auth_mode({"child_auth": "subscription"}), "subscription")
-        self.assertEqual(score._auth_mode({"child_auth": "api"}), "api")
-
-    def test_env_fingerprint_is_the_fallback(self):
-        manifest = {"env_fingerprint": {"child_auth": "subscription"}}
-        self.assertEqual(score._auth_mode(manifest), "subscription")
-
-    def test_top_level_beats_fingerprint(self):
-        manifest = {"child_auth": "api", "env_fingerprint": {"child_auth": "subscription"}}
-        self.assertEqual(score._auth_mode(manifest), "api")
-
-    def test_defaults_to_api(self):
-        # A run.json predating --child-auth described an API-keyed run.
-        self.assertEqual(score._auth_mode({}), "api")
-        self.assertEqual(score._auth_mode({"env_fingerprint": {}}), "api")
-        self.assertEqual(score._auth_mode({"env_fingerprint": None}), "api")
+    def test_reads_the_shared_manifest_chain(self):
+        # The manifest -> mode chain itself is pinned in test_ledger.py; what matters here
+        # is that the row writer reads THAT one, not a copy of it, so a resumed run and
+        # its ledger row can never disagree about which credential was spent.
+        self.assertIs(score.manifest_auth_mode, ledger.manifest_auth_mode)
 
     def test_row_carries_manifest_mode(self):
         row = self._row({"run_id": "r", "tier": "smoke", "child_auth": "subscription"})
@@ -659,12 +648,12 @@ class AuthModeTests(unittest.TestCase):
         run_dir = Path(tmp.name)
 
         write_json(run_dir / "run.json", {"run_id": "smoke-x", "child_auth": "subscription"})
-        self.assertEqual(
-            score._auth_mode(score._read_run_manifest(run_dir)), "subscription"
-        )
+        row = self._row(score._read_run_manifest(run_dir))
+        self.assertEqual(row["auth_mode"], "subscription")
 
         write_json(run_dir / "run.json", {"run_id": "smoke-x"})  # pre-flag manifest
-        self.assertEqual(score._auth_mode(score._read_run_manifest(run_dir)), "api")
+        row = self._row(score._read_run_manifest(run_dir))
+        self.assertEqual(row["auth_mode"], "api")
 
 
 class ScoreRunEndToEndTests(unittest.TestCase):

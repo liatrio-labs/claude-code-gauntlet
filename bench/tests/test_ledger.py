@@ -17,15 +17,24 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
-# Add bench/ to path so we can import the runner package.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Import via the intended package path, as every other bench test does: ledger.py is the
+# canonical home of the auth-mode vocabulary its siblings import, so it must not also be
+# reachable as a second, separately-initialised ``runner.ledger`` module.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-from runner.ledger import (
+from bench.runner import ledger  # noqa: E402
+from bench.runner.ledger import (  # noqa: E402
+    API_AUTH_MODE,
+    AUTH_MODES,
     append_row,
     cost_is_billable,
     DEFAULT_AUTH_MODE,
+    manifest_auth_mode,
     REQUIRED_KEYS,
     row_auth_mode,
     SUBSCRIPTION_AUTH_MODE,
@@ -142,7 +151,7 @@ class LedgerTestCase(unittest.TestCase):
                 modes.append(mode)
             return real_open(path, mode, *args, **kwargs)
 
-        with patch("runner.ledger.open", spy_open, create=True):
+        with patch("bench.runner.ledger.open", spy_open, create=True):
             append_row(self.ledger_path, valid_row())
             append_row(self.ledger_path, valid_row())
 
@@ -169,8 +178,32 @@ class AuthModeTestCase(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_mode_constants(self):
-        self.assertEqual(DEFAULT_AUTH_MODE, "api")
+        self.assertEqual(API_AUTH_MODE, "api")
         self.assertEqual(SUBSCRIPTION_AUTH_MODE, "subscription")
+        self.assertEqual(AUTH_MODES, ("api", "subscription"))
+
+    def test_every_named_mode_is_one_of_the_modes(self):
+        # The vocabulary is one tuple plus names into it; a new mode added to only one of
+        # them is the drift this pins.
+        self.assertIn(API_AUTH_MODE, AUTH_MODES)
+        self.assertIn(SUBSCRIPTION_AUTH_MODE, AUTH_MODES)
+        self.assertIn(DEFAULT_AUTH_MODE, AUTH_MODES)
+
+    def test_default_mode_is_api(self):
+        self.assertEqual(DEFAULT_AUTH_MODE, API_AUTH_MODE)
+
+    def test_siblings_read_the_same_vocabulary_object(self):
+        # invoke (env assembly), run (the CLI) and score (the row writer) must not carry
+        # their own copies of these strings -- that was the drift this consolidates.
+        from bench import run
+        from bench.runner import invoke, score
+
+        self.assertIs(invoke.AUTH_MODES, AUTH_MODES)
+        self.assertIs(run.ledger.AUTH_MODES, AUTH_MODES)
+        self.assertIs(score.manifest_auth_mode, manifest_auth_mode)
+        self.assertFalse(hasattr(run, "DEFAULT_CHILD_AUTH"))
+        self.assertFalse(hasattr(invoke, "CHILD_AUTH_MODES"))
+
 
     def test_auth_mode_is_not_a_required_key(self):
         # The ledger is append-only: requiring auth_mode would invalidate every
@@ -214,6 +247,50 @@ class AuthModeTestCase(unittest.TestCase):
             record = json.loads(fh.readline())
         self.assertEqual(record["auth_mode"], "subscription")
         self.assertEqual(record["cost_usd"], 4.20)
+
+
+class ManifestAuthModeTestCase(unittest.TestCase):
+    """The manifest -> auth_mode chain, read identically by the runner and the scorer.
+
+    ``run.py`` needs it to resume a run on the credential it started with; ``score.py``
+    needs it to label the row that run's costs land in. Two implementations of one chain
+    would let a run be resumed on one credential and labelled with the other, so it lives
+    here once.
+    """
+
+    def test_top_level_field_wins(self):
+        self.assertEqual(
+            manifest_auth_mode({"child_auth": "subscription"}), "subscription"
+        )
+
+    def test_env_fingerprint_is_the_fallback(self):
+        manifest = {"env_fingerprint": {"child_auth": "subscription"}}
+        self.assertEqual(manifest_auth_mode(manifest), "subscription")
+
+    def test_top_level_beats_the_fingerprint(self):
+        manifest = {
+            "child_auth": "api",
+            "env_fingerprint": {"child_auth": "subscription"},
+        }
+        self.assertEqual(manifest_auth_mode(manifest), "api")
+
+    def test_manifest_without_the_field_reads_as_api(self):
+        # run.json files written before --child-auth existed all spent the metered key.
+        self.assertEqual(manifest_auth_mode({}), DEFAULT_AUTH_MODE)
+        self.assertEqual(manifest_auth_mode({"env_fingerprint": {}}), DEFAULT_AUTH_MODE)
+
+    def test_malformed_fingerprint_does_not_raise(self):
+        for fingerprint in (None, "subscription", ["subscription"], 7):
+            with self.subTest(fingerprint=fingerprint):
+                self.assertEqual(
+                    manifest_auth_mode({"env_fingerprint": fingerprint}),
+                    DEFAULT_AUTH_MODE,
+                )
+
+    def test_non_dict_manifest_reads_as_api(self):
+        for manifest in (None, [], "api", 3):
+            with self.subTest(manifest=manifest):
+                self.assertEqual(manifest_auth_mode(manifest), DEFAULT_AUTH_MODE)
 
 
 if __name__ == "__main__":

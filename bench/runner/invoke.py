@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from bench.runner.costs import parse_costs
+from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MODE
 
 __all__ = [
     "InvokeResult",
@@ -106,8 +107,8 @@ SKILL_COMMAND = "code-gauntlet:code-gauntlet"
 # How the review child authenticates: "api" bills the metered key in bench/.env,
 # "subscription" runs on the operator's own Claude subscription capacity via the
 # long-lived OAuth token from ``claude setup-token``. The judge/scoring path is
-# always API-keyed and is unaffected. See ``_claude_auth_env``.
-CHILD_AUTH_MODES = ("api", "subscription")
+# always API-keyed and is unaffected. See ``_claude_auth_env``. The vocabulary is the
+# ledger's (it ends up in a row's auth_mode) and is imported, never restated.
 
 # Env credential sources the documented Claude Code precedence chain places ABOVE
 # CLAUDE_CODE_OAUTH_TOKEN (cloud providers -> ANTHROPIC_AUTH_TOKEN -> ANTHROPIC_API_KEY
@@ -449,10 +450,10 @@ def _claude_auth_env(base_env, child_auth):
     an unknown mode. Neither message -- nor anything else here -- may carry a credential
     value: these strings reach stderr, the run log, and the artifacts.
     """
-    if child_auth == "api":
+    if child_auth == API_AUTH_MODE:
         api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
         return ({"ANTHROPIC_API_KEY": api_key} if api_key else {}, ())
-    if child_auth == "subscription":
+    if child_auth == SUBSCRIPTION_AUTH_MODE:
         token = _load_dotenv_key(ENV_PATH, OAUTH_TOKEN_VAR) or base_env.get(OAUTH_TOKEN_VAR)
         if not token:
             # Var name as a literal, not interpolated from the constant: this message
@@ -468,15 +469,15 @@ def _claude_auth_env(base_env, child_auth):
         return ({OAUTH_TOKEN_VAR: token}, _OUTRANKING_CREDENTIAL_VARS)
     raise ValueError(
         "unknown child_auth {!r}; expected one of {}".format(
-            child_auth, ", ".join(CHILD_AUTH_MODES)
+            child_auth, ", ".join(AUTH_MODES)
         )
     )
 
 
-def build_env(pr, run_dir, base_env, child_auth="api"):
+def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
     """Assemble the pinned isolated env for one PR invocation (side effect: seeds trust).
 
-    ``child_auth`` selects how the child authenticates (``CHILD_AUTH_MODES``); see
+    ``child_auth`` selects how the child authenticates (``ledger.AUTH_MODES``); see
     ``_claude_auth_env`` for the credential contract and for why subscription mode has
     to REMOVE the higher-precedence credential vars rather than just not set them.
     Subscription mode additionally requires that the isolated config carry no
@@ -798,7 +799,7 @@ def _v3_preflight(claude_bin):
 
 
 def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                  child_model="inherit", child_auth="api"):
+                  child_model="inherit", child_auth=API_AUTH_MODE):
     """Run the headless review for one PR and classify the outcome.
 
     ``tool`` selects the pipeline label and gates the v3 preflight: a ``deep-review-v3``

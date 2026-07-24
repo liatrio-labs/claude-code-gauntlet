@@ -14,13 +14,24 @@ children. It qualifies ``cost_usd``: Anthropic documents a subscription-served
 run's ``total_cost_usd`` as not relevant for billing purposes, so
 ``cost_is_billable`` below is the single gate every consumer (scoring, the
 dashboard) reads before letting a row's cost into a billable figure.
+
+This module is also the canonical home of the child-auth vocabulary itself
+(``AUTH_MODES`` and friends) and of the manifest -> ``auth_mode`` chain, so the
+CLI, the env assembly, the scorer and the dashboard all read one definition.
 """
 
 import json
 import os
 
+# The canonical child-auth vocabulary, defined once for the whole harness: the CLI's
+# ``--child-auth`` choices, the manifest's ``child_auth``, this row's ``auth_mode``, and
+# the credential branch in ``invoke.build_env`` are all these same two strings. It lives
+# here because ``auth_mode`` is the field that outlives a run, and because this module
+# imports nothing from the package -- every consumer can depend on it without a cycle.
+API_AUTH_MODE = "api"
 SUBSCRIPTION_AUTH_MODE = "subscription"
-DEFAULT_AUTH_MODE = "api"
+AUTH_MODES = (API_AUTH_MODE, SUBSCRIPTION_AUTH_MODE)
+DEFAULT_AUTH_MODE = API_AUTH_MODE
 
 # Required keys from spec H8's ledger row schema. Missing any -> ValueError.
 # ``auth_mode`` is deliberately absent: the ledger is append-only, and every row
@@ -51,6 +62,28 @@ def row_auth_mode(row):
     other way would retroactively strip cost from the whole ledger.
     """
     return row.get("auth_mode") or DEFAULT_AUTH_MODE
+
+
+def manifest_auth_mode(manifest):
+    """The auth mode a run's ``run.json`` describes.
+
+    ``run.py`` writes ``child_auth`` at the manifest top level and copies it into
+    ``env_fingerprint``; either is authoritative, top level first. One implementation
+    because two consumers must agree: the runner reads it to resume a run on the
+    credential it began with, and the scorer reads it to label the row those PRs' costs
+    are summed into -- disagreeing would resume on one credential and label the other.
+
+    A manifest carrying neither predates the ``--child-auth`` flag and therefore described
+    an API-keyed run. Anything unreadable (no dict, a non-dict fingerprint) reads the same
+    way rather than raising: this runs on the resume path, where a bad manifest is reported
+    on its own terms.
+    """
+    if not isinstance(manifest, dict):
+        return DEFAULT_AUTH_MODE
+    fingerprint = manifest.get("env_fingerprint")
+    if not isinstance(fingerprint, dict):
+        fingerprint = {}
+    return manifest.get("child_auth") or fingerprint.get("child_auth") or DEFAULT_AUTH_MODE
 
 
 def cost_is_billable(row):

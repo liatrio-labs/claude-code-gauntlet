@@ -42,7 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import checkpoint, invoke, mirrors  # noqa: E402
+from bench.runner import checkpoint, invoke, ledger, mirrors  # noqa: E402
 from bench.runner.costs import parse_costs  # noqa: E402
 
 # Workspace layout (all under bench/workspace/, gitignored). Referenced as module
@@ -55,10 +55,6 @@ ENV_PATH = REPO_ROOT / "bench" / ".env"
 FIXTURE_PATH = GOLDEN_DIR / "review_md_fixture.md"
 
 MIN_FREE_GB = 10
-
-# Which credential a new run's review children spend when --child-auth is not given.
-# Must name a member of invoke.CHILD_AUTH_MODES.
-DEFAULT_CHILD_AUTH = "api"
 
 # `--tier subset` maps to the 15-PR gate subset; `full` is every shas.json key.
 # `--tier mini` is the 6-PR pre-registered paired-measurement cut (subset of gate).
@@ -213,7 +209,7 @@ def _free_gb(path):
 
 
 def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
-                  child_auth="api", env=None):
+                  child_auth=ledger.API_AUTH_MODE, env=None):
     """Return a list of one-line, actionable failure messages (empty == all prereqs met).
 
     ``child_auth`` swaps the credential prerequisite and nothing else. ``subscription``
@@ -254,7 +250,7 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
         if result.returncode != 0:
             failures.append("`gh auth status` failed -- run `gh auth login` to authenticate.")
 
-    if child_auth == "subscription":
+    if child_auth == ledger.SUBSCRIPTION_AUTH_MODE:
         # bench/.env before ambient, the precedence _claude_auth_env applies.
         #
         # Both messages spell the var name out instead of interpolating the invoke
@@ -315,7 +311,7 @@ def _judge_key_note(env_path, child_auth, env=None):
     Mirrors ``score._judge_api_key``'s resolution (ambient first, then ``bench/.env``) as
     an existence question only -- no credential value is read into this process.
     """
-    if child_auth != "subscription":
+    if child_auth != ledger.SUBSCRIPTION_AUTH_MODE:
         return None
     env = os.environ if env is None else env
     for name in ("BENCH_JUDGE_API_KEY", "ANTHROPIC_API_KEY"):
@@ -473,7 +469,7 @@ def _naive_payload_from_result(result_text, pr_dir):
 
 
 def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
-                  child_auth="api"):
+                  child_auth=ledger.API_AUTH_MODE):
     """Run the bare single-pass anchor review; return an :class:`invoke.InvokeResult`.
 
     Reuses the invoke layer's public building blocks (``build_env`` for the identical
@@ -571,7 +567,8 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
 
 
 def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-             tool="deep-review-v3", child_model="inherit", child_auth="api"):
+             tool="deep-review-v3", child_model="inherit",
+             child_auth=ledger.API_AUTH_MODE):
     """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
 
     ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
@@ -737,22 +734,23 @@ def _resolve_child_auth(child_auth):
     ``child_auth`` means the flag was not passed, the same sentinel ``_resolve_child_model``
     uses. Resuming an existing run goes through ``_child_auth_for`` instead.
     """
-    return child_auth if child_auth is not None else DEFAULT_CHILD_AUTH
+    return child_auth if child_auth is not None else ledger.DEFAULT_AUTH_MODE
 
 
 def _recorded_child_auth(run_id):
     """The mode ``run_id``'s manifest committed to, or None when there is none to honour.
 
-    An existing ``run.json`` without ``child_auth`` predates the flag and therefore spent
-    the metered key, so it reads as ``DEFAULT_CHILD_AUTH`` -- NOT as "unset". The
-    ``env_fingerprint`` copy is the same fallback chain ``score._auth_mode`` reads, so the
-    mode a run is resumed on cannot diverge from the ``auth_mode`` its ledger row gets.
+    The manifest chain itself is ``ledger.manifest_auth_mode`` -- the same read the scorer
+    labels the row with, so the credential a run is resumed on cannot diverge from the
+    ``auth_mode`` its costs are recorded under. What this adds is the distinction that
+    chain cannot make: whether there was a manifest to consult at all.
 
-    None means "nothing recorded to honour", for two distinct states that both leave the
-    choice to the flag: no manifest at all (``_make_run_dir`` created the dir but the
-    process died before ``_write_manifest``, which happens before the first PR is invoked,
-    so no credential has been spent), and an unreadable one (nothing can be claimed about
-    what it recorded; ``_resume`` fails on it independently).
+    None means "nothing recorded to honour", for two states that both leave the choice to
+    the flag: no manifest (``_make_run_dir`` created the dir but the process died before
+    ``_write_manifest``, which runs before the first PR, so no credential was spent), and
+    an unreadable one (nothing can be claimed about what it recorded; ``_resume`` reports
+    that on its own terms). A manifest that merely lacks the field is different: it
+    predates the flag and so really did spend the metered key.
     """
     path = RUNS_ROOT / run_id / "run.json"
     if not path.is_file():
@@ -763,9 +761,7 @@ def _recorded_child_auth(run_id):
         return None
     if not isinstance(manifest, dict):
         return None
-    fingerprint = manifest.get("env_fingerprint")
-    fingerprint = fingerprint if isinstance(fingerprint, dict) else {}
-    return manifest.get("child_auth") or fingerprint.get("child_auth") or DEFAULT_CHILD_AUTH
+    return ledger.manifest_auth_mode(manifest)
 
 
 def _child_auth_for(args, run_id=None):
@@ -1021,7 +1017,7 @@ def parse_args(argv=None):
     # own prerequisites -- an OAuth token and no apiKeyHelper, see check_prereqs -- and
     # its runs are not cost-comparable with API-keyed ones; bench/README.md has the detail.
     parser.add_argument(
-        "--child-auth", choices=list(invoke.CHILD_AUTH_MODES), default=None,
+        "--child-auth", choices=list(ledger.AUTH_MODES), default=None,
         dest="child_auth",
         help="credential for the review children: the metered bench/.env key (default) "
         "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
