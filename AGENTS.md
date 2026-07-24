@@ -39,6 +39,30 @@ committed via `[skip ci]`, so its release commits bypass CI and can reintroduce 
 (e.g. consecutive blank lines) that only surface later on a PR's full-repo `pre-commit run
 --all-files`. If that happens, commit the auto-fixed `CHANGELOG.md` alongside your change.
 
+`pre-commit run --all-files` means **all git-tracked files**, not all files on disk. A file you
+just created is invisible to every hook until you `git add` it, so a new doc can pass locally and
+then fail cspell or markdownlint in CI the moment it is committed — this is exactly how a new
+`SECURITY.md` reached a PR with three unknown words. `git add` new files before you trust a green
+lint run.
+
+### Contribution surface (issue forms, labels) — what cannot be tested pre-merge
+
+`tests/test_contribution_surface.py` covers what is checkable offline: issue-form schema, the
+label taxonomy in `.github/labels.json`, `bug_report.yml`'s phase list against README's
+Architecture section, and the CI-gate commands quoted in `CONTRIBUTING.md`. Two things it cannot
+reach, both of which need work sequenced *after* a merge and by someone with write access:
+
+- **GitHub serves issue forms from the default branch only.** A change under
+  `.github/ISSUE_TEMPLATE/` cannot be exercised through the real form until it lands on `main`;
+  the new-issue page keeps rendering the old form until then. Any plan that puts a form
+  submission test before the merge is mis-ordered. This matters because an invalid form does not
+  error — GitHub refuses to render it, silently.
+- **Labels must exist in the repo before a form can apply one.** GitHub drops an unknown
+  issue-form label without reporting it, so the manifest has to be synced with
+  `python3 .github/labels_diff.py --commands --repo <owner>/<repo>` (a write; a read-only token
+  cannot do it) and then confirmed with `--live -` or the `workflow_dispatch` "Verify Label
+  Taxonomy" workflow. See `docs/maintainer-issues.md`.
+
 ### Full product E2E (needs external access — usually unavailable in cloud)
 
 A real review run (`/code-gauntlet`) requires the **Claude Code CLI** (`claude`) with the
