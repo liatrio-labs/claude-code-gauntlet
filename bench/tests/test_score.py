@@ -26,6 +26,7 @@ from bench.runner.score import (  # noqa: E402
     resolve_judge_pin,
     score_run,
 )
+from bench.runner import ledger  # noqa: E402
 from bench.runner.ledger import REQUIRED_KEYS  # noqa: E402
 
 
@@ -592,6 +593,69 @@ class ToolLabelTests(unittest.TestCase):
         )
 
 
+class AuthModeTests(unittest.TestCase):
+    """The ledger row records which credential served the review children.
+
+    ``cost_usd``/``tokens_total`` are the envelope's own figures in every mode --
+    a subscription run's cost is documented as not relevant for billing, but the
+    ledger's job is to LABEL it, not to rewrite it. Zeroing or scaling the figure
+    here would silently destroy the only record of what the run consumed.
+    """
+
+    METRICS = {
+        "n_prs": 1, "golden_recall": 0.0, "valid_extra_rate": 0.0,
+        "noise_rate": 0.0, "precision_strict": 0.0, "f1_strict": 0.0,
+        "per_bucket": {}, "per_dimension": {}, "drift": {},
+    }
+    COSTS = {"tokens_total": 4321, "cost_usd": 27.0, "per_model": {}}
+
+    def _row(self, manifest):
+        return score._build_ledger_row(
+            "/tmp/r", self.METRICS, self.COSTS, manifest, "pin", "pin", "sha"
+        )
+
+    def test_reads_the_shared_manifest_chain(self):
+        # The manifest -> mode chain itself is pinned in test_ledger.py; what matters here
+        # is that the row writer reads THAT one, not a copy of it, so a resumed run and
+        # its ledger row can never disagree about which credential was spent.
+        self.assertIs(score.manifest_auth_mode, ledger.manifest_auth_mode)
+
+    def test_row_carries_manifest_mode(self):
+        row = self._row({"run_id": "r", "tier": "smoke", "child_auth": "subscription"})
+        self.assertEqual(row["auth_mode"], "subscription")
+
+    def test_row_carries_fingerprint_mode(self):
+        row = self._row(
+            {"run_id": "r", "tier": "smoke", "env_fingerprint": {"child_auth": "subscription"}}
+        )
+        self.assertEqual(row["auth_mode"], "subscription")
+
+    def test_row_defaults_to_api(self):
+        row = self._row({"run_id": "r", "tier": "smoke"})
+        self.assertEqual(row["auth_mode"], "api")
+
+    def test_cost_and_tokens_are_recorded_verbatim_in_both_modes(self):
+        api = self._row({"run_id": "r", "tier": "smoke", "child_auth": "api"})
+        sub = self._row({"run_id": "r", "tier": "smoke", "child_auth": "subscription"})
+        self.assertEqual(sub["cost_usd"], self.COSTS["cost_usd"])
+        self.assertEqual(sub["tokens_total"], self.COSTS["tokens_total"])
+        self.assertEqual(sub["cost_usd"], api["cost_usd"])
+        self.assertEqual(sub["tokens_total"], api["tokens_total"])
+
+    def test_mode_read_from_run_json(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        run_dir = Path(tmp.name)
+
+        write_json(run_dir / "run.json", {"run_id": "smoke-x", "child_auth": "subscription"})
+        row = self._row(score._read_run_manifest(run_dir))
+        self.assertEqual(row["auth_mode"], "subscription")
+
+        write_json(run_dir / "run.json", {"run_id": "smoke-x"})  # pre-flag manifest
+        row = self._row(score._read_run_manifest(run_dir))
+        self.assertEqual(row["auth_mode"], "api")
+
+
 class ScoreRunEndToEndTests(unittest.TestCase):
     """One fully wired run: scorer + adjudicator injected, no network."""
 
@@ -747,6 +811,7 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         self.assertEqual(row["tokens_total"], 250)  # 150 + 100
         self.assertEqual(row["tier"], "subset")
         self.assertEqual(row["tool"], "deep-review-v2")  # no anchor manifest -> v2 label
+        self.assertEqual(row["auth_mode"], "api")  # no manifest -> API-keyed default
         self.assertEqual(row["judge_pin"], self.pin)
         self.assertEqual(row["scorer_sha"], "dfc6cb42")
         self.assertEqual(row["envelope"]["cap"], 25)

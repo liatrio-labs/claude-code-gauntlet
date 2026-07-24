@@ -67,7 +67,7 @@ class InvokeTestBase(unittest.TestCase):
         return bindir
 
     def _run(self, mode, timeout_s=30, extra_env=None, tool="deep-review-v3",
-             child_model="inherit"):
+             child_model="inherit", child_auth="api"):
         bindir = self.install_fake()
         overrides = {
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
@@ -78,7 +78,7 @@ class InvokeTestBase(unittest.TestCase):
         with patched_environ(**overrides):
             return invoke_review(
                 self.worktree, PR, self.run_dir, timeout_s=timeout_s, tool=tool,
-                child_model=child_model,
+                child_model=child_model, child_auth=child_auth,
             )
 
 
@@ -283,6 +283,313 @@ class BuildEnvDotenvTest(InvokeTestBase):
         self._use_env_file("ANTHROPIC_API_KEY=\n")
         env = build_env(PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"})
         self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-ambient")
+
+
+# ------------------------------------------------------------------ child auth mode
+
+
+class BuildEnvChildAuthTest(InvokeTestBase):
+    """build_env's ``child_auth`` mode is the single auth branch point for the child.
+
+    ``api`` (the default) must stay behaviourally identical to the pre-mode harness --
+    every recorded run and every paired leg of record depends on that. ``subscription``
+    must actually reach the subscription: the documented precedence chain puts cloud
+    providers, ANTHROPIC_AUTH_TOKEN, ANTHROPIC_API_KEY and an apiKeyHelper all ABOVE
+    CLAUDE_CODE_OAUTH_TOKEN, and the child inherits the full parent env -- so any one of
+    them left in place silently bills the API key while the operator believes the run is
+    on subscription capacity. These tests pin the strip and the token precedence.
+    """
+
+    def _use_env_file(self, text):
+        path = Path(self.tmp) / "bench.env"
+        path.write_text(text)
+        saved = invoke.ENV_PATH
+        invoke.ENV_PATH = path
+        self.addCleanup(setattr, invoke, "ENV_PATH", saved)
+        return path
+
+    def _use_missing_env(self):
+        saved = invoke.ENV_PATH
+        invoke.ENV_PATH = Path(self.tmp) / "does-not-exist.env"
+        self.addCleanup(setattr, invoke, "ENV_PATH", saved)
+
+    def test_mode_constants(self):
+        # The mode names are the ledger's vocabulary, imported rather than restated -- see
+        # test_ledger.py for the canonical definition and its drift guards.
+        self.assertEqual(invoke.AUTH_MODES, ("api", "subscription"))
+        self.assertEqual(invoke.OAUTH_TOKEN_VAR, "CLAUDE_CODE_OAUTH_TOKEN")
+        self.assertEqual(
+            invoke._OUTRANKING_CREDENTIAL_VARS,
+            (
+                "CLAUDE_CODE_USE_BEDROCK",
+                "CLAUDE_CODE_USE_VERTEX",
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_API_KEY",
+            ),
+        )
+
+    def test_api_is_the_default_mode(self):
+        self._use_env_file("ANTHROPIC_API_KEY=sk-from-dotenv\n")
+        base = {"PATH": "/x/y", "HOME": str(self.tmp)}
+        self.assertEqual(
+            build_env(PR, self.run_dir, base),
+            build_env(PR, self.run_dir, base, child_auth="api"),
+        )
+
+    def test_api_mode_keeps_ambient_oauth_token_and_injects_dotenv_key(self):
+        # api mode strips nothing: an operator with a subscription token exported for
+        # their own shell must still get exactly today's child env.
+        self._use_env_file("ANTHROPIC_API_KEY=sk-from-dotenv\n")
+        env = build_env(
+            PR, self.run_dir, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
+            child_auth="api",
+        )
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oat-ambient")
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "sk-from-dotenv")
+
+    def test_subscription_does_not_inject_dotenv_api_key(self):
+        self._use_env_file(
+            "ANTHROPIC_API_KEY=sk-from-dotenv\nCLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n"
+        )
+        env = build_env(PR, self.run_dir, {}, child_auth="subscription")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_subscription_strips_ambient_anthropic_api_key(self):
+        self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        env = build_env(
+            PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"},
+            child_auth="subscription",
+        )
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_subscription_strips_ambient_anthropic_auth_token(self):
+        self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        env = build_env(
+            PR, self.run_dir, {"ANTHROPIC_AUTH_TOKEN": "at-ambient"},
+            child_auth="subscription",
+        )
+        self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
+
+    def test_subscription_strips_bedrock_switch(self):
+        self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        env = build_env(
+            PR, self.run_dir, {"CLAUDE_CODE_USE_BEDROCK": "1"},
+            child_auth="subscription",
+        )
+        self.assertNotIn("CLAUDE_CODE_USE_BEDROCK", env)
+
+    def test_subscription_strips_vertex_switch(self):
+        self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        env = build_env(
+            PR, self.run_dir, {"CLAUDE_CODE_USE_VERTEX": "1"},
+            child_auth="subscription",
+        )
+        self.assertNotIn("CLAUDE_CODE_USE_VERTEX", env)
+
+    def test_subscription_token_from_dotenv(self):
+        self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        env = build_env(PR, self.run_dir, {}, child_auth="subscription")
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oat-dotenv")
+
+    def test_subscription_token_from_ambient_when_dotenv_has_none(self):
+        self._use_missing_env()
+        env = build_env(
+            PR, self.run_dir, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
+            child_auth="subscription",
+        )
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oat-ambient")
+
+    def test_subscription_dotenv_token_wins_over_ambient(self):
+        # One rule for bench/.env, mirroring ANTHROPIC_API_KEY: the file is authoritative.
+        self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        env = build_env(
+            PR, self.run_dir, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
+            child_auth="subscription",
+        )
+        self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oat-dotenv")
+
+    def test_subscription_without_any_token_raises(self):
+        self._use_missing_env()
+        with self.assertRaises(RuntimeError) as ctx:
+            build_env(PR, self.run_dir, {}, child_auth="subscription")
+        message = str(ctx.exception)
+        # The message spells the var name out literally (it reaches stderr and the
+        # checkpoint detail, and a credential-named identifier flowing into either is
+        # what a scanner reports as clear-text exposure), so assert against the constant
+        # the lookup uses -- that is what keeps the two spellings from drifting.
+        self.assertIn(invoke.OAUTH_TOKEN_VAR, message)
+        self.assertIn("claude setup-token", message)
+
+    def test_error_message_never_carries_a_credential(self):
+        # An unknown mode must not turn the base env into a leak channel.
+        self._use_env_file("ANTHROPIC_API_KEY=sk-from-dotenv\n")
+        with self.assertRaises(ValueError) as ctx:
+            build_env(
+                PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"},
+                child_auth="oauth",
+            )
+        message = str(ctx.exception)
+        self.assertIn("oauth", message)
+        self.assertIn("subscription", message)
+        self.assertNotIn("sk-ambient", message)
+        self.assertNotIn("sk-from-dotenv", message)
+
+    def test_unknown_mode_raises_value_error(self):
+        with self.assertRaises(ValueError):
+            build_env(PR, self.run_dir, {}, child_auth="")
+
+    def test_subscription_keeps_the_isolated_home_and_gh_auth(self):
+        # The auth mode changes credentials only -- the S7 isolation and the gh
+        # re-pointing must be identical in both modes.
+        self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        home = Path(self.tmp) / "realhome"
+        (home / ".config" / "gh").mkdir(parents=True)
+        env = build_env(
+            PR, self.run_dir, {"HOME": str(home), "GH_TOKEN": "ght"},
+            child_auth="subscription",
+        )
+        workspace = self.run_dir.resolve().parent.parent
+        self.assertEqual(env["HOME"], str(workspace / "claude-home"))
+        self.assertEqual(env["GH_CONFIG_DIR"], str(home / ".config" / "gh"))
+        self.assertEqual(env["GH_TOKEN"], "ght")
+
+
+# ------------------------------------------------------------------- claude home
+
+
+class ResolveClaudeHomeTest(InvokeTestBase):
+    """The isolated claude home has exactly one derivation.
+
+    ``check_prereqs`` must inspect the very dir ``build_env`` will hand the child --
+    an apiKeyHelper in a settings file the preflight never looked at would outrank the
+    OAuth token at runtime. So the public helper and ``_claude_home`` share one rule,
+    and ``_claude_home``'s existing behaviour is unchanged.
+    """
+
+    def test_workspace_relative_default(self):
+        workspace = Path(self.tmp) / "workspace"
+        self.assertEqual(
+            invoke.resolve_claude_home(workspace, {}), workspace / "claude-home"
+        )
+
+    def test_bench_claude_home_override_wins(self):
+        workspace = Path(self.tmp) / "workspace"
+        override = Path(self.tmp) / "elsewhere"
+        self.assertEqual(
+            invoke.resolve_claude_home(workspace, {"BENCH_CLAUDE_HOME": str(override)}),
+            override,
+        )
+
+    def test_claude_home_still_derives_from_run_dir(self):
+        workspace = self.run_dir.resolve().parent.parent
+        self.assertEqual(
+            invoke._claude_home(self.run_dir, {}), workspace / "claude-home"
+        )
+
+    def test_claude_home_still_honors_the_override(self):
+        override = Path(self.tmp) / "elsewhere"
+        self.assertEqual(
+            invoke._claude_home(self.run_dir, {"BENCH_CLAUDE_HOME": str(override)}),
+            override,
+        )
+
+
+class ApiKeyHelperSourcesTest(InvokeTestBase):
+    """An ``apiKeyHelper`` in the isolated config outranks CLAUDE_CODE_OAUTH_TOKEN.
+
+    Unlike an env var it cannot be stripped from the child env, so preflight has to
+    refuse the run instead. The inspection runs on every prereq check, including runs
+    with no claude home at all, so a missing dir, an unreadable file or corrupt JSON
+    must read as "no helper" rather than crashing the harness.
+    """
+
+    def _config_dir(self):
+        path = Path(self.tmp) / "home" / "config"
+        path.mkdir(parents=True)
+        return path
+
+    def test_missing_dir_is_empty(self):
+        self.assertEqual(
+            invoke.api_key_helper_files(Path(self.tmp) / "no-such-home"), []
+        )
+
+    def test_settings_without_the_key_is_empty(self):
+        cfg = self._config_dir()
+        (cfg / "settings.json").write_text(json.dumps({"model": "opus"}))
+        self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
+
+    def test_empty_helper_value_is_empty(self):
+        cfg = self._config_dir()
+        (cfg / "settings.json").write_text(json.dumps({"apiKeyHelper": "   "}))
+        self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
+
+    def test_corrupt_json_is_empty(self):
+        cfg = self._config_dir()
+        (cfg / "settings.json").write_text("{not json")
+        self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
+
+    def test_non_object_json_is_empty(self):
+        cfg = self._config_dir()
+        (cfg / "settings.json").write_text(json.dumps(["apiKeyHelper"]))
+        self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
+
+    def test_unreadable_file_is_empty(self):
+        cfg = self._config_dir()
+        (cfg / "settings.json").mkdir()  # a dir where a file is expected: OSError on read
+        self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
+
+    def test_finds_helper_in_settings_json(self):
+        cfg = self._config_dir()
+        path = cfg / "settings.json"
+        path.write_text(json.dumps({"apiKeyHelper": "/bin/echo sk-x"}))
+        self.assertEqual(invoke.api_key_helper_files(cfg.parent), [str(path)])
+
+    def test_finds_helper_in_settings_local_json(self):
+        cfg = self._config_dir()
+        path = cfg / "settings.local.json"
+        path.write_text(json.dumps({"apiKeyHelper": "/bin/echo sk-x"}))
+        self.assertEqual(invoke.api_key_helper_files(cfg.parent), [str(path)])
+
+    def test_both_files_reported_sorted(self):
+        cfg = self._config_dir()
+        (cfg / "settings.json").write_text(json.dumps({"apiKeyHelper": "a"}))
+        (cfg / "settings.local.json").write_text(json.dumps({"apiKeyHelper": "b"}))
+        self.assertEqual(
+            invoke.api_key_helper_files(cfg.parent),
+            sorted([str(cfg / "settings.json"), str(cfg / "settings.local.json")]),
+        )
+
+    def test_public_name_keeps_its_return_value_de_classified(self):
+        # check_prereqs prints this function's return value, to name the offending file. A
+        # static analyser's credential heuristic matches the "api?key" in the name and then
+        # reads what it returns as a printed credential -- unless the name also carries the
+        # heuristic's own de-classifier for a filename. Renaming away from files/paths
+        # brings back a false clear-text-logging alert on the prereq output.
+        self.assertRegex(invoke.api_key_helper_files.__name__, r"file|path")
+
+    def test_dot_claude_under_the_home_is_also_inspected(self):
+        # BENCH_CLAUDE_HOME can point at a home that is not bench-created, and the CLI
+        # reads user settings from the HOME-relative .claude dir when CLAUDE_CONFIG_DIR
+        # is not what it resolves. Scanning both is fail-closed: the only outcome is a
+        # refusal, and the bench-created home has neither file.
+        home = Path(self.tmp) / "home"
+        dot_claude = home / ".claude"
+        dot_claude.mkdir(parents=True)
+        path = dot_claude / "settings.json"
+        path.write_text(json.dumps({"apiKeyHelper": "/bin/echo sk-x"}))
+        self.assertEqual(invoke.api_key_helper_files(home), [str(path)])
+
+    def test_helpers_from_both_dirs_are_reported_together(self):
+        cfg = self._config_dir()
+        home = cfg.parent
+        (home / ".claude").mkdir()
+        config_path = cfg / "settings.json"
+        home_path = home / ".claude" / "settings.local.json"
+        config_path.write_text(json.dumps({"apiKeyHelper": "a"}))
+        home_path.write_text(json.dumps({"apiKeyHelper": "b"}))
+        self.assertEqual(
+            invoke.api_key_helper_files(home), sorted([str(config_path), str(home_path)])
+        )
 
 
 # --------------------------------------------------------------------------- costs
@@ -704,6 +1011,111 @@ class ChildModelCommandTest(InvokeTestBase):
         res = self._run("ok", child_model="inherit", extra_env=env)
         self.assertEqual(res.status, "ok")
         self.assertNotIn("--model", argv_file.read_text().splitlines())
+
+
+class InvokeReviewChildAuthTest(InvokeTestBase):
+    """invoke_review is a pass-through for the auth mode.
+
+    build_env owns the whole credential decision; invoke_review must not re-derive or
+    default it, or a subscription run would silently fall back to the metered key.
+    """
+
+    @contextlib.contextmanager
+    def _build_env_spy(self):
+        seen = {}
+        real = invoke.build_env
+
+        def spy(pr, run_dir, base_env, child_auth="api"):
+            seen["child_auth"] = child_auth
+            # Run the real assembly in api mode: this test is about the plumbing, and
+            # no live subscription token exists here.
+            return real(pr, run_dir, base_env)
+
+        with patch.object(invoke, "build_env", spy):
+            yield seen
+
+    def test_forwards_explicit_child_auth(self):
+        with self._build_env_spy() as seen:
+            res = self._run("ok", child_auth="subscription")
+        self.assertEqual(res.status, "ok")
+        self.assertEqual(seen["child_auth"], "subscription")
+
+    def test_defaults_to_api(self):
+        with self._build_env_spy() as seen:
+            bindir = self.install_fake()
+            overrides = {
+                "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
+                "FAKE_CLAUDE_MODE": "ok",
+            }
+            with patched_environ(**overrides):
+                res = invoke_review(self.worktree, PR, self.run_dir, timeout_s=30)
+        self.assertEqual(res.status, "ok")
+        self.assertEqual(seen["child_auth"], "api")
+
+
+class ChildProcessCredentialEnvTest(InvokeTestBase):
+    """What the CHILD process actually received, across the subprocess boundary.
+
+    Every other auth test inspects ``build_env``'s return value, which proves the dict is
+    right but not that the dict is what ``claude`` runs with. This mode's whole promise is
+    that the metered key never reaches the child, so the fake records its own view of the
+    credential vars (presence only -- never values) and the assertions read that.
+    """
+
+    POLLUTED = {
+        "ANTHROPIC_API_KEY": "sk-ambient-should-not-arrive",
+        "ANTHROPIC_AUTH_TOKEN": "at-ambient-should-not-arrive",
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+        "CLAUDE_CODE_USE_VERTEX": "1",
+        "CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient",
+    }
+
+    def setUp(self):
+        super().setUp()
+        # No bench/.env: the ambient values above are then the only credential source, so
+        # the assertions describe exactly what the mode did with them.
+        saved = invoke.ENV_PATH
+        invoke.ENV_PATH = Path(self.tmp) / "absent.env"
+        self.addCleanup(setattr, invoke, "ENV_PATH", saved)
+        self.env_file = Path(self.tmp) / "child-credentials.json"
+
+    def _child_saw(self, child_auth):
+        result = self._run(
+            "ok",
+            extra_env={**self.POLLUTED, "FAKE_CLAUDE_ENV_FILE": str(self.env_file)},
+            child_auth=child_auth,
+        )
+        self.assertEqual(result.status, "ok", result.reason)
+        return json.loads(self.env_file.read_text())
+
+    # Spelled out rather than read from invoke._OUTRANKING_CREDENTIAL_VARS: a test that
+    # iterates the list it is checking passes vacuously the moment that list is emptied,
+    # which is exactly the regression it exists to catch.
+    MUST_NOT_REACH_CHILD = (
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+    )
+
+    def test_subscription_child_receives_only_the_oauth_token(self):
+        saw = self._child_saw("subscription")
+        self.assertTrue(saw["CLAUDE_CODE_OAUTH_TOKEN"])
+        for name in self.MUST_NOT_REACH_CHILD:
+            self.assertFalse(saw[name], "{} reached the child".format(name))
+
+    def test_the_strip_list_covers_every_var_this_test_names(self):
+        # Keeps the hardcoded list above honest in the other direction: if the chain grows
+        # a source, the production constant and this test must both learn about it.
+        self.assertEqual(
+            sorted(invoke._OUTRANKING_CREDENTIAL_VARS), sorted(self.MUST_NOT_REACH_CHILD)
+        )
+
+    def test_api_child_receives_the_ambient_key(self):
+        # The mirror image, from the same harness: api mode passes the key through, so a
+        # false pass in the test above would have to survive this one too.
+        saw = self._child_saw("api")
+        self.assertTrue(saw["ANTHROPIC_API_KEY"])
 
 
 if __name__ == "__main__":

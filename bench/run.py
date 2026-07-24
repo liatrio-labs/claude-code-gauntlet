@@ -42,7 +42,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import checkpoint, invoke, mirrors  # noqa: E402
+from bench.runner import checkpoint, invoke, ledger, mirrors  # noqa: E402
 from bench.runner.costs import parse_costs  # noqa: E402
 
 # Workspace layout (all under bench/workspace/, gitignored). Referenced as module
@@ -208,10 +208,24 @@ def _free_gb(path):
     return shutil.disk_usage(str(probe)).free / (1024 ** 3)
 
 
-def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB):
-    """Return a list of one-line, actionable failure messages (empty == all prereqs met)."""
+def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
+                  child_auth=ledger.API_AUTH_MODE, env=None):
+    """Return a list of one-line, actionable failure messages (empty == all prereqs met).
+
+    ``child_auth`` swaps the credential prerequisite and nothing else. ``subscription``
+    drops the metered-key requirement outright -- that key is deliberately not in play --
+    and demands instead a ``CLAUDE_CODE_OAUTH_TOKEN`` plus an isolated config carrying no
+    ``apiKeyHelper``: the helper outranks the token and, living in a settings file rather
+    than the env, is the one over-ranking source ``build_env`` cannot strip (see
+    ``invoke.api_key_helper_files``). It deliberately imposes no judge-key requirement:
+    scoring is a separate step that resolves its own key and fails loud on its own, and
+    the mode's primary use is a ``--check`` functional smoke, which never runs the judge.
+    ``env`` defaults to ``os.environ`` (the same late binding ``score._judge_api_key``
+    uses, so a caller can supply a fixed mapping without a mutable default).
+    """
     env_path = Path(env_path if env_path is not None else ENV_PATH)
     workspace_dir = Path(workspace_dir if workspace_dir is not None else WORKSPACE)
+    env = os.environ if env is None else env
     failures = []
 
     claude_bin = shutil.which("claude")
@@ -236,7 +250,31 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB):
         if result.returncode != 0:
             failures.append("`gh auth status` failed -- run `gh auth login` to authenticate.")
 
-    if not _read_env_key(env_path, "ANTHROPIC_API_KEY"):
+    if child_auth == ledger.SUBSCRIPTION_AUTH_MODE:
+        # bench/.env before ambient, the precedence _claude_auth_env applies.
+        #
+        # Both messages spell the var name out instead of interpolating the invoke
+        # constant: a credential-named identifier reaching a print is reported as
+        # clear-text logging even when only the NAME travels. Tests hold each literal
+        # against the constant its lookup uses, so the two cannot drift.
+        if not (_read_env_key(env_path, invoke.OAUTH_TOKEN_VAR)
+                or env.get(invoke.OAUTH_TOKEN_VAR)):
+            failures.append(
+                f"CLAUDE_CODE_OAUTH_TOKEN missing or empty in {env_path} and in the "
+                "environment -- run `claude setup-token` and add the token to bench/.env."
+            )
+        helper_files = invoke.api_key_helper_files(
+            invoke.resolve_claude_home(workspace_dir, env)
+        )
+        if helper_files:
+            failures.append(
+                "apiKeyHelper set in {files} -- it outranks CLAUDE_CODE_OAUTH_TOKEN, so "
+                "the child would authenticate with that key and never reach the "
+                "subscription; remove it or run --child-auth api.".format(
+                    files=", ".join(helper_files)
+                )
+            )
+    elif not _read_env_key(env_path, "ANTHROPIC_API_KEY"):
         failures.append(
             f"ANTHROPIC_API_KEY missing or empty in {env_path} -- "
             "copy bench/.env.example to bench/.env and add the metered key."
@@ -258,6 +296,32 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB):
         failures.append(f"Could not check free disk space for {workspace_dir}: {exc}")
 
     return failures
+
+
+def _judge_key_note(env_path, child_auth, env=None):
+    """A non-fatal note when a subscription run has no key the judge could later use.
+
+    Relaxing the ``ANTHROPIC_API_KEY`` requirement is the point of subscription mode -- the
+    review children genuinely do not need it, and the mechanical ``--check`` gate never
+    invokes the judge. But scoring still does, hours later and in a separate invocation, so
+    saying nothing here lets an operator finish a long leg and only then discover it is
+    unscoreable. A note rather than a failure: making it fatal would re-impose exactly the
+    requirement the mode exists to drop.
+
+    Mirrors ``score._judge_api_key``'s resolution (ambient first, then ``bench/.env``) as
+    an existence question only -- no credential value is read into this process.
+    """
+    if child_auth != ledger.SUBSCRIPTION_AUTH_MODE:
+        return None
+    env = os.environ if env is None else env
+    for name in ("BENCH_JUDGE_API_KEY", "ANTHROPIC_API_KEY"):
+        if env.get(name) or _read_env_key(env_path, name):
+            return None
+    return (
+        "NOTE: no BENCH_JUDGE_API_KEY or ANTHROPIC_API_KEY found. This subscription run "
+        "will complete and can be gated with --check, but scoring it (--score-only) needs "
+        "an API key for the judge."
+    )
 
 
 # ----------------------------------------------------------------------- naive anchor
@@ -404,7 +468,8 @@ def _naive_payload_from_result(result_text, pr_dir):
     return dest
 
 
-def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
+def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
+                  child_auth=ledger.API_AUTH_MODE):
     """Run the bare single-pass anchor review; return an :class:`invoke.InvokeResult`.
 
     Reuses the invoke layer's public building blocks (``build_env`` for the identical
@@ -412,9 +477,12 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
     (no --plugin-dir, pinned --max-turns, prompt via stdin) and watchdog. No config-echo
     check applies -- a no-plugin run prints no Headless config block -- and no dry-run
     payload is expected; naive candidates are extracted downstream from the raw output.
+
+    The anchor is a real ``claude`` invocation, so it needs credentialing exactly like
+    the skill path: ``child_auth`` goes to ``build_env``, which owns the whole decision.
     """
     worktree = Path(worktree).resolve()
-    env = invoke.build_env(pr, run_dir, os.environ)
+    env = invoke.build_env(pr, run_dir, os.environ, child_auth=child_auth)
     pr_dir = Path(run_dir) / invoke.pr_dir_name(pr)
     pr_dir.mkdir(parents=True, exist_ok=True)
     raw_path = pr_dir / "raw-naive.json"
@@ -499,13 +567,16 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
 
 
 def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-             tool="deep-review-v3", child_model="inherit"):
+             tool="deep-review-v3", child_model="inherit",
+             child_auth=ledger.API_AUTH_MODE):
     """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
 
     ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
     ``invoke.invoke_review`` so v3 can preflight the child CLI version; it is ignored on
     the ``--anchor naive`` path, which does not run the skill. ``child_model`` is the
     resolved child-session model pin, likewise forwarded to the skill path only.
+    ``child_auth`` goes to BOTH paths -- the naive anchor shells out to ``claude`` through
+    the same ``build_env``, so it spends whichever credential the mode selects.
 
     Returns ``{"counts": {status: n}, "drifted": [(url, reason), ...]}``. A DriftError
     marks the PR ``drifted`` (never scored) and the run continues to the next PR.
@@ -583,12 +654,13 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             )
             if is_naive:
                 result = _invoke_naive(
-                    worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s
+                    worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s,
+                    child_auth=child_auth,
                 )
             else:
                 result = invoke.invoke_review(
                     worktree, pr, run_dir, timeout_s=timeout_s, tool=tool,
-                    child_model=child_model,
+                    child_model=child_model, child_auth=child_auth,
                 )
             _collect_artifacts(output_dir, pr_dir)
             if not is_naive:
@@ -653,9 +725,73 @@ def _resolve_child_model(tool, child_model):
     return "inherit"
 
 
+def _resolve_child_auth(child_auth):
+    """Effective child-auth mode for a NEW run: an explicit flag wins, else the API key.
+
+    ``api`` is the default because every run of record was produced that way and its cost
+    figures are only comparable against another API-keyed run, while ``subscription``
+    spends the operator's own capacity -- that has to be asked for, never inferred. A None
+    ``child_auth`` means the flag was not passed, the same sentinel ``_resolve_child_model``
+    uses. Resuming an existing run goes through ``_child_auth_for`` instead.
+    """
+    return child_auth if child_auth is not None else ledger.DEFAULT_AUTH_MODE
+
+
+def _recorded_child_auth(run_id):
+    """The mode ``run_id``'s manifest committed to, or None when there is none to honour.
+
+    The manifest chain itself is ``ledger.manifest_auth_mode`` -- the same read the scorer
+    labels the row with, so the credential a run is resumed on cannot diverge from the
+    ``auth_mode`` its costs are recorded under. What this adds is the distinction that
+    chain cannot make: whether there was a manifest to consult at all.
+
+    None means "nothing recorded to honour", for two states that both leave the choice to
+    the flag: no manifest (``_make_run_dir`` created the dir but the process died before
+    ``_write_manifest``, which runs before the first PR, so no credential was spent), and
+    an unreadable one (nothing can be claimed about what it recorded; ``_resume`` reports
+    that on its own terms). A manifest that merely lacks the field is different: it
+    predates the flag and so really did spend the metered key.
+    """
+    path = RUNS_ROOT / run_id / "run.json"
+    if not path.is_file():
+        return None
+    try:
+        manifest = _load_json(path)
+    except (ValueError, OSError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    return ledger.manifest_auth_mode(manifest)
+
+
+def _child_auth_for(args, run_id=None):
+    """The credential mode this invocation will actually spend.
+
+    The one place the resume precedence lives, because three callers must agree on it or
+    the run breaks: ``_resume`` (which spends the credential), ``main``'s preflight (which
+    validates it), and ``main``'s conflict guard. Preflighting the flag's default while
+    resuming a subscription run would demand a metered key the run does not use and skip
+    the token/apiKeyHelper checks it does; preflighting subscription for a run that then
+    spends the metered key is the same bug mirrored. So the resolution is read from disk
+    once here rather than from whatever the caller happens to hold -- ``_resume`` passes
+    only the id, never its own already-loaded manifest, so the two cannot drift apart.
+
+    A resumed run's own recorded mode always wins. ``main`` refuses an explicit flag that
+    contradicts it rather than ignoring it, because unlike the ``tool``/``child_model``
+    labels this decides which credential is charged: honouring the flag would let
+    ``--retry-failed X --child-auth subscription`` bill the remaining PRs the other way
+    while the single ledger row can only carry one ``auth_mode``.
+    """
+    run_id = run_id or args.resume or args.retry_failed
+    recorded = _recorded_child_auth(run_id) if run_id else None
+    return recorded or _resolve_child_auth(args.child_auth)
+
+
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 CODE_GAUNTLET_* values
     env_fingerprint["timeout_s"] = timeout_s
+    child_auth = _resolve_child_auth(getattr(args, "child_auth", None))
+    env_fingerprint["child_auth"] = child_auth
     invocation = (
         "naive:single-pass max-turns={}".format(NAIVE_MAX_TURNS)
         if args.anchor == "naive"
@@ -678,6 +814,11 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
             None if args.anchor == "naive"
             else _resolve_child_model(args.tool, args.child_model)
         ),
+        # Recorded for EVERY run, deliberately breaking the two fields above: a naive
+        # anchor still authenticates (_invoke_naive credentials its child through the same
+        # build_env), so a null here would leave the run's auth provenance -- and with it
+        # whether its cost is billable API spend -- unrecoverable at scoring time.
+        "child_auth": child_auth,
         "fidelity": args.fidelity,
         "invocation": invocation,
         "env_fingerprint": env_fingerprint,
@@ -687,6 +828,20 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         "prs": list(args.prs) if getattr(args, "prs", None) else None,
     }
     (Path(run_dir) / "run.json").write_text(json.dumps(manifest, indent=2))
+
+
+def _write_child_auth_stub(manifest_path, run_id, child_auth):
+    """Create a minimal ``run.json`` recording only which credential a resume spends.
+
+    For a run dir that never got a manifest, so the auth provenance survives to scoring and
+    to any later resume. Deliberately not a full manifest: everything else about the
+    original run is unknowable here, and the fields left out already default the same way
+    they do for a missing manifest (``score._tool_label``, ``_infer_tier``), so this adds
+    provenance without inventing history.
+    """
+    manifest_path.write_text(
+        json.dumps({"run_id": run_id, "child_auth": child_auth}, indent=2)
+    )
 
 
 def _print_summary(run_id, run_dir, urls, cp, summary):
@@ -730,6 +885,7 @@ def _new_run(args):
     summary = _run_prs(
         run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data,
         tool=args.tool, child_model=_resolve_child_model(args.tool, args.child_model),
+        child_auth=_resolve_child_auth(args.child_auth),
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -761,12 +917,27 @@ def _resume(run_id, args, retry):
     # the same model it began with; fall back to the per-tool default for pre-child_model
     # run.json files (or a naive run, whose None value is unused by the anchor path).
     child_model = manifest.get("child_model") or _resolve_child_model(args.tool, args.child_model)
+    # And again for the credential mode, where the stakes are higher than a label: letting
+    # a flag override the recorded mode would bill half a run's PRs one way and half the
+    # other, under a single ledger row that can only carry one auth_mode. Resolved from
+    # the run id, not the manifest loaded above, so this answer and the one main()
+    # preflighted come from the same read (main refuses a contradicting flag outright).
+    child_auth = _child_auth_for(args, run_id)
+    # A run dir with no run.json at all (killed between _make_run_dir and _write_manifest)
+    # has no mode to honour, so the flag above chose one -- and nothing would remember it:
+    # score would read no manifest, default auth_mode to api, and let subscription spend
+    # into billable figures, while a second resume could pick the other credential for the
+    # remaining PRs. Record what this resume is about to spend. Only ever creates the file:
+    # a manifest that merely lacks child_auth is not missing its provenance (predating the
+    # flag IS its provenance), and writing into it would mutate a historical record.
+    if not manifest_path.exists():
+        _write_child_auth_stub(manifest_path, run_id, child_auth)
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
     summary = _run_prs(
         run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-        tool=tool, child_model=child_model,
+        tool=tool, child_model=child_model, child_auth=child_auth,
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -864,6 +1035,16 @@ def parse_args(argv=None):
         help="model for the child orchestrator session "
         "(default: sonnet for deep-review-v3, inherit for deep-review-v2)",
     )
+    # Which credential the review children spend. None is the "not specified" sentinel
+    # (as for --child-model) so the manifest's mode wins on resume. subscription has its
+    # own prerequisites -- an OAuth token and no apiKeyHelper, see check_prereqs -- and
+    # its runs are not cost-comparable with API-keyed ones; bench/README.md has the detail.
+    parser.add_argument(
+        "--child-auth", choices=list(ledger.AUTH_MODES), default=None,
+        dest="child_auth",
+        help="credential for the review children: the metered bench/.env key (default) "
+        "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
+    )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument(
         "--check", metavar="RUN_ID", dest="check",
@@ -920,6 +1101,13 @@ def main(argv=None):
     if args.check:
         # --check inspects an existing run; combining it with new-run flags is always a
         # mistake (the flags would be silently ignored). Fail loud.
+        #
+        # The three per-run knobs -- --tool, --child-model, --child-auth -- are absent from
+        # this list on purpose. They describe how a run was produced, so --check and
+        # --score-only read them from the run's own manifest and never from the flags;
+        # passing one is redundant rather than contradictory, and neither mode invokes
+        # claude, so nothing is spent on the wrong credential. Adding them here would also
+        # break `--check` for anyone who keeps the flags in a shell alias.
         if args.tier or args.prs or args.anchor or args.runs != 1:
             print(
                 "--check does not accept --tier / --prs / --anchor / --runs "
@@ -929,12 +1117,31 @@ def main(argv=None):
             return 2
         return _check_only(args.check)
 
-    failures = check_prereqs()
+    child_auth = _child_auth_for(args)
+    # Only reachable on a resume, where the run's own recorded mode wins: for a new run
+    # the resolved mode IS the flag. Refusing beats silently ignoring the flag -- the
+    # operator asked to charge a different credential, and one run dir can only honour
+    # one (its per-PR envelope costs are summed into a single auth_mode-labelled row).
+    if args.child_auth is not None and args.child_auth != child_auth:
+        print(
+            "--child-auth {} contradicts the mode run {} recorded ({}) -- a run dir is "
+            "one credential. Resume without the flag, or start a new run.".format(
+                args.child_auth, args.resume or args.retry_failed, child_auth
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    failures = check_prereqs(child_auth=child_auth)
     if failures:
         print("bench/run.py: prerequisite checks failed (fix each and re-run):", file=sys.stderr)
         for failure in failures:
             print("  - " + failure, file=sys.stderr)
         return 2
+
+    note = _judge_key_note(ENV_PATH, child_auth)
+    if note:
+        print(note, file=sys.stderr)
 
     if args.resume:
         return _resume(args.resume, args, retry=False)

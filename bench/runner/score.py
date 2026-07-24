@@ -43,7 +43,7 @@ from bench.adjudicator.adjudicate import adjudicate as _adjudicate
 from bench.adjudicator.adjudicate import file_context, slice_hunk
 from bench.runner import invoke
 from bench.runner.costs import parse_costs
-from bench.runner.ledger import append_row
+from bench.runner.ledger import append_row, manifest_auth_mode
 
 __all__ = [
     "resolve_judge_pin",
@@ -733,6 +733,9 @@ def _build_ledger_row(run_dir, metrics, costs, manifest, pin, adjudicator_pin, s
         "tokens_total": costs["tokens_total"],
         "cost_usd": costs["cost_usd"],
         "per_model": costs["per_model"],
+        # The label only; cost_usd/tokens_total above are the envelope figures
+        # unchanged. ledger.cost_is_billable is what consumers read it through.
+        "auth_mode": manifest_auth_mode(manifest),
         "judge_pin": pin,
         "adjudicator_pin": adjudicator_pin,
         "scorer_sha": scorer_sha,

@@ -10,7 +10,10 @@ events — not the default gate for every change.
 
 ## Tier ladder
 
-| Tier | Slug | What | Trigger | Cost (ledger) | Purpose |
+Every cost below is `auth_mode=api` spend; see
+[Which tiers may run on subscription](#which-tiers-may-run-on-subscription).
+
+| Tier | Slug | What | Trigger | Cost (ledger, `auth_mode=api`) | Purpose |
 |------|------|------|---------|---------------|---------|
 | Always-on suites | `suites-only` | `pytest` (pipeline + `bench/tests/`) + `node --test workflows/test/*.test.js` + `pre-commit` | Every PR / every commit path | $0 | Deterministic correctness |
 | Functional smoke | `smoke` | `--tier smoke` (2–3 PRs) + mechanical checker | Per sub-release, run by the release manager | ~$21–$32 (mean ~$27; 16–22 min/PR) | "No bugs, functions correctly" — **not** performance proof |
@@ -25,13 +28,40 @@ Owner-triggered spend stays owner-triggered: this runbook documents readiness
 and protocol; it never schedules or auto-triggers spend, and no work issue
 gates on the owner running a measurement.
 
+## Which tiers may run on subscription
+
+`python3 bench/run.py --child-auth subscription` runs the review children on the
+owner's own Claude subscription capacity instead of the metered key, at no
+marginal cost. Mechanics, prerequisites, and cost-honesty rules:
+[`README.md` → Child auth modes](README.md#child-auth-modes).
+
+| Tier | Subscription? | Why |
+|------|---------------|-----|
+| Always-on suites | n/a | $0 already; no `claude` invocation |
+| Functional smoke | **Yes — recommended** | Mechanical pass/fail, not measurement; the recurring per-sub-release cost |
+| Dev iteration (`--prs`, `--anchor naive`) | **Yes** | Not of record |
+| Paired mini-subset | **No** | Of record: clean cost accounting, no throttle-induced timeouts mid-leg |
+| Full-15 / holdout | **No** | Same, at release grade |
+
+Caveat on the "yes" rows: what a subscription usage-limit hit looks like in bench terms
+is **not yet confirmed** — expected to surface as a per-PR watchdog `timeout`, recoverable
+with `--retry-failed`, but no live subscription smoke has run yet. The first one settles
+it and updates [`README.md` → Usage limits](README.md#usage-limits).
+
+Every ledger cost figure in this runbook is `auth_mode=api` spend. A
+`auth_mode=subscription` row's `cost_usd` is recorded but is not billable spend
+(Anthropic documents it as "not relevant for billing purposes"), so it is
+excluded from the dashboard's cost aggregates and must never be quoted here as a
+tier cost. A subscription leg is therefore not cost-comparable with an
+API-keyed one — which is the second reason of-record legs stay on `api`.
+
 ## Functional smoke (mechanical)
 
 Smoke recall is noise (0.0–0.75 swing across 14 smoke rows on ~4 goldens). The
 verdict is **mechanical**, never the judge:
 
 ```bash
-python3 bench/run.py --tier smoke
+python3 bench/run.py --tier smoke        # --child-auth subscription skips API spend (see caveat above)
 python3 bench/run.py --check <RUN_ID>
 ```
 
@@ -92,6 +122,8 @@ Mini-subset A `custom-20260723-102149-381e9ff` — recall 19/30 = 0.6333, noise
 
 From `bench/experiments.jsonl`:
 
+Rows with `auth_mode=subscription` are excluded — they are not API spend:
+
 ```text
 smoke:        $21.11–$32.04 across 14 runs (mean ~$27, 16–22 min/PR)
 mini-subset:  $84.18 (custom-20260723-070640-c1dd46f)
@@ -121,9 +153,19 @@ Holdout holdout-20260721-085348-eec15be (recall 0.7407, noise 0.2095):
 ```text
 code-simplifier malformed StructuredOutput (PR-310 one-off) — not reproduced:
 9 dispatches across the 3 V3.1 measured runs, zero events.
+
+subscription usage-limit stall — unclassified: a limit hit is expected to block
+until the window resets, which surfaces as a watchdog `timeout` and is therefore
+indistinguishable from a genuine hang. Deferred deliberately: classifying it as
+its own invalid reason needs a reliable transcript signature, and no subscription
+run has produced one yet. `--retry-failed` after the reset recovers either way.
 ```
 
 The code-simplifier watch-item drop relies on this fact surviving issue deletion.
+The subscription entry is here for the same reason: it is the one idea the
+`--child-auth` work deferred rather than built, and it would otherwise live only
+in a closed issue. The observed failure mode, once a run shows one, belongs in
+[`README.md` → Usage limits](README.md#usage-limits).
 
 ## Contributor rule
 

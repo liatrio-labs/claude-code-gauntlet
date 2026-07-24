@@ -18,18 +18,35 @@ import html
 import json
 import re
 import subprocess
+import sys
 from datetime import date, datetime
 from pathlib import Path
+
+BENCH_DIR = Path(__file__).resolve().parent
+# This module runs as a script (``python3 bench/report.py``), so the repo root is
+# not importable by default; the ledger helpers below are the one definition of
+# which costs are billable and must not be re-derived here.
+REPO_ROOT = BENCH_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from bench.runner.ledger import cost_is_billable, row_auth_mode  # noqa: E402
 
 # Section break inside a tooltip / aria string. U+2028 (LINE SEPARATOR) renders as
 # a hard break in the browser but is NOT a "\n", so it survives _normalize() on one
 # physical line and never splits a JSON/attribute value across file lines.
 TIP_BREAK = "\u2028"
 
-BENCH_DIR = Path(__file__).resolve().parent
 DEFAULT_LEDGER = BENCH_DIR / "experiments.jsonl"
 DEFAULT_BASELINES = BENCH_DIR / "baselines.json"
 DEFAULT_OUT = BENCH_DIR / "report.html"
+
+# Cost-honesty marker. A subscription-served run's cost_usd is a consumption
+# estimate that Anthropic documents as not relevant for billing purposes, so it
+# is rendered only where it is labelled: blanked in the tile, dropped from the
+# derived per-golden aggregate, and kept in the ledger table behind this marker.
+NON_BILLABLE_MARK = "‡"
+NON_BILLABLE_CAPTION = "subscription auth · not billable API spend"
 
 # Metric fields that define a scored run's result; two ledger rows with an
 # identical signature are byte-identical re-scores of the same candidate set.
@@ -922,14 +939,18 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
 
 def _release_leg_html(rows, leg):
     """One measurement line inside a release card, or "" if its run is missing
-    from the loaded ledger (offline fixture, or a future release not yet run)."""
+    from the loaded ledger (offline fixture, or a future release not yet run).
+
+    A non-billable run contributes no cost metric: the cards are the headline
+    progression record, where an unlabelled subscription figure would read as
+    spend beside genuinely API-keyed legs."""
     row = row_by_run_id(rows, leg["run_id"])
     if row is None:
         return ""
     recall = row.get("golden_recall")
     noise = row.get("noise_rate")
     tokens = row.get("tokens_total")
-    cost = row.get("cost_usd")
+    cost = row.get("cost_usd") if cost_is_billable(row) else None
     n_goldens = leg.get("n_goldens")
     metrics = [f"recall {fmt_pct(recall)}", f"noise {fmt_pct(noise)}"]
     if n_goldens and recall is not None:
@@ -1015,10 +1036,14 @@ def subset_comparison(rows, baselines):
 def _efficiency(row, n_goldens):
     """Per-run value-efficiency figures. ``goldens`` is tp = round(recall × N) —
     distinct known issues caught, the numerator of golden_recall — NOT the
-    per_bucket golden_matched comment count (a comment can match several goldens)."""
+    per_bucket golden_matched comment count (a comment can match several goldens).
+
+    A non-billable run contributes ``cost = None``, so both ``cost`` and
+    ``cost_per_gold`` render as "—" rather than passing a subscription figure off
+    as spend. Tokens are unaffected: consumption is real in either auth mode."""
     recall = row.get("golden_recall")
     tokens = row.get("tokens_total")
-    cost = row.get("cost_usd")
+    cost = row.get("cost_usd") if cost_is_billable(row) else None
     per_bucket = row.get("per_bucket") or {}
     delivered = sum(per_bucket.values()) if per_bucket else row.get("total_candidates")
     goldens = round(recall * n_goldens) if (recall is not None and n_goldens) else None
@@ -1248,11 +1273,16 @@ def build_tiles_html(row, n_prs, n_goldens, runs=1):
     """Headline stat tiles for one measurement row. Release-aware: the caller
     picks ``row``/``n_prs``/``n_goldens`` — normally the current release's
     defining leg (see current_release_leg) — rather than this function assuming
-    any particular tier or baseline source."""
+    any particular tier or baseline source.
+
+    The "Run cost" tile is a billable-spend figure, so a subscription-served run
+    blanks it rather than presenting a number Anthropic documents as not relevant
+    for billing; the caption says which auth mode withheld it."""
     per_bucket = (row or {}).get("per_bucket", {})
     total = sum(per_bucket.values()) if per_bucket else None
     total_txt = str(total) if total is not None else "—"
     g = (row or {}).get
+    billable = cost_is_billable(row or {})
     tiles = [
         (fmt_pct(g("golden_recall")), "Golden recall",
          f"{n_prs} PRs · {n_goldens} goldens · N={runs}"),
@@ -1262,8 +1292,8 @@ def build_tiles_html(row, n_prs, n_goldens, runs=1):
          "reported, not gated — counts valid-extras as misses"),
         (fmt_pct(g("f1_strict")), "F1 (strict)",
          "recall + precision blend"),
-        (fmt_money(g("cost_usd")), "Run cost",
-         "one review pass · review spend"),
+        (fmt_money(g("cost_usd")) if billable else "—", "Run cost",
+         "one review pass · review spend" if billable else NON_BILLABLE_CAPTION),
     ]
     cells = "".join(
         '<div class="tile">'
@@ -1329,6 +1359,21 @@ def build_table_html(groups, top_anchor, ceiling):
         pb = r.get("per_bucket") or {}
         delivered = sum(pb.values()) if pb else r.get("total_candidates")
         kind, glyph, desc = classify(r, top_anchor, ceiling)
+        # The Cost cell keeps its figure in both auth modes — the table is the run
+        # record — but a non-billable one is marked so it can never be read, or
+        # summed by eye, as API spend.
+        cost_txt = fmt_money(r.get("cost_usd"))
+        if cost_is_billable(r):
+            cost_cell = f'<td class="num">{cost_txt}</td>'
+        else:
+            cost_tip = html.escape(
+                f"auth_mode={row_auth_mode(r)} — served by Claude subscription "
+                "capacity, not metered API spend; excluded from every derived "
+                "cost figure."
+            )
+            cost_cell = (
+                f'<td class="num" title="{cost_tip}">{cost_txt} {NON_BILLABLE_MARK}</td>'
+            )
         # "What changed" cell: the outcome line, else the hypothesis; full text on hover.
         # Confounded child-model experiments carry no annotation — synthesize one from
         # the reverted verdict and the run's own dominant (child) model.
@@ -1369,7 +1414,7 @@ def build_table_html(groups, top_anchor, ceiling):
             f'<td class="num">{fmt_pct(r.get("precision_strict"))}</td>'
             f'<td class="num">{fmt_pct(r.get("f1_strict"))}</td>'
             f'<td class="num">{fmt_int(r.get("tokens_total"))}</td>'
-            f'<td class="num">{fmt_money(r.get("cost_usd"))}</td>'
+            f"{cost_cell}"
             f"{changed_cell}"
         )
         body.append(f"<tr>{cells}</tr>")
@@ -1380,7 +1425,11 @@ def build_table_html(groups, top_anchor, ceiling):
     )
 
 
-def build_footnotes_html(baselines):
+def build_footnotes_html(baselines, rows=None):
+    """The Notes list. ``rows`` is the loaded ledger, used only to decide whether
+    the ‡ cost-honesty note applies: it is omitted unless a subscription row is
+    actually present, so a ledger of API-keyed runs renders byte-identically to
+    before the note existed and the committed report.html does not churn."""
     judge = str(baselines.get("judge_pin", "—"))
     adj = str(baselines.get("adjudicator_pin", "—"))
     dn = baselines.get("delta_noise_proposed", {}) or {}
@@ -1404,9 +1453,19 @@ def build_footnotes_html(baselines):
         "pending owner sign-off.",
         "Costs are review-invocation spend only — judge/adjudicator scoring spend "
         "is not included in cost_usd.",
-        "Source data: bench/experiments.jsonl (append-only ledger) and "
-        "bench/baselines.json; see bench/README.md.",
     ]
+    if any(not cost_is_billable(row) for row in rows or ()):
+        items.append(
+            f"<b>{NON_BILLABLE_MARK} Subscription auth</b> marks a run whose review "
+            "children ran on Claude subscription capacity (auth_mode=subscription). "
+            "Its cost_usd is the envelope's own figure, which Anthropic documents as "
+            "not relevant for billing purposes: it is shown for reference only and is "
+            "excluded from the run-cost tile and every derived cost aggregate."
+        )
+    items.append(
+        "Source data: bench/experiments.jsonl (append-only ledger) and "
+        "bench/baselines.json; see bench/README.md."
+    )
     lis = "".join(f"<li>{it}</li>" for it in items)
     return f'<ol class="footnotes">{lis}</ol>'
 
@@ -2122,7 +2181,7 @@ def render_html(rows, baselines, sha, generated):
         "<h2>Run ledger</h2>",
         build_table_html(groups, top_anchor, ceiling),
         "<h2>Notes</h2>",
-        build_footnotes_html(baselines),
+        build_footnotes_html(baselines, rows),
         f'<script type="application/json" id="bench-data">{embedded}</script>',
         "</div>",
     ]

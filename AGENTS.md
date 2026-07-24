@@ -45,6 +45,14 @@ then fail cspell or markdownlint in CI the moment it is committed — this is ex
 `SECURITY.md` reached a PR with three unknown words. `git add` new files before you trust a green
 lint run.
 
+**Never put the literal skip-ci token in a commit message, even when writing *about* it.** GitHub
+Actions scans the whole message, not just the subject, so a commit that merely explains the
+semantic-release convention above suppresses every workflow for that push — the PR shows a
+plausible-looking subset of checks (CodeQL and the bots still report) while the CI, lint-PR-title,
+and plugin-validate runs never exist. Worse on the way out: a squash merge pre-fills its body from
+the commit messages, so the token rides onto `main` and skips the release run there too. Describe
+it as "the skip-ci token" instead; a real occurrence cost a CI cycle on PR #40.
+
 ### Contribution surface (issue forms, labels) — what cannot be tested pre-merge
 
 `tests/test_contribution_surface.py` covers what is checkable offline: issue-form schema, the

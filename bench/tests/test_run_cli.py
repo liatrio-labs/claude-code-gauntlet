@@ -53,7 +53,7 @@ def drift_on(target_pr_number):
 
 
 def fake_invoke_ok(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                   child_model="inherit"):
+                   child_model="inherit", child_auth="api"):
     outdir = Path(run_dir) / "output"
     outdir.mkdir(parents=True, exist_ok=True)
     payload = outdir / "post-review-payload.json"
@@ -71,7 +71,7 @@ def make_invoke_first_fails():
     state = {"n": 0}
 
     def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-             child_model="inherit"):
+             child_model="inherit", child_auth="api"):
         state["n"] += 1
         if state["n"] == 1:
             return run.invoke.InvokeResult("failed", reason="boom")
@@ -85,13 +85,44 @@ def make_invoke_raises_first(exc):
     state = {"n": 0}
 
     def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-             child_model="inherit"):
+             child_model="inherit", child_auth="api"):
         state["n"] += 1
         if state["n"] == 1:
             raise exc
         return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
     return _inv
+
+
+def make_invoke_expecting_auth(expected):
+    """An invoke fake that refuses any child_auth other than *expected*.
+
+    The default-argument fakes above would silently accept "api" if _run_prs stopped
+    forwarding the mode, so at least one fake has to assert on what it was handed --
+    an unforwarded mode is a run billed against the wrong credential.
+    """
+    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+             child_model="inherit", child_auth="api"):
+        assert child_auth == expected, "invoke_review got child_auth={!r}, want {!r}".format(
+            child_auth, expected
+        )
+        return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
+
+    return _inv
+
+
+def make_naive_expecting_auth(expected):
+    """A _invoke_naive fake that refuses any child_auth other than *expected*."""
+    def _naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s, child_auth="api"):
+        assert child_auth == expected, "_invoke_naive got child_auth={!r}, want {!r}".format(
+            child_auth, expected
+        )
+        payload = Path(run_dir) / run.invoke.pr_dir_name(pr) / "post-review-payload.json"
+        payload.parent.mkdir(parents=True, exist_ok=True)
+        payload.write_text(json.dumps({"payload": {"comments": []}, "skipped": []}))
+        return run.invoke.InvokeResult("ok", cost_usd=0.11, payload_path=str(payload))
+
+    return _naive
 
 
 # -------------------------------------------------------------------------------- base
@@ -294,7 +325,7 @@ class ArtifactCaptureTest(RunTestBase):
         claude_home = self.tmp / "claude-home"
 
         def invoke_plants_wf(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                             child_model="inherit"):
+                             child_model="inherit", child_auth="api"):
             # Mimic a child Workflow record written under CLAUDE_CONFIG_DIR during the run.
             wf = (
                 claude_home / "config" / "projects" / "slug" / "session" / "workflows"
@@ -684,7 +715,7 @@ class ToolWiringTest(RunTestBase):
         captured = {}
 
         def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit"):
+                child_model="inherit", child_auth="api"):
             captured["tool"] = tool
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -720,7 +751,7 @@ class ToolWiringTest(RunTestBase):
         captured = {}
 
         def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit"):
+                child_model="inherit", child_auth="api"):
             captured["child_model"] = child_model
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -733,6 +764,532 @@ class ToolWiringTest(RunTestBase):
             tool="deep-review-v3", child_model="opus",
         )
         self.assertEqual(captured["child_model"], "opus")
+
+
+# ---------------------------------------------------------------------------- child auth
+
+
+class ChildAuthCliTest(RunTestBase):
+    """--child-auth parses to a None "not specified" sentinel that resolves to api.
+
+    The sentinel is what lets a resumed run keep the mode its manifest recorded instead
+    of silently adopting the flag's default half-way through.
+    """
+
+    def test_default_is_the_unspecified_sentinel(self):
+        self.assertIsNone(run.parse_args(["--tier", "smoke"]).child_auth)
+
+    def test_unspecified_resolves_to_api(self):
+        self.assertEqual(run._resolve_child_auth(None), "api")
+
+    def test_explicit_mode_wins(self):
+        self.assertEqual(run._resolve_child_auth("subscription"), "subscription")
+
+    def test_subscription_parses(self):
+        args = run.parse_args(["--tier", "smoke", "--child-auth", "subscription"])
+        self.assertEqual(args.child_auth, "subscription")
+
+    def test_api_parses_explicitly(self):
+        args = run.parse_args(["--tier", "smoke", "--child-auth", "api"])
+        self.assertEqual(args.child_auth, "api")
+
+    def test_bogus_mode_is_an_argparse_error(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            with self.assertRaises(SystemExit) as cm:
+                run.parse_args(["--tier", "smoke", "--child-auth", "oauth"])
+        self.assertEqual(cm.exception.code, 2)
+        self.assertIn("--child-auth", err.getvalue())
+
+    def test_main_hands_the_resolved_mode_to_check_prereqs(self):
+        captured = {}
+
+        def spy(*args, **kwargs):
+            captured.update(kwargs)
+            return ["stop before the run starts"]
+
+        with patch.object(run, "check_prereqs", spy):
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = run.main(["--tier", "smoke", "--child-auth", "subscription"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(captured.get("child_auth"), "subscription")
+
+    def _spy_prereq_mode(self, argv):
+        """Return the child_auth main() preflighted with, without starting a run."""
+        captured = {}
+
+        def spy(*args, **kwargs):
+            captured.update(kwargs)
+            return ["stop before the run starts"]
+
+        with patch.object(run, "check_prereqs", spy):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(run.main(argv), 2)
+        return captured.get("child_auth")
+
+    def _write_resumable(self, run_id, child_auth):
+        run_dir = self.runs_root / run_id
+        run_dir.mkdir(parents=True)
+        manifest = {"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None}
+        if child_auth is not None:
+            manifest["child_auth"] = child_auth
+        (run_dir / "run.json").write_text(json.dumps(manifest))
+        return run_dir
+
+    def test_resume_preflights_the_manifest_mode_not_the_flag_default(self):
+        # main() must preflight the mode the run will ACTUALLY use. _resume takes the
+        # manifest's mode, so preflighting the flag default would demand the metered key
+        # a subscription resume does not need -- and skip the token/apiKeyHelper checks
+        # that resume does need, deferring the failure to a mid-run build_env raise.
+        self._write_resumable("smoke-resume-sub", "subscription")
+        self.assertEqual(
+            self._spy_prereq_mode(["--resume", "smoke-resume-sub"]), "subscription"
+        )
+
+    def test_retry_failed_preflights_the_manifest_mode_too(self):
+        self._write_resumable("smoke-retry-sub", "subscription")
+        self.assertEqual(
+            self._spy_prereq_mode(["--retry-failed", "smoke-retry-sub"]), "subscription"
+        )
+
+    def test_resume_of_a_pre_child_auth_manifest_preflights_api(self):
+        self._write_resumable("smoke-resume-legacy", None)
+        self.assertEqual(self._spy_prereq_mode(["--resume", "smoke-resume-legacy"]), "api")
+
+    def test_resume_of_a_missing_run_still_preflights_the_flag(self):
+        # No manifest to consult (--resume of a bogus id) -- the flag is all there is.
+        self.assertEqual(
+            self._spy_prereq_mode(["--resume", "no-such-run", "--child-auth", "subscription"]),
+            "subscription",
+        )
+
+    def test_legacy_resume_cannot_be_switched_to_subscription_by_the_flag(self):
+        # A run dir is one auth mode: its PRs' envelope costs are summed into a single
+        # ledger row carrying a single auth_mode. A pre-child_auth manifest ran on the
+        # metered key, so honouring the flag would bill the remaining PRs the other way
+        # and label the mixed total "api". Refuse instead of quietly mixing.
+        self._write_resumable("smoke-legacy-switch", None)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            rc = run.main(["--resume", "smoke-legacy-switch", "--child-auth", "subscription"])
+        self.assertEqual(rc, 2)
+        message = stderr.getvalue()
+        self.assertIn("contradicts", message)
+        self.assertIn("api", message)
+
+    def test_resume_flag_agreeing_with_the_recorded_mode_is_accepted(self):
+        self._write_resumable("smoke-agree-sub", "subscription")
+        self.assertEqual(
+            self._spy_prereq_mode(["--resume", "smoke-agree-sub", "--child-auth", "subscription"]),
+            "subscription",
+        )
+
+    def test_resume_of_a_subscription_run_refuses_an_api_flag(self):
+        # The guard is symmetric: downgrading mid-run corrupts the row just as much.
+        self._write_resumable("smoke-sub-to-api", "subscription")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = run.main(["--resume", "smoke-sub-to-api", "--child-auth", "api"])
+        self.assertEqual(rc, 2)
+        message = err.getvalue()
+        self.assertIn("contradicts", message)
+        self.assertIn("subscription", message)
+
+    def test_new_run_never_trips_the_conflict_guard(self):
+        # The guard compares the flag against the resolved mode, which for a new run IS
+        # the flag -- so it can only ever fire on a resume.
+        self.assertEqual(
+            self._spy_prereq_mode(["--tier", "smoke", "--child-auth", "subscription"]),
+            "subscription",
+        )
+
+    def test_legacy_resume_without_a_flag_stays_on_api(self):
+        self._write_resumable("smoke-legacy-noflag", None)
+        self.assertEqual(self._spy_prereq_mode(["--resume", "smoke-legacy-noflag"]), "api")
+
+    def test_default_child_auth_is_a_valid_mode(self):
+        self.assertIn(run.ledger.DEFAULT_AUTH_MODE, run.ledger.AUTH_MODES)
+
+    def _resume_modes(self, run_id, argv):
+        """The mode main() preflights and the mode _resume resolves, for one argv.
+
+        They must be equal: main validates the credential the run then spends, so any
+        disagreement preflights one credential and charges the other.
+        """
+        args = run.parse_args(argv)
+        return (self._spy_prereq_mode(argv), run._child_auth_for(args, run_id))
+
+    def test_preflight_and_resume_agree_for_an_orphan_run_dir(self):
+        # A run dir with no run.json: _make_run_dir created it and the process died
+        # before _write_manifest, so no PR ran and no credential was spent. Whatever the
+        # rule is, both halves must reach the same answer -- preflighting subscription
+        # and then spending the metered key is the silent swap the guard exists to stop.
+        (self.runs_root / "smoke-orphan").mkdir(parents=True)
+        preflighted, resumed = self._resume_modes(
+            "smoke-orphan", ["--resume", "smoke-orphan", "--child-auth", "subscription"]
+        )
+        self.assertEqual(preflighted, resumed)
+
+    def test_preflight_and_resume_agree_for_a_corrupt_manifest(self):
+        run_dir = self.runs_root / "smoke-corrupt"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text("{not json")
+        preflighted, resumed = self._resume_modes(
+            "smoke-corrupt", ["--resume", "smoke-corrupt", "--child-auth", "subscription"]
+        )
+        self.assertEqual(preflighted, resumed)
+
+    def test_preflight_and_resume_agree_for_a_recorded_mode(self):
+        self._write_resumable("smoke-recorded", "subscription")
+        preflighted, resumed = self._resume_modes(
+            "smoke-recorded", ["--resume", "smoke-recorded"]
+        )
+        self.assertEqual(preflighted, resumed)
+        self.assertEqual(resumed, "subscription")
+
+    def test_preflight_and_resume_agree_for_a_legacy_manifest(self):
+        self._write_resumable("smoke-legacy-agree", None)
+        preflighted, resumed = self._resume_modes(
+            "smoke-legacy-agree", ["--resume", "smoke-legacy-agree"]
+        )
+        self.assertEqual(preflighted, resumed)
+        self.assertEqual(resumed, "api")
+
+    def test_env_fingerprint_only_manifest_is_honoured_like_score_reads_it(self):
+        # score._auth_mode falls back to env_fingerprint.child_auth, so the resume path
+        # must read the same chain: otherwise a manifest carrying only the fingerprint
+        # copy would be resumed on the metered key while its ledger row says subscription
+        # and the cost-honesty gate drops real spend.
+        run_dir = self.runs_root / "smoke-fingerprint-only"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps({
+                "tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None,
+                "env_fingerprint": {"child_auth": "subscription"},
+            })
+        )
+        args = run.parse_args(["--resume", "smoke-fingerprint-only"])
+        self.assertEqual(run._child_auth_for(args, "smoke-fingerprint-only"), "subscription")
+
+
+class ChildAuthPrereqTest(RunTestBase):
+    """Subscription mode swaps the credential prereq -- and only that.
+
+    It drops the metered-key requirement (that key is deliberately not in play) and
+    replaces it with the OAuth token plus a refusal when the isolated config carries an
+    apiKeyHelper: the helper outranks the token and, being a file rather than an env var,
+    is the one over-ranking source build_env cannot strip. No judge key is demanded here;
+    scoring resolves its own and fails loud separately.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.missing_env = self.tmp / "nope.env"  # does not exist
+
+    def _failures(self, child_auth, env, env_path=None):
+        return run.check_prereqs(
+            env_path=self.missing_env if env_path is None else env_path,
+            workspace_dir=self.tmp,
+            child_auth=child_auth,
+            env=env,
+        )
+
+    def _write_helper(self, claude_home=None, name="settings.json", value="/bin/echo key"):
+        config = (claude_home or (self.tmp / "claude-home")) / "config"
+        config.mkdir(parents=True, exist_ok=True)
+        path = config / name
+        path.write_text(json.dumps({"apiKeyHelper": value}))
+        return path
+
+    def test_subscription_drops_the_api_key_requirement(self):
+        joined = "\n".join(self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"}))
+        self.assertNotIn("ANTHROPIC_API_KEY", joined)
+
+    def test_subscription_without_a_token_is_one_actionable_failure(self):
+        failures = [f for f in self._failures("subscription", {}) if "OAUTH_TOKEN" in f]
+        self.assertEqual(len(failures), 1)
+        self.assertIn("claude setup-token", failures[0])
+
+    def test_failure_messages_name_the_var_the_lookup_uses(self):
+        # The messages spell the var name out as a literal so no credential-named
+        # identifier flows into a print (CodeQL's clear-text-logging rule flags that even
+        # when only the NAME is printed). This keeps the literal and the constant the
+        # lookup actually uses from drifting apart on a rename.
+        token = "\n".join(self._failures("subscription", {}))
+        self.assertIn(run.invoke.OAUTH_TOKEN_VAR, token)
+        self._write_helper()
+        helper = "\n".join(
+            self._failures("subscription", {run.invoke.OAUTH_TOKEN_VAR: "oat"})
+        )
+        self.assertIn(run.invoke.OAUTH_TOKEN_VAR, helper)
+
+    def test_subscription_token_in_dotenv_satisfies_the_check(self):
+        env_file = self.tmp / "bench.env"
+        env_file.write_text("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
+        joined = "\n".join(self._failures("subscription", {}, env_path=env_file))
+        self.assertNotIn("OAUTH_TOKEN", joined)
+
+    def test_subscription_token_in_env_satisfies_the_check(self):
+        joined = "\n".join(self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"}))
+        self.assertNotIn("OAUTH_TOKEN", joined)
+
+    def test_env_defaults_to_os_environ(self):
+        with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"}):
+            failures = run.check_prereqs(
+                env_path=self.missing_env, workspace_dir=self.tmp, child_auth="subscription"
+            )
+        self.assertNotIn("OAUTH_TOKEN", "\n".join(failures))
+
+    def test_api_mode_still_requires_the_metered_key(self):
+        joined = "\n".join(self._failures("api", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"}))
+        self.assertIn("ANTHROPIC_API_KEY missing", joined)
+        self.assertNotIn("OAUTH_TOKEN", joined)
+
+    def test_api_key_helper_fails_subscription_and_names_the_file(self):
+        path = self._write_helper()
+        failures = [
+            f for f in self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"})
+            if "apiKeyHelper" in f
+        ]
+        self.assertEqual(len(failures), 1)
+        self.assertIn(str(path), failures[0])
+        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", failures[0])
+
+    def test_api_key_helper_failure_carries_no_credential(self):
+        self._write_helper(value="/bin/echo sk-helper-secret")
+        joined = "\n".join(
+            self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat-token-secret"})
+        )
+        self.assertIn("apiKeyHelper", joined)
+        self.assertNotIn("sk-helper-secret", joined)
+        self.assertNotIn("oat-token-secret", joined)
+
+    def test_api_key_helper_check_honours_bench_claude_home(self):
+        home = self.tmp / "elsewhere-home"
+        path = self._write_helper(claude_home=home)
+        env = {"CLAUDE_CODE_OAUTH_TOKEN": "oat", "BENCH_CLAUDE_HOME": str(home)}
+        self.assertIn(str(path), "\n".join(self._failures("subscription", env)))
+
+    def test_api_key_helper_in_settings_local_is_also_caught(self):
+        path = self._write_helper(name="settings.local.json")
+        joined = "\n".join(self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"}))
+        self.assertIn(str(path), joined)
+
+    def test_api_mode_ignores_the_helper_entirely(self):
+        self._write_helper()
+        joined = "\n".join(self._failures("api", {}))
+        self.assertNotIn("apiKeyHelper", joined)
+
+
+class ChildAuthJudgeKeyNoteTest(RunTestBase):
+    """Subscription mode warns -- never fails -- when no judge key is in sight.
+
+    Dropping the ANTHROPIC_API_KEY requirement is the point of the mode, and --check needs
+    no judge at all. But scoring does, and it happens hours later, so silence lets an
+    operator finish a long leg and only then find it unscoreable. Making it fatal would
+    re-impose the very requirement the mode relaxes.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.missing_env = self.tmp / "nope.env"
+
+    def _note(self, child_auth, env, env_path=None):
+        return run._judge_key_note(
+            self.missing_env if env_path is None else env_path, child_auth, env=env
+        )
+
+    def test_subscription_with_no_key_anywhere_gets_a_note(self):
+        note = self._note("subscription", {})
+        self.assertIsNotNone(note)
+        self.assertIn("--score-only", note)
+        self.assertIn("--check", note)
+
+    def test_ambient_judge_key_silences_it(self):
+        self.assertIsNone(self._note("subscription", {"BENCH_JUDGE_API_KEY": "k"}))
+
+    def test_ambient_api_key_silences_it(self):
+        self.assertIsNone(self._note("subscription", {"ANTHROPIC_API_KEY": "k"}))
+
+    def test_dotenv_key_silences_it(self):
+        env_file = self.tmp / "bench.env"
+        env_file.write_text("ANTHROPIC_API_KEY=sk-dotenv\n")
+        self.assertIsNone(self._note("subscription", {}, env_path=env_file))
+
+    def test_api_mode_is_silent(self):
+        # api mode already hard-fails on a missing key; a note would be noise.
+        self.assertIsNone(self._note("api", {}))
+
+    def test_main_prints_the_note_once_prereqs_pass(self):
+        stderr = io.StringIO()
+        with patch.object(run, "check_prereqs", lambda **kwargs: []):
+            with patch.object(run, "_new_run", lambda args: 0):
+                with patch.dict(os.environ, {}, clear=True):
+                    self._patch_global("ENV_PATH", self.missing_env)
+                    with contextlib.redirect_stderr(stderr):
+                        rc = run.main(["--tier", "smoke", "--child-auth", "subscription"])
+        self.assertEqual(rc, 0)
+        self.assertIn("judge", stderr.getvalue().lower())
+
+
+class ChildAuthWiringTest(RunTestBase):
+    """--child-auth is recorded for every run and reaches BOTH invocation paths."""
+
+    def _manifest_for(self, argv):
+        args = run.parse_args(argv)
+        run_dir = self.tmp / "auth-manifest-{}".format(len(list(self.tmp.iterdir())))
+        run_dir.mkdir(parents=True)
+        run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
+        return json.loads((run_dir / "run.json").read_text())
+
+    def test_manifest_defaults_to_api(self):
+        self.assertEqual(self._manifest_for(["--tier", "smoke"])["child_auth"], "api")
+
+    def test_manifest_records_explicit_subscription(self):
+        manifest = self._manifest_for(["--tier", "smoke", "--child-auth", "subscription"])
+        self.assertEqual(manifest["child_auth"], "subscription")
+
+    def test_naive_anchor_still_records_child_auth(self):
+        # Deliberately unlike tool/child_model, which are null for a naive run: the anchor
+        # authenticates too (_invoke_naive builds its env through build_env), so dropping
+        # the label would lose the auth provenance the ledger's cost honesty reads.
+        manifest = self._manifest_for(
+            ["--tier", "smoke", "--anchor", "naive", "--child-auth", "subscription"]
+        )
+        self.assertEqual(manifest["child_auth"], "subscription")
+        self.assertIsNone(manifest["tool"])
+        self.assertIsNone(manifest["child_model"])
+
+    def test_env_fingerprint_carries_the_same_value(self):
+        manifest = self._manifest_for(["--tier", "smoke", "--child-auth", "subscription"])
+        self.assertEqual(manifest["env_fingerprint"]["child_auth"], "subscription")
+        self.assertEqual(manifest["env_fingerprint"]["child_auth"], manifest["child_auth"])
+
+    def test_run_prs_forwards_the_mode_to_invoke_review(self):
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("subscription"))
+        run_dir = self.runs_root / "auth-forward-skill"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        run._run_prs(
+            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data,
+            child_auth="subscription",
+        )
+        self.assertEqual(cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason"))
+
+    def test_run_prs_forwards_the_mode_to_the_naive_anchor(self):
+        self._install_runner_fakes()
+        run_dir = self.runs_root / "auth-forward-naive"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        with patch.object(run, "_invoke_naive", make_naive_expecting_auth("subscription")):
+            run._run_prs(
+                run_dir, [PLAIN_URL], cp, self.shas, set(), 60, "naive", self.bench_data,
+                child_auth="subscription",
+            )
+        self.assertEqual(cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason"))
+
+    def test_invoke_naive_forwards_the_mode_to_build_env(self):
+        # build_env owns the whole credential decision, so the only thing to pin here is
+        # that the anchor hands it the mode rather than defaulting to the metered key.
+        captured = {}
+        empty_bin = self.tmp / "no-claude-bin"
+        empty_bin.mkdir()
+
+        def spy(pr, run_dir, base_env, child_auth="api"):
+            captured["child_auth"] = child_auth
+            return {"PATH": str(empty_bin)}
+
+        with patch.object(run.invoke, "build_env", spy):
+            result = run._invoke_naive(
+                self.tmp, NAIVE_PR, self.runs_root / "naive-auth", "diff", {}, 30,
+                child_auth="subscription",
+            )
+        self.assertEqual(captured["child_auth"], "subscription")
+        self.assertEqual(result.reason, "claude_not_found")
+
+    def test_new_run_threads_the_resolved_mode(self):
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("subscription"))
+        rc = run._new_run(run.parse_args(["--tier", "smoke", "--child-auth", "subscription"]))
+        self.assertEqual(rc, 0)
+
+    def test_resume_prefers_the_manifest_mode_over_a_conflicting_flag(self):
+        # A resumed run must not switch credentials mid-flight: half its PRs would be
+        # billed one way and half the other, and the single ledger row could only label
+        # one of them. Same precedence as tool/child_model.
+        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        with self.assertRaises(KeyboardInterrupt):
+            run._new_run(run.parse_args(["--tier", "smoke", "--child-auth", "subscription"]))
+        run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
+        run_id = run_dir.name
+        self.assertEqual(
+            json.loads((run_dir / "run.json").read_text())["child_auth"], "subscription"
+        )
+
+        api_args = run.parse_args(["--resume", run_id, "--child-auth", "api"])
+        with patch.object(
+            run.invoke, "invoke_review", make_invoke_expecting_auth("subscription")
+        ):
+            run._resume(run_id, api_args, retry=False)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        for url in run._resolve_tier("smoke", self.subsets, self.shas):
+            self.assertEqual(cp.status(url), "ok", self._detail(cp, url).get("reason"))
+
+    def test_orphan_resume_records_the_mode_it_spent(self):
+        # A run dir with no run.json has no recorded mode, so the flag applies -- but
+        # nothing then persisted it: score would read no manifest, default auth_mode to
+        # api, and admit subscription spend into billable figures, while a second resume
+        # could pick the other credential for the rest of the PRs. Resuming writes the
+        # provenance the dir never got.
+        run_dir = self.runs_root / "smoke-orphan-record"
+        run_dir.mkdir(parents=True)
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("subscription"))
+        args = run.parse_args(
+            ["--resume", "smoke-orphan-record", "--child-auth", "subscription"]
+        )
+        run._resume("smoke-orphan-record", args, retry=False)
+
+        manifest = json.loads((run_dir / "run.json").read_text())
+        self.assertEqual(manifest["child_auth"], "subscription")
+        # Recorded means honoured: a later resume reads it back, so main's conflict guard
+        # can refuse a flag that disagrees instead of silently switching credentials.
+        self.assertEqual(run._recorded_child_auth("smoke-orphan-record"), "subscription")
+        # And the harm this closes: the scorer's own read of that manifest now labels the
+        # row subscription, so cost_is_billable keeps the spend out of billable figures.
+        self.assertEqual(run.ledger.manifest_auth_mode(manifest), "subscription")
+        self.assertFalse(run.ledger.cost_is_billable({"auth_mode": "subscription"}))
+
+    def test_orphan_resume_records_api_too(self):
+        run_dir = self.runs_root / "smoke-orphan-api"
+        run_dir.mkdir(parents=True)
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
+        run._resume("smoke-orphan-api", run.parse_args(["--resume", "smoke-orphan-api"]),
+                    retry=False)
+        manifest = json.loads((run_dir / "run.json").read_text())
+        self.assertEqual(manifest["child_auth"], "api")
+
+    def test_resume_never_rewrites_an_existing_manifest(self):
+        # A manifest without child_auth is not missing provenance -- it predates the flag,
+        # which IS its provenance. Writing into it would mutate a historical record.
+        run_dir = self.runs_root / "smoke-legacy-untouched"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None})
+        )
+        before = (run_dir / "run.json").read_bytes()
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
+        run._resume("smoke-legacy-untouched",
+                    run.parse_args(["--resume", "smoke-legacy-untouched"]), retry=False)
+        self.assertEqual((run_dir / "run.json").read_bytes(), before)
+
+    def test_resume_of_a_pre_child_auth_manifest_falls_back_to_api(self):
+        # run.json files written before the field existed all ran on the metered key.
+        run_dir = self.runs_root / "legacy-run"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None})
+        )
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
+        run._resume(run_dir.name, run.parse_args(["--resume", run_dir.name]), retry=False)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        self.assertEqual(cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason"))
 
 
 class PrsListTest(RunTestBase):
@@ -792,7 +1349,7 @@ class PrsListTest(RunTestBase):
         seen = []
 
         def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit"):
+                child_model="inherit", child_auth="api"):
             seen.append(pr["url"])
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -837,7 +1394,7 @@ class ResumeTest(RunTestBase):
         captured = []
 
         def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit"):
+                child_model="inherit", child_auth="api"):
             captured.append(tool)
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -866,7 +1423,7 @@ class ResumeTest(RunTestBase):
         captured = []
 
         def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit"):
+                child_model="inherit", child_auth="api"):
             captured.append(child_model)
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
