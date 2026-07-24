@@ -23,8 +23,12 @@
 # on GH-hosted runners avoids a cold multi-GB clone on every dispatch. The cache
 # key includes hashFiles('bench/golden/shas.json') so new golden pins invalidate
 # it; restore + save are split so a failed checker step still persists mirrors
-# populated during the run. GitHub evicts caches after 7 days of no access —
-# fine for per-sub-release dispatch, but a cold miss remains correct (just slower).
+# populated during a successful smoke run. Save is gated on the smoke step
+# succeeding — never on always() alone — so an interrupted/partial first
+# populate cannot freeze a broken mirror set under the exact key (cache-hit
+# would then skip every later save). ensure_mirror also heals unusable dirs.
+# GitHub evicts caches after 7 days of no access — fine for per-sub-release
+# dispatch, but a cold miss remains correct (just slower).
 name: Bench Smoke (live)
 
 on:
@@ -67,11 +71,13 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: bench/workspace/mirrors
-          key: bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v1
+          # v2: invalidate any v1 entries that may have been saved mid-failure.
+          key: bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v2
           restore-keys: |
             bench-mirrors-${{ runner.os }}-
 
       - name: Run smoke-tier benchmark
+        id: smoke-run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python3 bench/run.py --tier smoke
@@ -87,12 +93,18 @@ jobs:
           echo "Checking run: ${RUN_ID}"
           python3 bench/run.py --check "${RUN_ID}"
 
+      # Persist only after a successful smoke populate. Checker failure still
+      # saves (smoke-run succeeded); a mid-run kill/OOM does not, so the exact
+      # key cannot freeze an incomplete mirror set. cache-hit skips re-save.
       - name: Save bare mirrors
-        if: always() && steps.mirrors-cache.outputs.cache-hit != 'true'
+        if: >-
+          always()
+          && steps.mirrors-cache.outputs.cache-hit != 'true'
+          && steps.smoke-run.outcome == 'success'
         uses: actions/cache/save@v4
         with:
           path: bench/workspace/mirrors
-          key: bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v1
+          key: bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v2
 
       - name: Upload run artifacts
         if: always()

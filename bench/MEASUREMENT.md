@@ -50,13 +50,14 @@ Exit code is the smoke verdict. The checker never imports or calls the scorer.
 CI: `.github/workflows/bench-smoke.yml` (`workflow_dispatch`) runs smoke then
 `--check` on the newest run dir; the job fails if either step fails. Bare
 mirrors under `bench/workspace/mirrors/` are cached on GH-hosted runners via
-split restore/save (`actions/cache/restore` + `actions/cache/save` with
-`if: always()`), keyed on
-`bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v1`
-so new golden pins invalidate the cache and a failed checker step still
-persists mirrors populated during the run. Several GB per upstream; a cache
-hit avoids cold clones; a miss remains correct but slower. GitHub evicts
-caches after 7 days of no access.
+split restore/save (`actions/cache/restore` + `actions/cache/save`), keyed on
+`bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v2`
+so new golden pins invalidate the cache. Save runs only when the smoke step
+succeeded and the exact key missed — a failed checker still persists mirrors,
+but an interrupted/partial populate cannot freeze a broken set under that key.
+`ensure_mirror` also tears down unusable mirror directories and re-clones.
+Several GB per upstream; a cache hit avoids cold clones; a miss remains
+correct but slower. GitHub evicts caches after 7 days of no access.
 
 ## Named mini subset
 
