@@ -43,5 +43,5 @@ body:
     attributes:
       label: Pre-Submission Checks
       options:
-        - label: I searched existing issues and discussions
+        - label: I searched existing issues for duplicates
           required: true

@@ -64,15 +64,17 @@ body:
       options:
         - Phase 1 — Pre-flight
         - Phase 2 — Target & triage
-        - Phase 3 — Review agents
-        - Phase 4 — Classify & verify
+        - Phase 3 — Summarize & discover
+        - Phase 4 — Merge & verify
         - Phase 5 — Validate
-        - Phase 6 — Filter & reconcile
+        - Phase 6 — Filter
         - Phase 7 — Blind challenge
         - Phase 8 — Report & deliver
+        - Workflow pipeline (workflows/)
         - Pipeline script (scripts/)
         - Agent definition (agents/)
         - Skill orchestration (skills/)
+        - Benchmark harness (bench/)
         - Other / unknown
 
   - type: input
@@ -85,7 +87,20 @@ body:
     id: plugin_version
     attributes:
       label: Plugin Version
-      placeholder: See .claude-plugin/plugin.json (e.g., 2.3.4)
+      placeholder: See .claude-plugin/plugin.json (e.g., 3.1.2)
+
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: Install Method
+      description: A stale plugin of the same name can be resolved ahead of the install you intended, so provenance is a first-order diagnostic.
+      options:
+        - Marketplace (claude plugin install)
+        - Local plugin directory (--plugin-dir)
+        - Local clone used in place
+        - Other / unknown
+    validations:
+      required: true
 
   - type: input
     id: python_version
