@@ -227,7 +227,10 @@ need `BENCH_JUDGE_API_KEY` or `ANTHROPIC_API_KEY`. Subscription mode drops the
 `ANTHROPIC_API_KEY` **prereq** (the run genuinely does not need it), so a
 key-less machine can run a review pass and the mechanical
 [`--check`](#cli-reference) gate, which never invokes the judge; `--score-only`
-on such a run fails loud at score time with a missing-judge-key error.
+on such a run fails loud at score time with a missing-judge-key error. Because
+that failure lands hours after the spend, the runner prints a one-line `NOTE:` at
+startup when a subscription run can see no judge key at all — a warning, not a
+prerequisite.
 
 ### Cost honesty
 

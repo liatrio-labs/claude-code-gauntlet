@@ -10,7 +10,10 @@ events — not the default gate for every change.
 
 ## Tier ladder
 
-| Tier | What | Trigger | Cost (ledger) | Purpose |
+Every cost below is `auth_mode=api` spend; see
+[Which tiers may run on subscription](#which-tiers-may-run-on-subscription).
+
+| Tier | What | Trigger | Cost (ledger, `auth_mode=api`) | Purpose |
 |------|------|---------|---------------|---------|
 | Always-on suites | `pytest` (pipeline + `bench/tests/`) + `node --test workflows/test/*.test.js` + `pre-commit` | Every PR / every commit path | $0 | Deterministic correctness |
 | Functional smoke | `--tier smoke` (2–3 PRs) + mechanical checker | Per sub-release, run by the release manager | ~$21–$32 (mean ~$27; 16–22 min/PR) | "No bugs, functions correctly" — **not** performance proof |
@@ -36,6 +39,11 @@ marginal cost. Mechanics, prerequisites, and cost-honesty rules:
 | Paired mini-subset | **No** | Of record: clean cost accounting, no throttle-induced timeouts mid-leg |
 | Full-15 / holdout | **No** | Same, at release grade |
 
+Caveat on the "yes" rows: what a subscription usage-limit hit looks like in bench terms
+is **not yet confirmed** — expected to surface as a per-PR watchdog `timeout`, recoverable
+with `--retry-failed`, but no live subscription smoke has run yet. The first one settles
+it and updates [`README.md` → Usage limits](README.md#usage-limits).
+
 Every ledger cost figure in this runbook is `auth_mode=api` spend. A
 `auth_mode=subscription` row's `cost_usd` is recorded but is not billable spend
 (Anthropic documents it as "not relevant for billing purposes"), so it is
@@ -49,7 +57,7 @@ Smoke recall is noise (0.0–0.75 swing across 14 smoke rows on ~4 goldens). The
 verdict is **mechanical**, never the judge:
 
 ```bash
-python3 bench/run.py --tier smoke        # add --child-auth subscription to skip API spend
+python3 bench/run.py --tier smoke        # --child-auth subscription skips API spend (see caveat above)
 python3 bench/run.py --check <RUN_ID>
 ```
 
