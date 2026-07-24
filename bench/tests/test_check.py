@@ -89,13 +89,27 @@ def _ok_finding(origin="new"):
     }
 
 
-def _wf_record(script_path=PIPELINE):
-    """Shape of a per-child Workflow record (the real scriptPath carrier)."""
-    return {
+def _wf_record(script_path=PIPELINE, *, include_verify=True):
+    """Shape of a per-child Workflow record (the real scriptPath carrier).
+
+    Real skill runs also persist ``args.verify.scriptPath`` → verify_findings.py;
+    G4 must ignore that nested path and only grade the top-level Workflow path.
+    """
+    rec = {
         "runId": "wf_test-0001",
         "scriptPath": script_path,
         "status": "completed",
     }
+    if include_verify:
+        # Absolute form mirrors SKILL.md's ``{plugin_root}/scripts/verify_findings.py``.
+        rec["args"] = {
+            "verify": {
+                "scriptPath": str(REPO_ROOT / "scripts" / "verify_findings.py"),
+                "inputPathBase": "/tmp/in",
+                "outputPathBase": "/tmp/out",
+            }
+        }
+    return rec
 
 
 def _build_ok_run(
@@ -296,6 +310,51 @@ class CheckRunTest(unittest.TestCase):
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(any("scriptPath" in f for f in result["failures"]))
+
+    def test_nested_verify_script_path_ignored_by_g4(self):
+        """Healthy runs carry args.verify.scriptPath → verify_findings.py; must pass."""
+        _build_ok_run(self.run_dir)
+        # Explicitly assert the fixture planted a nested non-pipeline scriptPath.
+        wf = self.run_dir / "pr-example-repo-1" / "workflows" / "wf_test-0001.json"
+        data = json.loads(wf.read_text(encoding="utf-8"))
+        nested = data["args"]["verify"]["scriptPath"]
+        self.assertTrue(nested.endswith("verify_findings.py"), nested)
+        self.assertNotEqual(nested, data["scriptPath"])
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        # Extractor returns only the Workflow invocation path.
+        extracted = check._extract_script_paths(wf)
+        self.assertEqual(extracted, [PIPELINE])
+
+    def test_extract_script_paths_skips_nested_under_args(self):
+        wf = self.run_dir / "wf_nested.json"
+        _write_json(
+            wf,
+            {
+                "scriptPath": PIPELINE,
+                "args": {
+                    "verify": {"scriptPath": "/plugin/scripts/verify_findings.py"},
+                    "other": {"scriptPath": "/should/ignore.js"},
+                },
+            },
+        )
+        self.assertEqual(check._extract_script_paths(wf), [PIPELINE])
+
+    def test_extract_script_paths_accepts_wrapped_tool_input(self):
+        wf = self.run_dir / "wf_wrapped.json"
+        _write_json(
+            wf,
+            {
+                "runId": "wf_wrap",
+                "input": {
+                    "scriptPath": PIPELINE,
+                    "args": {
+                        "verify": {"scriptPath": "/plugin/scripts/verify_findings.py"},
+                    },
+                },
+            },
+        )
+        self.assertEqual(check._extract_script_paths(wf), [PIPELINE])
 
     def test_missing_workflow_records_fails_g4(self):
         _build_ok_run(self.run_dir, include_workflow=False)

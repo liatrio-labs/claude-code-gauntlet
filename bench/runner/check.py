@@ -166,29 +166,33 @@ def _validate_payload_fields(payload, label):
 
 
 def _extract_script_paths(path):
-    """Return every scriptPath string found in a workflow-record JSON file."""
+    """Return the Workflow-tool ``scriptPath`` from a ``wf_*.json`` record.
+
+    G4 checks plugin identity via the child Workflow invocation path
+    (``workflows/pipeline.js``). Nested paths such as ``args.verify.scriptPath``
+    (``scripts/verify_findings.py``) are intentionally ignored — a recursive
+    walk would false-fail healthy skill runs.
+    """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
-    paths = list(_SCRIPT_PATH_RE.findall(text))
     try:
         data = json.loads(text)
     except (json.JSONDecodeError, ValueError):
-        return paths
-    seen = set(paths)
-
-    def walk(node):
-        if isinstance(node, dict):
-            sp = node.get("scriptPath")
-            if isinstance(sp, str) and sp not in seen:
-                seen.add(sp)
-                paths.append(sp)
-            for v in node.values():
-                walk(v)
-        elif isinstance(node, list):
-            for v in node:
-                walk(v)
-
-    walk(data)
-    return paths
+        # Partial/corrupt JSON: first top-level-ish match only (not every hit).
+        m = _SCRIPT_PATH_RE.search(text)
+        return [m.group(1)] if m else []
+    if not isinstance(data, dict):
+        return []
+    sp = data.get("scriptPath")
+    if isinstance(sp, str) and sp:
+        return [sp]
+    # Some runtimes nest the tool input under a single wrapper key.
+    for key in ("input", "toolInput", "parameters"):
+        nested = data.get(key)
+        if isinstance(nested, dict):
+            sp = nested.get("scriptPath")
+            if isinstance(sp, str) and sp:
+                return [sp]
+    return []
 
 
 def _script_path_ok(script_path, expected_pipeline, repo_root=None):
