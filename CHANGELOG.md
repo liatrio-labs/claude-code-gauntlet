@@ -2,6 +2,67 @@
 
 <!-- version list -->
 
+## v3.1.3 (2026-07-24)
+
+### Bug Fixes
+
+- Repair the tier-slug contradiction and the workflow's dead remediation step
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- **ci**: Make the label helper refuse unusable input and close test gaps
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+### Chores
+
+- Apply markdownlint autofix to CHANGELOG.md
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+### Continuous Integration
+
+- Verify the label manifest against the repository's labels
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+### Documentation
+
+- Add SECURITY.md and put it in the cspell scope
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Align CONTRIBUTING and the PR checklist with the CI-enforced gates
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Check in the label taxonomy and expand the work-queue standard
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Cut unauthorized policy from SECURITY.md and fix stale claims
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Drop the invented tier slug and finish the conduct-channel split
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Record two verification gotchas in AGENTS.md
+  ([`4db589a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4db589ab9f1561c52dfd8b470577c23a54aca871))
+
+- Refresh the public contribution surface for v3
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Resolve the label taxonomy and tier vocabulary against their sources
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Sync issue forms with the shipped v3 architecture
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+### Testing
+
+- Address code-gauntlet review findings on PR #41
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Harden the contribution-surface contract after adversarial review
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+- Pin the public contribution surface (Issue #30)
+  ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
+
+
 ## v3.1.2 (2026-07-24)
 
 ### Bug Fixes
