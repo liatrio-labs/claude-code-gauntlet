@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.1.2 (2026-07-24)
+
+### Bug Fixes
+
+- **bench**: Catch writer degrade on compact-return carriers
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+- **bench**: Codify measurement policy with mini subset and smoke checker
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+- **bench**: Cover GitLab/union-schema paths and align mini dashboard bits
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+- **bench**: Cover wf collect wiring and grade --tier mini in report
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+- **bench**: Ignore nested verify scriptPath in smoke G4
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+- **bench**: Point smoke checker at real workflow records
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+- **bench**: Stop incomplete mirror caches from poisoning CI
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+### Chores
+
+- Apply markdownlint-cli2 autofix to CHANGELOG.md
+  ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
+
+
 ## v3.1.1 (2026-07-23)
 
 ### Bug Fixes

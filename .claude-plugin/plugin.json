@@ -1,6 +1,6 @@
 {
   "name": "code-gauntlet",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "Adversarial multi-agent code review. Your PR runs a gauntlet of up to seven concern-specialized agents, then survives deterministic verification, skeptical validation, and a blind challenge before anything reaches you. Prompt injection defense and flexible delivery (PR/MR comments, markdown, chat). Supports GitHub and GitLab. Formerly deep-review.",
   "author": {
     "name": "Lee Hopper"

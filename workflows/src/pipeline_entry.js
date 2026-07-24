@@ -10,7 +10,7 @@ import { runWith } from './stages.js';
 import { parseEntryArgs } from './args.js';
 
 export const meta = { name: 'code-gauntlet', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
-const PIPELINE_VERSION = '3.1.1';
+const PIPELINE_VERSION = '3.1.2';
 
 // run(rawArgs) — the thin public entry. Builds the real-globals ctx and delegates to
 // runWith (in stages.js), which owns arg validation, the top-level try/catch, the full
