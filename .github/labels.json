@@ -1,0 +1,31 @@
+{
+  "labels": [
+    {"name": "area:agents", "color": "c5def5", "description": "Changes landing in agents/: discovery and validation agent prompts", "category": "area"},
+    {"name": "area:bench", "color": "9fc7ef", "description": "Changes landing in bench/: harness, goldens, ledger", "category": "area"},
+    {"name": "area:ci", "color": "8ab6e8", "description": "Changes landing in .github/workflows or the pre-commit config", "category": "area"},
+    {"name": "area:docs", "color": "dbe9fb", "description": "Changes landing in README, CONTRIBUTING, or docs/", "category": "area"},
+    {"name": "area:scripts", "color": "b0d0f4", "description": "Changes landing in scripts/: retained stdlib Python twins", "category": "area"},
+    {"name": "area:skills", "color": "cddcf6", "description": "Changes landing in skills/: SKILL.md and phase references", "category": "area"},
+    {"name": "area:workflows", "color": "bfd4f2", "description": "Changes landing in workflows/: JS pipeline source and bundle", "category": "area"},
+    {"name": "bench", "color": "1a7f37", "description": "Benchmark harness concerns, wherever the change lands", "category": "topic"},
+    {"name": "benchmarking", "color": "0e8a16", "description": "Measurement runs, tiers, and scoring methodology", "category": "topic"},
+    {"name": "bug", "color": "d73a4a", "description": "Something isn't working", "category": "type"},
+    {"name": "determinism", "color": "1d76db", "description": "Deterministic pipeline behavior", "category": "topic"},
+    {"name": "documentation", "color": "0075ca", "description": "Improvements or additions to documentation", "category": "type"},
+    {"name": "duplicate", "color": "cfd3d7", "description": "This issue or pull request already exists", "category": "triage"},
+    {"name": "enhancement", "color": "a2eeef", "description": "New feature or request", "category": "type"},
+    {"name": "good first issue", "color": "7057ff", "description": "Good for newcomers", "category": "triage"},
+    {"name": "help wanted", "color": "008672", "description": "Extra attention is needed", "category": "triage"},
+    {"name": "invalid", "color": "e4e669", "description": "This doesn't seem right", "category": "triage"},
+    {"name": "latency", "color": "fbca04", "description": "Wall-clock run duration and pipeline latency", "category": "topic"},
+    {"name": "needs-triage", "color": "ededed", "description": "Auto-applied by issue forms; awaiting maintainer triage", "category": "triage"},
+    {"name": "policy", "color": "8250df", "description": "Measurement and release policy decisions", "category": "topic"},
+    {"name": "process", "color": "d4c5f9", "description": "Contribution and maintainer process", "category": "topic"},
+    {"name": "question", "color": "d876e3", "description": "Further information is requested", "category": "type"},
+    {"name": "reliability", "color": "b60205", "description": "Failure handling, degradation honesty, run integrity", "category": "topic"},
+    {"name": "tooling", "color": "6e7781", "description": "Developer tooling and automation concerns, wherever they land", "category": "topic"},
+    {"name": "verify-boundary", "color": "d93f0b", "description": "Verification receipt boundary between the JS pipeline and verify_findings.py", "category": "topic"},
+    {"name": "wontfix", "color": "ffffff", "description": "This will not be worked on", "category": "triage"},
+    {"name": "work-queue", "color": "5319e7", "description": "Maintainer work-queue item; see docs/maintainer-issues.md", "category": "triage"}
+  ]
+}
