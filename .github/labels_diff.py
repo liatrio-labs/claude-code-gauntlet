@@ -7,7 +7,7 @@ drops it silently otherwise. A manifest nothing checks against the live repo is
 therefore aspirational: this helper closes that gap in both directions.
 
     # print the `gh label create --force` commands the repo is missing
-    python3 .github/labels_diff.py --commands
+    python3 .github/labels_diff.py --commands --repo <owner>/<repo>
 
     # confirm the sync landed; exit 1 on any drift
     gh api "repos/<owner>/<repo>/labels" --paginate \\
@@ -19,15 +19,25 @@ Standard library only, like every other Python in this repo.
 
 import argparse
 import json
+import re
 import shlex
 import sys
 from pathlib import Path
 
 MANIFEST = Path(__file__).resolve().parent / "labels.json"
+HEX_COLOR = re.compile(r"^[0-9a-f]{6}$")
+
+# Exit codes: 0 in sync, 1 drift, 2 bad input or unusable manifest.
+EXIT_BAD_INPUT = 2
+
+
+def _die(message):
+    print(message, file=sys.stderr)
+    raise SystemExit(EXIT_BAD_INPUT)
 
 
 def load_manifest(path=MANIFEST):
-    return json.loads(path.read_text(encoding="utf-8"))["labels"]
+    return json.loads(Path(path).read_text(encoding="utf-8"))["labels"]
 
 
 def load_live(source):
@@ -35,25 +45,43 @@ def load_live(source):
 
     `gh api --paginate` concatenates one JSON array per page rather than emitting a
     single document, and `--paginate --slurp` nests the pages inside one array. Both
-    shapes are accepted: pages are decoded in sequence and flattened.
+    shapes are accepted. Anything else — an error payload, a single object, a list of
+    strings from `--jq` — is refused by name rather than crashing three frames later,
+    because a failed API read is what a maintainer will actually hit.
     """
     text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    if not text.strip():
+        _die(f"no JSON in {'stdin' if source == '-' else source}: "
+             "the `gh api` read produced nothing")
+
     decoder = json.JSONDecoder()
     entries, offset = [], 0
     while offset < len(text):
         if text[offset].isspace():
             offset += 1
             continue
-        page, offset = decoder.raw_decode(text, offset)
+        try:
+            page, offset = decoder.raw_decode(text, offset)
+        except json.JSONDecodeError as error:
+            _die(f"could not parse the label response as JSON: {error}")
+        if not isinstance(page, list):
+            _die("expected a JSON array of labels from `gh api`, got "
+                 f"{json.dumps(page)[:200]}")
         entries.extend(page)
-    while entries and isinstance(entries[0], list):
+
+    while entries and all(isinstance(entry, list) for entry in entries):
         entries = [entry for page in entries for entry in page]
-    return [
-        {"name": entry["name"],
-         "color": (entry.get("color") or "").lower(),
-         "description": entry.get("description") or ""}
-        for entry in entries
-    ]
+
+    labels = []
+    for entry in entries:
+        if not isinstance(entry, dict) or "name" not in entry:
+            _die(f"expected label objects with a name, got {json.dumps(entry)[:200]}")
+        labels.append({
+            "name": entry["name"],
+            "color": (entry.get("color") or "").lower(),
+            "description": entry.get("description") or "",
+        })
+    return labels
 
 
 def diff(manifest, live):
@@ -72,46 +100,60 @@ def diff(manifest, live):
     return missing, diverging, unmanaged
 
 
-def command(label):
+def command(label, repo=None):
     # `--force` updates an existing label in place instead of failing on conflict. It
     # never deletes, so a label absent from the manifest is left alone.
-    return " ".join([
-        "gh", "label", "create", shlex.quote(label["name"]),
-        "--color", label["color"],
-        "--description", shlex.quote(label["description"]),
-        "--force",
-    ])
+    argv = ["gh", "label", "create", shlex.quote(label["name"]),
+            "--color", shlex.quote(label["color"]),
+            "--description", shlex.quote(label["description"])]
+    if repo:
+        # Without this, `gh` infers the target from the working directory's git remote.
+        argv += ["--repo", shlex.quote(repo)]
+    return " ".join(argv + ["--force"])
+
+
+def check_emittable(manifest):
+    """Refuse to build a command line out of a value that would not survive one."""
+    for label in manifest:
+        for field in ("name", "description"):
+            if label[field].startswith("-"):
+                _die(f"{label['name']!r}: {field} starts with '-', which `gh` would read "
+                     "as a flag")
+        if not HEX_COLOR.match(label["color"]):
+            _die(f"{label['name']!r}: color {label['color']!r} is not 6-digit lowercase hex")
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(
+        description="Compare .github/labels.json against a repository's live labels.")
     parser.add_argument("--live", metavar="PATH",
                         help="JSON array of the repository's labels, or - for stdin")
     parser.add_argument("--commands", action="store_true",
                         help="print gh label create commands instead of a drift report")
+    parser.add_argument("--repo", metavar="OWNER/REPO",
+                        help="pass --repo to the emitted gh commands")
+    parser.add_argument("--manifest", metavar="PATH", default=MANIFEST,
+                        help="taxonomy manifest to read (default: .github/labels.json)")
     args = parser.parse_args(argv)
 
-    manifest = load_manifest()
-    for label in manifest:
-        # A leading dash would be read as a flag by the emitted command line.
-        if label["name"].startswith("-") or label["description"].startswith("-"):
-            print(f"refusing to emit a command for {label['name']!r}: leading '-'", file=sys.stderr)
-            return 2
+    manifest = load_manifest(args.manifest)
 
     if args.live is None:
         if not args.commands:
             parser.error("--live is required unless --commands is given")
+        check_emittable(manifest)
         for label in manifest:
-            print(command(label))
+            print(command(label, args.repo))
         return 0
 
     missing, diverging, unmanaged = diff(manifest, load_live(args.live))
 
     if args.commands:
+        check_emittable(manifest)
         for label in missing:
-            print(command(label))
+            print(command(label, args.repo))
         for label, _ in diverging:
-            print(command(label))
+            print(command(label, args.repo))
         return 0
 
     for label in missing:

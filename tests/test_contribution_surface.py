@@ -56,6 +56,19 @@ SINGULAR_AREA_DRIFT = re.compile(r"area:(workflow|skill|script|doc|agent)(?![a-z
 FORM_TOP_LEVEL_KEYS = {"name", "description", "title", "labels", "assignees", "projects", "type", "body"}
 FORM_FIELD_TYPES = {"markdown", "input", "textarea", "dropdown", "checkboxes"}
 FORM_ITEM_KEYS = {"type", "id", "attributes", "validations"}
+FORM_TOP_LEVEL_REQUIRED = {"name", "description", "body"}
+# Per-type attributes GitHub accepts. An unknown one is a validation error, not a
+# silently ignored extra.
+FORM_ATTRIBUTES = {
+    "markdown": {"value"},
+    "input": {"label", "description", "placeholder", "value"},
+    "textarea": {"label", "description", "placeholder", "value", "render"},
+    "dropdown": {"label", "description", "multiple", "options", "default"},
+    "checkboxes": {"label", "description", "options"},
+}
+# `markdown` is display-only: it takes no id and cannot be required.
+FORM_TYPES_WITHOUT_VALIDATIONS = {"markdown"}
+FORM_TYPES_WITH_OPTIONS = {"dropdown", "checkboxes"}
 # GitHub rejects these as dropdown options: empty, or a value YAML would read as a bool
 # or as the reserved "None".
 RESERVED_OPTIONS = {"none", "true", "false", "yes", "no", "on", "off"}
@@ -83,15 +96,21 @@ def _indent(line):
 
 
 def _sequence_after(lines, start, indent):
-    """Items of a block sequence whose dashes sit at `indent`, beginning at `lines[start]`."""
+    """Items of a block sequence whose dashes sit at `indent`, beginning at `lines[start]`.
+
+    A sequence of mappings indents its continuation keys past the dash — a checkboxes
+    option's `required:` is the case here — so those lines are skipped rather than
+    ending the sequence. Getting that order wrong truncates the list silently, which is
+    worse than reading nothing.
+    """
     items = []
     for line in lines[start:]:
         if not line.strip():
             continue
+        if _indent(line) > indent:
+            continue  # continuation of the previous item, not the end of the sequence
         if _indent(line) < indent or not line.lstrip(" ").startswith("- "):
             break
-        if _indent(line) > indent:
-            continue  # nested mapping keys (e.g. a checkboxes option's `required:`)
         items.append(_unquote(line.lstrip(" ")[2:]))
     return items
 
@@ -134,6 +153,7 @@ def _form_fields(text):
         block[0] = "    " + block[0].lstrip(" ")[2:]
 
         item_keys, attributes, options, validations = [], {}, None, {}
+        section = None
         for index, line in enumerate(block):
             if not line.strip():
                 continue
@@ -151,11 +171,15 @@ def _form_fields(text):
             elif sub_match and section == "validations":
                 validations[sub_match.group(1)] = sub_match.group(2).strip()
 
+        # `type:` and `id:` are read from anywhere in the item: GitHub does not impose
+        # key order, so requiring `type` first would reject a form that renders fine.
+        types = [line for line in block if re.match(r"^    type:", line)]
         ids = [line for line in block if re.match(r"^    id:", line)]
-        if len(ids) > 1:
-            raise ValueError(f"duplicate id: keys in one body item: {ids}")
+        for name, found in (("type", types), ("id", ids)):
+            if len(found) > 1:
+                raise ValueError(f"duplicate {name}: keys in one body item: {found}")
         fields.append({
-            "type": _unquote(block[0].split(":", 1)[1]) if block[0].startswith("    type:") else None,
+            "type": _unquote(types[0].split(":", 1)[1]) if types else None,
             "id": _unquote(ids[0].split(":", 1)[1]) if ids else None,
             "keys": item_keys,
             "attributes": attributes,
@@ -169,7 +193,8 @@ def _form_fields(text):
 
 
 def _field(form_name, field_id):
-    for field in _form_fields((FORMS / form_name).read_text(encoding="utf-8")):
+    form = next(path for path in _form_files() if path.stem == Path(form_name).stem)
+    for field in _form_fields(form.read_text(encoding="utf-8")):
         if field["id"] == field_id:
             return field
     return None
@@ -324,16 +349,62 @@ class TestLabelsDiffHelper(unittest.TestCase):
     def test_live_is_required_for_a_drift_report(self):
         self.assertEqual(self._run().returncode, 2)
 
+    def test_repo_flag_targets_the_emitted_commands(self):
+        # Without --repo, `gh` infers the target from the working directory's remote,
+        # which is how a taxonomy ends up synced into the wrong repository.
+        plain = self._run("--commands").stdout.splitlines()[0]
+        self.assertNotIn("--repo", plain)
+        targeted = self._run("--commands", "--repo", "acme/widgets").stdout.splitlines()[0]
+        self.assertIn("--repo acme/widgets", targeted)
+
+    def test_unusable_gh_output_is_refused_by_name_not_by_traceback(self):
+        cases = {
+            "empty": "",
+            "error payload": '{"message": "Not Found", "status": "404"}',
+            "single object": '{"name": "bug", "color": "d73a4a"}',
+            "names only (--jq)": '["bug", "enhancement"]',
+            "not json": "gh: command not found",
+        }
+        for name, payload in cases.items():
+            with self.subTest(payload=name):
+                result = subprocess.run(
+                    [sys.executable, str(LABELS_DIFF), "--live", "-"],
+                    cwd=REPO, input=payload, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(result.stderr.strip(), "the refusal must say what was wrong")
+
+    def test_a_manifest_that_cannot_be_shell_quoted_is_refused(self):
+        # The documented recipe pipes this output into a shell, so a value that would
+        # not survive a command line must stop the run rather than be emitted.
+        unusable = [
+            {"name": "-wip", "color": "ffffff", "description": "leading dash in name"},
+            {"name": "ok", "color": "ffffff", "description": "-leading dash in description"},
+            {"name": "ok", "color": "fff; echo pwned", "description": "not hex"},
+        ]
+        for entry in unusable:
+            with self.subTest(entry=entry["description"]):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "labels.json"
+                    path.write_text(json.dumps({"labels": [entry]}), encoding="utf-8")
+                    result = subprocess.run(
+                        [sys.executable, str(LABELS_DIFF), "--manifest", str(path), "--commands"],
+                        cwd=REPO, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertEqual(result.stdout, "", "nothing may be emitted")
+
 
 class TestIssueFormSchema(unittest.TestCase):
     """A form that violates GitHub's schema does not render, with no local signal."""
 
-    def test_top_level_keys_are_permitted(self):
+    def test_top_level_keys_are_permitted_and_complete(self):
         for form in _form_files():
             with self.subTest(form=form.name):
                 keys = {line.split(":", 1)[0] for line in form.read_text(encoding="utf-8").splitlines()
                         if re.match(r"^\w+:", line)}
                 self.assertLessEqual(keys, FORM_TOP_LEVEL_KEYS)
+                # GitHub requires all three; a form missing one does not render.
+                self.assertLessEqual(FORM_TOP_LEVEL_REQUIRED, keys)
 
     def test_body_items_are_well_formed(self):
         for form in _form_files():
@@ -349,20 +420,37 @@ class TestIssueFormSchema(unittest.TestCase):
                 with self.subTest(form=form.name, field=field["id"] or field["type"]):
                     self.assertIn(field["type"], FORM_FIELD_TYPES)
                     self.assertLessEqual(set(field["keys"]), FORM_ITEM_KEYS)
-                    if field["type"] == "markdown":
+                    self.assertLessEqual(set(field["attributes"]), FORM_ATTRIBUTES[field["type"]],
+                                         "unknown attribute for this field type")
+                    if field["type"] in FORM_TYPES_WITHOUT_VALIDATIONS:
+                        self.assertNotIn("validations", field["keys"],
+                                         "a markdown block cannot be required")
+                        self.assertIsNone(field["id"], "a markdown block takes no id")
                         self.assertIn("value", field["attributes"])
                     else:
                         self.assertRegex(field["id"] or "", r"^[A-Za-z0-9_-]+$")
                         self.assertTrue(field["attributes"].get("label"))
 
-    def test_dropdown_options_are_unique_and_renderable(self):
+    def test_the_reader_does_not_truncate_mapping_sequences(self):
+        # A checkboxes option is a mapping, so its `required:` line is indented past the
+        # dash. A reader that stops there reports one option out of several, and every
+        # assertion over those options is born vacuous.
+        for form in _form_files():
+            text = form.read_text(encoding="utf-8")
+            declared = len(re.findall(r"^        - label:", text, re.M))
+            parsed = sum(len(field["options"] or []) for field in _form_fields(text)
+                         if field["type"] == "checkboxes")
+            with self.subTest(form=form.name):
+                self.assertEqual(parsed, declared)
+
+    def test_option_lists_are_unique_and_renderable(self):
         for form in _form_files():
             for field in _form_fields(form.read_text(encoding="utf-8")):
-                if field["type"] != "dropdown":
+                if field["type"] not in FORM_TYPES_WITH_OPTIONS:
                     continue
                 with self.subTest(form=form.name, field=field["id"]):
                     options = field["options"]
-                    self.assertTrue(options, "a dropdown must declare options")
+                    self.assertTrue(options, f"a {field['type']} must declare options")
                     # A duplicated option makes the whole form fail to render.
                     self.assertEqual(len(options), len(set(options)))
                     for option in options:
@@ -411,8 +499,11 @@ class TestIssueForms(unittest.TestCase):
     def test_bug_form_plugin_version_placeholder_is_3x(self):
         placeholder = _field("bug_report.yml", "plugin_version")["attributes"]["placeholder"]
         self.assertIsNotNone(placeholder)
-        self.assertRegex(placeholder, r"3\.\d+\.\d+")
-        self.assertNotRegex(placeholder, r"2\.\d+\.\d+")
+        # Either a pinned example or the 3.x line; a pinned patch goes stale on every
+        # release, since python-semantic-release never touches the form.
+        self.assertRegex(placeholder, r"3\.(?:x|\d+\.\d+)")
+        self.assertNotRegex(placeholder, r"2\.(?:x|\d+\.\d+)")
+        self.assertIn(".claude-plugin/plugin.json", placeholder)
 
     def test_feature_form_area_options_include_workflows_and_bench(self):
         options = "\n".join(_field("feature_request.yml", "area")["options"])
@@ -489,9 +580,15 @@ class TestContributingDocs(unittest.TestCase):
             with self.subTest(tier=tier):
                 self.assertIn(tier, text)
         # Requirement 8: reference the canonical home, do not restate the ladder. Costs
-        # and `--tier` invocations are the tell that the ladder was copied in.
+        # and `--tier` invocations are the tell that the ladder was copied in — but a
+        # copy can be laundered into prose, so the ladder's own shape is rejected too.
         self.assertNotRegex(text, r"\$\d", "tier costs belong only in bench/MEASUREMENT.md")
         self.assertNotIn("--tier", text, "tier invocations belong only in bench/MEASUREMENT.md")
+        ladder_rows = [line for line in text.splitlines()
+                       if line.lstrip().startswith("|")
+                       and re.search(r"(?i)\b(tier|trigger|smoke|mini-subset|holdout)\b", line)]
+        self.assertEqual(ladder_rows, [],
+                         "a tier table here is the ladder restated; link the runbook instead")
         link = re.search(r"\[`bench/MEASUREMENT\.md`\]\((\.\./[^)]+)\)", text)
         self.assertIsNotNone(link, "the canonical runbook must be linked, not just named")
         self.assertTrue((REPO / "docs" / link.group(1)).resolve().is_file())
