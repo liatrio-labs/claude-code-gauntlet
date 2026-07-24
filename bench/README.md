@@ -81,14 +81,16 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
 | `--score-only` | `RUN_ID` | — | Re-score an already-captured run's candidates without re-invoking `claude`/`gh` (used for repeated judge re-scoring of the same candidate set). |
-| `--check` | `RUN_ID` | — | Mechanical functional-smoke checker (payload/schema, no silent degrade, plugin `scriptPath`, ≥1 comment). Exit 0 = pass. Never invokes the judge. See [`MEASUREMENT.md`](MEASUREMENT.md). |
+| `--check` | `RUN_ID` | — | Mechanical functional-smoke checker for a completed **skill** run (not `--anchor naive`). Checks payload/schema, findings persistence, no silent degrade, plugin `scriptPath` from collected `workflows/wf_*.json`, and ≥1 comment. Exit 0 = pass; never invokes the judge. See [`MEASUREMENT.md`](MEASUREMENT.md). |
 
-At most one of `--resume` / `--retry-failed` / `--score-only` may be given
-per invocation. A killed pass loses at most the one PR that was mid-flight;
-resuming picks up where it left off. For a new run or `--resume`/
-`--retry-failed`, `run.py` exits `0` only if every targeted PR in the run
-ended status `ok`, and `1` if any PR ended `timeout`/`failed`/`drifted`/
-`invalid` — useful for gating a CI step on a clean pass.
+At most one of `--resume` / `--retry-failed` / `--score-only` / `--check` may
+be given per invocation. `--check` also rejects `--tier` / `--prs` / `--anchor`
+/ `--runs` (those flags would otherwise be silently ignored). A killed pass
+loses at most the one PR that was mid-flight; resuming picks up where it left
+off. For a new run or `--resume` / `--retry-failed`, `run.py` exits `0` only if
+every targeted PR in the run ended status `ok`, and `1` if any PR ended
+`timeout`/`failed`/`drifted`/`invalid` — useful for gating a CI step on a clean
+pass.
 
 > **Note:** `--fidelity` is currently accepted and recorded in the run
 > manifest, but the harness always captures the skill's **dry-run** payload

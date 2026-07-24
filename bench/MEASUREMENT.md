@@ -31,22 +31,32 @@ python3 bench/run.py --tier smoke
 python3 bench/run.py --check <RUN_ID>
 ```
 
-`bench/run.py --check RUN_ID` implements smoke gates 2–5:
+`bench/run.py --check RUN_ID` implements the mechanical smoke gates:
 
-1. Payload parse + adapter-required fields + union-schema findings check
-2. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts degrade
-3. Child `scriptPath` under the repo's `workflows/pipeline.js` (interim grep;
-   upgrades to `pipeline_version`/`plugin_root` echo receipts when
-   environment-purity receipts land — Issue #23)
-4. ≥1 delivered comment across the run set
+1. Completeness — every `run.json` `pr_urls` entry has terminal status `ok`
+2. Payload parse + adapter-required fields + union-schema findings check
+   (requires ≥1 `code-gauntlet-findings-*.json` per PR)
+3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
+   degrade (scans report + `code-gauntlet-checkpoint-all-*.json`)
+4. Child `scriptPath` under the repo's `workflows/pipeline.js`, read from
+   collected `pr_dir/workflows/wf_*.json` records (not `raw.json`, which is
+   only the result envelope). Upgrades to `pipeline_version`/`plugin_root`
+   echo receipts when environment-purity receipts land — Issue #23
+5. ≥1 delivered comment across the run set
 
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
+`--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
 
 CI: `.github/workflows/bench-smoke.yml` (`workflow_dispatch`) runs smoke then
 `--check` on the newest run dir; the job fails if either step fails. Bare
-mirrors under `bench/workspace/mirrors/` are cached on GH-hosted runners
-(`actions/cache`, key `bench-mirrors-${{ runner.os }}-v1`) — several GB per
-upstream; a cache hit avoids cold clones; a miss remains correct but slower.
+mirrors under `bench/workspace/mirrors/` are cached on GH-hosted runners via
+split restore/save (`actions/cache/restore` + `actions/cache/save` with
+`if: always()`), keyed on
+`bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v1`
+so new golden pins invalidate the cache and a failed checker step still
+persists mirrors populated during the run. Several GB per upstream; a cache
+hit avoids cold clones; a miss remains correct but slower. GitHub evicts
+caches after 7 days of no access.
 
 ## Named mini subset
 

@@ -32,6 +32,9 @@ __all__ = [
     "invoke_review",
     "parse_result_envelope",
     "pr_dir_name",
+    "snapshot_workflow_records",
+    "collect_workflow_records",
+    "_claude_home",
 ]
 
 # Repo root == the code-gauntlet plugin dir. bench/runner/invoke.py -> parents[2].
@@ -193,6 +196,67 @@ def _claude_home(run_dir, base_env):
 
 def _worktree_dir(run_dir, pr):
     return Path(run_dir) / pr_dir_name(pr) / "worktree"
+
+
+def snapshot_workflow_records(claude_home):
+    """Return ``{resolved_path: (mtime_ns, size)}`` for every ``wf_*.json`` under config.
+
+    Per-child Workflow tool records live under
+    ``{CLAUDE_CONFIG_DIR}/projects/<slug>/<session>/workflows/wf_*.json`` and carry the
+    ``scriptPath`` the plugin-identity smoke gate needs. The result envelope in
+    ``raw.json`` (``claude -p --output-format json``) does **not** include tool inputs,
+    so these files are the only durable source. Snapshot before an invoke so
+    ``collect_workflow_records`` can copy only records this PR created or updated.
+    """
+    root = Path(claude_home) / "config"
+    out = {}
+    if not root.is_dir():
+        return out
+    for path in root.rglob("wf_*.json"):
+        try:
+            st = path.stat()
+        except OSError:
+            continue
+        out[str(path.resolve())] = (st.st_mtime_ns, st.st_size)
+    return out
+
+
+def collect_workflow_records(claude_home, pr_dir, baseline=None):
+    """Copy new/changed ``wf_*.json`` records into ``{pr_dir}/workflows/``.
+
+    ``baseline`` is the dict from :func:`snapshot_workflow_records` taken before the
+    child ran. Returns the list of basenames copied. Name collisions (same ``wf_`` id
+    from a different project slug) get a numeric suffix so nothing is overwritten.
+    """
+    baseline = baseline or {}
+    root = Path(claude_home) / "config"
+    dest_dir = Path(pr_dir) / "workflows"
+    copied = []
+    if not root.is_dir():
+        return copied
+    for path in sorted(root.rglob("wf_*.json")):
+        try:
+            resolved = str(path.resolve())
+            st = path.stat()
+        except OSError:
+            continue
+        prev = baseline.get(resolved)
+        if prev is not None and prev == (st.st_mtime_ns, st.st_size):
+            continue
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        target = dest_dir / path.name
+        if target.exists():
+            stem, suffix = path.stem, path.suffix
+            n = 2
+            while target.exists():
+                target = dest_dir / "{}-{}{}".format(stem, n, suffix)
+                n += 1
+        try:
+            shutil.copy2(path, target)
+        except OSError:
+            continue
+        copied.append(target.name)
+    return copied
 
 
 def _seed_trust(config_dir, worktree):

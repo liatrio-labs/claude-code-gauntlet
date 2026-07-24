@@ -6,14 +6,10 @@ norms and link out to specialty runbooks for domain policy.
 
 ## Measurement policy
 
-Do **not** restate the measurement tier ladder in work-queue issues. The
-canonical text lives in [`bench/MEASUREMENT.md`](../bench/MEASUREMENT.md):
+Do **not** restate the measurement tier ladder, costs, or owner options in
+work-queue issues. Link to the canonical runbook instead:
 
-- Always-on deterministic suites (every PR)
-- Per-sub-release functional smoke (release manager; mechanical checker)
-- Owner-triggered paired mini-subset (~$85) for changes that plausibly move
-  recall/noise
-- Owner-triggered full-15 / holdout (holdout sealed for V3.2)
+→ [`bench/MEASUREMENT.md`](../bench/MEASUREMENT.md)
 
 Work-queue issue drafts and PR descriptions that need measurement framing
 should reference that runbook rather than the superseded

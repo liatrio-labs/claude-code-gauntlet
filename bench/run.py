@@ -573,6 +573,14 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             (pr_dir / "diff.patch").write_text(diff_text)
 
             _clear_dir(output_dir)
+            # Snapshot per-child Workflow records before invoke so we can copy only
+            # this PR's new/changed wf_*.json into pr_dir/workflows/ (G3 plugin-identity
+            # gate). raw.json is the result envelope and never carries scriptPath.
+            claude_home = invoke._claude_home(run_dir, os.environ)
+            wf_baseline = (
+                {} if anchor == "naive"
+                else invoke.snapshot_workflow_records(claude_home)
+            )
             if anchor == "naive":
                 result = _invoke_naive(
                     worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s
@@ -583,6 +591,8 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                     child_model=child_model,
                 )
             _collect_artifacts(output_dir, pr_dir)
+            if anchor != "naive":
+                invoke.collect_workflow_records(claude_home, pr_dir, wf_baseline)
         except Exception as exc:
             # PR-granular progress: an unexpected error (bad JSON, an OSError during
             # collection, a plain bug) must fail only this PR and let the tier continue --
@@ -797,18 +807,22 @@ def _check_only(run_id):
     stats = result.get("stats") or {}
     print(
         "Check {}: ok={} pr_dirs={} comments={} findings_files={} "
-        "script_paths={} unknown_origin={}".format(
+        "workflow_records={} script_paths={} unknown_origin={}".format(
             run_id,
             result.get("ok"),
             stats.get("pr_dirs"),
             stats.get("delivered_comments"),
             stats.get("findings_files"),
+            stats.get("workflow_records"),
             stats.get("script_paths"),
             stats.get("unknown_origin"),
         )
     )
     for failure in result.get("failures") or []:
         print("  FAIL: {}".format(failure), file=sys.stderr)
+    # Naive-anchor refusal is a usage error (exit 2), not a smoke-gate failure.
+    if result.get("refused"):
+        return 2
     return 0 if result.get("ok") else 1
 
 
@@ -904,6 +918,15 @@ def main(argv=None):
     if args.score_only:
         return _score_only(args.score_only)
     if args.check:
+        # --check inspects an existing run; combining it with new-run flags is always a
+        # mistake (the flags would be silently ignored). Fail loud.
+        if args.tier or args.prs or args.anchor or args.runs != 1:
+            print(
+                "--check does not accept --tier / --prs / --anchor / --runs "
+                "(pass only --check RUN_ID).",
+                file=sys.stderr,
+            )
+            return 2
         return _check_only(args.check)
 
     failures = check_prereqs()

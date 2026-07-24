@@ -1,7 +1,8 @@
 """Tests for the mechanical functional-smoke checker (Issue #28).
 
-stdlib only, no network, no judge. Builds synthetic run trees under a tempdir and
-asserts each gate (G1–G4) independently, plus the ``--check`` CLI path.
+stdlib only, no network, no judge. Fixtures mirror real harness artifact names:
+bare findings lists, ``workflows/wf_*.json`` (not fabricated ``raw.json`` tool_uses),
+``code-gauntlet-checkpoint-all-*.json``, and ``run.json`` ``pr_urls`` completeness.
 """
 
 import contextlib
@@ -18,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bench import run  # noqa: E402
-from bench.runner import check  # noqa: E402
+from bench.runner import check, invoke  # noqa: E402
 
 PIPELINE = str(REPO_ROOT / "workflows" / "pipeline.js")
 
@@ -47,6 +48,7 @@ def _ok_payload(n_comments=1):
 
 
 def _ok_finding(origin="new"):
+    # Real persist output is a bare list of union-schema findings.
     return {
         "id": "f1",
         "title": "Null deref",
@@ -66,32 +68,51 @@ def _ok_finding(origin="new"):
     }
 
 
-def _raw_with_script_path(script_path=PIPELINE):
+def _wf_record(script_path=PIPELINE):
+    """Shape of a per-child Workflow record (the real scriptPath carrier)."""
     return {
-        "type": "result",
-        "subtype": "success",
-        "is_error": False,
-        "result": "Review complete.",
-        "total_cost_usd": 1.0,
-        "tool_uses": [
-            {
-                "name": "Workflow",
-                "input": {"scriptPath": script_path, "args": {}},
-            }
-        ],
+        "runId": "wf_test-0001",
+        "scriptPath": script_path,
+        "status": "completed",
     }
 
 
-def _build_ok_run(run_dir, *, n_prs=1, n_comments=1, origin="new", script_path=PIPELINE):
-    """Populate ``run_dir`` with a checker-passing synthetic run."""
+def _build_ok_run(
+    run_dir,
+    *,
+    n_prs=1,
+    n_comments=1,
+    origin="new",
+    script_path=PIPELINE,
+    pr_urls=None,
+    completed_prs=None,
+    include_findings=True,
+    include_workflow=True,
+):
+    """Populate ``run_dir`` with a checker-passing synthetic run (realistic names).
+
+    ``pr_urls`` is what ``run.json`` declares. ``completed_prs`` (default: all of
+    ``pr_urls``) controls which PRs get state files + artifact dirs — use a shorter
+    list to model a mid-run kill.
+    """
+    urls = pr_urls
+    if urls is None:
+        urls = [
+            "https://github.com/example/repo/pull/{}".format(i + 1) for i in range(n_prs)
+        ]
+    done = list(urls if completed_prs is None else completed_prs)
     _write_json(
         run_dir / "run.json",
-        {"run_id": run_dir.name, "tier": "smoke", "pr_urls": []},
+        {
+            "run_id": run_dir.name,
+            "tier": "smoke",
+            "anchor": None,
+            "pr_urls": list(urls),
+        },
     )
     state = run_dir / "state"
     state.mkdir(parents=True, exist_ok=True)
-    for i in range(n_prs):
-        url = "https://github.com/example/repo/pull/{}".format(i + 1)
+    for i, url in enumerate(done):
         _write_json(
             state / "pr-{}.json".format(i + 1),
             {"url": url, "status": "ok", "detail": {}, "ts": "2026-07-23T00:00:00Z"},
@@ -99,13 +120,32 @@ def _build_ok_run(run_dir, *, n_prs=1, n_comments=1, origin="new", script_path=P
         pr_dir = run_dir / "pr-example-repo-{}".format(i + 1)
         pr_dir.mkdir(parents=True, exist_ok=True)
         _write_json(pr_dir / "post-review-payload.json", _ok_payload(n_comments))
+        if include_findings:
+            # Bare list — the real writeArtifacts shape.
+            _write_json(
+                pr_dir / "code-gauntlet-findings-deadbeef.json",
+                [_ok_finding(origin=origin)],
+            )
+        if include_workflow:
+            _write_json(pr_dir / "workflows" / "wf_test-0001.json", _wf_record(script_path))
+        # Result envelope only — no tool_uses / scriptPath (matches production raw.json).
         _write_json(
-            pr_dir / "code-gauntlet-findings-deadbeef.json",
-            {"findings": [_ok_finding(origin=origin)]},
+            pr_dir / "raw.json",
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": "Review complete.",
+                "total_cost_usd": 1.0,
+                "session_id": "fake-session-0001",
+            },
         )
-        _write_json(pr_dir / "raw.json", _raw_with_script_path(script_path))
         (pr_dir / "deep-review-report.md").write_text(
             "# Report\n\nAll good.\n", encoding="utf-8"
+        )
+        _write_json(
+            pr_dir / "code-gauntlet-checkpoint-all-deadbeef.json",
+            {"phases": {}, "gaps": []},
         )
 
 
@@ -126,6 +166,13 @@ class CheckRunTest(unittest.TestCase):
         self.assertTrue(result["ok"], result["failures"])
         self.assertEqual(result["failures"], [])
         self.assertGreaterEqual(result["stats"]["delivered_comments"], 1)
+        self.assertGreaterEqual(result["stats"]["workflow_records"], 1)
+
+    def test_bare_list_unknown_origin_fails_g2(self):
+        _build_ok_run(self.run_dir, origin="unknown")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("origin=unknown" in f for f in result["failures"]))
 
     def test_missing_payload_fails_g1(self):
         _build_ok_run(self.run_dir)
@@ -134,40 +181,47 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("missing post-review-payload" in f for f in result["failures"]))
 
-    def test_bad_platform_fails_g1(self):
+    def test_missing_findings_fails_g1(self):
+        _build_ok_run(self.run_dir, include_findings=False)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("missing code-gauntlet-findings" in f for f in result["failures"])
+        )
+        self.assertEqual(result["stats"]["findings_files"], 0)
+
+    def test_partial_run_missing_checkpoint_fails_g0(self):
+        # run.json declares 3 PRs; only 1 has state + artifacts (mid-run kill).
+        urls = [
+            "https://github.com/example/repo/pull/1",
+            "https://github.com/example/repo/pull/2",
+            "https://github.com/example/repo/pull/3",
+        ]
+        _build_ok_run(self.run_dir, pr_urls=urls, completed_prs=urls[:1])
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("no checkpoint" in f for f in result["failures"]))
+        self.assertTrue(any("declares 3 PR" in f for f in result["failures"]))
+
+    def test_checkpoint_all_degrade_fails_g2(self):
         _build_ok_run(self.run_dir)
         _write_json(
-            self.run_dir / "pr-example-repo-1" / "post-review-payload.json",
-            {"platform": "bitbucket", "payload": {"comments": []}},
-        )
-        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("unrecognized payload platform" in f for f in result["failures"]))
-
-    def test_unknown_origin_fails_g2(self):
-        _build_ok_run(self.run_dir, origin="unknown")
-        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
-        self.assertFalse(result["ok"])
-        self.assertTrue(any("origin=unknown" in f for f in result["failures"]))
-        self.assertEqual(result["stats"]["unknown_origin"], 1)
-
-    def test_no_write_proof_gap_fails_g2(self):
-        _build_ok_run(self.run_dir)
-        report = self.run_dir / "pr-example-repo-1" / "deep-review-report.md"
-        report.write_text(
-            "# Report\n\ngaps: writeArtifacts: writer echo did not account "
-            "for all four planned artifact paths (no write proof) — "
-            "artifacts not persisted (partial-artifacts)\n",
-            encoding="utf-8",
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-checkpoint-all-deadbeef.json",
+            {
+                "gaps": [
+                    "writeArtifacts: writer echo did not account for all four "
+                    "planned artifact paths (no write proof) — artifacts not "
+                    "persisted (partial-artifacts)"
+                ]
+            },
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(
-            any("no-write-proof" in f or "partial-artifacts" in f for f in result["failures"])
+            any("checkpoint-all" in f and "no-write-proof" in f for f in result["failures"])
         )
 
     def test_stale_marketplace_script_path_fails_g3(self):
-        # Same filename, wrong root — the contamination class that voided runs.
         _build_ok_run(
             self.run_dir,
             script_path="/home/user/.claude/plugins/cache/stale/workflows/pipeline.js",
@@ -176,15 +230,13 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("scriptPath" in f for f in result["failures"]))
 
-    def test_missing_script_path_fails_g3(self):
-        _build_ok_run(self.run_dir)
-        _write_json(
-            self.run_dir / "pr-example-repo-1" / "raw.json",
-            {"type": "result", "result": "no workflow record here"},
-        )
+    def test_missing_workflow_records_fails_g3(self):
+        _build_ok_run(self.run_dir, include_workflow=False)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("no scriptPath found" in f for f in result["failures"]))
+        self.assertTrue(any("no workflows/wf_" in f for f in result["failures"]))
+        # raw.json must NOT be treated as a scriptPath source.
+        self.assertFalse(any("raw.json" in f and "scriptPath" in f for f in result["failures"]))
 
     def test_zero_comments_fails_g4(self):
         _build_ok_run(self.run_dir, n_comments=0)
@@ -192,20 +244,15 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("delivered comments" in f for f in result["failures"]))
 
-    def test_non_ok_checkpoint_fails_precondition(self):
+    def test_naive_anchor_refused(self):
         _build_ok_run(self.run_dir)
-        _write_json(
-            self.run_dir / "state" / "pr-1.json",
-            {
-                "url": "https://github.com/example/repo/pull/1",
-                "status": "failed",
-                "detail": {"reason": "boom"},
-                "ts": "2026-07-23T00:00:00Z",
-            },
-        )
+        manifest = json.loads((self.run_dir / "run.json").read_text())
+        manifest["anchor"] = "naive"
+        _write_json(self.run_dir / "run.json", manifest)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result.get("refused"))
         self.assertFalse(result["ok"])
-        self.assertTrue(any("precondition" in f for f in result["failures"]))
+        self.assertTrue(any("naive" in f for f in result["failures"]))
 
     def test_union_schema_missing_description_fails_g1(self):
         _build_ok_run(self.run_dir)
@@ -214,7 +261,7 @@ class CheckRunTest(unittest.TestCase):
         del bad["body"]
         _write_json(
             self.run_dir / "pr-example-repo-1" / "code-gauntlet-findings-deadbeef.json",
-            {"findings": [bad]},
+            [bad],
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
@@ -226,10 +273,8 @@ class CheckRunTest(unittest.TestCase):
         self.assertTrue(result["ok"], result["failures"])
 
     def test_does_not_import_score_module(self):
-        """Checker must never pull in the judge/score path."""
         import importlib
 
-        # Ensure a clean import of check does not load score.
         if "bench.runner.score" in sys.modules:
             del sys.modules["bench.runner.score"]
         importlib.reload(check)
@@ -237,6 +282,65 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir)
         check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertNotIn("bench.runner.score", sys.modules)
+
+
+class WorkflowRecordCollectionTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-wf-collect-")
+        self.home = Path(self.tmp) / "claude-home"
+        self.pr_dir = Path(self.tmp) / "pr-example-repo-1"
+        self.pr_dir.mkdir()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _plant(self, rel, payload, mtime_ns=None):
+        path = self.home / "config" / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        if mtime_ns is not None:
+            import os
+
+            os.utime(path, ns=(mtime_ns, mtime_ns))
+        return path
+
+    def test_collects_only_new_or_changed_records(self):
+        old = self._plant(
+            "projects/slug/session/workflows/wf_old.json",
+            _wf_record("/old/workflows/pipeline.js"),
+        )
+        baseline = invoke.snapshot_workflow_records(self.home)
+        self.assertIn(str(old.resolve()), baseline)
+
+        self._plant(
+            "projects/slug/session/workflows/wf_new.json",
+            _wf_record(PIPELINE),
+        )
+        # Change the old record so it is re-copied.
+        self._plant(
+            "projects/slug/session/workflows/wf_old.json",
+            _wf_record(PIPELINE),
+        )
+
+        copied = invoke.collect_workflow_records(self.home, self.pr_dir, baseline)
+        self.assertEqual(set(copied), {"wf_new.json", "wf_old.json"})
+        dest = self.pr_dir / "workflows"
+        self.assertTrue((dest / "wf_new.json").is_file())
+        self.assertTrue((dest / "wf_old.json").is_file())
+        data = json.loads((dest / "wf_new.json").read_text())
+        self.assertEqual(data["scriptPath"], PIPELINE)
+
+    def test_unchanged_baseline_copies_nothing(self):
+        self._plant(
+            "projects/slug/session/workflows/wf_old.json",
+            _wf_record(PIPELINE),
+        )
+        baseline = invoke.snapshot_workflow_records(self.home)
+        copied = invoke.collect_workflow_records(self.home, self.pr_dir, baseline)
+        self.assertEqual(copied, [])
+        self.assertFalse((self.pr_dir / "workflows").exists())
 
 
 class CheckCliTest(unittest.TestCase):
@@ -278,6 +382,21 @@ class CheckCliTest(unittest.TestCase):
             rc = run.main(["--check", "x", "--score-only", "y"])
         self.assertEqual(rc, 2)
         self.assertIn("--check", err.getvalue())
+
+    def test_check_rejects_tier_flag(self):
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = run.main(["--check", self.run_dir.name, "--tier", "smoke"])
+        self.assertEqual(rc, 2)
+        self.assertIn("does not accept", err.getvalue())
+
+    def test_check_naive_is_exit_2(self):
+        manifest = json.loads((self.run_dir / "run.json").read_text())
+        manifest["anchor"] = "naive"
+        _write_json(self.run_dir / "run.json", manifest)
+        with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = run.main(["--check", self.run_dir.name])
+        self.assertEqual(rc, 2)
 
 
 class MiniResolutionTest(unittest.TestCase):

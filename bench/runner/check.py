@@ -5,15 +5,16 @@ functional smoke gates. Never invokes the judge, adjudicator, or ``score_run``.
 
 Gates (smoke gates 2–5 from the measurement-policy issue):
 
+  G0  Completeness — every ``run.json`` ``pr_urls`` entry has terminal status ``ok``
   G1  Payload parse + adapter-required fields + union-schema findings check
+      (requires ≥1 findings artifact per PR)
   G2  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
   G3  Child ``scriptPath`` under the repo's ``workflows/pipeline.js``
+      (from collected ``pr_dir/workflows/wf_*.json``, not ``raw.json``)
   G4  ≥1 delivered inline comment across the run set
 
 Stdlib-only (CLAUDE.md).
 """
-
-from __future__ import annotations
 
 import json
 import re
@@ -38,6 +39,13 @@ _DEGRADE_RE = re.compile(
 # Expected pipeline entry relative to the plugin/repo root.
 PIPELINE_REL = Path("workflows") / "pipeline.js"
 
+# Real artifact names written by writeArtifacts / the skill (not speculative globs).
+_DEGRADE_SCAN_PATTERNS = (
+    "deep-review-report.md",
+    "code-gauntlet-report-*.md",
+    "code-gauntlet-checkpoint-all-*.json",
+)
+
 
 def _load_json(path):
     with open(path, encoding="utf-8") as fh:
@@ -57,8 +65,19 @@ def _iter_findings_files(pr_dir):
     return sorted(pr_dir.glob("code-gauntlet-findings-*.json"))
 
 
+def _iter_workflow_records(pr_dir):
+    """Return collected per-child Workflow records under ``pr_dir/workflows/``."""
+    wf_dir = Path(pr_dir) / "workflows"
+    if not wf_dir.is_dir():
+        return []
+    return sorted(wf_dir.glob("wf_*.json"))
+
+
 def _findings_list(data):
-    """Normalize a findings artifact to a list of finding dicts."""
+    """Normalize a findings artifact to a list of finding dicts.
+
+    Real persist output is a bare JSON list; some wrappers use ``{findings: [...]}``.
+    """
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
@@ -146,11 +165,10 @@ def _validate_payload_fields(payload, label):
     return failures
 
 
-def _extract_script_paths(raw_path):
-    """Return every scriptPath string found in a raw.json artifact."""
-    text = Path(raw_path).read_text(encoding="utf-8", errors="replace")
+def _extract_script_paths(path):
+    """Return every scriptPath string found in a workflow-record JSON file."""
+    text = Path(path).read_text(encoding="utf-8", errors="replace")
     paths = list(_SCRIPT_PATH_RE.findall(text))
-    # Also walk the JSON tree when parseable — catches non-stringified nests.
     try:
         data = json.loads(text)
     except (json.JSONDecodeError, ValueError):
@@ -202,16 +220,10 @@ def _script_path_ok(script_path, expected_pipeline, repo_root=None):
 
 
 def _scan_degrade_text(pr_dir):
-    """Return matching degrade snippets from report/gap-bearing artifacts."""
+    """Return matching degrade snippets from report/checkpoint artifacts."""
     hits = []
-    patterns = (
-        "deep-review-report.md",
-        "code-gauntlet-report-*.md",
-        "code-gauntlet-checkpoints-*.json",
-        "code-gauntlet-progress-*.json",
-    )
     files = []
-    for pat in patterns:
+    for pat in _DEGRADE_SCAN_PATTERNS:
         if "*" in pat:
             files.extend(pr_dir.glob(pat))
         else:
@@ -245,11 +257,25 @@ def _checkpoint_statuses(run_dir):
     return out
 
 
+def _load_manifest(run_dir):
+    """Return run.json dict or None when absent/unparseable."""
+    path = Path(run_dir) / "run.json"
+    if not path.is_file():
+        return None
+    try:
+        return _load_json(path)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
 def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     """Run functional smoke gates against ``run_dir``.
 
     Returns ``{"ok": bool, "failures": [str, ...], "stats": {...}}``.
     Does not raise on gate failures — callers use ``ok`` / exit codes.
+
+    Naive-anchor runs are rejected (they never produce Workflow ``scriptPath``
+    records); callers should treat that as a usage error (exit 2).
     """
     run_dir = Path(run_dir)
     failures = []
@@ -259,6 +285,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         "findings_files": 0,
         "script_paths": 0,
         "unknown_origin": 0,
+        "workflow_records": 0,
     }
 
     if not run_dir.is_dir():
@@ -278,10 +305,39 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         else repo_root / PIPELINE_REL
     )
 
-    # Precondition: every checkpointed PR is ok (when state exists).
+    manifest = _load_manifest(run_dir)
+    if manifest is None:
+        failures.append("missing or unparseable run.json")
+    elif manifest.get("anchor") == "naive":
+        return {
+            "ok": False,
+            "failures": [
+                "refused: --check applies to skill runs only "
+                "(this run has anchor=naive; no Workflow scriptPath records)"
+            ],
+            "stats": stats,
+            "refused": True,
+        }
+
+    # G0: every declared pr_urls entry must have a terminal ok checkpoint.
+    # Absence of a state file means pending (crash/kill mid-run) — must fail.
     statuses = _checkpoint_statuses(run_dir)
+    declared = list((manifest or {}).get("pr_urls") or [])
+    if manifest is not None and not declared:
+        failures.append("run.json pr_urls is empty or missing")
+    for url in declared:
+        status = statuses.get(url)
+        if status is None:
+            failures.append(
+                "precondition: PR {} has no checkpoint (pending / mid-run kill)".format(url)
+            )
+        elif status != "ok":
+            failures.append(
+                "precondition: PR {} status is {!r} (want 'ok')".format(url, status)
+            )
+    # Also flag leftover non-ok state rows not in pr_urls (defensive).
     for url, status in sorted(statuses.items()):
-        if status != "ok":
+        if url not in declared and status != "ok":
             failures.append(
                 "precondition: PR {} status is {!r} (want 'ok')".format(url, status)
             )
@@ -291,6 +347,13 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     if not pr_dirs:
         failures.append("no pr-* artifact directories found under {}".format(run_dir))
         return {"ok": False, "failures": failures, "stats": stats}
+
+    if declared and len(pr_dirs) < len(declared):
+        failures.append(
+            "precondition: run.json declares {} PR(s) but only {} pr-* dir(s) exist".format(
+                len(declared), len(pr_dirs)
+            )
+        )
 
     total_comments = 0
 
@@ -314,8 +377,16 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 failures.extend(_validate_payload_fields(payload, label))
                 total_comments += _count_delivered_comments(payload)
 
-        # --- G1: findings union schema (when present) ---
-        for findings_path in _iter_findings_files(pr_dir):
+        # --- G1: findings required + union schema ---
+        findings_files = _iter_findings_files(pr_dir)
+        if not findings_files:
+            failures.append(
+                "{}: missing code-gauntlet-findings-*.json "
+                "(union-schema / origin gates require a persisted findings artifact)".format(
+                    label
+                )
+            )
+        for findings_path in findings_files:
             stats["findings_files"] += 1
             try:
                 data = _load_json(findings_path)
@@ -350,19 +421,25 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 )
             )
 
-        # --- G3: scriptPath identity ---
-        raw_path = pr_dir / "raw.json"
-        if not raw_path.is_file():
+        # --- G3: scriptPath from collected workflow records (not raw.json) ---
+        wf_records = _iter_workflow_records(pr_dir)
+        stats["workflow_records"] += len(wf_records)
+        if not wf_records:
             failures.append(
-                "{}: missing raw.json (cannot verify plugin scriptPath)".format(label)
+                "{}: no workflows/wf_*.json records collected "
+                "(cannot verify plugin scriptPath; stale-plugin contamination "
+                "cannot be ruled out)".format(label)
             )
         else:
-            script_paths = _extract_script_paths(raw_path)
+            script_paths = []
+            for wf_path in wf_records:
+                script_paths.extend(_extract_script_paths(wf_path))
             stats["script_paths"] += len(script_paths)
             if not script_paths:
                 failures.append(
-                    "{}: no scriptPath found in raw.json "
-                    "(stale-plugin contamination cannot be ruled out)".format(label)
+                    "{}: workflows/wf_*.json present but no scriptPath field found".format(
+                        label
+                    )
                 )
             for sp in script_paths:
                 if not _script_path_ok(sp, expected_pipeline, repo_root=repo_root):
@@ -376,15 +453,12 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
 
     # --- G4: ≥1 delivered comment across the set ---
     if total_comments < 1:
-        failures.append(
-            "delivered comments across run: 0 (want ≥1)"
-        )
+        failures.append("delivered comments across run: 0 (want ≥1)")
 
     return {"ok": not failures, "failures": failures, "stats": stats}
 
 
 # Upgrade hook for environment-purity receipts (Issue #23): when
 # pipeline_version / plugin_root appear in the headless config echo, prefer
-# those over the interim scriptPath grep above. Keep this constant as the
-# documented switch point for that swap.
-PLUGIN_IDENTITY_STRATEGY = "scriptPath_grep"  # future: "echo_receipt"
+# those over the interim workflow-record scriptPath grep above.
+PLUGIN_IDENTITY_STRATEGY = "workflow_record_scriptPath"  # future: "echo_receipt"
