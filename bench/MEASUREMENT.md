@@ -153,9 +153,19 @@ Holdout holdout-20260721-085348-eec15be (recall 0.7407, noise 0.2095):
 ```text
 code-simplifier malformed StructuredOutput (PR-310 one-off) — not reproduced:
 9 dispatches across the 3 V3.1 measured runs, zero events.
+
+subscription usage-limit stall — unclassified: a limit hit is expected to block
+until the window resets, which surfaces as a watchdog `timeout` and is therefore
+indistinguishable from a genuine hang. Deferred deliberately: classifying it as
+its own invalid reason needs a reliable transcript signature, and no subscription
+run has produced one yet. `--retry-failed` after the reset recovers either way.
 ```
 
 The code-simplifier watch-item drop relies on this fact surviving issue deletion.
+The subscription entry is here for the same reason: it is the one idea the
+`--child-auth` work deferred rather than built, and it would otherwise live only
+in a closed issue. The observed failure mode, once a run shows one, belongs in
+[`README.md` → Usage limits](README.md#usage-limits).
 
 ## Contributor rule
 
