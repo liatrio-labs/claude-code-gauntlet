@@ -44,7 +44,9 @@ full-skill code-gauntlet pass costs roughly **$8/PR**, a `--anchor naive`
 bare single-pass review costs roughly **$0.50/PR**, and scoring one run
 (dedup + judge + adjudicator) costs roughly **$2**. `--tier subset` (15
 PRs) and `--tier full` (50 PRs) scale up from there — budget accordingly
-before a multi-run baseline pass.
+before a multi-run baseline pass. `--child-auth subscription` runs the review
+children on an existing Pro/Max plan instead, at no marginal cost — see
+[Child auth modes](#child-auth-modes).
 
 ## Prerequisites
 
@@ -53,7 +55,11 @@ actionable line and the whole list is shown at once (exit code 2):
 
 - `claude` CLI on `PATH`, with a parseable `--version`
 - `gh` CLI on `PATH`, authenticated (`gh auth status` passing)
-- `bench/.env` present with a non-empty `ANTHROPIC_API_KEY`
+- the review children's credential, which depends on `--child-auth`:
+  - `api` (default) — `bench/.env` present with a non-empty `ANTHROPIC_API_KEY`
+  - `subscription` — a non-empty `CLAUDE_CODE_OAUTH_TOKEN` (in `bench/.env` or
+    the environment) and no `apiKeyHelper` in the isolated config; see
+    [Child auth modes](#child-auth-modes)
 - `uv` on `PATH` (runs the vendored scorer in its own isolated environment)
 - at least 10 GB free on the partition holding `bench/workspace/` (bare
   mirrors are large — see above)
@@ -68,6 +74,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
                       [--resume RUN_ID] [--retry-failed RUN_ID]
                       [--timeout-mins 45] [--anchor naive] [--score-only RUN_ID]
                       [--check RUN_ID] [--prs URL[,URL...]|mini]
+                      [--child-auth api|subscription]
 ```
 
 | Flag | Values | Default | What it does |
@@ -80,6 +87,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--retry-failed` | `RUN_ID` | — | Re-run only the `timeout`/`failed` PRs of `RUN_ID`. |
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
+| `--child-auth` | `api` \| `subscription` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. On `--resume`/`--retry-failed` the run's recorded mode wins over this flag. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
 | `--score-only` | `RUN_ID` | — | Re-score an already-captured run's candidates without re-invoking `claude`/`gh` (used for repeated judge re-scoring of the same candidate set). |
 | `--check` | `RUN_ID` | — | Mechanical functional-smoke checker for a completed **skill** run (not `--anchor naive`). Checks payload/schema, findings persistence, no silent degrade, plugin `scriptPath` from collected `workflows/wf_*.json`, and ≥1 comment. Exit 0 = pass; never invokes the judge. See [`MEASUREMENT.md`](MEASUREMENT.md). |
 
@@ -137,7 +145,8 @@ how the candidates were produced and how the row is labeled.
 ## Keys and the judge
 
 - `bench/.env` needs `ANTHROPIC_API_KEY` at minimum — the runner refuses to
-  start without it.
+  start without it (unless `--child-auth subscription` is in play; see
+  [Child auth modes](#child-auth-modes)).
 - `BENCH_JUDGE_API_KEY` is optional: scoring (judge + adjudicator) uses it
   if set, otherwise falls back to `ANTHROPIC_API_KEY`. One key is enough to
   run everything end to end.
@@ -157,6 +166,97 @@ how the candidates were produced and how the row is labeled.
   runs under `uv run` from `bench/vendor/code-review-benchmark/`; it is
   never imported by the stdlib runner.
 
+## Child auth modes
+
+`--child-auth` selects the credential the **review children** spend. Nothing
+else changes: the isolation envelope, the pinned knobs, the watchdog, and the
+whole scoring path are identical in both modes.
+
+```bash
+claude setup-token                 # one-time; prints a long-lived OAuth token
+# put it in bench/.env as CLAUDE_CODE_OAUTH_TOKEN=..., or export it
+python3 bench/run.py --tier smoke --child-auth subscription
+python3 bench/run.py --check <RUN_ID>
+```
+
+| | `api` (default) | `subscription` |
+|---|---|---|
+| Credential | `ANTHROPIC_API_KEY` from `bench/.env`, force-injected | `CLAUDE_CODE_OAUTH_TOKEN` from `bench/.env`, else the ambient env |
+| Marginal cost | metered API spend | none — absorbed by an existing Pro/Max plan |
+| Ledger `auth_mode` | `api` | `subscription` |
+| `cost_usd` | billable spend | recorded, but **not** billable — see below |
+
+### Why subscription mode strips env vars
+
+Claude Code resolves credentials in a fixed order — cloud providers
+(`CLAUDE_CODE_USE_BEDROCK` / `CLAUDE_CODE_USE_VERTEX`) → `ANTHROPIC_AUTH_TOKEN`
+→ `ANTHROPIC_API_KEY` → `apiKeyHelper` → `CLAUDE_CODE_OAUTH_TOKEN` → the
+interactive `/login` session. The child inherits your full environment, so any
+one of those higher-ranked sources surviving would silently defeat the mode and
+bill the API anyway. Subscription mode therefore **removes** all four env vars
+rather than merely not setting them.
+
+`apiKeyHelper` lives in a settings file, not the environment, so it cannot be
+stripped. Instead the prereq check refuses the run and names the offending file
+(`settings.json` / `settings.local.json` under the isolated
+`CLAUDE_CONFIG_DIR`, which `BENCH_CLAUDE_HOME` can relocate).
+
+The mode is **token-only by design**. It never relies on the macOS Keychain or
+on `~/.claude/.credentials.json` surviving the `HOME`/`CLAUDE_CONFIG_DIR`
+isolation: Keychain credentials happen to survive on macOS while
+`.credentials.json` is stranded on Linux, so implicit auth would be a
+portability trap. No token, no run — the prereq check fails loud before any PR
+is touched.
+
+### Scoring stays API-keyed
+
+Subscription capacity covers only the child review sessions. The judge and
+adjudicator run through the vendored scorer against Anthropic's API and still
+need `BENCH_JUDGE_API_KEY` or `ANTHROPIC_API_KEY`. Subscription mode drops the
+`ANTHROPIC_API_KEY` **prereq** (the run genuinely does not need it), so a
+key-less machine can run a review pass and the mechanical
+[`--check`](#cli-reference) gate, which never invokes the judge; `--score-only`
+on such a run fails loud at score time with a missing-judge-key error.
+
+### Cost honesty
+
+Anthropic documents a subscription-served run's `total_cost_usd` as not relevant
+for billing purposes, and its representation is unspecified. So the harness
+records the envelope's figure unchanged — token counts are real either way — and
+qualifies it with `auth_mode` on the ledger row:
+
+- `bench/report.py` keeps the figure in the run-ledger table behind a `‡`
+  marker, and **excludes** it from the run-cost tile and from every derived
+  per-golden cost figure.
+- Any cost figure quoted in this README or in [`MEASUREMENT.md`](MEASUREMENT.md)
+  is `auth_mode=api` spend only.
+
+### Usage limits
+
+**Unconfirmed — to be recorded here by the first subscription-mode smoke.**
+Official docs describe a 5-hour rolling window plus weekly and Opus-specific
+caps, and say that on a limit hit further `-p` requests are blocked until the
+window resets. No machine-readable error shape is documented, so in bench terms
+the expected symptom is the per-PR watchdog firing (status `timeout`, reason
+`watchdog_timeout`) rather than a clean error. Either way, `--retry-failed
+RUN_ID` after the reset recovers the affected PRs. The first live smoke settles
+which of the two it actually is; update this paragraph with what was observed.
+
+### Recommended usage, and scope
+
+Functional smokes and dev iteration are the intended home for subscription mode
+— they are mechanical pass/fail, and under the ratcheted measurement policy the
+smoke is the recurring per-sub-release cost. **Of-record paired legs stay on
+`--child-auth api`**: clean cost accounting, and no throttle-induced timeouts
+mid-measurement. [`MEASUREMENT.md`](MEASUREMENT.md) states which tiers may run
+on subscription.
+
+This mode exists to spend **your own** subscription capacity — ordinary,
+individual usage, via the `setup-token` mechanism Anthropic explicitly provides
+for CI pipelines and scripts. It is not a credential-routing surface for third
+parties, and routing other people's review traffic through Free/Pro/Max
+credentials is prohibited by the usage policy.
+
 ## What gets written where
 
 Gitignored (`bench/workspace/`, `bench/.env`):
@@ -169,7 +269,8 @@ Gitignored (`bench/workspace/`, `bench/.env`):
   `state/` checkpoint files, `scores.json`
 - `bench/workspace/claude-home/` — isolated `HOME`/`CLAUDE_CONFIG_DIR` so
   operator config never leaks into a run
-- `bench/.env` — your API key(s)
+- `bench/.env` — your API key(s), and the optional
+  `CLAUDE_CODE_OAUTH_TOKEN` for `--child-auth subscription`
 
 Committed:
 

@@ -21,13 +21,35 @@ Owner-triggered spend stays owner-triggered: this runbook documents readiness
 and protocol; it never schedules or auto-triggers spend, and no work issue
 gates on the owner running a measurement.
 
+## Which tiers may run on subscription
+
+`python3 bench/run.py --child-auth subscription` runs the review children on the
+owner's own Claude subscription capacity instead of the metered key, at no
+marginal cost. Mechanics, prerequisites, and cost-honesty rules:
+[`README.md` → Child auth modes](README.md#child-auth-modes).
+
+| Tier | Subscription? | Why |
+|------|---------------|-----|
+| Always-on suites | n/a | $0 already; no `claude` invocation |
+| Functional smoke | **Yes — recommended** | Mechanical pass/fail, not measurement; the recurring per-sub-release cost |
+| Dev iteration (`--prs`, `--anchor naive`) | **Yes** | Not of record |
+| Paired mini-subset | **No** | Of record: clean cost accounting, no throttle-induced timeouts mid-leg |
+| Full-15 / holdout | **No** | Same, at release grade |
+
+Every ledger cost figure in this runbook is `auth_mode=api` spend. A
+`auth_mode=subscription` row's `cost_usd` is recorded but is not billable spend
+(Anthropic documents it as "not relevant for billing purposes"), so it is
+excluded from the dashboard's cost aggregates and must never be quoted here as a
+tier cost. A subscription leg is therefore not cost-comparable with an
+API-keyed one — which is the second reason of-record legs stay on `api`.
+
 ## Functional smoke (mechanical)
 
 Smoke recall is noise (0.0–0.75 swing across 14 smoke rows on ~4 goldens). The
 verdict is **mechanical**, never the judge:
 
 ```bash
-python3 bench/run.py --tier smoke
+python3 bench/run.py --tier smoke        # add --child-auth subscription to skip API spend
 python3 bench/run.py --check <RUN_ID>
 ```
 
@@ -87,6 +109,8 @@ Mini-subset A `custom-20260723-102149-381e9ff` — recall 19/30 = 0.6333, noise
 ## Ledger-sourced costs
 
 From `bench/experiments.jsonl`:
+
+Rows with `auth_mode=subscription` are excluded — they are not API spend:
 
 ```text
 smoke:        $21.11–$32.04 across 14 runs (mean ~$27, 16–22 min/PR)
