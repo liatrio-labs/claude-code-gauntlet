@@ -255,12 +255,12 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
             failures.append("`gh auth status` failed -- run `gh auth login` to authenticate.")
 
     if child_auth == "subscription":
-        # The var name is a literal in both messages, never interpolated from the
-        # invoke constant: an identifier a scanner name-matches as a credential reaching a
-        # print is reported as clear-text logging even when only the NAME is printed. These
-        # messages carry names and paths, never values -- and the tests hold the literals
-        # and the constant the lookups use to the same spelling.
-        # bench/.env wins over ambient here too, the precedence _claude_auth_env applies.
+        # bench/.env before ambient, the precedence _claude_auth_env applies.
+        #
+        # Both messages spell the var name out instead of interpolating the invoke
+        # constant: a credential-named identifier reaching a print is reported as
+        # clear-text logging even when only the NAME travels. Tests hold each literal
+        # against the constant its lookup uses, so the two cannot drift.
         if not (_read_env_key(env_path, invoke.OAUTH_TOKEN_VAR)
                 or env.get(invoke.OAUTH_TOKEN_VAR)):
             failures.append(
