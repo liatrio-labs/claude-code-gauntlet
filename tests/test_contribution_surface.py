@@ -69,6 +69,8 @@ FORM_ATTRIBUTES = {
 # `markdown` is display-only: it takes no id and cannot be required.
 FORM_TYPES_WITHOUT_VALIDATIONS = {"markdown"}
 FORM_TYPES_WITH_OPTIONS = {"dropdown", "checkboxes"}
+# checkboxes options are mappings (`- label: ...`), not bare scalars.
+FORM_TYPES_WITH_MAPPING_OPTIONS = {"checkboxes"}
 # GitHub rejects these as dropdown options: empty, or a value YAML would read as a bool
 # or as the reserved "None".
 RESERVED_OPTIONS = {"none", "true", "false", "yes", "no", "on", "off"}
@@ -137,6 +139,18 @@ def _form_labels(text):
     return []
 
 
+def _single_key(block, name):
+    """The value of a body item's own `name:` key, wherever it sits in the item.
+
+    GitHub does not impose key order, so scanning the whole item avoids rejecting a form
+    that renders fine. Two of the same key is a duplicate-key bug worth raising on.
+    """
+    found = [line for line in block if re.match(rf"^    {name}:", line)]
+    if len(found) > 1:
+        raise ValueError(f"duplicate {name}: keys in one body item: {found}")
+    return _unquote(found[0].split(":", 1)[1]) if found else None
+
+
 def _form_fields(text):
     """Parse one issue form's `body:` items into a list of field dicts.
 
@@ -171,16 +185,15 @@ def _form_fields(text):
             elif sub_match and section == "validations":
                 validations[sub_match.group(1)] = sub_match.group(2).strip()
 
-        # `type:` and `id:` are read from anywhere in the item: GitHub does not impose
-        # key order, so requiring `type` first would reject a form that renders fine.
-        types = [line for line in block if re.match(r"^    type:", line)]
-        ids = [line for line in block if re.match(r"^    id:", line)]
-        for name, found in (("type", types), ("id", ids)):
-            if len(found) > 1:
-                raise ValueError(f"duplicate {name}: keys in one body item: {found}")
+        field_type = _single_key(block, "type")
+        if field_type in FORM_TYPES_WITH_MAPPING_OPTIONS and options is not None:
+            # A checkboxes option is a mapping, so the raw item reads `label: <text>`.
+            # Carrying that prefix into the option value makes every emptiness and
+            # reserved-word assertion unfalsifiable, so the label text is extracted here.
+            options = [re.sub(r"^label:\s*", "", option) for option in options]
         fields.append({
-            "type": _unquote(types[0].split(":", 1)[1]) if types else None,
-            "id": _unquote(ids[0].split(":", 1)[1]) if ids else None,
+            "type": field_type,
+            "id": _single_key(block, "id"),
             "keys": item_keys,
             "attributes": attributes,
             "options": options,
@@ -332,6 +345,19 @@ class TestLabelsDiffHelper(unittest.TestCase):
 
         narrowed = self._run("--commands", live=live).stdout.strip().splitlines()
         self.assertEqual({shlex.split(line)[3] for line in narrowed}, {dropped, changed})
+
+    def test_a_label_the_manifest_does_not_manage_is_reported_but_not_drift(self):
+        # An extra label in the repo is informational: the sync never deletes, so it is
+        # not something the manifest can or should close. Exit stays 0.
+        live = self._as_live(_labels())
+        live.append({"name": "hand-made", "color": "ffffff", "description": "not managed here"})
+        result = self._run(live=live)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("unmanaged", result.stdout)
+        self.assertIn("hand-made", result.stdout)
+        self.assertNotIn("missing:", result.stdout)
+        self.assertNotIn("diverging:", result.stdout)
+        self.assertIn("in sync", result.stdout)
 
     def test_paginated_and_slurped_gh_output_are_both_accepted(self):
         labels = self._as_live(_labels())

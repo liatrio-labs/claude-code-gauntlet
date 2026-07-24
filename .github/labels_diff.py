@@ -68,7 +68,8 @@ def load_live(source):
 
     `gh api --paginate` concatenates one JSON array per page rather than emitting a
     single document, and `--paginate --slurp` nests the pages inside one array. Both
-    shapes are accepted. Anything else — an error payload, a single object, a list of
+    shapes are accepted, and nesting is flattened to any depth rather than the single
+    level `--slurp` happens to produce today. Anything else — an error payload, a single object, a list of
     strings from `--jq` — is refused by name rather than crashing three frames later,
     because a failed API read is what a maintainer will actually hit.
     """
@@ -149,6 +150,14 @@ def check_emittable(manifest):
             _die(f"{label['name']!r}: color {label['color']!r} is not 6-digit lowercase hex")
 
 
+def emit(labels, manifest, repo):
+    """Print the sync commands for `labels`, refusing first if any value is unusable."""
+    check_emittable(manifest)
+    for label in labels:
+        print(command(label, repo))
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Compare .github/labels.json against a repository's live labels.")
@@ -167,20 +176,12 @@ def main(argv=None):
     if args.live is None:
         if not args.commands:
             parser.error("--live is required unless --commands is given")
-        check_emittable(manifest)
-        for label in manifest:
-            print(command(label, args.repo))
-        return 0
+        return emit(manifest, manifest, args.repo)
 
     missing, diverging, unmanaged = diff(manifest, load_live(args.live))
 
     if args.commands:
-        check_emittable(manifest)
-        for label in missing:
-            print(command(label, args.repo))
-        for label, _ in diverging:
-            print(command(label, args.repo))
-        return 0
+        return emit(missing + [label for label, _ in diverging], manifest, args.repo)
 
     for label in missing:
         print(f"missing: {label['name']}")
