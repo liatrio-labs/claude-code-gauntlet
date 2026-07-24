@@ -1039,5 +1039,70 @@ class InvokeReviewChildAuthTest(InvokeTestBase):
         self.assertEqual(seen["child_auth"], "api")
 
 
+class ChildProcessCredentialEnvTest(InvokeTestBase):
+    """What the CHILD process actually received, across the subprocess boundary.
+
+    Every other auth test inspects ``build_env``'s return value, which proves the dict is
+    right but not that the dict is what ``claude`` runs with. This mode's whole promise is
+    that the metered key never reaches the child, so the fake records its own view of the
+    credential vars (presence only -- never values) and the assertions read that.
+    """
+
+    POLLUTED = {
+        "ANTHROPIC_API_KEY": "sk-ambient-should-not-arrive",
+        "ANTHROPIC_AUTH_TOKEN": "at-ambient-should-not-arrive",
+        "CLAUDE_CODE_USE_BEDROCK": "1",
+        "CLAUDE_CODE_USE_VERTEX": "1",
+        "CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient",
+    }
+
+    def setUp(self):
+        super().setUp()
+        # No bench/.env: the ambient values above are then the only credential source, so
+        # the assertions describe exactly what the mode did with them.
+        saved = invoke.ENV_PATH
+        invoke.ENV_PATH = Path(self.tmp) / "absent.env"
+        self.addCleanup(setattr, invoke, "ENV_PATH", saved)
+        self.env_file = Path(self.tmp) / "child-credentials.json"
+
+    def _child_saw(self, child_auth):
+        result = self._run(
+            "ok",
+            extra_env={**self.POLLUTED, "FAKE_CLAUDE_ENV_FILE": str(self.env_file)},
+            child_auth=child_auth,
+        )
+        self.assertEqual(result.status, "ok", result.reason)
+        return json.loads(self.env_file.read_text())
+
+    # Spelled out rather than read from invoke._OUTRANKING_CREDENTIAL_VARS: a test that
+    # iterates the list it is checking passes vacuously the moment that list is emptied,
+    # which is exactly the regression it exists to catch.
+    MUST_NOT_REACH_CHILD = (
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+    )
+
+    def test_subscription_child_receives_only_the_oauth_token(self):
+        saw = self._child_saw("subscription")
+        self.assertTrue(saw["CLAUDE_CODE_OAUTH_TOKEN"])
+        for name in self.MUST_NOT_REACH_CHILD:
+            self.assertFalse(saw[name], "{} reached the child".format(name))
+
+    def test_the_strip_list_covers_every_var_this_test_names(self):
+        # Keeps the hardcoded list above honest in the other direction: if the chain grows
+        # a source, the production constant and this test must both learn about it.
+        self.assertEqual(
+            sorted(invoke._OUTRANKING_CREDENTIAL_VARS), sorted(self.MUST_NOT_REACH_CHILD)
+        )
+
+    def test_api_child_receives_the_ambient_key(self):
+        # The mirror image, from the same harness: api mode passes the key through, so a
+        # false pass in the test above would have to survive this one too.
+        saw = self._child_saw("api")
+        self.assertTrue(saw["ANTHROPIC_API_KEY"])
+
+
 if __name__ == "__main__":
     unittest.main()

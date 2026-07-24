@@ -22,6 +22,13 @@ process-group id is written there at startup so the watchdog test can prove the 
 killed. If FAKE_CLAUDE_ARGV_FILE is set, the review invocation's argv is recorded there
 (one arg per line) so a test can assert the exact ``-p`` command the runner built -- the
 ``--version`` preflight probe does not record (it returns before reaching main's body).
+
+If FAKE_CLAUDE_ENV_FILE is set, a JSON ``{var: bool}`` map of which credential env vars
+this process actually RECEIVED is recorded there -- the only way to prove across the
+subprocess boundary that ``--child-auth subscription`` really kept the higher-precedence
+credentials away from the child, rather than merely that build_env's return value omitted
+them. Presence only, never values: a developer running the suite with a real key exported
+must not have it written to a temp file.
 """
 
 import json
@@ -125,6 +132,26 @@ def _record_argv():
             fh.write("\n".join(sys.argv[1:]))
 
 
+# Every credential env var the auth precedence chain can resolve, recorded as present or
+# absent so a test can assert the child's own view of it.
+_CREDENTIAL_VARS = (
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+)
+
+
+def _record_credential_env():
+    env_file = os.environ.get("FAKE_CLAUDE_ENV_FILE")
+    if not env_file:
+        return
+    seen = {name: bool(os.environ.get(name)) for name in _CREDENTIAL_VARS}
+    with open(env_file, "w") as fh:
+        json.dump(seen, fh)
+
+
 def _write_report(lines):
     """Write a report .md carrying the echo block in its methodology section."""
     output_dir = os.environ.get("CODE_GAUNTLET_OUTPUT_DIR")
@@ -147,6 +174,7 @@ def main():
 
     _record_pgid()
     _record_argv()
+    _record_credential_env()
     mode = os.environ.get("FAKE_CLAUDE_MODE", "ok")
 
     if mode == "mutate_repo":
