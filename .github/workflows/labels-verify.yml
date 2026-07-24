@@ -1,0 +1,39 @@
+name: Verify Label Taxonomy
+
+# Manual, like bench-smoke.yml: syncing labels needs write access a PR cannot have, so
+# this is the maintainer's confirmation that the repo matches .github/labels.json after
+# running the sync. It is not a PR gate — see docs/maintainer-issues.md.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  verify:
+    name: Compare labels.json against the repository's labels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read the repository's labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${{ github.repository }}/labels" --paginate --slurp > live-labels.json
+
+      - name: Report drift
+        run: python3 .github/labels_diff.py --live live-labels.json
+
+      - name: Print the commands that would close the drift
+        if: failure()
+        run: |
+          echo "::group::gh label create commands"
+          python3 .github/labels_diff.py --commands --live live-labels.json
+          echo "::endgroup::"
