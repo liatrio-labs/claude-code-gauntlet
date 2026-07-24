@@ -93,7 +93,7 @@ class TestGoldenData(unittest.TestCase):
 
     def test_mini_is_subset_of_gate(self):
         # mini is a gate cut (highest-golden-density PRs), not a disjoint tier.
-        self.assertTrue(set(self.subsets["mini"]) <= set(self.subsets["gate"]))
+        self.assertLessEqual(set(self.subsets["mini"]), set(self.subsets["gate"]))
 
     def test_mini_urls_match_pre_registered_order(self):
         expected = [

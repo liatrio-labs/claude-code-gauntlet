@@ -302,6 +302,65 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("code-gauntlet-report" in f for f in result["failures"]))
 
+    def test_workflow_return_partial_artifacts_gap_fails_g3(self):
+        """writeArtifacts gaps land on the compact return, not report/checkpoint."""
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        # Clean secondary carriers so only the compact-return path can fire.
+        (pr / "code-gauntlet-report-deadbeef.md").write_text("# Report\n", encoding="utf-8")
+        _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
+        _write_json(
+            pr / "workflows" / "wf_test-0001.json",
+            {
+                "runId": "wf_test-0001",
+                "scriptPath": PIPELINE,
+                "status": "completed",
+                "result": {
+                    "ok": True,
+                    "partial": True,
+                    "artifactPaths": {
+                        "findings": None,
+                        "report": None,
+                        "postReview": None,
+                        "checkpoints": None,
+                    },
+                    "gaps": [
+                        "writeArtifacts: writer echo did not account for all four "
+                        "planned artifact paths (no write proof) — artifacts not "
+                        "persisted (partial-artifacts)"
+                    ],
+                },
+            },
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("workflows/wf_" in f and "partial-artifacts" in f for f in result["failures"])
+        )
+
+    def test_raw_json_result_partial_artifacts_gap_fails_g3(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        (pr / "code-gauntlet-report-deadbeef.md").write_text("# Report\n", encoding="utf-8")
+        _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
+        # Skill often echoes the compact return into the envelope .result text.
+        _write_json(
+            pr / "raw.json",
+            {
+                "type": "result",
+                "subtype": "success",
+                "is_error": False,
+                "result": (
+                    "Review complete. Workflow return: "
+                    '{"ok":true,"gaps":["writeArtifacts: no write proof — '
+                    'artifacts not persisted (partial-artifacts)"]}'
+                ),
+            },
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("raw.json" in f and "partial-artifacts" in f for f in result["failures"]))
+
     def test_stale_marketplace_script_path_fails_g4(self):
         _build_ok_run(
             self.run_dir,

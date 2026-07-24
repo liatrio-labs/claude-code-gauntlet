@@ -39,9 +39,15 @@ _DEGRADE_RE = re.compile(
 # Expected pipeline entry relative to the plugin/repo root.
 PIPELINE_REL = Path("workflows") / "pipeline.js"
 
-# Artifact names written by writeArtifacts (workflows/src/stages.js plannedArtifactPaths).
+# Where G3 looks for writer no-write-proof / partial-artifacts signals.
+# writeArtifacts puts that gap on the compact Workflow return (gaps[]), which
+# lands in collected workflows/wf_*.json and often in raw.json's .result text —
+# NOT in the persisted report/checkpoint (those are written before the echo
+# proof runs). Report/checkpoint remain scanned as secondary carriers.
 # Do not include bench-only fixture names such as deep-review-report.md.
 _DEGRADE_SCAN_PATTERNS = (
+    "workflows/wf_*.json",
+    "raw.json",
     "code-gauntlet-report-*.md",
     "code-gauntlet-checkpoint-all-*.json",
 )
@@ -213,6 +219,8 @@ def _script_path_ok(script_path, expected_pipeline, repo_root=None):
         if candidate.is_absolute() and candidate.resolve() == expected:
             return True
     except OSError:
+        # Artifact path may be stale/unreadable on this host; treat as non-match
+        # and fall through to the relative-path / string-equality checks below.
         pass
     # Relative form used in some records: "workflows/pipeline.js" under plugin root.
     if repo_root is not None and normalized in (
@@ -223,24 +231,60 @@ def _script_path_ok(script_path, expected_pipeline, repo_root=None):
     return False
 
 
-def _scan_degrade_text(pr_dir):
-    """Return matching degrade snippets from report/checkpoint artifacts."""
-    hits = []
-    files = []
+def _iter_degrade_scan_paths(pr_dir):
+    """Yield artifact paths G3 scans for writer-degrade signals."""
+    pr_dir = Path(pr_dir)
     for pat in _DEGRADE_SCAN_PATTERNS:
         if "*" in pat:
-            files.extend(pr_dir.glob(pat))
+            for path in sorted(pr_dir.glob(pat)):
+                if path.is_file():
+                    yield path
         else:
-            p = pr_dir / pat
-            if p.is_file():
-                files.append(p)
-    for path in files:
+            path = pr_dir / pat
+            if path.is_file():
+                yield path
+
+
+def _gaps_strings(node):
+    """Yield string entries from any ``gaps`` array nested under ``node``."""
+    if isinstance(node, dict):
+        gaps = node.get("gaps")
+        if isinstance(gaps, list):
+            for item in gaps:
+                if isinstance(item, str):
+                    yield item
+        for value in node.values():
+            yield from _gaps_strings(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _gaps_strings(value)
+
+
+def _scan_degrade_text(pr_dir):
+    """Return basenames of artifacts carrying writer-degrade signals.
+
+    Primary signal: compact Workflow return ``gaps`` (in ``workflows/wf_*.json``
+    / ``raw.json``). Secondary: report/checkpoint text that happens to echo it.
+    """
+    hits = []
+    seen = set()
+    for path in _iter_degrade_scan_paths(pr_dir):
+        label = str(path.relative_to(pr_dir)) if path.is_relative_to(pr_dir) else path.name
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        if _DEGRADE_RE.search(text):
-            hits.append(path.name)
+        matched = bool(_DEGRADE_RE.search(text))
+        if not matched and path.suffix == ".json":
+            try:
+                data = json.loads(text)
+            except (json.JSONDecodeError, ValueError):
+                data = None
+            if data is not None:
+                matched = any(_DEGRADE_RE.search(g) for g in _gaps_strings(data))
+        if matched and label not in seen:
+            seen.add(label)
+            hits.append(label)
     return hits
 
 

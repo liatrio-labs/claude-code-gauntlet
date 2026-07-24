@@ -37,7 +37,8 @@ python3 bench/run.py --check <RUN_ID>
 2. Payload parse + adapter-required fields + union-schema findings check
    (requires ≥1 `code-gauntlet-findings-*.json` per PR)
 3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
-   degrade (scans report + `code-gauntlet-checkpoint-all-*.json`)
+   degrade (scans compact-return carriers `workflows/wf_*.json` + `raw.json`,
+   plus report / `code-gauntlet-checkpoint-all-*.json`)
 4. Child `scriptPath` under the repo's `workflows/pipeline.js`, read from
    collected `pr_dir/workflows/wf_*.json` records (not `raw.json`, which is
    only the result envelope). Upgrades to `pipeline_version`/`plugin_root`
