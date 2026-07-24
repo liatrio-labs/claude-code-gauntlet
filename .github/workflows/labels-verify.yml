@@ -46,9 +46,13 @@ jobs:
           python3 .github/labels_diff.py --live live-labels.json | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Print the commands that would close the drift
-        # Only when drift itself failed. A failed API read leaves this skipped rather
-        # than reporting the whole taxonomy as missing.
-        if: steps.drift.outcome == 'failure'
+        # Only when drift itself failed. A failed API read leaves the drift step
+        # skipped, so this stays skipped too rather than reporting the whole taxonomy as
+        # missing. `!cancelled()` is required: without a status function GitHub implies
+        # `success()`, which would skip this step on the gating dispatch run — exactly
+        # when the commands are wanted.
+        if: ${{ !cancelled() && steps.drift.outcome == 'failure' }}
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           echo "::group::gh label create commands"
           python3 .github/labels_diff.py --commands --live live-labels.json \

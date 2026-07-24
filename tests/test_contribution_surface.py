@@ -105,7 +105,7 @@ def _sequence_after(lines, start, indent):
     """
     items = []
     for line in lines[start:]:
-        if not line.strip():
+        if not line.strip() or line.lstrip().startswith("#"):
             continue
         if _indent(line) > indent:
             continue  # continuation of the previous item, not the end of the sequence
@@ -374,6 +374,37 @@ class TestLabelsDiffHelper(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertTrue(result.stderr.strip(), "the refusal must say what was wrong")
 
+    def test_an_unusable_manifest_is_refused_rather_than_read_as_drift(self):
+        # Exit 1 means drift and the workflow treats it that way, so a corrupt manifest
+        # must exit 2 instead of producing a plausible-looking report.
+        cases = {
+            "not json": "{oops",
+            "no labels key": '{"tags": []}',
+            "labels is a mapping": '{"labels": {"bug": "d73a4a"}}',
+            "labels is empty": '{"labels": []}',
+            "entry is a string": '{"labels": ["bug"]}',
+            "entry missing color": '{"labels": [{"name": "bug", "description": "x"}]}',
+        }
+        for name, payload in cases.items():
+            with self.subTest(manifest=name), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "labels.json"
+                path.write_text(payload, encoding="utf-8")
+                for mode in (["--commands"], ["--live", str(path)]):
+                    result = subprocess.run(
+                        [sys.executable, str(LABELS_DIFF), "--manifest", str(path), *mode],
+                        cwd=REPO, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 2, f"{mode}: {result.stdout}")
+                    self.assertNotIn("Traceback", result.stderr)
+
+    def test_a_missing_file_is_refused_rather_than_read_as_drift(self):
+        for args in (["--manifest", "/nonexistent/labels.json", "--commands"],
+                     ["--live", "/nonexistent/live.json"]):
+            with self.subTest(args=args):
+                result = subprocess.run([sys.executable, str(LABELS_DIFF), *args],
+                                        cwd=REPO, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertNotIn("Traceback", result.stderr)
+
     def test_a_manifest_that_cannot_be_shell_quoted_is_refused(self):
         # The documented recipe pipes this output into a shell, so a value that would
         # not survive a command line must stop the run rather than be emitted.
@@ -431,15 +462,36 @@ class TestIssueFormSchema(unittest.TestCase):
                         self.assertRegex(field["id"] or "", r"^[A-Za-z0-9_-]+$")
                         self.assertTrue(field["attributes"].get("label"))
 
-    def test_the_reader_does_not_truncate_mapping_sequences(self):
-        # A checkboxes option is a mapping, so its `required:` line is indented past the
-        # dash. A reader that stops there reports one option out of several, and every
-        # assertion over those options is born vacuous.
+    @staticmethod
+    def _declared_options(text):
+        """Count option lines directly, without going through the reader under test."""
+        lines = text.splitlines()
+        total = 0
+        for index, line in enumerate(lines):
+            if line.rstrip() != "      options:":
+                continue
+            for candidate in lines[index + 1:]:
+                if not candidate.strip() or candidate.lstrip().startswith("#"):
+                    continue
+                if _indent(candidate) > 8:
+                    continue
+                if _indent(candidate) < 8 or not candidate.lstrip().startswith("- "):
+                    break
+                total += 1
+        return total
+
+    def test_the_reader_reads_every_declared_option(self):
+        # Two shapes end a sequence early for a naive reader: a checkboxes option is a
+        # mapping, so its `required:` line is indented past the dash, and a YAML comment
+        # sits at the sequence's own indent. Either way the reader reports a subset of
+        # the options and every assertion over them is born vacuous — a duplicated
+        # option hidden behind a comment would stop the form rendering while the schema
+        # tests stayed green. Parsed count is compared against an independent count.
         for form in _form_files():
             text = form.read_text(encoding="utf-8")
-            declared = len(re.findall(r"^        - label:", text, re.M))
+            declared = self._declared_options(text)
             parsed = sum(len(field["options"] or []) for field in _form_fields(text)
-                         if field["type"] == "checkboxes")
+                         if field["type"] in FORM_TYPES_WITH_OPTIONS)
             with self.subTest(form=form.name):
                 self.assertEqual(parsed, declared)
 
@@ -593,13 +645,21 @@ class TestContributingDocs(unittest.TestCase):
         self.assertIsNotNone(link, "the canonical runbook must be linked, not just named")
         self.assertTrue((REPO / "docs" / link.group(1)).resolve().is_file())
 
-    def test_measurement_runbook_declares_the_tier_slugs(self):
-        # The vocabulary docs/maintainer-issues.md mandates has to be resolvable in the
-        # canonical home a reader is sent to.
-        runbook = _read("bench/MEASUREMENT.md")
-        for tier in ("suites-only", "smoke", "paired-mini"):
-            with self.subTest(tier=tier):
-                self.assertIn(tier, runbook)
+    def test_every_tier_slug_the_standard_mandates_resolves_in_the_runbook(self):
+        # Read the standard's vocabulary rather than hardcoding it, so a slug coined here
+        # cannot quietly become normative without existing in the canonical home a
+        # reader is sent to. That drift shipped once already.
+        standard = _read("docs/maintainer-issues.md")
+        vocabulary = standard.split("names exactly one measurement tier", 1)[1].split("\n\n", 2)[1]
+        slugs = re.findall(r"^- `([a-z-]+)`", vocabulary, re.M)
+        self.assertTrue(slugs, "the standard must list the tier slugs as a bullet list")
+        runbook_slugs = set(re.findall(r"^\| [^|]+ \| `([a-z-]+)` \|",
+                                       _read("bench/MEASUREMENT.md"), re.M))
+        for slug in slugs:
+            with self.subTest(slug=slug):
+                self.assertIn(slug, runbook_slugs,
+                              "a slug the standard mandates must appear in the runbook's "
+                              f"Slug column, which holds {sorted(runbook_slugs)}")
 
     def test_cspell_scope_includes_the_new_public_docs(self):
         hooks = _read(".pre-commit-config.yaml")

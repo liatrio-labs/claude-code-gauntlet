@@ -87,7 +87,7 @@ body:
     id: plugin_version
     attributes:
       label: Plugin Version
-      placeholder: See .claude-plugin/plugin.json (e.g., 3.1.2)
+      placeholder: See .claude-plugin/plugin.json (3.x line)
 
   - type: dropdown
     id: install_method

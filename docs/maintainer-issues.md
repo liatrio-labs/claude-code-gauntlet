@@ -72,14 +72,15 @@ A Verification section names exactly one measurement tier, drawn from this
 vocabulary:
 
 - `suites-only` — the always-on deterministic suites.
-- `smoke` — a mechanical functional pass/fail check per sub-release.
-- `paired-mini` — an owner-triggered paired benchmark against the baseline of
-  record.
-- `full-holdout` — the owner-triggered release-grade confirmation runs.
+- `smoke` — a mechanical functional pass/fail check.
+- `paired-mini` — a paired benchmark against the baseline of record.
 
-Those four slugs are the `Slug` column of the tier ladder in
+Those slugs come from the `Slug` column of the tier ladder in
 [`bench/MEASUREMENT.md`](../bench/MEASUREMENT.md), which is where a reader who
-does not recognize one resolves it. Nothing outside that ladder is a tier.
+does not recognize one resolves it. The ladder's fourth row has no slug: a
+release-grade run is rare and owner-triggered, so a Verification section that
+has to name one spells it as the ladder does — `Full-15 / holdout` — rather
+than coining a short name for it here.
 
 One clause of orientation per tier, as above, is the ceiling. Do **not**
 restate the tier definitions, their costs, their triggers, or the owner
@@ -171,24 +172,30 @@ Two more rules that are easy to get wrong:
 ### Syncing the taxonomy to GitHub
 
 Syncing is a maintainer step and needs a token with write access on the repo.
-Run every command in this section from the repo root, so the relative paths
-resolve. Derive the commands from the manifest and read them before running
-anything:
+Run these commands from the repo root, since they spell the helper's path
+relative to it. Derive the commands from the manifest and read them before
+running anything:
 
 ```bash
-python3 .github/labels_diff.py --commands
+python3 .github/labels_diff.py --commands --repo liatrio-labs/claude-code-gauntlet
 ```
 
 That prints one `gh label create ... --force` command per manifest label —
 every label, not only the drifted ones, which is safe because `--force` makes
-each command idempotent. Add `--live` to narrow the output to the labels that
-actually differ. Review them, then apply them under a shell that aborts on the
-first failure, so a single rejected label is loud rather than a silent partial
-sync:
+each command idempotent. Passing `--live <file>` alongside `--commands` narrows
+the output to the labels that actually differ.
+
+`--repo` is not optional in practice: without it `gh` infers the target from
+the working directory's git remote, so running the recipe inside a different
+checkout would sync this taxonomy into that repository instead.
+
+Review the printed commands, then apply them so that a single rejected label
+aborts the run rather than leaving a silent partial sync. This form keeps the
+abort behavior inside a subshell, so it cannot leave your own shell primed to
+exit on the next command that fails:
 
 ```bash
-set -euo pipefail
-python3 .github/labels_diff.py --commands | sh -eu
+bash -o pipefail -c 'python3 .github/labels_diff.py --commands --repo liatrio-labs/claude-code-gauntlet | sh -eu'
 ```
 
 `--force` updates an existing label in place — color and description — instead
@@ -213,15 +220,19 @@ gh api "repos/liatrio-labs/claude-code-gauntlet/labels" --paginate | python3 .gi
 It reports three things: labels in the manifest that the repo is missing,
 labels whose live color or description has drifted from the manifest, and
 labels that exist in the repo but not in the manifest — those last are listed
-and left alone, never deleted. `--commands --live <file>` then emits commands
-for exactly the first two groups.
+and left alone, never deleted. `--commands --live <file>`, with the same
+`--repo`, then emits commands for exactly the first two groups. It exits 0 in
+sync, 1 on drift, and 2 when the input or the manifest is unusable, so a failed
+API read never reads as drift.
 
 CI carries the same check as the "Verify Label Taxonomy" workflow
-(`.github/workflows/labels-verify.yml`), triggered manually with
-`workflow_dispatch` after a sync, because a sync needs write access a pull
-request does not get. The drift check is what makes the manifest verifiable
-instead of aspirational: without it, a repo that was never synced looks exactly
-like one that was.
+(`.github/workflows/labels-verify.yml`). It gates on `workflow_dispatch`, which
+is how a maintainer confirms a sync landed, and runs advisory-only on a pull
+request that touches the manifest or the helper — a pull request cannot perform
+the sync that would make it green, but it can prove the check itself still
+works. The drift check is what makes the manifest verifiable instead of
+aspirational: without it, a repo that was never synced looks exactly like one
+that was.
 
 ## Related
 

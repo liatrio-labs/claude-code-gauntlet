@@ -37,7 +37,30 @@ def _die(message):
 
 
 def load_manifest(path=MANIFEST):
-    return json.loads(Path(path).read_text(encoding="utf-8"))["labels"]
+    """Labels from the checked-in taxonomy.
+
+    A corrupt manifest must not be reported as drift: the caller distinguishes 1
+    (drift) from 2 (bad input), and the workflow reads any non-zero from the drift step
+    as drift.
+    """
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as error:
+        _die(f"cannot read the manifest: {error}")
+    except json.JSONDecodeError as error:
+        _die(f"{path} is not valid JSON: {error}")
+
+    labels = document.get("labels") if isinstance(document, dict) else None
+    if not isinstance(labels, list) or not labels:
+        _die(f"{path} must be an object with a non-empty `labels` array")
+    for entry in labels:
+        if not isinstance(entry, dict):
+            _die(f"{path}: every label must be an object, got {json.dumps(entry)[:200]}")
+        missing = [key for key in ("name", "color", "description")
+                   if not isinstance(entry.get(key), str)]
+        if missing:
+            _die(f"{path}: label {json.dumps(entry)[:120]} is missing string {missing}")
+    return labels
 
 
 def load_live(source):
@@ -49,7 +72,10 @@ def load_live(source):
     strings from `--jq` — is refused by name rather than crashing three frames later,
     because a failed API read is what a maintainer will actually hit.
     """
-    text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    try:
+        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+    except OSError as error:
+        _die(f"cannot read the label response: {error}")
     if not text.strip():
         _die(f"no JSON in {'stdin' if source == '-' else source}: "
              "the `gh api` read produced nothing")
@@ -167,9 +193,9 @@ def main(argv=None):
 
     if missing or diverging:
         sys.stdout.flush()
-        print(f"\n{len(missing)} missing, {len(diverging)} diverging — "
-              "run `python3 .github/labels_diff.py --commands --live <file>` from the repo root",
-              file=sys.stderr)
+        print(f"\n{len(missing)} missing, {len(diverging)} diverging — run "
+              "`python3 .github/labels_diff.py --commands --live <file> --repo <owner>/<repo>` "
+              "from the repo root", file=sys.stderr)
         return 1
     print(f"in sync: {len(manifest)} labels match the manifest")
     return 0
