@@ -8,6 +8,8 @@ Covers the append-only ledger (spec H8):
     (line 1 is byte-identical before and after the second append)
   - every line round-trips through json.loads back to the original row
   - the file is opened in append mode only (never truncated/rewritten)
+  - the auth_mode cost-honesty helpers: an absent field reads as "api", and
+    auth_mode stays OUT of the required keys so historical rows stay valid
 """
 
 import json
@@ -20,7 +22,14 @@ from unittest.mock import patch
 # Add bench/ to path so we can import the runner package.
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from runner.ledger import append_row, REQUIRED_KEYS
+from runner.ledger import (
+    append_row,
+    cost_is_billable,
+    DEFAULT_AUTH_MODE,
+    REQUIRED_KEYS,
+    row_auth_mode,
+    SUBSCRIPTION_AUTH_MODE,
+)
 
 
 REQUIRED = [
@@ -141,6 +150,70 @@ class LedgerTestCase(unittest.TestCase):
         for mode in modes:
             self.assertIn("a", mode)
             self.assertNotIn("w", mode)
+
+
+class AuthModeTestCase(unittest.TestCase):
+    """The auth_mode cost-honesty contract every ledger consumer reads through.
+
+    A subscription-served run's ``cost_usd`` is not billable API spend, so the
+    two helpers below are the single place that decides which rows may enter a
+    billable aggregate. They are pinned here because report.py imports them
+    rather than re-deriving the rule.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ledger_path = os.path.join(self._tmp.name, "experiments.jsonl")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_mode_constants(self):
+        self.assertEqual(DEFAULT_AUTH_MODE, "api")
+        self.assertEqual(SUBSCRIPTION_AUTH_MODE, "subscription")
+
+    def test_auth_mode_is_not_a_required_key(self):
+        # The ledger is append-only: requiring auth_mode would invalidate every
+        # row written before the field existed.
+        self.assertNotIn("auth_mode", REQUIRED_KEYS)
+
+    def test_absent_auth_mode_reads_as_api(self):
+        # Rows predating the field were all API-keyed.
+        self.assertEqual(row_auth_mode(valid_row()), "api")
+        self.assertTrue(cost_is_billable(valid_row()))
+
+    def test_null_auth_mode_reads_as_api(self):
+        # A manifest that carried an explicit null must not read as a third mode.
+        self.assertEqual(row_auth_mode(valid_row(auth_mode=None)), "api")
+        self.assertTrue(cost_is_billable(valid_row(auth_mode=None)))
+
+    def test_explicit_api_is_billable(self):
+        row = valid_row(auth_mode="api")
+        self.assertEqual(row_auth_mode(row), "api")
+        self.assertTrue(cost_is_billable(row))
+
+    def test_subscription_is_not_billable(self):
+        row = valid_row(auth_mode="subscription")
+        self.assertEqual(row_auth_mode(row), "subscription")
+        self.assertFalse(cost_is_billable(row))
+
+    def test_unknown_mode_stays_billable(self):
+        # Only subscription is known to be non-billable; anything else is a
+        # metered credential and must keep counting as spend.
+        self.assertTrue(cost_is_billable(valid_row(auth_mode="bedrock")))
+
+    def test_historical_row_without_auth_mode_still_appends(self):
+        append_row(self.ledger_path, valid_row())
+        with open(self.ledger_path) as fh:
+            record = json.loads(fh.readline())
+        self.assertNotIn("auth_mode", record)
+
+    def test_subscription_row_appends_with_its_cost_verbatim(self):
+        append_row(self.ledger_path, valid_row(auth_mode="subscription"))
+        with open(self.ledger_path) as fh:
+            record = json.loads(fh.readline())
+        self.assertEqual(record["auth_mode"], "subscription")
+        self.assertEqual(record["cost_usd"], 4.20)
 
 
 if __name__ == "__main__":

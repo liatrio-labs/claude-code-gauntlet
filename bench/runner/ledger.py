@@ -8,12 +8,23 @@ are never rewritten, so history is immutable and safe to read concurrently.
 touching the file, then appends a single physical line. The spec's full row
 schema has more optional fields; only the keys below are mandatory and
 enforced here — extras pass through untouched.
+
+The optional ``auth_mode`` field records which credential served a run's review
+children. It qualifies ``cost_usd``: Anthropic documents a subscription-served
+run's ``total_cost_usd`` as not relevant for billing purposes, so
+``cost_is_billable`` below is the single gate every consumer (scoring, the
+dashboard) reads before letting a row's cost into a billable figure.
 """
 
 import json
 import os
 
+SUBSCRIPTION_AUTH_MODE = "subscription"
+DEFAULT_AUTH_MODE = "api"
+
 # Required keys from spec H8's ledger row schema. Missing any -> ValueError.
+# ``auth_mode`` is deliberately absent: the ledger is append-only, and every row
+# written before the field existed must stay valid forever.
 REQUIRED_KEYS = (
     "run_id",
     "ts",
@@ -30,6 +41,27 @@ REQUIRED_KEYS = (
     "scorer_sha",
     "envelope",
 )
+
+
+def row_auth_mode(row):
+    """The credential mode that served ``row``'s review children.
+
+    An absent (or null) ``auth_mode`` reads as ``"api"``: the field postdates
+    every historical row, and all of those runs were API-keyed. Defaulting the
+    other way would retroactively strip cost from the whole ledger.
+    """
+    return row.get("auth_mode") or DEFAULT_AUTH_MODE
+
+
+def cost_is_billable(row):
+    """Whether ``row``'s ``cost_usd`` may enter a billable-spend figure.
+
+    False only for ``"subscription"`` — Anthropic documents that a subscription
+    run's ``total_cost_usd`` "isn't relevant for billing purposes", so the number
+    is a consumption estimate, not spend. Every other mode names a metered
+    credential and keeps counting.
+    """
+    return row_auth_mode(row) != SUBSCRIPTION_AUTH_MODE
 
 
 def append_row(ledger_path, row):

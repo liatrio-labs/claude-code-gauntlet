@@ -373,6 +373,113 @@ class TestMiniTierGraded(unittest.TestCase):
         self.assertNotEqual(mini, subset)
 
 
+class TestSubscriptionCostHonesty(unittest.TestCase):
+    """A subscription-served run's cost_usd must never reach a billable figure.
+
+    Anthropic documents that number as not relevant for billing purposes, so the
+    dashboard shows it only where it is explicitly labelled: the tile blanks, the
+    derived per-golden aggregate drops it, and the table cell keeps it behind a ‡.
+    """
+
+    SUB_ROW = {
+        "run_id": "mini-20260724-subauth", "ts": "2026-07-24T10:00:00Z",
+        "tier": "mini", "tool": "deep-review-v3", "n_prs": 6,
+        "golden_recall": 0.5, "valid_extra_rate": 0.2, "noise_rate": 0.1,
+        "precision_strict": 0.5, "f1_strict": 0.5,
+        "per_bucket": {"golden_matched": 10, "valid_extra": 4, "noise": 2},
+        "tokens_total": 1000000, "cost_usd": 27.0, "auth_mode": "subscription",
+    }
+
+    def _api_row(self):
+        row = dict(self.SUB_ROW)
+        row["auth_mode"] = "api"
+        return row
+
+    def test_report_single_sources_the_ledger_contract(self):
+        # Re-deriving "is this billable" in the dashboard would let it drift from
+        # the ledger's definition.
+        from bench.runner import ledger
+
+        self.assertIs(report.cost_is_billable, ledger.cost_is_billable)
+        self.assertIs(report.row_auth_mode, ledger.row_auth_mode)
+
+    def test_efficiency_drops_a_non_billable_cost(self):
+        eff = report._efficiency(self.SUB_ROW, 30)
+        self.assertIsNone(eff["cost"])
+        self.assertIsNone(eff["cost_per_gold"])
+        # Only the cost is withheld — the run's other figures are untouched.
+        self.assertEqual(eff["tokens"], 1000000)
+        self.assertEqual(eff["goldens"], 15)
+        self.assertIsNotNone(eff["tok_per_gold"])
+
+    def test_efficiency_keeps_an_api_cost(self):
+        eff = report._efficiency(self._api_row(), 30)
+        self.assertEqual(eff["cost"], 27.0)
+        self.assertAlmostEqual(eff["cost_per_gold"], 27.0 / 15)
+
+    def test_efficiency_keeps_a_legacy_row_without_auth_mode(self):
+        legacy = dict(self.SUB_ROW)
+        del legacy["auth_mode"]
+        self.assertEqual(report._efficiency(legacy, 30)["cost"], 27.0)
+
+    def test_tile_blanks_the_cost_and_names_subscription_auth(self):
+        out = report.build_tiles_html(self.SUB_ROW, 6, 30)
+        self.assertIn("Run cost", out)
+        self.assertNotIn("$27.00", out)
+        self.assertIn("subscription", out)
+
+    def test_tile_keeps_the_cost_for_an_api_row(self):
+        out = report.build_tiles_html(self._api_row(), 6, 30)
+        self.assertIn("$27.00", out)
+        self.assertNotIn("subscription", out)
+
+    def test_table_cell_keeps_the_figure_but_labels_it(self):
+        groups = report.ledger_groups([self.SUB_ROW])
+        out = report.build_table_html(groups, 0.6271, 0.24)
+        self.assertIn("$27.00", out)
+        self.assertIn("‡", out)
+        self.assertIn("auth_mode=subscription", out)
+        self.assertIn("title=", out)
+
+    def test_table_cell_is_unmarked_for_an_api_row(self):
+        groups = report.ledger_groups([self._api_row()])
+        out = report.build_table_html(groups, 0.6271, 0.24)
+        self.assertIn("$27.00", out)
+        self.assertNotIn("‡", out)
+
+    def test_footnote_appears_only_when_a_subscription_row_is_present(self):
+        with_sub = report.build_footnotes_html(FIXTURE_BASELINES, [self.SUB_ROW])
+        self.assertIn("‡", with_sub)
+        self.assertIn("subscription", with_sub)
+        without = report.build_footnotes_html(FIXTURE_BASELINES, FIXTURE_ROWS)
+        self.assertNotIn("‡", without)
+
+    def test_footnote_rows_argument_is_optional(self):
+        # Call sites that pass no rows keep today's footnote list exactly.
+        self.assertEqual(
+            report.build_footnotes_html(FIXTURE_BASELINES),
+            report.build_footnotes_html(FIXTURE_BASELINES, []),
+        )
+
+    def test_rendered_page_marks_a_subscription_run(self):
+        out = _render(rows=FIXTURE_ROWS + [self.SUB_ROW])
+        self.assertIn("‡", out)
+        self.assertIn("auth_mode=subscription", out)
+
+    def test_real_ledger_render_carries_no_subscription_marker(self):
+        # Every committed row predates auth_mode; the dashboard must render them
+        # exactly as before so bench/report.html does not churn.
+        rows = report.load_ledger(REAL_LEDGER)
+        baselines = report.load_baselines(REAL_BASELINES)
+        self.assertTrue(all(report.cost_is_billable(r) for r in rows))
+        out = report.render_html(rows, baselines, "abc1234", "2026-07-18")
+        self.assertNotIn("‡", out)
+        self.assertNotIn("auth_mode=subscription", out)
+
+    def test_fixture_render_carries_no_subscription_marker(self):
+        self.assertNotIn("‡", _render())
+
+
 class TestVoidRunsAndMilestones(unittest.TestCase):
     """The two superseded runs (contaminated smoke, failed mini-subset attempt)
     fade like CONFOUNDED_RUNS; the three custom-tier runs get distinct labels."""
