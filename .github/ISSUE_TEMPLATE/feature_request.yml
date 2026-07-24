@@ -43,9 +43,11 @@ body:
       label: Affected Area
       description: Which part of the project is impacted?
       options:
+        - Workflow pipeline (workflows/)
         - Review agent (agents/)
         - Pipeline script (scripts/)
         - Skill orchestration (skills/)
+        - Benchmark harness (bench/)
         - REVIEW.md configuration
         - Delivery (PR/MR comments, markdown, chat)
         - Documentation

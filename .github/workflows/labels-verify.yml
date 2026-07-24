@@ -1,0 +1,60 @@
+name: Verify Label Taxonomy
+
+# Syncing labels needs write access a pull request does not get, so the gating check is
+# the maintainer's manual confirmation after a sync — bench-smoke.yml's owner-triggered
+# precedent. On a pull request that touches the manifest or this helper the same check
+# runs advisory-only, so the `gh api` read and the parser are exercised before merge
+# instead of first running on the default branch. See docs/maintainer-issues.md.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/labels.json
+      - .github/labels_diff.py
+      - .github/workflows/labels-verify.yml
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  verify:
+    name: Compare labels.json against the repository's labels
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Read the repository's labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api "repos/${{ github.repository }}/labels" --paginate --slurp > live-labels.json
+
+      - name: Report drift
+        id: drift
+        # Gating on dispatch; advisory on a pull request, which cannot perform the sync
+        # that would make it green.
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: |
+          # Without pipefail the step would take tee's exit code and never report drift.
+          set -o pipefail
+          python3 .github/labels_diff.py --live live-labels.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Print the commands that would close the drift
+        # Only when drift itself failed. A failed API read leaves the drift step
+        # skipped, so this stays skipped too rather than reporting the whole taxonomy as
+        # missing. `!cancelled()` is required: without a status function GitHub implies
+        # `success()`, which would skip this step on the gating dispatch run — exactly
+        # when the commands are wanted.
+        if: ${{ !cancelled() && steps.drift.outcome == 'failure' }}
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        run: |
+          echo "::group::gh label create commands"
+          python3 .github/labels_diff.py --commands --live live-labels.json \
+            --repo "${{ github.repository }}"
+          echo "::endgroup::"

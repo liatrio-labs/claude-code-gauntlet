@@ -25,7 +25,7 @@ repos:
     hooks:
       - id: cspell
         name: spell check user-facing docs with cspell
-        files: ^(README\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|\.github/pull_request_template\.md)$
+        files: ^(README\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|SECURITY\.md|docs/maintainer-issues\.md|\.github/pull_request_template\.md)$
 
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.23.0

@@ -1,5 +1,8 @@
 blank_issues_disabled: true
 contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/liatrio-labs/claude-code-gauntlet/security/advisories/new
+    about: Report vulnerabilities privately here, never in a public issue. See SECURITY.md for scope.
   - name: Documentation
     url: https://github.com/liatrio-labs/claude-code-gauntlet#readme
     about: Refer to the README and docs for setup and usage guidance.

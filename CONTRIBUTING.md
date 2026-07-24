@@ -4,12 +4,16 @@ Thanks for your interest in contributing! This guide explains how to set up your
 
 ## Overview
 
-This repository provides a Claude Code plugin that orchestrates multi-agent code review with a deterministic Python verification pipeline. Contributions generally fall into one of these areas:
+This repository provides a Claude Code plugin that orchestrates multi-agent code review through a deterministic
+pipeline: a generated JavaScript workflow bundle (`workflows/pipeline.js`) plus retained standard-library Python
+scripts (`scripts/`) for verification, posting, and parity. Contributions generally fall into one of these areas:
 
-- Bug fixes in the pipeline scripts (`scripts/`)
+- Review pipeline stages in the workflow bundle source (`workflows/src/`) — see
+  [The v3 workflow pipeline](#the-v3-workflow-pipeline-js)
+- Bug fixes in the retained Python scripts (`scripts/`), including the parity twins of the JS stages
 - New or improved review agents (`agents/`)
 - Skill orchestration improvements (`skills/`)
-- Workflow pipeline (`workflows/`) and benchmark harness (`bench/`)
+- Benchmark harness, golden set, and measurement tooling (`bench/`)
 - Documentation, examples, and research updates
 - New tests or coverage gaps in the test suite (`tests/`, `bench/tests/`, `workflows/test/`)
 
@@ -27,7 +31,8 @@ ladder, costs, and pre-registered owner options.
 ## Getting Started
 
 1. Fork and clone the repository.
-2. Ensure you have Python 3.12+ installed (for the test suite and pre-commit hooks).
+2. Ensure you have Python 3.10 or newer installed (for the test suite and pre-commit hooks). CI runs the pipeline
+   suite on 3.10, 3.11, and 3.12.
 3. Set up the development environment:
 
 ```bash
@@ -59,8 +64,11 @@ python -m pytest tests/ -q
 # Bench harness unit tests (stdlib; no API spend)
 python -m pytest bench/tests/ -q
 
-# JS workflow tests (requires Node 24.18.0)
+# JS workflow tests (Node 24)
 node --test workflows/test/*.test.js
+
+# Rebuild the generated workflow bundle after editing workflows/src/
+node workflows/build.js
 
 # Run full pre-commit checks across the repo
 pre-commit run --all-files
@@ -70,6 +78,51 @@ pre-commit run markdownlint-fix --all-files
 
 # Run docs spell checking only
 pre-commit run cspell --all-files
+```
+
+Pass the test glob explicitly: the bare directory form is not a valid `node --test` target on node 24.
+
+## The v3 workflow pipeline (JS)
+
+The review pipeline runs inside Claude Code's workflow runtime, so it carries constraints the Python side does not.
+
+- **Source lives in `workflows/src/*.js`.** Those modules use ESM `import`/`export` for test time only; the shipped
+  artifact has no module system at all.
+- **`workflows/pipeline.js` is generated — never hand-edit it.** `node workflows/build.js` strips the
+  import/export lines and concatenates `workflows/src/*.js` into that single dependency-free bundle. Rebuild after
+  every source change and commit the result.
+- **Only JSON-safe language globals are guaranteed.** Host globals that `node --test` hands you — `structuredClone`,
+  `setTimeout`/`queueMicrotask`, `process`, and others — are absent from the workflow runtime sandbox, so a
+  reference keeps every local test green and then throws on the first live dispatch. `CLAUDE.md` holds the
+  normative list; deep-clone with the bundle's `deepClone` helper, never `structuredClone`.
+- **CI pins the Node major, not the patch.** `.github/workflows/ci.yml` runs the workflow tests and the build on
+  `node-version: "24"`; 24.18.0 is the reference build this repo develops against. There is no `package.json` and
+  no `node_modules`; use Node built-ins only.
+- **Bundle freshness is enforced.** `tests/test_bundle_fresh.py` and CI both rebuild and compare, so a stale or
+  hand-edited bundle fails the build:
+
+```bash
+node workflows/build.js
+git diff --exit-code workflows/pipeline.js
+```
+
+### Parity fixtures
+
+Five deterministic transforms (`mergeFindings`, `findingDedup`, `filterFindings`, `applyValidations`,
+`applyChallenges`) exist twice: as JS stages in the bundle and as the authoritative Python twins under `scripts/`.
+They are held at parity by frozen golden fixtures at
+`tests/fixtures/parity/<script>/[<group>/]<case>/{input,expected}.json`, which both runtimes replay. Four of the
+five scripts keep their cases directly under `<script>/`; `filter_findings` groups every one of its cases a level
+deeper (for example `tests/fixtures/parity/filter_findings/dedup_cross_agent/core_wins/`), which is why the
+recorder walks the whole tree instead of listing a single level.
+
+Never hand-edit a fixture to make a test pass — a fixture that no longer matches recorded behavior is exactly the
+drift the fixtures exist to catch. When a transform's intended behavior genuinely changes, change the Python twin
+and the JS stage together, then regenerate with the recorder and review the resulting diff:
+
+```bash
+python3 workflows/test/tools/record_parity.py                  # every case
+python3 workflows/test/tools/record_parity.py filter_findings  # one script
 ```
 
 ## Style and Quality
@@ -88,13 +141,15 @@ Before submitting a PR, run:
 python -m pytest tests/ -q
 python -m pytest bench/tests/ -q
 node --test workflows/test/*.test.js
+node workflows/build.js && git diff --exit-code workflows/pipeline.js
 pre-commit run --all-files
 ```
 
 This will:
 
 - Execute the pytest suite for pipeline scripts and the bench harness
-- Execute the Node workflow test suite (bundle freshness / stage contracts)
+- Execute the Node workflow test suite (stage contracts, parity replay, and the bundler's collision guard)
+- Confirm the committed bundle is byte-identical to a fresh build
 - Check YAML and TOML syntax
 - Fix Markdown formatting issues
 - Spell-check public-facing documentation
@@ -147,8 +202,11 @@ If a change is breaking, include `!` (e.g., `feat!: change findings JSON schema`
 ## Additional Notes
 ```
 
-- Ensure all checks pass (pre-commit and the test suite) before requesting review.
-- Reference related issues where applicable.
+- Ensure all checks pass (pre-commit and the test suite) before requesting review. The checklist in
+  `.github/pull_request_template.md` enumerates every CI-enforced gate; tick the ones that apply and say why for
+  any you skipped.
+- Reference related issues where applicable. For work-queue issues, keep the PR aligned with the issue's stated
+  requirements and verification steps ([`docs/maintainer-issues.md`](docs/maintainer-issues.md)).
 
 ### PR Title Format
 
@@ -181,17 +239,33 @@ If the automated check fails, update your PR title and it will re-run automatica
 
 Use the GitHub issue templates under `.github/ISSUE_TEMPLATE/` for bug reports, feature requests, and questions. These templates prompt for summary, context, reproduction steps, and the relevant phase, agent, or pipeline script.
 
+The label taxonomy those forms draw from is checked in at `.github/labels.json`. GitHub applies an issue-form label
+only when the label already exists in the repository, and silently drops it otherwise — so a new form label has to
+land in `labels.json` and in the repository before the form can apply it.
+
+Maintainer-authored work-queue issues follow a stricter standard than the public forms:
+[`docs/maintainer-issues.md`](docs/maintainer-issues.md) defines the required sections and the evidence an issue
+needs before it is queued. Read it before filing or picking up work-queue issues.
+
+Suspected vulnerabilities do not belong in any issue form — follow [`SECURITY.md`](SECURITY.md) and use the private
+advisory form instead.
+
 ## Code of Conduct
 
 We strive to maintain a welcoming and respectful community. Please review our [Code of Conduct](CODE_OF_CONDUCT.md) to understand our community standards and expectations.
 
-If you have any concerns, please contact the Liatrio Maintainers team (`@liatrio-labs/liatrio-labs-maintainers`) or use GitHub's private reporting form for this repository.
+Report conduct concerns to the Liatrio Maintainers team (`@liatrio-labs/liatrio-labs-maintainers`), the only
+enforcement contact the Code of Conduct names. Suspected vulnerabilities are a different channel — follow
+[`SECURITY.md`](SECURITY.md) and use the private advisory form, which is for vulnerabilities only.
 
 ## References
 
 - `README.md` — overview and quick start
+- `CLAUDE.md` — repo conventions the pipeline itself is held to (schema, runtime, plugin layout)
+- `SECURITY.md` — supported versions, private reporting channel, and scope
 - `bench/MEASUREMENT.md` — ratcheted measurement policy (canonical)
 - `docs/maintainer-issues.md` — maintainer work-queue issue standard
 - `.pre-commit-config.yaml` — linting and formatting hooks
 - `.github/ISSUE_TEMPLATE/` — issue forms
+- `.github/labels.json` — checked-in label taxonomy the forms resolve against
 - `docs/research/` — research artifacts informing the design
