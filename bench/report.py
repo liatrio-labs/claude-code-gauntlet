@@ -939,14 +939,18 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
 
 def _release_leg_html(rows, leg):
     """One measurement line inside a release card, or "" if its run is missing
-    from the loaded ledger (offline fixture, or a future release not yet run)."""
+    from the loaded ledger (offline fixture, or a future release not yet run).
+
+    A non-billable run contributes no cost metric: the cards are the headline
+    progression record, where an unlabelled subscription figure would read as
+    spend beside genuinely API-keyed legs."""
     row = row_by_run_id(rows, leg["run_id"])
     if row is None:
         return ""
     recall = row.get("golden_recall")
     noise = row.get("noise_rate")
     tokens = row.get("tokens_total")
-    cost = row.get("cost_usd")
+    cost = row.get("cost_usd") if cost_is_billable(row) else None
     n_goldens = leg.get("n_goldens")
     metrics = [f"recall {fmt_pct(recall)}", f"noise {fmt_pct(noise)}"]
     if n_goldens and recall is not None:

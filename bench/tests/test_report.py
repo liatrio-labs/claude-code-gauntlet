@@ -454,6 +454,19 @@ class TestSubscriptionCostHonesty(unittest.TestCase):
         without = report.build_footnotes_html(FIXTURE_BASELINES, FIXTURE_ROWS)
         self.assertNotIn("‡", without)
 
+    def test_release_leg_omits_a_non_billable_cost(self):
+        # The release cards are the headline progression record; an unlabelled
+        # subscription figure there reads as spend beside genuine API-keyed legs.
+        leg = {"name": "leg", "run_id": self.SUB_ROW["run_id"], "n_goldens": 30}
+        out = report._release_leg_html([self.SUB_ROW], leg)
+        self.assertNotIn("$27.00", out)
+        self.assertIn("1.0M tokens", out)
+
+    def test_release_leg_keeps_an_api_cost(self):
+        row = self._api_row()
+        leg = {"name": "leg", "run_id": row["run_id"], "n_goldens": 30}
+        self.assertIn("$27.00", report._release_leg_html([row], leg))
+
     def test_footnote_rows_argument_is_optional(self):
         # Call sites that pass no rows keep today's footnote list exactly.
         self.assertEqual(
