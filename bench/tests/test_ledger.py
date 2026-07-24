@@ -27,7 +27,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import ledger  # noqa: E402
 from bench.runner.ledger import (  # noqa: E402
     API_AUTH_MODE,
     AUTH_MODES,
