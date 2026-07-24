@@ -208,10 +208,24 @@ def _free_gb(path):
     return shutil.disk_usage(str(probe)).free / (1024 ** 3)
 
 
-def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB):
-    """Return a list of one-line, actionable failure messages (empty == all prereqs met)."""
+def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
+                  child_auth="api", env=None):
+    """Return a list of one-line, actionable failure messages (empty == all prereqs met).
+
+    ``child_auth`` swaps the credential prerequisite and nothing else. ``subscription``
+    drops the metered-key requirement outright -- that key is deliberately not in play --
+    and demands instead a ``CLAUDE_CODE_OAUTH_TOKEN`` plus an isolated config carrying no
+    ``apiKeyHelper``: the helper outranks the token and, living in a settings file rather
+    than the env, is the one over-ranking source ``build_env`` cannot strip (see
+    ``invoke.api_key_helper_sources``). It deliberately imposes no judge-key requirement:
+    scoring is a separate step that resolves its own key and fails loud on its own, and
+    the mode's primary use is a ``--check`` functional smoke, which never runs the judge.
+    ``env`` defaults to ``os.environ`` (the same late binding ``score._judge_api_key``
+    uses, so a caller can supply a fixed mapping without a mutable default).
+    """
     env_path = Path(env_path if env_path is not None else ENV_PATH)
     workspace_dir = Path(workspace_dir if workspace_dir is not None else WORKSPACE)
+    env = os.environ if env is None else env
     failures = []
 
     claude_bin = shutil.which("claude")
@@ -236,7 +250,24 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB):
         if result.returncode != 0:
             failures.append("`gh auth status` failed -- run `gh auth login` to authenticate.")
 
-    if not _read_env_key(env_path, "ANTHROPIC_API_KEY"):
+    if child_auth == "subscription":
+        # bench/.env wins over ambient here too, the precedence _claude_auth_env applies.
+        token_var = invoke.OAUTH_TOKEN_VAR
+        if not (_read_env_key(env_path, token_var) or env.get(token_var)):
+            failures.append(
+                f"{token_var} missing or empty in {env_path} and in the environment -- "
+                "run `claude setup-token` and add the token to bench/.env."
+            )
+        helpers = invoke.api_key_helper_sources(
+            invoke.resolve_claude_home(workspace_dir, env)
+        )
+        if helpers:
+            failures.append(
+                "apiKeyHelper set in {files} -- it outranks {var}, so the child would "
+                "authenticate with that key and never reach the subscription; remove it "
+                "or run --child-auth api.".format(files=", ".join(helpers), var=token_var)
+            )
+    elif not _read_env_key(env_path, "ANTHROPIC_API_KEY"):
         failures.append(
             f"ANTHROPIC_API_KEY missing or empty in {env_path} -- "
             "copy bench/.env.example to bench/.env and add the metered key."
@@ -404,7 +435,8 @@ def _naive_payload_from_result(result_text, pr_dir):
     return dest
 
 
-def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
+def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
+                  child_auth="api"):
     """Run the bare single-pass anchor review; return an :class:`invoke.InvokeResult`.
 
     Reuses the invoke layer's public building blocks (``build_env`` for the identical
@@ -412,9 +444,12 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
     (no --plugin-dir, pinned --max-turns, prompt via stdin) and watchdog. No config-echo
     check applies -- a no-plugin run prints no Headless config block -- and no dry-run
     payload is expected; naive candidates are extracted downstream from the raw output.
+
+    The anchor is a real ``claude`` invocation, so it needs credentialing exactly like
+    the skill path: ``child_auth`` goes to ``build_env``, which owns the whole decision.
     """
     worktree = Path(worktree).resolve()
-    env = invoke.build_env(pr, run_dir, os.environ)
+    env = invoke.build_env(pr, run_dir, os.environ, child_auth=child_auth)
     pr_dir = Path(run_dir) / invoke.pr_dir_name(pr)
     pr_dir.mkdir(parents=True, exist_ok=True)
     raw_path = pr_dir / "raw-naive.json"
@@ -499,13 +534,15 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s):
 
 
 def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-             tool="deep-review-v3", child_model="inherit"):
+             tool="deep-review-v3", child_model="inherit", child_auth="api"):
     """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
 
     ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
     ``invoke.invoke_review`` so v3 can preflight the child CLI version; it is ignored on
     the ``--anchor naive`` path, which does not run the skill. ``child_model`` is the
     resolved child-session model pin, likewise forwarded to the skill path only.
+    ``child_auth`` goes to BOTH paths -- the naive anchor shells out to ``claude`` through
+    the same ``build_env``, so it spends whichever credential the mode selects.
 
     Returns ``{"counts": {status: n}, "drifted": [(url, reason), ...]}``. A DriftError
     marks the PR ``drifted`` (never scored) and the run continues to the next PR.
@@ -583,12 +620,13 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             )
             if is_naive:
                 result = _invoke_naive(
-                    worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s
+                    worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s,
+                    child_auth=child_auth,
                 )
             else:
                 result = invoke.invoke_review(
                     worktree, pr, run_dir, timeout_s=timeout_s, tool=tool,
-                    child_model=child_model,
+                    child_model=child_model, child_auth=child_auth,
                 )
             _collect_artifacts(output_dir, pr_dir)
             if not is_naive:
@@ -653,9 +691,48 @@ def _resolve_child_model(tool, child_model):
     return "inherit"
 
 
+def _resolve_child_auth(child_auth):
+    """Effective child-auth mode: an explicit flag wins, else the metered API key.
+
+    ``api`` is the default because every run of record was produced that way and its cost
+    figures are only comparable against another API-keyed run, while ``subscription``
+    spends the operator's own capacity -- that has to be asked for, never inferred. A None
+    ``child_auth`` means the flag was not passed, the same sentinel ``_resolve_child_model``
+    uses so a resumed run's manifest value can win over the flag's default.
+    """
+    return child_auth if child_auth is not None else "api"
+
+
+def _child_auth_for(args, manifest=None):
+    """The credential mode this invocation will actually spend.
+
+    The one place the resume precedence lives, because two callers must agree on it or
+    the run breaks: ``_resume`` (which spends the credential) and ``main``'s preflight
+    (which validates it). Preflighting the flag's default while resuming a subscription
+    run would demand a metered key the run does not use and skip the token/apiKeyHelper
+    checks it does, turning a clear prereq failure into a mid-run ``build_env`` raise.
+
+    Pass ``manifest`` when the caller already loaded it; otherwise a ``--resume`` /
+    ``--retry-failed`` id is read from disk here, tolerating an absent or corrupt
+    ``run.json`` (the resume path reports those on its own terms).
+    """
+    if manifest is None:
+        run_id = args.resume or args.retry_failed
+        path = (RUNS_ROOT / run_id / "run.json") if run_id else None
+        manifest = {}
+        if path is not None and path.is_file():
+            try:
+                manifest = _load_json(path)
+            except (ValueError, OSError):
+                manifest = {}
+    return manifest.get("child_auth") or _resolve_child_auth(args.child_auth)
+
+
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     env_fingerprint = dict(invoke.BENCH_ENV)  # the 9 CODE_GAUNTLET_* values
     env_fingerprint["timeout_s"] = timeout_s
+    child_auth = _resolve_child_auth(getattr(args, "child_auth", None))
+    env_fingerprint["child_auth"] = child_auth
     invocation = (
         "naive:single-pass max-turns={}".format(NAIVE_MAX_TURNS)
         if args.anchor == "naive"
@@ -678,6 +755,11 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
             None if args.anchor == "naive"
             else _resolve_child_model(args.tool, args.child_model)
         ),
+        # Recorded for EVERY run, deliberately breaking the two fields above: a naive
+        # anchor still authenticates (_invoke_naive credentials its child through the same
+        # build_env), so a null here would leave the run's auth provenance -- and with it
+        # whether its cost is billable API spend -- unrecoverable at scoring time.
+        "child_auth": child_auth,
         "fidelity": args.fidelity,
         "invocation": invocation,
         "env_fingerprint": env_fingerprint,
@@ -730,6 +812,7 @@ def _new_run(args):
     summary = _run_prs(
         run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data,
         tool=args.tool, child_model=_resolve_child_model(args.tool, args.child_model),
+        child_auth=_resolve_child_auth(args.child_auth),
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -761,12 +844,17 @@ def _resume(run_id, args, retry):
     # the same model it began with; fall back to the per-tool default for pre-child_model
     # run.json files (or a naive run, whose None value is unused by the anchor path).
     child_model = manifest.get("child_model") or _resolve_child_model(args.tool, args.child_model)
+    # And again for the credential mode, where the stakes are higher than a label: letting
+    # a flag override the manifest would bill half a run's PRs one way and half the other,
+    # under a single ledger row that can only carry one auth_mode. A pre-child_auth
+    # run.json falls back to the CLI default (api), which is what those runs used.
+    child_auth = _child_auth_for(args, manifest)
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
     summary = _run_prs(
         run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-        tool=tool, child_model=child_model,
+        tool=tool, child_model=child_model, child_auth=child_auth,
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -864,6 +952,15 @@ def parse_args(argv=None):
         help="model for the child orchestrator session "
         "(default: sonnet for deep-review-v3, inherit for deep-review-v2)",
     )
+    # Which credential the review children spend. None is the "not specified" sentinel
+    # (as for --child-model) so the manifest's mode wins on resume. subscription has its
+    # own prerequisites -- an OAuth token and no apiKeyHelper, see check_prereqs -- and
+    # its runs are not cost-comparable with API-keyed ones; bench/README.md has the detail.
+    parser.add_argument(
+        "--child-auth", choices=["api", "subscription"], default=None, dest="child_auth",
+        help="credential for the review children: the metered bench/.env key (default) "
+        "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
+    )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument(
         "--check", metavar="RUN_ID", dest="check",
@@ -929,7 +1026,7 @@ def main(argv=None):
             return 2
         return _check_only(args.check)
 
-    failures = check_prereqs()
+    failures = check_prereqs(child_auth=_child_auth_for(args))
     if failures:
         print("bench/run.py: prerequisite checks failed (fix each and re-run):", file=sys.stderr)
         for failure in failures:
