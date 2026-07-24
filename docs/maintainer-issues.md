@@ -12,8 +12,9 @@ that.
 
 ## Issue structure
 
-Every maintainer work-queue issue carries these six sections, in this order,
-spelled as written.
+Every maintainer work-queue issue carries these six sections, in this order.
+Headings are spelled as written, with one exception: Candidate directions
+takes a parenthetical, whose wording is free (see that section).
 
 ### Problem / Goal
 
@@ -45,11 +46,14 @@ is what makes the discrepancy traceable.
 ### Candidate directions
 
 Prior analysis handed to the implementer: approaches already considered, dead
-ends already walked, a decomposition that looked workable. **Non-binding and
-optional by construction** — say so in the heading itself
-(`Candidate directions (non-binding, optional)`) so no reader mistakes it for
-a mandate. If a direction is in fact binding, it is a requirement and belongs
-in Requirements.
+ends already walked, a decomposition that looked workable. **Non-binding by
+construction** — say so in the heading itself, so no reader mistakes it for a
+mandate. The heading begins with `Candidate directions` and carries a
+parenthetical stating that the section is non-binding; the exact wording of
+that parenthetical is free. `Candidate directions (non-binding, optional)` and
+`Candidate directions (non-binding, from prior analysis)` both satisfy the
+rule. If a direction is in fact binding, it is a requirement and belongs in
+Requirements.
 
 ### Out of scope
 
@@ -71,13 +75,17 @@ vocabulary:
 - `smoke` — a mechanical functional pass/fail check per sub-release.
 - `paired-mini` — an owner-triggered paired benchmark against the baseline of
   record.
+- `full-holdout` — the owner-triggered release-grade confirmation runs.
+
+Those four slugs are the `Slug` column of the tier ladder in
+[`bench/MEASUREMENT.md`](../bench/MEASUREMENT.md), which is where a reader who
+does not recognize one resolves it. Nothing outside that ladder is a tier.
 
 One clause of orientation per tier, as above, is the ceiling. Do **not**
 restate the tier definitions, their costs, their triggers, or the owner
 measurement options in a work-queue issue or here — that duplication is how
-the policy drifts. The canonical home is
-[`bench/MEASUREMENT.md`](../bench/MEASUREMENT.md); drafts, issues, and PR
-descriptions link there.
+the policy drifts. The canonical home is the runbook linked above; drafts,
+issues, and PR descriptions link there.
 
 That policy supersedes the retired framing "every behavior-changing item ships
 behind a paired bench measurement": paired measurements are rare, expensive,
@@ -90,10 +98,38 @@ labels that apply to it. `needs-triage` is for inbound issues filed through
 the forms and is not used on maintainer-filed items.
 
 The taxonomy is checked in at [`.github/labels.json`](../.github/labels.json):
-one entry per label, with `name`, `color`, `description`, and a `category` of
-`type`, `triage`, `topic`, or `area`. That file — not the live repo state — is
-the reviewable source of truth, and `tests/test_contribution_surface.py`
-asserts its shape and its coverage of the labels the issue forms apply.
+one entry per label, with `name`, `color`, `description`, and a `category`.
+The manifest is where a label change is proposed and reviewed; the repository's
+own labels are what GitHub actually applies. The two are meant to be identical,
+the manifest leads, and the drift check below is how that is settled — a
+manifest entry that was never synced is not a label.
+
+`tests/test_contribution_surface.py` asserts the manifest's shape — entries
+name-sorted and unique, exactly those four keys, six-digit lowercase hex
+colors, a non-empty description inside GitHub's 100-character limit, a
+category drawn from the six below — and that every label the issue forms
+auto-apply resolves to an entry in it. It cannot see GitHub: a label that is
+in the manifest and not in the repo passes the suite and still drops silently
+on submission. Only the sync and the drift check below settle that.
+
+### Categories
+
+`category` is manifest metadata, not something GitHub stores. It records what
+kind of statement a label makes, so a triager can see the six axes at once:
+
+| Category | Question it answers | Labels |
+|----------|---------------------|--------|
+| `type` | What kind of item is this? | `bug`, `documentation`, `enhancement`, `question` |
+| `state` | Where is it in the queue? | `needs-triage`, `work-queue` |
+| `resolution` | Why was it closed without a fix? | `duplicate`, `invalid`, `wontfix` |
+| `outreach` | Who is being invited to pick it up? | `good first issue`, `help wanted` |
+| `topic` | What concern does it address? | `bench`, `benchmarking`, `determinism`, `latency`, `policy`, `process`, `reliability`, `tooling`, `verify-boundary` |
+| `area` | Where does the change land? | the seven `area:*` labels |
+
+An item normally carries at most one `type` and one `state`, a `resolution`
+only when it closes unfixed, and as many `topic` and `area` labels as apply.
+
+### Telling near-duplicate labels apart
 
 Topic and area labels answer different questions, which is why pairs like
 `bench` / `area:bench` and `tooling` / `area:ci` both exist and are not
@@ -102,12 +138,31 @@ reviewer will read the diff in. A topic label says **what concern the item
 addresses**, wherever the code for it happens to live: a pipeline change made to
 unblock the harness is `bench` + `area:workflows`, not `area:bench`.
 
-Two rules that are easy to get wrong:
+Within the topic labels, two pairs need a decision rule:
+
+- **`bench` is the machinery; `benchmarking` is the measurement.** Use `bench`
+  for the harness itself — the runner, the golden fixtures, the mirrors, the
+  ledger plumbing. Use `benchmarking` for taking a measurement — running a tier,
+  scoring, the judge, the metrics, the cost. A broken mirror cache is `bench`;
+  recording a new baseline of record is `benchmarking`. An item that changes
+  the harness in order to take a measurement carries both.
+- **`policy` beats `benchmarking` on measurement policy.** Deciding which tier
+  gates what, when a paired run is required, or how the ladder ratchets is
+  `policy`, not `benchmarking` — `benchmarking` is for measuring under the
+  policy, never for setting it. Where the two overlap, `policy` wins.
+
+Two more rules that are easy to get wrong:
 
 - **Plural `area:*` forms are canonical.** The seven area labels are
   `area:workflows`, `area:agents`, `area:scripts`, `area:skills`,
-  `area:bench`, `area:docs`, and `area:ci`. Singular drift in a draft is a bug
-  and the test suite fails on it.
+  `area:bench`, `area:docs`, and `area:ci`. Five of them have a singular form
+  to drift to — the agents, docs, scripts, skills, and workflows names — and
+  `tests/test_contribution_surface.py` fails on any singular spelling of those
+  five inside the file set it scans: every `.md`, `.yml`, `.yaml`, and `.json`
+  file under `.github/` and `docs/`, plus `CONTRIBUTING.md`, `README.md`,
+  `SECURITY.md`, `CLAUDE.md`, and `AGENTS.md`. That is the whole guarantee.
+  Drift in an issue body, a PR description, a commit message, or a source file
+  is outside the scan and nothing catches it.
 - **A label must already exist in the repo before an issue form or an issue
   can apply it.** GitHub drops a form label that names a nonexistent label,
   silently: the issue still files, just unlabeled, and nothing reports the
@@ -116,20 +171,57 @@ Two rules that are easy to get wrong:
 ### Syncing the taxonomy to GitHub
 
 Syncing is a maintainer step and needs a token with write access on the repo.
-Derive the commands from the manifest and read them before running anything:
+Run every command in this section from the repo root, so the relative paths
+resolve. Derive the commands from the manifest and read them before running
+anything:
 
 ```bash
-python3 -c "import json,shlex;[print('gh label create',shlex.quote(l['name']),'--color',l['color'],'--description',shlex.quote(l['description']),'--force') for l in json.load(open('.github/labels.json'))['labels']]"
+python3 .github/labels_diff.py --commands
 ```
 
-Review the printed commands, then re-run the same line with `| sh` appended to
-apply them.
+That prints one `gh label create ... --force` command per manifest label —
+every label, not only the drifted ones, which is safe because `--force` makes
+each command idempotent. Add `--live` to narrow the output to the labels that
+actually differ. Review them, then apply them under a shell that aborts on the
+first failure, so a single rejected label is loud rather than a silent partial
+sync:
+
+```bash
+set -euo pipefail
+python3 .github/labels_diff.py --commands | sh -eu
+```
 
 `--force` updates an existing label in place — color and description — instead
 of failing on conflict, so the sync is safe to re-run and safe to run against
 a repo where some labels already exist. It never deletes: a label that exists
 in the repo but is absent from the manifest is left untouched. Removing a
 label is therefore always a deliberate, separate `gh label delete`.
+
+The cost of `--force` is that it overwrites: a color or description someone
+curated by hand in the GitHub UI is replaced by the manifest's value, with no
+prompt and no diff. If a live label carries wording worth keeping, put it in
+`.github/labels.json` first and sync second.
+
+Confirm the sync landed rather than assuming it did. The same helper in
+`--live` mode compares the manifest against the repo's labels and exits 1 on
+any drift:
+
+```bash
+gh api "repos/liatrio-labs/claude-code-gauntlet/labels" --paginate | python3 .github/labels_diff.py --live -
+```
+
+It reports three things: labels in the manifest that the repo is missing,
+labels whose live color or description has drifted from the manifest, and
+labels that exist in the repo but not in the manifest — those last are listed
+and left alone, never deleted. `--commands --live <file>` then emits commands
+for exactly the first two groups.
+
+CI carries the same check as the "Verify Label Taxonomy" workflow
+(`.github/workflows/labels-verify.yml`), triggered manually with
+`workflow_dispatch` after a sync, because a sync needs write access a pull
+request does not get. The drift check is what makes the manifest verifiable
+instead of aspirational: without it, a repo that was never synced looks exactly
+like one that was.
 
 ## Related
 
