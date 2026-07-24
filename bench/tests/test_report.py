@@ -321,6 +321,58 @@ class TestReleaseProgression(unittest.TestCase):
         self.assertIn("63.3%", out)
 
 
+class TestMiniTierGraded(unittest.TestCase):
+    """``--tier mini`` must be a gate-graded tier in the dashboard (Issue #28)."""
+
+    def test_mini_in_tier_info_and_gate_tiers(self):
+        keys = [k for k, _label, _meaning in report.TIER_INFO]
+        self.assertIn("mini", keys)
+        self.assertIn("mini", report.GATE_TIERS)
+        self.assertIn("mini", report._TIER_GLYPH_SVG)
+
+    def test_mini_short_label_and_is_graded(self):
+        pt = {
+            "run_id": "mini-20260724-aaaaaaa",
+            "tool": "deep-review-v3",
+            "tier": "mini",
+            "kind": "gate",
+            "hypothesis": None,
+            "recall": 0.6333,
+            "noise": 0.2233,
+        }
+        self.assertEqual(report.short_label(pt), "mini")
+        # classify grades GATE_TIERS against bars — mini clears both → gate.
+        kind, _glyph, _desc = report.classify(
+            {
+                "run_id": pt["run_id"],
+                "tool": "deep-review-v3",
+                "tier": "mini",
+                "golden_recall": 0.6333,
+                "noise_rate": 0.2233,
+            },
+            top_anchor=0.6271,
+            ceiling=0.24,
+        )
+        self.assertEqual(kind, "gate")
+
+    def test_tier_info_and_explainer_have_no_double_backticks(self):
+        for _key, _label, meaning in report.TIER_INFO:
+            self.assertNotIn("``", meaning)
+        # Explainer foot is assembled from plain strings — no reST leftovers.
+        html_out = report.build_explainer_html(0.6271, 0.5, 0.24)
+        self.assertNotIn("``", html_out)
+        self.assertIn("pre-mini paired legs", html_out)
+
+    def test_mini_run_marker_is_hexagon_not_subset_circle(self):
+        mini = report._run_marker(10, 20, "mini", "--v3", False, False)
+        subset = report._run_marker(10, 20, "subset", "--v3", False, False)
+        self.assertIn("path", mini)
+        self.assertIn("mk-fill", mini)
+        self.assertNotIn("<circle", mini)
+        self.assertIn("<circle", subset)
+        self.assertNotEqual(mini, subset)
+
+
 class TestVoidRunsAndMilestones(unittest.TestCase):
     """The two superseded runs (contaminated smoke, failed mini-subset attempt)
     fade like CONFOUNDED_RUNS; the three custom-tier runs get distinct labels."""

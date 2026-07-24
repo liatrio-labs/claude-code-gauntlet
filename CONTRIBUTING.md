@@ -9,10 +9,20 @@ This repository provides a Claude Code plugin that orchestrates multi-agent code
 - Bug fixes in the pipeline scripts (`scripts/`)
 - New or improved review agents (`agents/`)
 - Skill orchestration improvements (`skills/`)
+- Workflow pipeline (`workflows/`) and benchmark harness (`bench/`)
 - Documentation, examples, and research updates
-- New tests or coverage gaps in the test suite (`tests/`)
+- New tests or coverage gaps in the test suite (`tests/`, `bench/tests/`, `workflows/test/`)
 
 Please open an issue first for significant changes to discuss the approach.
+
+## Measurement policy (contributors)
+
+External PRs ship behind the **always-on deterministic suites only** — not a
+paired bench measurement. The functional smoke (`bench/run.py --tier smoke` +
+`--check`) is run by the release manager. Paired mini-subset / full-15 / holdout
+runs are owner-triggered and reserved for changes that plausibly move recall or
+noise. See [`bench/MEASUREMENT.md`](bench/MEASUREMENT.md) for the full tier
+ladder, costs, and pre-registered owner options.
 
 ## Getting Started
 
@@ -43,8 +53,14 @@ Secret scanning (`gitleaks`) is included in `.pre-commit-config.yaml` and runs o
 ### Common Commands
 
 ```bash
-# Run the test suite
+# Pipeline pytest suite
 python -m pytest tests/ -q
+
+# Bench harness unit tests (stdlib; no API spend)
+python -m pytest bench/tests/ -q
+
+# JS workflow tests (requires Node 24.18.0)
+node --test workflows/test/*.test.js
 
 # Run full pre-commit checks across the repo
 pre-commit run --all-files
@@ -69,21 +85,24 @@ pre-commit run cspell --all-files
 Before submitting a PR, run:
 
 ```bash
-# Run the test suite
 python -m pytest tests/ -q
-
-# Run all pre-commit checks
+python -m pytest bench/tests/ -q
+node --test workflows/test/*.test.js
 pre-commit run --all-files
 ```
 
 This will:
 
-- Execute the full pytest suite for all pipeline scripts
+- Execute the pytest suite for pipeline scripts and the bench harness
+- Execute the Node workflow test suite (bundle freshness / stage contracts)
 - Check YAML and TOML syntax
 - Fix Markdown formatting issues
 - Spell-check public-facing documentation
 - Scan for committed secrets
 - Validate the commit message format (on commit)
+
+Live bench smoke and paired measurements are **not** contributor gates — see
+[`bench/MEASUREMENT.md`](bench/MEASUREMENT.md).
 
 ## Branching and Commit Conventions
 
@@ -171,6 +190,8 @@ If you have any concerns, please contact the Liatrio Maintainers team (`@liatrio
 ## References
 
 - `README.md` — overview and quick start
+- `bench/MEASUREMENT.md` — ratcheted measurement policy (canonical)
+- `docs/maintainer-issues.md` — maintainer work-queue issue standard
 - `.pre-commit-config.yaml` — linting and formatting hooks
 - `.github/ISSUE_TEMPLATE/` — issue forms
 - `docs/research/` — research artifacts informing the design

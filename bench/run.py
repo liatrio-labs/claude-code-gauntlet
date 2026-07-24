@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 """The one-command bench harness runner (spec H3).
 
-``python3 bench/run.py --tier smoke|subset|full [flags]`` drives the v2 skill over a
-tier's golden PRs: for each PR it ensures a cached bare mirror, cuts a detached worktree
-at the pinned head SHA (with the SHA input-drift guard), writes the REVIEW.md fixture for
-designated fixture PRs, invokes the headless review under the pinned isolated context,
-collects the dry-run payload + report artifacts into the per-PR dir, saves the PR diff,
-removes the worktree, and checkpoints the outcome. PR-granular checkpointing makes a run
-resumable; a killed pass loses at most the single PR that was mid-flight.
+``python3 bench/run.py --tier smoke|mini|subset|holdout|full [flags]`` drives the skill
+over a tier's golden PRs: for each PR it ensures a cached bare mirror, cuts a detached
+worktree at the pinned head SHA (with the SHA input-drift guard), writes the REVIEW.md
+fixture for designated fixture PRs, invokes the headless review under the pinned
+isolated context, collects the dry-run payload + report artifacts into the per-PR dir,
+saves the PR diff, removes the worktree, and checkpoints the outcome. PR-granular
+checkpointing makes a run resumable; a killed pass loses at most the single PR that was
+mid-flight.
 
 This runner does NOT write ledger rows -- scoring (Task 13) does. run.py records per-PR
 invoke metadata (status, cost, duration) into the checkpoint detail and a run.json
 manifest (run_id, tier, git_sha, start ts, env fingerprint).
 
+``--check RUN_ID`` runs the mechanical functional-smoke checker (Issue #28) against a
+completed run directory — payload/schema, no silent degrade, plugin scriptPath identity,
+and ≥1 delivered comment. It never invokes the judge.
+
 Stdlib-only (repo CLAUDE.md). The vendored scorer keeps its own deps behind ``uv`` and is
 never imported here; ``--score-only`` lazily imports the (Task 13) score module and errors
-cleanly if it is not present yet.
+cleanly if it is not present yet. ``--check`` imports ``bench.runner.check`` only.
 """
 
 import argparse
@@ -52,7 +57,13 @@ FIXTURE_PATH = GOLDEN_DIR / "review_md_fixture.md"
 MIN_FREE_GB = 10
 
 # `--tier subset` maps to the 15-PR gate subset; `full` is every shas.json key.
-_TIER_SUBSET_KEY = {"smoke": "smoke", "subset": "gate", "holdout": "holdout"}
+# `--tier mini` is the 6-PR pre-registered paired-measurement cut (subset of gate).
+_TIER_SUBSET_KEY = {
+    "smoke": "smoke",
+    "subset": "gate",
+    "holdout": "holdout",
+    "mini": "mini",
+}
 
 # Naive anchor (spec H3): a bare single-pass review -- no --plugin-dir, prompt from the
 # PR title + full diff, a pinned turn budget so it cannot loop. Same isolation envelope
@@ -107,7 +118,10 @@ def _make_run_dir(tier):
 
 
 def _resolve_tier(tier, subsets, shas):
-    """Return the ordered list of golden URLs for ``tier`` (smoke=3, subset=15, full=50)."""
+    """Return the ordered list of golden URLs for ``tier``.
+
+    Counts: smoke=3, mini=6, subset=15, holdout=10, full=all shas.json keys.
+    """
     if tier == "full":
         return list(shas.keys())
     return list(subsets[_TIER_SUBSET_KEY[tier]])
@@ -559,7 +573,15 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             (pr_dir / "diff.patch").write_text(diff_text)
 
             _clear_dir(output_dir)
-            if anchor == "naive":
+            # Snapshot per-child Workflow records before invoke so we can copy only
+            # this PR's new/changed wf_*.json into pr_dir/workflows/ (G3 plugin-identity
+            # gate). raw.json is the result envelope and never carries scriptPath.
+            is_naive = anchor == "naive"
+            claude_home = invoke._claude_home(run_dir, os.environ)
+            wf_baseline = (
+                {} if is_naive else invoke.snapshot_workflow_records(claude_home)
+            )
+            if is_naive:
                 result = _invoke_naive(
                     worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s
                 )
@@ -569,6 +591,8 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                     child_model=child_model,
                 )
             _collect_artifacts(output_dir, pr_dir)
+            if not is_naive:
+                invoke.collect_workflow_records(claude_home, pr_dir, wf_baseline)
         except Exception as exc:
             # PR-granular progress: an unexpected error (bad JSON, an OSError during
             # collection, a plain bug) must fail only this PR and let the tier continue --
@@ -771,6 +795,37 @@ def _score_only(run_id):
     return 0
 
 
+def _check_only(run_id):
+    """Run the mechanical functional-smoke checker against ``RUNS_ROOT/run_id``."""
+    run_dir = RUNS_ROOT / run_id
+    if not run_dir.is_dir():
+        print("--check: run directory not found: {}".format(run_dir), file=sys.stderr)
+        return 2
+    from bench.runner import check as check_mod
+
+    result = check_mod.check_run(run_dir, repo_root=REPO_ROOT)
+    stats = result.get("stats") or {}
+    print(
+        "Check {}: ok={} pr_dirs={} comments={} findings_files={} "
+        "workflow_records={} script_paths={} unknown_origin={}".format(
+            run_id,
+            result.get("ok"),
+            stats.get("pr_dirs"),
+            stats.get("delivered_comments"),
+            stats.get("findings_files"),
+            stats.get("workflow_records"),
+            stats.get("script_paths"),
+            stats.get("unknown_origin"),
+        )
+    )
+    for failure in result.get("failures") or []:
+        print("  FAIL: {}".format(failure), file=sys.stderr)
+    # Naive-anchor refusal is a usage error (exit 2), not a smoke-gate failure.
+    if result.get("refused"):
+        return 2
+    return 0 if result.get("ok") else 1
+
+
 # -------------------------------------------------------------------------------- CLI
 
 
@@ -779,7 +834,12 @@ def parse_args(argv=None):
         prog="bench/run.py",
         description="Drive the code-gauntlet skill over a tier's golden PRs and checkpoint outcomes. Tool labels and scorer keys keep their pre-rename deep-review-* names for measurement continuity.",
     )
-    parser.add_argument("--tier", choices=["smoke", "subset", "holdout", "full"], help="which PR set to run")
+    parser.add_argument(
+        "--tier",
+        choices=["smoke", "mini", "subset", "holdout", "full"],
+        help="which PR set to run (smoke=3, mini=6 paired cut, subset=15 gate, "
+        "holdout=10, full=50)",
+    )
     parser.add_argument("--runs", type=int, default=1, help="number of sequential runs (own dir each)")
     parser.add_argument("--fidelity", choices=["dry-run", "live"], default="dry-run")
     parser.add_argument("--resume", metavar="RUN_ID", help="re-run only pending PRs of RUN_ID")
@@ -806,17 +866,27 @@ def parse_args(argv=None):
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument(
-        "--prs", metavar="URL[,URL...]",
+        "--check", metavar="RUN_ID", dest="check",
+        help="run the mechanical functional-smoke checker against an existing run "
+        "(never invokes the judge; exit 0 = pass)",
+    )
+    parser.add_argument(
+        "--prs", metavar="URL[,URL...]|mini",
         help="explicit comma-separated golden PR list; overrides --tier's subset "
-        "resolution and labels the run 'custom'. Every URL must exist in shas.json.",
+        "resolution and labels the run 'custom'. Every URL must exist in shas.json. "
+        "The alias 'mini' expands to the pre-registered 6-PR mini subset.",
     )
     args = parser.parse_args(argv)
     # Validate --prs against the golden set at parse time so an unknown URL is a hard
     # argparse error (exit 2), never a mid-run surprise; normalize the string to a list.
+    # The documented alias ``mini`` expands to subsets.json["mini"] (still labels custom).
     if args.prs is not None:
         urls = [u.strip() for u in args.prs.split(",") if u.strip()]
         if not urls:
             parser.error("--prs was given but parsed no URLs")
+        if urls == ["mini"]:
+            subsets = _load_json(GOLDEN_DIR / "subsets.json")
+            urls = list(subsets["mini"])
         shas = _load_json(GOLDEN_DIR / "shas.json")
         unknown = [u for u in urls if u not in shas]
         if unknown:
@@ -830,17 +900,34 @@ def parse_args(argv=None):
 def main(argv=None):
     args = parse_args(argv)
 
-    modes = [bool(args.resume), bool(args.retry_failed), bool(args.score_only)]
+    modes = [
+        bool(args.resume),
+        bool(args.retry_failed),
+        bool(args.score_only),
+        bool(args.check),
+    ]
     if sum(modes) > 1:
         print(
-            "Choose at most one of --resume / --retry-failed / --score-only.", file=sys.stderr
+            "Choose at most one of --resume / --retry-failed / --score-only / --check.",
+            file=sys.stderr,
         )
         return 2
 
-    # --score-only has different prerequisites (no claude/gh invocation) and its module may
-    # not exist yet, so it is handled before the run prereq checks.
+    # --score-only / --check have different prerequisites (no claude/gh invocation) and
+    # are handled before the run prereq checks.
     if args.score_only:
         return _score_only(args.score_only)
+    if args.check:
+        # --check inspects an existing run; combining it with new-run flags is always a
+        # mistake (the flags would be silently ignored). Fail loud.
+        if args.tier or args.prs or args.anchor or args.runs != 1:
+            print(
+                "--check does not accept --tier / --prs / --anchor / --runs "
+                "(pass only --check RUN_ID).",
+                file=sys.stderr,
+            )
+            return 2
+        return _check_only(args.check)
 
     failures = check_prereqs()
     if failures:
@@ -857,7 +944,7 @@ def main(argv=None):
     if not args.tier and not args.prs:
         print(
             "--tier or --prs is required for a new run "
-            "(smoke|subset|holdout|full, or an explicit --prs list).",
+            "(smoke|mini|subset|holdout|full, or an explicit --prs list / --prs mini).",
             file=sys.stderr,
         )
         return 2

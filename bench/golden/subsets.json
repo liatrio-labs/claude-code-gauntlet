@@ -33,6 +33,14 @@
     "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/6",
     "https://github.com/calcom/cal.com/pull/22345"
   ],
+  "mini": [
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/4",
+    "https://github.com/calcom/cal.com/pull/11059",
+    "https://github.com/calcom/cal.com/pull/14740",
+    "https://github.com/getsentry/sentry/pull/93824",
+    "https://github.com/grafana/grafana/pull/79265",
+    "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/10"
+  ],
   "review_md_fixtures": [
     "https://github.com/getsentry/sentry/pull/77754",
     "https://github.com/calcom/cal.com/pull/10600"

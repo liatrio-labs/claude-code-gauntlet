@@ -50,19 +50,44 @@ def _mirror_dirname(clone_url):
     return f"{tail}-{digest}.git"
 
 
+def _mirror_is_usable(mirror):
+    """True when ``mirror`` is a bare repo that has at least one ref.
+
+    An interrupted ``git clone --mirror`` (or a poisoned CI cache entry) can
+    leave a directory that ``Path.exists()`` accepts but that cannot serve
+    worktrees. Those must be torn down and re-cloned. We check ``show-ref``
+    rather than ``rev-parse HEAD`` because a complete mirror can still have an
+    unresolved symbolic HEAD (e.g. default-branch name mismatch).
+    """
+    mirror = Path(mirror)
+    if not mirror.is_dir():
+        return False
+    bare = _git(
+        ["-C", str(mirror), "rev-parse", "--is-bare-repository"], check=False
+    )
+    if bare.returncode != 0 or bare.stdout.strip() != "true":
+        return False
+    refs = _git(["-C", str(mirror), "show-ref"], check=False)
+    return refs.returncode == 0 and bool(refs.stdout.strip())
+
+
 def ensure_mirror(clone_url, mirrors_dir, refresh=False):
     """Return the path to a cached bare mirror of ``clone_url``.
 
     Created with ``git clone --mirror`` on first use (this downloads the repo).
-    If the mirror already exists the network is not touched unless
+    If the mirror already exists and is usable the network is not touched unless
     ``refresh=True``, which runs ``git remote update`` to pull new refs.
+    Incomplete or corrupt mirror directories are removed and re-cloned.
     """
     clone_url = str(clone_url)
     mirror = Path(mirrors_dir) / _mirror_dirname(clone_url)
     if mirror.exists():
-        if refresh:
-            _git(["-C", str(mirror), "remote", "update"])
-        return mirror
+        if not _mirror_is_usable(mirror):
+            shutil.rmtree(mirror)
+        else:
+            if refresh:
+                _git(["-C", str(mirror), "remote", "update"])
+            return mirror
     Path(mirrors_dir).mkdir(parents=True, exist_ok=True)
     _git(["clone", "--mirror", clone_url, str(mirror)])
     return mirror

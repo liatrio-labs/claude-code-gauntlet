@@ -218,12 +218,19 @@ class PrereqTest(RunTestBase):
 class TierResolutionTest(RunTestBase):
     def test_counts(self):
         self.assertEqual(len(run._resolve_tier("smoke", self.subsets, self.shas)), 3)
+        self.assertEqual(len(run._resolve_tier("mini", self.subsets, self.shas)), 6)
         self.assertEqual(len(run._resolve_tier("subset", self.subsets, self.shas)), 15)
+        self.assertEqual(len(run._resolve_tier("holdout", self.subsets, self.shas)), 10)
         self.assertEqual(len(run._resolve_tier("full", self.subsets, self.shas)), 50)
 
     def test_subset_maps_to_gate(self):
         self.assertEqual(
             run._resolve_tier("subset", self.subsets, self.shas), self.subsets["gate"]
+        )
+
+    def test_mini_maps_to_mini_subset(self):
+        self.assertEqual(
+            run._resolve_tier("mini", self.subsets, self.shas), self.subsets["mini"]
         )
 
     def test_full_is_all_sha_keys(self):
@@ -276,6 +283,77 @@ class ArtifactCaptureTest(RunTestBase):
         self.assertTrue(output_dir.is_dir())
         self.assertEqual(list(output_dir.iterdir()), [])
         self.assertEqual(cp.status(PLAIN_URL), "ok")
+
+    def test_workflow_records_collected_into_pr_dir(self):
+        """_run_prs snapshots claude-home and copies new wf_*.json into pr_dir/workflows/.
+
+        This is the glue feeding check.py G4 (plugin-identity). The fake invoke plants a
+        workflow record under the workspace claude-home during the child call.
+        """
+        pipeline = str(run.REPO_ROOT / "workflows" / "pipeline.js")
+        claude_home = self.tmp / "claude-home"
+
+        def invoke_plants_wf(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
+                             child_model="inherit"):
+            # Mimic a child Workflow record written under CLAUDE_CONFIG_DIR during the run.
+            wf = (
+                claude_home / "config" / "projects" / "slug" / "session" / "workflows"
+                / "wf_live-0001.json"
+            )
+            wf.parent.mkdir(parents=True, exist_ok=True)
+            wf.write_text(
+                json.dumps({"runId": "wf_live-0001", "scriptPath": pipeline}),
+                encoding="utf-8",
+            )
+            return fake_invoke_ok(
+                worktree, pr, run_dir, timeout_s=timeout_s, tool=tool, child_model=child_model
+            )
+
+        self._install_runner_fakes(invoke_fn=invoke_plants_wf)
+        # Pre-existing unchanged record must not be copied (baseline filter).
+        stale = (
+            claude_home / "config" / "projects" / "slug" / "session" / "workflows"
+            / "wf_stale.json"
+        )
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        stale.write_text(
+            json.dumps({"runId": "wf_stale", "scriptPath": "/stale/workflows/pipeline.js"}),
+            encoding="utf-8",
+        )
+
+        run_dir = self.runs_root / "wf-collect-run"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        run._run_prs(run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data)
+
+        pr_dir = run_dir / run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
+        collected = pr_dir / "workflows" / "wf_live-0001.json"
+        self.assertTrue(collected.is_file(), "new wf record must land in pr_dir/workflows/")
+        self.assertEqual(json.loads(collected.read_text())["scriptPath"], pipeline)
+        self.assertFalse(
+            (pr_dir / "workflows" / "wf_stale.json").exists(),
+            "unchanged baseline wf records must not be copied",
+        )
+
+    def test_naive_anchor_skips_workflow_record_collection(self):
+        self._install_runner_fakes()
+        run_dir = self.runs_root / "naive-no-wf"
+        run_dir.mkdir(parents=True)
+        cp = run.checkpoint.Checkpoint(run_dir)
+        # Plant a record that would be copied if the skill path ran.
+        claude_home = self.tmp / "claude-home"
+        wf = (
+            claude_home / "config" / "projects" / "slug" / "session" / "workflows"
+            / "wf_should_not_copy.json"
+        )
+        wf.parent.mkdir(parents=True, exist_ok=True)
+        wf.write_text("{}", encoding="utf-8")
+
+        run._run_prs(
+            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, "naive", self.bench_data
+        )
+        pr_dir = run_dir / run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
+        self.assertFalse((pr_dir / "workflows").exists())
 
 
 # ---------------------------------------------------------------- checkpoint payload path
@@ -666,6 +744,10 @@ class PrsListTest(RunTestBase):
         # Surrounding whitespace around each URL is trimmed.
         spaced = run.parse_args(["--prs", " {} , {} ".format(FIXTURE_URL, PLAIN_URL)])
         self.assertEqual(spaced.prs, [FIXTURE_URL, PLAIN_URL])
+
+    def test_prs_mini_alias_expands_to_mini_subset(self):
+        args = run.parse_args(["--prs", "mini"])
+        self.assertEqual(args.prs, self.subsets["mini"])
 
     def test_unknown_url_is_argparse_error(self):
         with contextlib.redirect_stderr(io.StringIO()) as err:

@@ -122,6 +122,41 @@ class EnsureMirrorTest(MirrorsTestBase):
         self.assertTrue(marker.exists())
         self.assertEqual("kept", marker.read_text())
 
+    def test_empty_dir_is_torn_down_and_recloned(self):
+        # Interrupted clone / poisoned cache: directory exists but is not a bare repo.
+        dirname = mirrors._mirror_dirname(str(self.remote))
+        poison = self.mirrors_dir / dirname
+        poison.mkdir(parents=True)
+        (poison / "junk").write_text("incomplete")
+        mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
+        self.assertEqual(mirror, poison)
+        self.assertFalse((poison / "junk").exists())
+        self.assertTrue(mirrors._mirror_is_usable(mirror))
+        refs = self._git_ok("show-ref", cwd=mirror)
+        self.assertIn("refs/heads/main", refs)
+
+    def test_bare_repo_with_no_refs_is_torn_down_and_recloned(self):
+        # Partial mirror: bare init succeeded but fetch never landed refs.
+        dirname = mirrors._mirror_dirname(str(self.remote))
+        poison = self.mirrors_dir / dirname
+        poison.mkdir(parents=True)
+        self._git_ok("init", "-q", "--bare", str(poison), cwd=self.tmp)
+        self.assertFalse(mirrors._mirror_is_usable(poison))
+        mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
+        self.assertTrue(mirrors._mirror_is_usable(mirror))
+        refs = self._git_ok("show-ref", cwd=mirror)
+        self.assertIn("refs/heads/main", refs)
+
+    def test_non_bare_git_dir_is_torn_down_and_recloned(self):
+        dirname = mirrors._mirror_dirname(str(self.remote))
+        poison = self.mirrors_dir / dirname
+        poison.mkdir(parents=True)
+        self._git_ok("init", "-q", str(poison), cwd=self.tmp)  # non-bare
+        mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
+        self.assertTrue(mirrors._mirror_is_usable(mirror))
+        bare = self._git_ok("rev-parse", "--is-bare-repository", cwd=mirror).strip()
+        self.assertEqual(bare, "true")
+
     def test_no_remote_update_without_refresh(self):
         mirror = ensure_mirror(str(self.remote), self.mirrors_dir)
         self._add_pull_ref(pr_number=8)  # appears in remote only, after mirroring
