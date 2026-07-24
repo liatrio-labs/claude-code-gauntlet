@@ -32,7 +32,6 @@
 - Apply markdownlint-cli2 autofix to CHANGELOG.md
   ([`66f6648`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/66f6648d83ed9056f0f98cb0f66b0cd444570441))
 
-
 ## v3.1.1 (2026-07-23)
 
 ### Bug Fixes
