@@ -32,6 +32,8 @@ __all__ = [
     "invoke_review",
     "parse_result_envelope",
     "pr_dir_name",
+    "resolve_claude_home",
+    "api_key_helper_sources",
     "snapshot_workflow_records",
     "collect_workflow_records",
     "_claude_home",
@@ -100,6 +102,24 @@ _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 # Namespace-qualifying makes command resolution deterministic. See references/artifact 33
 # (P2b): skills are namespace-qualified in this isolation mode, unlike the flat --bare mode.
 SKILL_COMMAND = "code-gauntlet:code-gauntlet"
+
+# How the review child authenticates: "api" bills the metered key in bench/.env,
+# "subscription" runs on the operator's own Claude subscription capacity via the
+# long-lived OAuth token from ``claude setup-token``. The judge/scoring path is
+# always API-keyed and is unaffected. See ``_claude_auth_env``.
+CHILD_AUTH_MODES = ("api", "subscription")
+
+# Env credential sources the documented Claude Code precedence chain places ABOVE
+# CLAUDE_CODE_OAUTH_TOKEN (cloud providers -> ANTHROPIC_AUTH_TOKEN -> ANTHROPIC_API_KEY
+# -> apiKeyHelper -> CLAUDE_CODE_OAUTH_TOKEN -> /login). Any one of them surviving into
+# the child env silently defeats subscription mode, so subscription strips them all.
+_OUTRANKING_CREDENTIAL_VARS = (
+    "CLAUDE_CODE_USE_BEDROCK",
+    "CLAUDE_CODE_USE_VERTEX",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+)
+OAUTH_TOKEN_VAR = "CLAUDE_CODE_OAUTH_TOKEN"
 
 
 @dataclass
@@ -186,12 +206,59 @@ def _load_dotenv_key(path, key):
     return value
 
 
-def _claude_home(run_dir, base_env):
+def resolve_claude_home(workspace_dir, base_env):
+    """Return the isolated claude HOME for *workspace_dir* (``BENCH_CLAUDE_HOME`` wins).
+
+    The single derivation rule, shared by ``build_env`` (which hands the dir to the
+    child) and by ``run.py``'s preflight (which must inspect the very same dir -- an
+    ``apiKeyHelper`` in a settings file the preflight never looked at would outrank the
+    OAuth token at runtime). Callers that only have a run dir go through
+    :func:`_claude_home`; nothing else may re-derive the path.
+    """
     override = base_env.get("BENCH_CLAUDE_HOME")
     if override:
         return Path(override)
+    return Path(workspace_dir) / "claude-home"
+
+
+def _claude_home(run_dir, base_env):
     # Shared isolated home for the workspace: run_dir is <workspace>/runs/<run_id>.
-    return Path(run_dir).resolve().parent.parent / "claude-home"
+    return resolve_claude_home(Path(run_dir).resolve().parent.parent, base_env)
+
+
+# The settings files Claude Code reads out of CLAUDE_CONFIG_DIR, in the order the CLI
+# layers them. Only these two can carry an apiKeyHelper into the isolated config.
+_SETTINGS_FILES = ("settings.json", "settings.local.json")
+
+
+def api_key_helper_sources(claude_home):
+    """Return the settings files under *claude_home* that define an ``apiKeyHelper``.
+
+    An ``apiKeyHelper`` outranks ``CLAUDE_CODE_OAUTH_TOKEN`` in the documented
+    precedence chain, and unlike an env var it cannot be stripped from the child env --
+    so subscription mode has to refuse the run instead, naming the offending file. This
+    is a preflight-only inspection: it runs on every prereq check, including on machines
+    with no claude home at all, so a missing dir, an unreadable file, corrupt JSON, or a
+    non-object document all read as "no helper" rather than raising. Paths are returned
+    sorted as ``str`` so the failure message is deterministic.
+    """
+    config_dir = Path(claude_home) / "config"
+    found = []
+    for name in _SETTINGS_FILES:
+        path = config_dir / name
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        helper = data.get("apiKeyHelper")
+        if isinstance(helper, str) and not helper.strip():
+            continue
+        if not helper:
+            continue
+        found.append(str(path))
+    return sorted(found)
 
 
 def _worktree_dir(run_dir, pr):
@@ -337,15 +404,64 @@ def _gh_auth_env(base_env):
     return result
 
 
-def build_env(pr, run_dir, base_env):
+def _claude_auth_env(base_env, child_auth):
+    """Return ``(updates, removals)``: how one ``child_auth`` mode credentials the child.
+
+    The auth analogue of ``_gh_auth_env`` -- the one place a credential decision is
+    made, so the mode cannot be re-derived (or silently defaulted) anywhere downstream.
+    Claude Code resolves credentials in a fixed order: cloud providers
+    (``CLAUDE_CODE_USE_BEDROCK``/``CLAUDE_CODE_USE_VERTEX``) -> ``ANTHROPIC_AUTH_TOKEN``
+    -> ``ANTHROPIC_API_KEY`` -> ``apiKeyHelper`` -> ``CLAUDE_CODE_OAUTH_TOKEN`` ->
+    ``/login``. The child inherits the operator's full env, so the mode is only real if
+    the losing sources are removed rather than merely left unset.
+
+    - ``"api"`` (the default, and behaviourally what every recorded run used): inject
+      ``ANTHROPIC_API_KEY`` from ``bench/.env`` when it holds one, remove nothing. The
+      isolated ``HOME``/``CLAUDE_CONFIG_DIR`` carries no credentials, so without this
+      every ``claude`` invocation would be unauthenticated; the ``.env`` value WINS over
+      any ambient key so all bench spend lands on the single metered key. A
+      missing/empty ``.env`` or key leaves the ambient env untouched (the prereq check
+      reports that separately).
+    - ``"subscription"``: strip ``_OUTRANKING_CREDENTIAL_VARS`` and set
+      ``CLAUDE_CODE_OAUTH_TOKEN`` from ``bench/.env``, else from *base_env* -- one
+      precedence rule for that file, mirroring ``ANTHROPIC_API_KEY``. The remaining
+      over-ranking source, an ``apiKeyHelper`` in the isolated settings, lives in a file
+      and cannot be stripped here; ``check_prereqs`` refuses the run instead (see
+      :func:`api_key_helper_sources`). No token in either source is unrecoverable at
+      invocation time, so it raises rather than falling back to the metered key.
+
+    Raises ``RuntimeError`` for a subscription run with no token and ``ValueError`` for
+    an unknown mode. Neither message -- nor anything else here -- may carry a credential
+    value: these strings reach stderr, the run log, and the artifacts.
+    """
+    if child_auth == "api":
+        api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
+        return ({"ANTHROPIC_API_KEY": api_key} if api_key else {}, ())
+    if child_auth == "subscription":
+        token = _load_dotenv_key(ENV_PATH, OAUTH_TOKEN_VAR) or base_env.get(OAUTH_TOKEN_VAR)
+        if not token:
+            raise RuntimeError(
+                "child_auth=subscription needs {var}: run `claude setup-token` and put "
+                "the token in {path} as {var}=..., or export it. Found none in either "
+                "source.".format(var=OAUTH_TOKEN_VAR, path=ENV_PATH)
+            )
+        return ({OAUTH_TOKEN_VAR: token}, _OUTRANKING_CREDENTIAL_VARS)
+    raise ValueError(
+        "unknown child_auth {!r}; expected one of {}".format(
+            child_auth, ", ".join(CHILD_AUTH_MODES)
+        )
+    )
+
+
+def build_env(pr, run_dir, base_env, child_auth="api"):
     """Assemble the pinned isolated env for one PR invocation (side effect: seeds trust).
 
-    Loads ``ANTHROPIC_API_KEY`` from ``bench/.env`` (``ENV_PATH``) into the child env.
-    The isolated ``HOME``/``CLAUDE_CONFIG_DIR`` carries no credentials, so without this
-    every ``claude`` invocation would be unauthenticated. The ``.env`` value is
-    authoritative: it WINS over any ambient ``ANTHROPIC_API_KEY`` so all bench spend
-    lands on the single metered key. A missing/empty ``.env`` or key leaves the ambient
-    env untouched (the prereq check reports that separately).
+    ``child_auth`` selects how the child authenticates (``CHILD_AUTH_MODES``); see
+    ``_claude_auth_env`` for the credential contract and for why subscription mode has
+    to REMOVE the higher-precedence credential vars rather than just not set them.
+    Subscription mode additionally requires that the isolated config carry no
+    ``apiKeyHelper`` -- a file cannot be stripped from an env, so ``check_prereqs``
+    guards that ahead of the run via :func:`api_key_helper_sources`.
 
     The ``HOME``/``CLAUDE_CONFIG_DIR`` override isolates the *claude* binary's settings
     and plugins (the S7 boundary); it must not strand ``gh``, which the skill's children
@@ -356,9 +472,10 @@ def build_env(pr, run_dir, base_env):
     run_dir = Path(run_dir)
     env = dict(base_env)
     env.update(BENCH_ENV)
-    api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
-    if api_key:
-        env["ANTHROPIC_API_KEY"] = api_key
+    auth_updates, auth_removals = _claude_auth_env(base_env, child_auth)
+    for name in auth_removals:
+        env.pop(name, None)
+    env.update(auth_updates)
     env["CODE_GAUNTLET_OUTPUT_DIR"] = str(run_dir / "output")
     env["GH_REPO"] = "{}/{}".format(_owner(pr), _repo(pr))
     # Uncap the CLI's "background tasks at exit" wait. A ``-p`` run blocks on any background
@@ -661,7 +778,7 @@ def _v3_preflight(claude_bin):
 
 
 def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                  child_model="inherit"):
+                  child_model="inherit", child_auth="api"):
     """Run the headless review for one PR and classify the outcome.
 
     ``tool`` selects the pipeline label and gates the v3 preflight: a ``deep-review-v3``
@@ -675,6 +792,9 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
     leaves the child to its own default. The review agents' models are unaffected -- they
     are set by the pipeline's own policy, not this flag.
 
+    ``child_auth`` is passed straight to ``build_env``, which owns the entire credential
+    decision -- it is never re-derived or defaulted here.
+
     Returns an :class:`InvokeResult`. The isolated ``HOME``/``CLAUDE_CONFIG_DIR`` has no
     allowlist and no user, so ``--dangerously-skip-permissions`` plus the pinned context
     is the containment boundary; any prompt would deadlock, which the watchdog + scan catch.
@@ -683,7 +803,7 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
     run_dir = Path(run_dir)
     number = _pr_number(pr)
 
-    env = build_env(pr, run_dir, os.environ)
+    env = build_env(pr, run_dir, os.environ, child_auth=child_auth)
     # Belt-and-suspenders: also trust the exact worktree we will cd into, in case run.py
     # placed it somewhere other than the build_env-derived convention path.
     _seed_trust(Path(env["CLAUDE_CONFIG_DIR"]), worktree)
