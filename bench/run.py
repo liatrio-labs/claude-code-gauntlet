@@ -1101,6 +1101,13 @@ def main(argv=None):
     if args.check:
         # --check inspects an existing run; combining it with new-run flags is always a
         # mistake (the flags would be silently ignored). Fail loud.
+        #
+        # The three per-run knobs -- --tool, --child-model, --child-auth -- are absent from
+        # this list on purpose. They describe how a run was produced, so --check and
+        # --score-only read them from the run's own manifest and never from the flags;
+        # passing one is redundant rather than contradictory, and neither mode invokes
+        # claude, so nothing is spent on the wrong credential. Adding them here would also
+        # break `--check` for anyone who keeps the flags in a shell alias.
         if args.tier or args.prs or args.anchor or args.runs != 1:
             print(
                 "--check does not accept --tier / --prs / --anchor / --runs "
