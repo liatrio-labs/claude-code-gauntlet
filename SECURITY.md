@@ -46,9 +46,9 @@ Two cautions about attachments:
 ## Supported versions
 
 Only the latest released 3.x minor line receives security fixes; `.claude-plugin/plugin.json` carries the version
-number of the current release. Fixes ship forward on that line — there are no patch releases or backports to
-earlier 3.x minors, and none at all to 2.x, which is the retired architecture (the former deep-review pipeline)
-and is no longer maintained.
+number of the current release. Fixes ship forward on that line as new releases, patch releases included; they are
+not backported to earlier 3.x minors, and nothing is backported to 2.x, which is the retired architecture (the
+former deep-review pipeline) and is no longer maintained.
 
 | Version | Security fixes |
 |---|---|

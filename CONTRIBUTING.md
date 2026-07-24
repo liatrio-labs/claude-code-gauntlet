@@ -254,9 +254,9 @@ advisory form instead.
 
 We strive to maintain a welcoming and respectful community. Please review our [Code of Conduct](CODE_OF_CONDUCT.md) to understand our community standards and expectations.
 
-Report conduct concerns to the enforcement contact the Code of Conduct names: the Liatrio Maintainers team
-(`@liatrio-labs/liatrio-labs-maintainers`). Suspected vulnerabilities are a different channel — follow
-[`SECURITY.md`](SECURITY.md) and use the private advisory form.
+Report conduct concerns to the Liatrio Maintainers team (`@liatrio-labs/liatrio-labs-maintainers`), the only
+enforcement contact the Code of Conduct names. Suspected vulnerabilities are a different channel — follow
+[`SECURITY.md`](SECURITY.md) and use the private advisory form, which is for vulnerabilities only.
 
 ## References
 

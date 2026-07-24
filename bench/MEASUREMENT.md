@@ -15,10 +15,11 @@ events — not the default gate for every change.
 | Always-on suites | `suites-only` | `pytest` (pipeline + `bench/tests/`) + `node --test workflows/test/*.test.js` + `pre-commit` | Every PR / every commit path | $0 | Deterministic correctness |
 | Functional smoke | `smoke` | `--tier smoke` (2–3 PRs) + mechanical checker | Per sub-release, run by the release manager | ~$21–$32 (mean ~$27; 16–22 min/PR) | "No bugs, functions correctly" — **not** performance proof |
 | Paired mini-subset | `paired-mini` | `--tier mini` or `--prs mini` (6 PRs) vs baseline of record | Owner-triggered, only when a change plausibly moves recall/noise | ~$78–$85 / leg | Gate-grade paired measurement |
-| Full-15 / holdout | `full-holdout` | `--tier subset` (~$190–$230) / `--tier holdout` (sealed) | Owner-triggered, release-grade | see ledger | Confirmation / V3.2 reservation |
+| Full-15 / holdout | — | `--tier subset` (~$190–$230) / `--tier holdout` (sealed) | Owner-triggered, release-grade | see ledger | Confirmation / V3.2 reservation |
 
 The `Slug` column is the spelling work-queue issues and PR descriptions use
-when they name the tier a change ships behind.
+when they name the tier a change ships behind; the release-grade row has no
+short slug because it is owner-triggered and named by the run it produced.
 
 Owner-triggered spend stays owner-triggered: this runbook documents readiness
 and protocol; it never schedules or auto-triggers spend, and no work issue
