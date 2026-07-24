@@ -7,7 +7,9 @@ committed data (bench/experiments.jsonl + bench/baselines.json).
 """
 
 import json
+import os
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -235,6 +237,27 @@ class TestCli(unittest.TestCase):
     def test_git_sha_tolerates_non_repo(self):
         with tempfile.TemporaryDirectory() as td:
             self.assertEqual(report.git_short_sha(cwd=td), "uncommitted")
+
+    def test_runs_as_a_script_from_an_unrelated_cwd(self):
+        # report.py is documented as run standalone (`python3 bench/report.py`), and it
+        # imports the ledger's cost-honesty helpers, which needs the repo root on sys.path
+        # -- the shim at the top of the module. Every other test here imports the module
+        # after already putting the repo root on sys.path, so the shim's actual job is
+        # only exercised by a real subprocess invocation from outside the repo.
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "report.html"
+            proc = subprocess.run(
+                [sys.executable, str(BENCH_DIR / "report.py"),
+                 "--ledger", str(REAL_LEDGER), "--baselines", str(REAL_BASELINES),
+                 "--out", str(out)],
+                cwd=td, capture_output=True, text=True,
+                # A stray PYTHONPATH pointing at the repo would mask the very failure
+                # this test exists to catch.
+                env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertTrue(out.exists())
+            self.assertTrue(out.read_text(encoding="utf-8").lower().startswith("<!doctype html"))
 
 
 class TestRealData(unittest.TestCase):

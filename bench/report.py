@@ -1362,8 +1362,9 @@ def build_table_html(groups, top_anchor, ceiling):
         # The Cost cell keeps its figure in both auth modes — the table is the run
         # record — but a non-billable one is marked so it can never be read, or
         # summed by eye, as API spend.
+        cost_txt = fmt_money(r.get("cost_usd"))
         if cost_is_billable(r):
-            cost_cell = f'<td class="num">{fmt_money(r.get("cost_usd"))}</td>'
+            cost_cell = f'<td class="num">{cost_txt}</td>'
         else:
             cost_tip = html.escape(
                 f"auth_mode={row_auth_mode(r)} — served by Claude subscription "
@@ -1371,8 +1372,7 @@ def build_table_html(groups, top_anchor, ceiling):
                 "cost figure."
             )
             cost_cell = (
-                f'<td class="num" title="{cost_tip}">'
-                f'{fmt_money(r.get("cost_usd"))} {NON_BILLABLE_MARK}</td>'
+                f'<td class="num" title="{cost_tip}">{cost_txt} {NON_BILLABLE_MARK}</td>'
             )
         # "What changed" cell: the outcome line, else the hypothesis; full text on hover.
         # Confounded child-model experiments carry no annotation — synthesize one from
