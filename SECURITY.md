@@ -38,22 +38,21 @@ Two cautions about attachments:
 
 ### What to expect
 
-- We aim to acknowledge a report within a few business days.
-- We will tell you whether we could reproduce it, and how we assess scope and severity.
-- Fixes ship forward on the current release line, cut automatically by `semantic-release` from `main` (see
+- Reports are triaged privately, in the advisory thread.
+- We will tell you whether we could reproduce the report.
+- Fixes ship forward on the current release line, cut from `main` by `python-semantic-release` (see
   `CHANGELOG.md`). Pick up a fix with `claude plugin update code-gauntlet@code-gauntlet`.
-- We will coordinate disclosure timing with you and credit you in the advisory unless you ask us not to. There is
-  no bug bounty for this project.
 
 ## Supported versions
 
-Only the latest released 3.x minor line receives security fixes. The current release is 3.1.2. Fixes ship forward
-on that line; there are no patch releases or backports to earlier 3.x minors, and none at all to 2.x, which is the
-retired architecture (the former deep-review pipeline) and is no longer maintained.
+Only the latest released 3.x minor line receives security fixes; `.claude-plugin/plugin.json` carries the version
+number of the current release. Fixes ship forward on that line — there are no patch releases or backports to
+earlier 3.x minors, and none at all to 2.x, which is the retired architecture (the former deep-review pipeline)
+and is no longer maintained.
 
 | Version | Security fixes |
 |---|---|
-| 3.1.x (current) | Yes |
+| Latest released 3.x minor | Yes |
 | Earlier 3.x | No — upgrade to the latest 3.x |
 | 2.x and earlier | No — retired architecture, no backports |
 
@@ -61,9 +60,9 @@ retired architecture (the former deep-review pipeline) and is no longer maintain
 
 ### In scope
 
-- **Bypassable prompt-injection defenses.** Code under review is untrusted input. A crafted repository, diff,
-  comment, or `REVIEW.md` that gets the pipeline to exfiltrate data, post attacker-chosen content, or run commands
-  the user did not ask for is a vulnerability.
+- **Prompt-injection defenses that can be bypassed.** Code under review is untrusted input. A crafted repository,
+  diff, comment, or `REVIEW.md` that gets the pipeline to exfiltrate data, post attacker-chosen content, or run
+  commands the user did not ask for is a vulnerability.
 - **Command injection** in the pipeline scripts or the workflow bundle — anywhere a finding field, file path,
   branch name, or PR/MR body can reach a shell, `git`, `gh`, or `glab` invocation.
 - **Secret leakage** — credentials, tokens, or environment values written into `.code-gauntlet/` artifacts, the

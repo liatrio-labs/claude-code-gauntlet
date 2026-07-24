@@ -31,7 +31,8 @@ ladder, costs, and pre-registered owner options.
 ## Getting Started
 
 1. Fork and clone the repository.
-2. Ensure you have Python 3.12+ installed (for the test suite and pre-commit hooks).
+2. Ensure you have Python 3.10 or newer installed (for the test suite and pre-commit hooks). CI runs the pipeline
+   suite on 3.10, 3.11, and 3.12.
 3. Set up the development environment:
 
 ```bash
@@ -63,7 +64,7 @@ python -m pytest tests/ -q
 # Bench harness unit tests (stdlib; no API spend)
 python -m pytest bench/tests/ -q
 
-# JS workflow tests (requires Node 24.18.0)
+# JS workflow tests (Node 24)
 node --test workflows/test/*.test.js
 
 # Rebuild the generated workflow bundle after editing workflows/src/
@@ -90,12 +91,13 @@ The review pipeline runs inside Claude Code's workflow runtime, so it carries co
 - **`workflows/pipeline.js` is generated — never hand-edit it.** `node workflows/build.js` strips the
   import/export lines and concatenates `workflows/src/*.js` into that single dependency-free bundle. Rebuild after
   every source change and commit the result.
-- **Only JSON-safe language globals are guaranteed.** The workflow runtime sandbox does not provide
-  `structuredClone`, `Buffer`, `TextEncoder`/`TextDecoder`, `URL`, `setTimeout`/`queueMicrotask`, `process`, or
-  `console`. Referencing one keeps every local test green and then throws on the first live dispatch, so treat the
-  absence as a hard constraint — deep-clone with the bundle's JSON round-trip helper, not `structuredClone`.
-- **Node 24.18.0 is the pinned runtime** for the tests and the build. There is no `package.json` and no
-  `node_modules`; use Node built-ins only.
+- **Only JSON-safe language globals are guaranteed.** Host globals that `node --test` hands you — `structuredClone`,
+  `setTimeout`/`queueMicrotask`, `process`, and others — are absent from the workflow runtime sandbox, so a
+  reference keeps every local test green and then throws on the first live dispatch. `CLAUDE.md` holds the
+  normative list; deep-clone with the bundle's `deepClone` helper, never `structuredClone`.
+- **CI pins the Node major, not the patch.** `.github/workflows/ci.yml` runs the workflow tests and the build on
+  `node-version: "24"`; 24.18.0 is the reference build this repo develops against. There is no `package.json` and
+  no `node_modules`; use Node built-ins only.
 - **Bundle freshness is enforced.** `tests/test_bundle_fresh.py` and CI both rebuild and compare, so a stale or
   hand-edited bundle fails the build:
 
@@ -109,7 +111,10 @@ git diff --exit-code workflows/pipeline.js
 Five deterministic transforms (`mergeFindings`, `findingDedup`, `filterFindings`, `applyValidations`,
 `applyChallenges`) exist twice: as JS stages in the bundle and as the authoritative Python twins under `scripts/`.
 They are held at parity by frozen golden fixtures at
-`tests/fixtures/parity/<script>/<case>/{input,expected}.json`, which both runtimes replay.
+`tests/fixtures/parity/<script>/[<group>/]<case>/{input,expected}.json`, which both runtimes replay. Four of the
+five scripts keep their cases directly under `<script>/`; `filter_findings` groups every one of its cases a level
+deeper (for example `tests/fixtures/parity/filter_findings/dedup_cross_agent/core_wins/`), which is why the
+recorder walks the whole tree instead of listing a single level.
 
 Never hand-edit a fixture to make a test pass — a fixture that no longer matches recorded behavior is exactly the
 drift the fixtures exist to catch. When a transform's intended behavior genuinely changes, change the Python twin
@@ -143,7 +148,7 @@ pre-commit run --all-files
 This will:
 
 - Execute the pytest suite for pipeline scripts and the bench harness
-- Execute the Node workflow test suite (bundle freshness / stage contracts)
+- Execute the Node workflow test suite (stage contracts, parity replay, and the bundler's collision guard)
 - Confirm the committed bundle is byte-identical to a fresh build
 - Check YAML and TOML syntax
 - Fix Markdown formatting issues
@@ -249,7 +254,9 @@ advisory form instead.
 
 We strive to maintain a welcoming and respectful community. Please review our [Code of Conduct](CODE_OF_CONDUCT.md) to understand our community standards and expectations.
 
-If you have any concerns, please contact the Liatrio Maintainers team (`@liatrio-labs/liatrio-labs-maintainers`) or use GitHub's private reporting form for this repository.
+Report conduct concerns to the enforcement contact the Code of Conduct names: the Liatrio Maintainers team
+(`@liatrio-labs/liatrio-labs-maintainers`). Suspected vulnerabilities are a different channel — follow
+[`SECURITY.md`](SECURITY.md) and use the private advisory form.
 
 ## References
 
