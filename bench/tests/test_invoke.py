@@ -411,7 +411,11 @@ class BuildEnvChildAuthTest(InvokeTestBase):
         with self.assertRaises(RuntimeError) as ctx:
             build_env(PR, self.run_dir, {}, child_auth="subscription")
         message = str(ctx.exception)
-        self.assertIn("CLAUDE_CODE_OAUTH_TOKEN", message)
+        # The message spells the var name out literally (it reaches stderr and the
+        # checkpoint detail, and a credential-named identifier flowing into either is
+        # what a scanner reports as clear-text exposure), so assert against the constant
+        # the lookup uses -- that is what keeps the two spellings from drifting.
+        self.assertIn(invoke.OAUTH_TOKEN_VAR, message)
         self.assertIn("claude setup-token", message)
 
     def test_error_message_never_carries_a_credential(self):

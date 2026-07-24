@@ -1008,6 +1008,19 @@ class ChildAuthPrereqTest(RunTestBase):
         self.assertEqual(len(failures), 1)
         self.assertIn("claude setup-token", failures[0])
 
+    def test_failure_messages_name_the_var_the_lookup_uses(self):
+        # The messages spell the var name out as a literal so no credential-named
+        # identifier flows into a print (CodeQL's clear-text-logging rule flags that even
+        # when only the NAME is printed). This keeps the literal and the constant the
+        # lookup actually uses from drifting apart on a rename.
+        token = "\n".join(self._failures("subscription", {}))
+        self.assertIn(run.invoke.OAUTH_TOKEN_VAR, token)
+        self._write_helper()
+        helper = "\n".join(
+            self._failures("subscription", {run.invoke.OAUTH_TOKEN_VAR: "oat"})
+        )
+        self.assertIn(run.invoke.OAUTH_TOKEN_VAR, helper)
+
     def test_subscription_token_in_dotenv_satisfies_the_check(self):
         env_file = self.tmp / "bench.env"
         env_file.write_text("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")

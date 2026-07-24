@@ -255,21 +255,28 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
             failures.append("`gh auth status` failed -- run `gh auth login` to authenticate.")
 
     if child_auth == "subscription":
+        # The var name is a literal in both messages, never interpolated from the
+        # invoke constant: an identifier a scanner name-matches as a credential reaching a
+        # print is reported as clear-text logging even when only the NAME is printed. These
+        # messages carry names and paths, never values -- and the tests hold the literals
+        # and the constant the lookups use to the same spelling.
         # bench/.env wins over ambient here too, the precedence _claude_auth_env applies.
-        token_var = invoke.OAUTH_TOKEN_VAR
-        if not (_read_env_key(env_path, token_var) or env.get(token_var)):
+        if not (_read_env_key(env_path, invoke.OAUTH_TOKEN_VAR)
+                or env.get(invoke.OAUTH_TOKEN_VAR)):
             failures.append(
-                f"{token_var} missing or empty in {env_path} and in the environment -- "
-                "run `claude setup-token` and add the token to bench/.env."
+                f"CLAUDE_CODE_OAUTH_TOKEN missing or empty in {env_path} and in the "
+                "environment -- run `claude setup-token` and add the token to bench/.env."
             )
         helpers = invoke.api_key_helper_sources(
             invoke.resolve_claude_home(workspace_dir, env)
         )
         if helpers:
             failures.append(
-                "apiKeyHelper set in {files} -- it outranks {var}, so the child would "
-                "authenticate with that key and never reach the subscription; remove it "
-                "or run --child-auth api.".format(files=", ".join(helpers), var=token_var)
+                "apiKeyHelper set in {files} -- it outranks CLAUDE_CODE_OAUTH_TOKEN, so "
+                "the child would authenticate with that key and never reach the "
+                "subscription; remove it or run --child-auth api.".format(
+                    files=", ".join(helpers)
+                )
             )
     elif not _read_env_key(env_path, "ANTHROPIC_API_KEY"):
         failures.append(

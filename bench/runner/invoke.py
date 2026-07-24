@@ -449,10 +449,15 @@ def _claude_auth_env(base_env, child_auth):
     if child_auth == "subscription":
         token = _load_dotenv_key(ENV_PATH, OAUTH_TOKEN_VAR) or base_env.get(OAUTH_TOKEN_VAR)
         if not token:
+            # Var name as a literal, not interpolated from the constant: this message
+            # reaches stderr and the checkpoint detail, and a credential-named identifier
+            # flowing into either is reported as clear-text exposure even when only the
+            # name travels. A test holds the literal and the constant to one spelling.
             raise RuntimeError(
-                "child_auth=subscription needs {var}: run `claude setup-token` and put "
-                "the token in {path} as {var}=..., or export it. Found none in either "
-                "source.".format(var=OAUTH_TOKEN_VAR, path=ENV_PATH)
+                "child_auth=subscription needs CLAUDE_CODE_OAUTH_TOKEN: run "
+                "`claude setup-token` and put the token in {path} as "
+                "CLAUDE_CODE_OAUTH_TOKEN=..., or export it. Found none in either "
+                "source.".format(path=ENV_PATH)
             )
         return ({OAUTH_TOKEN_VAR: token}, _OUTRANKING_CREDENTIAL_VARS)
     raise ValueError(
