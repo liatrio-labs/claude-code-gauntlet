@@ -226,9 +226,13 @@ def _claude_home(run_dir, base_env):
     return resolve_claude_home(Path(run_dir).resolve().parent.parent, base_env)
 
 
-# The settings files Claude Code reads out of CLAUDE_CONFIG_DIR, in the order the CLI
-# layers them. Only these two can carry an apiKeyHelper into the isolated config.
+# The settings filenames Claude Code layers, and the dirs under the isolated home they
+# can appear in: ``config/`` is the CLAUDE_CONFIG_DIR build_env sets, and ``.claude/`` is
+# where a HOME-relative user-settings read would land. Both are scanned because the
+# inspection is fail-closed -- its only outcome is a refusal -- and BENCH_CLAUDE_HOME can
+# point at a home the harness did not create.
 _SETTINGS_FILES = ("settings.json", "settings.local.json")
+_SETTINGS_DIRS = ("config", ".claude")
 
 
 def api_key_helper_sources(claude_home):
@@ -241,23 +245,28 @@ def api_key_helper_sources(claude_home):
     with no claude home at all, so a missing dir, an unreadable file, corrupt JSON, or a
     non-object document all read as "no helper" rather than raising. Paths are returned
     sorted as ``str`` so the failure message is deterministic.
+
+    Scoped to the isolated home. Settings scopes outside it -- a golden worktree's own
+    ``.claude/settings.json``, enterprise managed settings -- are documented limitations
+    of the mode rather than checks here (bench/README.md, "Child auth modes").
     """
-    config_dir = Path(claude_home) / "config"
+    home = Path(claude_home)
     found = []
-    for name in _SETTINGS_FILES:
-        path = config_dir / name
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        helper = data.get("apiKeyHelper")
-        if isinstance(helper, str) and not helper.strip():
-            continue
-        if not helper:
-            continue
-        found.append(str(path))
+    for subdir in _SETTINGS_DIRS:
+        for name in _SETTINGS_FILES:
+            path = home / subdir / name
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            helper = data.get("apiKeyHelper")
+            if isinstance(helper, str) and not helper.strip():
+                continue
+            if not helper:
+                continue
+            found.append(str(path))
     return sorted(found)
 
 

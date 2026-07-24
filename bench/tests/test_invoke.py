@@ -553,6 +553,30 @@ class ApiKeyHelperSourcesTest(InvokeTestBase):
             sorted([str(cfg / "settings.json"), str(cfg / "settings.local.json")]),
         )
 
+    def test_dot_claude_under_the_home_is_also_inspected(self):
+        # BENCH_CLAUDE_HOME can point at a home that is not bench-created, and the CLI
+        # reads user settings from the HOME-relative .claude dir when CLAUDE_CONFIG_DIR
+        # is not what it resolves. Scanning both is fail-closed: the only outcome is a
+        # refusal, and the bench-created home has neither file.
+        home = Path(self.tmp) / "home"
+        dot_claude = home / ".claude"
+        dot_claude.mkdir(parents=True)
+        path = dot_claude / "settings.json"
+        path.write_text(json.dumps({"apiKeyHelper": "/bin/echo sk-x"}))
+        self.assertEqual(invoke.api_key_helper_sources(home), [str(path)])
+
+    def test_helpers_from_both_dirs_are_reported_together(self):
+        cfg = self._config_dir()
+        home = cfg.parent
+        (home / ".claude").mkdir()
+        config_path = cfg / "settings.json"
+        home_path = home / ".claude" / "settings.local.json"
+        config_path.write_text(json.dumps({"apiKeyHelper": "a"}))
+        home_path.write_text(json.dumps({"apiKeyHelper": "b"}))
+        self.assertEqual(
+            invoke.api_key_helper_sources(home), sorted([str(config_path), str(home_path)])
+        )
+
 
 # --------------------------------------------------------------------------- costs
 

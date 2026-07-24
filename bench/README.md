@@ -87,7 +87,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--retry-failed` | `RUN_ID` | — | Re-run only the `timeout`/`failed` PRs of `RUN_ID`. |
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
-| `--child-auth` | `api` \| `subscription` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. On `--resume`/`--retry-failed` the run's recorded mode wins over this flag. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
+| `--child-auth` | `api` \| `subscription` | `api` | Which credential the **review children** spend: the metered `bench/.env` key, or your own Claude subscription capacity via `CLAUDE_CODE_OAUTH_TOKEN`. Recorded in `run.json` and as the ledger row's `auth_mode`. A `--resume`/`--retry-failed` run keeps the mode it started with; passing a flag that contradicts it is refused (exit 2) rather than mixing credentials within one run. Scoring is unaffected and stays API-keyed. See [Child auth modes](#child-auth-modes). |
 | `--score-only` | `RUN_ID` | — | Re-score an already-captured run's candidates without re-invoking `claude`/`gh` (used for repeated judge re-scoring of the same candidate set). |
 | `--check` | `RUN_ID` | — | Mechanical functional-smoke checker for a completed **skill** run (not `--anchor naive`). Checks payload/schema, findings persistence, no silent degrade, plugin `scriptPath` from collected `workflows/wf_*.json`, and ≥1 comment. Exit 0 = pass; never invokes the judge. See [`MEASUREMENT.md`](MEASUREMENT.md). |
 
@@ -198,8 +198,19 @@ rather than merely not setting them.
 
 `apiKeyHelper` lives in a settings file, not the environment, so it cannot be
 stripped. Instead the prereq check refuses the run and names the offending file
-(`settings.json` / `settings.local.json` under the isolated
-`CLAUDE_CONFIG_DIR`, which `BENCH_CLAUDE_HOME` can relocate).
+(`settings.json` / `settings.local.json` under the isolated claude home, both in
+its `config/` dir — the `CLAUDE_CONFIG_DIR` the child gets — and in a
+HOME-relative `.claude/`; `BENCH_CLAUDE_HOME` can relocate that home).
+
+**Limitations of that guard.** It covers the isolated home and nothing else, so
+subscription honesty also assumes no higher-precedence credential in a settings
+scope the harness does not own: a golden worktree's own committed
+`.claude/settings.json` (project scope, and the worktree only exists mid-run,
+after preflight), or enterprise **managed settings**. Neither is plausible for
+this golden set, but if the mode ever appears to run free while your API key is
+still being billed, those are the scopes to check. Any such credential would
+have to be present before the run to matter — the check is a one-shot preflight,
+not re-verified per PR.
 
 The mode is **token-only by design**. It never relies on the macOS Keychain or
 on `~/.claude/.credentials.json` surviving the `HOME`/`CLAUDE_CONFIG_DIR`
