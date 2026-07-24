@@ -63,3 +63,12 @@ overrides:
       - autoupdate
       - commitlint
       - markdownlint
+      # Load-bearing: the ignoreRegExpList inline-code pattern loses backtick pairing
+      # after a fenced block, so `queueMicrotask` in the workflow-runtime section is
+      # spell-checked despite being inline code. Removing this fails cspell.
+      - queueMicrotask
+
+  - filename: SECURITY.md
+    words:
+      - exfiltration
+      - hostnames
