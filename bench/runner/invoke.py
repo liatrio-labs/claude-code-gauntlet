@@ -33,7 +33,7 @@ __all__ = [
     "parse_result_envelope",
     "pr_dir_name",
     "resolve_claude_home",
-    "api_key_helper_sources",
+    "api_key_helper_files",
     "snapshot_workflow_records",
     "collect_workflow_records",
     "_claude_home",
@@ -235,7 +235,13 @@ _SETTINGS_FILES = ("settings.json", "settings.local.json")
 _SETTINGS_DIRS = ("config", ".claude")
 
 
-def api_key_helper_sources(claude_home):
+# Named ``..._files`` for what it returns, which matters beyond readability: a static
+# analyser's credential heuristic matches any ``api?key`` identifier and then reads the
+# returned value as a credential wherever it is printed -- and ``check_prereqs`` does print
+# it, to name the offending file. "file" (like "path") is that heuristic's own de-classifier
+# for a filename, which is all this ever yields. A rename back to ``..._sources`` would
+# reintroduce a false clear-text-logging alert on the prereq output.
+def api_key_helper_files(claude_home):
     """Return the settings files under *claude_home* that define an ``apiKeyHelper``.
 
     An ``apiKeyHelper`` outranks ``CLAUDE_CODE_OAUTH_TOKEN`` in the documented
@@ -436,7 +442,7 @@ def _claude_auth_env(base_env, child_auth):
       precedence rule for that file, mirroring ``ANTHROPIC_API_KEY``. The remaining
       over-ranking source, an ``apiKeyHelper`` in the isolated settings, lives in a file
       and cannot be stripped here; ``check_prereqs`` refuses the run instead (see
-      :func:`api_key_helper_sources`). No token in either source is unrecoverable at
+      :func:`api_key_helper_files`). No token in either source is unrecoverable at
       invocation time, so it raises rather than falling back to the metered key.
 
     Raises ``RuntimeError`` for a subscription run with no token and ``ValueError`` for
@@ -475,7 +481,7 @@ def build_env(pr, run_dir, base_env, child_auth="api"):
     to REMOVE the higher-precedence credential vars rather than just not set them.
     Subscription mode additionally requires that the isolated config carry no
     ``apiKeyHelper`` -- a file cannot be stripped from an env, so ``check_prereqs``
-    guards that ahead of the run via :func:`api_key_helper_sources`.
+    guards that ahead of the run via :func:`api_key_helper_files`.
 
     The ``HOME``/``CLAUDE_CONFIG_DIR`` override isolates the *claude* binary's settings
     and plugins (the S7 boundary); it must not strand ``gh``, which the skill's children

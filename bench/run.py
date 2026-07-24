@@ -221,7 +221,7 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
     and demands instead a ``CLAUDE_CODE_OAUTH_TOKEN`` plus an isolated config carrying no
     ``apiKeyHelper``: the helper outranks the token and, living in a settings file rather
     than the env, is the one over-ranking source ``build_env`` cannot strip (see
-    ``invoke.api_key_helper_sources``). It deliberately imposes no judge-key requirement:
+    ``invoke.api_key_helper_files``). It deliberately imposes no judge-key requirement:
     scoring is a separate step that resolves its own key and fails loud on its own, and
     the mode's primary use is a ``--check`` functional smoke, which never runs the judge.
     ``env`` defaults to ``os.environ`` (the same late binding ``score._judge_api_key``
@@ -267,15 +267,15 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
                 f"CLAUDE_CODE_OAUTH_TOKEN missing or empty in {env_path} and in the "
                 "environment -- run `claude setup-token` and add the token to bench/.env."
             )
-        helpers = invoke.api_key_helper_sources(
+        helper_files = invoke.api_key_helper_files(
             invoke.resolve_claude_home(workspace_dir, env)
         )
-        if helpers:
+        if helper_files:
             failures.append(
                 "apiKeyHelper set in {files} -- it outranks CLAUDE_CODE_OAUTH_TOKEN, so "
                 "the child would authenticate with that key and never reach the "
                 "subscription; remove it or run --child-auth api.".format(
-                    files=", ".join(helpers)
+                    files=", ".join(helper_files)
                 )
             )
     elif not _read_env_key(env_path, "ANTHROPIC_API_KEY"):
