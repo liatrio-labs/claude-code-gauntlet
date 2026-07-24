@@ -62,7 +62,6 @@
 - Pin the public contribution surface (Issue #30)
   ([`ad15f2f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ad15f2fc13225b6addbf287d4267dd117a1e6d44))
 
-
 ## v3.1.2 (2026-07-24)
 
 ### Bug Fixes
