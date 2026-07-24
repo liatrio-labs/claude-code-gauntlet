@@ -830,6 +830,20 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     (Path(run_dir) / "run.json").write_text(json.dumps(manifest, indent=2))
 
 
+def _write_child_auth_stub(manifest_path, run_id, child_auth):
+    """Create a minimal ``run.json`` recording only which credential a resume spends.
+
+    For a run dir that never got a manifest, so the auth provenance survives to scoring and
+    to any later resume. Deliberately not a full manifest: everything else about the
+    original run is unknowable here, and the fields left out already default the same way
+    they do for a missing manifest (``score._tool_label``, ``_infer_tier``), so this adds
+    provenance without inventing history.
+    """
+    manifest_path.write_text(
+        json.dumps({"run_id": run_id, "child_auth": child_auth}, indent=2)
+    )
+
+
 def _print_summary(run_id, run_dir, urls, cp, summary):
     final = defaultdict(int)
     for url in urls:
@@ -909,6 +923,15 @@ def _resume(run_id, args, retry):
     # the run id, not the manifest loaded above, so this answer and the one main()
     # preflighted come from the same read (main refuses a contradicting flag outright).
     child_auth = _child_auth_for(args, run_id)
+    # A run dir with no run.json at all (killed between _make_run_dir and _write_manifest)
+    # has no mode to honour, so the flag above chose one -- and nothing would remember it:
+    # score would read no manifest, default auth_mode to api, and let subscription spend
+    # into billable figures, while a second resume could pick the other credential for the
+    # remaining PRs. Record what this resume is about to spend. Only ever creates the file:
+    # a manifest that merely lacks child_auth is not missing its provenance (predating the
+    # flag IS its provenance), and writing into it would mutate a historical record.
+    if not manifest_path.exists():
+        _write_child_auth_stub(manifest_path, run_id, child_auth)
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)

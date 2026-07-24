@@ -1232,6 +1232,53 @@ class ChildAuthWiringTest(RunTestBase):
         for url in run._resolve_tier("smoke", self.subsets, self.shas):
             self.assertEqual(cp.status(url), "ok", self._detail(cp, url).get("reason"))
 
+    def test_orphan_resume_records_the_mode_it_spent(self):
+        # A run dir with no run.json has no recorded mode, so the flag applies -- but
+        # nothing then persisted it: score would read no manifest, default auth_mode to
+        # api, and admit subscription spend into billable figures, while a second resume
+        # could pick the other credential for the rest of the PRs. Resuming writes the
+        # provenance the dir never got.
+        run_dir = self.runs_root / "smoke-orphan-record"
+        run_dir.mkdir(parents=True)
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("subscription"))
+        args = run.parse_args(
+            ["--resume", "smoke-orphan-record", "--child-auth", "subscription"]
+        )
+        run._resume("smoke-orphan-record", args, retry=False)
+
+        manifest = json.loads((run_dir / "run.json").read_text())
+        self.assertEqual(manifest["child_auth"], "subscription")
+        # Recorded means honoured: a later resume reads it back, so main's conflict guard
+        # can refuse a flag that disagrees instead of silently switching credentials.
+        self.assertEqual(run._recorded_child_auth("smoke-orphan-record"), "subscription")
+        # And the harm this closes: the scorer's own read of that manifest now labels the
+        # row subscription, so cost_is_billable keeps the spend out of billable figures.
+        self.assertEqual(run.ledger.manifest_auth_mode(manifest), "subscription")
+        self.assertFalse(run.ledger.cost_is_billable({"auth_mode": "subscription"}))
+
+    def test_orphan_resume_records_api_too(self):
+        run_dir = self.runs_root / "smoke-orphan-api"
+        run_dir.mkdir(parents=True)
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
+        run._resume("smoke-orphan-api", run.parse_args(["--resume", "smoke-orphan-api"]),
+                    retry=False)
+        manifest = json.loads((run_dir / "run.json").read_text())
+        self.assertEqual(manifest["child_auth"], "api")
+
+    def test_resume_never_rewrites_an_existing_manifest(self):
+        # A manifest without child_auth is not missing provenance -- it predates the flag,
+        # which IS its provenance. Writing into it would mutate a historical record.
+        run_dir = self.runs_root / "smoke-legacy-untouched"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None})
+        )
+        before = (run_dir / "run.json").read_bytes()
+        self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
+        run._resume("smoke-legacy-untouched",
+                    run.parse_args(["--resume", "smoke-legacy-untouched"]), retry=False)
+        self.assertEqual((run_dir / "run.json").read_bytes(), before)
+
     def test_resume_of_a_pre_child_auth_manifest_falls_back_to_api(self):
         # run.json files written before the field existed all ran on the metered key.
         run_dir = self.runs_root / "legacy-run"
