@@ -576,12 +576,12 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             # Snapshot per-child Workflow records before invoke so we can copy only
             # this PR's new/changed wf_*.json into pr_dir/workflows/ (G3 plugin-identity
             # gate). raw.json is the result envelope and never carries scriptPath.
+            is_naive = anchor == "naive"
             claude_home = invoke._claude_home(run_dir, os.environ)
             wf_baseline = (
-                {} if anchor == "naive"
-                else invoke.snapshot_workflow_records(claude_home)
+                {} if is_naive else invoke.snapshot_workflow_records(claude_home)
             )
-            if anchor == "naive":
+            if is_naive:
                 result = _invoke_naive(
                     worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s
                 )
@@ -591,7 +591,7 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                     child_model=child_model,
                 )
             _collect_artifacts(output_dir, pr_dir)
-            if anchor != "naive":
+            if not is_naive:
                 invoke.collect_workflow_records(claude_home, pr_dir, wf_baseline)
         except Exception as exc:
             # PR-granular progress: an unexpected error (bad JSON, an OSError during

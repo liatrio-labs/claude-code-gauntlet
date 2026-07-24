@@ -55,16 +55,19 @@ TOOL_STYLE = {
 }
 
 # Run tiers, weakest-to-strongest evidence: (key, label, one-line meaning).
+# ``mini`` is the named 6-PR paired cut (``--tier mini``); historical mini-subset
+# legs labeled ``custom`` (via ``--prs``) remain under that key for ledger continuity.
 TIER_INFO = (
     ("smoke", "smoke", "3 PRs / 4 goldens — directional only"),
+    ("mini", "mini", "6 PRs / ~30 goldens — paired measurement cut"),
     ("subset", "subset", "15 PRs / 59 goldens — gate-grade"),
     ("holdout", "holdout", "10 fresh PRs — confirmation"),
-    ("custom", "custom", "variable PRs, efficiency & mini-subset runs — pre-registered paired design"),
+    ("custom", "custom", "variable PRs / pre-``mini`` paired legs — explicit --prs lists"),
 )
 
 # Tiers whose recall/noise are graded against the two live bars (top-anchor +
 # noise ceiling). Smoke is directional-only; the rest are gate-grade.
-GATE_TIERS = ("subset", "holdout", "custom")
+GATE_TIERS = ("mini", "subset", "holdout", "custom")
 
 # Child-model experiments: CLAUDE_CODE_SUBAGENT_MODEL was pinned to a sonnet
 # child, and the pin cascaded onto the pipeline agents — dragging the [1m]
@@ -456,6 +459,8 @@ def short_label(pt):
         return pt["child_model"]     # e.g. "sonnet" / "sonnet[1m]"
     if tier == "holdout":
         return "Holdout"
+    if tier == "mini":
+        return "mini"
     if tier == "custom":
         return "custom"              # no override registered — generic fallback
     if tier == "subset":
@@ -804,6 +809,9 @@ _TIER_GLYPH_SVG = {
               '<circle cx="6" cy="6" r="4" fill="currentColor"/></svg>',
     "holdout": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
                '<path d="M6 1.6 L10.4 6 L6 10.4 L1.6 6 Z" fill="currentColor"/></svg>',
+    "mini": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
+            '<polygon points="6,1.4 10.6,4.2 10.6,7.8 6,10.6 1.4,7.8 1.4,4.2" '
+            'fill="currentColor"/></svg>',
     "custom": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
               '<rect x="2" y="2" width="8" height="8" rx="1.4" fill="currentColor"/></svg>',
 }
@@ -890,8 +898,9 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
         '<div class="explainer-col"><h3>How much a run is trusted</h3>'
         f'<ul class="def-list">{tiers}</ul>'
         '<p class="explainer-foot">Smoke numbers are directional and never pass or '
-        'fail a gate; a subset run is gate-grade; a holdout run confirms it on fresh '
-        'PRs; a custom run is the pre-registered paired design behind Gate-2. By owner '
+        'fail a gate; a mini run is the 6-PR paired cut; a subset run is gate-grade; '
+        'a holdout run confirms it on fresh PRs; a custom run is an explicit --prs '
+        'list (including pre-``mini`` paired legs such as Gate-2). By owner '
         'decision v3 delivers ~4× the comments of v2, so its lower precision is a '
         'bigger denominator, not weaker findings. Gate-2 re-baselined its token target '
         'to the v2 baseline on 2026-07-21: the original −20%-vs-Gate-1 target was '

@@ -3,15 +3,15 @@
 Inspects a finished run directory and returns a pass/fail verdict for the
 functional smoke gates. Never invokes the judge, adjudicator, or ``score_run``.
 
-Gates (smoke gates 2–5 from the measurement-policy issue):
+Gates (aligned with ``bench/MEASUREMENT.md``):
 
-  G0  Completeness — every ``run.json`` ``pr_urls`` entry has terminal status ``ok``
-  G1  Payload parse + adapter-required fields + union-schema findings check
+  G1  Completeness — every ``run.json`` ``pr_urls`` entry has terminal status ``ok``
+  G2  Payload parse + adapter-required fields + union-schema findings check
       (requires ≥1 findings artifact per PR)
-  G2  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
-  G3  Child ``scriptPath`` under the repo's ``workflows/pipeline.js``
+  G3  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
+  G4  Child ``scriptPath`` under the repo's ``workflows/pipeline.js``
       (from collected ``pr_dir/workflows/wf_*.json``, not ``raw.json``)
-  G4  ≥1 delivered inline comment across the run set
+  G5  ≥1 delivered inline comment across the run set
 
 Stdlib-only (CLAUDE.md).
 """
@@ -39,9 +39,9 @@ _DEGRADE_RE = re.compile(
 # Expected pipeline entry relative to the plugin/repo root.
 PIPELINE_REL = Path("workflows") / "pipeline.js"
 
-# Real artifact names written by writeArtifacts / the skill (not speculative globs).
+# Artifact names written by writeArtifacts (workflows/src/stages.js plannedArtifactPaths).
+# Do not include bench-only fixture names such as deep-review-report.md.
 _DEGRADE_SCAN_PATTERNS = (
-    "deep-review-report.md",
     "code-gauntlet-report-*.md",
     "code-gauntlet-checkpoint-all-*.json",
 )

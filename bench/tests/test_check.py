@@ -140,7 +140,7 @@ def _build_ok_run(
                 "session_id": "fake-session-0001",
             },
         )
-        (pr_dir / "deep-review-report.md").write_text(
+        (pr_dir / "code-gauntlet-report-deadbeef.md").write_text(
             "# Report\n\nAll good.\n", encoding="utf-8"
         )
         _write_json(
@@ -168,20 +168,20 @@ class CheckRunTest(unittest.TestCase):
         self.assertGreaterEqual(result["stats"]["delivered_comments"], 1)
         self.assertGreaterEqual(result["stats"]["workflow_records"], 1)
 
-    def test_bare_list_unknown_origin_fails_g2(self):
+    def test_bare_list_unknown_origin_fails_g3(self):
         _build_ok_run(self.run_dir, origin="unknown")
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(any("origin=unknown" in f for f in result["failures"]))
 
-    def test_missing_payload_fails_g1(self):
+    def test_missing_payload_fails_g2(self):
         _build_ok_run(self.run_dir)
         (self.run_dir / "pr-example-repo-1" / "post-review-payload.json").unlink()
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(any("missing post-review-payload" in f for f in result["failures"]))
 
-    def test_missing_findings_fails_g1(self):
+    def test_missing_findings_fails_g2(self):
         _build_ok_run(self.run_dir, include_findings=False)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
@@ -190,7 +190,7 @@ class CheckRunTest(unittest.TestCase):
         )
         self.assertEqual(result["stats"]["findings_files"], 0)
 
-    def test_partial_run_missing_checkpoint_fails_g0(self):
+    def test_partial_run_missing_checkpoint_fails_g1(self):
         # run.json declares 3 PRs; only 1 has state + artifacts (mid-run kill).
         urls = [
             "https://github.com/example/repo/pull/1",
@@ -203,7 +203,7 @@ class CheckRunTest(unittest.TestCase):
         self.assertTrue(any("no checkpoint" in f for f in result["failures"]))
         self.assertTrue(any("declares 3 PR" in f for f in result["failures"]))
 
-    def test_checkpoint_all_degrade_fails_g2(self):
+    def test_checkpoint_all_degrade_fails_g3(self):
         _build_ok_run(self.run_dir)
         _write_json(
             self.run_dir / "pr-example-repo-1" / "code-gauntlet-checkpoint-all-deadbeef.json",
@@ -221,7 +221,20 @@ class CheckRunTest(unittest.TestCase):
             any("checkpoint-all" in f and "no-write-proof" in f for f in result["failures"])
         )
 
-    def test_stale_marketplace_script_path_fails_g3(self):
+    def test_report_degrade_fails_g3(self):
+        _build_ok_run(self.run_dir)
+        report = (
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
+        )
+        report.write_text(
+            "# Report\n\ngaps: writeArtifacts: no write proof — partial-artifacts\n",
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("code-gauntlet-report" in f for f in result["failures"]))
+
+    def test_stale_marketplace_script_path_fails_g4(self):
         _build_ok_run(
             self.run_dir,
             script_path="/home/user/.claude/plugins/cache/stale/workflows/pipeline.js",
@@ -230,7 +243,7 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("scriptPath" in f for f in result["failures"]))
 
-    def test_missing_workflow_records_fails_g3(self):
+    def test_missing_workflow_records_fails_g4(self):
         _build_ok_run(self.run_dir, include_workflow=False)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
@@ -238,7 +251,7 @@ class CheckRunTest(unittest.TestCase):
         # raw.json must NOT be treated as a scriptPath source.
         self.assertFalse(any("raw.json" in f and "scriptPath" in f for f in result["failures"]))
 
-    def test_zero_comments_fails_g4(self):
+    def test_zero_comments_fails_g5(self):
         _build_ok_run(self.run_dir, n_comments=0)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
@@ -254,7 +267,7 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("naive" in f for f in result["failures"]))
 
-    def test_union_schema_missing_description_fails_g1(self):
+    def test_union_schema_missing_description_fails_g2(self):
         _build_ok_run(self.run_dir)
         bad = _ok_finding()
         del bad["description"]
