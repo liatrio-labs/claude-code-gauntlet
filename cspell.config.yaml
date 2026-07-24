@@ -63,3 +63,4 @@ overrides:
       - autoupdate
       - commitlint
       - markdownlint
+      - queueMicrotask
