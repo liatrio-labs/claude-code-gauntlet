@@ -862,6 +862,52 @@ class ChildAuthCliTest(RunTestBase):
             "subscription",
         )
 
+    def test_legacy_resume_cannot_be_switched_to_subscription_by_the_flag(self):
+        # A run dir is one auth mode: its PRs' envelope costs are summed into a single
+        # ledger row carrying a single auth_mode. A pre-child_auth manifest ran on the
+        # metered key, so honouring the flag would bill the remaining PRs the other way
+        # and label the mixed total "api". Refuse instead of quietly mixing.
+        self._write_resumable("smoke-legacy-switch", None)
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            rc = run.main(["--resume", "smoke-legacy-switch", "--child-auth", "subscription"])
+        self.assertEqual(rc, 2)
+        message = stderr.getvalue()
+        self.assertIn("contradicts", message)
+        self.assertIn("api", message)
+
+    def test_resume_flag_agreeing_with_the_recorded_mode_is_accepted(self):
+        self._write_resumable("smoke-agree-sub", "subscription")
+        self.assertEqual(
+            self._spy_prereq_mode(["--resume", "smoke-agree-sub", "--child-auth", "subscription"]),
+            "subscription",
+        )
+
+    def test_resume_of_a_subscription_run_refuses_an_api_flag(self):
+        # The guard is symmetric: downgrading mid-run corrupts the row just as much.
+        self._write_resumable("smoke-sub-to-api", "subscription")
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = run.main(["--resume", "smoke-sub-to-api", "--child-auth", "api"])
+        self.assertEqual(rc, 2)
+        message = err.getvalue()
+        self.assertIn("contradicts", message)
+        self.assertIn("subscription", message)
+
+    def test_new_run_never_trips_the_conflict_guard(self):
+        # The guard compares the flag against the resolved mode, which for a new run IS
+        # the flag -- so it can only ever fire on a resume.
+        self.assertEqual(
+            self._spy_prereq_mode(["--tier", "smoke", "--child-auth", "subscription"]),
+            "subscription",
+        )
+
+    def test_legacy_resume_without_a_flag_stays_on_api(self):
+        self._write_resumable("smoke-legacy-noflag", None)
+        self.assertEqual(self._spy_prereq_mode(["--resume", "smoke-legacy-noflag"]), "api")
+
+    def test_default_child_auth_is_a_valid_mode(self):
+        self.assertIn(run.DEFAULT_CHILD_AUTH, run.invoke.CHILD_AUTH_MODES)
+
 
 class ChildAuthPrereqTest(RunTestBase):
     """Subscription mode swaps the credential prereq -- and only that.

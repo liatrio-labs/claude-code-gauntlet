@@ -56,6 +56,10 @@ FIXTURE_PATH = GOLDEN_DIR / "review_md_fixture.md"
 
 MIN_FREE_GB = 10
 
+# Which credential a new run's review children spend when --child-auth is not given.
+# Must name a member of invoke.CHILD_AUTH_MODES.
+DEFAULT_CHILD_AUTH = "api"
+
 # `--tier subset` maps to the 15-PR gate subset; `full` is every shas.json key.
 # `--tier mini` is the 6-PR pre-registered paired-measurement cut (subset of gate).
 _TIER_SUBSET_KEY = {
@@ -692,40 +696,51 @@ def _resolve_child_model(tool, child_model):
 
 
 def _resolve_child_auth(child_auth):
-    """Effective child-auth mode: an explicit flag wins, else the metered API key.
+    """Effective child-auth mode for a NEW run: an explicit flag wins, else the API key.
 
     ``api`` is the default because every run of record was produced that way and its cost
     figures are only comparable against another API-keyed run, while ``subscription``
     spends the operator's own capacity -- that has to be asked for, never inferred. A None
     ``child_auth`` means the flag was not passed, the same sentinel ``_resolve_child_model``
-    uses so a resumed run's manifest value can win over the flag's default.
+    uses. Resuming an existing run goes through ``_child_auth_for`` instead.
     """
-    return child_auth if child_auth is not None else "api"
+    return child_auth if child_auth is not None else DEFAULT_CHILD_AUTH
 
 
 def _child_auth_for(args, manifest=None):
     """The credential mode this invocation will actually spend.
 
-    The one place the resume precedence lives, because two callers must agree on it or
-    the run breaks: ``_resume`` (which spends the credential) and ``main``'s preflight
-    (which validates it). Preflighting the flag's default while resuming a subscription
-    run would demand a metered key the run does not use and skip the token/apiKeyHelper
-    checks it does, turning a clear prereq failure into a mid-run ``build_env`` raise.
+    The one place the resume precedence lives, because three callers must agree on it or
+    the run breaks: ``_resume`` (which spends the credential), ``main``'s preflight (which
+    validates it), and ``main``'s conflict guard. Preflighting the flag's default while
+    resuming a subscription run would demand a metered key the run does not use and skip
+    the token/apiKeyHelper checks it does, turning a clear prereq failure into a mid-run
+    ``build_env`` raise.
 
-    Pass ``manifest`` when the caller already loaded it; otherwise a ``--resume`` /
-    ``--retry-failed`` id is read from disk here, tolerating an absent or corrupt
-    ``run.json`` (the resume path reports those on its own terms).
+    A resumed run's OWN mode always wins, and a manifest with no ``child_auth`` counts as
+    ``api`` rather than deferring to the flag: those run.json files predate the flag, so
+    their completed PRs really did spend the metered key. Deferring would let
+    ``--retry-failed X --child-auth subscription`` bill the remaining PRs the other way
+    while ``score`` -- reading the same silent manifest -- labels the summed total
+    ``api``. ``main`` refuses an explicit flag that contradicts the resolved mode rather
+    than ignoring it, because unlike the ``tool``/``child_model`` labels this decides
+    which credential is charged.
+
+    Pass ``manifest`` when the caller already loaded it. Otherwise a ``--resume`` /
+    ``--retry-failed`` id is read from disk here; an id with no readable ``run.json`` has
+    no recorded mode to honour, so the flag applies and the resume path reports the
+    missing run on its own terms.
     """
     if manifest is None:
         run_id = args.resume or args.retry_failed
         path = (RUNS_ROOT / run_id / "run.json") if run_id else None
-        manifest = {}
-        if path is not None and path.is_file():
-            try:
-                manifest = _load_json(path)
-            except (ValueError, OSError):
-                manifest = {}
-    return manifest.get("child_auth") or _resolve_child_auth(args.child_auth)
+        if path is None or not path.is_file():
+            return _resolve_child_auth(args.child_auth)
+        try:
+            manifest = _load_json(path)
+        except (ValueError, OSError):
+            manifest = {}
+    return manifest.get("child_auth") or DEFAULT_CHILD_AUTH
 
 
 def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
@@ -957,7 +972,8 @@ def parse_args(argv=None):
     # own prerequisites -- an OAuth token and no apiKeyHelper, see check_prereqs -- and
     # its runs are not cost-comparable with API-keyed ones; bench/README.md has the detail.
     parser.add_argument(
-        "--child-auth", choices=["api", "subscription"], default=None, dest="child_auth",
+        "--child-auth", choices=list(invoke.CHILD_AUTH_MODES), default=None,
+        dest="child_auth",
         help="credential for the review children: the metered bench/.env key (default) "
         "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
     )
@@ -1026,7 +1042,22 @@ def main(argv=None):
             return 2
         return _check_only(args.check)
 
-    failures = check_prereqs(child_auth=_child_auth_for(args))
+    child_auth = _child_auth_for(args)
+    # Only reachable on a resume, where the run's own recorded mode wins: for a new run
+    # the resolved mode IS the flag. Refusing beats silently ignoring the flag -- the
+    # operator asked to charge a different credential, and one run dir can only honour
+    # one (its per-PR envelope costs are summed into a single auth_mode-labelled row).
+    if args.child_auth is not None and args.child_auth != child_auth:
+        print(
+            "--child-auth {} contradicts the mode run {} recorded ({}) -- a run dir is "
+            "one credential. Resume without the flag, or start a new run.".format(
+                args.child_auth, args.resume or args.retry_failed, child_auth
+            ),
+            file=sys.stderr,
+        )
+        return 2
+
+    failures = check_prereqs(child_auth=child_auth)
     if failures:
         print("bench/run.py: prerequisite checks failed (fix each and re-run):", file=sys.stderr)
         for failure in failures:
