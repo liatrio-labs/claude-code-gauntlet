@@ -737,7 +737,7 @@ _PIPELINE_VERSION_RE = re.compile(
     r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]"
 )
 _IDENTITY_LINE_RE = re.compile(
-    r"(?m)^[ \t]*(pipeline_version|plugin_root)=(\S+)(?:[ \t]|\(|$)"
+    r"(?m)^[ \t]*(pipeline_version|plugin_root)=(.+?)\s*\((?:bundle|resolved)\)\s*$"
 )
 
 
@@ -802,8 +802,11 @@ def _script_path_matches_repo(script_path, repo_root):
     normalized = script_path.replace("\\", "/").rstrip("/")
     if normalized == str(expected).replace("\\", "/"):
         return True
+    candidate = Path(script_path)
     try:
-        return Path(script_path).resolve() == expected
+        if candidate.is_absolute():
+            return candidate.resolve() == expected
+        return (Path(repo_root) / candidate).resolve() == expected
     except OSError:
         return False
 

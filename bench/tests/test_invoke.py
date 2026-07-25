@@ -829,6 +829,11 @@ class PluginIdentityGuardTest(InvokeTestBase):
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "plugin_identity_mismatch")
 
+    def test_missing_identity_lines_marks_invalid(self):
+        res = self._run("no_identity_echo")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_identity_mismatch")
+
     def test_wrong_script_path_marks_invalid(self):
         res = self._run("wrong_script_path")
         self.assertEqual(res.status, "invalid")
@@ -1154,6 +1159,12 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         self.assertEqual(got["pipeline_version"], "3.1.3")
         self.assertEqual(got["plugin_root"], "/tmp/plugin")
 
+    def test_parse_identity_echo_preserves_plugin_root_spaces(self):
+        got = invoke.parse_identity_echo(
+            "plugin_root=/home/user/My Plugin/cg (resolved)\n"
+        )
+        self.assertEqual(got["plugin_root"], "/home/user/My Plugin/cg")
+
     def test_parse_identity_echo_missing_returns_partial(self):
         got = invoke.parse_identity_echo("pipeline_version=1.0.0 (bundle)\n")
         self.assertEqual(got.get("pipeline_version"), "1.0.0")
@@ -1169,6 +1180,23 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         got = invoke.extract_identity_receipt("", env, ())
         self.assertEqual(got["plugin_root"], "/abs/plugin")
         self.assertEqual(got["pipeline_version"], "3.1.3")
+
+
+class ScriptPathMatchesRepoTest(unittest.TestCase):
+    def test_relative_paths_are_repo_relative_not_cwd_relative(self):
+        with tempfile.TemporaryDirectory(prefix="bench-script-cwd-") as tmp:
+            old_cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                self.assertNotEqual(Path.cwd(), REPO_ROOT)
+                self.assertTrue(
+                    invoke._script_path_matches_repo("workflows/pipeline.js", REPO_ROOT)
+                )
+                self.assertTrue(
+                    invoke._script_path_matches_repo("./workflows/pipeline.js", REPO_ROOT)
+                )
+            finally:
+                os.chdir(old_cwd)
 
 
 if __name__ == "__main__":

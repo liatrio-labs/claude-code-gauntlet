@@ -18,6 +18,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
                     like ``ok`` — models a child self-healing the plugin mid-run.
   wrong_plugin_echo -> full knobs + stale identity (wrong plugin_root/pipeline_version) + payload.
   wrong_script_path -> clean echo identity + stale Workflow scriptPath record + payload.
+  no_identity_echo -> full knob echo without pipeline_version/plugin_root + payload.
 
 All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
 process-group id is written there at startup so the watchdog test can prove the group was
@@ -247,6 +248,11 @@ def main():
         ECHO_LINES = echo_lines()
 
     partial_lines = [ln for ln in ECHO_LINES if "trivial_scope" not in ln]
+    no_identity_lines = [
+        ln
+        for ln in ECHO_LINES
+        if "pipeline_version=" not in ln and "plugin_root=" not in ln
+    ]
 
     # Where the receipt lands: stdout lines, the envelope .result text, a report .md.
     stdout_lines = ECHO_LINES
@@ -257,6 +263,10 @@ def main():
         # A partial block (missing trivial_scope) in BOTH stdout and .result.
         stdout_lines = partial_lines
         result_text = "\n".join(partial_lines)
+    elif mode == "no_identity_echo":
+        # Full knob receipt, but no identity lines: config echo passes, identity guard fails.
+        stdout_lines = no_identity_lines
+        result_text = "\n".join(no_identity_lines)
     elif mode == "echo_in_result":
         # Receipt only in the final message (.result), never in intermediate stdout.
         stdout_lines = []
