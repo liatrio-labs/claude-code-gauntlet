@@ -431,6 +431,26 @@ class CheckRunTest(unittest.TestCase):
         ]
         self.assertEqual(identity_failures, [])
 
+    def test_g4_clean_echo_stale_scriptpath_still_fails(self):
+        """Defense-in-depth: clean identity echo must not override stale scriptPath."""
+        stale = "/home/user/.claude/plugins/cache/stale/workflows/pipeline.js"
+        _build_ok_run(self.run_dir, script_path=stale)
+        _plant_raw_identity(self.run_dir / "pr-example-repo-1")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"], result["failures"])
+        self.assertTrue(
+            any("scriptPath" in f for f in result["failures"]),
+            result["failures"],
+        )
+        identity_failures = [
+            f
+            for f in result["failures"]
+            if "plugin_root" in f
+            or "pipeline_version" in f
+            or "identity" in f.lower()
+        ]
+        self.assertEqual(identity_failures, [], result["failures"])
+
     def test_nested_verify_script_path_ignored_by_g4(self):
         """Healthy runs carry args.verify.scriptPath → verify_findings.py; must pass."""
         _build_ok_run(self.run_dir)
