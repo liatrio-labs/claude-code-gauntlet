@@ -17,6 +17,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   mutate_repo    -> write to FAKE_CLAUDE_MUTATE_PATH (inside the plugin repo), then behave
                     like ``ok`` — models a child self-healing the plugin mid-run.
   wrong_plugin_echo -> full knobs + stale identity (wrong plugin_root/pipeline_version) + payload.
+  wrong_script_path -> clean echo identity + stale Workflow scriptPath record + payload.
 
 All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
 process-group id is written there at startup so the watchdog test can prove the group was
@@ -191,6 +192,28 @@ def _write_report(lines):
         fh.write("\n".join(body) + "\n")
 
 
+def _plant_stale_workflow_record():
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if config_dir:
+        base = config_dir
+    else:
+        home = os.environ.get("HOME")
+        if not home:
+            return
+        base = os.path.join(home, "config")
+    wf_dir = os.path.join(base, "projects", "fake", "sess", "workflows")
+    os.makedirs(wf_dir, exist_ok=True)
+    path = os.path.join(wf_dir, "wf_stale.json")
+    with open(path, "w") as fh:
+        json.dump(
+            {
+                "runId": "wf_stale",
+                "scriptPath": "/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js",
+            },
+            fh,
+        )
+
+
 def main():
     # A --version probe (the v3 preflight) prints only the version and exits, before any
     # mode handling -- so it never records a pgid, hangs, or emits a review envelope. The
@@ -252,6 +275,8 @@ def main():
             "The deep-review workflow is now running in the background; "
             "I'll pick up the persisted artifacts for delivery once it completes."
         )
+    elif mode == "wrong_script_path":
+        _plant_stale_workflow_record()
 
     denials = []
     if mode == "asks":

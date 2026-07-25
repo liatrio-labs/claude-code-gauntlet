@@ -823,6 +823,22 @@ class EchoReceiptSourceTest(InvokeTestBase):
         self.assertFalse(res.echo_ok)
 
 
+class PluginIdentityGuardTest(InvokeTestBase):
+    def test_wrong_plugin_root_in_echo_marks_invalid(self):
+        res = self._run("wrong_plugin_echo")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_identity_mismatch")
+
+    def test_wrong_script_path_marks_invalid(self):
+        res = self._run("wrong_script_path")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_identity_mismatch")
+
+    def test_clean_identity_still_ok(self):
+        res = self._run("ok")
+        self.assertEqual(res.status, "ok")
+
+
 class V3PreflightTest(InvokeTestBase):
     """A deep-review-v3 run preflights the child CLI's Workflow-tool support.
 
@@ -897,6 +913,10 @@ class PluginMutationGuardTest(InvokeTestBase):
         import subprocess
         root = Path(self.tmp) / "plugin"
         root.mkdir()
+        files = {
+            "workflows/pipeline.js": "const PIPELINE_VERSION = '3.1.3';\n",
+            **files,
+        }
         for rel, content in files.items():
             p = root / rel
             p.parent.mkdir(parents=True, exist_ok=True)
