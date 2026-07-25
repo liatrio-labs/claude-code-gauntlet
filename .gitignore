@@ -36,3 +36,6 @@ docs/improvement-backlog.md
 bench/workspace/
 bench/.env
 probes/
+
+# Agentic SDD scratch (plans/briefs/reviews)
+.superpowers/
