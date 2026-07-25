@@ -37,6 +37,11 @@ __all__ = [
     "api_key_helper_files",
     "snapshot_workflow_records",
     "collect_workflow_records",
+    "scriptpath_from_record",
+    "script_path_matches_repo",
+    "extract_identity_receipt",
+    "read_pipeline_version",
+    "parse_identity_echo",
     "_claude_home",
 ]
 
@@ -797,10 +802,45 @@ def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
     return None
 
 
-def _script_path_matches_repo(script_path, repo_root):
-    expected = (Path(repo_root) / "workflows" / "pipeline.js").resolve()
+def scriptpath_from_record(data):
+    """Return the Workflow-tool ``scriptPath`` from a parsed ``wf_*.json`` dict.
+
+    Top-level ``scriptPath`` wins; otherwise look under a single wrapper key
+    (``input`` / ``toolInput`` / ``parameters``). Nested paths such as
+    ``args.verify.scriptPath`` are intentionally ignored — a recursive walk
+    would false-fail healthy skill runs.
+    """
+    if not isinstance(data, dict):
+        return None
+    sp = data.get("scriptPath")
+    if isinstance(sp, str) and sp:
+        return sp
+    for key in ("input", "toolInput", "parameters"):
+        nested = data.get(key)
+        if isinstance(nested, dict):
+            sp = nested.get("scriptPath")
+            if isinstance(sp, str) and sp:
+                return sp
+    return None
+
+
+def script_path_matches_repo(script_path, repo_root, expected_pipeline=None):
+    """True when *script_path* identifies ``{repo_root}/workflows/pipeline.js``.
+
+    Accepts absolute paths that resolve to the expected pipeline, the normalized
+    absolute string form, the relative literals ``workflows/pipeline.js`` /
+    ``./workflows/pipeline.js``, and other relative paths that resolve against
+    *repo_root* (not process CWD) to the expected file.
+    """
+    if expected_pipeline is None:
+        expected = (Path(repo_root) / "workflows" / "pipeline.js").resolve()
+    else:
+        expected = Path(expected_pipeline).resolve()
     normalized = script_path.replace("\\", "/").rstrip("/")
-    if normalized == str(expected).replace("\\", "/"):
+    expected_norm = str(expected).replace("\\", "/")
+    if normalized == expected_norm:
+        return True
+    if normalized in ("workflows/pipeline.js", "./workflows/pipeline.js"):
         return True
     candidate = Path(script_path)
     try:
@@ -809,6 +849,11 @@ def _script_path_matches_repo(script_path, repo_root):
         return (Path(repo_root) / candidate).resolve() == expected
     except OSError:
         return False
+
+
+# Backward-compatible private alias used by existing tests.
+def _script_path_matches_repo(script_path, repo_root):
+    return script_path_matches_repo(script_path, repo_root)
 
 
 def _new_workflow_script_paths(claude_home, baseline):
@@ -831,19 +876,9 @@ def _new_workflow_script_paths(claude_home, baseline):
             data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
         except (OSError, ValueError, json.JSONDecodeError):
             continue
-        if not isinstance(data, dict):
-            continue
-        sp = data.get("scriptPath")
-        if isinstance(sp, str) and sp:
+        sp = scriptpath_from_record(data)
+        if sp:
             paths.append(sp)
-            continue
-        for key in ("input", "toolInput", "parameters"):
-            nested = data.get(key)
-            if isinstance(nested, dict):
-                sp = nested.get("scriptPath")
-                if isinstance(sp, str) and sp:
-                    paths.append(sp)
-                    break
     return paths
 
 
@@ -867,7 +902,7 @@ def _check_plugin_identity(raw_text, envelope, report_dirs, claude_home, wf_base
     if got_root != exp_root:
         return "plugin_root {!r} != expected {!r}".format(str(got_root), str(exp_root))
     for sp in _new_workflow_script_paths(claude_home, wf_baseline):
-        if not _script_path_matches_repo(sp, repo_root):
+        if not script_path_matches_repo(sp, repo_root):
             return "scriptPath {!r} is not repo workflows/pipeline.js".format(sp)
     return None
 

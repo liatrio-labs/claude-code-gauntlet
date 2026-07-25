@@ -497,12 +497,48 @@ class CheckRunTest(unittest.TestCase):
         self.assertEqual(check._extract_script_paths(wf), [PIPELINE])
 
     def test_missing_workflow_records_fails_g4(self):
+        """Without an echo identity receipt, missing wf records still hard-fail G4."""
         _build_ok_run(self.run_dir, include_workflow=False)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(any("no workflows/wf_" in f for f in result["failures"]))
         # raw.json must NOT be treated as a scriptPath source.
         self.assertFalse(any("raw.json" in f and "scriptPath" in f for f in result["failures"]))
+
+    def test_g4_valid_echo_without_wf_records_passes(self):
+        """Complete valid echo receipt is sufficient when no wf records were collected."""
+        _build_ok_run(self.run_dir, include_workflow=False)
+        _plant_raw_identity(self.run_dir / "pr-example-repo-1")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertFalse(any("no workflows/wf_" in f for f in result["failures"]))
+
+    def test_g4_echo_identity_reads_raw_json_with_preamble(self):
+        """raw.json may carry stderr/preamble; tolerant parse must still find the receipt."""
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        raw_path = pr / "raw.json"
+        envelope = json.loads(raw_path.read_text(encoding="utf-8"))
+        envelope["result"] = _identity_echo_block(
+            plugin_root="/home/user/.claude/plugins/cache/stale",
+            pipeline_version="0.0.1",
+        )
+        # Merge-style file: CLI warning text ahead of the result envelope.
+        raw_path.write_text(
+            "warn: background noise from child CLI\n" + json.dumps(envelope) + "\n",
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"], result["failures"])
+        self.assertTrue(
+            any(
+                "plugin_root" in f
+                or "identity" in f.lower()
+                or "pipeline_version" in f
+                for f in result["failures"]
+            ),
+            result["failures"],
+        )
 
     def test_zero_comments_fails_g5(self):
         _build_ok_run(self.run_dir, n_comments=0)

@@ -843,6 +843,47 @@ class PluginIdentityGuardTest(InvokeTestBase):
         res = self._run("ok")
         self.assertEqual(res.status, "ok")
 
+    def _plant_wf(self, name, script_path, *, nested=False):
+        """Plant a wf_*.json under the shared claude-home derived from self.run_dir."""
+        home = invoke._claude_home(self.run_dir, os.environ)
+        wf_dir = home / "config" / "projects" / "shared" / "sess" / "workflows"
+        wf_dir.mkdir(parents=True, exist_ok=True)
+        path = wf_dir / name
+        if nested:
+            payload = {"runId": name, "input": {"scriptPath": script_path}}
+        else:
+            payload = {"runId": name, "scriptPath": script_path}
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_preexisting_stale_wf_record_does_not_invalidate_clean_run(self):
+        """Baseline-diffing must ignore untouched leftover records in shared claude-home."""
+        self._plant_wf(
+            "wf_old.json",
+            "/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js",
+        )
+        res = self._run("ok")
+        self.assertEqual(res.status, "ok", res.reason)
+
+    def test_new_stale_wf_caught_alongside_baseline_record(self):
+        """A new bad record is still caught when an older untouched record also exists."""
+        self._plant_wf(
+            "wf_old.json",
+            "/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js",
+        )
+        res = self._run("wrong_script_path")
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_identity_mismatch")
+
+    def test_nested_wrapper_script_path_marks_invalid(self):
+        """invoke path must read scriptPath from input/toolInput/parameters wrappers."""
+        res = self._run(
+            "wrong_script_path",
+            extra_env={"FAKE_CLAUDE_WF_NESTED": "1"},
+        )
+        self.assertEqual(res.status, "invalid")
+        self.assertEqual(res.reason, "plugin_identity_mismatch")
+
 
 class V3PreflightTest(InvokeTestBase):
     """A deep-review-v3 run preflights the child CLI's Workflow-tool support.
@@ -1190,13 +1231,70 @@ class ScriptPathMatchesRepoTest(unittest.TestCase):
                 os.chdir(tmp)
                 self.assertNotEqual(Path.cwd(), REPO_ROOT)
                 self.assertTrue(
-                    invoke._script_path_matches_repo("workflows/pipeline.js", REPO_ROOT)
+                    invoke.script_path_matches_repo("workflows/pipeline.js", REPO_ROOT)
                 )
                 self.assertTrue(
-                    invoke._script_path_matches_repo("./workflows/pipeline.js", REPO_ROOT)
+                    invoke.script_path_matches_repo("./workflows/pipeline.js", REPO_ROOT)
                 )
             finally:
                 os.chdir(old_cwd)
+
+    def test_check_and_invoke_agree_on_relative_forms(self):
+        from bench.runner import check as check_mod
+
+        expected = REPO_ROOT / "workflows" / "pipeline.js"
+        for rel in ("workflows/pipeline.js", "./workflows/pipeline.js"):
+            self.assertEqual(
+                invoke.script_path_matches_repo(rel, REPO_ROOT),
+                check_mod._script_path_ok(rel, expected, repo_root=REPO_ROOT),
+            )
+
+
+class WorkflowScriptPathScanTest(unittest.TestCase):
+    """Unit coverage for baseline-diffing and nested wrapper extraction."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-wf-scan-")
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.home = Path(self.tmp) / "claude-home"
+        self.wf_dir = self.home / "config" / "projects" / "p" / "s" / "workflows"
+        self.wf_dir.mkdir(parents=True)
+
+    def _write(self, name, payload):
+        path = self.wf_dir / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_baseline_excludes_unchanged_and_keeps_new(self):
+        old = self._write(
+            "wf_old.json",
+            {"scriptPath": "/stale/old/workflows/pipeline.js"},
+        )
+        baseline = invoke.snapshot_workflow_records(self.home)
+        self.assertIn(str(old.resolve()), baseline)
+        self._write(
+            "wf_new.json",
+            {"scriptPath": "/stale/new/workflows/pipeline.js"},
+        )
+        paths = invoke._new_workflow_script_paths(self.home, baseline)
+        self.assertEqual(paths, ["/stale/new/workflows/pipeline.js"])
+
+    def test_nested_wrapper_script_path_extracted(self):
+        self._write(
+            "wf_wrap.json",
+            {"runId": "wf_wrap", "input": {"scriptPath": "/stale/wrap/workflows/pipeline.js"}},
+        )
+        paths = invoke._new_workflow_script_paths(self.home, {})
+        self.assertEqual(paths, ["/stale/wrap/workflows/pipeline.js"])
+
+    def test_scriptpath_from_record_ignores_args_verify(self):
+        sp = invoke.scriptpath_from_record(
+            {
+                "scriptPath": "/repo/workflows/pipeline.js",
+                "args": {"verify": {"scriptPath": "/repo/scripts/verify_findings.py"}},
+            }
+        )
+        self.assertEqual(sp, "/repo/workflows/pipeline.js")
 
 
 if __name__ == "__main__":

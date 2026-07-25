@@ -205,14 +205,15 @@ def _plant_stale_workflow_record():
     wf_dir = os.path.join(base, "projects", "fake", "sess", "workflows")
     os.makedirs(wf_dir, exist_ok=True)
     path = os.path.join(wf_dir, "wf_stale.json")
+    stale = "/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js"
+    # FAKE_CLAUDE_WF_NESTED=1 plants scriptPath under an input wrapper (mirrors
+    # check.py's accepted nested Workflow-tool record shape).
+    if os.environ.get("FAKE_CLAUDE_WF_NESTED") == "1":
+        payload = {"runId": "wf_stale", "input": {"scriptPath": stale}}
+    else:
+        payload = {"runId": "wf_stale", "scriptPath": stale}
     with open(path, "w") as fh:
-        json.dump(
-            {
-                "runId": "wf_stale",
-                "scriptPath": "/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js",
-            },
-            fh,
-        )
+        json.dump(payload, fh)
 
 
 def main():
