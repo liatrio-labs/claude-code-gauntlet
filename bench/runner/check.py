@@ -9,8 +9,9 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
   G2  Payload parse + adapter-required fields + union-schema findings check
       (requires ≥1 findings artifact per PR)
   G3  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
-  G4  Child ``scriptPath`` under the repo's ``workflows/pipeline.js``
-      (from collected ``pr_dir/workflows/wf_*.json``, not ``raw.json``)
+  G4  Plugin identity — Headless config echo receipts (``pipeline_version``,
+      ``plugin_root``) when present; collected ``workflows/wf_*.json`` top-level
+      ``scriptPath`` as defense-in-depth when records exist
   G5  ≥1 delivered inline comment across the run set
 
 Stdlib-only (CLAUDE.md).
@@ -19,6 +20,8 @@ Stdlib-only (CLAUDE.md).
 import json
 import re
 from pathlib import Path
+
+from bench.runner.invoke import extract_identity_receipt, read_pipeline_version
 
 # Union-schema surface the persist boundary writes (canonical + v2 aliases).
 # A findings file may use either naming; we accept either for each pair.
@@ -229,6 +232,52 @@ def _script_path_ok(script_path, expected_pipeline, repo_root=None):
     ):
         return True
     return False
+
+
+def _check_echo_identity(pr_dir, repo_root, label):
+    """Return G4 failure strings when a complete identity receipt is present but stale."""
+    envelope = None
+    raw_path = Path(pr_dir) / "raw.json"
+    if raw_path.is_file():
+        try:
+            envelope = _load_json(raw_path)
+        except (json.JSONDecodeError, OSError):
+            envelope = None
+    receipt = extract_identity_receipt("", envelope, (pr_dir,))
+    if not receipt:
+        return []
+    failures = []
+    expected_ver = read_pipeline_version(repo_root)
+    if not expected_ver:
+        failures.append(
+            "{}: cannot read expected PIPELINE_VERSION from workflows/pipeline.js".format(
+                label
+            )
+        )
+        return failures
+    if receipt.get("pipeline_version") != expected_ver:
+        failures.append(
+            "{}: identity pipeline_version {!r} != expected {!r}".format(
+                label, receipt.get("pipeline_version"), expected_ver
+            )
+        )
+    plugin_root = receipt.get("plugin_root")
+    if not plugin_root:
+        failures.append("{}: identity receipt missing plugin_root".format(label))
+        return failures
+    try:
+        got_root = Path(plugin_root).resolve()
+        exp_root = Path(repo_root).resolve()
+    except OSError as exc:
+        failures.append("{}: identity plugin_root resolve failed: {}".format(label, exc))
+        return failures
+    if got_root != exp_root:
+        failures.append(
+            "{}: identity plugin_root {!r} != expected {!r}".format(
+                label, str(got_root), str(exp_root)
+            )
+        )
+    return failures
 
 
 def _iter_degrade_scan_paths(pr_dir):
@@ -469,7 +518,9 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 )
             )
 
-        # --- G4: scriptPath from collected workflow records (not raw.json) ---
+        # --- G4: plugin identity (echo receipt primary; scriptPath defense-in-depth) ---
+        failures.extend(_check_echo_identity(pr_dir, repo_root, label))
+
         wf_records = _iter_workflow_records(pr_dir)
         stats["workflow_records"] += len(wf_records)
         if not wf_records:
@@ -506,7 +557,6 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     return {"ok": not failures, "failures": failures, "stats": stats}
 
 
-# Upgrade hook for environment-purity receipts (Issue #23): when
-# pipeline_version / plugin_root appear in the headless config echo, prefer
-# those over the interim workflow-record scriptPath grep above.
-PLUGIN_IDENTITY_STRATEGY = "workflow_record_scriptPath"  # future: "echo_receipt"
+# Environment-purity receipts (Issue #23): echo identity is primary; workflow-record
+# scriptPath remains defense-in-depth when records exist.
+PLUGIN_IDENTITY_STRATEGY = "echo_receipt"

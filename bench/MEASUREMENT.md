@@ -73,10 +73,13 @@ python3 bench/run.py --check <RUN_ID>
 3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
    degrade (scans compact-return carriers `workflows/wf_*.json` + `raw.json`,
    plus report / `code-gauntlet-checkpoint-all-*.json`)
-4. Child `scriptPath` under the repo's `workflows/pipeline.js`, read from
-   collected `pr_dir/workflows/wf_*.json` records (not `raw.json`, which is
-   only the result envelope). Upgrades to `pipeline_version`/`plugin_root`
-   echo receipts when environment-purity receipts land — Issue #23
+4. Plugin identity — when the Headless config echo carries `pipeline_version` and
+   `plugin_root`, those receipts are validated against the repo's
+   `workflows/pipeline.js` version and plugin root (primary). When collected
+   `pr_dir/workflows/wf_*.json` records exist, top-level Workflow `scriptPath` is
+   also checked (defense in depth). Without a complete echo receipt, G4 falls back
+   to scriptPath-only from collected workflow records (not `raw.json`, which is
+   only the result envelope).
 5. ≥1 delivered comment across the run set
 
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
