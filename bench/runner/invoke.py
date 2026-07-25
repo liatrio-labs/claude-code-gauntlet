@@ -733,6 +733,70 @@ def _echo_ok(raw_text, envelope=None, report_dirs=()):
     return _echo_in_reports(report_dirs)
 
 
+_PIPELINE_VERSION_RE = re.compile(
+    r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]"
+)
+_IDENTITY_LINE_RE = re.compile(
+    r"(?m)^[ \t]*(pipeline_version|plugin_root)=(\S+)(?:[ \t]|\(|$)"
+)
+
+
+def read_pipeline_version(repo_root):
+    """Return PIPELINE_VERSION from ``{repo_root}/workflows/pipeline.js``, or None."""
+    path = Path(repo_root) / "workflows" / "pipeline.js"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = _PIPELINE_VERSION_RE.search(text)
+    return m.group(1) if m else None
+
+
+def parse_identity_echo(text):
+    """Parse identity receipt fields from a Headless config echo text blob."""
+    out = {}
+    for m in _IDENTITY_LINE_RE.finditer(text or ""):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
+    """Return ``{pipeline_version, plugin_root}`` from any echo source, or None.
+
+    Requires BOTH fields in the same source text. Scans stdout, envelope
+    ``.result``, then report ``*.md`` files (same order spirit as ``_echo_ok``).
+    """
+    texts = [raw_text or ""]
+    if isinstance(envelope, dict):
+        result = envelope.get("result")
+        if isinstance(result, str):
+            texts.append(result)
+    for t in texts:
+        got = parse_identity_echo(t)
+        if "pipeline_version" in got and "plugin_root" in got:
+            return got
+    # reports
+    seen = set()
+    for base in report_dirs or ():
+        if not base:
+            continue
+        base = Path(base)
+        if not base.exists():
+            continue
+        for md in sorted(base.rglob("*.md")):
+            resolved = md.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                got = parse_identity_echo(md.read_text(errors="replace"))
+            except OSError:
+                continue
+            if "pipeline_version" in got and "plugin_root" in got:
+                return got
+    return None
+
+
 def _find_payload(output_dir):
     base = Path(output_dir)
     if not base.exists():

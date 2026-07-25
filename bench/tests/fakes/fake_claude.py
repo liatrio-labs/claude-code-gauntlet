@@ -16,6 +16,7 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
                     report .md under $CODE_GAUNTLET_OUTPUT_DIR. + payload.
   mutate_repo    -> write to FAKE_CLAUDE_MUTATE_PATH (inside the plugin repo), then behave
                     like ``ok`` — models a child self-healing the plugin mid-run.
+  wrong_plugin_echo -> full knobs + stale identity (wrong plugin_root/pipeline_version) + payload.
 
 All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
 process-group id is written there at startup so the watchdog test can prove the group was
@@ -33,22 +34,49 @@ must not have it written to a temp file.
 
 import json
 import os
+import re
 import sys
 import time
 
-# The exact echo the real skill prints under CODE_GAUNTLET_HEADLESS=1 (Task 3 format:
-# two-space indent, key=value (source), 8 knob lines under the header).
-ECHO_LINES = [
-    "Headless config:",
-    "  model_tier=optimized (env)",
-    "  delivery=pr_comments,markdown (env)",
-    "  post_mode=dry-run (env)",
-    "  pr_comment_cap=25 (env)",
-    "  draft_policy=review (env)",
-    "  reviewed_policy=full (env)",
-    "  pr_not_found_policy=error (env)",
-    "  trivial_scope=full (env)",
-]
+
+def _plugin_dir_from_argv():
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == "--plugin-dir" and i + 1 < len(args):
+            return args[i + 1]
+    return os.environ.get("FAKE_CLAUDE_PLUGIN_ROOT", "")
+
+
+def _pipeline_version(plugin_dir):
+    override = os.environ.get("FAKE_CLAUDE_PIPELINE_VERSION")
+    if override:
+        return override
+    path = os.path.join(plugin_dir, "workflows", "pipeline.js")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return "0.0.0"
+    m = re.search(r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
+    return m.group(1) if m else "0.0.0"
+
+
+def echo_lines(plugin_root=None, pipeline_version=None):
+    root = plugin_root if plugin_root is not None else _plugin_dir_from_argv()
+    ver = pipeline_version if pipeline_version is not None else _pipeline_version(root)
+    return [
+        "Headless config:",
+        "  model_tier=optimized (env)",
+        "  delivery=pr_comments,markdown (env)",
+        "  post_mode=dry-run (env)",
+        "  pr_comment_cap=25 (env)",
+        "  draft_policy=review (env)",
+        "  reviewed_policy=full (env)",
+        "  pr_not_found_policy=error (env)",
+        "  trivial_scope=full (env)",
+        "  pipeline_version={} (bundle)".format(ver),
+        "  plugin_root={} (resolved)".format(root),
+    ]
 
 
 def _envelope(permission_denials, result_text="Review complete. 3 findings posted (dry-run)."):
@@ -186,6 +214,14 @@ def main():
     if mode == "hang":
         time.sleep(60)
         return
+
+    if mode == "wrong_plugin_echo":
+        ECHO_LINES = echo_lines(
+            plugin_root="/stale/plugin/cache/code-gauntlet",
+            pipeline_version="2.6.0",
+        )
+    else:
+        ECHO_LINES = echo_lines()
 
     partial_lines = [ln for ln in ECHO_LINES if "trivial_scope" not in ln]
 

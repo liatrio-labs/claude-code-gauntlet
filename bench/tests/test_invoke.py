@@ -1118,5 +1118,38 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
         self.assertTrue(saw["ANTHROPIC_API_KEY"])
 
 
+class IdentityReceiptHelpersTest(unittest.TestCase):
+    def test_read_pipeline_version_from_bundle(self):
+        ver = invoke.read_pipeline_version(REPO_ROOT)
+        self.assertRegex(ver, r"^\d+\.\d+\.\d+")
+
+    def test_parse_identity_echo_extracts_both_fields(self):
+        text = (
+            "Headless config:\n"
+            "  model_tier=optimized (env)\n"
+            "  pipeline_version=3.1.3 (bundle)\n"
+            "  plugin_root=/tmp/plugin (resolved)\n"
+        )
+        got = invoke.parse_identity_echo(text)
+        self.assertEqual(got["pipeline_version"], "3.1.3")
+        self.assertEqual(got["plugin_root"], "/tmp/plugin")
+
+    def test_parse_identity_echo_missing_returns_partial(self):
+        got = invoke.parse_identity_echo("pipeline_version=1.0.0 (bundle)\n")
+        self.assertEqual(got.get("pipeline_version"), "1.0.0")
+        self.assertNotIn("plugin_root", got)
+
+    def test_extract_identity_receipt_from_envelope_result(self):
+        block = (
+            "Headless config:\n"
+            "  pipeline_version=3.1.3 (bundle)\n"
+            "  plugin_root=/abs/plugin (resolved)\n"
+        )
+        env = {"type": "result", "result": block}
+        got = invoke.extract_identity_receipt("", env, ())
+        self.assertEqual(got["plugin_root"], "/abs/plugin")
+        self.assertEqual(got["pipeline_version"], "3.1.3")
+
+
 if __name__ == "__main__":
     unittest.main()
