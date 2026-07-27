@@ -146,7 +146,6 @@
   ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
   [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
 
-
 ## v3.1.3 (2026-07-24)
 
 ### Bug Fixes
