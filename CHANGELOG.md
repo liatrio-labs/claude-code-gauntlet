@@ -2,6 +2,53 @@
 
 <!-- version list -->
 
+## v3.2.1 (2026-07-27)
+
+### Bug Fixes
+
+- **detection**: Address adversarial audit findings
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **detection**: Address CodeQL findings on PR #45
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **detection**: Address round-2 audit findings
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **detection**: Address round-3 audit findings
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **detection**: Address round-4 audit findings and pin every fix
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **detection**: Address round-5 review findings on PR #45
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **detection**: Make prior-review detection read the signal the pipeline actually writes
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **detection**: Reapply defect fixes and regenerate bench fixtures
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+- **skill**: Surface the previously-reviewed gate in SKILL.md Phase 2
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+### Chores
+
+- Apply markdownlint fix to CHANGELOG.md
+  ([#45](https://github.com/liatrio-labs/claude-code-gauntlet/pull/45),
+  [`00b8164`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/00b8164bd6a6ef6e987fdc7db96d7cd3a008d8d3))
+
+
 ## v3.2.0 (2026-07-27)
 
 ### Bug Fixes
