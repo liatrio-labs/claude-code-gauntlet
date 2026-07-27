@@ -419,6 +419,23 @@ class TestBuildResult(unittest.TestCase):
         self.assertFalse(result["sha_is_ancestor"])
         self.assertFalse(result["incremental_safe"])
 
+    def test_found_and_not_found_branches_share_the_same_key_set(self):
+        """Both outcomes are one 15-key output contract, not two independently
+        hand-written dict literals — pinned here so a future edit that adds a
+        field to only one branch (schema drift between "found" and "not
+        found") fails this test instead of round-tripping silently through
+        both callers."""
+        not_found = detect_prior_review.build_result(None, None)
+        signal = {
+            "sha": FULL_SHA, "signal": "marker", "legacy": False, "source": "review",
+            "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
+        }
+        found = detect_prior_review.build_result(
+            signal, _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 1),
+        )
+        self.assertEqual(set(not_found.keys()), set(found.keys()))
+        self.assertEqual(len(found), 15)
+
 
 class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
     """End-to-end: a REAL resolve_git_facts() result (git subprocess calls

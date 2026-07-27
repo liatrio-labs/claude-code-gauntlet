@@ -486,24 +486,29 @@ def build_result(signal, git_facts, scanned=None, errors=None):
     git_facts = git_facts or {}
     head_sha = git_facts.get("head_sha")
 
+    # The full 15-key output contract, defaulted to the "nothing found" shape.
+    # The signal-found branch below only overrides the keys that actually
+    # differ, so the two outcomes cannot drift apart on field names — a key
+    # added to one is a key added to both, by construction.
+    result = {
+        "previously_reviewed": False,
+        "signal": None,
+        "source": None,
+        "legacy": False,
+        "last_reviewed_sha": None,
+        "last_reviewed_sha_short": None,
+        "sha_resolvable": False,
+        "sha_is_ancestor": False,
+        "head_sha": head_sha,
+        "head_advanced": False,
+        "new_commit_count": None,
+        "incremental_safe": False,
+        "marker": None,
+        "scanned": scanned,
+        "errors": errors,
+    }
     if not signal:
-        return {
-            "previously_reviewed": False,
-            "signal": None,
-            "source": None,
-            "legacy": False,
-            "last_reviewed_sha": None,
-            "last_reviewed_sha_short": None,
-            "sha_resolvable": False,
-            "sha_is_ancestor": False,
-            "head_sha": head_sha,
-            "head_advanced": False,
-            "new_commit_count": None,
-            "incremental_safe": False,
-            "marker": None,
-            "scanned": scanned,
-            "errors": errors,
-        }
+        return result
 
     sha_resolvable = bool(git_facts.get("sha_resolvable"))
     last_reviewed_sha = git_facts.get("last_reviewed_sha") or signal.get("sha")
@@ -514,7 +519,7 @@ def build_result(signal, git_facts, scanned=None, errors=None):
     head_advanced = bool(
         sha_resolvable and head_known and is_ancestor and last_reviewed_sha != head_sha
     )
-    return {
+    result.update({
         "previously_reviewed": True,
         "signal": signal.get("signal"),
         "source": signal.get("source"),
@@ -523,14 +528,12 @@ def build_result(signal, git_facts, scanned=None, errors=None):
         "last_reviewed_sha_short": git_facts.get("last_reviewed_sha_short"),
         "sha_resolvable": sha_resolvable,
         "sha_is_ancestor": is_ancestor,
-        "head_sha": head_sha,
         "head_advanced": head_advanced,
         "new_commit_count": git_facts.get("new_commit_count"),
         "incremental_safe": bool(sha_resolvable and head_advanced),
         "marker": sanitize_marker(signal.get("marker")),
-        "scanned": scanned,
-        "errors": errors,
-    }
+    })
+    return result
 
 
 # ---------------------------------------------------------------------------

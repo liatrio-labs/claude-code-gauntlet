@@ -353,6 +353,50 @@ class TestMalformed(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# TestMaxMarkerScans — the DoS-hardening bound (a hostile body of unclosed
+# marker tokens must not cost O(tokens x length)).
+# ---------------------------------------------------------------------------
+
+class TestMaxMarkerScans(unittest.TestCase):
+
+    def test_valid_marker_within_the_scan_window_is_still_found(self):
+        """A body noisy with malformed candidates, where the one valid marker
+        sits inside the last _MAX_MARKER_SCANS matches, still resolves —
+        the cap must not cost correctness in the common case."""
+        noise = "<!-- code-gauntlet-findings: {broken -->\n" * 10
+        valid = build_marker(SHA_40, 1)
+        text = noise + valid
+        signal = detect_signal(text)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["sha"], SHA_40)
+
+    def test_valid_marker_beyond_the_scan_window_is_not_found(self):
+        """A valid marker followed by more than _MAX_MARKER_SCANS malformed
+        candidates falls outside the last-N window find_marker scans, and is
+        therefore not recovered. This pins the cap actually bounding work
+        rather than being dead code — if the implementation ever scanned
+        every match instead of ``matches[-_MAX_MARKER_SCANS:]``, this test
+        would start failing (recovering a signal it should not)."""
+        valid = build_marker(SHA_40, 1)
+        trailing_noise = "<!-- code-gauntlet-findings: {broken -->\n" * (
+            review_marker._MAX_MARKER_SCANS + 5
+        )
+        text = valid + "\n" + trailing_noise
+        self.assertIsNone(find_marker(text))
+        self.assertIsNone(detect_signal(text))
+
+    def test_many_malformed_candidates_never_raise_or_hang(self):
+        """Sanity check on the scenario the bound exists for: a body with far
+        more marker-token occurrences than the scan window, all malformed."""
+        garbage = "<!-- code-gauntlet-findings: {" * 5000
+        try:
+            result = find_marker(garbage)
+        except Exception as exc:  # pragma: no cover - this is the failure path
+            self.fail(f"raised {exc!r} on a garbage-heavy body")
+        self.assertIsNone(result)
+
+
+# ---------------------------------------------------------------------------
 # TestIdempotence
 # ---------------------------------------------------------------------------
 

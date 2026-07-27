@@ -432,6 +432,16 @@ class TestResolveMarkerSha(unittest.TestCase):
         self.assertEqual(resolve_marker_sha({"sha": "abc1234"}), "abc1234")
         mock_head.assert_not_called()
 
+    @patch("scripts.post_review.warn")
+    @patch("scripts.post_review.get_head_sha", return_value="unknown")
+    def test_degraded_fallback_when_head_sha_itself_unresolvable(self, mock_head, mock_warn):
+        """git rev-parse HEAD failing makes get_head_sha() return "unknown" —
+        not SHA-shaped, so the caller must be warned the posted marker will be
+        undetectable rather than have the failure pass silently."""
+        self.assertEqual(resolve_marker_sha({}), "unknown")
+        mock_warn.assert_called_once()
+        self.assertIn("unknown", mock_warn.call_args[0][0])
+
 
 # ---------------------------------------------------------------------------
 # Review-marker round trip through the REAL poster (Issue #39 Requirement 6)
