@@ -36,7 +36,7 @@ Read `references/report-format.md` for the report template and PR comment format
 
 ### Methodology inputs
 
-The methodology section must disclose: **plugin version** (`.claude-plugin/plugin.json` `version`), **PIPELINE_VERSION** (the `PIPELINE_VERSION` constant in `workflows/pipeline.js`), **per-stage models** (from `resolvedPolicy` — a `subagentModel` override if present, else the S5 defaults), the **effective config** (delivery, limits), and `stats`/`gaps`. If `resolvedPolicy.subagentModel` is set, disclose it prominently — `CLAUDE_CODE_SUBAGENT_MODEL` overrode every per-stage model.
+The methodology section must disclose: **plugin version** (`.claude-plugin/plugin.json` `version`), **PIPELINE_VERSION** (the `PIPELINE_VERSION` constant in `workflows/pipeline.js`), **per-stage models** (from `resolvedPolicy` — a `subagentModel` override if present, else the S5 defaults), the **effective config** (delivery, limits), the **review scope** (`Full`, or `Incremental since {sha} (N commits)` — the workflow's Report stage has no knowledge of the previously-reviewed gate, so the orchestrator appends this line at delivery, not the pipeline), and `stats`/`gaps`. If `resolvedPolicy.subagentModel` is set, disclose it prominently — `CLAUDE_CODE_SUBAGENT_MODEL` overrode every per-stage model.
 
 ### Permalinks
 

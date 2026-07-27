@@ -138,7 +138,7 @@ def _parse_json_array(text):
             break
         try:
             doc, end = decoder.raw_decode(text, idx)
-        except ValueError:
+        except (ValueError, RecursionError):
             return items if items else None
         if isinstance(doc, list):
             items.extend(doc)
@@ -317,7 +317,7 @@ def load_bodies_file(path):
     try:
         with open(path) as fh:
             payload = json.load(fh)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         return [], [f"bodies-file: could not read {path} ({exc})"]
     if not isinstance(payload, list):
         return [], [f"bodies-file: expected a JSON array in {path}"]
@@ -409,11 +409,32 @@ _MARKER_ECHO_KEYS = ("version", "findings_count", "sha", "findings", "_token", "
 _MARKER_ECHO_MAX_CHARS = 4096
 
 
+def _bounded(value, limit=512):
+    """Return *value* with any string/collection clipped to a printable bound."""
+    if isinstance(value, str):
+        return value if len(value) <= limit else value[:limit] + "...[truncated]"
+    if isinstance(value, (int, float, bool)) or value is None:
+        return value
+    try:
+        encoded = json.dumps(value)
+    except (TypeError, ValueError):
+        return "[unrepresentable]"
+    if len(encoded) <= limit:
+        return value
+    return f"[{type(value).__name__} truncated, {len(encoded)} chars]"
+
+
 def sanitize_marker(marker):
-    """Return a size-bounded, allow-listed view of a parsed marker payload."""
+    """Return a size-bounded, allow-listed view of a parsed marker payload.
+
+    Every echoed VALUE is bounded too, not just the key set: an allow-listed key
+    is still attacker-controlled, so an unbounded `version` string was a way to
+    pipe arbitrary text into the orchestrator's context through a key that
+    passed the allow-list.
+    """
     if not isinstance(marker, dict):
         return None
-    out = {k: marker[k] for k in _MARKER_ECHO_KEYS if k in marker}
+    out = {k: _bounded(marker[k]) for k in _MARKER_ECHO_KEYS if k in marker}
     extra = sorted(k for k in marker if k not in _MARKER_ECHO_KEYS)
     if extra:
         out["unknown_keys"] = extra[:32]
@@ -423,8 +444,9 @@ def sanitize_marker(marker):
         return {"sha": marker.get("sha"), "unrepresentable": True}
     if len(encoded) > _MARKER_ECHO_MAX_CHARS:
         return {
-            "version": out.get("version"),
-            "findings_count": out.get("findings_count"),
+            "version": _bounded(out.get("version"), 64),
+            "findings_count": out.get("findings_count")
+            if isinstance(out.get("findings_count"), int) else None,
             "sha": out.get("sha"),
             "_token": out.get("_token"),
             "_legacy": out.get("_legacy"),

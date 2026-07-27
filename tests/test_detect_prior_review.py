@@ -846,6 +846,67 @@ class TestGitlabFetch(_CliTestBase):
         self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
 
 
+class TestGithubFetch(_CliTestBase):
+    """GitHub happy-path coverage, mirroring TestGitlabFetch above — until now
+    GitHub (the primary platform) had only failure-path coverage in this file."""
+
+    def test_github_reviews_are_fetched_and_a_signal_is_recovered(self):
+        review_body = "## Summary\nSome pre-existing narrative text.\n"
+        review_body += review_marker.build_footer(3, FULL_SHA, body=review_body)
+        reviews = [{"id": 9, "body": review_body, "submitted_at": "2026-01-01T00:00:00Z"}]
+
+        argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
+        with patch("scripts.detect_prior_review.subprocess.run",
+                   side_effect=_fake_gh_glab_and_git_run(
+                       reviews=reviews, git_run=_fake_git_run(resolvable=True))):
+            out, code = _run_main(argv)
+
+        self.assertEqual(code, 0)
+        result = json.loads(out.strip())
+        self.assertTrue(result["previously_reviewed"])
+        self.assertEqual(result["signal"], "marker")
+        self.assertEqual(result["source"], "review")
+        self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
+
+    def test_paginated_concatenated_json_arrays_are_flattened_and_newest_marker_wins(self):
+        """``gh api --paginate`` emits one JSON array per page, concatenated back
+        to back in the raw stdout — not one merged array (see
+        detect_prior_review._parse_json_array's own docstring). Build the fake
+        stdout as two literal concatenated arrays, an older marker on 'page 1'
+        and a newer one on 'page 2', and prove both pages' entries are flattened
+        into the scan and the timestamp-newest signal wins regardless of which
+        page carried it."""
+        older_sha = "c" * 40
+        newer_sha = "d" * 40
+        page1 = json.dumps([
+            {"id": 1, "body": review_marker.build_marker(older_sha, 1),
+             "submitted_at": "2026-01-01T00:00:00Z"},
+        ])
+        page2 = json.dumps([
+            {"id": 2, "body": review_marker.build_marker(newer_sha, 2),
+             "submitted_at": "2026-06-01T00:00:00Z"},
+        ])
+        concatenated = page1 + page2  # exactly what --paginate emits: arrays back to back
+
+        def fake_run(cmd, *a, **k):
+            joined = " ".join(cmd)
+            if "pulls" in joined and "reviews" in joined:
+                return SimpleNamespace(stdout=concatenated, stderr="", returncode=0)
+            if cmd and cmd[0] == "git":
+                return _fake_git_run(resolvable=True)(cmd, *a, **k)
+            return SimpleNamespace(stdout="{}", stderr="", returncode=0)
+
+        argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
+        with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
+            out, code = _run_main(argv)
+
+        self.assertEqual(code, 0)
+        result = json.loads(out.strip())
+        self.assertTrue(result["previously_reviewed"])
+        self.assertEqual(result["last_reviewed_sha"], newer_sha)
+        self.assertEqual(result["scanned"], {"review": 2}, "both pages' entries must be counted")
+
+
 class TestSanitizeMarker(unittest.TestCase):
     """sanitize_marker allow-lists echoed marker keys, lists unknown key NAMES
     only (values never echoed), and truncates an oversized payload. The
@@ -873,16 +934,42 @@ class TestSanitizeMarker(unittest.TestCase):
         self.assertNotIn("SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR", json.dumps(out))
 
     def test_huge_value_is_truncated_not_echoed_verbatim(self):
+        """Assert the OUTCOME (the payload is bounded) rather than which branch
+        produced it: values are clipped individually before the whole-payload cap
+        is consulted, so a single huge value never reaches the `truncated`
+        fallback. Pinning the branch would fail on that strictly better bound."""
         huge = "X" * 100000
         marker = {"version": "3.0", "findings_count": 1, "sha": FULL_SHA, "findings": huge}
         out = detect_prior_review.sanitize_marker(marker)
-        self.assertTrue(out.get("truncated"))
         dumped = json.dumps(out)
         self.assertNotIn(huge, dumped)
-        self.assertLess(len(dumped), len(huge))
+        self.assertLessEqual(len(dumped), detect_prior_review._MARKER_ECHO_MAX_CHARS)
         self.assertEqual(out["sha"], FULL_SHA)
         self.assertEqual(out["version"], "3.0")
         self.assertEqual(out["findings_count"], 1)
+
+    def test_allowlisted_key_values_are_bounded_individually(self):
+        """An allow-listed key is still attacker-controlled — `version` passing
+        the key filter must not let 60 KB of prose through into the
+        orchestrator's context."""
+        marker = {"version": "INJECT " * 9000, "findings_count": 1,
+                  "sha": FULL_SHA, "_token": "code-gauntlet-findings", "_legacy": False}
+        out = detect_prior_review.sanitize_marker(marker)
+        self.assertLessEqual(
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+        self.assertLess(len(str(out["version"])), 1000)
+        self.assertEqual(out["sha"], FULL_SHA)
+
+    def test_whole_payload_cap_still_fires_for_many_bounded_values(self):
+        """The `truncated` fallback stays reachable: many individually-bounded
+        values can still exceed the total cap."""
+        marker = {"version": "v" * 400, "findings_count": 1, "sha": FULL_SHA,
+                  "findings": ["f" * 400] * 40,
+                  "_token": "code-gauntlet-findings", "_legacy": False}
+        out = detect_prior_review.sanitize_marker(marker)
+        self.assertLessEqual(
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+        self.assertEqual(out["sha"], FULL_SHA)
 
     def test_non_dict_marker_returns_none(self):
         self.assertIsNone(detect_prior_review.sanitize_marker(None))

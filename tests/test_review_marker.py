@@ -680,6 +680,42 @@ class TestDocContract(unittest.TestCase):
         text = _read(self.POST_REVIEW_REL)
         self.assertNotRegex(text, r"(?m)^def build_footer\(")
 
+    def test_previously_reviewed_gate_precedes_stale_truncation_in_skill_and_phase2(self):
+        """Pins the ordering that IS the data-loss fix: the previously-reviewed gate
+        must run BEFORE stale-artifact truncation. Truncation zeroes every
+        `code-gauntlet-*-{sha}.*` file for the current SHA, which are exactly the
+        artifacts a "Skip — keep the existing review" answer is supposed to
+        preserve; if truncation ever moved ahead of the gate in either doc, a
+        repeat run of an already-reviewed PR at the same SHA would wipe the prior
+        review's findings/report before the gate got a chance to offer keeping
+        them."""
+        markers = {
+            self.SKILL_REL: (
+                "### Previously-reviewed gate (PR/MR targets only)",
+                "### Clean stale files",
+            ),
+            self.PHASE2_REL: (
+                "**3. Previously-reviewed gate**",
+                "**4. Truncate stale files**",
+            ),
+        }
+        for rel, (gate_marker, truncate_marker) in markers.items():
+            with self.subTest(path=rel):
+                text = _read(rel)
+                gate_idx = text.find(gate_marker)
+                truncate_idx = text.find(truncate_marker)
+                self.assertNotEqual(gate_idx, -1, f"gate section marker not found in {rel}")
+                self.assertNotEqual(truncate_idx, -1, f"truncation section marker not found in {rel}")
+                self.assertLess(
+                    gate_idx, truncate_idx,
+                    f"{rel}: the previously-reviewed gate must appear BEFORE stale-file "
+                    "truncation in doc order — truncation zeroes the artifacts a "
+                    "'Skip — keep the existing review' answer exists to preserve, so if "
+                    "this ordering regresses, a repeat run at the same SHA silently "
+                    "destroys the prior review's findings/report before the gate can "
+                    "even offer to keep them",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -201,6 +201,7 @@ Severity has been downgraded one level from the original classification (see the
 |--------|---------|
 | **Agents dispatched** | {list each agent with completion status: completed/failed/skipped} |
 | **Model tier** | {optimized — list which agents used which model} |
+| **Review scope** | {Full, or Incremental since {sha} (N commits)} |
 | **Findings pipeline** | {N raw findings → M after deterministic verification → K after confidence filter → J after dedup} |
 | **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} |
 | **Blind challenge round** | {N findings blind-challenged, M downgraded, K boosted, J contested} |

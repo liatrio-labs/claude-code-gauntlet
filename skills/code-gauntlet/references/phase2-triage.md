@@ -103,7 +103,7 @@ Split the result on the first `/` into `owner`/`repo`. This reads the PR's **own
 python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}
 ```
 
-This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA resolved in step 1).
+This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA resolved in step 1). By this point step 2b's checkout has already switched the working tree to the PR and step 2's gitignore edit may already have written to `.git/info/exclude`; a Skip answer below stops the review but reverts neither — the tree stays checked out on the PR branch.
 
 Runs **before step 4's truncation, not after**: the head SHA has not moved on a repeat run of an already-reviewed PR, so truncating first would zero out the very artifacts a "Skip — keep the existing review" answer is supposed to preserve.
 
@@ -133,7 +133,9 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
 1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's file-bounded `{last_reviewed_sha}..HEAD -- <file list>` diff); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
-2. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file.
+2. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file. On the incremental path, this stays branch 1's full server `--name-only` list unchanged — the same list branch 4 uses to bound the diff, never a narrower incremental-only set.
+
+`changedLines` (threaded into `args.changedLines`, Args Preparation below) must be counted from the diff actually saved in step 1 — the incremental diff on the incremental path, never branch 1's full-PR diff — since it feeds the 2e trivial/light-scope gate and the Summarize bucketing threshold.
 
 ```bash
 # PR/MR mode: server-computed diff + name-only file list

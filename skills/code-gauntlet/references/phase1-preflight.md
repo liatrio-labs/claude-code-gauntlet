@@ -117,11 +117,13 @@ It always exits 0 and prints exactly one JSON object on stdout (detection degrad
   "head_advanced": true,
   "new_commit_count": 3,
   "incremental_safe": true,
-  "marker": { "...": "parsed payload, unknown keys preserved" },
+  "marker": { "...": "allow-listed keys, bounded; unknown keys named under unknown_keys" },
   "scanned": { "review": 4 },
   "errors": []
 }
 ```
+
+`marker` is not a verbatim echo of the parsed payload — `sanitize_marker` allow-lists which keys it returns (`version`, `findings_count`, `sha`, `findings`, `_token`, `_legacy`), bounds every value, and reports any other key by NAME only under `unknown_keys` (values never echoed). The parsed marker is attacker-controllable — anyone with read access can post a comment carrying one — and the orchestrator is told to consume `marker` directly, so an unbounded verbatim echo would pipe arbitrary text into a model's context.
 
 When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`marker`/`last_reviewed_sha` `null` and `incremental_safe` `false`.
 
@@ -141,7 +143,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
       options: [
         { label: "Incremental — only changes since last review", description: "Review new commits only" },
         { label: "Full — review entire PR from scratch", description: "Start fresh" },
-        { label: "Skip — don't review again", description: "No review needed" }
+        { label: "Skip — don't review again", description: "No review needed — the working tree stays checked out on this PR; nothing is reverted" }
       ]
     }]
   )
@@ -158,7 +160,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
       multiSelect: false,
       options: [
         { label: "Yes — review again", description: "Run a fresh review" },
-        { label: "No — skip", description: "Keep the existing review" }
+        { label: "No — skip", description: "Keep the existing review — the working tree stays checked out on this PR; nothing is reverted" }
       ]
     }]
   )
