@@ -59,7 +59,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ## Eligibility Checks
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): none of the `AskUserQuestion` gates in this section are presented. The draft gate applies `CODE_GAUNTLET_DRAFT_POLICY` (`review` proceeds, `skip` stops); both previously-reviewed variants apply `CODE_GAUNTLET_REVIEWED_POLICY` (`incremental` / `full` / `skip`). Closed/merged does **not** stop the run headless — it proceeds against the pinned head exactly as resolved (benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE`, and `dry-run` posts nothing). Trivial-only-changes still stops deterministically. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): none of the `AskUserQuestion` gates in this section are presented. The draft gate applies `CODE_GAUNTLET_DRAFT_POLICY` (`review` proceeds, `skip` stops); the previously-reviewed gate — which runs in Phase 2 after checkout, see below — applies `CODE_GAUNTLET_REVIEWED_POLICY` (`incremental` / `full` / `skip`). Closed/merged does **not** stop the run headless — it proceeds against the pinned head exactly as resolved (benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE`, and `dry-run` posts nothing). Trivial-only-changes still stops deterministically. See `references/headless-mode.md`.
 
 1. **Closed/merged?** — Stop: "This PR is already closed/merged. No review needed."
 
@@ -79,80 +79,90 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
    )
    ```
 
-3. **Previously reviewed?** — Skip this check entirely when `target_type == local` (no PR/MR ⇒ no signal to detect). Otherwise run the detector. `{platform}` is `github` or `gitlab` per the resolved target type; owner/repo are parsed from the `origin` remote, so pass `--owner`/`--repo` only when the PR/MR lives on some other repository:
-
-   ```bash
-   python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --number {pr_number}
-   ```
-
-   It always exits 0 and prints exactly one JSON object on stdout (detection degrades, never blocks the review):
-
-   ```json
-   {
-     "previously_reviewed": true,
-     "signal": "marker",
-     "source": "review",
-     "legacy": false,
-     "last_reviewed_sha": "<full>",
-     "last_reviewed_sha_short": "<8>",
-     "sha_resolvable": true,
-     "head_sha": "<full>",
-     "head_advanced": true,
-     "new_commit_count": 3,
-     "incremental_safe": true,
-     "marker": { "...": "parsed payload, unknown keys preserved" },
-     "scanned": { "review": 4, "issue_comment": 2 },
-     "errors": []
-   }
-   ```
-
-   When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`marker`/`last_reviewed_sha` `null` and `incremental_safe` `false`.
-
-   `incremental_safe` is the single boolean that gates whether the incremental path may be offered. Branch in this order — the `sha_resolvable` case must be checked **before** the "no new commits" case, because an unresolvable SHA also reports `head_advanced: false` and would otherwise be announced as "no new commits" when commits may well have been pushed:
-
-   - `previously_reviewed == false` → continue, no question asked.
-   - `previously_reviewed == true` and `sha_resolvable == false` → present **neither** template. Disclose that a prior review was found but its commit is not present locally (force-push, shallow clone, or unfetched object) and continue as a full review.
-   - `incremental_safe == true` → ask (`{N}` = `new_commit_count`, `{short_sha}` = `last_reviewed_sha_short`):
-
-     ```
-     AskUserQuestion(
-       questions: [{
-         question: "This PR was previously reviewed at commit {short_sha}. {N} new commits have been pushed since. How would you like to proceed?",
-         header: "Previously Reviewed",
-         multiSelect: false,
-         options: [
-           { label: "Incremental — only changes since last review", description: "Review new commits only" },
-           { label: "Full — review entire PR from scratch", description: "Start fresh" },
-           { label: "Skip — don't review again", description: "No review needed" }
-         ]
-       }]
-     )
-     ```
-
-     If **Incremental**: store `last_reviewed_sha` — Phase 2 2c's incremental diff branch uses it. The marker payload is already parsed and available under the JSON's `marker` key above; do not re-parse the footer or hand-write a regex.
-   - `previously_reviewed == true`, `sha_resolvable == true`, `head_advanced == false` (the head is exactly where the last review stopped) → ask:
-
-     ```
-     AskUserQuestion(
-       questions: [{
-         question: "This PR was already reviewed and no new commits have been pushed. Review again with fresh eyes?",
-         header: "Previously Reviewed",
-         multiSelect: false,
-         options: [
-           { label: "Yes — review again", description: "Run a fresh review" },
-           { label: "No — skip", description: "Keep the existing review" }
-         ]
-       }]
-     )
-     ```
-
-   **Degradations** (state explicitly, never block the review):
-   - `errors` non-empty → disclose "prior-review detection unavailable ({reason})" and continue as a fresh review. `errors` can be non-empty alongside a successful detection (one surface fetched, the other failed) — report it either way.
-   - Never treat a detection failure as a reason to stop the run: the detector exits 0 for every outcome, and a review that cannot check its own history is still a valid full review.
-
-   **Boundary:** the signal exists only when a prior review actually posted to the PR/MR. A chat-only or markdown-only prior run writes nothing to the PR/MR, so a rerun is correctly detected as fresh.
+3. **Previously reviewed?** — **Deferred to Phase 2**, immediately after checkout. See "Previously-Reviewed Gate" below for the full gate; `phase2-triage.md` section 2b-post step 4 is where it runs. The reason is the same one that moves head-SHA resolution out of Phase 1 (see the note at the top of this file): the gate compares the last-reviewed commit against the PR head and counts the commits between them, and before `gh pr checkout` the working tree is on whatever branch the session started on — often with the PR's objects not even fetched. Running it here would compare against the wrong tree and silently mis-gate the incremental path.
 
 4. **Trivially simple?** — If ONLY lockfile/generated/auto-formatted changes with no logic modifications, stop.
+
+---
+
+## Previously-Reviewed Gate
+
+> Runs in **Phase 2, section 2b-post step 4** — after checkout, never in Phase 1. Listed here with the other pre-flight templates because it is a pre-flight UX decision.
+
+Skip entirely when `target_type == local` (no PR/MR ⇒ no signal to detect). Otherwise run the detector. `{platform}` is `github` or `gitlab` per the resolved target type; pass the `{owner}`/`{repo}` resolved for the PR rather than letting the script fall back to the `origin` remote, which points at the fork in a fork clone:
+
+```bash
+python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}
+```
+
+It always exits 0 and prints exactly one JSON object on stdout (detection degrades, never blocks the review):
+
+```json
+{
+  "previously_reviewed": true,
+  "signal": "marker",
+  "source": "review",
+  "legacy": false,
+  "last_reviewed_sha": "<full>",
+  "last_reviewed_sha_short": "<8>",
+  "sha_resolvable": true,
+  "sha_is_ancestor": true,
+  "head_sha": "<full>",
+  "head_advanced": true,
+  "new_commit_count": 3,
+  "incremental_safe": true,
+  "marker": { "...": "parsed payload, unknown keys preserved" },
+  "scanned": { "review": 4 },
+  "errors": []
+}
+```
+
+When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`marker`/`last_reviewed_sha` `null` and `incremental_safe` `false`.
+
+`incremental_safe` is the single boolean that gates whether the incremental path may be offered. Branch in this order — the `sha_resolvable` case must be checked **before** the "no new commits" case, because an unresolvable SHA also reports `head_advanced: false` and would otherwise be announced as "no new commits" when commits may well have been pushed:
+
+- `previously_reviewed == false` → continue, no question asked.
+- `previously_reviewed == true` and `sha_resolvable == false` → present **neither** template. Disclose that a prior review was found but its commit is not present locally (force-push, shallow clone, or unfetched object) and continue as a full review.
+- `incremental_safe == true` → ask (`{short_sha}` = `last_reviewed_sha_short`). Fill `{N}` from `new_commit_count`; if it is `0` or `null`, drop the count clause and say "new commits have been pushed since" rather than rendering "0 new commits":
+
+  ```
+  AskUserQuestion(
+    questions: [{
+      question: "This PR was previously reviewed at commit {short_sha}. {N} new commits have been pushed since. How would you like to proceed?",
+      header: "Previously Reviewed",
+      multiSelect: false,
+      options: [
+        { label: "Incremental — only changes since last review", description: "Review new commits only" },
+        { label: "Full — review entire PR from scratch", description: "Start fresh" },
+        { label: "Skip — don't review again", description: "No review needed" }
+      ]
+    }]
+  )
+  ```
+
+  If **Incremental**: store `last_reviewed_sha` — Phase 2 2c's incremental diff branch uses it. The marker payload is already parsed and available under the JSON's `marker` key above; do not re-parse the footer or hand-write a regex.
+- `previously_reviewed == true`, `sha_resolvable == true`, `head_advanced == false` (the head is exactly where the last review stopped) → ask:
+
+  ```
+  AskUserQuestion(
+    questions: [{
+      question: "This PR was already reviewed and no new commits have been pushed. Review again with fresh eyes?",
+      header: "Previously Reviewed",
+      multiSelect: false,
+      options: [
+        { label: "Yes — review again", description: "Run a fresh review" },
+        { label: "No — skip", description: "Keep the existing review" }
+      ]
+    }]
+  )
+  ```
+
+**Degradations** (state explicitly, never block the review):
+
+- `errors` non-empty → disclose "prior-review detection unavailable ({reason})" and continue as a fresh review. `errors` can be non-empty alongside a successful detection — report it either way.
+- Never treat a detection failure as a reason to stop the run: the detector exits 0 for every outcome, and a review that cannot check its own history is still a valid full review.
+
+**Boundary:** the signal exists only when a prior review actually posted to the PR/MR. A chat-only or markdown-only prior run writes nothing to the PR/MR, so a rerun is correctly detected as fresh.
 
 ---
 

@@ -57,7 +57,7 @@ Parse the user's input to determine the review target before eligibility checks 
 
    > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE` (`dry-run` posts nothing) and delivery follows `CODE_GAUNTLET_DELIVERY`, not PR state. See `references/headless-mode.md`.
 2. **Draft?** → Ask user (template in `references/phase1-preflight.md`).
-3. **Previously reviewed?** → Skip for local targets; otherwise run `detect_prior_review.py` and gate incremental vs full vs skip on its `incremental_safe` result (templates and degradations in reference).
+3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 4) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
 4. **Trivially simple?** → If ONLY lockfile/generated/auto-formatted changes, stop.
 
 ### Pre-flight configuration gate — MANDATORY GATE

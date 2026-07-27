@@ -481,7 +481,7 @@ class TestValidLinesForFile(unittest.TestCase):
 class TestSkipWarningDiagnostics(unittest.TestCase):
     """Verify that skip warnings include valid-line diagnostics."""
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc123")
+    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={"html_url": "http://example.com"})
     @patch("scripts.post_review.warn")
@@ -499,7 +499,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         self.assertIn("10", msg)
         self.assertIn("20", msg)
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc123")
+    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={"html_url": "http://example.com"})
     @patch("scripts.post_review.warn")
@@ -520,7 +520,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         # With an empty set, valid lines list is [] not None, so diag is present but empty
         self.assertIn("Valid lines for this file: []", msg)
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc123")
+    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={})
     @patch("scripts.post_review.fetch_gitlab_shas", return_value=("b", "h", "s"))

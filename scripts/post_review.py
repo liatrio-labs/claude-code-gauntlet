@@ -380,7 +380,17 @@ def resolve_marker_sha(data):
     sha = data.get("sha")
     if isinstance(sha, str) and SHA_RE.fullmatch(sha.strip()):
         return sha.strip()
-    return get_head_sha()
+    head = get_head_sha()
+    if not SHA_RE.fullmatch(head):
+        # get_head_sha() yields "unknown" when git fails. Writing that produces a
+        # marker the reader is guaranteed to reject, so the review posts but the
+        # next run cannot detect it. Say so rather than failing silently.
+        warn(
+            f"could not resolve a commit SHA for the review marker (git returned "
+            f"{head!r}); the posted review will not be detectable as a prior review. "
+            f"Set the 'sha' field in the findings JSON to avoid this."
+        )
+    return head
 
 
 # ---------------------------------------------------------------------------

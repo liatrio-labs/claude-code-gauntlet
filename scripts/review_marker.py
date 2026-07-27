@@ -73,6 +73,12 @@ _PROSE_LABEL_RE = re.compile(r"Reviewed\s+up\s+to\s*:", re.IGNORECASE)
 
 _ISO8601_RE = re.compile(r"^\d{4}-\d{2}-\d{2}")
 
+# How many marker candidates find_marker will attempt to parse, counting back
+# from the end of the body. A real body carries one. A body carrying dozens of
+# unparseable ones is hostile input on a public surface, and the safe answer
+# there is "no signal" (a full review) rather than an unbounded parse.
+_MAX_MARKER_SCANS = 32
+
 
 def is_sha_shaped(value):
     """Return True when *value* is a 7-40 character lowercase hex git object id."""
@@ -187,23 +193,24 @@ def find_marker(text):
     if not isinstance(text, str) or not text:
         return None
     try:
-        found = None
-        pos = 0
-        while True:
-            match = _MARKER_RE.search(text, pos)
-            if match is None:
-                return found
+        # Scan candidates from the END backwards and stop at the first that
+        # parses. The answer is defined as the last valid marker, so in the
+        # normal case (a body whose final marker is the mechanical one) this
+        # costs exactly one scan. Forward-scanning every occurrence made a body
+        # full of unclosed `<!--code-gauntlet-findings:{` tokens cost
+        # O(tokens x length) — minutes of Phase 1 stall from one hostile comment.
+        matches = list(_MARKER_RE.finditer(text))
+        for match in reversed(matches[-_MAX_MARKER_SCANS:]):
             start = match.end()
-            payload, end = (None, start)
-            if start < len(text) and text[start] == "{":
-                payload, end = _scan_json_at(text, start)
+            if start >= len(text) or text[start] != "{":
+                continue
+            payload, _ = _scan_json_at(text, start)
             if isinstance(payload, dict):
                 found = dict(payload)
                 found["_token"] = match.group(1)
                 found["_legacy"] = match.group(1) == LEGACY_MARKER_TOKEN
-                pos = max(end, match.end())
-            else:
-                pos = match.end()
+                return found
+        return None
     except Exception:  # pragma: no cover — defensive: a reader never raises
         return None
 

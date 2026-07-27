@@ -24,8 +24,15 @@ for the format. Nothing here branches on the marker's ``version`` field.
 
 Surfaces scanned (read-only; these are exactly the surfaces post_review.py writes to):
     github — repos/{owner}/{repo}/pulls/{n}/reviews      (source "review")
-             repos/{owner}/{repo}/issues/{n}/comments    (source "issue_comment")
     gitlab — projects/{id}/merge_requests/{n}/notes      (source "note")
+
+Only the surfaces post_review.py actually writes to are scanned. A surface we
+never write to can yield no true positive, but anyone with read access can post
+to it — and since the newest signal wins, that is a way to aim a rerun at an
+attacker-chosen SHA. Note the residual risk: both scanned surfaces are still
+user-writable, so a forged signal can at worst cause a rerun to offer/take an
+incremental scope. The interactive gate surfaces this to a human; headless
+`CODE_GAUNTLET_REVIEWED_POLICY=skip` is the configuration to think twice about.
 
 Output — exactly one JSON object on stdout:
     {
@@ -36,19 +43,22 @@ Output — exactly one JSON object on stdout:
         "last_reviewed_sha": "<full>",   # expanded when resolvable, else as recorded
         "last_reviewed_sha_short": "<8>",
         "sha_resolvable": true,          # the object exists in this clone
+        "sha_is_ancestor": true,         # ...and is an ancestor of head_sha
         "head_sha": "<full>",
         "head_advanced": true,
         "new_commit_count": 3,           # null when the SHA is unresolvable
         "incremental_safe": true,        # sha_resolvable and head_advanced
         "marker": {...},                 # full parsed payload / null
-        "scanned": {"review": 4, "issue_comment": 2},
+        "scanned": {"review": 4},
         "errors": []
     }
 
 Exit codes:
-    0 for EVERY outcome, including "found nothing" and "all fetches failed" — the
-    caller reads "errors". Detection is an optimization; a review must never fail
-    because a comment fetch 404'd. Non-zero only for argparse usage errors.
+    0 for EVERY outcome — "found nothing", "all fetches failed", a missing
+    --number, an unparseable remote. The caller reads "errors". Detection is an
+    optimization; a review must never fail because a comment fetch 404'd, and a
+    non-zero exit with empty stdout would leave the caller nothing to degrade on.
+    argparse still rejects a malformed flag (unknown option, bad --platform).
 
 No external Python dependencies — stdlib only.
 """
@@ -76,7 +86,7 @@ GIT_TIMEOUT_SECONDS = 10
 # The surfaces each platform exposes, in scan order. Used to seed "scanned" so the
 # key set is stable even when a fetch fails or returns nothing.
 PLATFORM_SOURCES = {
-    "github": ("review", "issue_comment"),
+    "github": ("review",),
     "gitlab": ("note",),
 }
 
@@ -180,44 +190,54 @@ def remote_slug():
     if rc != 0:
         return None, None
     url = stdout.strip()
-    match = re.match(r"git@[^:]+:(.+?)(?:\.git)?$", url) or re.match(
-        r"https?://[^/]+/(.+?)(?:\.git)?$", url
+    match = (
+        # scp-style: git@host:owner/repo(.git)
+        re.match(r"[^@/]+@[^:/]+:(.+?)(?:\.git)?/?$", url)
+        # any scheme, with optional user@ and :port —
+        # https://, http://, ssh://, git://, git+ssh://
+        or re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?/?$", url)
     )
     if not match:
         return None, None
-    owner, sep, repo = match.group(1).partition("/")
+    owner, sep, repo = match.group(1).strip("/").partition("/")
     if not sep or not owner or not repo:
         return None, None
     return owner, repo
 
 
 def fetch_entries_github(owner, repo, number):
-    """Return ``(entries, errors)`` for the two GitHub surfaces."""
-    errors = []
+    """Return ``(entries, errors)`` for the GitHub PR-reviews surface.
+
+    Only ``pulls/{n}/reviews`` is scanned — the exact endpoint ``post_review.py``
+    POSTs to. ``issues/{n}/comments`` was deliberately dropped: nothing has ever
+    written the signal there, so it could contribute no true positive, while any
+    user with read access can post an issue comment carrying a forged marker.
+    Since the newest signal wins, that surface was a way to point a rerun at an
+    attacker-chosen SHA and skip review of the commits after it.
+    """
     reviews, err = fetch_json(
         ["gh", "api", "--paginate", f"repos/{owner}/{repo}/pulls/{number}/reviews"],
         "github reviews",
     )
-    if err:
-        errors.append(err)
-    comments, err = fetch_json(
-        ["gh", "api", "--paginate", f"repos/{owner}/{repo}/issues/{number}/comments"],
-        "github issue comments",
-    )
-    if err:
-        errors.append(err)
-    return collect_entries_github(reviews, comments), errors
+    return collect_entries_github(reviews), ([err] if err else [])
 
 
 def fetch_entries_gitlab(owner, repo, number):
-    """Return ``(entries, errors)`` for the GitLab MR notes surface."""
+    """Return ``(entries, errors)`` for the GitLab MR notes surface.
+
+    ``--paginate`` is required, not optional: GitLab returns 20 notes per page,
+    and ``post_gitlab`` posts the marker-bearing summary note FIRST and then one
+    inline discussion note per finding. On any MR with more than 20 notes the
+    summary is off page 1, so an unpaginated fetch would make every GitLab rerun
+    look fresh — the very bug this script exists to fix.
+    """
     project_id = gitlab_project_id(owner, repo)
     notes, err = fetch_json(
-        ["glab", "api", f"projects/{project_id}/merge_requests/{number}/notes"],
+        ["glab", "api", "--paginate",
+         f"projects/{project_id}/merge_requests/{number}/notes"],
         "gitlab notes",
     )
-    errors = [err] if err else []
-    return collect_entries_gitlab(notes), errors
+    return collect_entries_gitlab(notes), ([err] if err else [])
 
 
 # ---------------------------------------------------------------------------
@@ -245,12 +265,9 @@ def _entries_from(payload, source, timestamp_key):
     return entries
 
 
-def collect_entries_github(payload_reviews, payload_comments):
-    """Reviews (``submitted_at``) then issue comments (``created_at``)."""
-    return (
-        _entries_from(payload_reviews, "review", "submitted_at")
-        + _entries_from(payload_comments, "issue_comment", "created_at")
-    )
+def collect_entries_github(payload_reviews):
+    """PR reviews, keyed on ``submitted_at`` — the only surface we write to."""
+    return _entries_from(payload_reviews, "review", "submitted_at")
 
 
 def collect_entries_gitlab(payload_notes):
@@ -323,6 +340,7 @@ def resolve_git_facts(sha, head_sha=None):
         "last_reviewed_sha": sha if isinstance(sha, str) and sha else None,
         "last_reviewed_sha_short": None,
         "sha_resolvable": False,
+        "sha_is_ancestor": False,
         "new_commit_count": None,
     }
     if not facts["last_reviewed_sha"]:
@@ -340,6 +358,18 @@ def resolve_git_facts(sha, head_sha=None):
     facts["last_reviewed_sha"] = full
     facts["last_reviewed_sha_short"] = full[:8]
 
+    # The reviewed commit must be an ANCESTOR of the head, not merely a different
+    # object. After a branch is force-pushed backwards the old commit still exists
+    # in the object DB, so an inequality test alone reports "advanced" while
+    # `rev-list --count` correctly says 0 — which would render as "0 new commits
+    # have been pushed since" and hand `git diff <sha>...HEAD` an empty diff.
+    if head:
+        _, _, anc_rc = run(
+            ["git", "merge-base", "--is-ancestor", sha, head],
+            timeout=GIT_TIMEOUT_SECONDS,
+        )
+        facts["sha_is_ancestor"] = anc_rc == 0
+
     stdout, _, rc = run(
         ["git", "rev-list", "--count", f"{sha}..{head or 'HEAD'}"],
         timeout=GIT_TIMEOUT_SECONDS,
@@ -353,8 +383,11 @@ def resolve_git_facts(sha, head_sha=None):
 def build_result(signal, git_facts, scanned=None, errors=None):
     """Assemble the output object. Pure — no subprocess, no I/O.
 
-    ``incremental_safe`` is exactly ``sha_resolvable and head_advanced``: the one
-    boolean the orchestrator gates the incremental path on.
+    ``incremental_safe`` is exactly ``sha_resolvable and head_advanced``, and
+    ``head_advanced`` additionally requires the reviewed commit to be an ancestor
+    of the head — so a backwards force-push degrades to a full review instead of
+    promising an incremental diff that would be empty. It is the one boolean the
+    orchestrator gates the incremental path on.
     """
     scanned = dict(scanned or {})
     errors = list(errors or [])
@@ -370,6 +403,7 @@ def build_result(signal, git_facts, scanned=None, errors=None):
             "last_reviewed_sha": None,
             "last_reviewed_sha_short": None,
             "sha_resolvable": False,
+            "sha_is_ancestor": False,
             "head_sha": head_sha,
             "head_advanced": False,
             "new_commit_count": None,
@@ -384,7 +418,10 @@ def build_result(signal, git_facts, scanned=None, errors=None):
     # An unusable head ("unknown", i.e. `git rev-parse HEAD` failed) must never
     # read as "advanced" — that would offer an incremental diff against nothing.
     head_known = bool(head_sha) and head_sha != "unknown"
-    head_advanced = bool(sha_resolvable and head_known and last_reviewed_sha != head_sha)
+    is_ancestor = bool(git_facts.get("sha_is_ancestor"))
+    head_advanced = bool(
+        sha_resolvable and head_known and is_ancestor and last_reviewed_sha != head_sha
+    )
     return {
         "previously_reviewed": True,
         "signal": signal.get("signal"),
@@ -393,6 +430,7 @@ def build_result(signal, git_facts, scanned=None, errors=None):
         "last_reviewed_sha": last_reviewed_sha,
         "last_reviewed_sha_short": git_facts.get("last_reviewed_sha_short"),
         "sha_resolvable": sha_resolvable,
+        "sha_is_ancestor": is_ancestor,
         "head_sha": head_sha,
         "head_advanced": head_advanced,
         "new_commit_count": git_facts.get("new_commit_count"),
@@ -407,14 +445,18 @@ def build_result(signal, git_facts, scanned=None, errors=None):
 # Main
 # ---------------------------------------------------------------------------
 
-def gather_entries(args, parser):
+def gather_entries(args):
     """Return ``(entries, errors, scanned)`` for the requested source of bodies."""
     if args.bodies_file:
         entries, errors = load_bodies_file(args.bodies_file)
         return entries, errors, count_by_source(entries)
 
+    # Anything recoverable past this point is reported as an `errors[]` entry on a
+    # normal exit-0 result, never as an argparse exit-2 with empty stdout: the
+    # caller parses our stdout to decide how to degrade, and a run that prints no
+    # JSON gives it nothing to read.
     if not args.number:
-        parser.error("--number is required unless --bodies-file is given")
+        return [], ["usage: --number is required unless --bodies-file is given"], {}
 
     owner, repo = args.owner, args.repo
     if not owner or not repo:
@@ -422,10 +464,10 @@ def gather_entries(args, parser):
         owner = owner or derived_owner
         repo = repo or derived_repo
     if not owner or not repo:
-        parser.error(
-            "--owner/--repo are required when they cannot be parsed from the "
-            "'origin' git remote"
-        )
+        return [], [
+            "could not determine owner/repo: the 'origin' remote is missing or "
+            "its URL is not in a recognized form — pass --owner and --repo"
+        ], {}
 
     if args.platform == "github":
         entries, errors = fetch_entries_github(owner, repo, args.number)
@@ -469,7 +511,7 @@ def main():
     )
     args = parser.parse_args()
 
-    entries, errors, scanned = gather_entries(args, parser)
+    entries, errors, scanned = gather_entries(args)
 
     try:
         signal = select_latest(entries)
@@ -479,7 +521,11 @@ def main():
 
     git_facts = resolve_git_facts(signal.get("sha") if signal else None, args.head_sha)
     result = build_result(signal, git_facts, scanned, errors)
-    print(json.dumps(result, indent=2, ensure_ascii=False))
+    # ensure_ascii=True: `marker` echoes unknown keys verbatim and `errors`
+    # carries raw gh/glab stderr, so the payload can hold text outside the
+    # terminal encoding. Escaping it keeps stdout printable under an ASCII
+    # locale instead of dying with UnicodeEncodeError and no JSON at all.
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":

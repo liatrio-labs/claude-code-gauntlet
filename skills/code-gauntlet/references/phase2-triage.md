@@ -97,6 +97,18 @@ Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob(
 
 Prevents echo-append (`>>`) from accumulating findings across sessions. Without truncation, re-running a review on the same SHA would append duplicate findings to existing NDJSON files.
 
+**4. Previously-reviewed gate** (PR/MR targets only — skip for `local`):
+
+Run the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe:
+
+```bash
+python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}
+```
+
+This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA resolved in step 1); `{owner}`/`{repo}` are the PR's repository, not necessarily the `origin` remote.
+
+If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2c's incremental branch consumes it. If it resolves to **Skip**, stop the run here. Otherwise continue as a full review.
+
 ---
 
 ## 2c. Identify Review Target
@@ -108,11 +120,11 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
    - **GitLab (MR):** Gather the file list with `glab mr diff {pr_number} --name-only`. Gather the full diff with `glab mr diff {pr_number}`.
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
-4. **Incremental** (Phase 1 resolved the "Incremental" answer and stored `last_reviewed_sha`; PR/MR mode only) — replaces branch 1's server-computed diff with `git diff {last_reviewed_sha}...HEAD` and `git diff --name-only {last_reviewed_sha}...HEAD`. Same validation rules as below (non-empty, starts with `diff --git`); if the diff fails or is empty, fall back to branch 1's full server diff and disclose the fallback. Record the incremental scope (`last_reviewed_sha`) in the triage announcement and the Phase 8 methodology.
+4. **Incremental** (2b-post step 4's gate resolved "Incremental" and stored `last_reviewed_sha`; PR/MR mode only) — replaces branch 1's server-computed diff with `git diff {last_reviewed_sha}...HEAD` and `git diff --name-only {last_reviewed_sha}...HEAD`. Same validation rules as below (non-empty, starts with `diff --git`); if the diff fails or is empty, fall back to branch 1's full server diff and disclose the fallback. Record the incremental scope (`last_reviewed_sha`) in the triage announcement and the Phase 8 methodology.
 
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
-1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when Phase 1 resolved incremental, branch 4's `{last_reviewed_sha}...HEAD` diff); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 4 resolved incremental, branch 4's `{last_reviewed_sha}...HEAD` diff); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 2. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file.
 
 ```bash
