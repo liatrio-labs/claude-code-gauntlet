@@ -108,6 +108,18 @@ Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob(
 
 All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list). The workflow's artifact-writer produces: `findings-*.json`, `report-*.md`, `checkpoint-all-*.json`.
 
+### Previously-reviewed gate (PR/MR targets only)
+
+Still in this step, now that the tree is at the review head, run the gate deferred from Phase 1 eligibility check 3 — it compares the last-reviewed commit against the PR head, so it could not run before checkout. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA above); `{owner}`/`{repo}` are the PR's repository, which in a fork clone is not the `origin` remote:
+
+```bash
+Bash(command="python3 \"{plugin_root}/scripts/detect_prior_review.py\" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}")
+```
+
+It always exits 0 and prints one JSON object. Gate on `incremental_safe`; the branch table, question templates, and degradations are in `references/phase1-preflight.md` → "Previously-Reviewed Gate". **Incremental** stores `last_reviewed_sha` for the 2c diff branch; **Skip** stops the run here; anything else continues as a full review. Skip this gate entirely for local-diff targets.
+
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the gate still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed`). See `references/headless-mode.md`.
+
 ### Gather the git artifacts the workflow consumes
 
 The workflow has no shell or git access, so Phase 2 produces the git-derived inputs on disk and threads their content/paths into the args.
