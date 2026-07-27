@@ -2,6 +2,151 @@
 
 <!-- version list -->
 
+## v3.2.0 (2026-07-27)
+
+### Bug Fixes
+
+- **bench**: Add child-auth {api,subscription} for review children
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Address PR #44 review comments on identity G4
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+- **bench**: Branch child credentialing on an explicit auth mode
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Drop a non-billable cost from the release-card leg too
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Harden identity parse and relative scriptPath match
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+- **bench**: Keep credential-named identifiers out of printed messages
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Name the helper lookup for the file paths it returns
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Never mix credentials across one run dir on resume
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Persist the auth mode a resume of an orphan run dir spends
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Resolve the resume auth mode from one read, not the caller's copy
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Widen the apiKeyHelper preflight to the home-relative .claude dir
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+### Chores
+
+- Apply markdownlint fix to CHANGELOG.md
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- Keep agent SDD scratch out of the tree
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+- Re-apply the markdownlint fix to CHANGELOG.md
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+### Code Style
+
+- **bench**: Lead the subscription prereq comment with its functional reason
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+### Documentation
+
+- Warn against the skip-ci token in commit messages
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Document the subscription child-auth mode
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Log the deferred usage-limit classification in the watch ledger
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Qualify quoted costs and the subscription smoke recommendation
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Record why the per-run knobs are absent from --check's guard
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **skill**: Add pipeline_version and plugin_root to headless echo
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+### Features
+
+- **bench**: Add --child-auth {api,subscription} to the runner
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Environment purity receipts for wrong-plugin rejection
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+- **bench**: Invalidate child runs on plugin identity mismatch
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+- **bench**: Label ledger rows with auth_mode and gate billable cost on it
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Parse pipeline_version and plugin_root identity receipts
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+- **bench**: Prefer echo identity receipts in smoke checker G4
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+### Refactoring
+
+- **bench**: Give the child-auth vocabulary and manifest chain one home
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+### Testing
+
+- **bench**: Assert the CHILD process never receives the metered key
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Cover G4 defense-in-depth echo plus stale scriptPath
+  ([#44](https://github.com/liatrio-labs/claude-code-gauntlet/pull/44),
+  [`8b23eab`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b23eabf468a2aee1c4d9401cf58d9032c357910))
+
+- **bench**: Drop an unused module import from test_ledger
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+- **bench**: Exercise report.py's sys.path shim through a real script run
+  ([#40](https://github.com/liatrio-labs/claude-code-gauntlet/pull/40),
+  [`8c23613`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8c23613107d2e6cf3c5dbf193ee81b74df2585cf))
+
+
 ## v3.1.3 (2026-07-24)
 
 ### Bug Fixes
