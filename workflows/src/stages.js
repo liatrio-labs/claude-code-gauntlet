@@ -1164,13 +1164,57 @@ async function dispatchReportSegment(c, model, inp, findings, seg) {
       model,
       schema: REPORT_SCHEMA,
     });
-    if (!result || !result.report) {
+    const report = unwrapWrappedReport(result && result.report);
+    if (!report) {
       return { report: minimalReport(segInp), gaps: [`report${tag}: writer returned no report — assembled a minimal report from pipeline stats`] };
     }
-    return { report: result.report, gaps: [] };
+    return { report, gaps: [] };
   } catch (e) {
     return { report: minimalReport(segInp), gaps: [`report${tag}: writer agent threw (${(e && e.message) || 'unknown'}) — assembled a minimal report from pipeline stats`] };
   }
+}
+
+// The report-writer intermittently returns its markdown ALREADY WRAPPED as a JSON
+// document: the string in its `report` field is literally `{"report": "# Code Gauntlet
+// Report..."}` instead of the markdown. The artifact-writer then persists that wrapper
+// verbatim — correctly, its contract is to write the text exactly as given — so
+// report.md holds JSON where every non-Phase-8 consumer expects markdown. Measured
+// across dated runs since 2026-07-22: roughly 15 of 25, i.e. long-standing and FLAKY,
+// not a regression of any one change.
+//
+// Fixed here, at the point the string is FIRST received, so the single-dispatch and the
+// segmented paths (both go through dispatchReportSegment) are covered by one rule and
+// the persisted artifact — not just the delivered one — is markdown.
+//
+// Phase 8 ALSO unwraps this shape at delivery time (references/phase8-delivery.md).
+// That is deliberate belt-and-braces, not a dead duplicate: this fix repairs the
+// PERSISTED artifact, Phase 8's repairs a report that reached it by any other route
+// (a resumed run, a hand-edited file, an older artifact). Neither makes the other
+// unnecessary; removing this one silently restores the corrupt-on-disk behaviour.
+//
+// Conservative by construction — a legitimate markdown report may well open with `{`.
+// Unwrapping requires ALL of: a successful JSON.parse, a plain object (not an array,
+// not a bare JSON string), a STRING `report` member, and no other meaningful content.
+// Anything else is returned byte-for-byte untouched. One level only, never a loop.
+function unwrapWrappedReport(s) {
+  if (typeof s !== 'string' || s === '') return s;
+  const trimmed = s.trim();
+  if (trimmed.charAt(0) !== '{') return s; // cheap reject before any parse attempt
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch (e) {
+    return s; // not JSON at all — ordinary markdown that happens to start with a brace
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return s;
+  if (typeof parsed.report !== 'string') return s;
+  // "Only meaningful content": tolerate a null/empty sibling key (an agent echoing an
+  // empty envelope field), but never discard real data by unwrapping past it.
+  for (const [k, v] of Object.entries(parsed)) {
+    if (k === 'report') continue;
+    if (v !== null && v !== undefined && v !== '') return s;
+  }
+  return parsed.report;
 }
 
 // Deterministic fallback report (no agent, no wall-clock) built from what the
@@ -1340,6 +1384,34 @@ async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
 // The derived persist (issue #38, D3.2): write the three primaries, then derive the two
 // projections on disk. Failure at ANY step takes the same partial-artifacts degradation
 // as the legacy path — a content-proof MISMATCH is the one exception (see below).
+//
+// ONE deterministic retry on a STRUCTURAL assemble failure (live smoke
+// smoke-20260727-205454-f99d948). On discourse-graphite#6 the writer transcribed
+// findings.json with `\"` over-escaped to `\\"`, producing unparseable JSON at line 99;
+// assemble_artifacts.py correctly refused to derive anything and the run lost ALL its
+// artifacts. The writer is a sampled agent, not a deterministic function — the other two
+// runs on the same commit produced parseable JSON — so a second dispatch is a genuinely
+// fresh sample rather than a repeat of the same computation. Hence: retry the whole
+// derived persist (writer + assembler) exactly once, then degrade.
+//
+// The boundaries are load-bearing:
+//   * ONLY when the assemble script REFUSED (trustAssembleReceipt structural failure:
+//     unparseable JSON, missing/duplicate id, bad plan checksum, a derived-document
+//     mismatch). A tolerated PRIMARY content-proof mismatch never reaches here — it is a
+//     successful persist with a disclosed divergence, and re-rolling it would trade a
+//     known-divergent artifact for an unknown one.
+//   * A writer throw / null / failed write-proof degrades immediately, as before: the
+//     dispatch itself did not complete, so there is nothing the assembler could refuse.
+//   * EXACTLY once. `attemptDerivedPersist` is called at most twice from here and calls
+//     nothing recursively — there is no loop to unbound.
+//   * NEVER fall back to the legacy by-value writer on this path. This was considered and
+//     REJECTED: the legacy writer carries NO content proof, so falling back to it converts
+//     a visible failure into a silent one. The same smoke run measured the by-value writer
+//     diverging from its payload on 3 of 3 runs (16 chars, 8 chars, and the invalid JSON
+//     above) — silent corruption is the normal case there, not the exception. Do not
+//     "helpfully" add the fallback.
+//   * BOTH attempts are disclosed, whichever way the retry lands, so a degraded (or
+//     narrowly-rescued) run stays honest about what happened.
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
   const planPath = persistPlanPath(outputDir, sha);
   const { findingsJson, reportMd } = persistPrimaries(inp);
@@ -1353,6 +1425,32 @@ async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, part
     { path: paths.report, text: reportMd },
     { path: planPath, text: planJson },
   ];
+  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, policy, assembleScriptPath);
+
+  const first = await attempt();
+  if (first.ok) return { artifactPaths: paths, gaps: first.gaps, partial: false };
+  if (!first.retryable) return partial(first.reason, []);
+
+  const second = await attempt();
+  if (second.ok) {
+    return {
+      artifactPaths: paths,
+      gaps: [`artifact-persist-retry: the first derived persist attempt failed (${first.reason}); a second artifact-writer dispatch succeeded and the artifacts below are from that attempt`]
+        .concat(second.gaps),
+      partial: false,
+    };
+  }
+  return partial(`${second.reason} — retried once after the first attempt failed (${first.reason})`, []);
+}
+
+// One derived-persist attempt: dispatch the writer for the three primaries, prove they
+// landed, run the assembler, grade the receipt. Returns
+//   { ok: true, gaps }                       — persisted (gaps may disclose a tolerated mismatch)
+//   { ok: false, retryable, reason }         — failed; `retryable` iff the assemble script
+//                                              structurally refused (see the caller).
+// Never throws: every dispatch keeps its own try/catch, exactly as before.
+async function attemptDerivedPersist(c, entries, planPath, plan, paths, policy, assembleScriptPath) {
+  const fail = (reason, retryable) => ({ ok: false, retryable: !!retryable, reason });
 
   let writerOut;
   try {
@@ -1363,16 +1461,16 @@ async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, part
       schema: WRITTEN_SCHEMA,
     });
   } catch (e) {
-    return partial(`writer agent threw (${(e && e.message) || 'unknown'})`, []);
+    return fail(`writer agent threw (${(e && e.message) || 'unknown'})`);
   }
-  if (!writerOut) return partial('writer returned null', []);
+  if (!writerOut) return fail('writer returned null');
   // Write-proof, same threat model as materializeVerifySlices: WRITTEN_SCHEMA declares
   // no `required`, so an empty { written: [] } is schema-valid and a writer under
   // StructuredOutput retry pressure can return one having written nothing. Without this
   // the assembler would then read primaries that never landed.
   const written = new Set(Array.isArray(writerOut.written) ? writerOut.written : []);
   if (!entries.every((e) => written.has(e.path))) {
-    return partial('writer echo did not cover all three primary artifact paths (no write proof)', []);
+    return fail('writer echo did not cover all three primary artifact paths (no write proof)');
   }
 
   let receipt;
@@ -1384,11 +1482,13 @@ async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, part
       schema: ASSEMBLE_RECEIPT_SCHEMA,
     });
   } catch (e) {
-    return partial(`assemble executor threw (${(e && e.message) || 'unknown'})`, []);
+    return fail(`assemble executor threw (${(e && e.message) || 'unknown'})`);
   }
   const trust = trustAssembleReceipt(receipt, paths, plan);
-  if (!trust.ok) return partial(trust.reason, []);
-  return { artifactPaths: paths, gaps: trust.gaps, partial: false };
+  // The one retryable class: the primaries reached disk (write-proof passed) and the
+  // pinned script graded them and refused. A fresh writer sample can fix exactly this.
+  if (!trust.ok) return fail(trust.reason, true);
+  return { ok: true, gaps: trust.gaps };
 }
 
 // The assemble receipt gate. A STRUCTURAL failure (no receipt, ok:false, a path the

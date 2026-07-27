@@ -318,6 +318,85 @@ test('reportStage in isolation: a bare agent() throw yields a minimal report + g
   assert.ok(out.gaps.some((g) => /report/i.test(g)));
 });
 
+// --- Report JSON-wrapper unwrap (measured: ~15 of 25 runs since 2026-07-22) --
+//
+// The report-writer intermittently returns its markdown ALREADY WRAPPED as a JSON
+// document: the string in its `report` field is literally `{"report": "# Code
+// Gauntlet..."}`. The artifact-writer then persists that wrapper verbatim (correctly —
+// its contract is to write the text as given), so every non-Phase-8 consumer of
+// report.md gets JSON where markdown belongs. reportStage unwraps at the point the
+// string is first received, so the persisted artifact is markdown.
+
+test('reportStage unwraps a report the writer returned JSON-wrapped', async () => {
+  const md = '# Code Gauntlet Report\n\nOne finding.\n';
+  const ctx = {
+    agent: async () => ({ report: JSON.stringify({ report: md }) }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.equal(out.report, md, 'the persisted report must be the markdown, not the wrapper');
+  assert.deepEqual(out.gaps, []);
+});
+
+test('reportStage unwraps a pretty-printed / whitespace-padded wrapper too', async () => {
+  const md = '# Code Gauntlet Report\n\n- [HIGH] something (a.js:1)\n';
+  const ctx = {
+    agent: async () => ({ report: `\n  ${JSON.stringify({ report: md }, null, 2)}\n` }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.equal(out.report, md);
+});
+
+test('reportStage leaves a legitimate markdown report starting with a brace ALONE', async () => {
+  // Conservative by construction: unwrapping requires a successful JSON.parse AND an
+  // object AND a string `report` member. Markdown that merely opens with `{` is not JSON.
+  const md = '{ this is prose } \n\n# Code Gauntlet Report\n';
+  const ctx = {
+    agent: async () => ({ report: md }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.equal(out.report, md);
+});
+
+test('reportStage does not unwrap JSON that is not a {report:string} wrapper', async () => {
+  const cases = [
+    JSON.stringify({ report: { markdown: '# nope' } }),   // report is not a string
+    JSON.stringify({ summary: '# nope' }),                 // no report member
+    JSON.stringify(['# nope']),                            // array, not object
+    JSON.stringify('# nope'),                              // bare JSON string
+    JSON.stringify({ report: '# md', findings: [1, 2] }),  // extra MEANINGFUL content
+  ];
+  for (const raw of cases) {
+    const ctx = { agent: async () => ({ report: raw }), parallel: async () => [] };
+    const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+    assert.equal(out.report, raw, `must be left verbatim: ${raw}`);
+  }
+});
+
+test('reportStage unwraps on the SEGMENTED path as well', async () => {
+  const big = [];
+  for (let i = 0; i < 80; i += 1) big.push(makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
+  const ctx = {
+    agent: async (prompt, opts) => ({ report: JSON.stringify({ report: `body for ${opts.label}` }) }),
+    parallel: async (thunks) => Promise.all(thunks.map((t) => t())),
+  };
+  const out = await reportStage(ctx, { findings: big, unverified: [], stats: {} });
+  assert.ok(!/\{"report"/.test(out.report), `segments must be unwrapped: ${out.report.slice(0, 200)}`);
+  assert.match(out.report, /body for report-writer-0/);
+});
+
+test('a wrapper whose report member is EMPTY degrades to the minimal report', async () => {
+  const ctx = {
+    agent: async () => ({ report: JSON.stringify({ report: '' }) }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.match(out.report, /minimal report/i);
+  assert.ok(out.gaps.some((g) => /report/i.test(g)), out.gaps);
+});
+
 // --- writeArtifacts degradation (non-fatal) ---------------------------------
 
 test('a writeArtifacts agent() throw yields ok:true with a partial-artifacts gap', async () => {

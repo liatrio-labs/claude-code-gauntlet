@@ -663,6 +663,120 @@ test('writer gate: a writer throw degrades to partial-artifacts', async () => {
   assert.equal(out.artifactPaths.checkpoints, null);
 });
 
+// --- ONE deterministic retry on a STRUCTURAL assemble failure ---------------
+//
+// Live smoke evidence (smoke-20260727-205454-f99d948): on discourse-graphite#6 the
+// artifact-writer emitted unparseable JSON (it over-escaped \" while transcribing),
+// assemble_artifacts.py correctly refused to derive, and the run lost its artifacts
+// entirely. A fresh writer dispatch is a fresh sample — the other 2 of 3 runs on the
+// same commit produced parseable JSON — so the derived persist is retried exactly once
+// before degrading. Never on a TOLERATED content-proof mismatch (that is a success),
+// never in a loop, and never by falling back to the legacy by-value writer.
+
+// A persist ctx whose ASSEMBLE receipt differs per attempt. `receiptsFrom` is an array of
+// patch functions, one per assemble dispatch, each starting from the honest receipt for
+// the plan the writer was handed on THAT attempt.
+function retryCtx(receiptsFrom, opts = {}) {
+  const calls = [];
+  let seenPlan = null;
+  let attempt = 0;
+  const agent = async (prompt, dispatch = {}) => {
+    const label = dispatch.label || '';
+    calls.push({ prompt, ...dispatch });
+    if (label === 'artifact-writer') {
+      const payload = parseWriterPayload(prompt);
+      seenPlan = JSON.parse(payload[payload.length - 1].text);
+      return { written: payload.map((e) => e.path) };
+    }
+    if (label === 'assemble-artifacts') {
+      if (opts.throwOnAssembleAttempt === attempt) { attempt += 1; throw new Error('injected executor throw'); }
+      const patch = receiptsFrom[attempt] || ((r) => r);
+      attempt += 1;
+      return patch(receiptFor(seenPlan));
+    }
+    return null;
+  };
+  return { calls, agent, parallel: async (thunks) => Promise.all(thunks.map((t) => t())) };
+}
+
+const refuse = (r) => ({ ...r, ok: false, errors: ['findings.json is not valid JSON (line 99)'] });
+
+test('retry: a structural assemble refusal is retried ONCE and can succeed', async () => {
+  const ctx = retryCtx([refuse, (r) => r]);
+  const out = await writeArtifacts(ctx, persistInput());
+
+  assert.equal(out.partial, false, `gaps: ${out.gaps}`);
+  assert.deepEqual(out.artifactPaths, PATHS);
+  assert.deepEqual(
+    labels(ctx),
+    ['artifact-writer', 'assemble-artifacts', 'artifact-writer', 'assemble-artifacts'],
+    'the retry re-dispatches the WRITER (a fresh sample), then the assembler',
+  );
+  // Both attempts disclosed: a run that only succeeded on the second try must say so.
+  assert.ok(
+    out.gaps.some((g) => /retr/i.test(g) && /not valid JSON/.test(g)),
+    `expected a retry-disclosure gap naming the first failure, got: ${out.gaps}`,
+  );
+});
+
+test('retry: a second structural refusal degrades, naming BOTH attempts', async () => {
+  const ctx = retryCtx([refuse, (r) => ({ ...r, ok: false, errors: ['duplicate id F1 in source'] })]);
+  const out = await writeArtifacts(ctx, persistInput());
+
+  assert.equal(out.partial, true);
+  assert.deepEqual(out.artifactPaths, { findings: null, report: null, postReview: null, checkpoints: null });
+  assert.equal(labels(ctx).filter((l) => l === 'artifact-writer').length, 2, 'exactly one retry, never a loop');
+  assert.equal(labels(ctx).filter((l) => l === 'assemble-artifacts').length, 2);
+  const gap = out.gaps.find((g) => /partial-artifacts/.test(g));
+  assert.ok(gap, out.gaps);
+  assert.ok(/duplicate id F1/.test(gap), `names the second failure: ${gap}`);
+  assert.ok(/retr/i.test(gap) && /not valid JSON/.test(gap), `names the retry + the first failure: ${gap}`);
+});
+
+test('retry: NEVER falls back to the legacy by-value writer', async () => {
+  // Deliberate: the legacy path carries no content proof, so falling back to it would
+  // convert a VISIBLE failure into a silent one — the smoke run proved the by-value
+  // writer diverges from its payload on every run.
+  const ctx = retryCtx([refuse, refuse]);
+  await writeArtifacts(ctx, persistInput());
+  for (const c of ctx.calls.filter((x) => x.label === 'artifact-writer')) {
+    assert.ok(Array.isArray(parseWriterPayload(c.prompt)), 'every writer dispatch is the derived (entries) payload');
+  }
+});
+
+test('retry: a TOLERATED primary content-proof mismatch is NOT retried', async () => {
+  // A tolerated mismatch is a successful persist with a disclosed divergence, not a
+  // failure — the artifacts are on disk and self-consistent with them.
+  const diverged = (r) => ({
+    ...r,
+    verified: r.verified.map((e) => (e.path === PATHS.findings
+      ? { ...e, chars: e.chars + 16, checksum: 'fnv1a32:0xdeadbeef', content_proof: 'mismatch' }
+      : e)),
+  });
+  const ctx = retryCtx([diverged, diverged]);
+  const out = await writeArtifacts(ctx, persistInput());
+
+  assert.equal(out.partial, false);
+  assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts'], 'no retry on a tolerated mismatch');
+  assert.ok(out.gaps.some((g) => /artifact-content-proof/.test(g)), out.gaps);
+  assert.ok(!out.gaps.some((g) => /retr/i.test(g)), out.gaps);
+});
+
+test('retry: a derived-document mismatch (structural) IS retried', async () => {
+  const forge = (r) => ({ ...r, written: r.written.map((e, i) => (i === 0 ? { ...e, checksum: 'fnv1a32:0x00000000' } : e)) });
+  const ctx = retryCtx([forge, (r) => r]);
+  const out = await writeArtifacts(ctx, persistInput());
+  assert.equal(out.partial, false, `gaps: ${out.gaps}`);
+  assert.equal(labels(ctx).filter((l) => l === 'artifact-writer').length, 2);
+});
+
+test('retry: the retry itself never throws out of writeArtifacts', async () => {
+  const ctx = retryCtx([refuse], { throwOnAssembleAttempt: 1 });
+  const out = await writeArtifacts(ctx, persistInput());
+  assert.equal(out.partial, true);
+  assert.ok(out.gaps.some((g) => /partial-artifacts/.test(g)), out.gaps);
+});
+
 // --- ANY throw inside writeArtifacts is non-fatal (issue #38 F1-persist-4) ---
 
 test('a throw in the PRE-DISPATCH plan computation degrades to partial-artifacts, not an exception', async () => {
