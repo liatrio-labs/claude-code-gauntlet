@@ -9,6 +9,10 @@ Covers:
   - render_comment_body: all severity emojis, with/without suggestion block
   - build_footer: metadata JSON in HTML comment
   - gitlab_project_id: URL encoding of owner/repo
+  - TestReviewMarkerRoundTripThroughRealPoster — issue #39 requirement 6's
+    headline "write signal == read signal" guarantee, proven against the REAL
+    post_github/post_gitlab DRY_RUN capture path rather than a
+    re-implementation of their footer composition. See the class docstring.
 """
 
 import contextlib
@@ -25,6 +29,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import scripts.post_review as post_review
+import scripts.review_marker as review_marker
 from scripts.post_review import (
     detect_platform,
     is_line_valid,
@@ -33,6 +38,7 @@ from scripts.post_review import (
     build_footer,
     gitlab_project_id,
     valid_lines_for_file,
+    resolve_marker_sha,
 )
 
 
@@ -390,6 +396,147 @@ class TestBuildFooter(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# resolve_marker_sha (Issue #39 D6)
+# ---------------------------------------------------------------------------
+
+class TestResolveMarkerSha(unittest.TestCase):
+    """The persisted payload's own ``sha`` (the commit the review actually ran
+    against) is preferred over a freshly re-resolved HEAD, so a HEAD that moved
+    between the workflow run and the post cannot mislabel the marker."""
+
+    @patch("scripts.post_review.get_head_sha", return_value="deadbeef")
+    def test_prefers_data_sha_when_sha_shaped(self, mock_head):
+        data = {"sha": "0f1e2d3c4b5a69788716253413121110090807a"}
+        self.assertEqual(resolve_marker_sha(data), data["sha"])
+        mock_head.assert_not_called()
+
+    @patch("scripts.post_review.get_head_sha", return_value="deadbeef")
+    def test_falls_back_to_head_when_sha_absent(self, mock_head):
+        self.assertEqual(resolve_marker_sha({}), "deadbeef")
+        mock_head.assert_called_once()
+
+    @patch("scripts.post_review.get_head_sha", return_value="deadbeef")
+    def test_falls_back_to_head_when_sha_none(self, mock_head):
+        self.assertEqual(resolve_marker_sha({"sha": None}), "deadbeef")
+
+    @patch("scripts.post_review.get_head_sha", return_value="deadbeef")
+    def test_rejects_non_sha_shaped_value_and_falls_back(self, mock_head):
+        self.assertEqual(resolve_marker_sha({"sha": "not-a-real-sha!!"}), "deadbeef")
+
+    @patch("scripts.post_review.get_head_sha", return_value="deadbeef")
+    def test_rejects_non_string_sha_and_falls_back(self, mock_head):
+        self.assertEqual(resolve_marker_sha({"sha": 12345}), "deadbeef")
+
+    @patch("scripts.post_review.get_head_sha", return_value="deadbeef")
+    def test_accepts_short_sha_shaped_value(self, mock_head):
+        self.assertEqual(resolve_marker_sha({"sha": "abc1234"}), "abc1234")
+        mock_head.assert_not_called()
+
+    @patch("scripts.post_review.warn")
+    @patch("scripts.post_review.get_head_sha", return_value="unknown")
+    def test_degraded_fallback_when_head_sha_itself_unresolvable(self, mock_head, mock_warn):
+        """git rev-parse HEAD failing makes get_head_sha() return "unknown" —
+        not SHA-shaped, so the caller must be warned the posted marker will be
+        undetectable rather than have the failure pass silently."""
+        self.assertEqual(resolve_marker_sha({}), "unknown")
+        mock_warn.assert_called_once()
+        self.assertIn("unknown", mock_warn.call_args[0][0])
+
+
+# ---------------------------------------------------------------------------
+# Review-marker round trip through the REAL poster (Issue #39 Requirement 6)
+# ---------------------------------------------------------------------------
+
+class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
+    """THE test that discharges issue #39 requirement 6 unambiguously: the
+    "write signal == read signal" guarantee proven against the bytes
+    post_review.py actually posts.
+
+    tests/test_review_marker.py's TestRoundTrip re-implements post_github's
+    and post_gitlab's footer composition inline
+    (``review_body += build_footer(len(findings), sha, body=review_body)``)
+    and then parses ITS OWN re-implementation. That proves the
+    re-implementation round-trips — it would keep passing even if
+    post_github/post_gitlab stopped appending the footer entirely, since
+    nothing in that test ever calls the real posting functions.
+
+    This test instead drives the REAL ``post_review.post_github`` and
+    ``post_review.post_gitlab`` with ``DRY_RUN`` mode (the same capture
+    technique bench/tests/test_adapter.py's reference-payload builders use:
+    set ``post_review.DRY_RUN = True``, call the poster, then read
+    ``post_review._CAPTURED``), pulls the posted body straight out of the
+    captured payload — GitHub: ``_CAPTURED[0]["payload"]["body"]``; GitLab:
+    the summary note is the first capture, same path — and feeds THAT EXACT
+    STRING to ``scripts.review_marker.detect_signal``, asserting the
+    recovered sha equals the sha the poster was given. Covers both platforms
+    and both an empty ``review_body`` (the ``workflows/src/stages.js``
+    default) and a non-empty one. If post_github/post_gitlab stopped
+    appending the footer, THIS test would fail; the re-implementation-based
+    one would not.
+    """
+
+    def setUp(self):
+        post_review.DRY_RUN = True
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    def tearDown(self):
+        post_review.DRY_RUN = False
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    @patch("scripts.post_review.check_tool")
+    def test_github_empty_review_body(self, _tool):
+        sha = "a" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "", "findings": []}
+        post_review.post_github(data, set())
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+    @patch("scripts.post_review.check_tool")
+    def test_github_non_empty_review_body(self, _tool):
+        sha = "b" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "## Summary\nSome pre-existing narrative text.\n",
+                "findings": []}
+        post_review.post_github(data, set())
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+    @patch("scripts.post_review.check_tool")
+    @patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start"))
+    def test_gitlab_empty_review_body(self, _shas, _tool):
+        sha = "c" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "", "findings": []}
+        post_review.post_gitlab(data, set())
+        # The summary note is posted before any per-finding discussion, so
+        # with findings=[] it is also the only capture.
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+    @patch("scripts.post_review.check_tool")
+    @patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start"))
+    def test_gitlab_non_empty_review_body(self, _shas, _tool):
+        sha = "d" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "## MR Review\nContext for the reviewer.\n",
+                "findings": []}
+        post_review.post_gitlab(data, set())
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+
+# ---------------------------------------------------------------------------
 # gitlab_project_id
 # ---------------------------------------------------------------------------
 
@@ -442,7 +589,7 @@ class TestValidLinesForFile(unittest.TestCase):
 class TestSkipWarningDiagnostics(unittest.TestCase):
     """Verify that skip warnings include valid-line diagnostics."""
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc123")
+    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={"html_url": "http://example.com"})
     @patch("scripts.post_review.warn")
@@ -460,7 +607,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         self.assertIn("10", msg)
         self.assertIn("20", msg)
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc123")
+    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={"html_url": "http://example.com"})
     @patch("scripts.post_review.warn")
@@ -481,7 +628,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         # With an empty set, valid lines list is [] not None, so diag is present but empty
         self.assertIn("Valid lines for this file: []", msg)
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc123")
+    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={})
     @patch("scripts.post_review.fetch_gitlab_shas", return_value=("b", "h", "s"))
@@ -555,7 +702,13 @@ class TestGitlabPositionPayload(unittest.TestCase):
             captured.append((cmd_prefix, payload))
             return {}
 
-        with patch("scripts.post_review.get_head_sha", return_value="abc123"), \
+        # Faithful to real git: `git rev-parse HEAD` always yields either a
+        # full 40-hex-char object id or the literal "unknown" (get_head_sha's
+        # own fallback on failure) — never a 6-char string. "abc123" would be
+        # the same class of fidelity bug flagged elsewhere in this change (a
+        # get_head_sha mock only 6 hex chars long).
+        with patch("scripts.post_review.get_head_sha",
+                   return_value="deadbeef" * 5), \
              patch("scripts.post_review.check_tool"), \
              patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")), \
              patch("scripts.post_review.post_json", side_effect=fake_post_json):
@@ -993,6 +1146,106 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
             self._dry_run_payload_bytes(wrapper),
             "wrapper form must drive a byte-identical dry-run payload",
         )
+
+
+# ---------------------------------------------------------------------------
+# Both footer halves posted (Issue #39 D3) — GitHub review body and GitLab
+# summary note both get the prose footer AND the machine marker, and an
+# already-prose'd review_body does not get a duplicate.
+# ---------------------------------------------------------------------------
+
+class TestBothFooterHalvesPosted(_DryRunTestBase):
+
+    def test_github_review_body_contains_both_prose_and_marker(self):
+        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
+                     "title": "Bug A", "body": "Body A"}
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "Summary", "findings": [finding_a],
+        })
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        self.assertIn("Generated by code-gauntlet", body)
+        self.assertIn("Reviewed up to:", body)
+        self.assertIn("code-gauntlet-findings:", body)
+        self.assertIn("Summary", body, "the original review_body must still be present")
+
+    def test_gitlab_summary_note_contains_both_prose_and_marker(self):
+        finding_x = {"file": "bar.py", "line": 2, "severity": "medium",
+                     "title": "Issue X", "body": "Desc X"}
+        self._write({
+            "platform": "gitlab", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": "MR review", "findings": [finding_x],
+        })
+        versions = [{"base_commit_sha": "base1", "head_commit_sha": "head1",
+                     "start_commit_sha": "start1"}]
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GL_DIFF, versions=versions)):
+            post_review.main()
+
+        body = self._payload()["summary"]["body"]
+        self.assertIn("Generated by code-gauntlet", body)
+        self.assertIn("Reviewed up to:", body)
+        self.assertIn("code-gauntlet-findings:", body)
+        self.assertIn("MR review", body)
+
+    def test_review_body_with_the_same_prose_sha_gets_no_second_copy(self):
+        """The idempotence guard (Issue #39 D3): a footer already naming THIS
+        commit is left alone rather than duplicated."""
+        pre_existing = (
+            "Some notes.\n\n---\n"
+            "Generated by code-gauntlet | Reviewed up to: deadbeefcafe\n"
+        )
+        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
+                     "title": "Bug A", "body": "Body A"}
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": pre_existing, "findings": [finding_a],
+        })
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)):
+            post_review.main()
+        body = self._payload()["payload"]["body"]
+        self.assertEqual(body.count("Generated by code-gauntlet"), 1,
+                         f"an exact-sha match must not duplicate: {body!r}")
+
+    def test_review_body_with_a_stale_prose_sha_still_gets_the_real_one(self):
+        """A hand-composed footer naming a DIFFERENT commit must not suppress the
+        real one: suppressing it would leave the posted review advertising a
+        commit the review never examined. Two lines is the honest outcome — the
+        reader takes the last — and only an exact-sha match is deduplicated
+        (see test_review_body_with_the_same_prose_sha_gets_no_second_copy)."""
+        pre_existing = "Some notes.\n\nGenerated by code-gauntlet | Reviewed up to: abc1234\n"
+        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
+                     "title": "Bug A", "body": "Body A"}
+        self._write({
+            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
+            "review_body": pre_existing, "findings": [finding_a],
+        })
+        with patch.object(sys, "argv",
+                          ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run",
+                   side_effect=_fake_run(diff=GH_DIFF)):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        # The real head sha must be present and last, so parse_prose_footer (and
+        # any human) reads the commit actually reviewed, not the stale one.
+        self.assertIn("Reviewed up to: deadbeefcafe", body)
+        self.assertGreater(body.rindex("deadbeefcafe"), body.rindex("abc1234"))
+        signal = review_marker.detect_signal(body)
+        self.assertEqual(signal["sha"], "deadbeefcafe")
+        # The mechanical marker is still appended (the guards are independent).
+        self.assertIn("code-gauntlet-findings:", body)
 
 
 if __name__ == "__main__":
