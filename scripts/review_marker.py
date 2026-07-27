@@ -45,6 +45,7 @@ No external Python dependencies — stdlib only.
 """
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 
@@ -171,7 +172,7 @@ def _has_non_finite(value, depth=0):
     if depth > 64:
         return True
     if isinstance(value, float):
-        return value != value or value in (float("inf"), float("-inf"))
+        return math.isnan(value) or value in (float("inf"), float("-inf"))
     if isinstance(value, dict):
         return any(_has_non_finite(v, depth + 1) for v in value.values())
     if isinstance(value, (list, tuple)):

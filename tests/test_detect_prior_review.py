@@ -1119,7 +1119,7 @@ class TestRound3And4FixRegressions(unittest.TestCase):
                 fh.write("[" * 60000 + "]" * 60000)
             out, code = _run_main(["--platform", "github", "--bodies-file", path])
         self.assertEqual(code, 0)
-        self.assertTrue(json.loads(out.strip()) is not None)
+        self.assertIsNot(json.loads(out.strip()), None)
 
 
 if __name__ == "__main__":

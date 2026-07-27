@@ -75,9 +75,7 @@ import sys
 # `scripts.detect_prior_review`, without swallowing real ImportErrors.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# select_latest drives the scan; detect_signal is re-exported so callers and tests
-# can reach the single-body parser without importing review_marker separately.
-from review_marker import detect_signal, select_latest  # noqa: E402,F401
+from review_marker import select_latest  # noqa: E402
 
 
 FETCH_TIMEOUT_SECONDS = 30
