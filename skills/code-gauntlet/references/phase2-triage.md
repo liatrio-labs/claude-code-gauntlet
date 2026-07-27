@@ -108,10 +108,11 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
    - **GitLab (MR):** Gather the file list with `glab mr diff {pr_number} --name-only`. Gather the full diff with `glab mr diff {pr_number}`.
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
+4. **Incremental** (Phase 1 resolved the "Incremental" answer and stored `last_reviewed_sha`; PR/MR mode only) — replaces branch 1's server-computed diff with `git diff {last_reviewed_sha}...HEAD` and `git diff --name-only {last_reviewed_sha}...HEAD`. Same validation rules as below (non-empty, starts with `diff --git`); if the diff fails or is empty, fall back to branch 1's full server diff and disclose the fallback. Record the incremental scope (`last_reviewed_sha`) in the triage announcement and the Phase 8 methodology.
 
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
-1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff; for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when Phase 1 resolved incremental, branch 4's `{last_reviewed_sha}...HEAD` diff); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 2. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file.
 
 ```bash

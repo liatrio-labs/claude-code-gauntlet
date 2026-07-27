@@ -26,7 +26,13 @@ Input JSON schema:
         "platform": "github",            # optional — auto-detected from git remote
         "owner": "myorg",
         "repo": "myrepo",
-        "pr_number": 7
+        "pr_number": 7,
+        "sha": "0f1e2d3..."              # optional — the commit the review ran
+                                         # against. Recorded in the review marker
+                                         # when SHA-shaped; falls back to
+                                         # `git rev-parse HEAD` when absent, so a
+                                         # HEAD that moved between the review and
+                                         # the post cannot mislabel the marker.
     }
 
 Platform detection:
@@ -56,6 +62,15 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timezone
+
+# The prior-review signal (prose footer + marker) is owned end-to-end by
+# review_marker.py — this script is only its writer. The explicit path insert
+# (rather than a try/except import) keeps both invocation modes working —
+# `python3 scripts/post_review.py` and `import scripts.post_review` — without
+# swallowing a real ImportError raised from inside review_marker.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from review_marker import SHA_RE, build_footer  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -343,19 +358,29 @@ def render_comment_body(finding):
 # ---------------------------------------------------------------------------
 # Metadata footer
 # ---------------------------------------------------------------------------
-
-def build_footer(findings_count, sha):
-    metadata = {
-        "version": "3.0",
-        "findings_count": findings_count,
-        "sha": sha,
-    }
-    return f"\n\n<!-- code-gauntlet-findings: {json.dumps(metadata, separators=(',', ':'))} -->"
+# ``build_footer`` is imported from review_marker (see the bootstrap at the top of
+# this file) and re-exported here, so this module has no second definition of the
+# signal it writes.
 
 
 def get_head_sha():
     stdout, _, rc = run_api(["git", "rev-parse", "HEAD"])
     return stdout.strip() if rc == 0 else "unknown"
+
+
+def resolve_marker_sha(data):
+    """Return the SHA to record in the review marker.
+
+    Prefers the ``sha`` pinned in the payload — the commit the review actually ran
+    against — so a HEAD that moved between the workflow run and the post cannot
+    record a SHA no review ever examined (which would scope a later incremental
+    diff wrongly). Falls back to ``git rev-parse HEAD`` when the field is absent
+    or not SHA-shaped.
+    """
+    sha = data.get("sha")
+    if isinstance(sha, str) and SHA_RE.fullmatch(sha.strip()):
+        return sha.strip()
+    return get_head_sha()
 
 
 # ---------------------------------------------------------------------------
@@ -402,9 +427,9 @@ def post_github(data, valid_lines):
 
         comments.append(comment)
 
-    sha = get_head_sha()
+    sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    review_body += build_footer(len(findings), sha)
+    review_body += build_footer(len(findings), sha, body=review_body)
 
     payload = {
         "body": review_body,
@@ -479,9 +504,9 @@ def post_gitlab(data, valid_lines, new_files=None):
     project_id = gitlab_project_id(owner, repo)
     base_sha, head_sha, start_sha = fetch_gitlab_shas(project_id, mr_iid)
 
-    sha = get_head_sha()
+    sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    review_body += build_footer(len(findings), sha)
+    review_body += build_footer(len(findings), sha, body=review_body)
 
     # Post the review summary as a top-level MR note first
     summary_payload = {"body": review_body}

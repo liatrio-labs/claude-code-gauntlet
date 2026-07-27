@@ -6,6 +6,10 @@
 - **Language-agnostic.** Scripts must not assume any particular programming language in the reviewed codebase. No `--include=*.py` or similar language filters — use `--exclude-dir` for non-source directories instead.
 - **Repo root for searches.** `verify_findings.py` resolves the repo root at startup via `git rev-parse --show-toplevel`. Symbol searches use `git grep -l` with `cwd=REPO_ROOT` and a 3-second per-symbol timeout.
 
+## Prior-review signal
+
+`scripts/review_marker.py` is the single source of truth for the prior-review marker/footer: it builds what `post_review.py` writes to a PR/MR review body and parses what `detect_prior_review.py` reads back on a rerun. Readers never branch on the payload's `version` field — it is informational/forensic only, since both the current `code-gauntlet-findings` token and the legacy `deep-review-findings` token carry `"version":"3.0"` despite being different wire shapes. Both token generations are recognized by every reader. `tests/test_review_marker.py::TestRoundTrip` is the guard that the write and read paths agree.
+
 ## Workflow runtime (JS)
 
 The v3 review pipeline runs inside `workflows/pipeline.js`, invoked from SKILL.md via the `Workflow` tool (`scriptPath` + args). Rules:

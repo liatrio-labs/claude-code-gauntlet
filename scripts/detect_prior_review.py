@@ -1,0 +1,431 @@
+#!/usr/bin/env python3
+"""
+detect_prior_review.py — Has code-gauntlet reviewed this PR/MR before, and up to which commit?
+
+Usage:
+    python3 detect_prior_review.py --platform {github|gitlab} --owner O --repo R --number N
+                                   [--head-sha SHA] [--bodies-file PATH]
+
+Reads the prior-review signal that ``post_review.py`` leaves on a PR/MR summary —
+both halves are parsed by ``review_marker.py``, which is the single source of truth
+for the format. Nothing here branches on the marker's ``version`` field.
+
+    --platform     REQUIRED. The orchestrator has already resolved the PR with
+                   gh/glab, so the platform is known; auto-detecting would
+                   duplicate post_review.detect_platform.
+    --head-sha     Use this instead of `git rev-parse HEAD` for the comparison.
+    --bodies-file  Offline/test hook: a JSON array of
+                   {"body","timestamp","source","id"} entries used INSTEAD of any
+                   network fetch. Makes the CLI end-to-end testable with no network
+                   and gives self-hosted users an escape hatch.
+
+Surfaces scanned (read-only; these are exactly the surfaces post_review.py writes to):
+    github — repos/{owner}/{repo}/pulls/{n}/reviews      (source "review")
+             repos/{owner}/{repo}/issues/{n}/comments    (source "issue_comment")
+    gitlab — projects/{id}/merge_requests/{n}/notes      (source "note")
+
+Output — exactly one JSON object on stdout:
+    {
+        "previously_reviewed": true,
+        "signal": "marker",              # or "footer" / null
+        "source": "review",              # which surface carried it / null
+        "legacy": false,                 # pre-rename token or product name
+        "last_reviewed_sha": "<full>",   # expanded when resolvable, else as recorded
+        "last_reviewed_sha_short": "<8>",
+        "sha_resolvable": true,          # the object exists in this clone
+        "head_sha": "<full>",
+        "head_advanced": true,
+        "new_commit_count": 3,           # null when the SHA is unresolvable
+        "incremental_safe": true,        # sha_resolvable and head_advanced
+        "marker": {...},                 # full parsed payload / null
+        "scanned": {"review": 4, "issue_comment": 2},
+        "errors": []
+    }
+
+Exit codes:
+    0 for EVERY outcome, including "found nothing" and "all fetches failed" — the
+    caller reads "errors". Detection is an optimization; a review must never fail
+    because a comment fetch 404'd. Non-zero only for argparse usage errors.
+
+No external Python dependencies — stdlib only.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+# Same explicit bootstrap as post_review.py: works when run directly
+# (`python3 scripts/detect_prior_review.py`) and when imported as
+# `scripts.detect_prior_review`, without swallowing real ImportErrors.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# select_latest drives the scan; detect_signal is re-exported so callers and tests
+# can reach the single-body parser without importing review_marker separately.
+from review_marker import detect_signal, select_latest  # noqa: E402,F401
+
+
+FETCH_TIMEOUT_SECONDS = 30
+GIT_TIMEOUT_SECONDS = 10
+
+# The surfaces each platform exposes, in scan order. Used to seed "scanned" so the
+# key set is stable even when a fetch fails or returns nothing.
+PLATFORM_SOURCES = {
+    "github": ("review", "issue_comment"),
+    "gitlab": ("note",),
+}
+
+
+# ---------------------------------------------------------------------------
+# Subprocess wrappers — the only impure surface in this module
+# ---------------------------------------------------------------------------
+
+def run(cmd, timeout=None):
+    """Run *cmd*. Returns ``(stdout, stderr, returncode)``. Never raises.
+
+    A missing CLI tool (OSError) and a timeout both come back as returncode -1
+    with the reason in stderr, so callers degrade instead of blowing up.
+    """
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout
+        )
+    except subprocess.TimeoutExpired:
+        return "", f"timed out after {timeout}s", -1
+    except OSError as exc:
+        return "", str(exc), -1
+    return result.stdout, result.stderr, result.returncode
+
+
+def _parse_json_array(text):
+    """Parse *text* as a JSON array of objects. Returns a list, or None on failure.
+
+    ``gh api --paginate`` merges pages into a single array, but a client that
+    emits one array per page must not defeat detection, so concatenated documents
+    are tolerated and flattened.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    decoder = json.JSONDecoder()
+    items = []
+    idx = 0
+    while idx < len(text):
+        while idx < len(text) and text[idx] in " \t\r\n":
+            idx += 1
+        if idx >= len(text):
+            break
+        try:
+            doc, end = decoder.raw_decode(text, idx)
+        except ValueError:
+            return items if items else None
+        if isinstance(doc, list):
+            items.extend(doc)
+        else:
+            items.append(doc)
+        idx = end
+    return items
+
+
+def fetch_json(cmd, label):
+    """Run *cmd* and parse its stdout as a JSON array.
+
+    Returns ``(items, error)`` — exactly one of which is meaningful. Never raises;
+    a failure is a string for ``errors[]``, not an exception.
+    """
+    stdout, stderr, rc = run(cmd, timeout=FETCH_TIMEOUT_SECONDS)
+    if rc != 0:
+        detail = (stderr.strip() or stdout.strip())[:300]
+        return [], f"{label}: fetch failed (exit {rc}): {detail}"
+    items = _parse_json_array(stdout)
+    if items is None:
+        return [], f"{label}: response was not JSON: {stdout.strip()[:120]}"
+    return items, None
+
+
+def git_rev_parse(rev):
+    """Return the full object id for *rev*, or None."""
+    stdout, _, rc = run(["git", "rev-parse", rev], timeout=GIT_TIMEOUT_SECONDS)
+    value = stdout.strip()
+    return value if rc == 0 and value else None
+
+
+# ---------------------------------------------------------------------------
+# Fetch — one call per surface; each failure is independent
+# ---------------------------------------------------------------------------
+
+def gitlab_project_id(owner, repo):
+    """Return the URL-encoded project path (mirrors post_review.gitlab_project_id)."""
+    return f"{owner}/{repo}".replace("/", "%2F")
+
+
+def fetch_entries_github(owner, repo, number):
+    """Return ``(entries, errors)`` for the two GitHub surfaces."""
+    errors = []
+    reviews, err = fetch_json(
+        ["gh", "api", "--paginate", f"repos/{owner}/{repo}/pulls/{number}/reviews"],
+        "github reviews",
+    )
+    if err:
+        errors.append(err)
+    comments, err = fetch_json(
+        ["gh", "api", "--paginate", f"repos/{owner}/{repo}/issues/{number}/comments"],
+        "github issue comments",
+    )
+    if err:
+        errors.append(err)
+    return collect_entries_github(reviews, comments), errors
+
+
+def fetch_entries_gitlab(owner, repo, number):
+    """Return ``(entries, errors)`` for the GitLab MR notes surface."""
+    project_id = gitlab_project_id(owner, repo)
+    notes, err = fetch_json(
+        ["glab", "api", f"projects/{project_id}/merge_requests/{number}/notes"],
+        "gitlab notes",
+    )
+    errors = [err] if err else []
+    return collect_entries_gitlab(notes), errors
+
+
+# ---------------------------------------------------------------------------
+# Pure collectors
+# ---------------------------------------------------------------------------
+
+def _entries_from(payload, source, timestamp_key):
+    """Map an API array into the entry shape review_marker.select_latest consumes."""
+    entries = []
+    if not isinstance(payload, list):
+        return entries
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        body = item.get("body")
+        if not isinstance(body, str):
+            continue
+        timestamp = item.get(timestamp_key)
+        entries.append({
+            "body": body,
+            "timestamp": timestamp if isinstance(timestamp, str) else None,
+            "source": source,
+            "id": item.get("id"),
+        })
+    return entries
+
+
+def collect_entries_github(payload_reviews, payload_comments):
+    """Reviews (``submitted_at``) then issue comments (``created_at``)."""
+    return (
+        _entries_from(payload_reviews, "review", "submitted_at")
+        + _entries_from(payload_comments, "issue_comment", "created_at")
+    )
+
+
+def collect_entries_gitlab(payload_notes):
+    """MR notes (``created_at``)."""
+    return _entries_from(payload_notes, "note", "created_at")
+
+
+def collect_entries_file(payload):
+    """Map a ``--bodies-file`` array into the entry shape. Unknown sources pass through."""
+    entries = []
+    if not isinstance(payload, list):
+        return entries
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        body = item.get("body")
+        if not isinstance(body, str):
+            continue
+        timestamp = item.get("timestamp")
+        source = item.get("source")
+        entries.append({
+            "body": body,
+            "timestamp": timestamp if isinstance(timestamp, str) else None,
+            "source": source if isinstance(source, str) else "bodies_file",
+            "id": item.get("id"),
+        })
+    return entries
+
+
+def count_by_source(entries):
+    """Return ``{source: count}`` over *entries*."""
+    counts = {}
+    for entry in entries:
+        source = entry.get("source")
+        counts[source] = counts.get(source, 0) + 1
+    return counts
+
+
+def load_bodies_file(path):
+    """Return ``(entries, errors)`` from the offline hook file. Never raises."""
+    try:
+        with open(path) as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return [], [f"bodies-file: could not read {path} ({exc})"]
+    if not isinstance(payload, list):
+        return [], [f"bodies-file: expected a JSON array in {path}"]
+    return collect_entries_file(payload), []
+
+
+# ---------------------------------------------------------------------------
+# Git facts + result assembly
+# ---------------------------------------------------------------------------
+
+def resolve_git_facts(sha, head_sha=None):
+    """Return the git-derived facts about *sha* relative to HEAD. Never raises.
+
+    ``sha_resolvable`` is False when the recorded object is not present in this
+    clone (force-push, shallow clone, unfetched object); the raw value is kept and
+    ``new_commit_count`` stays None.
+    """
+    facts = {
+        "head_sha": head_sha or git_rev_parse("HEAD") or "unknown",
+        "last_reviewed_sha": sha if isinstance(sha, str) and sha else None,
+        "last_reviewed_sha_short": None,
+        "sha_resolvable": False,
+        "new_commit_count": None,
+    }
+    if not facts["last_reviewed_sha"]:
+        return facts
+    facts["last_reviewed_sha_short"] = facts["last_reviewed_sha"][:8]
+
+    _, _, rc = run(
+        ["git", "cat-file", "-e", f"{sha}^{{commit}}"], timeout=GIT_TIMEOUT_SECONDS
+    )
+    if rc != 0:
+        return facts
+    facts["sha_resolvable"] = True
+
+    full = git_rev_parse(sha) or sha
+    facts["last_reviewed_sha"] = full
+    facts["last_reviewed_sha_short"] = full[:8]
+
+    stdout, _, rc = run(
+        ["git", "rev-list", "--count", f"{sha}..HEAD"], timeout=GIT_TIMEOUT_SECONDS
+    )
+    count = stdout.strip()
+    if rc == 0 and count.isdigit():
+        facts["new_commit_count"] = int(count)
+    return facts
+
+
+def build_result(signal, git_facts, scanned=None, errors=None):
+    """Assemble the output object. Pure — no subprocess, no I/O.
+
+    ``incremental_safe`` is exactly ``sha_resolvable and head_advanced``: the one
+    boolean the orchestrator gates the incremental path on.
+    """
+    scanned = dict(scanned or {})
+    errors = list(errors or [])
+    git_facts = git_facts or {}
+    head_sha = git_facts.get("head_sha")
+
+    if not signal:
+        return {
+            "previously_reviewed": False,
+            "signal": None,
+            "source": None,
+            "legacy": False,
+            "last_reviewed_sha": None,
+            "last_reviewed_sha_short": None,
+            "sha_resolvable": False,
+            "head_sha": head_sha,
+            "head_advanced": False,
+            "new_commit_count": None,
+            "incremental_safe": False,
+            "marker": None,
+            "scanned": scanned,
+            "errors": errors,
+        }
+
+    sha_resolvable = bool(git_facts.get("sha_resolvable"))
+    last_reviewed_sha = git_facts.get("last_reviewed_sha") or signal.get("sha")
+    head_advanced = bool(sha_resolvable and last_reviewed_sha != head_sha)
+    return {
+        "previously_reviewed": True,
+        "signal": signal.get("signal"),
+        "source": signal.get("source"),
+        "legacy": bool(signal.get("legacy")),
+        "last_reviewed_sha": last_reviewed_sha,
+        "last_reviewed_sha_short": git_facts.get("last_reviewed_sha_short"),
+        "sha_resolvable": sha_resolvable,
+        "head_sha": head_sha,
+        "head_advanced": head_advanced,
+        "new_commit_count": git_facts.get("new_commit_count"),
+        "incremental_safe": bool(sha_resolvable and head_advanced),
+        "marker": signal.get("marker"),
+        "scanned": scanned,
+        "errors": errors,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def gather_entries(args, parser):
+    """Return ``(entries, errors, scanned)`` for the requested source of bodies."""
+    if args.bodies_file:
+        entries, errors = load_bodies_file(args.bodies_file)
+        return entries, errors, count_by_source(entries)
+
+    missing = [name for name in ("owner", "repo", "number") if not getattr(args, name)]
+    if missing:
+        parser.error(
+            "--" + ", --".join(missing) + " are required unless --bodies-file is given"
+        )
+
+    if args.platform == "github":
+        entries, errors = fetch_entries_github(args.owner, args.repo, args.number)
+    else:
+        entries, errors = fetch_entries_gitlab(args.owner, args.repo, args.number)
+
+    scanned = {source: 0 for source in PLATFORM_SOURCES[args.platform]}
+    scanned.update(count_by_source(entries))
+    return entries, errors, scanned
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Detect whether code-gauntlet has already reviewed this PR/MR."
+    )
+    parser.add_argument(
+        "--platform",
+        required=True,
+        choices=("github", "gitlab"),
+        help="Forge hosting the PR/MR. Required — the caller already knows it.",
+    )
+    parser.add_argument("--owner", help="Repository owner / GitLab namespace.")
+    parser.add_argument("--repo", help="Repository name.")
+    parser.add_argument("--number", help="PR number / MR IID.")
+    parser.add_argument(
+        "--head-sha",
+        dest="head_sha",
+        help="Compare against this SHA instead of `git rev-parse HEAD`.",
+    )
+    parser.add_argument(
+        "--bodies-file",
+        dest="bodies_file",
+        help="JSON array of {body,timestamp,source,id} entries to scan INSTEAD of "
+             "fetching. Offline/test hook.",
+    )
+    args = parser.parse_args()
+
+    entries, errors, scanned = gather_entries(args, parser)
+
+    try:
+        signal = select_latest(entries)
+    except Exception as exc:  # pragma: no cover — defensive: detection never blocks
+        signal = None
+        errors = errors + [f"detection failed: {exc}"]
+
+    git_facts = resolve_git_facts(signal.get("sha") if signal else None, args.head_sha)
+    result = build_result(signal, git_facts, scanned, errors)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
