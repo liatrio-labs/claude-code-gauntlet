@@ -1864,7 +1864,11 @@ function firstUnsafeNumber(root, rootPath) {
       continue;
     }
     if (node && typeof node === 'object') {
-      for (const [k, v] of Object.entries(node)) stack.push([v, `${where}.${k}`]);
+      const entries = Object.entries(node);
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const [k, v] = entries[i];
+        stack.push([v, `${where}.${k}`]);
+      }
     }
   }
   return null;

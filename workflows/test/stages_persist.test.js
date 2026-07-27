@@ -528,6 +528,15 @@ test('persistDerivable also scans the checkpoint skeleton and the PR identity', 
   assert.match(persistDerivable(inp2).reason, /prIdentity\.pr_number/);
 });
 
+test('persistDerivable reports the FIRST unsafe field among sibling object keys, not the last', () => {
+  // Both `rate` (inserted first) and `count` (inserted second) are unsafe; the scan
+  // must report `rate` — the earlier key in insertion order — matching the array
+  // branch's own forward-order guarantee.
+  const inp = persistInput();
+  inp.checkpoints.phases.challenge.stats = { rate: 0.5, count: 90.5 };
+  assert.match(persistDerivable(inp).reason, /checkpoints\.phases\.challenge\.stats\.rate/);
+});
+
 test('a non-integer number falls back to the legacy by-value writer, naming the reason', async () => {
   const ctx = persistCtx();
   const findings = [makeFinding('F1', { confidence: 0.9 })];

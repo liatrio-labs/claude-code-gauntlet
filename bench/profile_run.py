@@ -282,11 +282,15 @@ def classify_stage(label, agent_type):
     return "other"
 
 
-def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
+def _group_by_stage(agents):
     by_stage = {}
     for a in agents:
-        stage = a["stage"]
-        by_stage.setdefault(stage, []).append(a)
+        by_stage.setdefault(a["stage"], []).append(a)
+    return by_stage
+
+
+def build_stage_profile(agents, workflow_start_ms, workflow_duration_ms):
+    by_stage = _group_by_stage(agents)
 
     stages_out = []
     for name in STAGE_ORDER:
@@ -392,9 +396,7 @@ def _fill_transform_gaps(stages_out):
 # --------------------------------------------------------------------------- parallel-capacity accounting
 
 def build_capacity_accounting(agents):
-    by_stage = {}
-    for a in agents:
-        by_stage.setdefault(a["stage"], []).append(a)
+    by_stage = _group_by_stage(agents)
 
     out = []
     for name in STAGE_ORDER:
@@ -431,9 +433,7 @@ def build_critical_path(agents, workflow_start_ms, workflow_end_ms):
     phases are inserted as zero-agent "gap" hops between discover->verify and
     validate-batch->challenge.
     """
-    by_stage = {}
-    for a in agents:
-        by_stage.setdefault(a["stage"], []).append(a)
+    by_stage = _group_by_stage(agents)
 
     hops = []
     prev_end = workflow_start_ms
@@ -477,6 +477,10 @@ def build_critical_path(agents, workflow_start_ms, workflow_end_ms):
 
 
 # --------------------------------------------------------------------------- orchestrator session phases
+
+def _find_tool_result(events, tool_use_id):
+    return next((e for e in events if e["kind"] == "tool_result" and e.get("tool_use_id") == tool_use_id), None)
+
 
 def analyze_orchestrator_phases(session_path: Path | None, workflow_start_ms, workflow_end_ms, run_task_id):
     if session_path is None or not session_path.exists():
@@ -526,7 +530,7 @@ def analyze_orchestrator_phases(session_path: Path | None, workflow_start_ms, wo
     phase2_start_ms = None
     if ask_events:
         first_ask = ask_events[0]
-        tr = next((e for e in events if e["kind"] == "tool_result" and e.get("tool_use_id") == first_ask["id"]), None)
+        tr = _find_tool_result(events, first_ask["id"])
         if tr:
             human_wait1_s = (tr["ts_ms"] - first_ask["ts_ms"]) / 1000.0
             phase2_start_ms = tr["ts_ms"]
@@ -538,7 +542,7 @@ def analyze_orchestrator_phases(session_path: Path | None, workflow_start_ms, wo
     workflow_launches = [e for e in events if e["kind"] == "tool_use" and e["name"] == "Workflow"]
     matched_launch = None
     for launch in workflow_launches:
-        tr = next((e for e in events if e["kind"] == "tool_result" and e.get("tool_use_id") == launch["id"]), None)
+        tr = _find_tool_result(events, launch["id"])
         if tr and run_task_id and (f"Task ID: {run_task_id}" in tr["text"]):
             matched_launch = (launch, tr)
             break
@@ -560,7 +564,7 @@ def analyze_orchestrator_phases(session_path: Path | None, workflow_start_ms, wo
         for e in events:
             if e["kind"] != "tool_use" or e["name"] != "Bash" or not (phase2_start_ms <= e["ts_ms"] <= launch_ts):
                 continue
-            tr = next((r for r in events if r["kind"] == "tool_result" and r.get("tool_use_id") == e.get("id")), None)
+            tr = _find_tool_result(events, e.get("id"))
             model_latency_ms = max(e["ts_ms"] - prev_result_ts, 0.0)
             shell_ms = (tr["ts_ms"] - e["ts_ms"]) if tr else None
             bash_calls.append(
