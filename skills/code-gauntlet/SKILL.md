@@ -57,7 +57,7 @@ Parse the user's input to determine the review target before eligibility checks 
 
    > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE` (`dry-run` posts nothing) and delivery follows `CODE_GAUNTLET_DELIVERY`, not PR state. See `references/headless-mode.md`.
 2. **Draft?** → Ask user (template in `references/phase1-preflight.md`).
-3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 4) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
+3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 3) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
 4. **Trivially simple?** → If ONLY lockfile/generated/auto-formatted changes, stop.
 
 ### Pre-flight configuration gate — MANDATORY GATE
@@ -82,7 +82,7 @@ Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUser
 
 Identify the review target, gather the git artifacts the workflow consumes, and assemble the args object. This is a fast pass in the main context — the review stages run later, inside the workflow. Read `references/phase2-triage.md` for the full sub-steps (VCS detection, checkout, risk classification, REVIEW.md parse) and the args-preparation walkthrough.
 
-### Resolve head SHA, gitignore, and clean stale files (after checkout)
+### Resolve head SHA and gitignore (after checkout)
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never run `gh pr checkout` (or any checkout/fetch/stash) — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit. See `references/headless-mode.md`.
 
@@ -100,6 +100,26 @@ Bash(command="git check-ignore -q .code-gauntlet 2>/dev/null || echo '/.code-gau
 
 Disclose the outcome in the triage output (one line): either `.code-gauntlet/ excluded via .git/info/exclude` or, if the exclude file is unwritable, `note: .code-gauntlet/ is NOT ignored (info/exclude unwritable) — artifacts will show as untracked files` — never fall back to editing `.gitignore`.
 
+### Previously-reviewed gate (PR/MR targets only)
+
+Still in this step, now that the tree is at the review head, run the gate deferred from Phase 1 eligibility check 3 — it compares the last-reviewed commit against the PR head, so it could not run before checkout. Runs **before the stale-file truncation below**: the head SHA has not moved on a repeat run of an already-reviewed PR, so truncating first would zero out the artifacts a "Skip — keep the existing review" answer is supposed to preserve. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA above). Resolve `{owner}`/`{repo}` first — they are the PR's repository, which in a fork clone is not the `origin` remote:
+
+```bash
+Bash(command="gh pr view {pr_number} --json url --jq '.url | split(\"/\") | .[3] + \"/\" + .[4]'")  # owner/repo
+```
+
+Split the result on the first `/` into `owner`/`repo`. This reads the PR's **own URL**, which always lives on the base repository — `gh repo view` would resolve the *current* clone, which in a fork is the fork, exactly the case the explicit flags exist to fix. (GitLab: `glab mr view {pr_number} --output json | jq -r '.web_url'`, then take the path segments before `/-/merge_requests/`.)
+
+```bash
+Bash(command="python3 \"{plugin_root}/scripts/detect_prior_review.py\" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}")
+```
+
+It always exits 0 and prints one JSON object. Gate on `incremental_safe`; the branch table, question templates, and degradations are in `references/phase1-preflight.md` → "Previously-Reviewed Gate". **Incremental** stores `last_reviewed_sha` for the 2c diff branch; **Skip** stops the run here, before the truncation below; anything else continues as a full review. Skip this gate entirely for local-diff targets.
+
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the gate still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed`). See `references/headless-mode.md`.
+
+### Clean stale files
+
 **Truncate stale files** from prior sessions with the same SHA, so a re-run does not blend old artifacts with new:
 
 ```bash
@@ -107,18 +127,6 @@ Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob(
 ```
 
 All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list). The workflow's artifact-writer produces: `findings-*.json`, `report-*.md`, `checkpoint-all-*.json`.
-
-### Previously-reviewed gate (PR/MR targets only)
-
-Still in this step, now that the tree is at the review head, run the gate deferred from Phase 1 eligibility check 3 — it compares the last-reviewed commit against the PR head, so it could not run before checkout. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA above); `{owner}`/`{repo}` are the PR's repository, which in a fork clone is not the `origin` remote:
-
-```bash
-Bash(command="python3 \"{plugin_root}/scripts/detect_prior_review.py\" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}")
-```
-
-It always exits 0 and prints one JSON object. Gate on `incremental_safe`; the branch table, question templates, and degradations are in `references/phase1-preflight.md` → "Previously-Reviewed Gate". **Incremental** stores `last_reviewed_sha` for the 2c diff branch; **Skip** stops the run here; anything else continues as a full review. Skip this gate entirely for local-diff targets.
-
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the gate still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed`). See `references/headless-mode.md`.
 
 ### Gather the git artifacts the workflow consumes
 

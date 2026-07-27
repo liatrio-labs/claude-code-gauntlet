@@ -61,7 +61,8 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
     "owner": "repository-owner",
     "repo": "repository-name",
     "pr_number": 123,
-    "platform": "github|gitlab"
+    "platform": "github|gitlab",
+    "sha": "<full_sha>"
 }
 ```
 
@@ -105,7 +106,8 @@ findings = {
     ],
     'owner': 'myorg',
     'repo': 'myapp',
-    'pr_number': 42
+    'pr_number': 42,
+    'sha': 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3'
 }
 with open(sys.argv[1], 'w') as f:
     json.dump(findings, f, ensure_ascii=False, indent=2)

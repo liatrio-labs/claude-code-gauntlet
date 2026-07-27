@@ -79,7 +79,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
    )
    ```
 
-3. **Previously reviewed?** — **Deferred to Phase 2**, immediately after checkout. See "Previously-Reviewed Gate" below for the full gate; `phase2-triage.md` section 2b-post step 4 is where it runs. The reason is the same one that moves head-SHA resolution out of Phase 1 (see the note at the top of this file): the gate compares the last-reviewed commit against the PR head and counts the commits between them, and before `gh pr checkout` the working tree is on whatever branch the session started on — often with the PR's objects not even fetched. Running it here would compare against the wrong tree and silently mis-gate the incremental path.
+3. **Previously reviewed?** — **Deferred to Phase 2**, immediately after checkout. See "Previously-Reviewed Gate" below for the full gate; `phase2-triage.md` section 2b-post step 3 is where it runs. The reason is the same one that moves head-SHA resolution out of Phase 1 (see the note at the top of this file): the gate compares the last-reviewed commit against the PR head and counts the commits between them, and before `gh pr checkout` the working tree is on whatever branch the session started on — often with the PR's objects not even fetched. Running it here would compare against the wrong tree and silently mis-gate the incremental path.
 
 4. **Trivially simple?** — If ONLY lockfile/generated/auto-formatted changes with no logic modifications, stop.
 
@@ -87,9 +87,15 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 ## Previously-Reviewed Gate
 
-> Runs in **Phase 2, section 2b-post step 4** — after checkout, never in Phase 1. Listed here with the other pre-flight templates because it is a pre-flight UX decision.
+> Runs in **Phase 2, section 2b-post step 3** — after checkout, never in Phase 1. Listed here with the other pre-flight templates because it is a pre-flight UX decision.
 
-Skip entirely when `target_type == local` (no PR/MR ⇒ no signal to detect). Otherwise run the detector. `{platform}` is `github` or `gitlab` per the resolved target type; pass the `{owner}`/`{repo}` resolved for the PR rather than letting the script fall back to the `origin` remote, which points at the fork in a fork clone:
+Skip entirely when `target_type == local` (no PR/MR ⇒ no signal to detect). Otherwise run the detector. `{platform}` is `github` or `gitlab` per the resolved target type. Resolve `{owner}`/`{repo}` first — they are the PR's repository, not necessarily the `origin` remote, which points at the fork in a fork clone:
+
+```bash
+gh pr view {pr_number} --json url --jq '.url | split("/") | .[3] + "/" + .[4]'   # owner/repo
+```
+
+Split the result on the first `/` into `owner`/`repo`. This reads the PR's **own URL**, which always lives on the base repository — `gh repo view` would resolve the *current* clone, which in a fork is the fork, exactly the case the explicit flags exist to fix. (GitLab: `glab mr view {pr_number} --output json | jq -r '.web_url'`, then take the path segments before `/-/merge_requests/`.)
 
 ```bash
 python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}
@@ -119,11 +125,12 @@ It always exits 0 and prints exactly one JSON object on stdout (detection degrad
 
 When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`marker`/`last_reviewed_sha` `null` and `incremental_safe` `false`.
 
-`incremental_safe` is the single boolean that gates whether the incremental path may be offered. Branch in this order — the `sha_resolvable` case must be checked **before** the "no new commits" case, because an unresolvable SHA also reports `head_advanced: false` and would otherwise be announced as "no new commits" when commits may well have been pushed:
+`incremental_safe` is the single boolean that gates whether the incremental path may be offered. Branch in this exact order — each earlier case also satisfies a later case's condition, so checking out of order mis-classifies it: `sha_resolvable` before "no new commits" (an unresolvable SHA also reports `head_advanced: false` and would otherwise be announced as "no new commits" when commits may well have been pushed); `sha_is_ancestor` before "no new commits" (a rewritten history — rebase, squash, or a backward force-push — also reports `head_advanced: false`, since `head_advanced` requires `sha_is_ancestor`, so unchecked it reads identically to "nothing changed"). `{short_sha}` below is `last_reviewed_sha_short`:
 
 - `previously_reviewed == false` → continue, no question asked.
 - `previously_reviewed == true` and `sha_resolvable == false` → present **neither** template. Disclose that a prior review was found but its commit is not present locally (force-push, shallow clone, or unfetched object) and continue as a full review.
-- `incremental_safe == true` → ask (`{short_sha}` = `last_reviewed_sha_short`). Fill `{N}` from `new_commit_count`; if it is `0` or `null`, drop the count clause and say "new commits have been pushed since" rather than rendering "0 new commits":
+- `previously_reviewed == true`, `sha_resolvable == true`, `sha_is_ancestor == false` → present **neither** template. History was rewritten since the last review (rebase, squash, or a backward force-push): the reviewed commit still exists locally but is no longer an ancestor of HEAD, so the commits cannot be compared. Disclose that the PR was previously reviewed at `{short_sha}` but its history has since been rewritten, and continue as a full review. `new_commit_count` counts commits on the diverged history here — it is meaningless and must not be quoted to the user.
+- `incremental_safe == true` → ask. Fill `{N}` from `new_commit_count`; if it is `0` or `null`, drop the count clause and say "new commits have been pushed since" rather than rendering "0 new commits":
 
   ```
   AskUserQuestion(
@@ -141,7 +148,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
   ```
 
   If **Incremental**: store `last_reviewed_sha` — Phase 2 2c's incremental diff branch uses it. The marker payload is already parsed and available under the JSON's `marker` key above; do not re-parse the footer or hand-write a regex.
-- `previously_reviewed == true`, `sha_resolvable == true`, `head_advanced == false` (the head is exactly where the last review stopped) → ask:
+- `previously_reviewed == true`, `sha_resolvable == true`, `sha_is_ancestor == true`, `head_advanced == false` (the reviewed commit IS the head — genuinely no new commits) → ask:
 
   ```
   AskUserQuestion(

@@ -9,6 +9,10 @@ Covers:
   - render_comment_body: all severity emojis, with/without suggestion block
   - build_footer: metadata JSON in HTML comment
   - gitlab_project_id: URL encoding of owner/repo
+  - TestReviewMarkerRoundTripThroughRealPoster — issue #39 requirement 6's
+    headline "write signal == read signal" guarantee, proven against the REAL
+    post_github/post_gitlab DRY_RUN capture path rather than a
+    re-implementation of their footer composition. See the class docstring.
 """
 
 import contextlib
@@ -25,6 +29,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import scripts.post_review as post_review
+import scripts.review_marker as review_marker
 from scripts.post_review import (
     detect_platform,
     is_line_valid,
@@ -429,6 +434,99 @@ class TestResolveMarkerSha(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Review-marker round trip through the REAL poster (Issue #39 Requirement 6)
+# ---------------------------------------------------------------------------
+
+class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
+    """THE test that discharges issue #39 requirement 6 unambiguously: the
+    "write signal == read signal" guarantee proven against the bytes
+    post_review.py actually posts.
+
+    tests/test_review_marker.py's TestRoundTrip re-implements post_github's
+    and post_gitlab's footer composition inline
+    (``review_body += build_footer(len(findings), sha, body=review_body)``)
+    and then parses ITS OWN re-implementation. That proves the
+    re-implementation round-trips — it would keep passing even if
+    post_github/post_gitlab stopped appending the footer entirely, since
+    nothing in that test ever calls the real posting functions.
+
+    This test instead drives the REAL ``post_review.post_github`` and
+    ``post_review.post_gitlab`` with ``DRY_RUN`` mode (the same capture
+    technique bench/tests/test_adapter.py's reference-payload builders use:
+    set ``post_review.DRY_RUN = True``, call the poster, then read
+    ``post_review._CAPTURED``), pulls the posted body straight out of the
+    captured payload — GitHub: ``_CAPTURED[0]["payload"]["body"]``; GitLab:
+    the summary note is the first capture, same path — and feeds THAT EXACT
+    STRING to ``scripts.review_marker.detect_signal``, asserting the
+    recovered sha equals the sha the poster was given. Covers both platforms
+    and both an empty ``review_body`` (the ``workflows/src/stages.js``
+    default) and a non-empty one. If post_github/post_gitlab stopped
+    appending the footer, THIS test would fail; the re-implementation-based
+    one would not.
+    """
+
+    def setUp(self):
+        post_review.DRY_RUN = True
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    def tearDown(self):
+        post_review.DRY_RUN = False
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    @patch("scripts.post_review.check_tool")
+    def test_github_empty_review_body(self, _tool):
+        sha = "a" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "", "findings": []}
+        post_review.post_github(data, set())
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+    @patch("scripts.post_review.check_tool")
+    def test_github_non_empty_review_body(self, _tool):
+        sha = "b" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "## Summary\nSome pre-existing narrative text.\n",
+                "findings": []}
+        post_review.post_github(data, set())
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+    @patch("scripts.post_review.check_tool")
+    @patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start"))
+    def test_gitlab_empty_review_body(self, _shas, _tool):
+        sha = "c" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "", "findings": []}
+        post_review.post_gitlab(data, set())
+        # The summary note is posted before any per-finding discussion, so
+        # with findings=[] it is also the only capture.
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+    @patch("scripts.post_review.check_tool")
+    @patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start"))
+    def test_gitlab_non_empty_review_body(self, _shas, _tool):
+        sha = "d" * 40
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
+                "review_body": "## MR Review\nContext for the reviewer.\n",
+                "findings": []}
+        post_review.post_gitlab(data, set())
+        body = post_review._CAPTURED[0]["payload"]["body"]
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+
+
+# ---------------------------------------------------------------------------
 # gitlab_project_id
 # ---------------------------------------------------------------------------
 
@@ -594,7 +692,13 @@ class TestGitlabPositionPayload(unittest.TestCase):
             captured.append((cmd_prefix, payload))
             return {}
 
-        with patch("scripts.post_review.get_head_sha", return_value="abc123"), \
+        # Faithful to real git: `git rev-parse HEAD` always yields either a
+        # full 40-hex-char object id or the literal "unknown" (get_head_sha's
+        # own fallback on failure) — never a 6-char string. "abc123" would be
+        # the same class of fidelity bug flagged elsewhere in this change (a
+        # get_head_sha mock only 6 hex chars long).
+        with patch("scripts.post_review.get_head_sha",
+                   return_value="deadbeef" * 5), \
              patch("scripts.post_review.check_tool"), \
              patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")), \
              patch("scripts.post_review.post_json", side_effect=fake_post_json):

@@ -4,7 +4,7 @@ Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage
 
 ## Contents
 
-- **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + gitignore + stale cleanup — **2c** Review target + diff/changed-files save
+- **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + gitignore + previously-reviewed gate + stale cleanup — **2c** Review target + diff/changed-files save
 - **2d** Project context (CLAUDE.md, REVIEW.md parse) — **2e** Risk classification
 - **2g** Test discovery — **2h** Docs/specs — **2i** History context
 - **2k** AI-generated code detection — **2l** Review dimensions
@@ -69,7 +69,7 @@ No fallback or workaround — a silently wrong working tree produces unreliable 
 
 ---
 
-## 2b-post. Resolve Head SHA, Gitignore, and Clean Stale Files
+## 2b-post. Resolve Head SHA, Gitignore, Previously-Reviewed Gate, and Clean Stale Files
 
 Now that the working tree reflects the review target, compute the short SHA and perform housekeeping. These steps run after checkout so the SHA reflects the actual PR HEAD and the gitignore addition is not stashed by `gh pr checkout`.
 
@@ -89,25 +89,33 @@ Bash(command="git check-ignore -q .code-gauntlet 2>/dev/null || echo '/.code-gau
 
 Added after checkout to avoid stash/pop loss from `gh pr checkout` — if this ran before checkout, the gitignore modification would be stashed and potentially lost.
 
-**3. Truncate stale files** from prior sessions with the same SHA:
+**3. Previously-reviewed gate** (PR/MR targets only — skip for `local`):
+
+Run the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. Resolve `{owner}`/`{repo}` first — they are the PR's repository, not necessarily the `origin` remote:
+
+```bash
+gh pr view {pr_number} --json url --jq '.url | split("/") | .[3] + "/" + .[4]'   # owner/repo
+```
+
+Split the result on the first `/` into `owner`/`repo`. This reads the PR's **own URL**, which always lives on the base repository — `gh repo view` would resolve the *current* clone, which in a fork is the fork, exactly the case the explicit flags exist to fix. (GitLab: `glab mr view {pr_number} --output json | jq -r '.web_url'`, then take the path segments before `/-/merge_requests/`.)
+
+```bash
+python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}
+```
+
+This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA resolved in step 1).
+
+Runs **before step 4's truncation, not after**: the head SHA has not moved on a repeat run of an already-reviewed PR, so truncating first would zero out the very artifacts a "Skip — keep the existing review" answer is supposed to preserve.
+
+If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2c's incremental branch consumes it. If it resolves to **Skip**, stop the run here, before step 4. Otherwise continue as a full review.
+
+**4. Truncate stale files** from prior sessions with the same SHA:
 
 ```bash
 Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/code-gauntlet-*-{head_sha_short}.*')]\"")
 ```
 
 Prevents echo-append (`>>`) from accumulating findings across sessions. Without truncation, re-running a review on the same SHA would append duplicate findings to existing NDJSON files.
-
-**4. Previously-reviewed gate** (PR/MR targets only — skip for `local`):
-
-Run the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe:
-
-```bash
-python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}
-```
-
-This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA resolved in step 1); `{owner}`/`{repo}` are the PR's repository, not necessarily the `origin` remote.
-
-If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2c's incremental branch consumes it. If it resolves to **Skip**, stop the run here. Otherwise continue as a full review.
 
 ---
 
@@ -120,11 +128,11 @@ Use `target_type` and `pr_number` from Phase 1's "Resolve review target" step. D
    - **GitLab (MR):** Gather the file list with `glab mr diff {pr_number} --name-only`. Gather the full diff with `glab mr diff {pr_number}`.
 2. **Branch comparison** — `git diff <base>...HEAD` and `git diff --name-only <base>...HEAD`
 3. **Local changes** — `git diff HEAD` (or `git diff --cached` if nothing unstaged)
-4. **Incremental** (2b-post step 4's gate resolved "Incremental" and stored `last_reviewed_sha`; PR/MR mode only) — replaces branch 1's server-computed diff with `git diff {last_reviewed_sha}...HEAD` and `git diff --name-only {last_reviewed_sha}...HEAD`. Same validation rules as below (non-empty, starts with `diff --git`); if the diff fails or is empty, fall back to branch 1's full server diff and disclose the fallback. Record the incremental scope (`last_reviewed_sha`) in the triage announcement and the Phase 8 methodology.
+4. **Incremental** (2b-post step 3's gate resolved "Incremental" and stored `last_reviewed_sha`; PR/MR mode only) — reuses branch 1's server-computed `--name-only` file list (never branch 1's diff content) and diffs only those files: `git diff {last_reviewed_sha}..HEAD -- <that file list>`. Do **not** use the unbounded `git diff {last_reviewed_sha}...HEAD` / `git diff --name-only {last_reviewed_sha}...HEAD` form: `incremental_safe` guarantees `{last_reviewed_sha}` is an ancestor of HEAD, so the three-dot form collapses to two-dot, and unbounded it would include every commit since the last review — including an unrelated base-branch merge (e.g. `git merge main`) that pulls in files the PR never touched. Same validation rules as below (non-empty, starts with `diff --git`); note the residual limitation: a base merge that also touches a PR file still shows up. If the diff fails or is empty, fall back to branch 1's full server diff and disclose the fallback. Record the incremental scope (`last_reviewed_sha`) in the triage announcement and the Phase 8 methodology.
 
 **Save the diff and the changed-file list (the workflow has no git access):** Persist both git-derived inputs to disk so the workflow can consume them.
 
-1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 4 resolved incremental, branch 4's `{last_reviewed_sha}...HEAD` diff); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
+1. **Diff** → `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode use the server-computed, fork-safe diff (or, when 2b-post step 3 resolved incremental, branch 4's file-bounded `{last_reviewed_sha}..HEAD -- <file list>` diff); for branch/local targets use `git diff`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`.
 2. **Changed files** → `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array (this path becomes `args.changedFilesPath`). Keep the same array inline for `args.changedFiles` — the Summarize stage reads it by value, because the workflow cannot open the file.
 
 ```bash

@@ -103,7 +103,13 @@ def run(cmd, timeout=None):
     """
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
+            cmd, capture_output=True, text=True,
+            # text=True decodes STRICT utf-8 by default, and UnicodeDecodeError is
+            # a ValueError, not an OSError — a single undecodable byte from gh/glab
+            # would escape this wrapper and exit 1 with empty stdout, breaking the
+            # always-exit-0 contract the caller degrades on.
+            encoding="utf-8", errors="replace",
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         return "", f"timed out after {timeout}s", -1
@@ -322,7 +328,7 @@ def load_bodies_file(path):
 # Git facts + result assembly
 # ---------------------------------------------------------------------------
 
-def resolve_git_facts(sha, head_sha=None):
+def resolve_git_facts(sha, head_sha=None, errors=None):
     """Return the git-derived facts about *sha* relative to the head. Never raises.
 
     ``sha_resolvable`` is False when the recorded object is not present in this
@@ -334,7 +340,16 @@ def resolve_git_facts(sha, head_sha=None):
     every time), and the commit count is taken against that same head rather than
     whatever HEAD happens to be.
     """
+    errors = errors if errors is not None else []
     head = (git_rev_parse(head_sha) or head_sha) if head_sha else git_rev_parse("HEAD")
+    if not head:
+        # Without a head there is nothing to compare against; say why, so the
+        # caller's "detection unavailable" disclosure names the real reason
+        # instead of reporting a bare "no prior review".
+        errors.append(
+            "git: could not resolve the head commit "
+            "(not a git repository, an unborn branch, or git is unavailable)"
+        )
     facts = {
         "head_sha": head or "unknown",
         "last_reviewed_sha": sha if isinstance(sha, str) and sha else None,
@@ -347,10 +362,14 @@ def resolve_git_facts(sha, head_sha=None):
         return facts
     facts["last_reviewed_sha_short"] = facts["last_reviewed_sha"][:8]
 
-    _, _, rc = run(
+    _, cat_err, rc = run(
         ["git", "cat-file", "-e", f"{sha}^{{commit}}"], timeout=GIT_TIMEOUT_SECONDS
     )
     if rc != 0:
+        errors.append(
+            f"git: the last-reviewed commit {facts['last_reviewed_sha_short']} is not "
+            f"present in this clone{': ' + cat_err.strip() if cat_err.strip() else ''}"
+        )
         return facts
     facts["sha_resolvable"] = True
 
@@ -378,6 +397,40 @@ def resolve_git_facts(sha, head_sha=None):
     if rc == 0 and count.isdigit():
         facts["new_commit_count"] = int(count)
     return facts
+
+
+#: Keys echoed back from a parsed marker. The payload is attacker-controllable —
+#: anyone with read access can post a comment carrying a marker — and the
+#: orchestrator is told to consume the `marker` object, so an unbounded verbatim
+#: echo would pipe arbitrary text straight into a model's context. Forward
+#: compatibility is preserved by `unknown_keys` (names only, capped), which lets a
+#: future producer's fields be noticed without their values being replayed.
+_MARKER_ECHO_KEYS = ("version", "findings_count", "sha", "findings", "_token", "_legacy")
+_MARKER_ECHO_MAX_CHARS = 4096
+
+
+def sanitize_marker(marker):
+    """Return a size-bounded, allow-listed view of a parsed marker payload."""
+    if not isinstance(marker, dict):
+        return None
+    out = {k: marker[k] for k in _MARKER_ECHO_KEYS if k in marker}
+    extra = sorted(k for k in marker if k not in _MARKER_ECHO_KEYS)
+    if extra:
+        out["unknown_keys"] = extra[:32]
+    try:
+        encoded = json.dumps(out)
+    except (TypeError, ValueError):
+        return {"sha": marker.get("sha"), "unrepresentable": True}
+    if len(encoded) > _MARKER_ECHO_MAX_CHARS:
+        return {
+            "version": out.get("version"),
+            "findings_count": out.get("findings_count"),
+            "sha": out.get("sha"),
+            "_token": out.get("_token"),
+            "_legacy": out.get("_legacy"),
+            "truncated": True,
+        }
+    return out
 
 
 def build_result(signal, git_facts, scanned=None, errors=None):
@@ -435,7 +488,7 @@ def build_result(signal, git_facts, scanned=None, errors=None):
         "head_advanced": head_advanced,
         "new_commit_count": git_facts.get("new_commit_count"),
         "incremental_safe": bool(sha_resolvable and head_advanced),
-        "marker": signal.get("marker"),
+        "marker": sanitize_marker(signal.get("marker")),
         "scanned": scanned,
         "errors": errors,
     }
@@ -519,7 +572,9 @@ def main():
         signal = None
         errors = errors + [f"detection failed: {exc}"]
 
-    git_facts = resolve_git_facts(signal.get("sha") if signal else None, args.head_sha)
+    git_facts = resolve_git_facts(
+        signal.get("sha") if signal else None, args.head_sha, errors
+    )
     result = build_result(signal, git_facts, scanned, errors)
     # ensure_ascii=True: `marker` echoes unknown keys verbatim and `errors`
     # carries raw gh/glab stderr, so the payload can hold text outside the

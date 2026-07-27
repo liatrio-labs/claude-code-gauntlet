@@ -18,7 +18,21 @@ Covers:
     head_advanced in every branch, and head_advanced additionally requiring
     sha_is_ancestor.
   - resolve_git_facts: the `git merge-base --is-ancestor <sha> <head>` call is
-    made and its exit code drives sha_is_ancestor.
+    made and its exit code drives sha_is_ancestor, and it appends a
+    human-readable explanation to errors[] both when the head cannot be
+    resolved and when the last-reviewed commit is absent from the clone.
+  - build_result is also exercised end-to-end against a REAL resolve_git_facts
+    result (git subprocess calls patched), including the non-ancestor
+    (rebase/force-push) case, proving build_result's assumed input shape is
+    actually compatible with what resolve_git_facts emits — not just assumed
+    via the hand-built _git_facts() fixture.
+  - GitHub reviews are fetched with --paginate too, mirroring the GitLab
+    pagination pin below (PR reviews come back oldest-first at 30/page, so an
+    unpaginated fetch would silently lose the newest marker on a busy PR).
+  - sanitize_marker: allow-listed echo keys, unknown key NAMES only (values
+    never echoed verbatim), and truncation of an oversized payload.
+  - run()'s errors="replace" decode: undecodable bytes from gh/glab/git must
+    not raise, and the CLI must still exit 0 with valid JSON on stdout.
   - CLI end-to-end via --bodies-file with git subprocess calls patched: stdout
     parses as exactly one JSON object, exit 0, fields match. Non-ASCII content
     (a marker's `findings` extension slot, a non-ASCII bodies-file path) still
@@ -94,11 +108,21 @@ def _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_
         def res(out="", err="", rc=0):
             return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
         if "cat-file" in cmd:
-            return res(rc=0 if resolvable else 1,
-                       err="" if resolvable else "fatal: Not a valid object name")
+            # Faithful to real git: `git cat-file -e <bad>^{commit}` is a
+            # "fatal:" error exiting 128, not a plain 1, and it names the
+            # object it could not find. Verified empirically: `git cat-file -e
+            # 000...0^{commit}` -> "fatal: Not a valid object name
+            # 000...0^{commit}", exit 128.
+            return res(rc=0 if resolvable else 128,
+                       err="" if resolvable else f"fatal: Not a valid object name {cmd[-1]}")
         if "merge-base" in cmd:
-            return res(rc=0 if ancestor else 1,
-                       err="" if ancestor else "fatal: Not an ancestor")
+            # Faithful to real git: a plain "not an ancestor" answer from
+            # `merge-base --is-ancestor` is silent on stderr and exits 1 — it
+            # is a boolean "no", not an error. Verified empirically. (A truly
+            # invalid commit would exit 128 with a "fatal:" message, but that
+            # branch is unreachable here — merge-base only runs after cat-file
+            # has already proven the sha resolvable.)
+            return res(rc=0 if ancestor else 1)
         if "rev-parse" in cmd and cmd[-1] == "HEAD":
             return res(out=head_sha + "\n")
         if "rev-parse" in cmd:
@@ -111,7 +135,15 @@ def _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_
                 return res(out=rev + "\n")
             if resolvable:
                 return res(out=full_sha + "\n")
-            return res(err="fatal: ambiguous argument", rc=1)
+            # Faithful to real git: an unresolvable rev is a "fatal:" error
+            # exiting 128, not 1. Verified empirically: `git rev-parse
+            # deadbeef` -> "fatal: ambiguous argument 'deadbeef': unknown
+            # revision or path not in the working tree.", exit 128.
+            return res(
+                err=f"fatal: ambiguous argument '{rev}': unknown revision or "
+                    "path not in the working tree.",
+                rc=128,
+            )
         if "rev-list" in cmd:
             return res(out=f"{commit_count}\n")
         return res(out="{}")
@@ -206,6 +238,29 @@ class TestFetchEntriesGithubSingleSurface(unittest.TestCase):
         self.assertEqual(errors, [])
 
 
+class TestFetchEntriesGithubPagination(unittest.TestCase):
+    """Mirrors TestFetchEntriesGitlabPagination below: GitHub returns PR
+    reviews oldest-first at 30/page (gh's default page size), so an
+    unpaginated fetch on any PR with more than 30 reviews would silently lose
+    the newest marker — the same class of bug --paginate fixes on the GitLab
+    side, previously unpinned on this side."""
+
+    def test_paginate_flag_is_present_in_gh_argv(self):
+        calls = []
+
+        def fake_run(cmd, *a, **k):
+            calls.append(cmd)
+            return SimpleNamespace(stdout="[]", stderr="", returncode=0)
+
+        with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
+            detect_prior_review.fetch_entries_github("o", "r", 5)
+
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--paginate", calls[0])
+        joined = " ".join(calls[0])
+        self.assertIn("pulls/5/reviews", joined)
+
+
 class TestCollectEntriesGitlab(unittest.TestCase):
 
     def test_maps_notes_to_entry_shape(self):
@@ -247,17 +302,21 @@ class TestFetchEntriesGitlabPagination(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 def _git_facts(sha_resolvable, last_reviewed_sha, last_reviewed_sha_short,
-                head_sha, sha_is_ancestor, head_advanced, new_commit_count,
-                incremental_safe):
+                head_sha, sha_is_ancestor, new_commit_count):
+    """Build a git_facts dict from ONLY the six keys resolve_git_facts ever
+    emits: head_sha, last_reviewed_sha, last_reviewed_sha_short,
+    sha_resolvable, sha_is_ancestor, new_commit_count. head_advanced and
+    incremental_safe are NOT among them — those are build_result's OWN
+    outputs, computed from these six plus the signal. Fabricating them here
+    as fixture inputs would let this fixture drift away from what
+    resolve_git_facts actually returns without any test noticing."""
     return {
         "sha_resolvable": sha_resolvable,
         "last_reviewed_sha": last_reviewed_sha,
         "last_reviewed_sha_short": last_reviewed_sha_short,
         "head_sha": head_sha,
         "sha_is_ancestor": sha_is_ancestor,
-        "head_advanced": head_advanced,
         "new_commit_count": new_commit_count,
-        "incremental_safe": incremental_safe,
     }
 
 
@@ -268,7 +327,7 @@ class TestBuildResult(unittest.TestCase):
             "sha": FULL_SHA, "signal": "marker", "legacy": False, "source": "review",
             "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
         }
-        facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, True, 3, True)
+        facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 3)
         result = detect_prior_review.build_result(signal, facts)
 
         self.assertTrue(result["previously_reviewed"])
@@ -295,7 +354,7 @@ class TestBuildResult(unittest.TestCase):
             "sha": FULL_SHA, "signal": "footer", "legacy": False, "source": "issue_comment",
             "marker": None,
         }
-        facts = _git_facts(True, FULL_SHA, SHORT_SHA, FULL_SHA, True, False, 0, False)
+        facts = _git_facts(True, FULL_SHA, SHORT_SHA, FULL_SHA, True, 0)
         result = detect_prior_review.build_result(signal, facts)
 
         self.assertTrue(result["previously_reviewed"])
@@ -313,7 +372,7 @@ class TestBuildResult(unittest.TestCase):
             "sha": raw_sha, "signal": "marker", "legacy": True, "source": "note",
             "marker": {"version": "3.0", "sha": raw_sha},
         }
-        facts = _git_facts(False, raw_sha, raw_sha[:8], HEAD_SHA, False, False, None, False)
+        facts = _git_facts(False, raw_sha, raw_sha[:8], HEAD_SHA, False, None)
         result = detect_prior_review.build_result(signal, facts)
 
         self.assertTrue(result["previously_reviewed"])
@@ -338,7 +397,7 @@ class TestBuildResult(unittest.TestCase):
             "sha": FULL_SHA, "signal": "marker", "legacy": False, "source": "review",
             "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
         }
-        facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, False, False, 0, False)
+        facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, False, 0)
         result = detect_prior_review.build_result(signal, facts)
 
         self.assertTrue(result["sha_resolvable"])
@@ -358,6 +417,67 @@ class TestBuildResult(unittest.TestCase):
         self.assertIsNone(result["marker"])
         self.assertIsNone(result["last_reviewed_sha"])
         self.assertFalse(result["sha_is_ancestor"])
+        self.assertFalse(result["incremental_safe"])
+
+
+class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
+    """End-to-end: a REAL resolve_git_facts() result (git subprocess calls
+    patched) piped directly into build_result — proving the two functions'
+    dict shapes are actually compatible, rather than assumed via the
+    hand-built _git_facts() fixture used by TestBuildResult above. Includes
+    the non-ancestor (rebase/force-push) case, which nothing previously
+    exercised end to end."""
+
+    def _signal(self, sha):
+        return {
+            "sha": sha, "signal": "marker", "legacy": False, "source": "review",
+            "marker": {"version": "3.0", "findings_count": 1, "sha": sha},
+        }
+
+    def test_forward_moving_branch_is_incremental_safe(self):
+        fake_run = _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA,
+                                  commit_count=3, ancestor=True)
+        with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
+            git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+
+        result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
+
+        self.assertTrue(result["previously_reviewed"])
+        self.assertTrue(result["sha_resolvable"])
+        self.assertTrue(result["sha_is_ancestor"])
+        self.assertTrue(result["head_advanced"])
+        self.assertTrue(result["incremental_safe"])
+        self.assertEqual(result["new_commit_count"], 3)
+
+    def test_non_ancestor_rebase_or_force_push_is_not_incremental_safe(self):
+        """The reviewed commit still exists in the object DB (sha_resolvable
+        True) but a backwards force-push/rebase has moved it off head's
+        ancestry. TestBuildResult covers this branch against a hand-built
+        fixture; this proves the SAME outcome against resolve_git_facts'
+        actual output — the case the module docstring calls out as never
+        exercised end to end."""
+        fake_run = _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA,
+                                  commit_count=0, ancestor=False)
+        with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
+            git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+
+        result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
+
+        self.assertTrue(result["previously_reviewed"])
+        self.assertTrue(result["sha_resolvable"])
+        self.assertFalse(result["sha_is_ancestor"])
+        self.assertFalse(result["head_advanced"])
+        self.assertFalse(result["incremental_safe"])
+
+    def test_sha_unresolvable_is_not_incremental_safe(self):
+        fake_run = _fake_git_run(resolvable=False, head_sha=HEAD_SHA)
+        with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
+            git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
+
+        result = detect_prior_review.build_result(self._signal(FULL_SHA), git_facts)
+
+        self.assertTrue(result["previously_reviewed"])
+        self.assertFalse(result["sha_resolvable"])
         self.assertFalse(result["incremental_safe"])
 
 
@@ -397,6 +517,41 @@ class TestResolveGitFactsMergeBase(unittest.TestCase):
         merge_base_calls = [c for c in calls if "merge-base" in c]
         self.assertEqual(len(merge_base_calls), 1)
         self.assertFalse(facts["sha_is_ancestor"])
+
+
+class TestResolveGitFactsErrorMessages(unittest.TestCase):
+    """resolve_git_facts appends a human-readable explanation to errors[] in
+    two situations: the head commit cannot be resolved at all, and the
+    last-reviewed commit is absent from this clone. Both strings feed the
+    caller's degradation disclosure and were previously unpinned."""
+
+    def test_head_unresolvable_appends_explanation(self):
+        def fake_run(cmd, *a, **k):
+            if cmd[:2] == ["git", "rev-parse"]:
+                return SimpleNamespace(stdout="", stderr="fatal: not a git repository",
+                                        returncode=128)
+            return SimpleNamespace(stdout="", stderr="", returncode=0)
+
+        with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
+            errors = []
+            facts = detect_prior_review.resolve_git_facts(None, None, errors)
+
+        self.assertEqual(facts["head_sha"], "unknown")
+        self.assertTrue(
+            any("could not resolve the head commit" in e for e in errors), errors)
+
+    def test_last_reviewed_commit_absent_appends_explanation(self):
+        fake_run = _fake_git_run(resolvable=False)
+        with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
+            errors = []
+            facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA, errors)
+
+        self.assertFalse(facts["sha_resolvable"])
+        self.assertTrue(
+            any("is not present in this clone" in e for e in errors), errors)
+        self.assertTrue(
+            any(FULL_SHA[:8] in e for e in errors),
+            "the short sha should be named in the explanation")
 
 
 # ---------------------------------------------------------------------------
@@ -689,6 +844,102 @@ class TestGitlabFetch(_CliTestBase):
         result = json.loads(out.strip())
         self.assertTrue(result["previously_reviewed"])
         self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
+
+
+class TestSanitizeMarker(unittest.TestCase):
+    """sanitize_marker allow-lists echoed marker keys, lists unknown key NAMES
+    only (values never echoed), and truncates an oversized payload. The
+    parsed marker is attacker-controllable — anyone with read access can post
+    a comment carrying one — and the orchestrator is told to consume the
+    `marker` object, so an unbounded verbatim echo would pipe arbitrary text
+    straight into a model's context."""
+
+    def test_normal_payload_round_trips_unchanged(self):
+        marker = {
+            "version": "3.0", "findings_count": 2, "sha": FULL_SHA,
+            "_token": "code-gauntlet-findings", "_legacy": False,
+        }
+        self.assertEqual(detect_prior_review.sanitize_marker(marker), marker)
+
+    def test_unknown_keys_appear_by_name_only_value_not_echoed(self):
+        marker = {
+            "version": "3.0", "sha": FULL_SHA,
+            "attacker_field": "SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",
+        }
+        out = detect_prior_review.sanitize_marker(marker)
+        self.assertIn("unknown_keys", out)
+        self.assertIn("attacker_field", out["unknown_keys"])
+        self.assertNotIn("attacker_field", out)
+        self.assertNotIn("SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR", json.dumps(out))
+
+    def test_huge_value_is_truncated_not_echoed_verbatim(self):
+        huge = "X" * 100000
+        marker = {"version": "3.0", "findings_count": 1, "sha": FULL_SHA, "findings": huge}
+        out = detect_prior_review.sanitize_marker(marker)
+        self.assertTrue(out.get("truncated"))
+        dumped = json.dumps(out)
+        self.assertNotIn(huge, dumped)
+        self.assertLess(len(dumped), len(huge))
+        self.assertEqual(out["sha"], FULL_SHA)
+        self.assertEqual(out["version"], "3.0")
+        self.assertEqual(out["findings_count"], 1)
+
+    def test_non_dict_marker_returns_none(self):
+        self.assertIsNone(detect_prior_review.sanitize_marker(None))
+        self.assertIsNone(detect_prior_review.sanitize_marker("not a dict"))
+        self.assertIsNone(detect_prior_review.sanitize_marker([1, 2, 3]))
+
+
+class TestRunSurvivesNonUtf8Stdout(unittest.TestCase):
+    """run() passes errors='replace' to subprocess.run, so a single
+    undecodable byte in gh/glab/git's stdout — a UnicodeDecodeError, which is
+    a ValueError, not an OSError — cannot escape run()'s except clauses and
+    break the always-exit-0 contract the caller degrades on. Both tests drive
+    the REAL subprocess module with a python3 child process that writes
+    invalid UTF-8 bytes, not the process-wide `scripts.detect_prior_review.
+    subprocess.run` mock used elsewhere in this file, so the assertion is
+    against actual OS decode behavior rather than a fake that could lie about
+    it. No network: the child process and the one real `git rev-parse HEAD`
+    call the end-to-end test makes are both local-only."""
+
+    def test_run_wrapper_never_raises_and_replaces_undecodable_bytes(self):
+        cmd = [sys.executable, "-c",
+               r"import sys; sys.stdout.buffer.write(b'garbage \xff\xfe bytes')"]
+        stdout, stderr, rc = detect_prior_review.run(cmd, timeout=10)
+        self.assertEqual(rc, 0)
+        self.assertIn("garbage", stdout)
+        self.assertIn("bytes", stdout)
+        self.assertIn("�", stdout,
+                       "undecodable bytes must be replaced, not silently dropped")
+
+    def test_cli_end_to_end_non_utf8_fetch_still_exits_zero_with_valid_json(self):
+        """fetch_entries_github is monkeypatched to route through the REAL
+        run() wrapper against a python3 child that writes undecodable bytes,
+        so main()'s exit code and stdout validity are proven against real
+        decode behavior end to end, not a mock that bypasses run()'s own
+        subprocess.run call entirely."""
+
+        def fake_fetch_entries_github(owner, repo, number):
+            cmd = [sys.executable, "-c",
+                   r"import sys; sys.stdout.buffer.write(b'\xff\xfe' + b'not json')"]
+            stdout, _, _ = detect_prior_review.run(cmd, timeout=10)
+            items = detect_prior_review._parse_json_array(stdout)
+            if items is None:
+                return [], [f"github reviews: response was not JSON: {stdout[:60]!r}"]
+            return detect_prior_review.collect_entries_github(items), []
+
+        argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
+        with patch.object(detect_prior_review, "fetch_entries_github",
+                           side_effect=fake_fetch_entries_github):
+            out, code = _run_main(argv)
+
+        self.assertEqual(code, 0)
+        decoder = json.JSONDecoder()
+        obj, end = decoder.raw_decode(out.strip())
+        self.assertIsInstance(obj, dict)
+        self.assertEqual(end, len(out.strip()))
+        self.assertFalse(obj["previously_reviewed"])
+        self.assertTrue(obj["errors"])
 
 
 # ---------------------------------------------------------------------------
