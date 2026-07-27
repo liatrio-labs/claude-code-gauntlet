@@ -7,8 +7,11 @@
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
 export const ARGS_VERSION = 1;
-// REQUIRED mirrors consumption: changedFiles/changedLines feed summarize bucketing and
-// the agent-count guard; changedFilesPath is on-disk provenance the workflow never opens.
+// changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
+// REQUIRED because they're consumed. `mode` and `repoRoot` are NOT read anywhere in
+// workflows/src (mode is only ever re-checked against its own enum below; repoRoot is unread
+// entirely) — they're required as provenance/telemetry the skill always stamps, not because
+// any stage consumes them. changedFilesPath is on-disk provenance the workflow never opens.
 const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'agentFlags', 'policy', 'limits'];
 
 // The nonce is interpolated into the verify executor command argv (the verify stage
@@ -21,17 +24,129 @@ const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 // the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
 const DELIVERY_TIERS = ['all', 'main_only'];
 
+// Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
+// stamped `null` rather than absent — a wasted model round trip. These five top-level
+// optional fields have no meaning as `null` (only "absent" or "a well-formed object/array"),
+// so a literal null is equivalent to omission and gets dropped before validateArgs ever sees
+// it. This allowlist is intentionally narrow: do NOT extend the null-tolerance treatment to
+// any other field. In particular, limits.deliveryCap: null means "uncapped" and
+// policy.subagentModel: null means "no override" — both are load-bearing DATA, not omitted-
+// field stand-ins, and must survive this step untouched.
+//
+// `persist` is on the list for the same reason its siblings are (its null means "take the
+// legacy by-value writer path", exactly what absence means); leaving it off was a hole that
+// hard-rejected a whole run over a stamped null — the very cost this allowlist exists to
+// remove.
+//
+// TOLERATED IS NOT SILENT. Dropping a stamped null removes a fail-loud guard: a mis-stamped
+// `reviewConfig: null` would otherwise review under the Filter stage's config-absent
+// defaults instead of the operator's REVIEW.md thresholds — a silent change to the DELIVERED
+// findings, which issue #38 forbids. So every drop that ACTUALLY removed a guard is REPORTED
+// (stripNullOptionalsReport -> nullToleranceRejectedKeys -> runWith -> an envelope gap via
+// nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
+// A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
+// is deliberately NOT disclosed — see nullToleranceRejectedKeys.
+const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'delivery', 'checkpoints', 'persist'];
+
+// What the operator actually loses when a stamped null is treated as absent, per key. Used
+// only to word the disclosure gap — no control flow reads it.
+const NULL_TOLERANCE_CONSEQUENCE = {
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  delivery: 'delivery falls back to tier "all" with no PR identity',
+  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
+  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
+  persist: 'the artifact-writer takes the legacy full by-value persist path',
+};
+
+// nullToleranceGap(key) -> the operator-actionable gap line for one dropped null. Names the
+// field, states it was treated as ABSENT, states the consequence, and says to omit it.
+// Pure string building — no host globals (the workflow sandbox has no console/process).
+export function nullToleranceGap(key) {
+  const why = NULL_TOLERANCE_CONSEQUENCE[key] || 'the run proceeds as if the field had not been supplied';
+  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ${key} entirely (or stamp a well-formed value); do not stamp null.`;
+}
+
+// nullToleranceRejectedKeys(cleanArgs, dropped) -> the subset of `dropped` whose stamped null
+// validateArgs would ACTUALLY have rejected — i.e. the keys where the tolerance changed the
+// outcome and there is therefore something to disclose.
+//
+// `checkpoints` is why this exists (issue #38 F4-3): validateArgs has never carried a
+// checkpoints shape check, so a stamped `checkpoints: null` was ALWAYS equivalent to absence.
+// Nothing was tolerated and nothing was lost, so a gap there announced a degradation that
+// never happened — and noise in the gap channel is corrosive precisely because gaps are how
+// this pipeline stays honest about the degradations that DID happen.
+//
+// The subset is COMPUTED, not listed: one differential validateArgs call per dropped key (the
+// stripped waist, vs the same waist with that null put back). A second hand-maintained list
+// would drift the moment someone adds or removes a shape check. Pure — validateArgs is pure,
+// and the probe objects are shallow copies, so the caller's waist is untouched.
+export function nullToleranceRejectedKeys(cleanArgs, dropped) {
+  if (!Array.isArray(dropped) || dropped.length === 0) return [];
+  const baseline = validateArgs(cleanArgs).errors.length;
+  return dropped.filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
+}
+
+// The stripped waist with ONE dropped null put back, addressed by the same key spelling
+// stripNullOptionalsReport reports (`delivery.tier` / `delivery.prIdentity` are the only
+// nested forms today).
+function withNullAt(args, key) {
+  const base = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
+  const dot = key.indexOf('.');
+  if (dot === -1) return { ...base, [key]: null };
+  const parent = key.slice(0, dot);
+  const child = key.slice(dot + 1);
+  const parentValue = base[parent];
+  const parentObject = (parentValue && typeof parentValue === 'object' && !Array.isArray(parentValue)) ? parentValue : {};
+  return { ...base, [parent]: { ...parentObject, [child]: null } };
+}
+
+// stripNullOptionalsReport(args) -> { args, dropped }
+// Drops a literal top-level null for the narrow NULLABLE_TOP_LEVEL allowlist (and, inside a
+// present `delivery` object, a literal null for its `prIdentity`/`tier` sub-fields), and
+// names every key it dropped so the caller can DISCLOSE the substitution.
+// Non-mutating: the returned waist is a fresh shallow copy and a touched `delivery` is
+// itself copied, so a caller holding the original object sees no change (its stamped nulls
+// are still there). Non-object input (undefined, null, a string) passes through as-is with
+// an empty `dropped`; there is nothing to strip.
+export function stripNullOptionalsReport(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [] };
+  const dropped = [];
+  const out = { ...args };
+  for (const k of NULLABLE_TOP_LEVEL) {
+    if (out[k] === null) { delete out[k]; dropped.push(k); }
+  }
+  if (out.delivery && typeof out.delivery === 'object' && !Array.isArray(out.delivery)) {
+    const delivery = { ...out.delivery };
+    if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
+    if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
+    out.delivery = delivery;
+  }
+  return { args: out, dropped };
+}
+
+export function normalizeArgsReport(raw) {
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return stripNullOptionalsReport(parsed);
+}
+
 export function normalizeArgs(raw) {
-  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return normalizeArgsReport(raw).args;
 }
 
 // The bundle entry's args guard (live-run L1): a direct Workflow invocation with a raw
 // string ("PR 310") used to die in JSON.parse with a native stack and no guidance. The
 // entry cannot be unit-tested itself (its body ends in a top-level `return`), so the
 // guard lives here and the entry calls it.
+//
+// PARSE ONLY — deliberately does NOT strip stamped nulls. runWith re-normalizes anyway, and
+// it is the only place that can attach the disclosure gaps to the returned envelope; if the
+// entry stripped first, runWith would see an already-clean waist and the substitution would
+// go unreported on exactly the live path that matters.
 export function parseEntryArgs(raw) {
   try {
-    return normalizeArgs(raw);
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
   } catch (e) {
     throw new Error(`args must be the assembled argsVersion:1 waist object — do not invoke this workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Got: ${String(raw).slice(0, 80)}`);
   }
@@ -130,6 +245,24 @@ export function validateArgs(args) {
           if (typeof id.sha_full !== 'string' || !id.sha_full) errors.push('delivery.prIdentity.sha_full must be a non-empty string');
         }
       }
+    }
+  }
+  // Optional persist waist (issue #38, D3.4): { assembleScriptPath }. When present, the
+  // artifact-writer persists only the UNIQUE content (findings.json, report.md, the
+  // persist plan) and the executor runs that script to DERIVE the post-review and
+  // checkpoint artifacts on disk. When ABSENT, writeArtifacts takes the legacy full
+  // by-value path and records no gap — a clean, documented degradation for older callers
+  // (bench included). Same present-then-shape-checked pattern as `delivery`: a malformed
+  // object fails loud at the waist rather than mid-persist, after every paid stage.
+  // (A literal `persist: null` never reaches here — it is on NULLABLE_TOP_LEVEL and is
+  // dropped, and disclosed, by stripNullOptionalsReport. The `=== null` arm below is the
+  // guard for a caller that skipped normalization entirely.)
+  if (args.persist !== undefined) {
+    if (args.persist === null || typeof args.persist !== 'object' || Array.isArray(args.persist)) {
+      errors.push('persist must be an object of the form { assembleScriptPath } when present');
+    } else if (args.persist.assembleScriptPath !== undefined
+      && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
+      errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
     }
   }
   return { ok: errors.length === 0, errors };

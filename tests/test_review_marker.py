@@ -733,11 +733,24 @@ class TestDocContract(unittest.TestCase):
         preserve; if truncation ever moved ahead of the gate in either doc, a
         repeat run of an already-reviewed PR at the same SHA would wipe the prior
         review's findings/report before the gate got a chance to offer keeping
-        them."""
+        them.
+
+        SKILL.md now runs both steps as labelled sections of one composite Bash
+        call (issue #38 collapsed Phase 2's independent round trips), so the
+        markers there are the section labels rather than headings; the ordering
+        requirement is identical either way. Because the two steps now share a
+        single call, the gate can no longer withhold truncation just by running
+        first — so SKILL.md additionally guards the truncate branch on the
+        detector's own `previously_reviewed`/`sha_resolvable`/`last_reviewed_sha`/
+        `head_sha` facts (the exact-match test for "the reviewed commit IS the
+        current head" — `head_advanced` alone cannot distinguish that case from
+        an unresolvable SHA or rewritten history, both of which also read
+        `head_advanced: false` but must NOT defer truncation), and that guard is
+        pinned below."""
         markers = {
             self.SKILL_REL: (
-                "### Previously-reviewed gate (PR/MR targets only)",
-                "### Clean stale files",
+                'echo "=== prior_review ==="',
+                'echo "=== stale_truncate ==="',
             ),
             self.PHASE2_REL: (
                 "**3. Previously-reviewed gate**",
@@ -760,6 +773,23 @@ class TestDocContract(unittest.TestCase):
                     "destroys the prior review's findings/report before the gate can "
                     "even offer to keep them",
                 )
+
+        # The in-composite guard: truncation must be conditional on the detector's
+        # facts, or running both steps in one Bash call would destroy exactly the
+        # artifacts the gate exists to protect, before the user is ever asked.
+        skill = _read(self.SKILL_REL)
+        truncate_block = skill[skill.find('echo "=== stale_truncate ==="'):]
+        truncate_block = truncate_block[:truncate_block.find("```", 1)]
+        for fact in (
+            "previously_reviewed", "sha_resolvable", "last_reviewed_sha", "head_sha",
+        ):
+            self.assertIn(
+                fact, truncate_block,
+                f"{self.SKILL_REL}: the stale_truncate section must gate on the "
+                f"detector's `{fact}` fact. Running the gate and the truncation in "
+                "one composite Bash call means doc order alone no longer protects "
+                "the prior review's artifacts — only this guard does.",
+            )
 
     def test_headless_skip_semantics_agree_between_skill_and_headless_mode(self):
         """D1 regression pin: SKILL.md's Phase 2 headless note and

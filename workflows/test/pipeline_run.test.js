@@ -223,6 +223,30 @@ test('empty report while findings survive the filter -> ok:true, empty_report ga
   assert.equal(typeof out.artifactPaths.findings, 'string', 'findings are still persisted');
 });
 
+test('the fresh-run empty_report wording is unchanged by the union guard (output-preserving)', async () => {
+  // The guard now fires on the UNION of postFilterCount and the delivered challenge count.
+  // On a FRESH run challenge only removes findings, so postFilterCount >= deliveredCount and
+  // the union must reduce to exactly the old condition AND the old message, byte for byte.
+  // Whitespace-only (not ''): a falsy report is caught by reportStage's own minimal-report
+  // fallback, so the guard under test is exercised with a truthy-but-blank report.
+  const args = validArgs();
+  const ctx = makeCtx(args, { reportText: '   ' });
+  const out = await runWith(ctx, args);
+  const gap = out.gaps.find((g) => /empty_report/.test(g));
+  assert.ok(gap, `expected an empty_report gap, got: ${out.gaps}`);
+  assert.equal(
+    gap,
+    'empty_report: report stage produced no report while 2 finding(s) survived the filter — refusing to ship a silent empty report',
+  );
+});
+
+test('a non-empty report on a run with findings records NO empty_report gap (guard stays narrow)', async () => {
+  const args = validArgs();
+  const out = await runWith(makeCtx(args), args);
+  assert.ok(!out.gaps.some((g) => /empty_report/.test(g)), `got: ${out.gaps}`);
+  assert.equal(typeof out.artifactPaths.report, 'string');
+});
+
 test('resume replaying an empty report checkpoint re-runs report+persist (not skipped)', async () => {
   // The crashed-persist false negative: a prior run left an empty report in its checkpoint.
   // On resume, runPhase would normally REUSE it — the guard must instead re-run report from
@@ -292,6 +316,85 @@ test('reportStage in isolation: a bare agent() throw yields a minimal report + g
   assert.equal(typeof out.report, 'string');
   assert.ok(out.report.length > 0, 'minimal report assembled from stats');
   assert.ok(out.gaps.some((g) => /report/i.test(g)));
+});
+
+// --- Report JSON-wrapper unwrap (measured: ~15 of 25 runs since 2026-07-22) --
+//
+// The report-writer intermittently returns its markdown ALREADY WRAPPED as a JSON
+// document: the string in its `report` field is literally `{"report": "# Code
+// Gauntlet..."}`. The artifact-writer then persists that wrapper verbatim (correctly —
+// its contract is to write the text as given), so every non-Phase-8 consumer of
+// report.md gets JSON where markdown belongs. reportStage unwraps at the point the
+// string is first received, so the persisted artifact is markdown.
+
+test('reportStage unwraps a report the writer returned JSON-wrapped', async () => {
+  const md = '# Code Gauntlet Report\n\nOne finding.\n';
+  const ctx = {
+    agent: async () => ({ report: JSON.stringify({ report: md }) }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.equal(out.report, md, 'the persisted report must be the markdown, not the wrapper');
+  assert.deepEqual(out.gaps, []);
+});
+
+test('reportStage unwraps a pretty-printed / whitespace-padded wrapper too', async () => {
+  const md = '# Code Gauntlet Report\n\n- [HIGH] something (a.js:1)\n';
+  const ctx = {
+    agent: async () => ({ report: `\n  ${JSON.stringify({ report: md }, null, 2)}\n` }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.equal(out.report, md);
+});
+
+test('reportStage leaves a legitimate markdown report starting with a brace ALONE', async () => {
+  // Conservative by construction: unwrapping requires a successful JSON.parse AND an
+  // object AND a string `report` member. Markdown that merely opens with `{` is not JSON.
+  const md = '{ this is prose } \n\n# Code Gauntlet Report\n';
+  const ctx = {
+    agent: async () => ({ report: md }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.equal(out.report, md);
+});
+
+test('reportStage does not unwrap JSON that is not a {report:string} wrapper', async () => {
+  const cases = [
+    JSON.stringify({ report: { markdown: '# nope' } }),   // report is not a string
+    JSON.stringify({ summary: '# nope' }),                 // no report member
+    JSON.stringify(['# nope']),                            // array, not object
+    JSON.stringify('# nope'),                              // bare JSON string
+    JSON.stringify({ report: '# md', findings: [1, 2] }),  // extra MEANINGFUL content
+  ];
+  for (const raw of cases) {
+    const ctx = { agent: async () => ({ report: raw }), parallel: async () => [] };
+    const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+    assert.equal(out.report, raw, `must be left verbatim: ${raw}`);
+  }
+});
+
+test('reportStage unwraps on the SEGMENTED path as well', async () => {
+  const big = [];
+  for (let i = 0; i < 80; i += 1) big.push(makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
+  const ctx = {
+    agent: async (prompt, opts) => ({ report: JSON.stringify({ report: `body for ${opts.label}` }) }),
+    parallel: async (thunks) => Promise.all(thunks.map((t) => t())),
+  };
+  const out = await reportStage(ctx, { findings: big, unverified: [], stats: {} });
+  assert.ok(!/\{"report"/.test(out.report), `segments must be unwrapped: ${out.report.slice(0, 200)}`);
+  assert.match(out.report, /body for report-writer-0/);
+});
+
+test('a wrapper whose report member is EMPTY degrades to the minimal report', async () => {
+  const ctx = {
+    agent: async () => ({ report: JSON.stringify({ report: '' }) }),
+    parallel: async () => [],
+  };
+  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
+  assert.match(out.report, /minimal report/i);
+  assert.ok(out.gaps.some((g) => /report/i.test(g)), out.gaps);
 });
 
 // --- writeArtifacts degradation (non-fatal) ---------------------------------
@@ -366,6 +469,96 @@ test('argsVersion mismatch is rejected immediately with an ok:false envelope', a
   assert.equal(ctx.calls.length, 0);
 });
 
+// --- Args-waist null tolerance is DISCLOSED (issue #38, L5-2/L3-1) -----------
+
+test('a stamped reviewConfig:null runs, but the config substitution is DISCLOSED as a gap', async () => {
+  // Tolerating the null is what removes the 21.3s reject round trip. Doing it SILENTLY
+  // would review under the Filter stage's built-in 55/70 instead of the operator's
+  // REVIEW.md thresholds — a silent delivered-findings change. Degraded-but-disclosed.
+  const args = validArgs({ reviewConfig: null });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true, `a stamped null must not reject the run; gaps: ${out.gaps}`);
+  const gap = out.gaps.find((g) => /^null_arg: /.test(g));
+  assert.ok(gap, `expected a null_arg gap naming reviewConfig, got: ${out.gaps}`);
+  assert.match(gap, /reviewConfig/);
+  assert.match(gap, /ABSENT/);
+  assert.match(gap, /Omit/);
+  // The caller's args object is not mutated by the strip.
+  assert.equal(args.reviewConfig, null);
+});
+
+test('a stamped exclusionPatterns/delivery null each gets its own disclosure gap', async () => {
+  const args = validArgs({ exclusionPatterns: null, delivery: null });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  const named = out.gaps.filter((g) => /^null_arg: /.test(g));
+  assert.equal(named.length, 2, `one gap per dropped key, got: ${named}`);
+  for (const k of ['exclusionPatterns', 'delivery']) {
+    assert.ok(named.some((g) => g.includes(k)), `a gap names ${k}`);
+  }
+});
+
+test('F4-3: checkpoints:null discloses NOTHING — validateArgs never rejected it', async () => {
+  // The disclosure exists because tolerating a stamped null REMOVES a fail-loud guard. There
+  // has never been a checkpoints shape check, so `checkpoints: null` was always equivalent to
+  // absence: nothing was tolerated, nothing was lost, and the run was previously valid and
+  // silent. Announcing a degradation there is noise in the one channel this pipeline uses to
+  // stay honest about the degradations that are real.
+  const args = validArgs({ checkpoints: null });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((g) => /^null_arg: /.test(g)), []);
+
+  // ...while a null that WOULD have been rejected still discloses, from the same run.
+  const args2 = validArgs({ checkpoints: null, reviewConfig: null });
+  const out2 = await runWith(makeCtx(args2), args2);
+  const named = out2.gaps.filter((g) => /^null_arg: /.test(g));
+  assert.equal(named.length, 1, `only the load-bearing drop is disclosed, got: ${named}`);
+  assert.match(named[0], /reviewConfig/);
+});
+
+test('F4-3: every OTHER nullable key still discloses (the filter is not a blanket mute)', async () => {
+  // delivery.tier / delivery.prIdentity are nested drops; each is rejected by validateArgs as
+  // a stamped null, so each keeps its disclosure.
+  const args = validArgs({ delivery: { tier: null, prIdentity: null } });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  const named = out.gaps.filter((g) => /^null_arg: /.test(g));
+  assert.equal(named.length, 2, `got: ${named}`);
+  assert.ok(named.some((g) => g.includes('delivery.tier')));
+  assert.ok(named.some((g) => g.includes('delivery.prIdentity')));
+});
+
+test('a clean waist records NO null_arg gap (disclosure is not noise)', async () => {
+  const args = validArgs();
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((g) => /null_arg/.test(g)), []);
+});
+
+test('L3-1: a stamped persist:null runs instead of hard-rejecting the whole run, and is disclosed', async () => {
+  // persist was added to the waist but left OFF the null-tolerance allowlist the same diff
+  // introduced for its siblings, so `persist: null` rejected the run outright.
+  const args = validArgs({ persist: null });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true, `persist:null must be treated as absent, not rejected; error: ${out.error}`);
+  assert.equal(out.phaseReached, 'report');
+  assert.ok(out.gaps.some((g) => /^null_arg: /.test(g) && g.includes('persist')), `expected a persist disclosure, got: ${out.gaps}`);
+});
+
+test('the null_arg disclosure also rides the invalid-args early return', async () => {
+  // A run rejected for an unrelated reason must still tell the operator the null was there.
+  const args = validArgs({ reviewConfig: null, argsVersion: 2 });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, false);
+  assert.ok(out.gaps.some((g) => /^null_arg: /.test(g) && g.includes('reviewConfig')));
+  assert.ok(out.gaps.some((g) => /argsVersion/.test(g)), 'the validation errors are still carried');
+});
+
 // --- Checkpoint resume ------------------------------------------------------
 
 test('a present checkpoint for a phase skips that phase\'s dispatch', async () => {
@@ -397,7 +590,7 @@ test('checkpointPath is phase-keyed and sha-scoped', () => {
 
 // --- Checkpoint round-trip (the pipeline's OWN persist output resumes it) ----
 
-test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-consumed phases carry full output', async () => {
+test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-consumed phase carries full output', async () => {
   // Run 1 produces the checkpoint artifact the writer persists; capture it via onPersist.
   const args1 = validArgs();
   let persistedCheckpoints = null;
@@ -406,11 +599,12 @@ test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-co
   assert.equal(out1.ok, true);
   assert.ok(persistedCheckpoints, 'writer received a checkpoints payload');
 
-  // The SLIM persisted checkpoint keeps FULL output only for the two resume-consumed phases
-  // (filter carries the empty-report guard's count; challenge carries the delivered findings).
+  // The SLIM persisted checkpoint keeps FULL output only for the ONE resume-consumed phase:
+  // challenge carries the delivered findings. `filter` is a pure agent-free JS function, so it
+  // simply re-runs on a resume at zero dispatch cost (issue #38, P1) rather than being persisted.
   assert.deepEqual(
-    Object.keys(persistedCheckpoints.phases).sort(), ['challenge', 'filter'],
-    'only filter + challenge keep full output in the persisted checkpoint',
+    Object.keys(persistedCheckpoints.phases).sort(), ['challenge'],
+    'only challenge keeps full output in the persisted checkpoint',
   );
   // Every completed phase is still accounted for by NAME + a bare count (observability without
   // the by-value findings bulk the OLD full-map checkpoint duplicated).
@@ -419,7 +613,7 @@ test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-co
     assert.equal(typeof persistedCheckpoints.counts[phase], 'number', `counts has a number for '${phase}'`);
   }
   // The upstream phases' full findings arrays are GONE from the persisted checkpoint.
-  for (const phase of ['summarize', 'discover', 'merge', 'verify', 'validate', 'report']) {
+  for (const phase of ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'report']) {
     assert.ok(!(phase in persistedCheckpoints.phases), `phase '${phase}' full output dropped from the checkpoint`);
   }
 
@@ -438,7 +632,7 @@ test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-co
   assert.equal(out2.stats.highConfidence, 2, 'the preserved challenge findings are delivered unchanged');
 });
 
-test('slimPersistedCheckpoints keeps only filter+challenge full, counts every phase, and the writer omits unverified', async () => {
+test('slimPersistedCheckpoints keeps only challenge full, counts every phase, and the writer omits unverified', async () => {
   const args = validArgs();
   let persisted = null;
   const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
@@ -450,7 +644,9 @@ test('slimPersistedCheckpoints keeps only filter+challenge full, counts every ph
   assert.ok(!('unverified' in persisted), 'writer payload no longer carries the unverified bucket');
   // Change 2: the checkpoint the writer persisted is the slim shape.
   assert.ok(persisted.checkpoints.phases.challenge, 'challenge output preserved for resume');
-  assert.ok(persisted.checkpoints.phases.filter, 'filter output preserved for the empty-report guard count');
+  // P1 (issue #38): filter is NOT persisted — it is a pure JS function that re-runs free.
+  assert.ok(!('filter' in persisted.checkpoints.phases), 'filter output is not persisted');
+  assert.equal(typeof persisted.checkpoints.counts.filter, 'number', 'the filter COUNT is still recorded');
   assert.ok(persisted.checkpoints.counts, 'per-phase counts present');
 });
 
@@ -464,7 +660,11 @@ test('reportStage segments an oversized findings payload into >1 dispatch and jo
   const calls = [];
   const ctx = {
     agent: async (prompt, opts) => { calls.push(opts); return { report: `segment body for ${opts.label}` }; },
-    parallel: async () => [],
+    // Segment dispatches now fan out through parallel() (issue #38, S2); it preserves input
+    // order and nulls a failed member in place.
+    parallel: async (thunks) => Promise.all(thunks.map(async (t) => {
+      try { return await t(); } catch { return null; }
+    })),
   };
   const out = await reportStage(ctx, { findings: big, unverified: [], stats: {}, generatedAt: '2026-07-18T00:00:00Z' });
 

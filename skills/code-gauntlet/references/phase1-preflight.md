@@ -2,7 +2,7 @@
 
 Workflow-tool availability check, review target resolution, eligibility logic, AskUserQuestion templates, and consolidated pre-flight configuration gate for Phase 1.
 
-> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) and gitignore check (`git check-ignore`) happen in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Phase 1 only runs the availability check, resolves the output directory, and runs `mkdir -p`.
+> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) and gitignore check (`git check-ignore`) happen in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Phase 1's own Bash work is the single composite call in SKILL.md (output directory + `mkdir -p`, plugin-dir confirmation, PR state, a root REVIEW.md quick-check, and the trivial-check file list) — no checkout-dependent state.
 
 ---
 
@@ -81,7 +81,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
 
 3. **Previously reviewed?** — **Deferred to Phase 2**, immediately after checkout. See "Previously-Reviewed Gate" below for the full gate; `phase2-triage.md` section 2b-post step 3 is where it runs. The reason is the same one that moves head-SHA resolution out of Phase 1 (see the note at the top of this file): the gate compares the last-reviewed commit against the PR head and counts the commits between them, and before `gh pr checkout` the working tree is on whatever branch the session started on — often with the PR's objects not even fetched. Running it here would compare against the wrong tree and silently mis-gate the incremental path.
 
-4. **Trivially simple?** — If ONLY lockfile/generated/auto-formatted changes with no logic modifications, stop.
+4. **Trivially simple?** — If ONLY lockfile/generated/auto-formatted changes with no logic modifications, stop. The file list to check comes from the Phase 1 composite call in SKILL.md (`changed_files` section) — for PR/MR mode that's `gh pr diff {pr_number} --name-only` (there is no `gh pr diff --stat`; that flag does not exist and the command fails). For branch/local targets use `git diff --name-only <base>...HEAD` / `git diff --name-only HEAD`. Never issue a second call to re-fetch this list — it is already on hand from the composite.
 
 ---
 

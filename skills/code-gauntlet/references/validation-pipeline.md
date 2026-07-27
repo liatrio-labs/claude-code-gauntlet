@@ -94,7 +94,7 @@ After thresholds it re-runs cross-agent dedup and ranks; that ranked set is the 
 
 # Report stage (`reportStage`)
 
-Dispatches the `report-writer` agent to render markdown from the high-confidence + unverified buckets (carried by value — the workflow has no disk). Oversized finding payloads are segmented into per-chunk dispatches joined under titled headings. On a throw OR null result, a deterministic **minimal report** is assembled from the pipeline stats and a gap is recorded — report failure is non-fatal. The `artifact-writer` then persists findings.json + report.md + the checkpoint artifact to `{output_dir}`.
+Dispatches the `report-writer` agent to render markdown from the high-confidence + unverified buckets (carried by value — the workflow has no disk). Oversized finding payloads are segmented into per-chunk dispatches joined under titled headings. On a throw OR null result, a deterministic **minimal report** is assembled from the pipeline stats and a gap is recorded — report failure is non-fatal. The `artifact-writer` then persists findings.json + report.md + the pre-selected post-review payload + the checkpoint artifact to `{output_dir}` (SKILL.md's artifact-writer output list has the exact filenames, including the optional derived-path `persist-plan-*.json`).
 
 ---
 

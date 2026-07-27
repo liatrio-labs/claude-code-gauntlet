@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs } from '../src/args.js';
+import {
+  ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
+  stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap,
+} from '../src/args.js';
 
 const good = {
   argsVersion: 1, mode: 'interactive', repoRoot: '/r', outputDir: '/r/.code-gauntlet',
@@ -182,4 +185,183 @@ test('validateArgs type-checks changedFiles (array) and changedLines (number)', 
   assert.equal(r.ok, false);
   assert.ok(r.errors.some((e) => e.includes('changedFiles')));
   assert.ok(r.errors.some((e) => e.includes('changedLines')));
+});
+
+// D4 — args-waist null tolerance (issue #38 A1). A dispatch was rejected solely because
+// reviewConfig arrived as a stamped `null` rather than absent. normalizeArgs now strips a
+// literal null for a narrow allowlist of optional top-level fields so a stamped null costs
+// nothing at the waist.
+test('stripNullOptionalsReport deletes a null reviewConfig/exclusionPatterns/delivery/checkpoints', () => {
+  const a = { ...good, reviewConfig: null, exclusionPatterns: null, delivery: null, checkpoints: null };
+  const stripped = stripNullOptionalsReport(a).args;
+  assert.equal('reviewConfig' in stripped, false);
+  assert.equal('exclusionPatterns' in stripped, false);
+  assert.equal('delivery' in stripped, false);
+  assert.equal('checkpoints' in stripped, false);
+});
+test('stripNullOptionalsReport drops delivery.prIdentity: null and delivery.tier: null inside a present delivery object', () => {
+  const a = { ...good, delivery: { tier: null, prIdentity: null } };
+  const stripped = stripNullOptionalsReport(a).args;
+  assert.deepEqual(stripped.delivery, {});
+});
+test('stripNullOptionalsReport does NOT strip limits.deliveryCap: null (uncapped is load-bearing)', () => {
+  const a = { ...good, limits: { ...good.limits, deliveryCap: null } };
+  const stripped = stripNullOptionalsReport(a).args;
+  assert.equal(stripped.limits.deliveryCap, null);
+});
+test('stripNullOptionalsReport does NOT strip policy.subagentModel: null (no-override is load-bearing)', () => {
+  const stripped = stripNullOptionalsReport(good).args; // good already carries policy.subagentModel: null
+  assert.equal(stripped.policy.subagentModel, null);
+});
+test('stripNullOptionalsReport leaves a non-null, non-allowlisted-field waist untouched', () => {
+  assert.deepEqual(stripNullOptionalsReport(good).args, good);
+});
+test('stripNullOptionalsReport passes through non-object input (undefined, string) without throwing', () => {
+  assert.equal(stripNullOptionalsReport(undefined).args, undefined);
+  assert.equal(stripNullOptionalsReport(null).args, null);
+});
+
+test('normalizeArgs strips stamped nulls on the object-passthrough form so validateArgs accepts them', () => {
+  const a = { ...good, reviewConfig: null, exclusionPatterns: null, delivery: null, checkpoints: null };
+  const normalized = normalizeArgs(a);
+  assert.equal('reviewConfig' in normalized, false);
+  assert.equal('exclusionPatterns' in normalized, false);
+  assert.equal('delivery' in normalized, false);
+  assert.equal('checkpoints' in normalized, false);
+  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
+});
+test('normalizeArgs strips stamped nulls on the JSON-string form too', () => {
+  const raw = JSON.stringify({ ...good, reviewConfig: null, delivery: { tier: null, prIdentity: null } });
+  const normalized = normalizeArgs(raw);
+  assert.equal('reviewConfig' in normalized, false);
+  assert.deepEqual(normalized.delivery, {});
+  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
+});
+test('normalizeArgs leaves a malformed non-null reviewConfig alone for validateArgs to reject loudly', () => {
+  const a = { ...good, reviewConfig: { ignore: [{ pattern: 'x', reason: 'y' }] } };
+  const r = validateArgs(normalizeArgs(a));
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('reviewConfig.ignore')));
+});
+test('normalizeArgs still round-trips a fully well-formed waist unchanged (no over-stripping)', () => {
+  assert.deepEqual(normalizeArgs(good), good);
+  assert.deepEqual(normalizeArgs(JSON.stringify(good)), good);
+});
+
+// --- L3-1: the persist waist is null-tolerated AND shape-checked -------------
+// The persist field (issue #38 D3.4) was added to the waist but left OFF the very
+// null-tolerance allowlist the same diff introduced for its siblings, so a stamped
+// `persist: null` hard-rejected the whole run — the exact 21.3s-round-trip cost the
+// allowlist exists to remove.
+
+test('validateArgs accepts a well-formed persist waist, an empty one, and its absence', () => {
+  assert.deepEqual(
+    validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' } }),
+    { ok: true, errors: [] },
+  );
+  assert.deepEqual(validateArgs({ ...good, persist: {} }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // `good` carries no persist
+});
+test('validateArgs shape-checks a present persist (non-object, and a non-string/empty script path)', () => {
+  // Same present-then-shape-checked treatment as `delivery`: malformed fails loud at the
+  // waist, before any paid stage is dispatched.
+  const r = validateArgs({ ...good, persist: '/plugin/scripts/assemble_artifacts.py' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /persist must be an object/);
+  const r2 = validateArgs({ ...good, persist: ['/p.py'] });
+  assert.equal(r2.ok, false);
+  assert.match(r2.errors.join(' '), /persist must be an object/);
+  const r3 = validateArgs({ ...good, persist: { assembleScriptPath: 42 } });
+  assert.equal(r3.ok, false);
+  assert.match(r3.errors.join(' '), /persist\.assembleScriptPath/);
+  const r4 = validateArgs({ ...good, persist: { assembleScriptPath: '' } });
+  assert.equal(r4.ok, false);
+  assert.match(r4.errors.join(' '), /persist\.assembleScriptPath/);
+});
+test('stripNullOptionalsReport deletes a null persist (same stand-in-for-absent treatment as its siblings)', () => {
+  const stripped = stripNullOptionalsReport({ ...good, persist: null }).args;
+  assert.equal('persist' in stripped, false);
+});
+test('normalizeArgs strips a stamped persist:null so validateArgs accepts the run instead of rejecting it', () => {
+  const normalized = normalizeArgs({ ...good, persist: null });
+  assert.equal('persist' in normalized, false);
+  assert.deepEqual(validateArgs(normalized), { ok: true, errors: [] });
+  // ...and via the JSON-string form too.
+  assert.deepEqual(validateArgs(normalizeArgs(JSON.stringify({ ...good, persist: null }))), { ok: true, errors: [] });
+});
+test('a stamped persist:null still leaves a MALFORMED persist to fail loud (tolerance is null-only)', () => {
+  const r = validateArgs(normalizeArgs({ ...good, persist: { assembleScriptPath: '' } }));
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /persist\.assembleScriptPath/);
+});
+
+// --- L5-2: null tolerance is DISCLOSED, not silent ---------------------------
+// Tolerating a stamped null removes a fail-loud guard. A mis-stamped reviewConfig: null
+// would otherwise review under the Filter stage's config-absent defaults (55/70) rather
+// than the operator's REVIEW.md thresholds — a silent DELIVERED-findings change. The strip
+// therefore reports what it dropped so runWith can surface an actionable gap.
+
+test('stripNullOptionalsReport names every key it dropped', () => {
+  const { args: stripped, dropped } = stripNullOptionalsReport({
+    ...good, reviewConfig: null, exclusionPatterns: null, checkpoints: null, persist: null,
+  });
+  assert.deepEqual(dropped.slice().sort(), ['checkpoints', 'exclusionPatterns', 'persist', 'reviewConfig']);
+  for (const k of dropped) assert.equal(k in stripped, false, `${k} was dropped from the waist`);
+});
+test('stripNullOptionalsReport names the delivery sub-field drops with their dotted paths', () => {
+  const { dropped } = stripNullOptionalsReport({ ...good, delivery: { tier: null, prIdentity: null } });
+  assert.deepEqual(dropped.slice().sort(), ['delivery.prIdentity', 'delivery.tier']);
+});
+test('stripNullOptionalsReport reports NOTHING for a clean waist (no false disclosure)', () => {
+  assert.deepEqual(stripNullOptionalsReport(good).dropped, []);
+  // The two load-bearing nulls are not drops and must never be reported as such.
+  assert.deepEqual(
+    stripNullOptionalsReport({ ...good, limits: { ...good.limits, deliveryCap: null } }).dropped,
+    [],
+  );
+  assert.deepEqual(stripNullOptionalsReport(undefined).dropped, []);
+  assert.deepEqual(stripNullOptionalsReport('not an object').dropped, []);
+});
+test('the strip never mutates the caller object — nested delivery included', () => {
+  const caller = { ...good, reviewConfig: null, persist: null, delivery: { tier: null, prIdentity: null } };
+  const beforeDelivery = caller.delivery;
+  const { args: stripped } = stripNullOptionalsReport(caller);
+  assert.equal(caller.reviewConfig, null, 'caller keeps its stamped null');
+  assert.equal(caller.persist, null);
+  assert.equal(caller.delivery, beforeDelivery, 'the caller delivery object is the same reference');
+  assert.equal(caller.delivery.tier, null, 'the caller delivery sub-fields are untouched');
+  assert.equal(caller.delivery.prIdentity, null);
+  assert.notEqual(stripped.delivery, beforeDelivery, 'the returned delivery is a copy, not the caller object');
+  assert.deepEqual(stripped.delivery, {});
+});
+test('nullToleranceGap names the field, says it was treated as absent, and says to omit it', () => {
+  const g = nullToleranceGap('reviewConfig');
+  assert.match(g, /^null_arg: /);
+  assert.match(g, /reviewConfig/);
+  assert.match(g, /ABSENT/);
+  assert.match(g, /Omit/);
+  // The reviewConfig wording must name the concrete consequence: config-absent thresholds.
+  assert.match(g, /55/);
+  assert.match(g, /70/);
+  // An unlisted key still produces a well-formed, actionable line.
+  const g2 = nullToleranceGap('somethingNew');
+  assert.match(g2, /somethingNew/);
+  assert.match(g2, /Omit/);
+});
+test('normalizeArgsReport reports drops on both the object and JSON-string forms', () => {
+  const r1 = normalizeArgsReport({ ...good, reviewConfig: null });
+  assert.deepEqual(r1.dropped, ['reviewConfig']);
+  assert.equal('reviewConfig' in r1.args, false);
+  const r2 = normalizeArgsReport(JSON.stringify({ ...good, exclusionPatterns: null, persist: null }));
+  assert.deepEqual(r2.dropped.slice().sort(), ['exclusionPatterns', 'persist']);
+  assert.deepEqual(normalizeArgsReport(good).dropped, []);
+});
+test('parseEntryArgs does NOT strip stamped nulls — runWith owns the strip so it can disclose it', () => {
+  // If the entry stripped first, runWith would see an already-clean waist and the silent
+  // config substitution would go unreported on exactly the live path that matters.
+  const parsed = parseEntryArgs(JSON.stringify({ ...good, reviewConfig: null, persist: null }));
+  assert.equal(parsed.reviewConfig, null);
+  assert.equal(parsed.persist, null);
+  const parsedObj = parseEntryArgs({ ...good, reviewConfig: null });
+  assert.equal(parsedObj.reviewConfig, null);
 });

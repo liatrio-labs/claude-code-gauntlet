@@ -10,8 +10,11 @@ import assert from 'node:assert/strict';
 import { verifyStage, parseWriterPayload } from '../src/stages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
-// Platform contract: agent(promptString, opts). verify uses SEQUENTIAL agent() calls
-// (never parallel() — the order pairs receipts to slices), so parallel() throws here.
+// Platform contract: agent(promptString, opts). The EXECUTOR slice loop is deliberately
+// SEQUENTIAL bare agent() calls (never parallel() — the order pairs receipts to slices),
+// so the mock throws if a 'verify-slice-' dispatch is ever issued from inside parallel().
+// The slice-input WRITER group fan-out DOES go through parallel() (issue #38, S2), so
+// parallel() is a faithful null-isolating implementation rather than a hard throw.
 // Before the executor loop, verifyStage dispatches artifact-writer 'verify-input-writer-*'
 // calls to materialize the slice inputs; those are handled separately (succeeding by
 // default, or via cfg.sliceWriter) so `agentImpl` sees only executor dispatches with a
@@ -20,6 +23,7 @@ import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 function verifyCtx(agentImpl, cfg = {}) {
   const calls = [];
   let execIdx = -1;
+  let inParallel = 0;
   const agent = async (prompt, opts = {}) => {
     assertPrompt(prompt);
     assertValidSchema(opts.schema);
@@ -31,6 +35,9 @@ function verifyCtx(agentImpl, cfg = {}) {
       const entries = parseWriterPayload(prompt) || [];
       return { written: entries.map((e) => e.path) };
     }
+    if (inParallel > 0 && (opts.label || '').startsWith('verify-slice-')) {
+      throw new Error('verifyStage must use agent() per slice, not parallel()');
+    }
     execIdx += 1;
     return agentImpl(call, execIdx);
   };
@@ -38,7 +45,15 @@ function verifyCtx(agentImpl, cfg = {}) {
     calls,
     execCalls: () => calls.filter((t) => (t.label || '').startsWith('verify-slice-')),
     agent,
-    parallel: async () => { throw new Error('verifyStage must use agent() per slice, not parallel()'); },
+    // parallel() nulls a failed member IN PLACE (Phase 0 contract), preserving input order.
+    parallel: async (thunks) => {
+      inParallel += 1;
+      try {
+        return await Promise.all(thunks.map(async (t) => {
+          try { return await t(); } catch { return null; }
+        }));
+      } finally { inParallel -= 1; }
+    },
   };
 }
 
