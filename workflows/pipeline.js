@@ -1833,8 +1833,11 @@ function resolvePolicy(agentType, opts = {}) {
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
 const ARGS_VERSION = 1;
-// REQUIRED mirrors consumption: changedFiles/changedLines feed summarize bucketing and
-// the agent-count guard; changedFilesPath is on-disk provenance the workflow never opens.
+// changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
+// REQUIRED because they're consumed. `mode` and `repoRoot` are NOT read anywhere in
+// workflows/src (mode is only ever re-checked against its own enum below; repoRoot is unread
+// entirely) — they're required as provenance/telemetry the skill always stamps, not because
+// any stage consumes them. changedFilesPath is on-disk provenance the workflow never opens.
 const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'agentFlags', 'policy', 'limits'];
 
 // The nonce is interpolated into the verify executor command argv (the verify stage
@@ -1847,17 +1850,134 @@ const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 // the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
 const DELIVERY_TIERS = ['all', 'main_only'];
 
+// Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
+// stamped `null` rather than absent — a wasted model round trip. These five top-level
+// optional fields have no meaning as `null` (only "absent" or "a well-formed object/array"),
+// so a literal null is equivalent to omission and gets dropped before validateArgs ever sees
+// it. This allowlist is intentionally narrow: do NOT extend the null-tolerance treatment to
+// any other field. In particular, limits.deliveryCap: null means "uncapped" and
+// policy.subagentModel: null means "no override" — both are load-bearing DATA, not omitted-
+// field stand-ins, and must survive this step untouched.
+//
+// `persist` is on the list for the same reason its siblings are (its null means "take the
+// legacy by-value writer path", exactly what absence means); leaving it off was a hole that
+// hard-rejected a whole run over a stamped null — the very cost this allowlist exists to
+// remove.
+//
+// TOLERATED IS NOT SILENT. Dropping a stamped null removes a fail-loud guard: a mis-stamped
+// `reviewConfig: null` would otherwise review under the Filter stage's config-absent
+// defaults instead of the operator's REVIEW.md thresholds — a silent change to the DELIVERED
+// findings, which issue #38 forbids. So every drop that ACTUALLY removed a guard is REPORTED
+// (stripNullOptionalsReport -> nullToleranceRejectedKeys -> runWith -> an envelope gap via
+// nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
+// A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
+// is deliberately NOT disclosed — see nullToleranceRejectedKeys.
+const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'delivery', 'checkpoints', 'persist'];
+
+// What the operator actually loses when a stamped null is treated as absent, per key. Used
+// only to word the disclosure gap — no control flow reads it.
+const NULL_TOLERANCE_CONSEQUENCE = {
+  reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  delivery: 'delivery falls back to tier "all" with no PR identity',
+  'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
+  'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
+  persist: 'the artifact-writer takes the legacy full by-value persist path',
+};
+
+// nullToleranceGap(key) -> the operator-actionable gap line for one dropped null. Names the
+// field, states it was treated as ABSENT, states the consequence, and says to omit it.
+// Pure string building — no host globals (the workflow sandbox has no console/process).
+function nullToleranceGap(key) {
+  const why = NULL_TOLERANCE_CONSEQUENCE[key] || 'the run proceeds as if the field had not been supplied';
+  return `null_arg: args.${key} arrived as a literal null and was treated as ABSENT — ${why}. Omit ${key} entirely (or stamp a well-formed value); do not stamp null.`;
+}
+
+// nullToleranceRejectedKeys(cleanArgs, dropped) -> the subset of `dropped` whose stamped null
+// validateArgs would ACTUALLY have rejected — i.e. the keys where the tolerance changed the
+// outcome and there is therefore something to disclose.
+//
+// `checkpoints` is why this exists (issue #38 F4-3): validateArgs has never carried a
+// checkpoints shape check, so a stamped `checkpoints: null` was ALWAYS equivalent to absence.
+// Nothing was tolerated and nothing was lost, so a gap there announced a degradation that
+// never happened — and noise in the gap channel is corrosive precisely because gaps are how
+// this pipeline stays honest about the degradations that DID happen.
+//
+// The subset is COMPUTED, not listed: one differential validateArgs call per dropped key (the
+// stripped waist, vs the same waist with that null put back). A second hand-maintained list
+// would drift the moment someone adds or removes a shape check. Pure — validateArgs is pure,
+// and the probe objects are shallow copies, so the caller's waist is untouched.
+function nullToleranceRejectedKeys(cleanArgs, dropped) {
+  if (!Array.isArray(dropped) || dropped.length === 0) return [];
+  const baseline = validateArgs(cleanArgs).errors.length;
+  return dropped.filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
+}
+
+// The stripped waist with ONE dropped null put back, addressed by the same key spelling
+// stripNullOptionalsReport reports (`delivery.tier` / `delivery.prIdentity` are the only
+// nested forms today).
+function withNullAt(args, key) {
+  const base = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
+  const dot = key.indexOf('.');
+  if (dot === -1) return { ...base, [key]: null };
+  const parent = key.slice(0, dot);
+  const child = key.slice(dot + 1);
+  const parentValue = base[parent];
+  const parentObject = (parentValue && typeof parentValue === 'object' && !Array.isArray(parentValue)) ? parentValue : {};
+  return { ...base, [parent]: { ...parentObject, [child]: null } };
+}
+
+// stripNullOptionalsReport(args) -> { args, dropped }
+// Drops a literal top-level null for the narrow NULLABLE_TOP_LEVEL allowlist (and, inside a
+// present `delivery` object, a literal null for its `prIdentity`/`tier` sub-fields), and
+// names every key it dropped so the caller can DISCLOSE the substitution.
+// Non-mutating: the returned waist is a fresh shallow copy and a touched `delivery` is
+// itself copied, so a caller holding the original object sees no change (its stamped nulls
+// are still there). Non-object input (undefined, null, a string) passes through as-is with
+// an empty `dropped`; there is nothing to strip.
+function stripNullOptionalsReport(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return { args, dropped: [] };
+  const dropped = [];
+  const out = { ...args };
+  for (const k of NULLABLE_TOP_LEVEL) {
+    if (out[k] === null) { delete out[k]; dropped.push(k); }
+  }
+  if (out.delivery && typeof out.delivery === 'object' && !Array.isArray(out.delivery)) {
+    const delivery = { ...out.delivery };
+    if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
+    if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
+    out.delivery = delivery;
+  }
+  return { args: out, dropped };
+}
+
+// The value-only form, kept for callers that do not surface gaps.
+function stripNullOptionals(args) {
+  return stripNullOptionalsReport(args).args;
+}
+
+function normalizeArgsReport(raw) {
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return stripNullOptionalsReport(parsed);
+}
+
 function normalizeArgs(raw) {
-  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return normalizeArgsReport(raw).args;
 }
 
 // The bundle entry's args guard (live-run L1): a direct Workflow invocation with a raw
 // string ("PR 310") used to die in JSON.parse with a native stack and no guidance. The
 // entry cannot be unit-tested itself (its body ends in a top-level `return`), so the
 // guard lives here and the entry calls it.
+//
+// PARSE ONLY — deliberately does NOT strip stamped nulls. runWith re-normalizes anyway, and
+// it is the only place that can attach the disclosure gaps to the returned envelope; if the
+// entry stripped first, runWith would see an already-clean waist and the substitution would
+// go unreported on exactly the live path that matters.
 function parseEntryArgs(raw) {
   try {
-    return normalizeArgs(raw);
+    return typeof raw === 'string' ? JSON.parse(raw) : raw;
   } catch (e) {
     throw new Error(`args must be the assembled argsVersion:1 waist object — do not invoke this workflow directly; run the code-gauntlet skill (Phases 1-2 build the args). Got: ${String(raw).slice(0, 80)}`);
   }
@@ -1956,6 +2076,24 @@ function validateArgs(args) {
           if (typeof id.sha_full !== 'string' || !id.sha_full) errors.push('delivery.prIdentity.sha_full must be a non-empty string');
         }
       }
+    }
+  }
+  // Optional persist waist (issue #38, D3.4): { assembleScriptPath }. When present, the
+  // artifact-writer persists only the UNIQUE content (findings.json, report.md, the
+  // persist plan) and the executor runs that script to DERIVE the post-review and
+  // checkpoint artifacts on disk. When ABSENT, writeArtifacts takes the legacy full
+  // by-value path and records no gap — a clean, documented degradation for older callers
+  // (bench included). Same present-then-shape-checked pattern as `delivery`: a malformed
+  // object fails loud at the waist rather than mid-persist, after every paid stage.
+  // (A literal `persist: null` never reaches here — it is on NULLABLE_TOP_LEVEL and is
+  // dropped, and disclosed, by stripNullOptionalsReport. The `=== null` arm below is the
+  // guard for a caller that skipped normalization entirely.)
+  if (args.persist !== undefined) {
+    if (args.persist === null || typeof args.persist !== 'object' || Array.isArray(args.persist)) {
+      errors.push('persist must be an object of the form { assembleScriptPath } when present');
+    } else if (args.persist.assembleScriptPath !== undefined
+      && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
+      errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
     }
   }
   return { ok: errors.length === 0, errors };
@@ -2515,6 +2653,18 @@ function pinNumericFields(finding) {
 // verify_findings.py --input reads: { findings, base_branch }). Segmented under the
 // shared char budget. Returns { ok } / { ok:false, reason }; a throw OR a null result
 // is a failure (the caller degrades the whole set to UNVERIFIED).
+//
+// The per-GROUP fan-out goes through parallel() (issue #38, S2) — the groups are
+// independent writes to distinct paths. NOTE this is the group loop only; verifyStage's
+// per-SLICE executor loop stays sequential and fail-fast on purpose (each envelope pairs
+// to its slice by order). Two properties keep the degradation byte-identical to the old
+// sequential loop for any given failure set:
+//   - every thunk owns its try/catch and returns { ok } / { ok:false, reason }, so a
+//     thrown member can never escape and parallel() never has to null it; and
+//   - the results are evaluated in INDEX order and the FIRST failure's reason is returned,
+//     which is exactly the reason the sequential loop would have stopped on.
+// (The extra groups after the first failure are now dispatched rather than skipped — a
+// fan-out cost, never an output difference.)
 async function materializeVerifySlices(c, inp, slices, policy) {
   const v = inp.verify || {};
   const inputPathBase = v.inputPathBase || 'phase4-input';
@@ -2524,10 +2674,10 @@ async function materializeVerifySlices(c, inp, slices, policy) {
     content: { findings: slice.map(pinNumericFields), base_branch: v.baseBranch },
   }));
   const groups = chunkBySerializedSize(entries, SEGMENT_CHAR_BUDGET);
-  for (let g = 0; g < groups.length; g += 1) {
+  const thunks = groups.map((group, g) => async () => {
     let result;
     try {
-      result = await c.agent(verifySliceWriterPrompt(groups[g]), {
+      result = await c.agent(verifySliceWriterPrompt(group), {
         label: `verify-input-writer-${g}`,
         agentType: 'code-gauntlet:artifact-writer',
         model,
@@ -2543,10 +2693,20 @@ async function materializeVerifySlices(c, inp, slices, policy) {
     // executor would then read slice-input files that were never written. An uncovered
     // path degrades the WHOLE set to UNVERIFIED (findings kept), never a fabricated verify.
     const written = new Set(Array.isArray(result.written) ? result.written : []);
-    const dispatchedPaths = groups[g].map((e) => e.path);
+    const dispatchedPaths = group.map((e) => e.path);
     if (!dispatchedPaths.every((p) => written.has(p))) {
       return { ok: false, reason: 'slice-input writer echo did not cover all dispatched slice paths (no write proof)' };
     }
+    return { ok: true };
+  });
+
+  const results = await c.parallel(thunks);
+  for (let g = 0; g < groups.length; g += 1) {
+    const r = results[g];
+    // A null member is unreachable while the thunks above swallow their own throws; it is
+    // still handled so a platform-side null can never be mistaken for a successful write.
+    if (!r) return { ok: false, reason: `slice-input writer group ${g} produced no result` };
+    if (r.ok !== true) return { ok: false, reason: r.reason };
   }
   return { ok: true };
 }
@@ -3050,9 +3210,12 @@ const REPORT_SCHEMA = { type: 'object', properties: { report: { type: 'string' }
 //
 // Segmentation: when the serialized findings payload exceeds
 // SEGMENT_CHAR_BUDGET the findings are chunked and one report-writer is
-// dispatched PER chunk (sequentially, each with the same try/catch), then the
-// per-chunk reports are concatenated under titled segment headings. Any single
+// dispatched PER chunk (through parallel(), each with the same try/catch), then
+// the per-chunk reports are concatenated under titled segment headings. Any single
 // chunk that fails degrades to its own minimal section — the rest still render.
+// parallel() preserves INPUT order, so the `## Report segment i of n` concatenation
+// and the gap ordering are byte-identical to the old sequential loop regardless of
+// which segments answer first (issue #38, S2).
 async function reportStage(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -3065,13 +3228,19 @@ async function reportStage(ctx, input) {
     return dispatchReportSegment(c, model, inp, findings, null);
   }
 
-  // Segment: one dispatch per chunk, sequentially, titled sections joined.
+  // Segment: one dispatch per chunk through parallel(), titled sections joined IN INDEX
+  // ORDER. dispatchReportSegment already owns its try/catch and never throws, so no member
+  // can be nulled by parallel(); the null branch below is defense-in-depth only.
   const chunks = chunkBySerializedSize(findings, SEGMENT_CHAR_BUDGET);
+  const thunks = chunks.map((chunk, i) => () => dispatchReportSegment(c, model, inp, chunk, { index: i, total: chunks.length }));
+  const results = await c.parallel(thunks);
   const parts = [];
   const gaps = [];
   for (let i = 0; i < chunks.length; i += 1) {
-    const seg = { index: i, total: chunks.length };
-    const out = await dispatchReportSegment(c, model, inp, chunks[i], seg);
+    const out = results[i] || {
+      report: minimalReport({ ...inp, findings: chunks[i] }),
+      gaps: [`report segment ${i}: dispatch produced no result — assembled a minimal report from pipeline stats`],
+    };
     parts.push(`## Report segment ${i + 1} of ${chunks.length}\n\n${out.report}`);
     gaps.push(...out.gaps);
   }
@@ -3123,8 +3292,13 @@ function minimalReport(inp) {
   return lines.join('\n');
 }
 
+// The report-writer is deliberately NOT given the shared context path (issue #38, R1):
+// its contract renders entirely from the by-value { summary, findings, unverified, stats }
+// below, and references/report-format.md sources its code snippet from finding.evidence —
+// also carried by value. In the profiled run the writer spent 5.7 s Reading the 95 KB
+// context file, got a TRUNCATED read back, and then said it had enough context without it.
+// Dropping the read removes that latency and the truncated-read exposure for this agent.
 function reportPrompt(inp, seg) {
-  const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
   const segLine = seg ? `This is report segment ${seg.index + 1} of ${seg.total}; render only the findings in this segment. ` : '';
   const body = JSON.stringify({
     summary: inp.summary || '',
@@ -3132,7 +3306,7 @@ function reportPrompt(inp, seg) {
     unverified: (!seg || seg.index === 0) ? (inp.unverified || []) : [], // render the unverified bucket once, in segment 0
     stats: inp.stats || {},
   });
-  return `${ctxLine}${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
+  return `${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
 }
 
 // --- Persistence: writeArtifacts --------------------------------------------
@@ -3172,25 +3346,76 @@ function writerEchoCoversPaths(echoed, paths) {
 }
 
 // writeArtifacts(ctx, { findings, postReview, report, checkpoints, outputDir,
-// headShaShort, policy }) -> { artifactPaths, gaps, partial }
-// The workflow script has NO disk access, so a writer agent persists findings.json
-// + report.md + the checkpoint/progress JSON to {output_dir}; the content is carried
-// BY VALUE in the dispatch prompt. Wrapped in its own try/catch (like reportStage):
-// a throw OR null result degrades to a partial-artifacts gap with null paths and is
-// NON-FATAL — it never bubbles to the top-level catch.
+// headShaShort, policy, persist }) -> { artifactPaths, gaps, partial }
+// The workflow script has NO disk access, so agents persist findings.json + report.md
+// + the post-review delivery set + the checkpoint/progress JSON to {output_dir}.
+//
+// TWO persistence paths, one PUBLIC contract (same return shape, the same four
+// artifactPaths keys, the same partial-artifacts degradation — Phase 8 is untouched):
+//
+//   DERIVED (issue #38, D3; taken when args.persist.assembleScriptPath is present).
+//     Measured on a real run: of the 88,389 B the writer emitted, the post-review
+//     findings array was canonically byte-identical to findings.json, the checkpoint's
+//     phases.challenge.findings was the alias-stripped twin of the same array, and the
+//     genuine residual was 383 B. So the writer now persists ONLY the unique content
+//     (findings.json, report.md, the persist plan) and the executor runs the pinned
+//     scripts/assemble_artifacts.py to DERIVE the two projections from what actually
+//     landed on disk, returning a content-proof receipt.
+//
+//   LEGACY (no persist waist, or the id-integrity guard refused). One artifact-writer
+//     dispatch carrying all four artifacts by value. Unchanged.
+//
+// Wrapped in its own try/catch (like reportStage): a throw OR null result degrades to
+// a partial-artifacts gap with null paths and is NON-FATAL — it never bubbles to the
+// top-level catch. The try covers the WHOLE body, not just the dispatches: the derived
+// path computes the plan and the primaries (JSON.stringify over caller-supplied objects,
+// a deep clone of the checkpoint) BEFORE any agent is called, and a throw there is exactly
+// as non-fatal as a writer failure. Keeping those computations outside the guard is the
+// regression this shape exists to prevent — SKILL.md's Error Recovery promises the caller
+// that writer failure never ends the run.
 async function writeArtifacts(ctx, input) {
-  const c = ctx || defaultCtx();
-  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
-  const outputDir = inp.outputDir || '.code-gauntlet';
-  const sha = inp.headShaShort || 'head';
-  const policy = inp.policy || {};
-  const paths = plannedArtifactPaths(outputDir, sha);
-  const model = modelFor('code-gauntlet:artifact-writer', policy);
-  const partial = (reason) => ({
+  const partial = (reason, extraGaps) => ({
     artifactPaths: { findings: null, report: null, postReview: null, checkpoints: null },
-    gaps: [`writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`],
+    gaps: (extraGaps || []).concat([`writeArtifacts: ${reason} — artifacts not persisted (partial-artifacts)`]),
     partial: true,
   });
+
+  try {
+    const c = ctx || defaultCtx();
+    const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
+    const outputDir = inp.outputDir || '.code-gauntlet';
+    const sha = inp.headShaShort || 'head';
+    const policy = inp.policy || {};
+    const paths = plannedArtifactPaths(outputDir, sha);
+
+    const assembleScriptPath = (inp.persist || {}).assembleScriptPath;
+    if (typeof assembleScriptPath === 'string' && assembleScriptPath !== '') {
+      // The guard that keeps the derived path safe under pathological input. Every
+      // projection is by finding id, so a missing/duplicate id — or a delivery/challenge
+      // entry that is not a byte-identical twin of its findings.json row — makes the
+      // derivation unfaithful. Rather than degrade the run (null paths, no artifacts) we
+      // fall back to the legacy full by-value writer and name the reason in a gap.
+      const derivable = persistDerivable(inp);
+      if (derivable.ok) {
+        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath);
+      }
+      return await writeArtifactsLegacy(c, inp, paths, policy, partial, [
+        `writeArtifacts: derived persistence unavailable (${derivable.reason}) — persisted the full by-value payload instead`,
+      ]);
+    }
+    // No persist waist: the documented clean degradation for older callers (bench
+    // included). Legacy path, no gap — nothing was lost, only latency.
+    return await writeArtifactsLegacy(c, inp, paths, policy, partial, []);
+  } catch (e) {
+    return partial(`persistence threw before any artifact was written (${(e && e.message) || 'unknown'})`, []);
+  }
+}
+
+// The legacy full by-value persist: ONE artifact-writer dispatch carrying all four
+// artifacts. `extraGaps` rides along on both the success and the degradation return so
+// an id-integrity fallback is always visible in the envelope.
+async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
+  const model = modelFor('code-gauntlet:artifact-writer', policy);
   try {
     const result = await c.agent(writeArtifactsPrompt(inp, paths), {
       label: 'artifact-writer',
@@ -3198,14 +3423,178 @@ async function writeArtifacts(ctx, input) {
       model,
       schema: WRITER_SCHEMA,
     });
-    if (!result) return partial('writer returned null');
+    if (!result) return partial('writer returned null', extraGaps);
     if (!writerEchoCoversPaths(result.artifactPaths, paths)) {
-      return partial('writer echo did not account for all four planned artifact paths (no write proof)');
+      return partial('writer echo did not account for all four planned artifact paths (no write proof)', extraGaps);
     }
-    return { artifactPaths: paths, gaps: [], partial: false };
+    return { artifactPaths: paths, gaps: extraGaps, partial: false };
   } catch (e) {
-    return partial(`writer agent threw (${(e && e.message) || 'unknown'})`);
+    return partial(`writer agent threw (${(e && e.message) || 'unknown'})`, extraGaps);
   }
+}
+
+// The derived persist (issue #38, D3.2): write the three primaries, then derive the two
+// projections on disk. Failure at ANY step takes the same partial-artifacts degradation
+// as the legacy path — a content-proof MISMATCH is the one exception (see below).
+async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
+  const planPath = persistPlanPath(outputDir, sha);
+  const { findingsJson, reportMd } = persistPrimaries(inp);
+  // Kept as an OBJECT as well as a string: trustAssembleReceipt grades the receipt
+  // against the expectations the pipeline itself computed, never against the ones the
+  // receipt echoes back at us.
+  const plan = persistPlan(inp, paths);
+  const planJson = JSON.stringify(plan, null, 2);
+  const entries = [
+    { path: paths.findings, text: findingsJson },
+    { path: paths.report, text: reportMd },
+    { path: planPath, text: planJson },
+  ];
+
+  let writerOut;
+  try {
+    writerOut = await c.agent(finalArtifactsWriterPrompt(entries), {
+      label: 'artifact-writer',
+      agentType: 'code-gauntlet:artifact-writer',
+      model: modelFor('code-gauntlet:artifact-writer', policy),
+      schema: WRITTEN_SCHEMA,
+    });
+  } catch (e) {
+    return partial(`writer agent threw (${(e && e.message) || 'unknown'})`, []);
+  }
+  if (!writerOut) return partial('writer returned null', []);
+  // Write-proof, same threat model as materializeVerifySlices: WRITTEN_SCHEMA declares
+  // no `required`, so an empty { written: [] } is schema-valid and a writer under
+  // StructuredOutput retry pressure can return one having written nothing. Without this
+  // the assembler would then read primaries that never landed.
+  const written = new Set(Array.isArray(writerOut.written) ? writerOut.written : []);
+  if (!entries.every((e) => written.has(e.path))) {
+    return partial('writer echo did not cover all three primary artifact paths (no write proof)', []);
+  }
+
+  let receipt;
+  try {
+    receipt = await c.agent(assemblePrompt(assembleScriptPath, planPath), {
+      label: 'assemble-artifacts',
+      agentType: 'code-gauntlet:executor',
+      model: modelFor('code-gauntlet:executor', policy),
+      schema: ASSEMBLE_RECEIPT_SCHEMA,
+    });
+  } catch (e) {
+    return partial(`assemble executor threw (${(e && e.message) || 'unknown'})`, []);
+  }
+  const trust = trustAssembleReceipt(receipt, paths, plan);
+  if (!trust.ok) return partial(trust.reason, []);
+  return { artifactPaths: paths, gaps: trust.gaps, partial: false };
+}
+
+// The assemble receipt gate. A STRUCTURAL failure (no receipt, ok:false, a path the
+// script never verified/wrote) is untrustworthy persistence -> degrade. A content-proof
+// MISMATCH is deliberately NOT a failure: the script derived from what is actually on
+// disk and the artifacts are self-consistent with it, so the findings are still
+// delivered and the divergence is raised as a LOUD gap instead of costing the run its
+// artifacts (never-fabricate cuts both ways — inventing a new way to lose a run is
+// exactly as wrong as inventing a success).
+//
+// A receipt must NEVER be allowed to grade itself (issue #38 L1-2). The receipt is a
+// self-report relayed by an executor agent, so every claim it makes about what it was
+// CHECKING AGAINST is compared here to the value the pipeline computed independently:
+//
+//   * receipt.planChecksum must equal the plan's own planChecksum. The script recomputes
+//     it from the plan it actually read and refuses to run on a mismatch, so a receipt
+//     echoing a different value did not execute THIS plan.
+//   * each verified entry's expected_chars/expected_checksum must equal the plan's
+//     expect[] entry for that path. Otherwise a wholly self-consistent fabricated
+//     receipt ("expected 10, got 10, match") passes.
+//   * content_proof must agree with the numbers the receipt itself reports, since the
+//     script derives it as exactly `chars === expected_chars && checksum ===
+//     expected_checksum`. An incoherent receipt is a broken relay, not a proof.
+//   * each DERIVED document's reported chars/checksum must equal the plan's `derive[]` entry
+//     for that path — the pipeline's own serialization of the document it holds. Path
+//     presence proved only that something was written there.
+function trustAssembleReceipt(receipt, paths, plan) {
+  if (!receipt || typeof receipt !== 'object') return { ok: false, reason: 'assemble executor returned no receipt' };
+  if (receipt.ok !== true) {
+    const errors = Array.isArray(receipt.errors) ? receipt.errors.join('; ') : '';
+    return { ok: false, reason: `assemble script reported failure (${errors || 'no reason given'})` };
+  }
+  if (receipt.planChecksum !== plan.planChecksum) {
+    return {
+      ok: false,
+      reason: `assemble receipt echoed plan checksum ${receipt.planChecksum === undefined ? 'none' : receipt.planChecksum} but the pipeline computed ${plan.planChecksum} — the executor did not run this persist plan`,
+    };
+  }
+  const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
+  const written = Array.isArray(receipt.written) ? receipt.written : [];
+  const verifiedByPath = new Map(verified.map((e) => [(e && e.path), e]));
+  const expectByPath = new Map((plan.expect || []).map((e) => [e.path, e]));
+  const writtenPaths = new Set(written.map((e) => (e && e.path)));
+  for (const p of [paths.findings, paths.report]) {
+    const got = verifiedByPath.get(p);
+    if (!got) return { ok: false, reason: `assemble receipt did not verify ${p} (no content proof)` };
+    const want = expectByPath.get(p);
+    if (!want || got.expected_chars !== want.chars || got.expected_checksum !== want.checksum) {
+      return {
+        ok: false,
+        reason: `assemble receipt checked ${p} against a foreign expectation (receipt says ${got.expected_chars} chars/${got.expected_checksum}, the pipeline handed the writer ${want ? want.chars : 'none'}/${want ? want.checksum : 'none'})`,
+      };
+    }
+    const same = got.chars === want.chars && got.checksum === want.checksum;
+    if ((got.content_proof === 'match') !== same) {
+      return {
+        ok: false,
+        reason: `assemble receipt is incoherent for ${p}: content_proof:"${got.content_proof}" contradicts its own chars/checksum (${got.chars}/${got.checksum} vs expected ${want.chars}/${want.checksum})`,
+      };
+    }
+  }
+  // The DERIVED documents (the delivered payload). Path presence alone proved nothing about
+  // their content, so each is checked against the plan's own `derive` expectation — the
+  // chars/checksum the pipeline computed for the document it holds in memory, compared to
+  // what the script reports for the bytes it actually wrote.
+  //
+  // Threat model, stated plainly for whoever reads this next: the plan is on disk, so a
+  // BYZANTINE executor can read these numbers and echo them back. This is NOT authentication.
+  // It catches a stale/confused/hallucinating executor and a real Python-vs-JS serializer
+  // divergence — the same bound trustSlice documents for the verify receipt.
+  //
+  // Unlike a primary mismatch, this is STRUCTURAL: a primary can still be derived from
+  // on-disk truth, but a derived document that disagrees with the pipeline has no other
+  // copy to fall back to — the derivation itself is what went wrong.
+  //
+  // ONE EXCEPTION, and it is not a loophole. Both derived documents are projections of
+  // findings.json ALONE, so when findings.json's OWN content proof came back `mismatch` the
+  // derived documents are EXPECTED to differ: the script faithfully projected the divergent
+  // bytes that are actually on disk. Failing there would convert the deliberately non-fatal
+  // primary mismatch into a lost run — inventing a new way to lose a run, which the
+  // never-fabricate contract rules out in the same breath as inventing a success. The
+  // difference is still reported, as a gap, right beside the primary mismatch that caused it.
+  const writtenByPath = new Map(written.map((e) => [(e && e.path), e]));
+  const deriveByPath = new Map((plan.derive || []).map((e) => [e.path, e]));
+  const findingsProof = verifiedByPath.get(paths.findings);
+  const sourceDiverged = !!(findingsProof && findingsProof.content_proof === 'mismatch');
+  const derivedGaps = [];
+  for (const p of [paths.postReview, paths.checkpoints]) {
+    if (!writtenPaths.has(p)) return { ok: false, reason: `assemble receipt did not write ${p} (no write proof)` };
+    const want = deriveByPath.get(p);
+    if (!want) return { ok: false, reason: `persist plan carries no derived-content expectation for ${p} (no content proof)` };
+    const got = writtenByPath.get(p);
+    if (got.chars === want.chars && got.checksum === want.checksum) continue;
+    const detail = `derived document ${p} does not match the pipeline's own derivation (receipt reports ${got.chars == null ? 'no' : got.chars} chars/${got.checksum == null ? 'no checksum' : got.checksum}, the pipeline derived ${want.chars}/${want.checksum})`;
+    if (sourceDiverged) {
+      derivedGaps.push(`artifact-content-proof: ${detail} — expected, since ${paths.findings} it was derived from also diverged`);
+      continue;
+    }
+    return { ok: false, reason: `${detail} — the delivered payload is not what this run produced` };
+  }
+  // Primary mismatches first, then any derived difference they explain — the primary gap
+  // ordering is unchanged for every run that has no derived difference.
+  const gaps = [];
+  for (const e of verified) {
+    if (e && e.content_proof === 'mismatch') {
+      gaps.push(`artifact-content-proof: ${e.path} bytes on disk differ from the payload handed to the writer (expected ${e.expected_chars} chars/checksum ${e.expected_checksum}, got ${e.chars}/${e.checksum})`);
+    }
+  }
+  gaps.push(...derivedGaps);
+  return { ok: true, gaps };
 }
 
 // The persisted findings must satisfy BOTH downstream boundaries: verify_findings.py
@@ -3273,6 +3662,328 @@ function writeArtifactsPrompt(inp, paths) {
   return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). Write the payload's findings (as pretty JSON) to ${paths.findings}, the payload's report (verbatim markdown) to ${paths.report}, the payload's postReview (the pre-selected delivery set, as pretty JSON) to ${paths.postReview}, and the payload's checkpoints (as JSON) to ${paths.checkpoints}. Return { artifactPaths } echoing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
+// --- Derived persistence (issue #38, D3) -------------------------------------
+
+// The v2 aliases toV2Aliased ADDS at the persist boundary. The checkpoint's
+// challenge findings are the alias-stripped twin of findings.json, so removing
+// exactly these keys restores the canonical shape (and, because the aliases are
+// appended LAST, the key order too).
+const PERSIST_ALIAS_FIELDS = ['line', 'end_line', 'body'];
+
+function stripPersistAliases(f) {
+  const out = {};
+  for (const [k, v] of Object.entries(f)) {
+    if (!PERSIST_ALIAS_FIELDS.includes(k)) out[k] = v;
+  }
+  return out;
+}
+
+// fnv1a32(s) -> "fnv1a32:0x........" — the content-proof checksum.
+//
+// It must be computable IDENTICALLY here and in Python. The workflow sandbox has no
+// TextEncoder and no Buffer, so the only byte source available is String#charCodeAt —
+// i.e. UTF-16 code units. scripts/assemble_artifacts.py reproduces this exactly by
+// unpacking the string's utf-16-le encoding, including surrogate pairs (an emoji
+// contributes TWO units on both sides). Math.imul is a language builtin, NOT a host
+// global, so it is available in the sandbox.
+function fnv1a32(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `fnv1a32:0x${h.toString(16).padStart(8, '0')}`;
+}
+
+// Strip a UTF-8 BOM and AT MOST ONE trailing newline before checksumming. The Write
+// tool may normalise a trailing newline or prepend a BOM, and a false content-proof
+// degrade must not cost a run its artifacts. Applied on BOTH sides (here and in
+// assemble_artifacts.py) so the tolerance is symmetric; two trailing newlines is a
+// REAL difference and still reports as a mismatch.
+function normalizeForChecksum(s) {
+  let out = typeof s === 'string' ? s : '';
+  if (out.charCodeAt(0) === 0xfeff) out = out.slice(1);
+  if (out.endsWith('\r\n')) return out.slice(0, -2);
+  if (out.endsWith('\n')) return out.slice(0, -1);
+  return out;
+}
+
+// The persist plan's own path. Deliberately matches the Phase 2 stale-file truncation
+// glob `code-gauntlet-*-<sha>.*`, so no skill change is needed to clean it up. It is
+// NOT an artifactPaths key — the public contract stays at exactly four.
+function persistPlanPath(outputDir, sha) {
+  return `${outputDir}/code-gauntlet-persist-plan-${sha}.json`;
+}
+
+// The two PRIMARY strings — the only genuinely unique content the writer persists.
+// Pure and exported so a test can assert the writer prompt carries them verbatim.
+function persistPrimaries(inp) {
+  return {
+    findingsJson: JSON.stringify(((inp || {}).findings || []).map(toV2Aliased), null, 2),
+    reportMd: (inp || {}).report || '',
+  };
+}
+
+// persistPlan(inp, paths) -> the plan scripts/assemble_artifacts.py consumes.
+// PURE (deep-clones the checkpoint before emptying the challenge findings), and
+// exported so the projection rules are directly unit-testable — the in-run
+// byte-identity test applies them to the primaries and asserts the result equals
+// writerPayload(inp).postReview / .checkpoints.
+//
+// The skeleton is derived FROM slimPersistedCheckpoints' output by EMPTYING (not
+// deleting) phases.challenge.findings, so there is exactly one source of truth for the
+// checkpoint shape and the key keeps its position — the derived document is
+// key-order-identical to the one the pipeline holds in memory.
+//
+// THE PLAN'S SELF-PROOF (`planChecksum`, issue #38 L1-2). The plan is transcribed to
+// disk by the artifact-writer agent exactly like findings.json and report.md — but
+// unlike them it is not data to be checked, it is the INSTRUCTION SET. `postReview.ids`
+// is the sole authority for which finding ids reach the delivered post-review artifact,
+// so a writer that elides two entries from that list produces a silently smaller
+// delivered set with a self-consistent ok:true receipt and no gap. The two primaries had
+// expect[].chars/checksum to prove them; the plan had nothing. So it now carries a
+// checksum of itself, computed over the plan MINUS that field:
+//
+//   planChecksum = fnv1a32(JSON.stringify(planWithoutPlanChecksum, null, 2))
+//
+// Unambiguous in both runtimes because (a) the field is appended LAST, so deleting it
+// on the Python side restores this exact object (both runtimes preserve insertion order
+// and neither reorders on re-serialization), and (b) the serializer is the same pretty
+// printer that produces the derived artifacts — which makes the plan checksum a canary
+// for serializer divergence too: a Python/JS spelling difference over the plan's content
+// fails the proof before a divergent artifact is written.
+//
+// THE DERIVED DOCUMENTS' CONTENT PROOF (`derive`, issue #38 F1-persist-1/F4-4). The two
+// primaries are proven by `expect[].chars/checksum`; the two DERIVED documents —
+// post-review.json and checkpoint-all.json, i.e. the payload that actually reaches the user
+// — were gated on PATH PRESENCE only ("the script says it wrote something there"). So the
+// plan also carries a { path, chars, checksum } expectation for each derived document,
+// computed here from writerPayload(inp).postReview / .checkpoints through the SAME
+// normalizeForChecksum + fnv1a32 the primaries use. It costs nothing at dispatch (~40 bytes
+// each; the documents themselves are still never sent) and it makes the byte-identity claim
+// PROVABLE for the delivered payload rather than merely argued.
+//
+// WHAT THIS IS NOT: authentication. The plan is on disk and the executor can read it, so a
+// BYZANTINE executor could echo back any value the plan names — exactly the threat model
+// trustSlice already documents for the verify receipt. This is a consistency/liveness check
+// against a STALE, CONFUSED or HALLUCINATING executor (a receipt from another run, a
+// half-finished derivation, an invented success), and against a real serializer divergence
+// between the two runtimes. Do not build a security argument on top of it.
+//
+// WHY A DERIVED MISMATCH IS FATAL WHERE A PRIMARY MISMATCH IS NOT: a primary mismatch still
+// leaves on-disk truth to derive from, so the run keeps its artifacts and raises a loud gap.
+// A derived mismatch means the DERIVATION disagreed with the pipeline — there is no other
+// copy of that document to fall back to — so trustAssembleReceipt treats it as structural.
+//
+// WHY THE ID LISTS STAY (the weak point is transcription, not encoding). No wire format
+// removes the failure mode: the plan must cross an LLM agent's transcription to reach
+// disk (the sandbox has no disk access at all), and no encoding stops an agent from
+// writing fewer bytes than it was handed. The alternatives are strictly worse — deriving
+// the delivery set on the Python side means reimplementing selectDelivery's ranking and
+// cap in a second language, i.e. an order-sensitive stage whose divergence would silently
+// change the delivered findings; and "all of findings.json, in order" is simply false,
+// delivery is a ranked capped subset. So the list stays explicit and gains a proof.
+function persistPlan(inp, paths) {
+  const { findingsJson, reportMd } = persistPrimaries(inp);
+  const id = inp.prIdentity;
+  const skeleton = deepClone(inp.checkpoints || {});
+  const challenge = (skeleton.phases || {}).challenge;
+  const challengeFindingIds = challenge && Array.isArray(challenge.findings)
+    ? challenge.findings.map((f) => f && f.id)
+    : [];
+  if (challenge && Array.isArray(challenge.findings)) challenge.findings = [];
+  const expectOf = (path, text) => {
+    const normalized = normalizeForChecksum(text);
+    return { path, chars: normalized.length, checksum: fnv1a32(normalized) };
+  };
+  // The derived documents, as the pipeline itself would serialize them — the same pretty
+  // printer assemble_artifacts.py reproduces (js_stringify_pretty) and the same source
+  // (writerPayload) the legacy by-value path persists. Only their chars/checksum travel.
+  const held = writerPayload(inp || {});
+  const plan = {
+    planVersion: 2,
+    expect: [expectOf(paths.findings, findingsJson), expectOf(paths.report, reportMd)],
+    derive: [
+      expectOf(paths.postReview, JSON.stringify(held.postReview, null, 2)),
+      expectOf(paths.checkpoints, JSON.stringify(held.checkpoints, null, 2)),
+    ],
+    postReview: {
+      path: paths.postReview,
+      source: paths.findings,
+      ids: (inp.postReview || []).map((f) => f && f.id),
+      // Same envelope decision writerPayload makes (live-run L3, D16): with a PR
+      // identity the artifact IS the post_review.py input wrapper; without one it is a
+      // bare array. Key order is the wire contract — findings are appended last.
+      wrapper: id
+        ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '' }
+        : null,
+    },
+    checkpoint: {
+      path: paths.checkpoints,
+      source: paths.findings,
+      challengeFindingIds,
+      stripAliasFields: PERSIST_ALIAS_FIELDS,
+      skeleton,
+    },
+  };
+  // Appended LAST and computed over the object WITHOUT it — see the construction note
+  // above. assemble_artifacts.py deletes exactly this key and recomputes.
+  plan.planChecksum = fnv1a32(JSON.stringify(plan, null, 2));
+  return plan;
+}
+
+// firstUnsafeNumber(root, rootPath) -> the path of the first number the Python twin
+// could not spell identically, or null.
+//
+// JS numbers are doubles and Number#toString has its own spelling rules; Python's
+// repr(float) does not share them (1e-7 vs 1e-07, 0.000001 vs 1e-06, 90 vs 90.0, 0 vs
+// -0.0, null vs NaN). scripts/assemble_artifacts.py deliberately does NOT reimplement
+// Number#toString — a port whose own bugs would be invisible is worse than a
+// precondition — so it refuses any number it cannot round-trip and this guard applies
+// the SAME rule one step earlier, where refusing is free: the run falls back to the
+// legacy by-value writer instead of writing a divergent artifact or losing artifacts.
+// Every number the pipeline actually produces is a count, a line number, or a
+// confidence, so the precondition never binds in practice. Integers outside JS's safe
+// range are rejected too: JS would already have parsed them lossily.
+const JS_MAX_SAFE_INTEGER = 9007199254740991;
+
+function firstUnsafeNumber(root, rootPath) {
+  const stack = [[root, rootPath]];
+  while (stack.length > 0) {
+    const [node, where] = stack.pop();
+    if (typeof node === 'number') {
+      if (!Number.isInteger(node) || node > JS_MAX_SAFE_INTEGER || node < -JS_MAX_SAFE_INTEGER) return where;
+      continue;
+    }
+    if (Array.isArray(node)) {
+      for (let i = node.length - 1; i >= 0; i -= 1) stack.push([node[i], `${where}[${i}]`]);
+      continue;
+    }
+    if (node && typeof node === 'object') {
+      for (const [k, v] of Object.entries(node)) stack.push([v, `${where}.${k}`]);
+    }
+  }
+  return null;
+}
+
+// persistDerivable(inp) -> { ok } | { ok:false, reason }
+// The guard on the derived path. Every projection is BY FINDING ID out of
+// findings.json, so the derivation is only faithful when:
+//   0. every number in the persisted content is a JS-safe integer (see
+//      firstUnsafeNumber — otherwise the Python serializer spells it differently);
+//   1. every finding carries a unique, non-empty string id;
+//   2. every postReview / challenge entry has a twin in the findings set; and
+//   3. that twin is byte-identical to it under the projection rules — including the
+//      alias round trip, because toV2Aliased only ADDS an alias when absent, so a
+//      finding that ALREADY carries `line`/`end_line`/`body` would silently lose it to
+//      the checkpoint's alias strip.
+// A refusal is NOT a degradation: writeArtifacts falls back to the legacy full
+// by-value writer and records the reason as a gap. Pure and exported for direct tests.
+function persistDerivable(inp) {
+  // Everything the derived documents are built from: findings.json's content, the
+  // checkpoint skeleton, and the post-review envelope's pr_number.
+  for (const [label, value] of [
+    ['findings', (inp || {}).findings],
+    ['postReview', (inp || {}).postReview],
+    ['checkpoints', (inp || {}).checkpoints],
+    ['prIdentity', (inp || {}).prIdentity],
+  ]) {
+    if (value === undefined || value === null) continue;
+    const bad = firstUnsafeNumber(value, label);
+    if (bad !== null) {
+      return { ok: false, reason: `${bad} is not a JS-safe integer — the Python assembler cannot spell it byte-identically, so the derived artifact would diverge` };
+    }
+  }
+  const findings = (inp || {}).findings || [];
+  const byId = new Map();
+  for (let i = 0; i < findings.length; i += 1) {
+    const f = findings[i];
+    const fid = f && f.id;
+    if (typeof fid !== 'string' || fid === '') {
+      return { ok: false, reason: `finding at index ${i} has no usable string id` };
+    }
+    if (byId.has(fid)) return { ok: false, reason: `duplicate finding id ${fid}` };
+    byId.set(fid, f);
+    if (JSON.stringify(stripPersistAliases(toV2Aliased(f))) !== JSON.stringify(f)) {
+      return { ok: false, reason: `finding ${fid} already carries a v2 alias field (${PERSIST_ALIAS_FIELDS.join('/')}) — the checkpoint alias strip is not reversible` };
+    }
+  }
+  const twinCheck = (list, label, project) => {
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      const fid = entry && entry.id;
+      if (typeof fid !== 'string' || !byId.has(fid)) {
+        return `${label} entry at index ${i} (id ${fid === undefined ? 'missing' : fid}) is not present in the findings set`;
+      }
+      if (JSON.stringify(project(entry)) !== JSON.stringify(project(byId.get(fid)))) {
+        return `${label} entry ${fid} differs from the findings entry with the same id`;
+      }
+    }
+    return null;
+  };
+  const postReviewBad = twinCheck(inp.postReview || [], 'postReview', toV2Aliased);
+  if (postReviewBad) return { ok: false, reason: postReviewBad };
+  const challenge = ((inp.checkpoints || {}).phases || {}).challenge;
+  const challengeFindings = challenge && Array.isArray(challenge.findings) ? challenge.findings : [];
+  const challengeBad = twinCheck(challengeFindings, 'checkpoint challenge', (f) => f);
+  if (challengeBad) return { ok: false, reason: challengeBad };
+  return { ok: true };
+}
+
+// The DERIVED writer payload: `[{ path, text }]` — each `text` is written VERBATIM
+// (the verify slice-input shape uses `content` and is written as JSON). Sending the
+// exact string removes every reformatting degree of freedom, which is what makes the
+// content-proof checksum meaningful.
+function finalArtifactsWriterPrompt(entries) {
+  const payload = JSON.stringify(entries);
+  return `Persist these code-gauntlet artifacts to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "text" VERBATIM to its "path" — byte for byte, nothing before it and NOTHING AFTER THE FINAL BYTE (no trailing commentary, no tool-call markup). Do not reformat, re-indent, or re-serialize. Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
+}
+
+// The assemble receipt shape (scripts/assemble_artifacts.py's single stdout line).
+const ASSEMBLE_RECEIPT_SCHEMA = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    planVersion: { type: 'number' },
+    // The plan checksum the script RECOMPUTED from the plan it read; trustAssembleReceipt
+    // compares it against the pipeline's own so the receipt cannot grade itself.
+    planChecksum: { type: 'string' },
+    verified: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          chars: { type: 'number' },
+          expected_chars: { type: 'number' },
+          checksum: { type: 'string' },
+          expected_checksum: { type: 'string' },
+          content_proof: { type: 'string' },
+        },
+      },
+    },
+    written: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          path: { type: 'string' },
+          chars: { type: 'number' },
+          checksum: { type: 'string' },
+        },
+      },
+    },
+    errors: { type: 'array', items: { type: 'string' } },
+  },
+};
+
+// The pinned command: a single `python3 <script> --plan <plan>` invocation of plain
+// word tokens only (CLAUDE.md AST-safe emission — no command substitution, heredocs,
+// env prefix, or shell operators), exactly like verifyCommand.
+function assemblePrompt(scriptPath, planPath) {
+  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\npython3 ${scriptPath} --plan ${planPath}`;
+}
+
 // --- Checkpoints ------------------------------------------------------------
 
 // checkpointPath(phase, sha) -> bare filename for a phase's persisted checkpoint.
@@ -3312,13 +4023,27 @@ function buildResumeCheckpoints(phaseOutputs) {
 }
 
 // Phases whose FULL output a resume from the PERSISTED (successful-run) checkpoint actually
-// consumes. Traced from runWith's post-challenge tail: `challenge` carries the delivered
-// high-confidence findings/unverified that selectDelivery, the report input, and
-// writeArtifacts read by value; `filter` carries the post-filter set the empty-report guard
-// counts (postFilterCount). Every OTHER phase contributes only a count/stat to the final
-// envelope on a resume (discovered/merged/verified/validate.stats/filter.stats), never its
-// findings bulk — so those re-run on resume rather than being carried by value.
-const PERSISTED_RESUME_PHASES = ['filter', 'challenge'];
+// consumes. Exactly ONE qualifies: `challenge` carries the delivered high-confidence findings
+// and the `unverified` bucket that selectDelivery, the report input, and writeArtifacts read
+// BY VALUE — replaying it is what makes the delivered set on a resume verbatim-identical.
+//
+// `filter` is deliberately NOT persisted (issue #38, P1). Its only resume consumers are
+// `postFilterCount` (the empty-report guard) and `filterOut.stats` (report input + envelope),
+// and on a resume from the persisted checkpoint `summarize`/`discover`/`verify`/`validate`
+// re-run anyway (they were never persisted) — so `filter`, a PURE agent-free JS function
+// (filterStage -> applyFilterPipeline), simply re-runs too at ZERO dispatch cost and both
+// consumers are computed from the freshly re-derived set. Persisting it bought nothing and
+// cost 35% of the checkpoint artifact's bytes in the profiled run.
+//
+// CONSEQUENCE FOR THE EMPTY-REPORT GUARD (issue #38, L2-1/L5-3): because filter re-runs
+// while challenge is REPLAYED, on a resume `postFilterCount` describes a freshly
+// rediscovered set, NOT the set being delivered. A resume that rediscovers nothing has
+// postFilterCount 0 while the replayed challenge still carries real findings — so the guard
+// in runWith keys on the UNION of postFilterCount and the delivered challenge count. Do not
+// narrow it back to postFilterCount alone. Every OTHER phase
+// contributes only a count/stat to the final envelope on a resume
+// (discovered/merged/verified/validate.stats/filter.stats), never its findings bulk.
+const PERSISTED_RESUME_PHASES = ['challenge'];
 
 // phaseFindingCount(out) -> the count summarizing one phase's output for the slim checkpoint
 // (findings-bearing stages carry `findings`; the filter stage carries `filtered`).
@@ -3364,7 +4089,18 @@ function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
 // The return is compact by design: counts + artifact paths + gaps, never the raw
 // findings bulk.
 async function runWith(ctx, rawArgs) {
-  const A = normalizeArgs(rawArgs);
+  // Normalization is TOLERANT of a stamped null for the narrow NULLABLE_TOP_LEVEL allowlist
+  // (issue #38 A1 — a rejected dispatch cost a 21.3s round trip). Tolerance without
+  // disclosure would be a silent config substitution, though: a mis-stamped
+  // `reviewConfig: null` reviews on the Filter stage's built-in 55/70 instead of the
+  // operator's REVIEW.md thresholds, changing the DELIVERED set. So every drop that actually
+  // tolerated something becomes an operator-actionable gap here — the one place that owns the
+  // returned envelope — and it rides on BOTH exits below (the reject envelope and the success
+  // envelope). Drops validateArgs would have ACCEPTED anyway (`checkpoints`, which has no
+  // shape check at all) are filtered out by nullToleranceRejectedKeys: nothing was tolerated,
+  // so claiming a degradation would be gap-channel noise on a previously valid, silent run.
+  const { args: A, dropped: droppedNulls } = normalizeArgsReport(rawArgs);
+  const nullArgGaps = nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap);
   const check = validateArgs(A);
   if (!check.ok) {
     return {
@@ -3374,7 +4110,7 @@ async function runWith(ctx, rawArgs) {
       failingPhase: 'args',
       artifactPaths: {},
       stats: {},
-      gaps: check.errors,
+      gaps: [...nullArgGaps, ...check.errors],
     };
   }
 
@@ -3390,7 +4126,7 @@ async function runWith(ctx, rawArgs) {
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   const checkpoints = readCheckpoints(c, A);
 
-  const gaps = [];
+  const gaps = [...nullArgGaps];
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
@@ -3412,15 +4148,36 @@ async function runWith(ctx, rawArgs) {
     return out;
   };
 
+  // Summarize and Discover have NO data dependency: summarize's output is first read at
+  // reportInput, and discover's input is built only from A.agentFlags / limits / policy /
+  // contextPath — `limits` being coarsenLimits(A.limits, nChangedFiles, 0), computed above,
+  // before either. So both are STARTED here and awaited in order below. Four properties are
+  // load-bearing and each is pinned by a test in stages_latency.test.js:
+  //   1. Checkpoint semantics: a phase whose checkpoint is present must NOT dispatch, so the
+  //      promise is only created when checkpoints[name] === undefined (null = replay it).
+  //   2. Record ORDER: summarize is still awaited (and so recorded into phaseOutputs /
+  //      completed / counts) BEFORE discover — both are consumer-visible in the artifact.
+  //   3. No unhandled rejection: `settle` attaches its handlers the instant the promise is
+  //      created, so a discover rejection arriving while summarize is still being awaited is
+  //      captured, never floating. It is re-thrown at the point the phase is awaited.
+  //   4. Error attribution: because the re-throw happens inside runPhase's thunk, a discover
+  //      failure is still attributed to failingPhase 'discover', never 'summarize'.
+  // settle(p) -> Promise<thunk>: the thunk returns the value or re-throws the error.
+  const settle = (p) => p.then((value) => () => value, (error) => () => { throw error; });
+  const replay = (name) => checkpoints[name] !== undefined;
+
   try {
-    const summaryOut = await runPhase('summarize', () => summarize(c, {
+    const summarizeSettled = replay('summarize') ? null : settle(summarize(c, {
       changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextPath,
     }));
-    gaps.push(...(summaryOut.gaps || []));
-
-    const discoverOut = await runPhase('discover', () => discover(c, {
+    const discoverSettled = replay('discover') ? null : settle(discover(c, {
       agentFlags: A.agentFlags || {}, limits, policy, contextPath,
     }));
+
+    const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
+    gaps.push(...(summaryOut.gaps || []));
+
+    const discoverOut = await runPhase('discover', async () => (await discoverSettled)());
     gaps.push(...(discoverOut.gaps || []));
 
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
@@ -3471,7 +4228,10 @@ async function runWith(ctx, rawArgs) {
         filter: filterOut.stats,
         challenge: challengeOut.stats,
       },
-      policy, contextPath, generatedAt: A.generatedAt,
+      // No contextPath (issue #38, R1): the report-writer renders from the by-value
+      // { summary, findings, unverified, stats } above and never needs the shared context
+      // file. Every OTHER stage still receives contextPath — this is scoped to the writer.
+      policy, generatedAt: A.generatedAt,
     };
     let reportOut = await runPhase('report', () => reportStage(c, reportInput));
     gaps.push(...(reportOut.gaps || []));
@@ -3484,16 +4244,42 @@ async function runWith(ctx, rawArgs) {
     //      re-run report+persist, not skip past the crashed stub); and
     //   2) if it is STILL empty with findings present, keep ok:true but record an explicit
     //      'empty_report' gap and null the report artifact path — never a silent empty report.
+    //
+    // "findings present" is the UNION of THREE counts, not postFilterCount alone (issue #38,
+    // L2-1/L5-3/F2-1). Since `filter` was dropped from the persisted checkpoint (P1), a resume
+    // RE-RUNS summarize/discover/verify/validate/filter while REPLAYING challenge — so
+    // postFilterCount is a freshly recomputed number about a set the run is not delivering,
+    // while the delivered set comes from the replayed challenge output. A resume that
+    // rediscovers nothing has postFilterCount 0, and the guard would go blind to a real
+    // delivered set behind an empty report. deliveredCount (challengeOut.findings — exactly
+    // what selectDelivery and the writer consume) closes that hole, and unverifiedCount
+    // (challengeOut.unverified — the challenge-skipped / cap-overflow bucket the report is
+    // CONTRACTUALLY required to render in its secondary section) closes the remaining one: a
+    // replayed challenge can route every finding to that bucket, leaving both other counts 0
+    // while the report still has real content to lose.
+    // The union is a strict SUPERSET of the old condition, so it can never fire less often
+    // than before: on a FRESH run challenge only ever removes findings, so postFilterCount >=
+    // deliveredCount and the union reduces to postFilterCount > 0 with the message unchanged.
     const postFilterCount = (filterOut.filtered || []).length;
+    const deliveredCount = (challengeOut.findings || []).length;
+    const unverifiedCount = (challengeOut.unverified || []).length;
+    const findingsAtRisk = postFilterCount > 0 || deliveredCount > 0 || unverifiedCount > 0;
     const reportIsEmpty = (out) => !out || typeof out.report !== 'string' || out.report.trim() === '';
-    if (reportIsEmpty(reportOut) && postFilterCount > 0 && checkpoints.report !== undefined) {
+    if (reportIsEmpty(reportOut) && findingsAtRisk && checkpoints.report !== undefined) {
       reportOut = await reportStage(c, reportInput);
       phaseOutputs.report = reportOut;
       gaps.push(...(reportOut.gaps || []));
     }
-    const emptyReport = reportIsEmpty(reportOut) && postFilterCount > 0;
+    const emptyReport = reportIsEmpty(reportOut) && findingsAtRisk;
     if (emptyReport) {
-      gaps.push(`empty_report: report stage produced no report while ${postFilterCount} finding(s) survived the filter — refusing to ship a silent empty report`);
+      // Word the gap from whichever count is actually non-zero: the fresh-run wording is
+      // byte-identical to before, and the resume case names BOTH replayed buckets (delivered
+      // and unverified) rather than reporting a misleading "0 survived the filter" — the
+      // operator needs to know which one is at risk, since either can be the sole reason the
+      // guard fired.
+      gaps.push(postFilterCount > 0
+        ? `empty_report: report stage produced no report while ${postFilterCount} finding(s) survived the filter — refusing to ship a silent empty report`
+        : `empty_report: report stage produced no report while ${deliveredCount} finding(s) replayed from the resumed challenge checkpoint would be delivered and ${unverifiedCount} would be reported as unverified/pipeline-degraded — refusing to ship a silent empty report`);
     }
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
@@ -3503,15 +4289,19 @@ async function runWith(ctx, rawArgs) {
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       report: reportOut.report,
-      // Persist a SLIM checkpoint: only the resume-consumed phases (filter, challenge) carry
-      // full output; every other phase is reduced to a count, so the single artifact-writer
+      // Persist a SLIM checkpoint: only the resume-consumed phase (challenge) carries full
+      // output; every other phase is reduced to a count, so the single artifact-writer
       // prompt no longer duplicates every phase's findings bulk by value. readCheckpoints
-      // unwraps .phases, so a resume skips exactly the preserved phases and re-runs the rest.
+      // unwraps .phases, so a resume skips exactly the preserved phase and re-runs the rest.
       // The in-memory failure-path return below still carries the full phaseOutputs map.
       checkpoints: slimPersistedCheckpoints(phaseOutputs, completed, phaseReached),
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
+      // Optional (issue #38, D3.4): with an assembleScriptPath the writer persists only
+      // the unique content and the executor derives the two projections on disk. Absent
+      // (bench, older callers) -> the legacy full by-value path, no gap.
+      persist: A.persist,
       policy,
     });
     gaps.push(...(writeOut.gaps || []));

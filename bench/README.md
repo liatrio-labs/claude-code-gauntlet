@@ -13,6 +13,10 @@ ratcheted four-tier ladder (always-on suites → functional smoke → owner-trig
 mini-subset → owner-triggered full-15/holdout), ledger costs, and pre-registered
 owner options.
 
+**Profiling a recorded workflow run:** see [`PROFILING.md`](PROFILING.md) for
+`profile_run.py`, which turns a recorded `code-gauntlet` workflow run (record JSON +
+subagent transcripts + orchestrator session) into a stage/critical-path/cost profile.
+
 ## Quickstart
 
 ```bash

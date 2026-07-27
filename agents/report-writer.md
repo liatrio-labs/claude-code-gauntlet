@@ -23,7 +23,7 @@ The dispatch prompt carries a results JSON object by value:
 - `unverified` — the pipeline-degraded bucket (skipped or failed a stage; lower trust).
 - `stats` — per-stage counts.
 
-If a `contextPath` is provided, Read it first for shared context.
+Everything you need is in that object — there is no shared context file to read.
 
 ## Protocol
 

@@ -32,33 +32,55 @@ and STOP. Do not attempt to reproduce the pipeline inline — the clean break to
 
 ### Plugin root resolution
 
-Resolve `plugin_root` from this SKILL.md's path — go up two directories from `skills/code-gauntlet/`. Confirm with `ls {plugin_root}/scripts/ {plugin_root}/agents/ {plugin_root}/workflows/`. The workflow entry is `{plugin_root}/workflows/pipeline.js`; retained scripts (`verify_findings.py`, `post_review.py`) live under `{plugin_root}/scripts/`.
+Resolve `plugin_root` from this SKILL.md's path — go up two directories from `skills/code-gauntlet/`. The workflow entry is `{plugin_root}/workflows/pipeline.js`; retained scripts (`verify_findings.py`, `post_review.py`) live under `{plugin_root}/scripts/`. Confirming `{plugin_root}/scripts/`, `{plugin_root}/agents/`, and `{plugin_root}/workflows/` exist happens inside the Phase 1 composite call below — not as its own round trip.
 
-### Resolve output directory
-
-Resolve the output directory for artifacts. The workflow's artifact-writer persists into it, so it must exist before Phase 3.
-
-```bash
-Bash(command="echo ${CODE_GAUNTLET_OUTPUT_DIR:-.code-gauntlet}")  # Store as `output_dir`
-Bash(command="mkdir -p {output_dir}")
-```
-
-If `mkdir -p` fails, stop — the output directory is not writable. This catches read-only filesystems early rather than producing mysterious partial-artifacts failures at persist time.
-
-**Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
+> **Shell hygiene — binds here, the first site that needs it.** User shells commonly alias `ls`/`cp`/`grep` to incompatible replacements: an `ls`→`eza --icons` alias broke exactly this directory listing on a recorded run, because this reminder previously appeared only in Phase 2, after the damage was already done. In every Bash call in this skill, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them. This sentence is deliberately repeated verbatim at the Phase 2 composite below rather than cross-referenced once — the same duplication doctrine CLAUDE.md already applies to the false-positive exclusion list and the NDJSON emission contract ("intentionally duplicated... we want the guarantee that every agent has the list even if a file read fails"). A future refactor that collapses this into a single cross-reference reintroduces the exact failure it fixes.
 
 ### Resolve review target
 
-Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template.
+Parse the user's input to determine the review target before eligibility checks — the target type affects every subsequent step. Store `target_type` (`pr`, `mr`, or `local`) and `pr_number` (if applicable). The ARGUMENTS value is the user's explicit input — a bare number (e.g., `1`, `42`) is always a PR/MR number. Resolve it via `gh pr view` before considering any other target type. Do not compare it against the branch name or second-guess it; the branch may track a different upstream PR. See `references/phase1-preflight.md` for resolution logic, validation, and the PR-not-found template. (One case needs its own round trip before the composite below: "review" with no number/URL, resolved via `gh pr view --json number --jq '.number'` for the current branch — the composite needs `pr_number` as an input, so this must run first.)
+
+### Phase 1 composite: output dir, plugin confirmation, PR state, REVIEW.md, trivial-check file list
+
+One Bash call gathers every independent Phase-1 input at once: output-directory setup, the plugin-root confirmation, the PR state eligibility checks 1–2 need, a root-level REVIEW.md quick-check for the pre-flight gate, and the changed-file list eligibility check 4 needs. None of these five depend on each other — only what comes after this call (gate answers, eligibility decisions) depends on its output.
+
+```bash
+echo "=== output_dir ==="
+OUTPUT_DIR="${CODE_GAUNTLET_OUTPUT_DIR:-.code-gauntlet}"
+echo "$OUTPUT_DIR"
+mkdir -p "$OUTPUT_DIR" && echo "mkdir: ok" || echo "mkdir: FAILED"
+
+echo "=== plugin_dirs ==="
+command ls "{plugin_root}/scripts" "{plugin_root}/agents" "{plugin_root}/workflows"
+
+echo "=== pr_view ==="
+gh pr view {pr_number} --json state,isDraft,title,url
+
+echo "=== review_md_root ==="
+test -f REVIEW.md && cat REVIEW.md || echo "NONE"
+
+echo "=== changed_files ==="
+gh pr diff {pr_number} --name-only
+```
+
+(GitLab: swap `pr_view` for `glab mr view {pr_number} --output json`, and `changed_files` for `glab mr diff {pr_number} --name-only`. Local/branch targets skip `pr_view` and `changed_files` entirely — use `git diff --name-only <base>...HEAD` / `git diff --name-only HEAD` for the trivial-check list instead.)
+
+If `mkdir -p` fails, stop — the output directory is not writable. This catches read-only filesystems early rather than producing mysterious partial-artifacts failures at persist time.
+
+Store: `output_dir` (section 1); the plugin-dir confirmation (section 2 — if any directory is missing, stop, `plugin_root` was resolved wrong); the PR's `state`/`isDraft` (section 3, feeds eligibility checks 1 and 2 below); the REVIEW.md root text or `NONE` (section 4, feeds the pre-flight configuration gate's quick-check); and the changed-file list (section 5, feeds eligibility check 4 below — the same primitive the recorded run got wrong by inventing `gh pr diff --stat`, which does not exist; see `references/phase1-preflight.md` eligibility check 4 for the worked command).
+
+**Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
 ### Eligibility checks
 
-1. **Closed/merged?** → Stop.
+Reads from the composite above — no new Bash calls here.
+
+1. **Closed/merged?** (`pr_view.state`) → Stop.
 
    > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do **not** stop — headless reviews closed/merged PRs, proceeding against the pinned head exactly as resolved. Benchmarking historical merged PRs is the headless use case; posting safety is governed by `CODE_GAUNTLET_POST_MODE` (`dry-run` posts nothing) and delivery follows `CODE_GAUNTLET_DELIVERY`, not PR state. See `references/headless-mode.md`.
-2. **Draft?** → Ask user (template in `references/phase1-preflight.md`).
+2. **Draft?** (`pr_view.isDraft`) → Ask user (template in `references/phase1-preflight.md`).
 3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 3) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
-4. **Trivially simple?** → If ONLY lockfile/generated/auto-formatted changes, stop.
+4. **Trivially simple?** (`changed_files` from the composite above) → If ONLY lockfile/generated/auto-formatted changes, stop.
 
 ### Pre-flight configuration gate — MANDATORY GATE
 
@@ -68,7 +90,7 @@ Parse the user's input to determine the review target before eligibility checks 
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this gate is satisfied by the headless resolution above — the printed `Headless config:` block stands in for the interactive answers; do not present `AskUserQuestion`.
 
-Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUserQuestion` containing the unresolved items (delivery preference, REVIEW.md setup if missing). The model policy is fixed: `policy.tier="optimized"` — the single benchmarked configuration (discovery on Sonnet with security-reviewer on Opus). A **REVIEW.md** `Model Tier` value other than `optimized` (e.g. a legacy v2-era `frontier`) **self-heals**: proceed with `optimized`, never ask and never abort on this field, and print a loud methodology warning (`REVIEW.md Model Tier '<value>' is not supported — reviewing under 'optimized', the single benchmarked policy; update REVIEW.md`) that also lands in the report methodology. The **env knob** `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. Alternate model modes are roadmap work (issue #17). If REVIEW.md pre-configures `default_delivery`, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 2 (args) and Phase 8 (delivery).
+Check REVIEW.md for `model_tier` and `default_delivery` — read from the `review_md_root` section of the Phase 1 composite above; no new Bash call. Build a single `AskUserQuestion` containing the unresolved items (delivery preference, REVIEW.md setup if missing). The model policy is fixed: `policy.tier="optimized"` — the single benchmarked configuration (discovery on Sonnet with security-reviewer on Opus). A **REVIEW.md** `Model Tier` value other than `optimized` (e.g. a legacy v2-era `frontier`) **self-heals**: proceed with `optimized`, never ask and never abort on this field, and print a loud methodology warning (`REVIEW.md Model Tier '<value>' is not supported — reviewing under 'optimized', the single benchmarked policy; update REVIEW.md`) that also lands in the report methodology. The **env knob** `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. Alternate model modes are roadmap work (issue #17). If REVIEW.md pre-configures `default_delivery`, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 2 (args) and Phase 8 (delivery).
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` (which sets `policy.tier`; only `optimized` is valid) and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
 
@@ -82,61 +104,154 @@ Check REVIEW.md for `model_tier` and `default_delivery`. Build a single `AskUser
 
 Identify the review target, gather the git artifacts the workflow consumes, and assemble the args object. This is a fast pass in the main context — the review stages run later, inside the workflow. Read `references/phase2-triage.md` for the full sub-steps (VCS detection, checkout, risk classification, REVIEW.md parse) and the args-preparation walkthrough.
 
-### Resolve head SHA and gitignore (after checkout)
+### Phase 2 Composite A — pre-gather (status → checkout → SHA/gitignore → prior-review gate → stale truncation)
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never run `gh pr checkout` (or any checkout/fetch/stash) — the harness pre-places a worktree pinned at the review head, and a checkout would abandon it for the live branch head. Instead verify the tree is already at the intended commit: compare `git rev-parse HEAD` against the PR's live head (`gh pr view <n> --json headRefOid`). If they match, review the current checkout as-is; if they differ, print `HEADLESS INPUT ERROR: working tree HEAD <sha> != PR head <sha>` and stop with a non-zero outcome — never silently review a different commit. See `references/headless-mode.md`.
+One Bash call, but its sections form the **genuine dependency chain** — status → checkout → SHA/gitignore → prior-review gate → stale truncation — each depends on the previous section's output, so unlike Composite B below they cannot be reordered or run separately. `{owner}`/`{repo}` resolve *inside the call itself*, parsed from the PR's own URL — never the `origin` remote, which is the fork in a fork clone. `{platform}` is a different kind of thing entirely: a template placeholder, substituted before dispatch (like `{pr_number}` and `{plugin_root}`) from what Phase 1 already determined (PR vs. MR), not a value the shell computes from anything fetched inside this composite.
 
-Now that we're on the correct branch, compute the short SHA for filename uniqueness:
-
-```bash
-Bash(command="git rev-parse --short=8 HEAD")  # Store as `head_sha_short`
-```
-
-**Ensure `{output_dir}` is ignored via `.git/info/exclude`** (skip if using env var override). Never append to the repo's tracked `.gitignore` — that silently dirties the reviewed repo's working tree with an undisclosed edit to a user file. `info/exclude` is repo-local, untracked, and shared across worktrees. This runs after checkout so it is not stashed by `gh pr checkout`:
+> **Shell hygiene:** user shells commonly alias `ls`/`cp`/`grep` to incompatible replacements (an `ls`→`eza --icons` alias broke a live run's directory listing). In every Bash call, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them. (Same reminder as Phase 1 — see the duplication rationale there.)
 
 ```bash
-Bash(command="git check-ignore -q .code-gauntlet 2>/dev/null || echo '/.code-gauntlet/' >> \"$(git rev-parse --git-common-dir)/info/exclude\"")
+echo "=== status ==="
+TARGET_SHA=$(gh pr view {pr_number} --json headRefOid --jq '.headRefOid')
+CURRENT_SHA=$(git rev-parse HEAD)
+echo "target=$TARGET_SHA current=$CURRENT_SHA"
+
+echo "=== checkout ==="
+if [ "$TARGET_SHA" = "$CURRENT_SHA" ]; then
+  echo "already at target, no checkout needed"
+elif [ "${CODE_GAUNTLET_HEADLESS:-}" = "1" ]; then
+  echo "HEADLESS INPUT ERROR: working tree HEAD $CURRENT_SHA != PR head $TARGET_SHA"
+  exit 1
+else
+  gh pr checkout {pr_number} || { echo "CHECKOUT FAILED: unable to checkout PR {pr_number}"; exit 1; }
+fi
+
+echo "=== sha ==="
+HEAD_SHA_SHORT=$(git rev-parse --short=8 HEAD)
+HEAD_SHA_FULL=$(git rev-parse HEAD)
+echo "head_sha_short=$HEAD_SHA_SHORT"
+echo "head_sha_full=$HEAD_SHA_FULL"
+
+echo "=== gitignore ==="
+if git check-ignore -q .code-gauntlet 2>/dev/null; then
+  echo "already-ignored"
+elif echo "/.code-gauntlet/" >> "$(git rev-parse --git-common-dir)/info/exclude"; then
+  echo "added"
+else
+  echo "unwritable"
+fi
+
+echo "=== owner_repo ==="
+OWNER_REPO=$(gh pr view {pr_number} --json url --jq '.url | split("/") | .[3] + "/" + .[4]')
+echo "$OWNER_REPO"
+
+echo "=== prior_review ==="
+OWNER="${OWNER_REPO%%/*}"
+REPO="${OWNER_REPO##*/}"
+PRIOR_JSON=$(python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --owner "$OWNER" --repo "$REPO" --number {pr_number} --head-sha "$HEAD_SHA_FULL")
+echo "$PRIOR_JSON"
+
+echo "=== stale_truncate ==="
+echo "$PRIOR_JSON" | python3 -c "
+import json, sys, glob, os
+j = json.load(sys.stdin)
+reviewed_at_current_head = (
+    j.get('previously_reviewed')
+    and j.get('sha_resolvable')
+    and j.get('last_reviewed_sha') == j.get('head_sha')
+)
+if reviewed_at_current_head:
+    print('DEFERRED: previously reviewed at the current SHA -- truncation withheld until the Skip/Review-again answer is known (a Skip must preserve these files)')
+else:
+    pattern = os.path.join('{output_dir}', 'code-gauntlet-*-$HEAD_SHA_SHORT.*')
+    n = 0
+    for f in glob.glob(pattern):
+        open(f, 'w').close()
+        n += 1
+    print('truncated ' + str(n) + ' file(s)')
+"
 ```
 
-Disclose the outcome in the triage output (one line): either `.code-gauntlet/ excluded via .git/info/exclude` or, if the exclude file is unwritable, `note: .code-gauntlet/ is NOT ignored (info/exclude unwritable) — artifacts will show as untracked files` — never fall back to editing `.gitignore`.
+Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above already handles this branch inline — the `elif` fires before any `gh pr checkout` is attempted and `exit 1`s the whole composite call immediately, so `sha`/`gitignore`/`owner_repo`/`prior_review`/`stale_truncate` never run against the wrong commit. `CODE_GAUNTLET_HEADLESS` is read directly by the script (not pre-resolved by the model), so this is self-contained regardless of who assembles the call. See `references/headless-mode.md`.
 
-### Previously-reviewed gate (PR/MR targets only)
+**`status`/`checkout` duplicate `references/phase2-triage.md` 2b — 2b is the owner.** 2b's target-type table (PR/MR, branch, local) and its checkout-failure STOP are canonical; this composite is one concrete instantiation of that table (the PR/MR row) plus the headless row. For **branch/local targets**, apply 2b's table directly: in `status`, replace `TARGET_SHA=$(gh pr view ...)` with `TARGET_SHA=$(git rev-parse <branch>)` (branch comparison) or drop the `status`/`checkout` sections entirely and set `TARGET_SHA=$CURRENT_SHA` (local changes — always a no-op, per 2b step 1); in `checkout`, replace `gh pr checkout {pr_number}` with `git checkout <branch>` (branch comparison) or nothing (local changes). **Checkout failure** (2b step 4): the `checkout` section's `||` clause already exits non-zero on a failed `gh pr checkout`/`git checkout` — on that exit, stop and print 2b step 4's message (`Unable to checkout [branch/PR]. The review requires the target code to be accessible locally. You can checkout the branch manually and re-run the review.`); no fallback.
 
-Still in this step, now that the tree is at the review head, run the gate deferred from Phase 1 eligibility check 3 — it compares the last-reviewed commit against the PR head, so it could not run before checkout. Runs **before the stale-file truncation below**: the head SHA has not moved on a repeat run of an already-reviewed PR, so truncating first would zero out the artifacts a "Skip — keep the existing review" answer is supposed to preserve. By this point the working tree has already been switched to the PR (2b checkout) and `.git/info/exclude` may already carry the `.code-gauntlet/` entry added above; a Skip answer below stops the review but reverts neither — the tree stays checked out on the PR branch. `{head_sha_full}` is `git rev-parse HEAD` (the full form of the short SHA above). Resolve `{owner}`/`{repo}` first — they are the PR's repository, which in a fork clone is not the `origin` remote:
+GitLab MR mode: swap `gh pr view`/`gh pr checkout` for `glab mr view`/`glab mr checkout` in the `status`/`checkout` sections; for `owner_repo`, use `glab mr view {pr_number} --output json | jq -r '.web_url'` and take the path segments before `/-/merge_requests/` instead of splitting a GitHub API URL.
+
+Local/branch targets: drop the `owner_repo`/`prior_review` sections entirely (no PR/MR ⇒ no previously-reviewed signal), and in `stale_truncate` skip straight to the unconditional truncate loop (the `else` branch) — there is no prior-review artifact to protect.
+
+**Why `stale_truncate` is conditional, not unconditional:** truncating `code-gauntlet-*-{head_sha_short}.*` is destructive only when the current SHA IS the SHA a prior review already covered — the detector's own `last_reviewed_sha == head_sha` (with `sha_resolvable: true`, so the comparison is between two resolved full SHAs, not a short form racing a long one). That is the one case where a "Skip — keep the existing review" answer, asked next from this composite's printed JSON, must be able to leave the on-disk artifacts untouched. `head_advanced` is the wrong signal to gate on here: it reads `false` in this same-SHA case, but it *also* reads `false` when the recorded SHA is unresolvable and when history was rewritten — two cases where the correct answer is the opposite (truncate now, nothing is protected) — so a gate keyed on `head_advanced` alone cannot tell them apart. Every `stale_truncate` gate outcome has a defined resolution:
+
+  - `previously_reviewed: false` (no prior review found) → truncate now. Nothing to protect.
+  - `previously_reviewed: true`, `sha_resolvable: false` (the recorded SHA is not present in this clone — shallow clone, unfetched object, or a pruned force-push target) → truncate now. An object git cannot see locally cannot be the checked-out HEAD, so this SHA never held that prior review's output.
+  - `previously_reviewed: true`, `sha_resolvable: true`, `last_reviewed_sha != head_sha` (includes both `sha_is_ancestor: true` — head advanced, whichever of Incremental/Full/Skip gets chosen — and `sha_is_ancestor: false` — rewritten history) → truncate now. Either way this SHA could not already hold a prior review's output, so truncating up front is safe and saves a second round trip.
+  - `previously_reviewed: true`, `sha_resolvable: true`, `last_reviewed_sha == head_sha` → `DEFERRED`. Run the unconditional truncate loop as a follow-up **only if** the user answers "Yes — review again" to the template in `references/phase1-preflight.md` → "Previously-Reviewed Gate"; a "No — skip" answer stops the review here with the files intact.
+
+After this call: interpret `prior_review`'s JSON per `references/phase1-preflight.md` → "Previously-Reviewed Gate" (branch order, question templates, degradations — unchanged). **Incremental** stores `last_reviewed_sha` for Composite B's incremental diff branch below. **Skip** stops the run here.
+
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `prior_review` section still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). A `DEFERRED` truncation resolves the same way it does interactively: run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
+
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list). The workflow's artifact-writer produces: `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, and — only on the derived `persist` path (see "Assemble the args object" below) — `persist-plan-*.json`. The Phase 2 stale-file truncation glob (`code-gauntlet-*-{head_sha_short}.*`, see `stale_truncate` above) matches on the `*` between `code-gauntlet-` and `-{head_sha_short}`, so it already covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+
+### Phase 2 Composite B — independent-gather (diff, changed-files, line count, misc)
+
+Once Composite A resolves (and, for PR/MR targets, any previously-reviewed question is answered), one Bash call gathers everything the args waist needs from disk — these four sections are mutually independent of each other on the default (full-diff) path. **`files` runs before `diff`** so that the incremental path below — which must bound the diff to the files list — reads a list that already exists in this same call, rather than one the literal script hasn't produced yet:
 
 ```bash
-Bash(command="gh pr view {pr_number} --json url --jq '.url | split(\"/\") | .[3] + \"/\" + .[4]'")  # owner/repo
+echo "=== files ==="
+gh pr diff {pr_number} --name-only | python3 -c "import json, sys; print(json.dumps([l.rstrip(chr(10)) for l in sys.stdin if l.strip()]))" > "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+cat "{output_dir}/code-gauntlet-files-{head_sha_short}.json"
+
+echo "=== diff ==="
+gh pr diff {pr_number} > "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"
+head -c 200 "{output_dir}/code-gauntlet-diff-{head_sha_short}.patch"   # must start with "diff --git"; also confirm file size > 0
+
+echo "=== numstat ==="
+python3 -c "
+path = '{output_dir}/code-gauntlet-diff-{head_sha_short}.patch'
+added = 0
+removed = 0
+binary = 0
+in_hunk = False
+with open(path, 'r', errors='replace') as f:
+    for line in f:
+        if line.startswith('@@'):
+            in_hunk = True
+            continue
+        if line.startswith('diff --git'):
+            in_hunk = False
+            continue
+        if not in_hunk:
+            if line.startswith('Binary files ') and line.rstrip(chr(10)).endswith('differ'):
+                binary += 1
+            continue
+        if line.startswith('+'):
+            added += 1
+        elif line.startswith('-'):
+            removed += 1
+print('changed_lines=' + str(added + removed))
+print('binary_files=' + str(binary))
+"
+
+echo "=== misc ==="
+git rev-parse --show-toplevel
+python3 -c "import datetime; print(datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'))"
+python3 -c "import secrets; print(secrets.token_hex(8))"
 ```
 
-Split the result on the first `/` into `owner`/`repo`. This reads the PR's **own URL**, which always lives on the base repository — `gh repo view` would resolve the *current* clone, which in a fork is the fork, exactly the case the explicit flags exist to fix. (GitLab: `glab mr view {pr_number} --output json | jq -r '.web_url'`, then take the path segments before `/-/merge_requests/`.)
+- **Files** → this path becomes `args.changedFilesPath`; keep the same array inline for `args.changedFiles` (the Summarize stage reads it by value — the workflow cannot open the file).
+- **Diff** → this path becomes `args.diffPath`, passed to the verify executor as `--diff-file`.
+- **`numstat` reads the patch already saved by the `diff` section above via a pure text scan — never `git apply`.** `git apply --numstat | awk '{a+=$1;d+=$2}'` was the prior approach and is wrong: `git apply` refuses a wide range of inputs that are still perfectly valid, countable diffs (a patch that no longer applies cleanly against the current tree, renames, mode-only changes), and on refusal it exits non-zero with **empty stdout** — piped into `awk`, that prints a false, plausible `0` instead of failing loud, and `0` here can flip the trivial/light-scope gate below and the Summarize bucketing threshold without any visible error. The replacement never invokes `git apply` at all: it scans the saved patch text directly using **hunk-state tracking**, the same thing `git diff --numstat` itself does per-file — not a bare line-prefix test. A line starting `@@` enters a hunk (not counted); a line starting `diff --git` leaves it (start of the next file's header block); while NOT in a hunk nothing is counted (that is where `--- `, `+++ `, `index `, `new file mode`, `similarity index`, and `rename from/to` live, alongside the `Binary files ... differ` tally); while IN a hunk, a line starting `+` counts as added and `-` as removed (context lines and `\ No newline at end of file` are ignored either way). A **bare line-prefix test is wrong**: a REMOVED content line whose own text begins `-- ` appears in the patch as `--- ` (one prefix dash plus the two the line already had), and an ADDED line whose text begins `++ ` appears as `+++ ` — both are then indistinguishable from a real file header by prefix alone, and markdown front matter, diffs-of-diffs, and comment banners hit this routinely, silently undercounting `changed_lines`. Hunk-state tracking has no such blind spot: it never inspects a hunk-body line's prefix to decide "header," only its position relative to the last `@@`/`diff --git` line. Binary files (`Binary files a/... and b/... differ`, with no countable hunk) are tallied separately as `binary_files` rather than silently folded into a `0` contribution — if a real diff is textually small but changes only binary content, `changed_lines` can legitimately read low or `0`; check `binary_files > 0` before treating that as "no diff." Verified against `git diff --numstat` ground truth on a corpus covering content lines beginning `-- `/`++ `, markdown front-matter `---`/`+++` delimiters, a patch-of-a-patch, a binary file, a rename, a mode-only change, a no-trailing-newline file, CRLF endings, and an empty diff — the scan reproduces git's own non-binary total in every case (the bare-prefix predecessor undercounted the `-- `/`++ ` and patch-of-a-patch cases). This is what feeds `changedLines`, and the same rule applies to the 2k AI-generated-code scan (`references/phase2-triage.md` 2k): both derive from this one saved patch, never a fresh diff fetch.
+- **`misc`** gives `repoRoot`, a `generatedAt` candidate (re-stamp at args-assembly time if Phase 3 dispatch isn't immediate — `generatedAt` must reflect the actual assembly moment), and a `nonce` candidate matching `^[A-Za-z0-9._-]+$`.
+- **Risk classification (2e)** and **AI-generated-code detection (2k)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file. Neither runs here.
 
-```bash
-Bash(command="python3 \"{plugin_root}/scripts/detect_prior_review.py\" --platform {platform} --owner {owner} --repo {repo} --number {pr_number} --head-sha {head_sha_full}")
-```
+**Incremental path** (Composite A's prior-review gate resolved Incremental): because `files` now runs first, its list is already on disk (`{output_dir}/code-gauntlet-files-{head_sha_short}.json`) by the time the `diff` section runs — replace the `diff` section's `gh pr diff {pr_number}` with the bounded form `git diff {last_reviewed_sha}..HEAD -- <the paths read back from that just-written JSON file>` (`phase2-triage.md` 2c branch 4) — the file list itself still comes from the unbounded `gh pr diff {pr_number} --name-only` written by the `files` section, never narrowed to incremental-only files; only the diff *content* is bounded. `changedLines` is then counted from this bounded diff, never the full-PR diff.
 
-It always exits 0 and prints one JSON object. Gate on `incremental_safe`; the branch table, question templates, and degradations are in `references/phase1-preflight.md` → "Previously-Reviewed Gate". **Incremental** stores `last_reviewed_sha` for the 2c diff branch; **Skip** stops the run here, before the truncation below; anything else continues as a full review. Skip this gate entirely for local-diff targets.
+**GitLab MR mode:** swap `gh pr diff {pr_number}` for `glab mr diff {pr_number}` in both the `files` and `diff` sections.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the gate still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). See `references/headless-mode.md`.
+**Branch/local targets:** replace `diff` with `git diff <base>...HEAD` / `git diff HEAD` and `files` with `git diff --name-only`. If `gh pr diff` fails (e.g., 20K-line / 300-file API limit exceeded), the workflow's verify executor falls back to its own `git diff` chain inside an executor subagent (which has shell) — not in this composite.
 
-### Clean stale files
-
-**Truncate stale files** from prior sessions with the same SHA, so a re-run does not blend old artifacts with new:
-
-```bash
-Bash(command="python3 -c \"import glob; [open(f,'w').close() for f in glob.glob('{output_dir}/code-gauntlet-*-{head_sha_short}.*')]\"")
-```
-
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list). The workflow's artifact-writer produces: `findings-*.json`, `report-*.md`, `checkpoint-all-*.json`.
-
-### Gather the git artifacts the workflow consumes
-
-The workflow has no shell or git access, so Phase 2 produces the git-derived inputs on disk and threads their content/paths into the args.
-
-> **Shell hygiene:** user shells commonly alias `ls`/`cp`/`grep` to incompatible replacements (an `ls`→`eza --icons` alias broke a live run's directory listing). In every Bash call, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them.
-
-1. **Diff** → save the merge-base diff to `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch`. In PR/MR mode, when the previously-reviewed gate above resolved **Incremental**, use the bounded form `git diff {last_reviewed_sha}..HEAD -- <the PR's --name-only file list>` (`phase2-triage.md` 2c branch 4) instead — otherwise use the server-computed diff (`gh pr diff {pr_number}` / `glab mr diff {pr_number}`), which is fork-safe; for branch/local targets use `git diff <base>...HEAD` / `git diff HEAD`. Validate: non-empty and starts with `diff --git`. This path becomes `args.diffPath` and is passed to the verify executor as `--diff-file`. `changedLines` is counted from this same saved diff — the incremental diff on the incremental path, never the full-PR diff.
-2. **Changed files** → write the changed-file list to `{output_dir}/code-gauntlet-files-{head_sha_short}.json` as a JSON array, and keep the same array inline for `args.changedFiles` (the summarize stage reads it by value — the workflow cannot open the file). This path becomes `args.changedFilesPath`. On the incremental path this stays the PR's full server `--name-only` list — it is what bounds the diff above, never narrowed to incremental-only files.
-3. **Risk classification (2e)** and **AI-generated-code detection (2k)** — classify changed files by risk as in `references/phase2-triage.md`; this feeds the context file.
+**Composites A/B never subsume 2d (CLAUDE.md/REVIEW.md discovery), 2g (test discovery), or 2k (AI-marker scan)** — those three stay on Glob/Grep exactly as `references/phase2-triage.md` already mandates for each ("Never use `find` from Bash..." / "Never use `find` or `grep` from Bash..."). Routing them through Bash here is the mistake the recorded run made; keep them as separate Glob/Grep tool calls.
 
 ### Parse REVIEW.md into the review config
 
@@ -177,6 +292,8 @@ agentFlags = (trivial_gate_fired AND scope answer == light) ? { "deep": false } 
 
 All three inputs are on hand at this step: the 2e risk table, the `changedLines` value being stamped two lines up, and the fresh echo above. (This scope gate is distinct from Phase 1's eligibility check #4 — "only lockfile/generated changes → stop" — which aborts; this one narrows dimensions.) The map is **opt-out**: `{}` = full scope (every dimension on — byte-identical to no flags); `{ "deep": false }` = light scope (only the two core dimensions `bug`, `security` run — two discovery agents). Stamping `{}` after a light decision silently runs a full 7-agent review the user/operator declined — that exact miss occurred in live verification, which is why this is a derivation rule, not prose. Never stamp a non-boolean value: `agentActive` gates only on the literal `false`, and the args waist rejects anything else.
 
+**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`, but omitting is the norm: a live run once stamped `reviewConfig: null` and paid a 21.3s round trip re-deriving it before dispatch. Two fields are the opposite case — `null` there is a meaningful value, not a stand-in for absent, so do not "fix" it away: `reviewConfigPath: null` (no REVIEW.md found — pure provenance) and `limits.deliveryCap: null` (uncapped delivery — an explicit choice, not an oversight).
+
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 
 ```
@@ -197,6 +314,10 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   // by-value inputs the in-memory stages need (the workflow has no disk):
   changedFiles, changedLines, baseBranch, reviewConfig, exclusionPatterns,
 
+  // optional: derive persisted artifacts via a pinned executor script instead of the full by-value writer path.
+  // Omit `persist` entirely to keep the legacy writer (unchanged behavior); artifactPaths and Phase 8 are the same either way.
+  persist: { assembleScriptPath: "{plugin_root}/scripts/assemble_artifacts.py" },
+
   // verify handoff (sha-scoped) for the executor's pinned command:
   verify: {
     scriptPath: "{plugin_root}/scripts/verify_findings.py",
@@ -207,6 +328,8 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
 ```
 
 `mode` is `"headless"` under `CODE_GAUNTLET_HEADLESS=1`, else `"interactive"`. Never call `new Date()` inside the workflow — `generatedAt` is the only clock.
+
+**`persist` (optional).** When present, the workflow's artifact-writer emits only unique content — the findings JSON, the report markdown, and a persist-plan JSON — and a pinned executor runs `assemble_artifacts.py` to *derive* the post-review payload and checkpoint artifacts from `findings.json` plus the plan, returning a content-proof receipt instead of re-emitting them by value. When `persist` is absent, the workflow falls back to the legacy full by-value writer path unchanged. Either way, `artifactPaths` and Phase 8 are unaffected.
 
 ---
 
@@ -263,7 +386,7 @@ Read the compact return, pick up the persisted artifacts, and run the delivery g
 
 The compact return always carries a `checkpoints` field alongside `artifactPaths`. Its shape tells you where the resume state lives:
 
-1. **On `ok: true` (writer succeeded):** artifacts are persisted. Read `artifactPaths.postReview` (the pipeline's **pre-selected delivery payload** — the challenge-survivors chosen by the delivery tier in `args.delivery.tier`: `all` (default) includes every survivor, `main_only` keeps main-tagged only — then ranked and capped at `limits.deliveryCap`, each carrying its `report_tag`; union-schema aliased so `post_review.py` consumes it unchanged), `artifactPaths.findings` (the full persisted findings JSON, every survivor, same union schema), and `artifactPaths.report` (the markdown — always shows every finding regardless of tier). These are the source of truth for delivery — do not reconstruct, re-filter, or re-rank from the return value. Here `checkpoints` is just `{ completed: [...] }` (phase names); a **slim** resume checkpoint (`{ phases, completed, phaseReached, counts }` — full output only for the resume-consumed `filter` + `challenge` phases, plus a per-phase `counts` map) is on disk at `artifactPaths.checkpoints`, so a later re-run of a superseded run resumes from it, reusing the delivered `challenge` findings verbatim and re-running the upstream phases.
+1. **On `ok: true` (writer succeeded):** artifacts are persisted. Read `artifactPaths.postReview` (the pipeline's **pre-selected delivery payload** — the challenge-survivors chosen by the delivery tier in `args.delivery.tier`: `all` (default) includes every survivor, `main_only` keeps main-tagged only — then ranked and capped at `limits.deliveryCap`, each carrying its `report_tag`; union-schema aliased so `post_review.py` consumes it unchanged), `artifactPaths.findings` (the full persisted findings JSON, every survivor, same union schema), and `artifactPaths.report` (the markdown — always shows every finding regardless of tier). These are the source of truth for delivery — do not reconstruct, re-filter, or re-rank from the return value. Here `checkpoints` is just `{ completed: [...] }` (phase names); a **slim** resume checkpoint (`{ phases, completed, phaseReached, counts }` — full output only for the resume-consumed `challenge` phase, plus a per-phase `counts` map for every phase including `filter`) is on disk at `artifactPaths.checkpoints`, so a later re-run of a superseded run resumes from it, reusing the delivered `challenge` findings verbatim and re-running the upstream phases — `filter` included: it is a pure, agent-free JS function (no dispatch cost), so it simply re-runs on resume rather than being persisted (issue #38, P1).
 2. **On `ok: false`, or `ok: true` with a partial-artifacts gap** (writer failed, `artifactPaths` empty/null): nothing was persisted, so the resume state rides back **in the return** as `checkpoints`. Offer **resume-from-checkpoint**:
    - If `checkpoints` has a `.phases` map → re-invoke the same `Workflow` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
    - If `checkpoints` is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~100k-char budget, so the workflow did **not** ship the findings bulk back) → there is no phase map to resume from and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`), noting the truncation in the methodology.
