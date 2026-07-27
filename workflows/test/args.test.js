@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs, stripNullOptionals,
+  ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap,
 } from '../src/args.js';
 
@@ -191,34 +191,34 @@ test('validateArgs type-checks changedFiles (array) and changedLines (number)', 
 // reviewConfig arrived as a stamped `null` rather than absent. normalizeArgs now strips a
 // literal null for a narrow allowlist of optional top-level fields so a stamped null costs
 // nothing at the waist.
-test('stripNullOptionals deletes a null reviewConfig/exclusionPatterns/delivery/checkpoints', () => {
+test('stripNullOptionalsReport deletes a null reviewConfig/exclusionPatterns/delivery/checkpoints', () => {
   const a = { ...good, reviewConfig: null, exclusionPatterns: null, delivery: null, checkpoints: null };
-  const stripped = stripNullOptionals(a);
+  const stripped = stripNullOptionalsReport(a).args;
   assert.equal('reviewConfig' in stripped, false);
   assert.equal('exclusionPatterns' in stripped, false);
   assert.equal('delivery' in stripped, false);
   assert.equal('checkpoints' in stripped, false);
 });
-test('stripNullOptionals drops delivery.prIdentity: null and delivery.tier: null inside a present delivery object', () => {
+test('stripNullOptionalsReport drops delivery.prIdentity: null and delivery.tier: null inside a present delivery object', () => {
   const a = { ...good, delivery: { tier: null, prIdentity: null } };
-  const stripped = stripNullOptionals(a);
+  const stripped = stripNullOptionalsReport(a).args;
   assert.deepEqual(stripped.delivery, {});
 });
-test('stripNullOptionals does NOT strip limits.deliveryCap: null (uncapped is load-bearing)', () => {
+test('stripNullOptionalsReport does NOT strip limits.deliveryCap: null (uncapped is load-bearing)', () => {
   const a = { ...good, limits: { ...good.limits, deliveryCap: null } };
-  const stripped = stripNullOptionals(a);
+  const stripped = stripNullOptionalsReport(a).args;
   assert.equal(stripped.limits.deliveryCap, null);
 });
-test('stripNullOptionals does NOT strip policy.subagentModel: null (no-override is load-bearing)', () => {
-  const stripped = stripNullOptionals(good); // good already carries policy.subagentModel: null
+test('stripNullOptionalsReport does NOT strip policy.subagentModel: null (no-override is load-bearing)', () => {
+  const stripped = stripNullOptionalsReport(good).args; // good already carries policy.subagentModel: null
   assert.equal(stripped.policy.subagentModel, null);
 });
-test('stripNullOptionals leaves a non-null, non-allowlisted-field waist untouched', () => {
-  assert.deepEqual(stripNullOptionals(good), good);
+test('stripNullOptionalsReport leaves a non-null, non-allowlisted-field waist untouched', () => {
+  assert.deepEqual(stripNullOptionalsReport(good).args, good);
 });
-test('stripNullOptionals passes through non-object input (undefined, string) without throwing', () => {
-  assert.equal(stripNullOptionals(undefined), undefined);
-  assert.equal(stripNullOptionals(null), null);
+test('stripNullOptionalsReport passes through non-object input (undefined, string) without throwing', () => {
+  assert.equal(stripNullOptionalsReport(undefined).args, undefined);
+  assert.equal(stripNullOptionalsReport(null).args, null);
 });
 
 test('normalizeArgs strips stamped nulls on the object-passthrough form so validateArgs accepts them', () => {
@@ -278,8 +278,8 @@ test('validateArgs shape-checks a present persist (non-object, and a non-string/
   assert.equal(r4.ok, false);
   assert.match(r4.errors.join(' '), /persist\.assembleScriptPath/);
 });
-test('stripNullOptionals deletes a null persist (same stand-in-for-absent treatment as its siblings)', () => {
-  const stripped = stripNullOptionals({ ...good, persist: null });
+test('stripNullOptionalsReport deletes a null persist (same stand-in-for-absent treatment as its siblings)', () => {
+  const stripped = stripNullOptionalsReport({ ...good, persist: null }).args;
   assert.equal('persist' in stripped, false);
 });
 test('normalizeArgs strips a stamped persist:null so validateArgs accepts the run instead of rejecting it', () => {

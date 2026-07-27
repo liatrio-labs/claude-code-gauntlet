@@ -369,7 +369,7 @@ def write_text_atomic(path, text):
         try:
             os.unlink(tmp)
         except OSError:
-            pass
+            pass  # best-effort cleanup; the original exception below is what must propagate
         raise
     try:
         os.replace(tmp, path)
@@ -377,7 +377,7 @@ def write_text_atomic(path, text):
         try:
             os.unlink(tmp)
         except OSError:
-            pass
+            pass  # best-effort cleanup; the original exception below is what must propagate
         raise
 
 

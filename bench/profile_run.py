@@ -151,7 +151,7 @@ def find_run_record(projects_dir: Path, run_id: str | None):
                     if ts:
                         return (1, iso_to_ms(ts))
             except (json.JSONDecodeError, OSError, ValueError):
-                pass
+                pass  # unreadable/invalid record; ranked via mtime fallback below
             return (0, p.stat().st_mtime * 1000.0)
 
         record_path = max(candidates, key=sort_key)

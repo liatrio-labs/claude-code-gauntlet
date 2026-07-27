@@ -1952,11 +1952,6 @@ function stripNullOptionalsReport(args) {
   return { args: out, dropped };
 }
 
-// The value-only form, kept for callers that do not surface gaps.
-function stripNullOptionals(args) {
-  return stripNullOptionalsReport(args).args;
-}
-
 function normalizeArgsReport(raw) {
   const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
   return stripNullOptionalsReport(parsed);
