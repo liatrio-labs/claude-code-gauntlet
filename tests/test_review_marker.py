@@ -550,6 +550,7 @@ class TestDocContract(unittest.TestCase):
     PHASE1_REL = "skills/code-gauntlet/references/phase1-preflight.md"
     SKILL_REL = "skills/code-gauntlet/SKILL.md"
     PHASE2_REL = "skills/code-gauntlet/references/phase2-triage.md"
+    HEADLESS_MODE_REL = "skills/code-gauntlet/references/headless-mode.md"
     REPORT_FORMAT_REL = "skills/code-gauntlet/references/report-format.md"
     DELIVERY_GUIDE_REL = "skills/code-gauntlet/references/delivery-guide.md"
     POST_REVIEW_REL = "scripts/post_review.py"
@@ -715,6 +716,159 @@ class TestDocContract(unittest.TestCase):
                     "destroys the prior review's findings/report before the gate can "
                     "even offer to keep them",
                 )
+
+    def test_headless_skip_semantics_agree_between_skill_and_headless_mode(self):
+        """D1 regression pin: SKILL.md's Phase 2 headless note and
+        headless-mode.md's per-gate table must not contradict on when headless
+        `skip` stops the run for the previously-reviewed gate. A prior mismatch
+        had SKILL.md claim `skip` stops the run whenever `previously_reviewed`
+        is true, while headless-mode.md said `skip` only stops the run when
+        `sha_is_ancestor` is ALSO true — on rewritten history (rebase, squash,
+        or a backward force-push) the reviewed commit is no longer an ancestor
+        of HEAD, so the tree is effectively unreviewed and `skip` must not
+        discard it. Keyed on substantive tokens (`sha_is_ancestor`, `skip`, the
+        `REVIEWED_POLICY` env var) rather than an exact sentence, so it survives
+        rewording; the failure message names both files so the next person
+        knows to sync them."""
+        for rel in (self.SKILL_REL, self.HEADLESS_MODE_REL):
+            text = _read(rel)
+            matching_lines = [
+                line for line in text.splitlines()
+                if "REVIEWED_POLICY" in line
+                and re.search(r"\bskip\b", line, re.IGNORECASE)
+                and "stops the run" in line
+            ]
+            with self.subTest(path=rel):
+                self.assertTrue(
+                    matching_lines,
+                    f"{rel} has no line stating the headless `skip` stop-condition "
+                    "for the previously-reviewed gate (REVIEWED_POLICY + skip + "
+                    f"'stops the run') — sync {self.SKILL_REL} and "
+                    f"{self.HEADLESS_MODE_REL} so both describe the same behavior.",
+                )
+                for line in matching_lines:
+                    self.assertIn(
+                        "sha_is_ancestor", line,
+                        f"{rel}: a headless `skip`-stops-the-run statement for the "
+                        "previously-reviewed gate does not require `sha_is_ancestor` "
+                        f"— this contradicts the other file; sync {self.SKILL_REL} "
+                        f"and {self.HEADLESS_MODE_REL} so both agree that skip does "
+                        "NOT stop the run on rewritten history "
+                        "(sha_is_ancestor == false).",
+                    )
+
+    def test_phase2_triage_never_appends_to_tracked_gitignore(self):
+        """D2 regression pin: phase2-triage.md must never prescribe appending to
+        the repo's TRACKED .gitignore — SKILL.md explicitly forbids this (it
+        silently dirties the reviewed repo's working tree with an undisclosed
+        edit to a user file) and instead writes to the untracked, repo-local
+        `.git/info/exclude`. A prior half-applied fix left phase2-triage.md's
+        gitignore step using `>> .gitignore` while SKILL.md, and even
+        phase2-triage.md's own later prose, already referenced
+        `.git/info/exclude` — a model following phase2-triage.md's literal
+        command would dirty the user's repo."""
+        text = _read(self.PHASE2_REL)
+        self.assertNotIn(
+            ">> .gitignore", text,
+            f"{self.PHASE2_REL} appends to the repo's tracked .gitignore — this "
+            "dirties the reviewed user's repo with an undisclosed edit; use "
+            "`.git/info/exclude` instead (matching SKILL.md's forbidding rule).",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Round-3 fix regressions — each of these MUST fail if its fix is reverted.
+#
+# Rounds 1-3 each regressed the previous round's work, and a mutation test then
+# showed four round-3 fixes could be reverted with the whole suite still green.
+# Issue #39 requirement 6 is explicit that the fixes "cannot silently regress
+# again", so each one is pinned here by the exact behaviour that motivated it.
+# ---------------------------------------------------------------------------
+
+class TestRound3FixRegressions(unittest.TestCase):
+
+    def test_numeric_overflow_token_rejects_the_marker(self):
+        """R3-2: parse_constant only sees literal NaN/Infinity tokens. `1e999` is
+        an ordinary numeric token that overflows to inf, and json.dumps then
+        re-emits a bare `Infinity`, making the detector's own stdout invalid
+        JSON. Reverting _has_non_finite makes this marker parse."""
+        for token in ("1e999", "-1e999", "1E999"):
+            with self.subTest(token=token):
+                text = f'<!-- {MARKER_TOKEN}: {{"version":{token},"sha":"{SHA_40}"}} -->'
+                self.assertIsNone(find_marker(text))
+                self.assertIsNone(detect_signal(text))
+
+    def test_finite_numbers_still_parse(self):
+        """The overflow guard must not reject ordinary numeric payloads."""
+        text = f'<!-- {MARKER_TOKEN}: {{"version":1,"findings_count":250,"sha":"{SHA_40}"}} -->'
+        signal = detect_signal(text)
+        self.assertIsNotNone(signal)
+        self.assertEqual(signal["sha"], SHA_40)
+
+    def test_marker_guard_requires_this_sha(self):
+        """R3-3: a stale/foreign marker must NOT suppress ours. find_marker is
+        last-wins, so suppressing on 'any marker' let the stale sha be what a
+        rerun reads while our prose line advertised a different commit."""
+        stale = build_marker("d" * 40, 1)
+        appended = build_footer(2, SHA_40, body=stale)
+        self.assertIn(f'"sha":"{SHA_40}"', appended)
+        recovered = detect_signal(stale + appended)
+        self.assertEqual(recovered["sha"], SHA_40)
+
+    def test_prose_guard_requires_this_sha(self):
+        """R3-3 (symmetric half): a stale prose footer must not suppress ours, or
+        the posted review advertises a commit the review never examined."""
+        stale = "---\n" + build_prose_footer("d" * 40)
+        appended = build_footer(1, SHA_40, body=stale)
+        self.assertIn(f"Reviewed up to: {SHA_40}", appended)
+
+    def test_double_append_is_still_a_no_op(self):
+        """Both sha checks must not break idempotence for OUR own signal."""
+        body = build_footer(3, SHA_40)
+        self.assertEqual(build_footer(3, SHA_40, body=body), "")
+
+    def test_utc_offset_timestamps_order_by_absolute_instant(self):
+        """R3-4: a lexicographic compare picks the OLDER signal when a producer
+        emits an offset instead of Z. 01:00+02:00 is 23:00Z the previous day, so
+        it must lose to 00:30Z. Reverting _sort_key inverts this."""
+        older, newer = "a" * 40, "b" * 40
+        entries = [
+            {"body": build_footer(1, older), "timestamp": "2026-07-26T01:00:00+02:00",
+             "source": "review"},
+            {"body": build_footer(1, newer), "timestamp": "2026-07-26T00:30:00Z",
+             "source": "review"},
+        ]
+        self.assertEqual(select_latest(entries)["sha"], newer)
+        self.assertEqual(select_latest(list(reversed(entries)))["sha"], newer)
+
+    def test_sort_keys_stay_mutually_comparable(self):
+        """Naive, offset-bearing and Z-suffixed timestamps must yield one key
+        shape — mixing an epoch string with an ISO string would sort every naive
+        timestamp above every aware one."""
+        keys = [review_marker._sort_key(t) for t in (
+            "2026-07-26T00:30:00Z", "2026-07-26T01:00:00+02:00", "2026-07-26T00:30:00")]
+        self.assertTrue(all(k and k[0].isdigit() for k in keys), keys)
+        self.assertEqual(keys[0], keys[2])  # naive is read as UTC
+
+    def test_unparseable_timestamp_sorts_lowest_not_highest(self):
+        real = "b" * 40
+        entries = [
+            {"body": build_footer(1, real), "timestamp": "2020-01-01T00:00:00Z",
+             "source": "review"},
+            {"body": build_footer(1, "a" * 40), "timestamp": "not-a-date",
+             "source": "review"},
+        ]
+        self.assertEqual(select_latest(entries)["sha"], real)
+
+    def test_deeply_nested_marker_never_raises(self):
+        """R3-5: json raises RecursionError (a RuntimeError, not a ValueError) on
+        deeply nested input, which escaped the never-raise contract."""
+        payload = "[" * 40000 + "]" * 40000
+        text = f'<!-- {MARKER_TOKEN}: {{"sha":"{SHA_40}","x":{payload}}} -->'
+        try:
+            self.assertIsNone(find_marker(text))
+        except RecursionError:
+            self.fail("find_marker raised RecursionError")
 
 
 if __name__ == "__main__":

@@ -81,13 +81,13 @@ Bash(command="git rev-parse --short=8 HEAD")  # Store as `head_sha_short`
 
 Computed after checkout so the SHA reflects the actual PR HEAD, not whatever branch was checked out before.
 
-**2. Ensure `{output_dir}` is gitignored** (skip if using env var override):
+**2. Ensure `{output_dir}` is ignored via `.git/info/exclude`** (skip if using env var override). Never append to the repo's tracked `.gitignore` — that silently dirties the reviewed repo's working tree with an undisclosed edit to a user file. `info/exclude` is repo-local, untracked, and shared across worktrees:
 
 ```bash
-Bash(command="git check-ignore -q .code-gauntlet 2>/dev/null || echo '/.code-gauntlet/' >> .gitignore")
+Bash(command="git check-ignore -q .code-gauntlet 2>/dev/null || echo '/.code-gauntlet/' >> \"$(git rev-parse --git-common-dir)/info/exclude\"")
 ```
 
-Added after checkout to avoid stash/pop loss from `gh pr checkout` — if this ran before checkout, the gitignore modification would be stashed and potentially lost.
+Added after checkout to avoid stash/pop loss from `gh pr checkout` — if this ran before checkout, the exclude-file edit would be stashed and potentially lost. Disclose the outcome in the triage output (one line): either `.code-gauntlet/ excluded via .git/info/exclude` or, if the exclude file is unwritable, `note: .code-gauntlet/ is NOT ignored (info/exclude unwritable) — artifacts will show as untracked files` — never fall back to editing `.gitignore`.
 
 **3. Previously-reviewed gate** (PR/MR targets only — skip for `local`):
 
@@ -402,4 +402,4 @@ The skill supplies only the path base and slice sizing (`limits.verifySliceSize`
 
 ## Triage Announcement
 
-Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions. For 1000+ line PRs, add: "This PR is [N] lines. Review effectiveness drops sharply above 400 lines. Consider splitting into smaller PRs."
+Announce triage results before proceeding: PR title, review mode, file counts by risk level, AI-generated files if any, active dimensions, incremental scope (`Full`, or `Incremental since {last_reviewed_sha} (N commits)` when 2b-post step 3 resolved Incremental — `Full` is the no-op case for a normal review). For 1000+ line PRs, add: "This PR is [N] lines. Review effectiveness drops sharply above 400 lines. Consider splitting into smaller PRs."

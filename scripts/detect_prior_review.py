@@ -341,7 +341,16 @@ def resolve_git_facts(sha, head_sha=None, errors=None):
     whatever HEAD happens to be.
     """
     errors = errors if errors is not None else []
-    head = (git_rev_parse(head_sha) or head_sha) if head_sha else git_rev_parse("HEAD")
+    if head_sha:
+        head = git_rev_parse(head_sha)
+        if not head:
+            errors.append(
+                f"git: --head-sha {head_sha} could not be resolved in this clone; "
+                "comparisons against it are unreliable"
+            )
+            head = head_sha
+    else:
+        head = git_rev_parse("HEAD")
     if not head:
         # Without a head there is nothing to compare against; say why, so the
         # caller's "detection unavailable" disclosure names the real reason
@@ -413,8 +422,13 @@ def _bounded(value, limit=512):
     """Return *value* with any string/collection clipped to a printable bound."""
     if isinstance(value, str):
         return value if len(value) <= limit else value[:limit] + "...[truncated]"
-    if isinstance(value, (int, float, bool)) or value is None:
+    if isinstance(value, bool) or value is None:
         return value
+    if isinstance(value, (int, float)):
+        # Numbers are attacker-chosen too: a 4200-digit integer sails past a cap
+        # that only inspects strings.
+        text = repr(value)
+        return value if len(text) <= 64 else f"[number truncated, {len(text)} digits]"
     try:
         encoded = json.dumps(value)
     except (TypeError, ValueError):
@@ -435,7 +449,12 @@ def sanitize_marker(marker):
     if not isinstance(marker, dict):
         return None
     out = {k: _bounded(marker[k]) for k in _MARKER_ECHO_KEYS if k in marker}
-    extra = sorted(k for k in marker if k not in _MARKER_ECHO_KEYS)
+    # Key NAMES are attacker-authored strings too — capping their count alone
+    # still let kilobytes of free text through the "names only" guarantee.
+    extra = sorted(
+        (k if isinstance(k, str) and len(k) <= 64 else str(k)[:64] + "...")
+        for k in marker if k not in _MARKER_ECHO_KEYS
+    )
     if extra:
         out["unknown_keys"] = extra[:32]
     try:

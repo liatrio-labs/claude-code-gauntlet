@@ -1066,5 +1066,61 @@ class TestArgparseUsageErrors(unittest.TestCase):
         self.assertNotEqual(code, 0)
 
 
+class TestRound3And4FixRegressions(unittest.TestCase):
+    """Each test here MUST fail if its fix is reverted — see the matching class
+    in tests/test_review_marker.py for why this is pinned so explicitly."""
+
+    def test_attacker_key_names_are_length_bounded(self):
+        """R4: unknown_keys capped the COUNT of names but not their LENGTH, so
+        kilobytes of attacker text reached the orchestrator through the very
+        guard that promises 'names only'."""
+        marker = {"version": "3.0", "sha": FULL_SHA,
+                  "X" * 3000: 1, "Y" * 3000: 2}
+        out = detect_prior_review.sanitize_marker(marker)
+        self.assertLessEqual(
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+        for name in out.get("unknown_keys", []):
+            self.assertLessEqual(len(name), 128, "an unknown key name is unbounded")
+
+    def test_huge_integer_value_is_bounded(self):
+        """R4: _bounded exempted numbers, so a 4200-digit findings_count sailed
+        past a cap that only inspected strings."""
+        marker = {"version": "3.0", "findings_count": int("9" * 4200),
+                  "sha": FULL_SHA}
+        out = detect_prior_review.sanitize_marker(marker)
+        self.assertLessEqual(
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+
+    def test_ordinary_counts_still_pass_through_unchanged(self):
+        out = detect_prior_review.sanitize_marker(
+            {"version": "3.0", "findings_count": 12, "sha": FULL_SHA})
+        self.assertEqual(out["findings_count"], 12)
+
+    def test_unresolvable_head_sha_is_reported_in_errors(self):
+        """R4: an unresolvable --head-sha fell back to the raw string with an
+        empty errors[], so the output fabricated 'history was rewritten' with no
+        indication anything had gone wrong."""
+        errors = []
+        with patch("scripts.detect_prior_review.subprocess.run",
+                   side_effect=_fake_git_run(resolvable=False)):
+            # 8 chars: the fake only echoes back a rev that is already full-length,
+            # so this exercises the genuine "cannot resolve" path.
+            detect_prior_review.resolve_git_facts(FULL_SHA, "deadbeef", errors)
+        self.assertTrue(
+            any("head-sha" in e for e in errors),
+            f"an unresolvable --head-sha must be explained; got {errors}")
+
+    def test_deeply_nested_bodies_file_exits_zero(self):
+        """R3-5: json raises RecursionError (a RuntimeError), which escaped the
+        always-exit-0 contract."""
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "bodies.json")
+            with open(path, "w") as fh:
+                fh.write("[" * 60000 + "]" * 60000)
+            out, code = _run_main(["--platform", "github", "--bodies-file", path])
+        self.assertEqual(code, 0)
+        self.assertTrue(json.loads(out.strip()) is not None)
+
+
 if __name__ == "__main__":
     unittest.main()

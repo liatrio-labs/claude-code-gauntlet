@@ -131,14 +131,17 @@ def build_footer(findings_count, sha, body="", findings=None):
     # line suppress both halves and post a review carrying no detectable signal;
     # guarding without the sha check let a stale/foreign marker survive and win
     # the reader's last-wins rule while our prose line advertised a different
-    # commit.
+    # commit. Both halves carry the sha check for the same reason: a footer left
+    # by a model copying the reference rendering must not suppress the real one.
     existing = detect_signal(text)
     want_marker = not (
         existing
         and existing.get("signal") == "marker"
         and existing.get("sha") == sha
     )
-    want_prose = not (has_prose_footer(text) and parse_prose_footer(text))
+    want_prose = not (
+        has_prose_footer(text) and parse_prose_footer(text) == sha
+    )
 
     if not want_marker and not want_prose:
         return ""
@@ -380,10 +383,12 @@ def select_latest(entries):
 
     *entries* is an iterable of ``{"body", "timestamp", "source", "id"}``. Bodies
     are run through :func:`detect_signal`; among those that produce a signal the
-    winner is the one with the greatest ISO8601 ``timestamp`` (lexicographic
-    compare is correct for ISO8601-Z), with missing or unparseable timestamps
-    sorting lowest and ties broken by latest input order. The returned dict is the
-    signal augmented with ``source`` and ``timestamp`` from the winning entry.
+    winner is the one with the latest absolute instant, as computed by
+    :func:`_sort_key` — NOT a lexicographic compare of the raw strings, which
+    picks the older signal the moment a producer emits a UTC offset rather than
+    ``Z``. Missing or unparseable timestamps sort lowest and ties break by latest
+    input order. The returned dict is the signal augmented with ``source`` and
+    ``timestamp`` from the winning entry.
     """
     best = None
     best_key = None
