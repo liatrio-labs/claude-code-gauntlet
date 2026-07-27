@@ -9,8 +9,12 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
   G2  Payload parse + adapter-required fields + union-schema findings check
       (requires ≥1 findings artifact per PR)
   G3  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
-  G4  Child ``scriptPath`` under the repo's ``workflows/pipeline.js``
-      (from collected ``pr_dir/workflows/wf_*.json``, not ``raw.json``)
+  G4  Plugin identity — Headless config echo receipts (``pipeline_version``,
+      ``plugin_root``) are primary; a complete valid receipt is sufficient when
+      no ``workflows/wf_*.json`` records were collected. When records exist,
+      top-level Workflow ``scriptPath`` is also checked (defense-in-depth).
+      Without a complete echo receipt, collected workflow records are required
+      (scriptPath-only fallback).
   G5  ≥1 delivered inline comment across the run set
 
 Stdlib-only (CLAUDE.md).
@@ -19,6 +23,14 @@ Stdlib-only (CLAUDE.md).
 import json
 import re
 from pathlib import Path
+
+from bench.runner.invoke import (
+    extract_identity_receipt,
+    parse_result_envelope,
+    read_pipeline_version,
+    script_path_matches_repo,
+    scriptpath_from_record,
+)
 
 # Union-schema surface the persist boundary writes (canonical + v2 aliases).
 # A findings file may use either naming; we accept either for each pair.
@@ -176,8 +188,8 @@ def _extract_script_paths(path):
 
     G4 checks plugin identity via the child Workflow invocation path
     (``workflows/pipeline.js``). Nested paths such as ``args.verify.scriptPath``
-    (``scripts/verify_findings.py``) are intentionally ignored — a recursive
-    walk would false-fail healthy skill runs.
+    (``scripts/verify_findings.py``) are intentionally ignored — see
+    :func:`bench.runner.invoke.scriptpath_from_record`.
     """
     text = Path(path).read_text(encoding="utf-8", errors="replace")
     try:
@@ -186,49 +198,76 @@ def _extract_script_paths(path):
         # Partial/corrupt JSON: first top-level-ish match only (not every hit).
         m = _SCRIPT_PATH_RE.search(text)
         return [m.group(1)] if m else []
-    if not isinstance(data, dict):
-        return []
-    sp = data.get("scriptPath")
-    if isinstance(sp, str) and sp:
-        return [sp]
-    # Some runtimes nest the tool input under a single wrapper key.
-    for key in ("input", "toolInput", "parameters"):
-        nested = data.get(key)
-        if isinstance(nested, dict):
-            sp = nested.get("scriptPath")
-            if isinstance(sp, str) and sp:
-                return [sp]
-    return []
+    sp = scriptpath_from_record(data)
+    return [sp] if sp else []
 
 
 def _script_path_ok(script_path, expected_pipeline, repo_root=None):
     """True when scriptPath is the repo's ``workflows/pipeline.js``.
 
-    Stale marketplace copies also end in ``workflows/pipeline.js`` but live under
-    ``~/.claude/plugins/cache/...`` — those must fail. Accept only paths that
-    resolve to ``expected_pipeline`` or whose normalized string equals that path
-    (artifact may outlive the on-disk resolve target).
+    Delegates to the shared :func:`bench.runner.invoke.script_path_matches_repo`
+    so invoke-time and smoke-check identity answers cannot drift.
     """
-    expected = Path(expected_pipeline).resolve()
-    normalized = script_path.replace("\\", "/").rstrip("/")
-    expected_norm = str(expected).replace("\\", "/")
-    if normalized == expected_norm:
-        return True
-    candidate = Path(script_path)
+    if repo_root is None:
+        repo_root = Path(expected_pipeline).resolve().parent.parent
+    return script_path_matches_repo(
+        script_path, repo_root, expected_pipeline=expected_pipeline
+    )
+
+
+def _check_echo_identity(pr_dir, repo_root, label):
+    """Return ``(failures, identity_ok)`` for the echo identity receipt.
+
+    ``identity_ok`` is True only when a complete receipt is present and matches
+    the expected ``PIPELINE_VERSION`` + plugin root. Uses the tolerant result
+    envelope parser — ``raw.json`` may carry stderr/preamble ahead of the JSON
+    (``invoke_review`` merges stderr into the same file).
+    """
+    raw_text = ""
+    envelope = None
+    raw_path = Path(pr_dir) / "raw.json"
+    if raw_path.is_file():
+        try:
+            raw_text = raw_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            raw_text = ""
+        else:
+            envelope = parse_result_envelope(raw_text)
+    receipt = extract_identity_receipt(raw_text, envelope, (pr_dir,))
+    if not receipt:
+        return [], False
+    failures = []
+    expected_ver = read_pipeline_version(repo_root)
+    if not expected_ver:
+        failures.append(
+            "{}: cannot read expected PIPELINE_VERSION from workflows/pipeline.js".format(
+                label
+            )
+        )
+        return failures, False
+    if receipt.get("pipeline_version") != expected_ver:
+        failures.append(
+            "{}: identity pipeline_version {!r} != expected {!r}".format(
+                label, receipt.get("pipeline_version"), expected_ver
+            )
+        )
+    plugin_root = receipt.get("plugin_root")
+    if not plugin_root:
+        failures.append("{}: identity receipt missing plugin_root".format(label))
+        return failures, False
     try:
-        if candidate.is_absolute() and candidate.resolve() == expected:
-            return True
-    except OSError:
-        # Artifact path may be stale/unreadable on this host; treat as non-match
-        # and fall through to the relative-path / string-equality checks below.
-        pass
-    # Relative form used in some records: "workflows/pipeline.js" under plugin root.
-    if repo_root is not None and normalized in (
-        "workflows/pipeline.js",
-        "./workflows/pipeline.js",
-    ):
-        return True
-    return False
+        got_root = Path(plugin_root).resolve()
+        exp_root = Path(repo_root).resolve()
+    except OSError as exc:
+        failures.append("{}: identity plugin_root resolve failed: {}".format(label, exc))
+        return failures, False
+    if got_root != exp_root:
+        failures.append(
+            "{}: identity plugin_root {!r} != expected {!r}".format(
+                label, str(got_root), str(exp_root)
+            )
+        )
+    return failures, (not failures)
 
 
 def _iter_degrade_scan_paths(pr_dir):
@@ -469,15 +508,21 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 )
             )
 
-        # --- G4: scriptPath from collected workflow records (not raw.json) ---
+        # --- G4: plugin identity (echo receipt primary; scriptPath defense-in-depth) ---
+        id_failures, identity_ok = _check_echo_identity(pr_dir, repo_root, label)
+        failures.extend(id_failures)
+
         wf_records = _iter_workflow_records(pr_dir)
         stats["workflow_records"] += len(wf_records)
         if not wf_records:
-            failures.append(
-                "{}: no workflows/wf_*.json records collected "
-                "(cannot verify plugin scriptPath; stale-plugin contamination "
-                "cannot be ruled out)".format(label)
-            )
+            # A complete valid echo receipt is sufficient (matches invoke.py).
+            # Without one, collected workflow records remain required.
+            if not identity_ok:
+                failures.append(
+                    "{}: no workflows/wf_*.json records collected "
+                    "(cannot verify plugin scriptPath; stale-plugin contamination "
+                    "cannot be ruled out)".format(label)
+                )
         else:
             script_paths = []
             for wf_path in wf_records:
@@ -506,7 +551,6 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     return {"ok": not failures, "failures": failures, "stats": stats}
 
 
-# Upgrade hook for environment-purity receipts (Issue #23): when
-# pipeline_version / plugin_root appear in the headless config echo, prefer
-# those over the interim workflow-record scriptPath grep above.
-PLUGIN_IDENTITY_STRATEGY = "workflow_record_scriptPath"  # future: "echo_receipt"
+# Environment-purity receipts (Issue #23): echo identity is primary; workflow-record
+# scriptPath remains defense-in-depth when records exist.
+PLUGIN_IDENTITY_STRATEGY = "echo_receipt"

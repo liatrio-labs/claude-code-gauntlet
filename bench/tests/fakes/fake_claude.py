@@ -16,6 +16,9 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
                     report .md under $CODE_GAUNTLET_OUTPUT_DIR. + payload.
   mutate_repo    -> write to FAKE_CLAUDE_MUTATE_PATH (inside the plugin repo), then behave
                     like ``ok`` — models a child self-healing the plugin mid-run.
+  wrong_plugin_echo -> full knobs + stale identity (wrong plugin_root/pipeline_version) + payload.
+  wrong_script_path -> clean echo identity + stale Workflow scriptPath record + payload.
+  no_identity_echo -> full knob echo without pipeline_version/plugin_root + payload.
 
 All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
 process-group id is written there at startup so the watchdog test can prove the group was
@@ -33,22 +36,49 @@ must not have it written to a temp file.
 
 import json
 import os
+import re
 import sys
 import time
 
-# The exact echo the real skill prints under CODE_GAUNTLET_HEADLESS=1 (Task 3 format:
-# two-space indent, key=value (source), 8 knob lines under the header).
-ECHO_LINES = [
-    "Headless config:",
-    "  model_tier=optimized (env)",
-    "  delivery=pr_comments,markdown (env)",
-    "  post_mode=dry-run (env)",
-    "  pr_comment_cap=25 (env)",
-    "  draft_policy=review (env)",
-    "  reviewed_policy=full (env)",
-    "  pr_not_found_policy=error (env)",
-    "  trivial_scope=full (env)",
-]
+
+def _plugin_dir_from_argv():
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == "--plugin-dir" and i + 1 < len(args):
+            return args[i + 1]
+    return os.environ.get("FAKE_CLAUDE_PLUGIN_ROOT", "")
+
+
+def _pipeline_version(plugin_dir):
+    override = os.environ.get("FAKE_CLAUDE_PIPELINE_VERSION")
+    if override:
+        return override
+    path = os.path.join(plugin_dir, "workflows", "pipeline.js")
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return "0.0.0"
+    m = re.search(r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
+    return m.group(1) if m else "0.0.0"
+
+
+def echo_lines(plugin_root=None, pipeline_version=None):
+    root = plugin_root if plugin_root is not None else _plugin_dir_from_argv()
+    ver = pipeline_version if pipeline_version is not None else _pipeline_version(root)
+    return [
+        "Headless config:",
+        "  model_tier=optimized (env)",
+        "  delivery=pr_comments,markdown (env)",
+        "  post_mode=dry-run (env)",
+        "  pr_comment_cap=25 (env)",
+        "  draft_policy=review (env)",
+        "  reviewed_policy=full (env)",
+        "  pr_not_found_policy=error (env)",
+        "  trivial_scope=full (env)",
+        "  pipeline_version={} (bundle)".format(ver),
+        "  plugin_root={} (resolved)".format(root),
+    ]
 
 
 def _envelope(permission_denials, result_text="Review complete. 3 findings posted (dry-run)."):
@@ -163,6 +193,29 @@ def _write_report(lines):
         fh.write("\n".join(body) + "\n")
 
 
+def _plant_stale_workflow_record():
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR")
+    if config_dir:
+        base = config_dir
+    else:
+        home = os.environ.get("HOME")
+        if not home:
+            return
+        base = os.path.join(home, "config")
+    wf_dir = os.path.join(base, "projects", "fake", "sess", "workflows")
+    os.makedirs(wf_dir, exist_ok=True)
+    path = os.path.join(wf_dir, "wf_stale.json")
+    stale = "/home/ubuntu/.claude/plugins/cache/stale/workflows/pipeline.js"
+    # FAKE_CLAUDE_WF_NESTED=1 plants scriptPath under an input wrapper (mirrors
+    # check.py's accepted nested Workflow-tool record shape).
+    if os.environ.get("FAKE_CLAUDE_WF_NESTED") == "1":
+        payload = {"runId": "wf_stale", "input": {"scriptPath": stale}}
+    else:
+        payload = {"runId": "wf_stale", "scriptPath": stale}
+    with open(path, "w") as fh:
+        json.dump(payload, fh)
+
+
 def main():
     # A --version probe (the v3 preflight) prints only the version and exits, before any
     # mode handling -- so it never records a pgid, hangs, or emits a review envelope. The
@@ -187,7 +240,20 @@ def main():
         time.sleep(60)
         return
 
+    if mode == "wrong_plugin_echo":
+        ECHO_LINES = echo_lines(
+            plugin_root="/stale/plugin/cache/code-gauntlet",
+            pipeline_version="2.6.0",
+        )
+    else:
+        ECHO_LINES = echo_lines()
+
     partial_lines = [ln for ln in ECHO_LINES if "trivial_scope" not in ln]
+    no_identity_lines = [
+        ln
+        for ln in ECHO_LINES
+        if "pipeline_version=" not in ln and "plugin_root=" not in ln
+    ]
 
     # Where the receipt lands: stdout lines, the envelope .result text, a report .md.
     stdout_lines = ECHO_LINES
@@ -198,6 +264,10 @@ def main():
         # A partial block (missing trivial_scope) in BOTH stdout and .result.
         stdout_lines = partial_lines
         result_text = "\n".join(partial_lines)
+    elif mode == "no_identity_echo":
+        # Full knob receipt, but no identity lines: config echo passes, identity guard fails.
+        stdout_lines = no_identity_lines
+        result_text = "\n".join(no_identity_lines)
     elif mode == "echo_in_result":
         # Receipt only in the final message (.result), never in intermediate stdout.
         stdout_lines = []
@@ -216,6 +286,8 @@ def main():
             "The deep-review workflow is now running in the background; "
             "I'll pick up the persisted artifacts for delivery once it completes."
         )
+    elif mode == "wrong_script_path":
+        _plant_stale_workflow_record()
 
     denials = []
     if mode == "asks":

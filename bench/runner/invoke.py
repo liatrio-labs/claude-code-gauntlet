@@ -37,6 +37,11 @@ __all__ = [
     "api_key_helper_files",
     "snapshot_workflow_records",
     "collect_workflow_records",
+    "scriptpath_from_record",
+    "script_path_matches_repo",
+    "extract_identity_receipt",
+    "read_pipeline_version",
+    "parse_identity_echo",
     "_claude_home",
 ]
 
@@ -733,6 +738,175 @@ def _echo_ok(raw_text, envelope=None, report_dirs=()):
     return _echo_in_reports(report_dirs)
 
 
+_PIPELINE_VERSION_RE = re.compile(
+    r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]"
+)
+_IDENTITY_LINE_RE = re.compile(
+    r"(?m)^[ \t]*(pipeline_version|plugin_root)=(.+?)\s*\((?:bundle|resolved)\)\s*$"
+)
+
+
+def read_pipeline_version(repo_root):
+    """Return PIPELINE_VERSION from ``{repo_root}/workflows/pipeline.js``, or None."""
+    path = Path(repo_root) / "workflows" / "pipeline.js"
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    m = _PIPELINE_VERSION_RE.search(text)
+    return m.group(1) if m else None
+
+
+def parse_identity_echo(text):
+    """Parse identity receipt fields from a Headless config echo text blob."""
+    out = {}
+    for m in _IDENTITY_LINE_RE.finditer(text or ""):
+        out[m.group(1)] = m.group(2)
+    return out
+
+
+def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
+    """Return ``{pipeline_version, plugin_root}`` from any echo source, or None.
+
+    Requires BOTH fields in the same source text. Scans stdout, envelope
+    ``.result``, then report ``*.md`` files (same order spirit as ``_echo_ok``).
+    """
+    texts = [raw_text or ""]
+    if isinstance(envelope, dict):
+        result = envelope.get("result")
+        if isinstance(result, str):
+            texts.append(result)
+    for t in texts:
+        got = parse_identity_echo(t)
+        if "pipeline_version" in got and "plugin_root" in got:
+            return got
+    # reports
+    seen = set()
+    for base in report_dirs or ():
+        if not base:
+            continue
+        base = Path(base)
+        if not base.exists():
+            continue
+        for md in sorted(base.rglob("*.md")):
+            resolved = md.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                got = parse_identity_echo(md.read_text(errors="replace"))
+            except OSError:
+                continue
+            if "pipeline_version" in got and "plugin_root" in got:
+                return got
+    return None
+
+
+def scriptpath_from_record(data):
+    """Return the Workflow-tool ``scriptPath`` from a parsed ``wf_*.json`` dict.
+
+    Top-level ``scriptPath`` wins; otherwise look under a single wrapper key
+    (``input`` / ``toolInput`` / ``parameters``). Nested paths such as
+    ``args.verify.scriptPath`` are intentionally ignored — a recursive walk
+    would false-fail healthy skill runs.
+    """
+    if not isinstance(data, dict):
+        return None
+    sp = data.get("scriptPath")
+    if isinstance(sp, str) and sp:
+        return sp
+    for key in ("input", "toolInput", "parameters"):
+        nested = data.get(key)
+        if isinstance(nested, dict):
+            sp = nested.get("scriptPath")
+            if isinstance(sp, str) and sp:
+                return sp
+    return None
+
+
+def script_path_matches_repo(script_path, repo_root, expected_pipeline=None):
+    """True when *script_path* identifies ``{repo_root}/workflows/pipeline.js``.
+
+    Accepts absolute paths that resolve to the expected pipeline, the normalized
+    absolute string form, the relative literals ``workflows/pipeline.js`` /
+    ``./workflows/pipeline.js``, and other relative paths that resolve against
+    *repo_root* (not process CWD) to the expected file.
+    """
+    if expected_pipeline is None:
+        expected = (Path(repo_root) / "workflows" / "pipeline.js").resolve()
+    else:
+        expected = Path(expected_pipeline).resolve()
+    normalized = script_path.replace("\\", "/").rstrip("/")
+    expected_norm = str(expected).replace("\\", "/")
+    if normalized == expected_norm:
+        return True
+    if normalized in ("workflows/pipeline.js", "./workflows/pipeline.js"):
+        return True
+    candidate = Path(script_path)
+    try:
+        if candidate.is_absolute():
+            return candidate.resolve() == expected
+        return (Path(repo_root) / candidate).resolve() == expected
+    except OSError:
+        return False
+
+
+# Backward-compatible private alias used by existing tests.
+def _script_path_matches_repo(script_path, repo_root):
+    return script_path_matches_repo(script_path, repo_root)
+
+
+def _new_workflow_script_paths(claude_home, baseline):
+    """Top-level Workflow ``scriptPath`` values from records changed since *baseline*."""
+    baseline = baseline or {}
+    root = Path(claude_home) / "config"
+    paths = []
+    if not root.is_dir():
+        return paths
+    for path in sorted(root.rglob("wf_*.json")):
+        try:
+            resolved = str(path.resolve())
+            st = path.stat()
+        except OSError:
+            continue
+        prev = baseline.get(resolved)
+        if prev is not None and prev == (st.st_mtime_ns, st.st_size):
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        sp = scriptpath_from_record(data)
+        if sp:
+            paths.append(sp)
+    return paths
+
+
+def _check_plugin_identity(raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root):
+    """Return None if identity is clean, else a human reason fragment for stderr."""
+    receipt = extract_identity_receipt(raw_text, envelope, report_dirs)
+    if not receipt:
+        return "missing pipeline_version/plugin_root identity receipt"
+    expected_ver = read_pipeline_version(repo_root)
+    if not expected_ver:
+        return "cannot read expected PIPELINE_VERSION from workflows/pipeline.js"
+    if receipt["pipeline_version"] != expected_ver:
+        return "pipeline_version {!r} != expected {!r}".format(
+            receipt["pipeline_version"], expected_ver
+        )
+    try:
+        got_root = Path(receipt["plugin_root"]).resolve()
+        exp_root = Path(repo_root).resolve()
+    except OSError as exc:
+        return "plugin_root resolve failed: {}".format(exc)
+    if got_root != exp_root:
+        return "plugin_root {!r} != expected {!r}".format(str(got_root), str(exp_root))
+    for sp in _new_workflow_script_paths(claude_home, wf_baseline):
+        if not script_path_matches_repo(sp, repo_root):
+            return "scriptPath {!r} is not repo workflows/pipeline.js".format(sp)
+    return None
+
+
 def _find_payload(output_dir):
     base = Path(output_dir)
     if not base.exists():
@@ -848,6 +1022,8 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
     # Snapshot the plugin repo's pre-run dirty state so the post-run integrity guard flags
     # only NEW mutations the child introduced — never a pre-existing local edit.
     baseline_dirty = _plugin_dirty_paths(REPO_ROOT) or frozenset()
+    claude_home = Path(env["CLAUDE_CONFIG_DIR"]).parent
+    wf_baseline = snapshot_workflow_records(claude_home)
 
     cmd = [
         claude_bin,
@@ -974,7 +1150,33 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
             reason="config_echo_mismatch",
         )
 
-    # 4) Dry-run payload (the scored candidate set).
+    # 4) Plugin identity receipt: echo + new Workflow scriptPath records must resolve
+    #    to this checkout before the run can score.
+    identity_err = _check_plugin_identity(
+        raw_text,
+        envelope,
+        report_dirs,
+        claude_home=claude_home,
+        wf_baseline=wf_baseline,
+        repo_root=REPO_ROOT,
+    )
+    if identity_err:
+        print(
+            "PLUGIN IDENTITY MISMATCH during PR {} — invalidated: {}".format(
+                number, identity_err
+            ),
+            file=sys.stderr,
+        )
+        return InvokeResult(
+            "invalid",
+            cost_usd=cost_usd,
+            per_model=per_model,
+            echo_ok=True,
+            raw_json_path=str(raw_path),
+            reason="plugin_identity_mismatch",
+        )
+
+    # 5) Dry-run payload (the scored candidate set).
     payload_path = _find_payload(env["CODE_GAUNTLET_OUTPUT_DIR"])
     delivery = env.get("CODE_GAUNTLET_DELIVERY", "")
     if payload_path is None and "pr_comments" in [d.strip() for d in delivery.split(",")]:

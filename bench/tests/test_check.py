@@ -112,6 +112,30 @@ def _wf_record(script_path=PIPELINE, *, include_verify=True):
     return rec
 
 
+def _identity_echo_block(*, plugin_root=None, pipeline_version=None):
+    """Headless config identity lines for raw.json / report carriers."""
+    root = str(plugin_root if plugin_root is not None else REPO_ROOT)
+    ver = pipeline_version
+    if ver is None:
+        ver = invoke.read_pipeline_version(REPO_ROOT)
+    return (
+        "Review complete.\n\n"
+        "Headless config:\n"
+        "  pipeline_version={} (bundle)\n"
+        "  plugin_root={} (resolved)\n"
+    ).format(ver, root)
+
+
+def _plant_raw_identity(pr_dir, *, plugin_root=None, pipeline_version=None):
+    raw_path = Path(pr_dir) / "raw.json"
+    data = json.loads(raw_path.read_text(encoding="utf-8"))
+    data["result"] = _identity_echo_block(
+        plugin_root=plugin_root,
+        pipeline_version=pipeline_version,
+    )
+    _write_json(raw_path, data)
+
+
 def _build_ok_run(
     run_dir,
     *,
@@ -370,6 +394,63 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("scriptPath" in f for f in result["failures"]))
 
+    def test_g4_echo_identity_mismatch_fails(self):
+        """Clean scriptPath but stale identity receipt in raw.json .result fails G4."""
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        _plant_raw_identity(
+            pr,
+            plugin_root="/home/user/.claude/plugins/cache/stale",
+            pipeline_version="0.0.1",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "plugin_root" in f
+                or "identity" in f.lower()
+                or "pipeline_version" in f
+                for f in result["failures"]
+            ),
+            result["failures"],
+        )
+        self.assertFalse(any("scriptPath" in f for f in result["failures"]))
+
+    def test_g4_clean_echo_and_clean_scriptpath_passes(self):
+        _build_ok_run(self.run_dir)
+        _plant_raw_identity(self.run_dir / "pr-example-repo-1")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        identity_failures = [
+            f
+            for f in result["failures"]
+            if "scriptPath" in f
+            or "plugin_root" in f
+            or "pipeline_version" in f
+            or "identity" in f.lower()
+        ]
+        self.assertEqual(identity_failures, [])
+
+    def test_g4_clean_echo_stale_scriptpath_still_fails(self):
+        """Defense-in-depth: clean identity echo must not override stale scriptPath."""
+        stale = "/home/user/.claude/plugins/cache/stale/workflows/pipeline.js"
+        _build_ok_run(self.run_dir, script_path=stale)
+        _plant_raw_identity(self.run_dir / "pr-example-repo-1")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"], result["failures"])
+        self.assertTrue(
+            any("scriptPath" in f for f in result["failures"]),
+            result["failures"],
+        )
+        identity_failures = [
+            f
+            for f in result["failures"]
+            if "plugin_root" in f
+            or "pipeline_version" in f
+            or "identity" in f.lower()
+        ]
+        self.assertEqual(identity_failures, [], result["failures"])
+
     def test_nested_verify_script_path_ignored_by_g4(self):
         """Healthy runs carry args.verify.scriptPath → verify_findings.py; must pass."""
         _build_ok_run(self.run_dir)
@@ -416,12 +497,48 @@ class CheckRunTest(unittest.TestCase):
         self.assertEqual(check._extract_script_paths(wf), [PIPELINE])
 
     def test_missing_workflow_records_fails_g4(self):
+        """Without an echo identity receipt, missing wf records still hard-fail G4."""
         _build_ok_run(self.run_dir, include_workflow=False)
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(any("no workflows/wf_" in f for f in result["failures"]))
         # raw.json must NOT be treated as a scriptPath source.
         self.assertFalse(any("raw.json" in f and "scriptPath" in f for f in result["failures"]))
+
+    def test_g4_valid_echo_without_wf_records_passes(self):
+        """Complete valid echo receipt is sufficient when no wf records were collected."""
+        _build_ok_run(self.run_dir, include_workflow=False)
+        _plant_raw_identity(self.run_dir / "pr-example-repo-1")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertFalse(any("no workflows/wf_" in f for f in result["failures"]))
+
+    def test_g4_echo_identity_reads_raw_json_with_preamble(self):
+        """raw.json may carry stderr/preamble; tolerant parse must still find the receipt."""
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        raw_path = pr / "raw.json"
+        envelope = json.loads(raw_path.read_text(encoding="utf-8"))
+        envelope["result"] = _identity_echo_block(
+            plugin_root="/home/user/.claude/plugins/cache/stale",
+            pipeline_version="0.0.1",
+        )
+        # Merge-style file: CLI warning text ahead of the result envelope.
+        raw_path.write_text(
+            "warn: background noise from child CLI\n" + json.dumps(envelope) + "\n",
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"], result["failures"])
+        self.assertTrue(
+            any(
+                "plugin_root" in f
+                or "identity" in f.lower()
+                or "pipeline_version" in f
+                for f in result["failures"]
+            ),
+            result["failures"],
+        )
 
     def test_zero_comments_fails_g5(self):
         _build_ok_run(self.run_dir, n_comments=0)
