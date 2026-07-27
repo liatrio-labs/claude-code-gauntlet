@@ -79,10 +79,10 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
    )
    ```
 
-3. **Previously reviewed?** — Skip this check entirely when `target_type == local` (no PR/MR ⇒ no signal to detect). Otherwise run the detector (owner/repo resolved the same way as Phase 2a's `git remote get-url origin` detection; `--platform` is `github` or `gitlab` per the resolved target type):
+3. **Previously reviewed?** — Skip this check entirely when `target_type == local` (no PR/MR ⇒ no signal to detect). Otherwise run the detector. `{platform}` is `github` or `gitlab` per the resolved target type; owner/repo are parsed from the `origin` remote, so pass `--owner`/`--repo` only when the PR/MR lives on some other repository:
 
    ```bash
-   python3 "{plugin_root}/scripts/detect_prior_review.py" --platform github --owner {owner} --repo {repo} --number {pr_number}
+   python3 "{plugin_root}/scripts/detect_prior_review.py" --platform {platform} --number {pr_number}
    ```
 
    It always exits 0 and prints exactly one JSON object on stdout (detection degrades, never blocks the review):
@@ -91,6 +91,8 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
    {
      "previously_reviewed": true,
      "signal": "marker",
+     "source": "review",
+     "legacy": false,
      "last_reviewed_sha": "<full>",
      "last_reviewed_sha_short": "<8>",
      "sha_resolvable": true,
@@ -99,14 +101,18 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
      "new_commit_count": 3,
      "incremental_safe": true,
      "marker": { "...": "parsed payload, unknown keys preserved" },
+     "scanned": { "review": 4, "issue_comment": 2 },
      "errors": []
    }
    ```
 
-   `incremental_safe` is the single boolean that gates whether the incremental path may be offered — never derive it from `head_advanced` alone.
+   When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`marker`/`last_reviewed_sha` `null` and `incremental_safe` `false`.
+
+   `incremental_safe` is the single boolean that gates whether the incremental path may be offered. Branch in this order — the `sha_resolvable` case must be checked **before** the "no new commits" case, because an unresolvable SHA also reports `head_advanced: false` and would otherwise be announced as "no new commits" when commits may well have been pushed:
 
    - `previously_reviewed == false` → continue, no question asked.
-   - `previously_reviewed == true` and `head_advanced` → ask (`{N}` = `new_commit_count`, `{short_sha}` = `last_reviewed_sha_short`):
+   - `previously_reviewed == true` and `sha_resolvable == false` → present **neither** template. Disclose that a prior review was found but its commit is not present locally (force-push, shallow clone, or unfetched object) and continue as a full review.
+   - `incremental_safe == true` → ask (`{N}` = `new_commit_count`, `{short_sha}` = `last_reviewed_sha_short`):
 
      ```
      AskUserQuestion(
@@ -124,7 +130,7 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
      ```
 
      If **Incremental**: store `last_reviewed_sha` — Phase 2 2c's incremental diff branch uses it. The marker payload is already parsed and available under the JSON's `marker` key above; do not re-parse the footer or hand-write a regex.
-   - `previously_reviewed == true` and not `head_advanced` → ask:
+   - `previously_reviewed == true`, `sha_resolvable == true`, `head_advanced == false` (the head is exactly where the last review stopped) → ask:
 
      ```
      AskUserQuestion(
@@ -141,8 +147,8 @@ Store the resolved `target_type` (`pr`, `mr`, or `local`) and `pr_number` for us
      ```
 
    **Degradations** (state explicitly, never block the review):
-   - `errors` non-empty → disclose "prior-review detection unavailable ({reason})" and continue as a fresh review.
-   - `sha_resolvable == false` → continue as a full review, disclosing that the recorded SHA is not present locally (force-push, shallow clone, or unfetched object).
+   - `errors` non-empty → disclose "prior-review detection unavailable ({reason})" and continue as a fresh review. `errors` can be non-empty alongside a successful detection (one surface fetched, the other failed) — report it either way.
+   - Never treat a detection failure as a reason to stop the run: the detector exits 0 for every outcome, and a review that cannot check its own history is still a valid full review.
 
    **Boundary:** the signal exists only when a prior review actually posted to the PR/MR. A chat-only or markdown-only prior run writes nothing to the PR/MR, so a rerun is correctly detected as fresh.
 

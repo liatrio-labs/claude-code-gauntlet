@@ -3,16 +3,19 @@
 detect_prior_review.py — Has code-gauntlet reviewed this PR/MR before, and up to which commit?
 
 Usage:
-    python3 detect_prior_review.py --platform {github|gitlab} --owner O --repo R --number N
-                                   [--head-sha SHA] [--bodies-file PATH]
+    python3 detect_prior_review.py --platform {github|gitlab} --number N
+                                   [--owner O] [--repo R] [--head-sha SHA]
+                                   [--bodies-file PATH]
 
 Reads the prior-review signal that ``post_review.py`` leaves on a PR/MR summary —
 both halves are parsed by ``review_marker.py``, which is the single source of truth
 for the format. Nothing here branches on the marker's ``version`` field.
 
     --platform     REQUIRED. The orchestrator has already resolved the PR with
-                   gh/glab, so the platform is known; auto-detecting would
-                   duplicate post_review.detect_platform.
+                   gh/glab, so the platform is known; guessing it for a
+                   self-hosted host would be a coin flip.
+    --owner/--repo Optional — parsed from the `origin` remote when omitted, so
+                   the usual call needs only --platform and --number.
     --head-sha     Use this instead of `git rev-parse HEAD` for the comparison.
     --bodies-file  Offline/test hook: a JSON array of
                    {"body","timestamp","source","id"} entries used INSTEAD of any
@@ -53,6 +56,7 @@ No external Python dependencies — stdlib only.
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -158,6 +162,33 @@ def git_rev_parse(rev):
 def gitlab_project_id(owner, repo):
     """Return the URL-encoded project path (mirrors post_review.gitlab_project_id)."""
     return f"{owner}/{repo}".replace("/", "%2F")
+
+
+def remote_slug():
+    """Return ``(owner, repo)`` parsed from ``origin``, or ``(None, None)``.
+
+    Lets the caller pass only ``--platform`` and ``--number``: composing an
+    owner/repo lookup was one more CLI incantation for the orchestrator to get
+    wrong, and this is the same remote parse ``post_review.detect_platform``
+    performs (SSH ``git@host:path`` and http(s) ``host/path``, ``.git`` stripped).
+    A namespaced GitLab path keeps its subgroups in *repo*, which is correct —
+    ``gitlab_project_id`` re-joins and encodes the whole path.
+    """
+    stdout, _, rc = run(
+        ["git", "remote", "get-url", "origin"], timeout=GIT_TIMEOUT_SECONDS
+    )
+    if rc != 0:
+        return None, None
+    url = stdout.strip()
+    match = re.match(r"git@[^:]+:(.+?)(?:\.git)?$", url) or re.match(
+        r"https?://[^/]+/(.+?)(?:\.git)?$", url
+    )
+    if not match:
+        return None, None
+    owner, sep, repo = match.group(1).partition("/")
+    if not sep or not owner or not repo:
+        return None, None
+    return owner, repo
 
 
 def fetch_entries_github(owner, repo, number):
@@ -275,14 +306,20 @@ def load_bodies_file(path):
 # ---------------------------------------------------------------------------
 
 def resolve_git_facts(sha, head_sha=None):
-    """Return the git-derived facts about *sha* relative to HEAD. Never raises.
+    """Return the git-derived facts about *sha* relative to the head. Never raises.
 
     ``sha_resolvable`` is False when the recorded object is not present in this
     clone (force-push, shallow clone, unfetched object); the raw value is kept and
     ``new_commit_count`` stays None.
+
+    An explicit *head_sha* is expanded through ``git rev-parse`` so an abbreviated
+    value is never compared against a full one (which would read as "advanced"
+    every time), and the commit count is taken against that same head rather than
+    whatever HEAD happens to be.
     """
+    head = (git_rev_parse(head_sha) or head_sha) if head_sha else git_rev_parse("HEAD")
     facts = {
-        "head_sha": head_sha or git_rev_parse("HEAD") or "unknown",
+        "head_sha": head or "unknown",
         "last_reviewed_sha": sha if isinstance(sha, str) and sha else None,
         "last_reviewed_sha_short": None,
         "sha_resolvable": False,
@@ -304,7 +341,8 @@ def resolve_git_facts(sha, head_sha=None):
     facts["last_reviewed_sha_short"] = full[:8]
 
     stdout, _, rc = run(
-        ["git", "rev-list", "--count", f"{sha}..HEAD"], timeout=GIT_TIMEOUT_SECONDS
+        ["git", "rev-list", "--count", f"{sha}..{head or 'HEAD'}"],
+        timeout=GIT_TIMEOUT_SECONDS,
     )
     count = stdout.strip()
     if rc == 0 and count.isdigit():
@@ -343,7 +381,10 @@ def build_result(signal, git_facts, scanned=None, errors=None):
 
     sha_resolvable = bool(git_facts.get("sha_resolvable"))
     last_reviewed_sha = git_facts.get("last_reviewed_sha") or signal.get("sha")
-    head_advanced = bool(sha_resolvable and last_reviewed_sha != head_sha)
+    # An unusable head ("unknown", i.e. `git rev-parse HEAD` failed) must never
+    # read as "advanced" — that would offer an incremental diff against nothing.
+    head_known = bool(head_sha) and head_sha != "unknown"
+    head_advanced = bool(sha_resolvable and head_known and last_reviewed_sha != head_sha)
     return {
         "previously_reviewed": True,
         "signal": signal.get("signal"),
@@ -372,16 +413,24 @@ def gather_entries(args, parser):
         entries, errors = load_bodies_file(args.bodies_file)
         return entries, errors, count_by_source(entries)
 
-    missing = [name for name in ("owner", "repo", "number") if not getattr(args, name)]
-    if missing:
+    if not args.number:
+        parser.error("--number is required unless --bodies-file is given")
+
+    owner, repo = args.owner, args.repo
+    if not owner or not repo:
+        derived_owner, derived_repo = remote_slug()
+        owner = owner or derived_owner
+        repo = repo or derived_repo
+    if not owner or not repo:
         parser.error(
-            "--" + ", --".join(missing) + " are required unless --bodies-file is given"
+            "--owner/--repo are required when they cannot be parsed from the "
+            "'origin' git remote"
         )
 
     if args.platform == "github":
-        entries, errors = fetch_entries_github(args.owner, args.repo, args.number)
+        entries, errors = fetch_entries_github(owner, repo, args.number)
     else:
-        entries, errors = fetch_entries_gitlab(args.owner, args.repo, args.number)
+        entries, errors = fetch_entries_gitlab(owner, repo, args.number)
 
     scanned = {source: 0 for source in PLATFORM_SOURCES[args.platform]}
     scanned.update(count_by_source(entries))
@@ -398,8 +447,14 @@ def main():
         choices=("github", "gitlab"),
         help="Forge hosting the PR/MR. Required — the caller already knows it.",
     )
-    parser.add_argument("--owner", help="Repository owner / GitLab namespace.")
-    parser.add_argument("--repo", help="Repository name.")
+    parser.add_argument(
+        "--owner",
+        help="Repository owner / GitLab namespace. Defaults to the 'origin' remote.",
+    )
+    parser.add_argument(
+        "--repo",
+        help="Repository name. Defaults to the 'origin' remote.",
+    )
     parser.add_argument("--number", help="PR number / MR IID.")
     parser.add_argument(
         "--head-sha",

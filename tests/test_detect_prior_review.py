@@ -77,6 +77,13 @@ def _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_
         if "rev-parse" in cmd and cmd[-1] == "HEAD":
             return res(out=head_sha + "\n")
         if "rev-parse" in cmd:
+            # Faithful to real git: `rev-parse` echoes an already-full object id
+            # back unchanged and only *expands* an abbreviated one. A fake that
+            # rewrote every rev to full_sha would hide which rev the caller
+            # actually passed — exactly what an explicit --head-sha must prove.
+            rev = cmd[-1]
+            if len(rev) == 40:
+                return res(out=rev + "\n")
             if resolvable:
                 return res(out=full_sha + "\n")
             return res(err="fatal: ambiguous argument", rc=1)
