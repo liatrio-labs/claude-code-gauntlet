@@ -564,10 +564,13 @@ export const VERIFY_ATTEMPTS_PER_SLICE = 2;
 // of the damage now tracks the size of the fault.
 //
 // Findings are never dropped and success is never fabricated, now at slice granularity:
-// against every failure class trustSlice DETECTS, every finding leaves this stage either
+// against every failure class this stage DETECTS, every finding leaves this stage either
 // as its slice's trusted verified output or as itself with origin='unknown' — never
 // missing, never silently upgraded. `verified` is true only when ZERO slices degraded, so
 // the one top-level boolean keeps meaning "this whole run's classification is trustworthy".
+//
+// ("this stage", not "trustSlice": an agent() throw is caught in dispatchVerifySlice and a
+// missing slice input in materializeVerifySlices — trustSlice never sees either.)
 //
 // The qualifier is load-bearing, so state it plainly: trustSlice does not bind a slice's
 // echoed CONTENT to the findings that slice dispatched (see its own comment). An envelope
