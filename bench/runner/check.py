@@ -48,21 +48,58 @@ _DEGRADE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Value of a JSON ``"script"`` field — a workflow record's echo of the whole
+# pipeline bundle, whose own source carries the degrade sentinels as ordinary
+# substrings (issue #52). The escape-aware body is required: a naive
+# ``[^"]*`` stops at the first ``\"`` and leaves most of the bundle behind.
+_SCRIPT_FIELD_RE = re.compile(r'"script"\s*:\s*"(?:\\.|[^"\\])*"', re.DOTALL)
+# The same field truncated mid-write, with no closing quote.
+_SCRIPT_FIELD_OPEN_RE = re.compile(r'"script"\s*:\s*"(?:\\.|[^"\\])*\Z', re.DOTALL)
+
 # Expected pipeline entry relative to the plugin/repo root.
 PIPELINE_REL = Path("workflows") / "pipeline.js"
 
-# Where G3 looks for writer no-write-proof / partial-artifacts signals.
-# writeArtifacts puts that gap on the compact Workflow return (gaps[]), which
-# lands in collected workflows/wf_*.json and often in raw.json's .result text —
-# NOT in the persisted report/checkpoint (those are written before the echo
-# proof runs). Report/checkpoint remain scanned as secondary carriers.
+# Where G3 looks for writer no-write-proof / partial-artifacts signals, and how
+# each carrier is read (issue #52). writeArtifacts puts that gap on the compact
+# Workflow return (gaps[]), which lands in collected workflows/wf_*.json and
+# often in raw.json's .result text — NOT in the persisted report/checkpoint
+# (those are written before the echo proof runs). Report/checkpoint remain
+# scanned as secondary carriers.
+#
+# STRUCTURED carriers own a real ``gaps`` array, so that parsed array is the
+# authoritative — and only — signal consulted; their raw bytes are never
+# regex-scanned:
+#   workflows/wf_*.json  carries the compact return at ``result.gaps``. It also
+#       echoes the whole ~230 KB workflows/pipeline.js bundle into its
+#       ``script`` field, and that bundle's source contains the sentinels as
+#       ordinary substrings ("no write proof" x4 string/template literals;
+#       "partial-artifacts" x6 — 1 string literal + 5 comments) — so a raw
+#       scan matches on EVERY collected record, degraded or not.
+#   code-gauntlet-checkpoint-all-*.json  the persisted checkpoint's ``gaps``.
+#
+# TEXT carriers have no ``gaps`` structure to parse, so a raw-text scan is the
+# only mechanism that can ever see their signal:
+#   raw.json  the child CLI's result envelope, whose ``result`` is free prose
+#       (the model's final turn), never a nested ``gaps`` array. Measured over
+#       the retained corpus: 0/131 carry a structured ``gaps``, and 0/131 embed
+#       the bundle (max 9.5 KB — invoke.py never forwards Workflow tool-call
+#       inputs here), so scanning its bytes is both necessary and safe.
+#   code-gauntlet-report-*.md  markdown; there is no parse step to consult.
+#
 # Do not include bench-only fixture names such as deep-review-report.md.
-_DEGRADE_SCAN_PATTERNS = (
-    "workflows/wf_*.json",
-    "raw.json",
-    "code-gauntlet-report-*.md",
-    "code-gauntlet-checkpoint-all-*.json",
-)
+_DEGRADE_STRUCTURED = "structured"
+_DEGRADE_TEXT = "text"
+
+_DEGRADE_CARRIER_POLICY = {
+    "workflows/wf_*.json": _DEGRADE_STRUCTURED,
+    "raw.json": _DEGRADE_TEXT,
+    "code-gauntlet-report-*.md": _DEGRADE_TEXT,
+    "code-gauntlet-checkpoint-all-*.json": _DEGRADE_STRUCTURED,
+}
+
+# Single source of truth: the scanned patterns ARE the policy's keys, so the
+# two cannot desync. Scan order follows insertion order above.
+_DEGRADE_SCAN_PATTERNS = tuple(_DEGRADE_CARRIER_POLICY)
 
 
 def _load_json(path):
@@ -271,56 +308,93 @@ def _check_echo_identity(pr_dir, repo_root, label):
 
 
 def _iter_degrade_scan_paths(pr_dir):
-    """Yield artifact paths G3 scans for writer-degrade signals."""
+    """Yield ``(path, pattern)`` for artifacts G3 scans for writer degrades.
+
+    The pattern travels with the path so the caller can look up that carrier's
+    ``_DEGRADE_CARRIER_POLICY`` entry.
+    """
     pr_dir = Path(pr_dir)
     for pat in _DEGRADE_SCAN_PATTERNS:
         if "*" in pat:
             for path in sorted(pr_dir.glob(pat)):
                 if path.is_file():
-                    yield path
+                    yield path, pat
         else:
             path = pr_dir / pat
             if path.is_file():
-                yield path
+                yield path, pat
 
 
-def _gaps_strings(node):
-    """Yield string entries from any ``gaps`` array nested under ``node``."""
+def _gaps_lists(node):
+    """Yield every ``gaps`` array nested anywhere under ``node``."""
     if isinstance(node, dict):
         gaps = node.get("gaps")
         if isinstance(gaps, list):
-            for item in gaps:
-                if isinstance(item, str):
-                    yield item
+            yield gaps
         for value in node.values():
-            yield from _gaps_strings(value)
+            yield from _gaps_lists(value)
     elif isinstance(node, list):
         for value in node:
-            yield from _gaps_strings(value)
+            yield from _gaps_lists(value)
+
+
+def _strip_script_field(text):
+    """Blank out any JSON ``"script"`` field value ahead of a raw-text scan.
+
+    ``workflows/wf_*.json`` echoes the entire pipeline bundle into that field,
+    and the bundle's own source carries the degrade sentinels as ordinary
+    substrings (issue #52). Handles both a well-formed value and one
+    truncated mid-write.
+
+    Only STRUCTURED carriers get this treatment. The unterminated-field pattern
+    necessarily runs to end-of-text, so applying it to a TEXT carrier could
+    swallow genuine trailing prose — and TEXT carriers never embed the bundle,
+    so there is nothing there to neutralize.
+    """
+    text = _SCRIPT_FIELD_RE.sub('"script":""', text)
+    return _SCRIPT_FIELD_OPEN_RE.sub('"script":""', text)
 
 
 def _scan_degrade_text(pr_dir):
     """Return basenames of artifacts carrying writer-degrade signals.
 
-    Primary signal: compact Workflow return ``gaps`` (in ``workflows/wf_*.json``
-    / ``raw.json``). Secondary: report/checkpoint text that happens to echo it.
+    A STRUCTURED carrier is judged by its parsed ``gaps`` array and nothing
+    else: the presence of any ``gaps`` list — *including an empty one* —
+    settles the question, so the healthy ``result.gaps == []`` shape reads as
+    clean instead of falling through to a byte scan that the embedded pipeline
+    bundle would always match (issue #52).
+
+    A structured carrier that will not parse, or that has no ``gaps`` anywhere,
+    is still scanned — reporting "clean" for an artifact we could not read
+    would be a new way to lose a run — but with the bundle-bearing ``script``
+    field blanked first. TEXT carriers have no structure to consult and are
+    scanned as-is. See ``_DEGRADE_CARRIER_POLICY`` for the classification.
     """
     hits = []
     seen = set()
-    for path in _iter_degrade_scan_paths(pr_dir):
+    for path, pattern in _iter_degrade_scan_paths(pr_dir):
         label = str(path.relative_to(pr_dir)) if path.is_relative_to(pr_dir) else path.name
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        matched = bool(_DEGRADE_RE.search(text))
-        if not matched and path.suffix == ".json":
+        if _DEGRADE_CARRIER_POLICY[pattern] == _DEGRADE_STRUCTURED:
             try:
                 data = json.loads(text)
             except (json.JSONDecodeError, ValueError):
                 data = None
-            if data is not None:
-                matched = any(_DEGRADE_RE.search(g) for g in _gaps_strings(data))
+            gaps_lists = list(_gaps_lists(data)) if data is not None else []
+            if gaps_lists:
+                matched = any(
+                    _DEGRADE_RE.search(item)
+                    for gaps in gaps_lists
+                    for item in gaps
+                    if isinstance(item, str)
+                )
+            else:
+                matched = bool(_DEGRADE_RE.search(_strip_script_field(text)))
+        else:
+            matched = bool(_DEGRADE_RE.search(text))
         if matched and label not in seen:
             seen.add(label)
             hits.append(label)
