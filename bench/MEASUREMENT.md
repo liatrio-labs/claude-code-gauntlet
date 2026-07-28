@@ -95,6 +95,40 @@ python3 bench/run.py --check <RUN_ID>
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
 
+### Reading a FAIL — the tier has a non-change failure floor
+
+A red checker does **not** by itself mean the change under test is broken. Two
+failure modes fire on clean code and both have been observed on branches that
+were otherwise correct, so triage the reason before drawing a conclusion.
+
+**`config_echo_mismatch` — 6 of 140 collected children (4.3%).** Reason
+distribution across all 30 retained run dirs: `ok` 130, `config_echo_mismatch`
+6, `plugin_mutated_by_child` 3, `is_error(success)` 1. The child renders the
+Phase 1 identity receipt as prose in its final message (e.g.
+`**plugin 3.2.2 · PIPELINE_VERSION 3.2.2**`) instead of the machine-readable
+`pipeline_version=… (bundle)` / `plugin_root=… (resolved)` lines
+`_echo_ok` parses from stdout, the `.result` envelope, or the report `.md`.
+The review itself can be complete underneath it — on
+`smoke-20260728-144630-a162ecd` the affected child returned `ok:true`, all 8
+phases, zero gaps, a full artifact set and a captured dry-run payload. Confirm
+that before re-running: an `invalid` with a complete artifact set is a
+formatting miss, not a pipeline failure. (Distinct from
+`workflow_backgrounded`, which the runner labels separately — see gate 2b in
+`bench/runner/invoke.py`.)
+
+**`origin=unknown` from artifact-writer transcription drift.** The writer is a
+sampled agent, not a function (see CLAUDE.md, "The by-value writer is not
+trustworthy"), and a corrupted slice-input file makes `verify_findings.py`
+refuse the slice, degrading every finding in it to `origin=unknown` and
+tripping gate 3. Measured on two consecutive smokes:
+`smoke-20260727-205454-f99d948` (`receipt nonce mismatch`, plus
+`artifact-content-proof` divergence on all 3 PRs and one assemble refusal) and
+`smoke-20260728-144630-a162ecd` (one stray `}` appended after an otherwise
+complete document, on 2 of 3 PRs — 23 findings lost, all recoverable with
+`raw_decode`; see issue #69). Until that is fixed in the parser, expect gate 3
+to be the tier's least stable gate, and diff the run's `wf_*.json` `gaps`
+against the previous smoke before attributing it to the change under test.
+
 CI: `.github/workflows/bench-smoke.yml` (`workflow_dispatch`) runs smoke then
 `--check` on the newest run dir; the job fails if either step fails. Bare
 mirrors under `bench/workspace/mirrors/` are cached on GH-hosted runners via
