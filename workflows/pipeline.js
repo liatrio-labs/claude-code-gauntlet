@@ -2718,16 +2718,40 @@ const VERIFY_SCHEMA = {
   required: ['status'], // discriminated union: receipt/result only present on status:'ok'
 };
 
+// Dispatches per verify slice: the first executor call plus EXACTLY ONE deterministic
+// re-dispatch when that call comes back untrusted (verifySliceWithRetry).
+//
+// It is a named constant because two independent things must agree with the retry
+// verifySliceWithRetry actually performs: worstCaseAgentCount's verify term (a guard that
+// undercounts the worst case is a guard that does not hold) and the tests that pin the
+// dispatch count. Exported so those tests assert against THIS value rather than a
+// hand-copied literal — raise it here without touching verifySliceWithRetry and the
+// dispatch-count test fails instead of the guard silently over-counting.
+const VERIFY_ATTEMPTS_PER_SLICE = 2;
+
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
 // Slices findings into limits.verifySliceSize chunks and dispatches ONE `executor`
 // agent per slice, SEQUENTIALLY (not parallel()) so each envelope pairs to its slice by
 // order. Each executor runs the pinned verify_findings.py receipt command and returns
 // VERIFY_SCHEMA. A slice is TRUSTED only when status==='ok' AND the receipt echoes the
 // dispatched nonce, head sha, and slice length (n_in — the truncation guard: proof the
-// script saw every finding we sent). ANY untrusted slice — receipt mismatch,
-// status:'failed', or an agent() throw — degrades the WHOLE set to the UNVERIFIED path:
-// every ORIGINAL finding re-emitted with origin='unknown' (surfaced-classification
-// skipped), a loud gap, verified=false. Findings are never dropped, success never faked.
+// script saw every finding we sent).
+//
+// DEGRADATION IS PER SLICE (issue #54, and issue #25 requirement 3). An untrusted slice
+// — receipt mismatch, status:'failed', an agent() throw, or a slice whose --input file
+// was never provably written — degrades ONLY ITS OWN findings to the UNVERIFIED shape
+// (origin='unknown', surfaced-classification skipped) and the loop keeps going; slices
+// that verify cleanly keep their verified output. This replaced an all-or-nothing
+// `break` under which one transient hiccup on slice 0 cost EVERY slice its
+// classification: measured live on 2026-07-27 (smoke-20260727-205454-f99d948), a single
+// dropped nonce echo marked all 16 findings of a one-slice PR origin=unknown. The size
+// of the damage now tracks the size of the fault.
+//
+// Findings are never dropped and success is never fabricated, now at slice granularity:
+// every finding leaves this stage either as its slice's trusted verified output or as
+// itself with origin='unknown' — never missing, never silently upgraded. `verified` is
+// true only when ZERO slices degraded, so the one top-level boolean keeps meaning "this
+// whole run's classification is trustworthy".
 async function verifyStage(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -2750,64 +2774,137 @@ async function verifyStage(ctx, input) {
   // executor reads ${inputPathBase}.slice{i}.json, but the workflow script has no disk
   // access and the merged findings exist only mid-workflow (the skill CANNOT pre-write
   // them). One or more artifact-writer dispatches (segmented like the report stage when
-  // the payload is large) write them by value. Any writer failure -> the WHOLE set takes
-  // the UNVERIFIED path, exactly like an untrusted slice: never fabricate a verification.
+  // the payload is large) write them by value. A writer GROUP that fails takes only the
+  // slices IT carried to the UNVERIFIED path — never fabricate a verification for a
+  // slice whose input is not provably on disk, and never punish the slices whose input is.
   const materialized = await materializeVerifySlices(c, inp, slices, policy);
-  if (!materialized.ok) return unverifiedResult(findings, materialized.reason);
 
-  const verifiedOut = [];
-  let failureReason = null;
+  const out = [];
+  const gaps = [];
+  let degradedSlices = 0;
 
-  for (let i = 0; i < slices.length && failureReason === null; i += 1) {
+  // The output is assembled in SLICE-INDEX order — trusted output and degraded originals
+  // alike — because downstream ranking (applyChallenges' stable sort on severity then
+  // confidence) breaks ties by array position. Completion order or "trusted first" would
+  // make delivery ordering vary run to run for tied findings.
+  for (let i = 0; i < slices.length; i += 1) {
     const slice = slices[i];
-    // Per-slice nonce: derive `${nonce}.${i}` so two equal-length slices can never
-    // satisfy each other's receipt (a slice-confusion / replay defense on top of the
-    // base nonce). The base nonce is charset-validated at the args waist (args.js).
-    const sliceNonce = `${nonce}.${i}`;
-    let env;
-    try {
-      // agent(promptString, opts); the pinned command is embedded in the prompt
-      // (verifyPrompt), which is how the executor agent receives it.
-      env = await c.agent(verifyPrompt(inp, i), {
-        label: `verify-slice-${i}`,
-        agentType: 'code-gauntlet:executor',
-        model,
-        schema: VERIFY_SCHEMA,
-      });
-    } catch (e) {
-      failureReason = `executor threw on slice ${i} (${(e && e.message) || 'unknown'})`;
-      break;
+    const degrade = (detail) => {
+      out.push(...degradedSlice(slice));
+      gaps.push(verifyDegradeGap(detail, slice.length, findings.length));
+      degradedSlices += 1;
+    };
+
+    // No write proof for this slice's --input file: the executor would read a file that
+    // may not exist, so it is never dispatched. Only this slice degrades.
+    const unwritten = materialized.failed.get(i);
+    if (unwritten !== undefined) {
+      degrade(`slice ${i} (slice-input group ${unwritten.group}): ${unwritten.reason}`);
+      continue;
     }
-    const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length });
-    if (!trust.ok) {
-      failureReason = `slice ${i}: ${trust.reason}`;
-      break;
+
+    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort });
+    if (!attempt.ok) {
+      degrade(`slice ${i}: ${attempt.reason}`);
+      continue;
     }
     // Trusted: collect the enriched verified findings (origin new/surfaced set by Python;
-    // cross_file_refs preserved verbatim for downstream surfaced-classification).
-    const verified = env.result && Array.isArray(env.result.verified) ? env.result.verified : [];
-    verifiedOut.push(...verified);
+    // cross_file_refs preserved verbatim for downstream surfaced-classification). Findings
+    // the script really eliminated are absent by design — trustSlice's content-fidelity
+    // stamp is what proves an elimination came from the script and not from the echo.
+    out.push(...attempt.verified);
+    if (attempt.gap) gaps.push(attempt.gap);
   }
 
-  if (failureReason !== null) return unverifiedResult(findings, failureReason);
-
-  return { findings: verifiedOut, verified: true, gaps: [] };
+  return { findings: out, verified: degradedSlices === 0, gaps };
 }
 
-// The UNVERIFIED degradation: every ORIGINAL finding re-emitted with origin='unknown'
-// (surfaced-classification skipped), verified=false, a loud gap. Findings are never
-// dropped and success is never fabricated. Reached by an untrusted slice, an executor
-// throw, OR a slice-input writer failure. Numeric-string fields are pinned here for the
-// same reason they are pinned on the slice-input path: the trusted path returns the
-// script's re-scored numbers, but this path re-emits discovery-shaped findings whose
-// confidence is the schema's numeric STRING ("85") — leaked downstream, the filter's
-// consensus `+` boost concatenates ("85" + 10 -> "8510" -> clamped to 100).
-function unverifiedResult(findings, reason) {
-  return {
-    findings: findings.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' })),
-    verified: false,
-    gaps: [`verify: UNVERIFIED — ${reason}; all ${findings.length} finding(s) marked origin=unknown, surfaced-classification skipped`],
-  };
+// One slice's share of the UNVERIFIED degradation: its ORIGINAL findings re-emitted with
+// origin='unknown' (surfaced-classification skipped). Nothing is dropped and nothing is
+// upgraded. Numeric-string fields are pinned here for the same reason they are pinned on
+// the slice-input path: the trusted path returns the script's re-scored numbers, but this
+// path re-emits discovery-shaped findings whose confidence is the schema's numeric STRING
+// ("85") — leaked downstream, the filter's consensus `+` boost concatenates ("85" + 10 ->
+// "8510" -> clamped to 100).
+function degradedSlice(slice) {
+  return slice.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' }));
+}
+
+// The loud gap for one degraded slice. `detail` names the slice (and, for a write
+// failure, the writer group) and carries the underlying reason, so a reader can tell
+// WHICH share of the run lost its classification and why; `k of n` states the blast
+// radius directly, which is the whole point of per-slice degradation — a run that
+// degrades 2 of 16 findings must not read the same as one that degrades all 16.
+//
+// The UNVERIFIED token is load-bearing: tests and the bench checker's degrade scan key
+// on substrings of this string, and the underlying reason is passed through VERBATIM (a
+// write-proof failure's "(no write proof)" is exactly what bench/runner/check.py's
+// _DEGRADE_RE matches — paraphrasing it would silently disable that detection).
+function verifyDegradeGap(detail, k, n) {
+  return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped`;
+}
+
+// verifySliceWithRetry -> { ok:true, verified, gap } | { ok:false, reason }
+// One slice, dispatched at most VERIFY_ATTEMPTS_PER_SLICE times: the first executor call
+// and — only if that one came back untrusted — exactly ONE re-dispatch before degrading.
+// Same shape and rationale as writeArtifactsDerived's single retry: the executor is a
+// SAMPLED AGENT, not a function, so a second dispatch is a fresh sample and is a
+// plausible fix for the whole failure set here (a dropped/garbled receipt echo, a
+// truncated result body, a fabricated elimination, a schema-retry exhaustion or timeout
+// throw). That is why this retries uniformly where the persist path classifies: there is
+// no verify failure class for which "our dispatch never reached the script" is provable,
+// so a blanket single retry is both simpler and never less honest than a taxonomy.
+//
+// The retry carries a DISTINCT nonce (`${nonce}.${i}.r1`). Re-using the slice nonce
+// would move the exact confusion trustSlice defends against from space (two equal-length
+// slices satisfying each other's receipts) into time (attempt 2 satisfied by a replay of
+// attempt 1's receipt) — and since attempt 1 was untrusted, a fresh receipt is precisely
+// the thing we are re-dispatching to obtain. The suffix stays inside the args-waist nonce
+// charset (args.js NONCE_RE) and inside one AST-safe word token.
+//
+// The nonce is now COMPUTED ONCE and threaded into verifyPrompt/verifyCommand. It used
+// to be derived independently at both sites, which silently required the two formulas to
+// stay identical; an attempt-varying nonce makes that a live bug rather than a latent one.
+async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort }) {
+  const attempt = (sliceNonce, label) =>
+    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label });
+
+  const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
+  if (first.ok) return { ok: true, verified: first.verified, gap: null };
+
+  const second = await attempt(`${nonce}.${i}.r1`, `verify-slice-${i}-retry`);
+  if (second.ok) {
+    // Disclosed, not degraded: no finding lost its classification, but the run states
+    // that it took two dispatches to get there (the persist path's retry discloses the
+    // same way). Deliberately carries no UNVERIFIED token — nothing was degraded.
+    return {
+      ok: true,
+      verified: second.verified,
+      gap: `verify-slice-retry: slice ${i}'s first executor dispatch was untrusted (${first.reason}); a second dispatch was trusted and this slice's verified findings are from that attempt`,
+    };
+  }
+  return { ok: false, reason: `${second.reason} — retried once after the first attempt failed (${first.reason})` };
+}
+
+// One executor dispatch for one slice. Never throws: a thrown agent() becomes an
+// untrusted result carrying the message, exactly as the pre-retry loop recorded it.
+async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label }) {
+  let env;
+  try {
+    // agent(promptString, opts); the pinned command is embedded in the prompt
+    // (verifyPrompt), which is how the executor agent receives it.
+    env = await c.agent(verifyPrompt(inp, i, sliceNonce), {
+      label,
+      agentType: 'code-gauntlet:executor',
+      model,
+      schema: VERIFY_SCHEMA,
+    });
+  } catch (e) {
+    return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
+  }
+  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length });
+  if (!trust.ok) return { ok: false, reason: trust.reason };
+  return { ok: true, verified: env.result && Array.isArray(env.result.verified) ? env.result.verified : [] };
 }
 
 // Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1,
@@ -2828,20 +2925,22 @@ function pinNumericFields(finding) {
 
 // Dispatch the artifact-writer to persist each slice's --input JSON (the shape
 // verify_findings.py --input reads: { findings, base_branch }). Segmented under the
-// shared char budget. Returns { ok } / { ok:false, reason }; a throw OR a null result
-// is a failure (the caller degrades the whole set to UNVERIFIED).
+// shared char budget. Returns { failed } — a Map from SLICE INDEX to
+// { group, reason } for every slice whose input file is not provably on disk. An
+// empty map means every slice's input was written and proven.
 //
 // The per-GROUP fan-out goes through parallel() (issue #38, S2) — the groups are
-// independent writes to distinct paths. NOTE this is the group loop only; verifyStage's
-// per-SLICE executor loop stays sequential and fail-fast on purpose (each envelope pairs
-// to its slice by order). Two properties keep the degradation byte-identical to the old
-// sequential loop for any given failure set:
-//   - every thunk owns its try/catch and returns { ok } / { ok:false, reason }, so a
-//     thrown member can never escape and parallel() never has to null it; and
-//   - the results are evaluated in INDEX order and the FIRST failure's reason is returned,
-//     which is exactly the reason the sequential loop would have stopped on.
-// (The extra groups after the first failure are now dispatched rather than skipped — a
-// fan-out cost, never an output difference.)
+// independent writes to distinct paths — and each thunk owns its try/catch, so a thrown
+// member can never escape and parallel() never has to null it (the message survives into
+// the reason string). NOTE this is the group loop only; verifyStage's per-SLICE executor
+// loop stays sequential on purpose (each envelope pairs to its slice by order).
+//
+// A failed group takes down only ITS OWN slices (issue #54). This used to return the
+// FIRST failure in group-index order and degrade the entire run, which threw away both
+// the groups that wrote successfully and every other group's failure reason. Failures are
+// still surfaced in a deterministic order — verifyStage walks slices by index and groups
+// are contiguous in that index, so gap order is fixed by construction, not by which
+// parallel member happened to settle first.
 async function materializeVerifySlices(c, inp, slices, policy) {
   const v = inp.verify || {};
   const inputPathBase = v.inputPathBase || 'phase4-input';
@@ -2850,6 +2949,10 @@ async function materializeVerifySlices(c, inp, slices, policy) {
     path: `${inputPathBase}.slice${i}.json`,
     content: { findings: slice.map(pinNumericFields), base_branch: v.baseBranch },
   }));
+  // path -> slice index. Keyed on the PATH (unique per slice by construction) rather than
+  // on a group's position, so attributing a group's failure to its slices cannot be
+  // silently invalidated by a future change to how entries are chunked.
+  const sliceOfPath = new Map(entries.map((e, i) => [e.path, i]));
   const groups = chunkBySerializedSize(entries, SEGMENT_CHAR_BUDGET);
   const thunks = groups.map((group, g) => async () => {
     let result;
@@ -2868,7 +2971,9 @@ async function materializeVerifySlices(c, inp, slices, policy) {
     // dispatched. WRITTEN_SCHEMA declares no `required`, so an empty { written: [] } is
     // schema-valid — without this a writer that persisted nothing would pass and the
     // executor would then read slice-input files that were never written. An uncovered
-    // path degrades the WHOLE set to UNVERIFIED (findings kept), never a fabricated verify.
+    // path degrades THIS GROUP's slices to UNVERIFIED (findings kept), never a fabricated
+    // verify. The literal "(no write proof)" is the bench checker's degrade sentinel
+    // (bench/runner/check.py _DEGRADE_RE) — do not paraphrase it.
     const written = new Set(Array.isArray(result.written) ? result.written : []);
     const dispatchedPaths = group.map((e) => e.path);
     if (!dispatchedPaths.every((p) => written.has(p))) {
@@ -2878,14 +2983,21 @@ async function materializeVerifySlices(c, inp, slices, policy) {
   });
 
   const results = await c.parallel(thunks);
+  const failed = new Map();
   for (let g = 0; g < groups.length; g += 1) {
     const r = results[g];
     // A null member is unreachable while the thunks above swallow their own throws; it is
     // still handled so a platform-side null can never be mistaken for a successful write.
-    if (!r) return { ok: false, reason: `slice-input writer group ${g} produced no result` };
-    if (r.ok !== true) return { ok: false, reason: r.reason };
+    const reason = !r
+      ? `slice-input writer group ${g} produced no result`
+      : (r.ok === true ? null : r.reason);
+    if (reason === null) continue;
+    for (const e of groups[g]) {
+      const idx = sliceOfPath.get(e.path);
+      if (idx !== undefined) failed.set(idx, { group: g, reason });
+    }
   }
-  return { ok: true };
+  return { failed };
 }
 
 function verifySliceWriterPrompt(entries) {
@@ -2946,7 +3058,14 @@ function trustSlice(env, { nonce, headShaShort, n }) {
 // prefix, or shell operators). Per-slice input/output paths are sha-scoped and index-
 // suffixed; verifyStage materializes the slice inputs via the artifact-writer (see
 // materializeVerifySlices) before dispatch, then the executor reads the slice output.
-function verifyCommand(inp, i) {
+//
+// `sliceNonce` is THREADED IN, never re-derived: it is the same value verifySliceWithRetry
+// hands trustSlice as the expected receipt nonce, so argv and the trust check cannot
+// disagree. It varies by ATTEMPT as well as by slice (the retry's `.r1` suffix), which is
+// exactly what a second, independently-derived formula here would get wrong. The paths do
+// NOT vary by attempt: a retry re-runs the same script over the same slice input and
+// overwrites the same output.
+function verifyCommand(inp, i, sliceNonce) {
   const v = inp.verify || {};
   const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
   const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
@@ -2954,7 +3073,7 @@ function verifyCommand(inp, i) {
     'python3', v.scriptPath || 'scripts/verify_findings.py',
     '--input', inPath,
     '--output', outPath,
-    '--nonce', `${inp.nonce}.${i}`, // per-slice derived nonce (matches trustSlice)
+    '--nonce', sliceNonce,
     '--head-sha', inp.headShaShort,
     '--base-branch', v.baseBranch || 'main',
   ];
@@ -2962,8 +3081,8 @@ function verifyCommand(inp, i) {
   return parts.join(' ');
 }
 
-function verifyPrompt(inp, i) {
-  return `Run exactly this command, then read the --output file and return its contents verbatim via the schema:\n${verifyCommand(inp, i)}`;
+function verifyPrompt(inp, i, sliceNonce) {
+  return `Run exactly this command, then read the --output file and return its contents verbatim via the schema:\n${verifyCommand(inp, i, sliceNonce)}`;
 }
 
 // --- Agent-count coarsening -------------------------------------------------
@@ -2991,12 +3110,20 @@ const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findi
 // worstCaseAgentCount(limits, nFiles, nFindings) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate
 // batches + min(nFindings, challengeCap) challengers + 2 (report + writer).
+//
+// The verify term counts VERIFY_ATTEMPTS_PER_SLICE dispatches per slice, because every
+// slice can independently take its one deterministic retry (verifySliceWithRetry) and a
+// worst case that assumes the happy path is not a bound. The remaining terms are still
+// NOMINAL: the report/writer pair can segment, and writeArtifactsDerived has its own
+// single retry, neither of which is counted here. That looseness is covered by the
+// headroom between AGENT_COUNT_GUARD and the platform ceiling; the verify term is the one
+// that scales with finding count, which is why it is the one made exact.
 function worstCaseAgentCount(limits, nFiles, nFindings) {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = Math.max(0, nFindings || 0);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
-  const verifyCalls = ceilDiv(findings, effectiveSliceSize(L, findings));
+  const verifyCalls = ceilDiv(findings, effectiveSliceSize(L, findings)) * VERIFY_ATTEMPTS_PER_SLICE;
   const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
@@ -3029,7 +3156,11 @@ function coarsenLimits(limits, nFiles, nFindings) {
       L.summarizeBucketSize = effectiveBucketSize(L) * 2;
       continue;
     }
-    const verifyTerm = ceilDiv(findings, effectiveSliceSize(L, findings));
+    // Same VERIFY_ATTEMPTS_PER_SLICE scaling worstCaseAgentCount applies, so the "reduce
+    // whichever term is largest" choice is made against each term's real contribution to
+    // the count it is trying to pull down. Doubling verifySliceSize still strictly halves
+    // this term, so the loop's termination argument is unchanged.
+    const verifyTerm = ceilDiv(findings, effectiveSliceSize(L, findings)) * VERIFY_ATTEMPTS_PER_SLICE;
     const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     if (validateTerm >= verifyTerm && validateTerm >= challengeTerm) {

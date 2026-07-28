@@ -16,7 +16,7 @@
 // gate after draining the microtask queue and the test asserts the valve never fired.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { runWith, reportStage, verifyStage, slimPersistedCheckpoints } from '../src/stages.js';
+import { runWith, reportStage, verifyStage, slimPersistedCheckpoints, parseWriterPayload } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
 // Drain the microtask queue far enough that a SEQUENTIAL implementation has provably
@@ -362,16 +362,37 @@ test('D2.3: the verify slice-input writer groups dispatch through parallel(), no
 
   assert.equal(deadlocked, false, 'writer group 1 must dispatch while group 0 is still in flight');
   assert.ok(labels.filter((l) => l.startsWith('verify-input-writer-')).length > 1, 'more than one writer group dispatched');
-  assert.equal(out.verified, false, 'no write proof -> the whole set degrades to UNVERIFIED');
+  // Both groups return { written: [] } here, so the WHOLE set degrades — but that is now
+  // incidental to this fixture (every group failed), not a first-failure-wins property.
+  // Per-group / per-slice attribution is pinned by the two tests below, not here.
+  assert.equal(out.verified, false, 'no write proof from either group -> every slice degrades to UNVERIFIED');
 });
 
-test('D2.3: materializeVerifySlices reports the FIRST failure in index order (message unchanged)', async () => {
-  const findings = bigVerifyFindings();
+// Pulls the slice index back out of a materialized slice-input path
+// (`${inputPathBase}.slice${i}.json`) so a test can attribute a writer group's
+// dispatched entries to slice indices without hardcoding chunkBySerializedSize's
+// packing boundaries.
+function sliceIndexFromPath(path) {
+  const m = /\.slice(\d+)\.json$/.exec(path);
+  if (!m) throw new Error(`path has no slice index: ${path}`);
+  return Number(m[1]);
+}
+
+test('D2.3: materializeVerifySlices surfaces EVERY failed group\'s own reason, attributed to its own slices, in slice-index order', async () => {
+  // issue #54: this used to be "first failure wins, the rest of the run degrades under
+  // that one message" — group 0 threw and its reason alone used to appear once. Now
+  // every failed group degrades only the slices IT carried, each with ITS OWN reason,
+  // and neither group's slices ever borrow the other's message.
+  const findings = bigVerifyFindings(); // 60 -> exactly two writer groups under SEGMENT_CHAR_BUDGET
+  const groupSliceIndices = {};
   const ctx = {
     agent: async (prompt, opts) => {
       const label = (opts || {}).label || '';
-      if (label === 'verify-input-writer-0') throw new Error('later-group boom');
-      if (label === 'verify-input-writer-1') return null; // an earlier-index failure exists at 0
+      if (label.startsWith('verify-input-writer-')) {
+        groupSliceIndices[label] = parseWriterPayload(prompt).map((e) => sliceIndexFromPath(e.path));
+      }
+      if (label === 'verify-input-writer-0') throw new Error('group-0 boom');
+      if (label === 'verify-input-writer-1') return null;
       return { written: [] };
     },
     parallel: async (thunks) => Promise.all(thunks.map(async (t) => {
@@ -382,24 +403,63 @@ test('D2.3: materializeVerifySlices reports the FIRST failure in index order (me
     findings, limits: { verifySliceSize: 1 }, policy: {}, nonce: 'n', headShaShort: 'abc1234',
     verify: { inputPathBase: 'p4', outputPathBase: 'p4o', baseBranch: 'main' },
   });
+
+  const g0 = groupSliceIndices['verify-input-writer-0'];
+  const g1 = groupSliceIndices['verify-input-writer-1'];
+  assert.ok(g0 && g0.length > 0, 'writer group 0 dispatched with at least one slice');
+  assert.ok(g1 && g1.length > 0, 'writer group 1 dispatched with at least one slice');
+  assert.equal(g0.length + g1.length, findings.length, 'exactly two writer groups cover every slice (fixture assumption)');
+  // Groups are contiguous chunks of the original slice order (issue #38's greedy
+  // packer never reorders), so group 0 is the low contiguous range and group 1 picks
+  // up immediately after it.
+  assert.deepEqual(g0, Array.from({ length: g0.length }, (_, i) => i), 'group 0 is a contiguous low range starting at slice 0');
+  assert.deepEqual(g1, Array.from({ length: g1.length }, (_, i) => g0.length + i), 'group 1 is the contiguous range immediately after group 0');
+
+  // Both groups failed here, so every slice degrades -> one gap per slice (per-slice
+  // granularity, not one gap per group), in strict slice-index order.
   assert.equal(out.verified, false);
-  assert.equal(out.gaps.length, 1);
-  // Group 0 threw -> its message wins, byte-identical to today's sequential first-failure.
-  assert.match(out.gaps[0], /slice-input writer threw \(later-group boom\)/);
-  assert.ok(!/returned null/.test(out.gaps[0]), 'a later group\'s failure must not win');
+  assert.equal(out.gaps.length, findings.length);
+  for (let i = 0; i < findings.length; i += 1) {
+    const gap = out.gaps[i];
+    assert.match(gap, new RegExp(`^verify: UNVERIFIED — slice ${i} \\(slice-input group `), `gap ${i} is attributed to slice ${i}`);
+    if (g0.includes(i)) {
+      assert.match(gap, /slice-input group 0\): slice-input writer threw \(group-0 boom\)/, `slice ${i} (group 0) carries group 0's own reason`);
+      assert.ok(!/returned null/.test(gap), `slice ${i} (group 0) must not borrow group 1's reason`);
+    } else {
+      assert.match(gap, /slice-input group 1\): slice-input writer returned null/, `slice ${i} (group 1) carries group 1's own reason`);
+      assert.ok(!/threw/.test(gap), `slice ${i} (group 1) must not borrow group 0's reason`);
+    }
+  }
 });
 
-test('D2.3: a MID-LIST writer failure still reports that group\'s reason, not a later one', async () => {
-  const findings = bigVerifyFindings(120); // >2 groups
+test('D2.3: a healthy writer group\'s slices reach the executor and stay verified while other groups fail (each with its own reason)', async () => {
+  const findings = bigVerifyFindings(120); // >2 writer groups; group 0 is healthy
   const seen = [];
+  const groupSliceIndices = {};
+  const FAILED_LABELS = new Set(['verify-input-writer-1', 'verify-input-writer-2']);
   const ctx = {
     agent: async (prompt, opts) => {
       const label = (opts || {}).label || '';
       seen.push(label);
-      const entries = JSON.parse(prompt.slice(prompt.lastIndexOf('PAYLOAD_JSON:') + 'PAYLOAD_JSON:'.length));
-      if (label === 'verify-input-writer-1') return null;
-      if (label === 'verify-input-writer-2') throw new Error('third-group boom');
-      return { written: entries.map((e) => e.path) };
+      if (label.startsWith('verify-input-writer-')) {
+        const entries = parseWriterPayload(prompt);
+        groupSliceIndices[label] = entries.map((e) => sliceIndexFromPath(e.path));
+        if (label === 'verify-input-writer-1') return null;
+        if (label === 'verify-input-writer-2') throw new Error('third-group boom');
+        return { written: entries.map((e) => e.path) };
+      }
+      if (label.startsWith('verify-slice-')) {
+        // A slice from a HEALTHY writer group reaches the executor. Make it trivially
+        // trusted (retry-agnostic: whichever attempt dispatches, its own nonce is
+        // echoed back), so this fixture proves reachability without asserting on retries.
+        const nonce = (prompt.match(/--nonce (\S+)/) || [])[1];
+        return {
+          status: 'ok',
+          receipt: { sha: 'abc1234', nonce, n_in: 1 },
+          result: { verified: [{ id: `verified-${nonce}` }], eliminated: [], batches: [], stats: {} },
+        };
+      }
+      throw new Error(`unexpected dispatch label: ${label}`);
     },
     parallel: async (thunks) => Promise.all(thunks.map(async (t) => {
       try { return await t(); } catch { return null; }
@@ -409,9 +469,62 @@ test('D2.3: a MID-LIST writer failure still reports that group\'s reason, not a 
     findings, limits: { verifySliceSize: 1 }, policy: {}, nonce: 'n', headShaShort: 'abc1234',
     verify: { inputPathBase: 'p4', outputPathBase: 'p4o', baseBranch: 'main' },
   });
-  assert.ok(seen.filter((l) => l.startsWith('verify-input-writer-')).length >= 3, 'at least three writer groups');
+
+  const writerLabels = Object.keys(groupSliceIndices).sort();
+  assert.ok(writerLabels.length > 2, 'at least three writer groups dispatched');
+  assert.ok('verify-input-writer-0' in groupSliceIndices, 'group 0 dispatched');
+  assert.ok('verify-input-writer-1' in groupSliceIndices, 'group 1 dispatched');
+  assert.ok('verify-input-writer-2' in groupSliceIndices, 'group 2 dispatched');
+
+  const failedIndices = [];
+  const healthyIndices = [];
+  for (const label of writerLabels) {
+    const idxs = groupSliceIndices[label];
+    (FAILED_LABELS.has(label) ? failedIndices : healthyIndices).push(...idxs);
+  }
+  failedIndices.sort((a, b) => a - b);
+  healthyIndices.sort((a, b) => a - b);
+  assert.equal(failedIndices.length + healthyIndices.length, findings.length, 'every slice belongs to exactly one writer group');
+  // Groups 1 and 2 are adjacent in the (unreordered) chunking, so their failed slices
+  // form one contiguous block.
+  for (let k = 1; k < failedIndices.length; k += 1) {
+    assert.equal(failedIndices[k], failedIndices[k - 1] + 1, 'failed-group slices form a contiguous block');
+  }
+
   assert.equal(out.verified, false);
-  assert.match(out.gaps[0], /slice-input writer returned null/, 'group 1 (the first failure) supplies the reason');
+  assert.equal(out.findings.length, findings.length, 'no finding is ever dropped');
+
+  // Slices from the healthy groups are NOT degraded and DID reach the executor.
+  for (const i of healthyIndices) {
+    assert.notEqual(out.findings[i].origin, 'unknown', `slice ${i} (healthy group) must not be degraded`);
+    assert.ok(String(out.findings[i].id).startsWith('verified-'), `slice ${i} carries the executor's trusted output, not the original finding`);
+    assert.notEqual(out.findings[i].id, findings[i].id, `slice ${i}'s output id is not the original finding's id`);
+    assert.ok(seen.some((l) => l === `verify-slice-${i}` || l === `verify-slice-${i}-retry`), `slice ${i} was dispatched to the executor`);
+  }
+  // Slices from the failed writer groups degrade to their ORIGINAL finding, origin=unknown,
+  // and are NEVER dispatched to the executor.
+  for (const i of failedIndices) {
+    assert.equal(out.findings[i].origin, 'unknown', `slice ${i} (failed writer group) degrades to origin=unknown`);
+    assert.equal(out.findings[i].id, findings[i].id, `slice ${i} keeps its original finding — nothing dropped`);
+    assert.ok(!seen.some((l) => l === `verify-slice-${i}` || l === `verify-slice-${i}-retry`), `slice ${i} (writer failure) is never dispatched to the executor`);
+  }
+
+  // Gaps: one per degraded slice, in strict slice-index order, each with its OWN
+  // group's reason — group 1's reason never appears on a group 2 slice and vice versa.
+  assert.equal(out.gaps.length, failedIndices.length);
+  const g1 = new Set(groupSliceIndices['verify-input-writer-1']);
+  const g2 = new Set(groupSliceIndices['verify-input-writer-2']);
+  for (let k = 0; k < failedIndices.length; k += 1) {
+    const i = failedIndices[k];
+    const gap = out.gaps[k];
+    assert.match(gap, new RegExp(`^verify: UNVERIFIED — slice ${i} \\(slice-input group `), `gap ${k} is attributed to slice ${i}`);
+    if (g1.has(i)) {
+      assert.match(gap, /slice-input group 1\): slice-input writer returned null/, `slice ${i} (group 1) carries group 1's own reason`);
+    } else {
+      assert.ok(g2.has(i), `slice ${i} belongs to group 1 or group 2`);
+      assert.match(gap, /slice-input group 2\): slice-input writer threw \(third-group boom\)/, `slice ${i} (group 2) carries group 2's own reason`);
+    }
+  }
 });
 
 // --- D2.3: report segments fan out through parallel() -----------------------

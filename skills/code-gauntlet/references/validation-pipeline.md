@@ -12,7 +12,7 @@ The Python scripts are still shipped and still pass their suites (parity is prov
 
 Classifies each finding as `new` (introduced by this change) or `surfaced` (pre-existing code exposed by the change), fact-checks evidence against file content, and validates line references against the diff. It is the one stage that still shells out to Python — the workflow has no shell, so it dispatches an **executor** agent per finding-slice.
 
-**The executor pattern.** The stage slices the merged findings into `limits.verifySliceSize` chunks and first dispatches the **artifact-writer** to persist each `${verify.inputPathBase}.slice{i}.json` (the workflow has no disk, so the writer materializes the slice inputs the script will read; a writer throw/null degrades the whole set to UNVERIFIED — never a fabricated verification). It then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs exactly:
+**The executor pattern.** The stage slices the merged findings into `limits.verifySliceSize` chunks and first dispatches the **artifact-writer** to persist each `${verify.inputPathBase}.slice{i}.json` (the workflow has no disk, so the writer materializes the slice inputs the script will read; the writer fans out in groups, and a group that throws / returns null / cannot prove its writes degrades only the slices THAT GROUP carried — never a fabricated verification). It then dispatches one `executor` agent per slice **sequentially** so each receipt pairs to its slice by order. Each executor runs exactly:
 
 ```
 python3 {verify.scriptPath} --input {inputPathBase}.slice{i}.json --output {outputPathBase}.slice{i}.json \
@@ -28,7 +28,9 @@ and returns the script's discriminated-union envelope verbatim:
 
 **Trust.** A slice is trusted only when `status==='ok'` AND the receipt echoes the dispatched nonce (`{nonce}.{i}`), head sha, and `n_in` (slice length), AND `verified.length + eliminated.length === n_in` (the truncation guard — proof the result body was not silently cut). The per-slice nonce (`{nonce}.{i}`) means two equal-length slices can never satisfy each other's receipts.
 
-**Degradation.** ANY untrusted slice — receipt mismatch, `status:'failed'`, or an executor throw — degrades the WHOLE set to the UNVERIFIED path: every original finding is re-emitted with `origin='unknown'`, surfaced-classification is skipped, a loud gap is recorded, and `verified=false`. Findings are never dropped and success is never faked.
+**Degradation is per slice (issues #54, #25 req. 3).** An untrusted slice — receipt mismatch, `status:'failed'`, an executor throw, or a slice whose `--input` file was never provably written by the artifact-writer — degrades only its OWN findings to `origin='unknown'` (surfaced-classification skipped) and the loop keeps going; trusted slices keep their verified output. This replaced an all-or-nothing `break`: measured live on 2026-07-27, a single dropped nonce echo on slice 0 marked all 16 findings of a one-slice PR `origin=unknown`. The blast radius now tracks the size of the fault.
+
+Before degrading, a slice gets **exactly one retry** (`VERIFY_ATTEMPTS_PER_SLICE=2`) with a distinct nonce (`{nonce}.{i}.r1`, so a replay of attempt 1's receipt cannot satisfy attempt 2). A slice recovered on retry emits a disclosure gap but is not counted as degraded; a slice that fails both attempts degrades with both reasons chained. A writer-group failure while materializing slice inputs degrades only the slices that group carried — other groups' slices still reach the executor. `verified` is true only when zero slices degraded. Findings are never dropped and success is never faked — every finding leaves the stage either as its slice's trusted verified output or as itself with `origin='unknown'`.
 
 **Classification rules** (applied by `verify_findings.py` on the trusted path):
 
