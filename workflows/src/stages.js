@@ -96,11 +96,11 @@ export function contextReadPlan(lines, chars) {
 }
 
 // sharedContextLine(inp) -> the leading context-read sentence, or '' when no context
-// path was threaded. SINGLE SOURCE for every stage that names the shared context file
-// (summarize, discover, validate). Adding a stage that hand-rolls this sentence
-// re-opens issue #48 for that stage silently, so the guard in
-// workflows/test/stages_context_read.test.js pins that the literal appears exactly
-// once in this module — here.
+// path was threaded. Called ONCE, by runWith, which threads the resulting STRING to the
+// stages that need it. The stages never receive the path, so no stage is ABLE to build a
+// context-read instruction of its own — the property that used to be defended by scanning
+// this file's source text for hand-rolled copies. Capability removed rather than guarded:
+// an adversarial review defeated the text-scan version in one edit by rewording.
 export function sharedContextLine(inp) {
   const path = inp && inp.contextPath;
   if (!path) return '';
@@ -110,7 +110,12 @@ export function sharedContextLine(inp) {
   const warn = 'A single Read of this file returns only PART of it and gives NO truncation notice, so one Read is never the whole file.';
   const plan = contextReadPlan(inp.contextLines, inp.contextChars);
   if (plan.length === 0) {
-    return `${head} ${warn} Read it to its end: after each Read, issue another with offset set past the last line you received, and repeat until a Read returns no further content. `;
+    // No measurement (or one too large to plan): the terminus is unknown, so end-detection
+    // is unavoidable here. The STEPPING still is not — spelling out fixed-size steps keeps
+    // the only judgment "did that call return anything", instead of the open-ended "have I
+    // read enough yet" that issue #48 records an agent answering wrong.
+    const s = READ_PLAN_MAX_LINES;
+    return `${head} ${warn} Read it in ${s}-line steps — Read(offset=1, limit=${s}), then Read(offset=${1 + s}, limit=${s}), then Read(offset=${1 + 2 * s}, limit=${s}), continuing to step by ${s} until a call returns no further content. Do not stop before that. `;
   }
   const total = inp.contextLines;
   if (plan.length === 1) {
@@ -204,9 +209,10 @@ export async function summarize(ctx, input) {
 }
 
 function summarizePrompt(inp, files) {
-  // Was a bare one-sentence context pointer with no read plan — the summarizer opens the
-  // SAME file the discovery agents do and carried the same silent-partial exposure (#48).
-  const ctxLine = sharedContextLine(inp);
+  // Prebuilt by runWith (issue #48): the summarizer opens the SAME file the discovery
+  // agents do, so it gets the same read plan. This stage cannot construct one — it never
+  // sees the context path.
+  const ctxLine = inp.contextLine || '';
   // Single-source the size number (live-run L7): triage said 1211 changed lines, the
   // report said ~1218 because the summarizer re-derived it from the diff. The waist's
   // changedLines is the one authoritative count.
@@ -445,7 +451,7 @@ export async function discover(ctx, input) {
 // conventions-and-intent: typo/naming). Scoping lives entirely in the registry; no
 // agent-name special-casing here.
 function discoverPrompt(inp, spec) {
-  const ctxLine = sharedContextLine(inp);
+  const ctxLine = inp.contextLine || '';
   const dims = spec.dimensions.join(', ');
   const base = `${ctxLine}This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
   return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
@@ -970,7 +976,7 @@ export async function validateStage(ctx, input) {
 }
 
 function validatePrompt(inp, batch) {
-  const ctxLine = sharedContextLine(inp);
+  const ctxLine = inp.contextLine || '';
   // Each finding carries its location + claim so the validator can open the right code
   // (validator.md step 1: "Read the code at the file and line range specified"). Passing
   // only ids left validators unable to locate anything — they scored blind.
@@ -2222,10 +2228,29 @@ export async function runWith(ctx, rawArgs) {
   // it into the exact Read calls the prompt enumerates — issue #48. Both are OPTIONAL:
   // an older caller that stamps neither gets the count-free read-to-end wording, which
   // is what every caller had before this landed.
-  const contextSize = { contextLines: A.contextLines, contextChars: A.contextChars };
+  // Built ONCE, here, and threaded to the stages as a plain string. The stages are given
+  // no path and no size, so none of them CAN name the shared context file without the read
+  // plan — the invariant is structural, not asserted over this file's source text.
+  const contextLine = sharedContextLine({
+    contextPath, contextLines: A.contextLines, contextChars: A.contextChars,
+  });
+  // DEGRADED IS NOT SILENT. Absent measurement is legal (hard-failing would trade a partial
+  // read for a dead run — a worse deal), but it drops the pipeline back to the count-free
+  // read-to-end wording: the agent's own judgment about when it has read enough, which is
+  // exactly the judgment that failed in #48. Phase 2 is model-executed and can skip the
+  // stamp, so this is a live path, not a theoretical one — and without a gap the whole fix
+  // reverts with nothing anywhere saying so. Same contract args.js states for a tolerated
+  // null: what was lost, and what to do about it.
+  const contextSizeGap = A.contextLines === undefined
+    ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
+      + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
+      + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
+      + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
+      + '(and contextChars) from the Phase 2 step that writes the context file.']
+    : [];
   const checkpoints = readCheckpoints(c, A);
 
-  const gaps = [...nullArgGaps];
+  const gaps = [...nullArgGaps, ...contextSizeGap];
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';
@@ -2267,10 +2292,10 @@ export async function runWith(ctx, rawArgs) {
 
   try {
     const summarizeSettled = replay('summarize') ? null : settle(summarize(c, {
-      changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextPath, ...contextSize,
+      changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextLine,
     }));
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: A.agentFlags || {}, limits, policy, contextPath, ...contextSize,
+      agentFlags: A.agentFlags || {}, limits, policy, contextLine,
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
@@ -2294,7 +2319,7 @@ export async function runWith(ctx, rawArgs) {
     gaps.push(...(verifyOut.gaps || []));
 
     const validateOut = await runPhase('validate', () => validateStage(c, {
-      findings: verifyOut.findings || [], limits, policy, contextPath, ...contextSize,
+      findings: verifyOut.findings || [], limits, policy, contextLine,
     }));
     gaps.push(...(validateOut.gaps || []));
 
@@ -2304,12 +2329,11 @@ export async function runWith(ctx, rawArgs) {
     }));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
-      // No contextPath: challengeStage never reads one, and challengePrompt takes only the
+      // No context line: challengeStage never read one, and challengePrompt takes only the
       // finding — the challenger is structurally blind (it gets title/description/location
-      // and opens the code itself). The field was threaded here but dead; passing it while
-      // nothing consumes it invites a future edit to "use the context we already have" and
-      // quietly break the blindness the challenge round exists for. Surfaced by the
-      // contextPath/contextSize pairing guard in stages_context_read.test.js (issue #48).
+      // and opens the code itself). A dead contextPath was threaded here until issue #48;
+      // passing context to a stage that must not use it invites a future edit to "use the
+      // context we already have" and quietly break the blindness the round exists for.
       findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
     gaps.push(...(challengeOut.gaps || []));

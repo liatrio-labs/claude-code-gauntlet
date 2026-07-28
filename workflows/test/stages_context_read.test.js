@@ -158,11 +158,19 @@ test('sharedContextLine: every variant states that a partial Read is unannounced
   }
 });
 
-test('sharedContextLine: no size stamped -> read-to-end wording, never a fabricated count', () => {
+test('sharedContextLine: no size stamped -> deterministic stepping, never a fabricated count', () => {
+  // Without a measurement the TERMINUS is unknowable, so end-detection is unavoidable. The
+  // stepping is not: fixed 750-line steps leave the agent only "did that call return
+  // anything", instead of the open-ended "have I read enough yet" that #48 records being
+  // answered wrong. What must never appear is a total — that would be invented.
   const line = sharedContextLine({ contextPath: '/abs/ctx.md' });
-  assert.match(line, /until a Read returns no further content/);
+  assert.match(line, /Read\(offset=1, limit=750\)/);
+  assert.match(line, /Read\(offset=751, limit=750\)/);
+  assert.match(line, /Read\(offset=1501, limit=750\)/);
+  assert.match(line, /until a call returns no further content/);
+  assert.match(line, /Do not stop before that/);
   assert.doesNotMatch(line, /undefined|NaN|null|Infinity/);
-  assert.doesNotMatch(line, /Read\(offset=/); // no plan invented from a missing measurement
+  assert.doesNotMatch(line, /It is \d+ lines/); // no total invented from a missing measurement
 });
 
 test('sharedContextLine: a one-call file still carries the reach-the-end check', () => {
@@ -231,6 +239,30 @@ test('GUARD (behavioral): every dispatched prompt that names the context file ca
     + 'they will silently review whatever one Read happens to return (issue #48)');
 });
 
+test('GUARD: an unmeasured run DISCLOSES the degradation — a silent fallback is the #48 failure again', async () => {
+  // The fallback wording is a real degradation: it hands the stop condition back to the
+  // agent's judgment, which is the judgment #48 records failing. Legal, but it must be
+  // announced. Phase 2 is model-executed and can skip the stamp, so this is a live path.
+  const args = validArgs();
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true, 'an unmeasured run still completes — degraded, not dead');
+  const disclosed = out.gaps.filter((g) => /context_unmeasured/.test(g));
+  assert.equal(disclosed.length, 1, `expected exactly one disclosure gap, got: ${JSON.stringify(out.gaps)}`);
+  // The gap must be actionable: name the field, the consequence, and the remedy.
+  assert.match(disclosed[0], /contextLines/);
+  assert.match(disclosed[0], /truncation notice/);
+  assert.match(disclosed[0], /Stamp contextLines/);
+});
+
+test('GUARD: a measured run reports NO degradation — the gap channel stays quiet when nothing is lost', async () => {
+  // Noise in the gap channel is corrosive precisely because gaps are how this pipeline
+  // stays honest about the degradations that DID happen (args.js makes the same argument
+  // for `checkpoints`). A stamped run must not announce one.
+  const args = validArgs({ contextLines: PROFILED_LINES, contextChars: PROFILED_CHARS });
+  const out = await runWith(makeCtx(args), args);
+  assert.deepEqual(out.gaps.filter((g) => /context_unmeasured/.test(g)), []);
+});
+
 test('GUARD (behavioral): the same holds with no measurement stamped — fallback, never silence', async () => {
   const args = validArgs();
   const ctx = makeCtx(args);
@@ -239,54 +271,43 @@ test('GUARD (behavioral): the same holds with no measurement stamped — fallbac
   const naming = ctx.calls.filter((c) => (c.prompt || '').includes(contextPath));
   assert.ok(naming.length >= 9);
   const offenders = naming
-    .filter((c) => !/until a Read returns no further content/.test(c.prompt) || !/NO truncation notice/.test(c.prompt))
+    .filter((c) => !/until a call returns no further content/.test(c.prompt) || !/NO truncation notice/.test(c.prompt))
     .map((c) => c.label);
   assert.deepEqual(offenders, [],
     'these dispatches name the context file without even the count-free read-to-end fallback');
 });
 
-test('GUARD (source): contextPath is dereferenced in exactly one function — sharedContextLine', () => {
-  // The backstop. A stage function that builds its own context sentence must first GET the
-  // path, and the only way to get it is to read it off its input. So: every `.contextPath`
-  // dereference outside sharedContextLine is a would-be second builder. runWith's own
-  // computation (`const contextPath =`) and its threading into stage inputs (the bare
-  // `contextPath,` shorthand) are the allowed non-dereference forms.
-  const src = readFileSync(join(SRC, 'stages.js'), 'utf8');
-  const start = src.indexOf('export function sharedContextLine');
-  assert.ok(start > 0, 'sharedContextLine not found — the single-owner invariant has no owner');
-  // The helper's body ends at the next top-level declaration.
-  const after = src.slice(start + 1);
-  const end = start + 1 + after.search(/\n(?:export )?(?:async )?(?:function|const|class) /);
-  const helper = src.slice(start, end);
-  const rest = src.slice(0, start) + src.slice(end);
-
-  assert.match(helper, /inp\.contextPath/, 'sharedContextLine no longer reads contextPath off its input');
-
-  const offenders = rest.split('\n')
-    .map((line, i) => ({ line: line.trim(), n: i + 1 }))
-    .filter(({ line }) => /\.contextPath\b/.test(line))
-    .filter(({ line }) => !line.startsWith('//') && !line.startsWith('*'))
-    .map(({ n, line }) => `${n}: ${line}`);
-  assert.deepEqual(offenders, [],
-    'contextPath is dereferenced outside sharedContextLine — that code can build a context-read instruction '
-    + 'with no read plan and no truncation warning, reopening issue #48 for its stage');
-});
-
-test('GUARD (source): every stage input threading contextPath also threads the measured size', () => {
-  // contextPath without the size degrades to the count-free wording — correct for an older
-  // CALLER, but a regression if runWith simply forgot to pass on a size it was handed.
-  // Textual, and deliberately so: it is the third layer, behind the two behavioral guards.
+test('GUARD (source): no stage input carries the context path — the capability is gone', () => {
+  // What replaced two brittle source-text scans. The stages are threaded a prebuilt
+  // `contextLine` STRING; none of them receives the path or the size, so none of them is
+  // ABLE to construct a context-read instruction that skips the plan. The previous version
+  // asserted the literal "Read the shared context at " appeared once in stages.js — an
+  // adversarial review defeated that in one edit by rewording to "Open the shared context
+  // at ...", whole suite green. A capability you removed needs no phrase policing.
   const src = readFileSync(join(SRC, 'stages.js'), 'utf8');
   const offenders = src.split('\n')
-    .map((line, i) => ({ line, n: i + 1 }))
-    // Both the ES6 shorthand `contextPath,` and an explicit `contextPath: <expr>,`.
+    .map((line, i) => ({ line: line.trim(), n: i + 1 }))
+    .filter(({ line }) => !line.startsWith('//') && !line.startsWith('*'))
+    // Stage-input object literals: `contextPath,` (shorthand) or `contextPath: <expr>`.
     .filter(({ line }) => /(^|[\s{(])contextPath\s*(,|:\s*\w)/.test(line))
-    .filter(({ line }) => !/^\s*(\/\/|\*)/.test(line))
-    .filter(({ line }) => !line.includes('...contextSize'))
+    // runWith legitimately BUILDS the path and hands it to sharedContextLine once.
     .filter(({ line }) => !/const contextPath =/.test(line))
-    .map(({ n, line }) => `${n}: ${line.trim()}`);
+    .filter(({ line }) => !/contextPath, contextLines:/.test(line))
+    .map(({ n, line }) => `${n}: ${line}`);
   assert.deepEqual(offenders, [],
-    'a stage input threads contextPath without ...contextSize — that stage falls back to the count-free wording even though the size was measured');
+    'a stage input carries the context path — that stage can build its own context-read '
+    + 'instruction with no read plan and no truncation warning, reopening issue #48 for it. '
+    + 'Stages receive the prebuilt contextLine string instead.');
+});
+
+test('GUARD (source): sharedContextLine is called exactly once — the single build point', () => {
+  const src = readFileSync(join(SRC, 'stages.js'), 'utf8');
+  const calls = src.split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .filter((line) => /sharedContextLine\(/.test(line)).length;
+  // One definition + one call site (runWith). A second call site means a stage is building
+  // its own line again, from a path it should not have.
+  assert.equal(calls, 2, `expected the definition plus exactly one call site, found ${calls}`);
 });
 
 // --- Integration: the plan reaches the agents ------------------------------
@@ -299,7 +320,7 @@ test('discoverPrompt: every dispatched discovery agent gets the enumerated plan'
   };
   await discover(ctx, {
     agentFlags: {}, limits: {}, policy: {},
-    contextPath: '/abs/ctx.md', contextLines: PROFILED_LINES, contextChars: PROFILED_CHARS,
+    contextLine: sharedContextLine({ contextPath: '/abs/ctx.md', contextLines: PROFILED_LINES, contextChars: PROFILED_CHARS }),
   });
   const dispatched = Object.keys(prompts);
   assert.equal(dispatched.length, 7, 'all 7 discovery agents dispatch on a full-scope run');
@@ -320,7 +341,7 @@ test('validatePrompt: the validator gets the same plan (it reads the same file)'
   await validateStage(ctx, {
     findings: [{ id: 'F1', file: 'a.js', line_start: 1, line_end: 2, description: 'x', dimension: 'bug', severity: 'high' }],
     limits: { validateBatch: 25 }, policy: {},
-    contextPath: '/abs/ctx.md', contextLines: PROFILED_LINES, contextChars: PROFILED_CHARS,
+    contextLine: sharedContextLine({ contextPath: '/abs/ctx.md', contextLines: PROFILED_LINES, contextChars: PROFILED_CHARS }),
   });
   assert.equal(prompts.length, 1);
   assert.match(prompts[0], /exactly 4 Read calls/);
@@ -356,8 +377,8 @@ test('runWith: an args waist with NO measured size still runs and degrades to re
   const withContext = ctx.calls.filter((c) => (c.prompt || '').includes('Read the shared context at'));
   assert.ok(withContext.length >= 9);
   for (const call of withContext) {
-    assert.match(call.prompt, /until a Read returns no further content/, `${call.label} lost the read-to-end fallback`);
-    assert.doesNotMatch(call.prompt, /Read\(offset=/, `${call.label} invented a plan with no measurement`);
+    assert.match(call.prompt, /until a call returns no further content/, `${call.label} lost the read-to-end fallback`);
+    assert.doesNotMatch(call.prompt, /It is \d+ lines/, `${call.label} invented a total with no measurement`);
     assert.doesNotMatch(call.prompt, /undefined|NaN/);
   }
 });

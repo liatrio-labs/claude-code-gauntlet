@@ -189,10 +189,13 @@ export function validateArgs(args) {
   // exact Read calls the discovery/validate/summarize prompts enumerate — issue #48,
   // where an unmeasurable file left the agent to guess whether it had read all of it.
   //
-  // OPTIONAL and independently so: absent contextLines degrades every prompt to the
-  // count-free read-to-end wording (what every caller had before this landed, and what
-  // bench and older callers still send); absent contextChars just means the line cap
-  // binds the chunk size alone. Both are shape-checked when present, because a
+  // OPTIONAL and independently so. Not for old callers: SKILL.md is the only producer of
+  // this waist (bench invokes the skill rather than assembling args) and it ships with the
+  // bundle, so there is no real skew window. It is optional because Phase 2 is
+  // MODEL-EXECUTED and can skip the measurement step in a live run, and hard-failing there
+  // would trade a partial read for a dead review. runWith emits a context_unmeasured gap so
+  // the degradation is disclosed rather than silent. Absent contextChars just means the
+  // line cap binds the chunk size alone. Both are shape-checked when present, because a
   // zero/negative/fractional value would produce a plan that either misses the file's
   // tail or names a nonsense offset — a silent under-read is exactly what this exists to
   // prevent, so a malformed value fails loud at the waist instead.

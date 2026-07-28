@@ -3,7 +3,7 @@
 // ctx is injected {agent, parallel}; the mock ctx is the testability seam.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs } from '../src/stages.js';
+import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs, sharedContextLine } from '../src/stages.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
@@ -154,7 +154,10 @@ test('discover returns `dispatched`: every active agentType, regardless of outco
 test('discoverPrompt: elicitation markers present (context-file-first, no-cap, dimension naming)', async () => {
   const ctx = fakeCtx();
   await discover(ctx, {
-    changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {}, contextPath: '/abs/ctx.md',
+    changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {},
+    // Stages receive the PREBUILT sentence, never the path (issue #48) — see
+    // stages_context_read.test.js for why the capability was removed rather than guarded.
+    contextLine: sharedContextLine({ contextPath: '/abs/ctx.md', contextLines: 2028, contextChars: 94784 }),
   });
   const bugPrompt = ctx.prompts['code-gauntlet:bug-detector'];
   assert.match(bugPrompt, /Read the shared context at \/abs\/ctx\.md first/);
