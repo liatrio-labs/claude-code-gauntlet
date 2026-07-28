@@ -15,7 +15,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, SKILL_RECOVERY_LINE } from './args.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -2343,6 +2343,22 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
 // The return is compact by design: counts + artifact paths + gaps, never the raw
 // findings bulk.
 export async function runWith(ctx, rawArgs) {
+  // Two seams into args handling, one message (issue #27). pipeline_entry.js's
+  // parseEntryArgs is the live naked-call path and THROWS on a refusal — a throw is the
+  // only signal the platform renders as a failure (a returned ok:false reports as
+  // <status>completed</status>, identical to success; see args.js's parseEntryArgs
+  // comment). This arm exists because runWith's OWN contract is throw-free (this doc
+  // comment already promised it "NEVER lets a throw escape") and empirically was not:
+  // normalizeArgsReport's JSON.parse below used to sit outside any try/catch, so
+  // `runWith(undefined, 'PR 310')` escaped as an uncaught native SyntaxError. So a refusal
+  // here RETURNS the same entryRefusalEnvelope(rawArgs) instead of throwing — same
+  // entryRefusalMessage as the entry, wrapped in the standard args-reject shape below, so
+  // the wording cannot drift between the two signals (pinned by a test). This arm is
+  // defensive, not the primary guard: in production the entry throws first, so a live
+  // naked call never reaches here. It is still worth fixing — runWith is exported,
+  // directly unit-tested, and documented as throw-free.
+  const entry = entryArgs(rawArgs);
+  if (!entry.ok) return entry.envelope;
   // Normalization is TOLERANT of a stamped null for the narrow NULLABLE_TOP_LEVEL allowlist
   // (issue #38 A1 — a rejected dispatch cost a 21.3s round trip). Tolerance without
   // disclosure would be a silent config substitution, though: a mis-stamped
@@ -2353,13 +2369,19 @@ export async function runWith(ctx, rawArgs) {
   // envelope). Drops validateArgs would have ACCEPTED anyway (`checkpoints`, which has no
   // shape check at all) are filtered out by nullToleranceRejectedKeys: nothing was tolerated,
   // so claiming a degradation would be gap-channel noise on a previously valid, silent run.
-  const { args: A, dropped: droppedNulls } = normalizeArgsReport(rawArgs);
+  // Normalize from entry.waist, not rawArgs: entryArgs has already unwrapped every JSON
+  // layer, and normalizeArgsReport peels exactly one — re-normalizing the raw value would
+  // hand validateArgs a string for any waist encoded more than once.
+  const { args: A, dropped: droppedNulls } = normalizeArgsReport(entry.waist);
   const nullArgGaps = nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap);
   const check = validateArgs(A);
   if (!check.ok) {
     return {
       ok: false,
-      error: `invalid args: ${check.errors.join('; ')}`,
+      // The field list says WHAT is wrong; SKILL_RECOVERY_LINE says where the fields come
+      // from. A naked caller that hand-built an object reads only this string (the platform
+      // reports the run as completed either way), so it has to carry both.
+      error: `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
       phaseReached: 'args',
       failingPhase: 'args',
       artifactPaths: {},
