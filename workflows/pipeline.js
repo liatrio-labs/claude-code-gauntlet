@@ -2749,10 +2749,20 @@ const VERIFY_ATTEMPTS_PER_SLICE = 2;
 // of the damage now tracks the size of the fault.
 //
 // Findings are never dropped and success is never fabricated, now at slice granularity:
-// every finding leaves this stage either as its slice's trusted verified output or as
-// itself with origin='unknown' — never missing, never silently upgraded. `verified` is
-// true only when ZERO slices degraded, so the one top-level boolean keeps meaning "this
-// whole run's classification is trustworthy".
+// against every failure class trustSlice DETECTS, every finding leaves this stage either
+// as its slice's trusted verified output or as itself with origin='unknown' — never
+// missing, never silently upgraded. `verified` is true only when ZERO slices degraded, so
+// the one top-level boolean keeps meaning "this whole run's classification is trustworthy".
+//
+// The qualifier is load-bearing, so state it plainly: trustSlice does not bind a slice's
+// echoed CONTENT to the findings that slice dispatched (see its own comment). An envelope
+// carrying a same-length sibling slice's findings satisfies the nonce, sha, n_in and count
+// guards, and this loop then threads it — dropping the real slice's findings outright
+// rather than degrading them. That hole predates per-slice degradation and is unchanged
+// here; #25 requirement 2 closes it by turning the count guard into delta-id coverage.
+// What IS new is one more dispatch per failed slice on which it can be hit: before the
+// retry, a slice whose first attempt failed honestly could only reach the conservative
+// degrade. Weigh that against what the retry buys — see verifySliceWithRetry.
 async function verifyStage(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -3030,6 +3040,21 @@ function verifySliceWriterPrompt(entries) {
 // (an old/wrong result, a fabricated success, or another slice's answer) — NOT a
 // Byzantine one. The nonce is argv-visible by construction, so a malicious executor
 // could always echo it back; this is a consistency/liveness check, not authentication.
+//
+// KNOWN GAP — the guards above bind the slice's SHAPE, never its CONTENT. Nothing checks
+// that the findings in verified[]/eliminated[] are the ones this slice dispatched. Since
+// verifySliceSize is a constant, most slices in a run share a length, so an envelope
+// carrying a SIBLING slice's findings clears the nonce (it is this slice's), the sha, n_in
+// and the count sum, and is accepted — the real slice's findings are then dropped outright
+// (not degraded) and the run still reports verified=true. Reproduced end-to-end during the
+// #54 review. Predates per-slice degradation and is NOT widened by the guards here.
+//
+// The fix belongs to #25 requirement 2 ("the count guard becomes delta-id coverage"), not
+// here: an id-set check changes acceptance on the TRUSTED path, so an echo that merely
+// mangles an id character would start degrading runs that pass today. That is a
+// findings-content change and needs #25's measurement tier, which is exactly why the
+// count guard — a shape check that can only catch transport truncation — is what stands
+// here in the meantime.
 function trustSlice(env, { nonce, headShaShort, n }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
