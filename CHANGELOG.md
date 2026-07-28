@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v3.2.2 (2026-07-28)
+
+### Bug Fixes
+
+- **bench**: Address PR #56 review nits on G3 degrade scan
+  ([#56](https://github.com/liatrio-labs/claude-code-gauntlet/pull/56),
+  [`263614e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/263614eaea39ff720717de1344034b9df1e9478a))
+
+- **bench**: Decide G3 writer degrades from parsed gaps, not raw bytes
+  ([#56](https://github.com/liatrio-labs/claude-code-gauntlet/pull/56),
+  [`263614e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/263614eaea39ff720717de1344034b9df1e9478a))
+
+- **lint**: Address code-quality bot findings on PR #51
+  ([#51](https://github.com/liatrio-labs/claude-code-gauntlet/pull/51),
+  [`348901a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348901a1e59d72dcb1ee79cb0c3ac8c7c6bca9b6))
+
+- **lint**: Remove double-blank-line markdownlint violation in CHANGELOG.md
+  ([#51](https://github.com/liatrio-labs/claude-code-gauntlet/pull/51),
+  [`348901a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348901a1e59d72dcb1ee79cb0c3ac8c7c6bca9b6))
+
+- **lint**: Resolve markdownlint MD038 trailing-space-in-code-span failure, address remaining review
+  nits ([#51](https://github.com/liatrio-labs/claude-code-gauntlet/pull/51),
+  [`348901a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348901a1e59d72dcb1ee79cb0c3ac8c7c6bca9b6))
+
+- **persist**: Unwrap JSON-wrapped reports and retry a refused derived persist once
+  ([#51](https://github.com/liatrio-labs/claude-code-gauntlet/pull/51),
+  [`348901a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348901a1e59d72dcb1ee79cb0c3ac8c7c6bca9b6))
+
+### Performance Improvements
+
+- Cut review wall-clock without changing review output
+  ([#51](https://github.com/liatrio-labs/claude-code-gauntlet/pull/51),
+  [`348901a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348901a1e59d72dcb1ee79cb0c3ac8c7c6bca9b6))
+
+- Cut review wall-clock without changing review output (#38)
+  ([#51](https://github.com/liatrio-labs/claude-code-gauntlet/pull/51),
+  [`348901a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348901a1e59d72dcb1ee79cb0c3ac8c7c6bca9b6))
+
+
 ## v3.2.1 (2026-07-27)
 
 ### Bug Fixes
