@@ -83,6 +83,22 @@ test('sandbox parity: full pipeline runs ok with node-only globals (structuredCl
   assert.equal(out.stats.highConfidence, 2);
 });
 
+test('sandbox parity: the shared-context read plan builds with node-only globals removed', async () => {
+  // The test above runs a waist with NO contextLines, so it never reaches contextReadPlan or
+  // the plan-enumerating branch of sharedContextLine (issue #48). Without this case the whole
+  // read-plan path would be sandbox-UNTESTED — exactly the shape of the structuredClone crash:
+  // green under node:test, `X is not defined` on the first live dispatch. Drive it explicitly.
+  const args = validArgs({ contextLines: 2028, contextChars: 94784 });
+  const ctx = makeCtx(args);
+  const out = await withSandboxGlobals(() => runWith(ctx, args));
+  assert.equal(out.ok, true, `read-plan path must not depend on node-only globals; gaps: ${out.gaps}`);
+  assert.equal(out.phaseReached, 'report');
+  // Prove the plan actually reached the agents under those conditions, rather than the run
+  // merely surviving because the branch was skipped again.
+  const planned = ctx.calls.filter((c) => /Read\(offset=1924, limit=105\)/.test(c.prompt || ''));
+  assert.ok(planned.length >= 9, `expected summarize + 7 discovery + validate to carry the plan, got ${planned.length}`);
+});
+
 // --- Validate dispatch schema is object-rooted (Messages API contract) -------
 
 // --- Agent-count guard wiring (coarsenLimits applied by runWith) -------------

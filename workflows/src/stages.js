@@ -38,6 +38,93 @@ function modelFor(agentType, policy) {
 // into multiple dispatches to stay under the writer's context.
 const SEGMENT_CHAR_BUDGET = 100000;
 
+// --- Shared context file: the deterministic read plan (issue #48) ---------------
+//
+// A `Read` returns only PART of a large file and says nothing about it. Measured on
+// run wf_cef39739-577: all 7 discovery agents' first Read of the 95,057-byte /
+// 2,028-line shared context file returned 58,145 chars ending at line 1083, with no
+// truncation notice in ANY of the 7 tool results. Six agents inferred the cutoff and
+// paginated on; security-reviewer did not, and reviewed roughly the first half of the
+// diff while reporting as if it had seen all of it.
+//
+// The fix is arithmetic, not instruction. The skill stamps the file's size
+// (contextLines/contextChars, measured after it writes the file); these helpers turn
+// that into the EXACT list of Read calls that covers it, and the prompt enumerates
+// them. The agent's job is "make these listed calls", not "notice an invisible
+// truncation and drive a loop" — a judgment it demonstrably gets wrong 1 time in 7.
+//
+// Both bounds below are observed platform behavior, not a documented contract, so the
+// planner stays well under each: the Read tool documents a 2,000-line default cap, and
+// the run above puts a character cap near 58,000. A plan chunk is sized by whichever
+// binds first, from the stamped chars-per-line.
+const READ_PLAN_MAX_LINES = 750;
+const READ_PLAN_MAX_CHARS = 30000;
+// Above this many chunks, the prompt states the plan as its generating rule (first
+// offset, span, final line) instead of listing every call — identical information,
+// bounded prompt size. Four chunks covers the profiled file; the rule form is for
+// pathological inputs (very many very short lines), never the normal path.
+const READ_PLAN_MAX_ENUMERATED = 10;
+// Hard ceiling on the plan's SIZE, checked before a single element is allocated. Without
+// it the loop below allocates one object per chunk for whatever `lines` it is handed, and
+// the waist accepts any positive safe integer: contextLines = Number.MAX_SAFE_INTEGER
+// OOM-kills the node process — a V8 fatal error, not a catchable throw, so runWith's
+// top-level catch never runs, no gap is recorded, and nothing is dispatched. 2000 chunks
+// covers a 1.5M-line context file; past that the plan degrades to the count-free
+// read-to-end wording, because a review context that large is already beyond triage.
+const READ_PLAN_MAX_CHUNKS = 2000;
+
+// contextReadPlan(lines, chars) -> [{ offset, limit }, ...] covering lines 1..lines.
+// PURE arithmetic. Offsets are 1-based to match the Read tool's `cat -n` numbering
+// (the profiled agents' own follow-up Reads used 1-based offsets). An unusable or
+// absent line count yields [] — the caller then falls back to the count-free wording
+// rather than emitting a plan built from a guess.
+export function contextReadPlan(lines, chars) {
+  const total = Number.isSafeInteger(lines) && lines > 0 ? lines : 0;
+  if (total === 0) return [];
+  // Chars is advisory: absent/unusable just means the line cap binds alone.
+  const perLine = Number.isSafeInteger(chars) && chars > 0 ? chars / total : 0;
+  const byChars = perLine > 0 ? Math.floor(READ_PLAN_MAX_CHARS / perLine) : READ_PLAN_MAX_LINES;
+  const span = Math.max(1, Math.min(READ_PLAN_MAX_LINES, byChars));
+  // Bound the ALLOCATION, not just the input: computed before the loop so an absurd size
+  // degrades instead of exhausting the heap (see READ_PLAN_MAX_CHUNKS).
+  if (Math.ceil(total / span) > READ_PLAN_MAX_CHUNKS) return [];
+  const plan = [];
+  for (let offset = 1; offset <= total; offset += span) {
+    plan.push({ offset, limit: Math.min(span, total - offset + 1) });
+  }
+  return plan;
+}
+
+// sharedContextLine(inp) -> the leading context-read sentence, or '' when no context
+// path was threaded. SINGLE SOURCE for every stage that names the shared context file
+// (summarize, discover, validate). Adding a stage that hand-rolls this sentence
+// re-opens issue #48 for that stage silently, so the guard in
+// workflows/test/stages_context_read.test.js pins that the literal appears exactly
+// once in this module — here.
+export function sharedContextLine(inp) {
+  const path = inp && inp.contextPath;
+  if (!path) return '';
+  const head = `Read the shared context at ${path} first — it has the diff, project rules, and risk classification.`;
+  // A partial Read is INVISIBLE: it carries no truncation notice and looks exactly
+  // like a complete file. Stated on every path, plan or no plan.
+  const warn = 'A single Read of this file returns only PART of it and gives NO truncation notice, so one Read is never the whole file.';
+  const plan = contextReadPlan(inp.contextLines, inp.contextChars);
+  if (plan.length === 0) {
+    return `${head} ${warn} Read it to its end: after each Read, issue another with offset set past the last line you received, and repeat until a Read returns no further content. `;
+  }
+  const total = inp.contextLines;
+  if (plan.length === 1) {
+    return `${head} ${warn} It is ${total} lines: read it with Read(offset=1, limit=${plan[0].limit}), and if that call does not reach line ${total}, continue with offset set past the last line you received until it does. `;
+  }
+  const tail = `Make ALL of them — stopping early means you review only the part you saw. If any call does not land where the plan says, continue with offset set past the last line you received until you reach line ${total}.`;
+  if (plan.length <= READ_PLAN_MAX_ENUMERATED) {
+    const calls = plan.map((p) => `Read(offset=${p.offset}, limit=${p.limit})`).join(', ');
+    return `${head} ${warn} It is ${total} lines, which takes exactly ${plan.length} Read calls: ${calls}. ${tail} `;
+  }
+  const span = plan[0].limit;
+  return `${head} ${warn} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
+}
+
 // Greedy pack: accumulate items into a chunk until adding the next would exceed
 // `budget` serialized chars, then start a new chunk. A single oversized item still
 // goes in a chunk of its own (never dropped). Shared by report segmentation and
@@ -117,7 +204,9 @@ export async function summarize(ctx, input) {
 }
 
 function summarizePrompt(inp, files) {
-  const ctxLine = inp.contextPath ? `Read the shared context at ${inp.contextPath}. ` : '';
+  // Was a bare one-sentence context pointer with no read plan — the summarizer opens the
+  // SAME file the discovery agents do and carried the same silent-partial exposure (#48).
+  const ctxLine = sharedContextLine(inp);
   // Single-source the size number (live-run L7): triage said 1211 changed lines, the
   // report said ~1218 because the summarizer re-derived it from the diff. The waist's
   // changedLines is the one authoritative count.
@@ -356,9 +445,7 @@ export async function discover(ctx, input) {
 // conventions-and-intent: typo/naming). Scoping lives entirely in the registry; no
 // agent-name special-casing here.
 function discoverPrompt(inp, spec) {
-  const ctxLine = inp.contextPath
-    ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
-    : '';
+  const ctxLine = sharedContextLine(inp);
   const dims = spec.dimensions.join(', ');
   const base = `${ctxLine}This is a code gauntlet built for thoroughness, not speed: investigate using your own methodology and tools (LSP first, Grep fallback) as defined for your role, across the full codebase context around the diff — not just the changed lines. Your dimension(s): ${dims}. Report EVERY genuine finding for these dimension(s): there is no cap and no minimum. An empty findings list must reflect a genuine post-investigation absence of issues, never brevity or a quota. Every finding MUST cite concrete evidence: the evidence field must be non-empty and reference real lines you actually inspected (in the diff or in a file you opened) — a finding you cannot ground in inspected code is noise, do not emit it. For any absence or "missing" claim (e.g. a test-coverage negative asserting no test exists), name in evidence the specific file or path you checked; an unproven absence is not a finding. Return { findings, complete, total_seen }; each finding must match the canonical schema, with description as a single paragraph of prose, at most 500 characters — no code blocks or bullet lists; put code references in evidence and cross_file_refs instead.`;
   return spec.promptExtra ? `${base} ${spec.promptExtra}` : base;
@@ -883,9 +970,7 @@ export async function validateStage(ctx, input) {
 }
 
 function validatePrompt(inp, batch) {
-  const ctxLine = inp.contextPath
-    ? `Read the shared context at ${inp.contextPath} first — it has the diff, project rules, and risk classification. `
-    : '';
+  const ctxLine = sharedContextLine(inp);
   // Each finding carries its location + claim so the validator can open the right code
   // (validator.md step 1: "Read the code at the file and line range specified"). Passing
   // only ids left validators unable to locate anything — they scored blind.
@@ -2132,6 +2217,12 @@ export async function runWith(ctx, rawArgs) {
   let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
+  // The context file's own size, measured by the skill right after it writes the file
+  // (the workflow has no disk and cannot measure it). Feeds contextReadPlan, which turns
+  // it into the exact Read calls the prompt enumerates — issue #48. Both are OPTIONAL:
+  // an older caller that stamps neither gets the count-free read-to-end wording, which
+  // is what every caller had before this landed.
+  const contextSize = { contextLines: A.contextLines, contextChars: A.contextChars };
   const checkpoints = readCheckpoints(c, A);
 
   const gaps = [...nullArgGaps];
@@ -2176,10 +2267,10 @@ export async function runWith(ctx, rawArgs) {
 
   try {
     const summarizeSettled = replay('summarize') ? null : settle(summarize(c, {
-      changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextPath,
+      changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextPath, ...contextSize,
     }));
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: A.agentFlags || {}, limits, policy, contextPath,
+      agentFlags: A.agentFlags || {}, limits, policy, contextPath, ...contextSize,
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
@@ -2203,7 +2294,7 @@ export async function runWith(ctx, rawArgs) {
     gaps.push(...(verifyOut.gaps || []));
 
     const validateOut = await runPhase('validate', () => validateStage(c, {
-      findings: verifyOut.findings || [], limits, policy, contextPath,
+      findings: verifyOut.findings || [], limits, policy, contextPath, ...contextSize,
     }));
     gaps.push(...(validateOut.gaps || []));
 
@@ -2213,7 +2304,13 @@ export async function runWith(ctx, rawArgs) {
     }));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
-      findings: filterOut.filtered || [], limits, policy, contextPath, generatedAt: A.generatedAt,
+      // No contextPath: challengeStage never reads one, and challengePrompt takes only the
+      // finding — the challenger is structurally blind (it gets title/description/location
+      // and opens the code itself). The field was threaded here but dead; passing it while
+      // nothing consumes it invites a future edit to "use the context we already have" and
+      // quietly break the blindness the challenge round exists for. Surfaced by the
+      // contextPath/contextSize pairing guard in stages_context_read.test.js (issue #48).
+      findings: filterOut.filtered || [], limits, policy, generatedAt: A.generatedAt,
     }));
     gaps.push(...(challengeOut.gaps || []));
 

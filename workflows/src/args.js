@@ -183,6 +183,37 @@ export function validateArgs(args) {
     errors.push('changedFiles must be an array of repo-relative paths');
   if (args.changedLines !== undefined && typeof args.changedLines !== 'number')
     errors.push('changedLines must be a number');
+  // Optional shared-context file size, measured by the skill immediately after it writes
+  // {output_dir}/code-gauntlet-context-{head_sha_short}.md. The workflow has no disk, so
+  // this is the only path for it. contextReadPlan (stages.js) turns the pair into the
+  // exact Read calls the discovery/validate/summarize prompts enumerate — issue #48,
+  // where an unmeasurable file left the agent to guess whether it had read all of it.
+  //
+  // OPTIONAL and independently so: absent contextLines degrades every prompt to the
+  // count-free read-to-end wording (what every caller had before this landed, and what
+  // bench and older callers still send); absent contextChars just means the line cap
+  // binds the chunk size alone. Both are shape-checked when present, because a
+  // zero/negative/fractional value would produce a plan that either misses the file's
+  // tail or names a nonsense offset — a silent under-read is exactly what this exists to
+  // prevent, so a malformed value fails loud at the waist instead.
+  // The MAX bounds are memory safety, not taste. contextReadPlan allocates one entry per
+  // chunk; handed Number.MAX_SAFE_INTEGER it OOM-kills the node process with a V8 fatal
+  // error — uncatchable, so runWith's top-level catch never runs, no gap is recorded and
+  // nothing is dispatched. contextReadPlan carries its own chunk ceiling as the last line
+  // of defence; this is the fail-loud one, at the waist, where a nonsense measurement is
+  // still attributable to the producer that stamped it.
+  const CONTEXT_SIZE_MAX = { contextLines: 5000000, contextChars: 500000000 };
+  for (const k of ['contextLines', 'contextChars']) {
+    if (args[k] === undefined) continue;
+    if (!Number.isSafeInteger(args[k]) || args[k] <= 0) {
+      errors.push(`${k} must be a positive safe integer (the measured size of the shared context file) when present`);
+    } else if (args[k] > CONTEXT_SIZE_MAX[k]) {
+      errors.push(`${k} is ${args[k]}, above the ${CONTEXT_SIZE_MAX[k]} ceiling — that is not a review context, it is a mis-measurement`);
+    }
+  }
+  if (args.contextChars !== undefined && args.contextLines === undefined) {
+    errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
+  }
   // Optional reviewConfig (the parsed REVIEW.md shape, see parseReviewMd in
   // filterFindings.js). Its `ignore` list feeds escapeRegExp in the Filter stage, which
   // assumes flat strings — a session that assembles entries as {pattern, reason} objects

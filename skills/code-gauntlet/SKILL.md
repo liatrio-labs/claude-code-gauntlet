@@ -271,7 +271,21 @@ The assembled `reviewConfig` is exactly the `parseReviewMd` output shape — **`
 
 ### Write the shared agent context file
 
-Write the shared context to `{output_dir}/code-gauntlet-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. Contents: CLAUDE.md/REVIEW.md rules, risk classification (2e), and the full diff inside `<untrusted-code-content>` tags. The workflow's discovery, validate, and challenge agents Read this file at `{output_dir}/code-gauntlet-context-{head_sha_short}.md` — the workflow threads exactly this path to them, so the filename must match. (The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.)
+Write the shared context to `{output_dir}/code-gauntlet-context-{head_sha_short}.md` using `python3 -c "import json; ..."`. Contents: CLAUDE.md/REVIEW.md rules, risk classification (2e), and the full diff inside `<untrusted-code-content>` tags. The workflow's discovery, validate, and summarize agents Read this file at `{output_dir}/code-gauntlet-context-{head_sha_short}.md` — the workflow threads exactly this path to them, so the filename must match. (The change **summary** is no longer written here — the workflow's Summarize stage produces it internally.)
+
+**Measure the file in the same command that writes it, and stamp the measurement into args as `contextLines` / `contextChars`.** This is not bookkeeping — it is the whole read-completeness mechanism. A `Read` of a file this size returns only part of it and emits **no truncation notice**; the workflow has no disk and cannot measure the file itself, so this stamp is the only way `contextReadPlan` can compute the exact `Read` calls the agent prompts enumerate. Print both from the string you just wrote, so the numbers describe the bytes on disk rather than a re-read:
+
+```python
+# ... inside the same python3 -c that writes `content` to the context path:
+# lines counts as the Read tool's `cat -n` numbering does — a file with no trailing
+# newline still shows its final partial line, so it counts.
+lines = content.count("\n") + (0 if content.endswith("\n") else 1)
+print(json.dumps({"contextLines": lines, "contextChars": len(content)}))
+```
+
+Stamp both values verbatim. Never estimate them, never carry them over from an earlier run, and never re-derive them from a later `wc -l` — `wc -l` counts newline *terminators*, so it reports one fewer than `cat -n` numbers for a file with no trailing newline, and an undercount by one silently drops the file's last line from every agent's read plan. If the file came out **empty** (`not content` — note the formula above returns `1`, not `0`, for empty content, so test the content, never the line count), omit both fields rather than stamping `{"contextLines": 1, "contextChars": 0}`: that pair would tell every agent the shared context is one line long and it would stop after one read. An empty shared context is a Phase 2 bug to fix, not a value to pass on.
+
+> **Why this exists (issue #48).** On run `wf_cef39739-577`, all 7 discovery agents' first `Read` of a 95,057-byte / 2,028-line context file returned 58,145 chars ending at line 1083, with no truncation notice in any of the 7 tool results. Six agents inferred the cutoff and paginated on; `security-reviewer` did not, and reviewed roughly the first half of the diff while returning `complete: true`. No artifact, report, or transcript distinguished that from a clean empty result.
 
 > **NDJSON emission has been removed from discovery agents (v3).** Discovery agents return findings only through structured output (`agent()`/`parallel()` schema) — the `printf`-NDJSON emission prose was stripped from all 7 `.md` bodies and Bash was dropped from their tool grants (it existed solely for emission). `references/ndjson-emission-contract.md` and `scripts/validate_ndjson.py` remain shipped as retained v2-compat/bench surface, not consumed by discovery agents.
 
@@ -313,6 +327,12 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
 
   // by-value inputs the in-memory stages need (the workflow has no disk):
   changedFiles, changedLines, baseBranch, reviewConfig, exclusionPatterns,
+
+  // the shared context file's own measured size, from the write step above. Feeds
+  // contextReadPlan, which turns it into the exact Read calls the discovery/validate/
+  // summarize prompts enumerate. Omit BOTH if the file came out empty; contextChars
+  // may not be stamped without contextLines.
+  contextLines, contextChars,
 
   // optional: derive persisted artifacts via a pinned executor script instead of the full by-value writer path.
   // Omit `persist` entirely to keep the legacy writer (unchanged behavior); artifactPaths and Phase 8 are the same either way.
