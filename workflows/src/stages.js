@@ -108,6 +108,7 @@ export function sharedContextLine(inp) {
   // A partial Read is INVISIBLE: it carries no truncation notice and looks exactly
   // like a complete file. Stated on every path, plan or no plan.
   const warn = 'A single Read of this file returns only PART of it and gives NO truncation notice, so one Read is never the whole file.';
+  const prefix = `${head} ${warn}`;
   const plan = contextReadPlan(inp.contextLines, inp.contextChars);
   if (plan.length === 0) {
     // No measurement (or one too large to plan): the terminus is unknown, so end-detection
@@ -115,19 +116,19 @@ export function sharedContextLine(inp) {
     // the only judgment "did that call return anything", instead of the open-ended "have I
     // read enough yet" that issue #48 records an agent answering wrong.
     const s = READ_PLAN_MAX_LINES;
-    return `${head} ${warn} Read it in ${s}-line steps — Read(offset=1, limit=${s}), then Read(offset=${1 + s}, limit=${s}), then Read(offset=${1 + 2 * s}, limit=${s}), continuing to step by ${s} until a call returns no further content. Do not stop before that. `;
+    return `${prefix} Read it in ${s}-line steps — Read(offset=1, limit=${s}), then Read(offset=${1 + s}, limit=${s}), then Read(offset=${1 + 2 * s}, limit=${s}), continuing to step by ${s} until a call returns no further content. Do not stop before that. `;
   }
   const total = inp.contextLines;
   if (plan.length === 1) {
-    return `${head} ${warn} It is ${total} lines: read it with Read(offset=1, limit=${plan[0].limit}), and if that call does not reach line ${total}, continue with offset set past the last line you received until it does. `;
+    return `${prefix} It is ${total} lines: read it with Read(offset=1, limit=${plan[0].limit}), and if that call does not reach line ${total}, continue with offset set past the last line you received until it does. `;
   }
   const tail = `Make ALL of them — stopping early means you review only the part you saw. If any call does not land where the plan says, continue with offset set past the last line you received until you reach line ${total}.`;
   if (plan.length <= READ_PLAN_MAX_ENUMERATED) {
     const calls = plan.map((p) => `Read(offset=${p.offset}, limit=${p.limit})`).join(', ');
-    return `${head} ${warn} It is ${total} lines, which takes exactly ${plan.length} Read calls: ${calls}. ${tail} `;
+    return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls: ${calls}. ${tail} `;
   }
   const span = plan[0].limit;
-  return `${head} ${warn} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
+  return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 
 // Greedy pack: accumulate items into a chunk until adding the next would exceed
@@ -2225,29 +2226,39 @@ export async function runWith(ctx, rawArgs) {
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   // The context file's own size, measured by the skill right after it writes the file
   // (the workflow has no disk and cannot measure it). Feeds contextReadPlan, which turns
-  // it into the exact Read calls the prompt enumerates — issue #48. Both are OPTIONAL:
-  // an older caller that stamps neither gets the count-free read-to-end wording, which
-  // is what every caller had before this landed.
+  // it into the exact Read calls the prompt enumerates — issue #48. Both are OPTIONAL
+  // because Phase 2 is model-executed and can skip the stamp; hard-failing there would
+  // trade a partial read for a dead review. Absent (or unplannable) measurement falls
+  // back to the count-free read-to-end wording — disclosed via a gap below, never silent.
   // Built ONCE, here, and threaded to the stages as a plain string. The stages are given
   // no path and no size, so none of them CAN name the shared context file without the read
   // plan — the invariant is structural, not asserted over this file's source text.
+  const contextPlan = contextReadPlan(A.contextLines, A.contextChars);
   const contextLine = sharedContextLine({
     contextPath, contextLines: A.contextLines, contextChars: A.contextChars,
   });
-  // DEGRADED IS NOT SILENT. Absent measurement is legal (hard-failing would trade a partial
-  // read for a dead run — a worse deal), but it drops the pipeline back to the count-free
-  // read-to-end wording: the agent's own judgment about when it has read enough, which is
-  // exactly the judgment that failed in #48. Phase 2 is model-executed and can skip the
-  // stamp, so this is a live path, not a theoretical one — and without a gap the whole fix
-  // reverts with nothing anywhere saying so. Same contract args.js states for a tolerated
-  // null: what was lost, and what to do about it.
+  // DEGRADED IS NOT SILENT. Falling back to the count-free wording is legal (hard-failing
+  // would trade a partial read for a dead run — a worse deal), but it drops the pipeline
+  // back to the agent's own judgment about when it has read enough, which is exactly the
+  // judgment that failed in #48. Two producers of that fallback must both disclose:
+  //   1. contextLines absent — Phase 2 skipped the stamp (live; model-executed).
+  //   2. contextLines stamped but contextReadPlan returns [] — the size clears the waist
+  //      ceiling (5M lines) yet exceeds READ_PLAN_MAX_CHUNKS (~1.5M at the line cap). Checking
+  //      only `=== undefined` left that second path silent: same fallback wording, zero gaps.
+  // Same contract args.js states for a tolerated null: what was lost, and what to do about it.
   const contextSizeGap = A.contextLines === undefined
     ? ['context_unmeasured: args.contextLines was not stamped, so the shared-context read plan could not be computed — '
       + 'every agent got the count-free "read until a Read returns no further content" wording instead of the exact '
       + 'Read calls covering the file. That restores the failure mode of issue #48: a Read returns part of a large file '
       + 'with no truncation notice, and an agent that stops there reviews only what it saw. Stamp contextLines '
       + '(and contextChars) from the Phase 2 step that writes the context file.']
-    : [];
+    : (contextPlan.length === 0
+      ? ['context_unplannable: args.contextLines was stamped (' + A.contextLines + ') but exceeds the read-plan chunk '
+        + 'ceiling, so the shared-context read plan could not be built — every agent got the count-free '
+        + '"read until a Read returns no further content" wording instead of the exact Read calls covering the file. '
+        + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
+        + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
+      : []);
   const checkpoints = readCheckpoints(c, A);
 
   const gaps = [...nullArgGaps, ...contextSizeGap];

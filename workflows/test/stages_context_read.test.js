@@ -189,6 +189,27 @@ test('sharedContextLine: a pathological plan degrades to its generating rule, no
   assert.ok(line.length < 800, `rule form should stay compact, got ${line.length} chars`);
 });
 
+test('sharedContextLine: enumerated form at READ_PLAN_MAX_ENUMERATED, rule form one past it', () => {
+  // The switch is plan.length <= 10. Pin both sides so an off-by-one on the comparison
+  // (or on READ_PLAN_MAX_ENUMERATED itself) cannot slide past unnoticed. Span is the
+  // 750-line cap when chars are absent, so N*750 lines -> exactly N chunks.
+  const atThreshold = 10 * 750;
+  const pastThreshold = 11 * 750;
+  assert.equal(contextReadPlan(atThreshold).length, 10);
+  assert.equal(contextReadPlan(pastThreshold).length, 11);
+
+  const enumerated = sharedContextLine({ contextPath: '/c.md', contextLines: atThreshold });
+  assert.match(enumerated, /exactly 10 Read calls:/);
+  assert.ok(enumerated.includes('Read(offset=1, limit=750)'));
+  assert.ok(enumerated.includes('Read(offset=6751, limit=750)'));
+  assert.doesNotMatch(enumerated, /Read calls of limit=/);
+
+  const rule = sharedContextLine({ contextPath: '/c.md', contextLines: pastThreshold });
+  assert.match(rule, /exactly 11 Read calls of limit=750/);
+  assert.match(rule, /stepping by 750 through line 8250/);
+  assert.ok((rule.match(/Read\(offset=/g) || []).length === 0, 'rule form must not enumerate');
+});
+
 test('sharedContextLine: no prompt variant leaks undefined/NaN', () => {
   const inputs = [
     { contextPath: '/c.md' },
@@ -260,7 +281,34 @@ test('GUARD: a measured run reports NO degradation — the gap channel stays qui
   // for `checkpoints`). A stamped run must not announce one.
   const args = validArgs({ contextLines: PROFILED_LINES, contextChars: PROFILED_CHARS });
   const out = await runWith(makeCtx(args), args);
-  assert.deepEqual(out.gaps.filter((g) => /context_unmeasured/.test(g)), []);
+  assert.deepEqual(out.gaps.filter((g) => /context_unmeasured|context_unplannable/.test(g)), []);
+});
+
+test('GUARD: a measured-but-unplannable size DISCLOSES the degradation — the dead zone between ceilings', async () => {
+  // Dead zone: contextLines clears the waist's CONTEXT_SIZE_MAX (5_000_000) yet exceeds
+  // READ_PLAN_MAX_CHUNKS (2000 chunks × 750 lines = 1_500_000). contextReadPlan returns []
+  // and sharedContextLine falls back to the count-free wording — the same degradation as
+  // an unmeasured run. Checking only `contextLines === undefined` left this path silent.
+  const tooLargeToPlan = 2000 * 750 + 1; // 1_500_001 — under the 5M waist ceiling
+  assert.deepEqual(contextReadPlan(tooLargeToPlan), [], 'fixture must sit past the plan ceiling');
+  const args = validArgs({ contextLines: tooLargeToPlan });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true, 'an unplannable measurement still completes — degraded, not dead');
+  assert.deepEqual(out.gaps.filter((g) => /context_unmeasured/.test(g)), [],
+    'this is not an absent stamp — do not mislabel it as unmeasured');
+  const disclosed = out.gaps.filter((g) => /context_unplannable/.test(g));
+  assert.equal(disclosed.length, 1, `expected exactly one disclosure gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.match(disclosed[0], /chunk ceiling|READ_PLAN_MAX_CHUNKS/);
+  assert.match(disclosed[0], /truncation notice|failure mode of issue #48/);
+  // Prompts must actually carry the fallback, not a fabricated plan for an impossible size.
+  const contextPath = `${args.outputDir}/code-gauntlet-context-${args.headShaShort}.md`;
+  const naming = ctx.calls.filter((c) => (c.prompt || '').includes(contextPath));
+  assert.ok(naming.length >= 9);
+  for (const call of naming) {
+    assert.match(call.prompt, /until a call returns no further content/, `${call.label} lost the fallback`);
+    assert.doesNotMatch(call.prompt, /It is \d+ lines/, `${call.label} invented a planned total`);
+  }
 });
 
 test('GUARD (behavioral): the same holds with no measurement stamped — fallback, never silence', async () => {
@@ -367,8 +415,9 @@ test('runWith: threads the measured size from the args waist into summarize, dis
 });
 
 test('runWith: an args waist with NO measured size still runs and degrades to read-to-end', async () => {
-  // Bench and any pre-#48 caller stamp neither field. That must remain a working,
-  // unannounced-but-correct path — not a rejection and not a fabricated plan.
+  // Phase 2 is model-executed and can skip the stamp. That must remain a working path —
+  // not a rejection and not a fabricated plan — and the degradation is disclosed via
+  // context_unmeasured (asserted by the GUARD test above), never silent.
   const args = validArgs();
   const ctx = makeCtx(args);
   const out = await runWith(ctx, args);
