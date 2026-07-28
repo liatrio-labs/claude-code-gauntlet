@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.2.6 (2026-07-28)
+
+### Bug Fixes
+
+- **args**: Address PR #76 review; make CLAUDE.md budget hook CI-safe
+  ([#76](https://github.com/liatrio-labs/claude-code-gauntlet/pull/76),
+  [`a03a5db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a03a5dbe06bcb2930db8ba6450a16123788ae982))
+
+- **args**: Apply NONCE_RE charset to headShaShort argv safety
+  ([#76](https://github.com/liatrio-labs/claude-code-gauntlet/pull/76),
+  [`a03a5db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a03a5dbe06bcb2930db8ba6450a16123788ae982))
+
+- **args**: Make entry-guard recovery copy-paste, not inference
+  ([#76](https://github.com/liatrio-labs/claude-code-gauntlet/pull/76),
+  [`a03a5db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a03a5dbe06bcb2930db8ba6450a16123788ae982))
+
+- **args**: Make entry-guard recovery copy-paste, not inference (#27)
+  ([#76](https://github.com/liatrio-labs/claude-code-gauntlet/pull/76),
+  [`a03a5db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a03a5dbe06bcb2930db8ba6450a16123788ae982))
+
+### Documentation
+
+- **args**: Name entryArgs in the two seam comments, not the removed helper
+  ([#76](https://github.com/liatrio-labs/claude-code-gauntlet/pull/76),
+  [`a03a5db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a03a5dbe06bcb2930db8ba6450a16123788ae982))
+
+### Testing
+
+- **docs**: Pin a byte budget on CLAUDE.md so growth cannot be silent
+  ([#76](https://github.com/liatrio-labs/claude-code-gauntlet/pull/76),
+  [`a03a5db`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a03a5dbe06bcb2930db8ba6450a16123788ae982))
+
+
 ## v3.2.5 (2026-07-28)
 
 ### Bug Fixes
