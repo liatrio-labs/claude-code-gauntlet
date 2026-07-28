@@ -302,6 +302,7 @@ and whitespace-only all count as absent, and no heading is emitted at all.
 ```suggestion
 {suggested_fix_code}
 ```
+
 ```
 
 `{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the severity uppercased,

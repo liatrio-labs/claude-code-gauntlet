@@ -24,9 +24,10 @@ The dispatch prompt carries a results JSON object by value:
 - `stats` — per-stage counts.
 
 Each finding carries the canonical fields (`severity`, `title`, `file`, `line_start`,
-`description`, plus optionally `suggestion`, `claude_md_rule`, `spec_text`) alongside
-optional per-dimension extras. Optional fields that are absent on a given finding simply
-are not rendered — never invented or back-filled.
+`description`, plus optionally `suggestion` and `claude_md_rule`) and, for intent
+findings, `spec_text` (a per-dimension extra) — alongside other per-dimension extras.
+Optional fields that are absent on a given finding simply are not rendered — never
+invented or back-filled.
 
 Everything you need is in that object — there is no shared context file to read.
 

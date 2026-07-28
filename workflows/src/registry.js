@@ -101,7 +101,11 @@ export const DIMENSIONS = [
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { criticality: 'number', failure_scenario: 'string' }, modelOverride: null, promptExtra: null },
+    // criticality is a 1-10 IMPACT scale (agents/test-analyzer.md); bound it in the schema
+    // fragment so StructuredOutput rejects 0/-5/999 the same way items is required on arrays.
+    // confidence stays unbound here and is clamped later — validators adjust it at runtime.
+    schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
+    modelOverride: null, promptExtra: null },
   { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
     schemaExtra: { spec_text: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },

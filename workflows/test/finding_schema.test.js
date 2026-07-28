@@ -172,6 +172,8 @@ test('the fields issue #47 added are declared, on the right agents, with the rig
 
   const testAnalyzer = props('code-gauntlet:test-analyzer');
   assert.equal(testAnalyzer.criticality.type, 'number', 'criticality is a NUMBER (1-10 impact)');
+  assert.equal(testAnalyzer.criticality.minimum, 1, 'criticality lower bound is 1');
+  assert.equal(testAnalyzer.criticality.maximum, 10, 'criticality upper bound is 10');
   assert.equal(testAnalyzer.failure_scenario.type, 'string');
 
   const conventions = props('code-gauntlet:conventions-and-intent');

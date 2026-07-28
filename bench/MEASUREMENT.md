@@ -113,8 +113,9 @@ The review itself can be complete underneath it — on
 phases, zero gaps, a full artifact set and a captured dry-run payload. Confirm
 that before re-running: an `invalid` with a complete artifact set is a
 formatting miss, not a pipeline failure. (Distinct from
-`workflow_backgrounded`, which the runner labels separately — see gate 2b in
-`bench/runner/invoke.py`.)
+`workflow_backgrounded`, which the runner labels in
+`bench/runner/invoke.py`'s `_workflow_backgrounded` — a status distinct from
+any of `check.py`'s G1–G5 gates.)
 
 **`origin=unknown` from artifact-writer transcription drift.** The writer is a
 sampled agent, not a function (see CLAUDE.md, "The by-value writer is not
