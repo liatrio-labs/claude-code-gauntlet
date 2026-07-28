@@ -17,8 +17,13 @@ repos:
     rev: v0.45.0
     hooks:
       - id: markdownlint-fix
-        # bench/golden holds byte-exact fixtures (recorded input envelopes), not docs
-        exclude: "LICENSE|^bench/golden/"
+        # LICENSE and bench/golden are non-docs / byte-exact fixtures. CHANGELOG.md is
+        # rewritten by python-semantic-release on every release commit (which carries the
+        # skip-ci token, so CI never sees it); the default template leaves an MD012 double
+        # blank before the previous version heading, and every subsequent PR's merge-with-
+        # main lint run then fails on that generated nit. Exclude the generated file rather
+        # than keep re-fixing it on unrelated PRs.
+        exclude: "LICENSE|^bench/golden/|^CHANGELOG\\.md$"
 
   - repo: https://github.com/streetsidesoftware/cspell-cli
     rev: v9.7.0
