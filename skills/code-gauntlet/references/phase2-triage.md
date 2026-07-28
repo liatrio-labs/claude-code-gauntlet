@@ -302,7 +302,7 @@ Skip conditions: test-analyzer (no test files in repo), type-design-analyzer (no
 
 ## Shared Agent Context File
 
-The workflow's discovery, validate, and challenge agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/code-gauntlet-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file.
+The workflow's **summarize, discovery, and validate** agents Read a shared context file. The workflow threads exactly this path to them: `{output_dir}/code-gauntlet-context-{head_sha_short}.md`. The skill must write it there before the Phase 3 `Workflow` call, or the agents' "Read the shared context" step hits a missing file. The **challenger** is not in that list and never has been — it is structurally blind (it receives only a finding's title, description, and location and opens the code itself), so the Challenge stage is given no context path at all.
 
 Write it with `python3 -c "import json; ..."`. Contents:
 
@@ -311,6 +311,23 @@ Write it with `python3 -c "import json; ..."`. Contents:
 - The full diff inside `<untrusted-code-content>` tags. Raw diff lines only — never substitute a summary for changed content; evidence destroyed during summarization cannot be recovered by agents.
 
 The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to the report writer. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
+
+### Measure it (issue #48)
+
+A single `Read` of this file returns only **part** of it and carries **no truncation notice** — the partial result is indistinguishable from a complete one. Measured on run `wf_cef39739-577`: all 7 discovery agents' first `Read` of a 95,057-byte / 2,028-line context file came back as 58,145 chars ending at line 1083. Six agents inferred the cutoff and paginated to the end; `security-reviewer` did not, and reviewed roughly the first half of the diff while returning `complete: true`.
+
+The workflow has no disk, so it cannot measure the file. The skill must, **in the same `python3 -c` invocation that writes it**, and stamp the result into the args waist as `contextLines` / `contextChars`:
+
+```python
+lines = content.count("\n") + (0 if content.endswith("\n") else 1)
+print(json.dumps({"contextLines": lines, "contextChars": len(content)}))
+```
+
+`contextLines` counts as the Read tool's `cat -n` numbering does: a file with no trailing newline still displays its final partial line, so it counts. Do **not** substitute `wc -l`, which counts newline *terminators* and therefore reports one fewer for exactly that case — an undercount by one drops the file's last line from every agent's read plan, silently. `contextChars` is `len(content)` and is advisory: it only narrows the per-call chunk size when lines are long, so a small code-point-vs-UTF-16 divergence between the runtimes is harmless.
+
+If the file came out **empty**, omit both fields — test `not content`, not `lines == 0`: the formula returns `1` for empty content (`"".count("\n") + 1`), so a naive zero-check never fires and the waist would happily accept `{"contextLines": 1, "contextChars": 0}`, telling every agent the shared context is a single line. An empty shared context is a Phase 2 bug to fix, not a value to pass on.
+
+`contextReadPlan` (`workflows/src/stages.js`) turns the pair into the exact `Read(offset, limit)` calls covering the file, and `sharedContextLine` enumerates them in the Summarize, Discover, and Validate prompts. **Both fields are optional**: stamp neither and every prompt degrades to fixed 750-line stepping with no known terminus, and the run reports a `context_unmeasured` gap. That is a real degradation — it puts end-detection back in the agent's hands — so it is disclosed, never silent. Optionality exists because this step is model-executed and can be skipped; it is not a licence to skip it. Stamping `contextChars` without `contextLines` is rejected at the waist (chars alone cannot size a line-offset plan), as is any non-positive or fractional value.
 
 ---
 
@@ -348,6 +365,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 
 **Other inputs (optional unless noted):**
 
+- `contextLines` / `contextChars` — the shared context file's measured size, from the write step above. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
 - `reviewConfig` — the parsed REVIEW.md object (thresholds + `ignore`), consumed by the Filter stage.

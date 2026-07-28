@@ -32,6 +32,26 @@ For large PRs with per-file summaries provided, also produce a **summary-of-summ
 
 These words pre-judge quality. The review agents exist to find out whether the PR's claims are actually true — your summary must not prejudge that.
 
+<!-- Canonical source: references/complete-read-contract.md — keep all agent copies in sync -->
+## Reading a file completely
+
+A `Read` can return only PART of a file and tell you nothing about it. There is no
+truncation notice, and a partial result looks exactly like a complete file. One `Read`
+is never proof you have the whole file.
+
+- **The shared context file is mandatory reading in full.** When your dispatch prompt
+  lists the `Read` calls that cover it, make every one of them. When it instead states
+  a line count, read until you reach that line. When it gives neither, keep issuing
+  `Read` with `offset` set past the last line you received until a call returns no
+  further content.
+- **For any other file your conclusion depends on**, check where the result stopped
+  against where the content should end. Output that breaks off mid-hunk, mid-function,
+  or inside an unclosed tag, bracket, or quote means the file continues — read on from
+  that offset before you judge it.
+- **Stopping early is a silent failure.** You will analyze only the portion you saw and
+  report as though you had seen all of it. Never treat "I read the file" as settled
+  because one call returned something plausible.
+
 ## What you do NOT do
 
 - Do not evaluate whether the changes are correct, safe, or well-implemented

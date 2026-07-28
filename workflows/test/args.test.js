@@ -365,3 +365,63 @@ test('parseEntryArgs does NOT strip stamped nulls — runWith owns the strip so 
   const parsedObj = parseEntryArgs({ ...good, reviewConfig: null });
   assert.equal(parsedObj.reviewConfig, null);
 });
+
+// --- contextLines / contextChars: the shared-context size waist (issue #48) ---
+//
+// The workflow has no disk, so the only way it can know how much of the shared context
+// file exists is for the skill to measure it and stamp it. contextReadPlan turns the
+// measurement into the exact Read calls the dispatch prompts enumerate; a malformed
+// measurement would yield a plan that misses the file's tail, which is precisely the
+// silent under-read #48 exists to stop. So the waist shape-checks both, hard.
+test('contextLines/contextChars are OPTIONAL — a pre-#48 waist stays valid', () => {
+  // Bench and every caller predating this field stamp neither. They must keep running
+  // (degrading to the count-free read-to-end wording), not be rejected.
+  assert.equal(validateArgs(good).ok, true);
+  assert.equal(validateArgs({ ...good, contextLines: 2028 }).ok, true);
+  assert.equal(validateArgs({ ...good, contextLines: 2028, contextChars: 94784 }).ok, true);
+  assert.equal(validateArgs({ ...good, contextLines: 1, contextChars: 1 }).ok, true);
+});
+
+test('contextLines/contextChars reject any value that would corrupt the read plan', () => {
+  for (const bad of [0, -1, 1.5, NaN, Infinity, '2028', null, {}, [], Number.MAX_SAFE_INTEGER + 2]) {
+    const r = validateArgs({ ...good, contextLines: bad });
+    assert.equal(r.ok, false, `contextLines=${String(bad)} should be rejected`);
+    assert.ok(r.errors.some((e) => e.includes('contextLines')), r.errors.join('; '));
+  }
+  for (const bad of [0, -1, 2.5, NaN, '95057', null, {}]) {
+    const r = validateArgs({ ...good, contextLines: 2028, contextChars: bad });
+    assert.equal(r.ok, false, `contextChars=${String(bad)} should be rejected`);
+    assert.ok(r.errors.some((e) => e.includes('contextChars')), r.errors.join('; '));
+  }
+});
+
+test('contextChars without contextLines is rejected — chars alone cannot size a line plan', () => {
+  const r = validateArgs({ ...good, contextChars: 94784 });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.some((e) => e.includes('contextChars requires contextLines')), r.errors.join('; '));
+});
+
+test('a stamped null contextLines is NOT silently tolerated — it is a measurement, not an optional object', () => {
+  // NULLABLE_TOP_LEVEL is deliberately narrow (args.js). A null measurement must fail
+  // loud rather than degrade quietly to the count-free wording: the skill measured
+  // something and got null, which is a bug in the producer, not an omission.
+  assert.deepEqual(stripNullOptionalsReport({ ...good, contextLines: null }).dropped, []);
+  assert.equal(validateArgs({ ...good, contextLines: null }).ok, false);
+});
+
+test('contextLines/contextChars are bounded above — an absurd measurement fails loud at the waist', () => {
+  // Found by the adversarial review of this change: the guard checked only
+  // Number.isSafeInteger && > 0, so contextLines = Number.MAX_SAFE_INTEGER validated
+  // cleanly and then OOM-killed the node process inside contextReadPlan, uncatchably,
+  // before any dispatch. contextReadPlan carries its own chunk ceiling as the last line
+  // of defence; this is the fail-loud one, where the bad value is still attributable to
+  // the producer that stamped it.
+  for (const [k, over] of [['contextLines', 5000001], ['contextChars', 500000001]]) {
+    const base = k === 'contextChars' ? { ...good, contextLines: 2028 } : { ...good };
+    const r = validateArgs({ ...base, [k]: over });
+    assert.equal(r.ok, false, `${k}=${over} should be rejected`);
+    assert.ok(r.errors.some((e) => e.includes(k) && e.includes('ceiling')), r.errors.join('; '));
+  }
+  assert.equal(validateArgs({ ...good, contextLines: 5000000 }).ok, true, 'the ceiling itself is accepted');
+  assert.equal(validateArgs({ ...good, contextLines: Number.MAX_SAFE_INTEGER }).ok, false);
+});

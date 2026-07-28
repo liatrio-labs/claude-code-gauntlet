@@ -18,6 +18,27 @@ DISCOVERY_AGENTS = [
     "conventions-and-intent", "type-design-analyzer", "code-simplifier",
 ]
 
+# Every agent that opens a file, and so is exposed to an unannounced partial Read
+# (issue #48). The 7 discovery agents plus the three other file-readers: validator and
+# change-summarizer are handed the shared context path by the same stage inputs the
+# discovery agents are; challenger is not, but it opens the code under review itself.
+COMPLETE_READ_AGENTS = DISCOVERY_AGENTS + ["validator", "challenger", "change-summarizer"]
+
+COMPLETE_READ_CANON = (
+    "skills/code-gauntlet/references/complete-read-contract.md"
+)
+COMPLETE_READ_MARKER = (
+    "<!-- Canonical source: references/complete-read-contract.md"
+    " — keep all agent copies in sync -->"
+)
+
+
+def _canonical_complete_read_block():
+    """The block between the BEGIN/END sentinels in the canonical reference."""
+    text = (REPO / COMPLETE_READ_CANON).read_text()
+    body = text.split("<!-- BEGIN CANONICAL BLOCK -->")[1]
+    return body.split("<!-- END CANONICAL BLOCK -->")[0].strip("\n")
+
 # Emission-mechanics markers that must never reappear in a discovery agent
 # contract. 'Bash' is included: the tool was granted solely for NDJSON emission
 # ("Bash is available ONLY for writing findings"), so its grant goes with it.
@@ -63,6 +84,92 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
                              f"{name} example emits null for schema-declared {field}")
             self.assertNotIn("otherwise null", text.split(field)[1][:120],
                              f"{name} contract still offers a null branch for {field}")
+
+
+class TestCompleteReadContract(unittest.TestCase):
+    """The read-completeness contract (issue #48).
+
+    On run wf_cef39739-577 every one of the 7 discovery agents' FIRST Read of the
+    95,057-byte / 2,028-line shared context file returned 58,145 chars ending at line
+    1083, and NONE of the 7 tool results carried a truncation notice. Six agents
+    paginated to the file's end anyway; security-reviewer did not, and reviewed roughly
+    half the diff while returning complete=true. Nothing in the run's artifacts, report
+    or transcript distinguished that from a clean empty result.
+
+    The primary fix is arithmetic (contextReadPlan in workflows/src/stages.js enumerates
+    the exact Read calls, pinned by workflows/test/stages_context_read.test.js). These
+    tests pin the agent-side backstop: every file-reading agent carries the rule, and
+    all 10 copies stay byte-identical to the canonical source.
+    """
+
+    def test_canonical_source_exists_and_lists_every_copy(self):
+        canon = REPO / COMPLETE_READ_CANON
+        self.assertTrue(canon.is_file(), f"missing canonical source: {COMPLETE_READ_CANON}")
+        text = canon.read_text()
+        for name in COMPLETE_READ_AGENTS:
+            self.assertIn(f"`agents/{name}.md`", text,
+                          f"{name} is not listed in the canonical file's duplication contract")
+
+    def test_every_file_reading_agent_carries_the_block_byte_identically(self):
+        # Byte-identity is the point: a copy that drifts is a copy that stops saying the
+        # thing that keeps a partial read from passing as a whole one.
+        block = _canonical_complete_read_block()
+        self.assertGreater(len(block), 400, "canonical block looks truncated")
+        offenders = {}
+        for name in COMPLETE_READ_AGENTS:
+            text = (REPO / "agents" / f"{name}.md").read_text()
+            problems = []
+            if text.count(COMPLETE_READ_MARKER) != 1:
+                problems.append(f"canonical-source comment appears {text.count(COMPLETE_READ_MARKER)}x (need 1)")
+            if block not in text:
+                problems.append("block missing or not byte-identical to the canonical source")
+            if problems:
+                offenders[name] = problems
+        self.assertEqual(offenders, {},
+                         f"complete-read contract drifted or is missing: {offenders}")
+
+    def test_the_block_states_the_three_load_bearing_facts(self):
+        # Requirement 2: the fix must not depend on the Read tool emitting a truncation
+        # notice — none of the 7 profiled first-reads carried one. Assert the block says
+        # so explicitly, names the shared context file, and calls out the silent-failure
+        # consequence. Worded against the canonical source only; the byte-identity test
+        # above propagates it to all 10 copies.
+        block = _canonical_complete_read_block()
+        self.assertIn("no", block.lower())
+        self.assertIn("truncation notice", block)
+        self.assertIn("shared context file is mandatory reading in full", block)
+        self.assertIn("silent failure", block)
+        self.assertIn("offset", block)
+
+    def test_the_block_trips_no_existing_discovery_agent_guard(self):
+        # The scrub guard above forbids printf/ndjson/validate_ndjson/Bash in a discovery
+        # agent contract. A new block that reintroduced any of them would pass its own
+        # test and fail the scrub — assert the two contracts are compatible directly.
+        self.assertEqual(sorted(set(RESIDUE.findall(_canonical_complete_read_block()))), [])
+
+    def test_the_skill_documents_measuring_and_stamping_the_context_size(self):
+        # The agent-side block is a backstop. The primary mechanism is the measurement
+        # the skill stamps — if Phase 2 stops stamping it, every prompt silently falls
+        # back to the count-free wording and the arithmetic fix is gone with no failure
+        # anywhere. Pin the producer-side documentation that keeps the two in step.
+        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text()
+        triage = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text()
+        for doc, label in [(skill, "SKILL.md"), (triage, "phase2-triage.md")]:
+            self.assertIn("contextLines", doc, f"{label} does not document the contextLines waist field")
+            self.assertIn("contextChars", doc, f"{label} does not document the contextChars waist field")
+
+    def test_the_workflow_validates_and_consumes_the_stamped_size(self):
+        # The Python suite owns no JS behavior, but it can pin that the two halves of the
+        # waist still exist: the skill's docs (above) promise a field the workflow must
+        # still accept and use. A rename on either side fails here.
+        args_js = (REPO / "workflows/src/args.js").read_text()
+        stages_js = (REPO / "workflows/src/stages.js").read_text()
+        self.assertIn("contextLines", args_js, "args.js no longer validates contextLines")
+        self.assertIn("contextReadPlan", stages_js, "stages.js no longer builds a read plan")
+        # The bundle is generated; test_bundle_fresh.py proves it matches src, so a
+        # presence check here catches a build that silently dropped the stage.
+        bundle = (REPO / "workflows/pipeline.js").read_text()
+        self.assertIn("contextReadPlan", bundle, "the shipped bundle carries no read plan")
 
 
 if __name__ == "__main__":

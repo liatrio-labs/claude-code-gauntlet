@@ -40,7 +40,6 @@
   ([#51](https://github.com/liatrio-labs/claude-code-gauntlet/pull/51),
   [`348901a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348901a1e59d72dcb1ee79cb0c3ac8c7c6bca9b6))
 
-
 ## v3.2.1 (2026-07-27)
 
 ### Bug Fixes
