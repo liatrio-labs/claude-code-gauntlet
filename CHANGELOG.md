@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.2.3 (2026-07-28)
+
+### Bug Fixes
+
+- **context**: Compute the shared-context read plan instead of asking agents to paginate
+  ([#59](https://github.com/liatrio-labs/claude-code-gauntlet/pull/59),
+  [`5106d06`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5106d06aecbb6e684f0e5bcccb324fc5460d311f))
+
+- **context**: Compute the shared-context read plan instead of asking agents to paginate (#48)
+  ([#59](https://github.com/liatrio-labs/claude-code-gauntlet/pull/59),
+  [`5106d06`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5106d06aecbb6e684f0e5bcccb324fc5460d311f))
+
+- **context**: Disclose unplannable read-plan degradation
+  ([#59](https://github.com/liatrio-labs/claude-code-gauntlet/pull/59),
+  [`5106d06`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5106d06aecbb6e684f0e5bcccb324fc5460d311f))
+
+### Chores
+
+- Drop a stray blank line semantic-release left in CHANGELOG.md
+  ([#59](https://github.com/liatrio-labs/claude-code-gauntlet/pull/59),
+  [`5106d06`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5106d06aecbb6e684f0e5bcccb324fc5460d311f))
+
+### Refactoring
+
+- **context**: Remove the hand-roll capability instead of guarding it
+  ([#59](https://github.com/liatrio-labs/claude-code-gauntlet/pull/59),
+  [`5106d06`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5106d06aecbb6e684f0e5bcccb324fc5460d311f))
+
+
 ## v3.2.2 (2026-07-28)
 
 ### Bug Fixes
