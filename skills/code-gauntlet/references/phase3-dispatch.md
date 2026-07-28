@@ -42,7 +42,7 @@ The workflow threads eight stages inside one top-level try/catch, checkpointing 
 | 1 | **Summarize** | `change-summarizer` (one call; fans out per-file buckets + a merge call for >500-line PRs) | empty summary + gap |
 | 2 | **Discover** | one `parallel()` fan-out to every active discovery agent (see roster) | a null member marks that agent's dimensions degraded |
 | 3 | **Merge** | pure JS (no agents) — regroups + dedups discovered findings | — |
-| 4 | **Verify** | one `executor` per finding-slice, sequential | any untrusted slice → whole set `origin=unknown`, `verified=false`, loud gap |
+| 4 | **Verify** | one `executor` per finding-slice, sequential, one retry per slice before degrading | an untrusted slice (after its retry) → that slice's findings `origin=unknown`; other slices unaffected; `verified=false` iff any slice degraded; loud gap per degraded slice |
 | 5 | **Validate** | one `validator` per batch, `parallel()` | a null batch → its findings `validation=skipped`, kept at face value |
 | 6 | **Filter** | pure JS (no agents) — thresholds, injection filter, dedup, routing | — |
 | 7 | **Challenge** | one `challenger` per finding (blind), up to `limits.challengeCap` | overflow / null → `challenge=skipped`, routed to the unverified bucket |

@@ -1,13 +1,19 @@
 // stages_verify.test.js — orchestration-contract tests for the Verify stage.
 // verifyStage dispatches the `executor` agent (one call per verifySliceSize slice),
-// and trusts a slice's result ONLY when status==='ok' and the receipt echoes the
-// dispatched nonce, head sha, and slice finding-count. ANY untrusted slice (wrong
-// receipt, status:'failed', or agent throw) degrades the WHOLE set to the UNVERIFIED
-// path: every finding origin='unknown', surfaced-classification skipped, a loud gap,
-// verified=false — findings are never dropped and success is never fabricated.
+// SEQUENTIALLY, and trusts a slice's result ONLY when status==='ok' and the receipt
+// echoes the dispatched nonce, head sha, and slice finding-count (trustSlice).
+// DEGRADATION IS PER SLICE (issue #54, issue #25 requirement 3): an untrusted slice
+// degrades ONLY ITS OWN findings (origin='unknown', surfaced-classification skipped) and
+// the loop keeps going — slices that verify cleanly keep their verified output. Each slice
+// gets exactly ONE deterministic retry before degrading (VERIFY_ATTEMPTS_PER_SLICE=2):
+// attempt 1 is labeled `verify-slice-${i}` with nonce `${nonce}.${i}`, the retry is
+// `verify-slice-${i}-retry` with the DISTINCT nonce `${nonce}.${i}.r1` (so a replay of
+// attempt 1's receipt cannot satisfy the retry). `verified` is true iff ZERO slices
+// degraded. Findings are never dropped and success is never fabricated, at slice
+// granularity; output stays in strict slice-index order.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyStage, parseWriterPayload } from '../src/stages.js';
+import { verifyStage, parseWriterPayload, VERIFY_ATTEMPTS_PER_SLICE } from '../src/stages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
 // Platform contract: agent(promptString, opts). The EXECUTOR slice loop is deliberately
@@ -17,33 +23,45 @@ import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 // parallel() is a faithful null-isolating implementation rather than a hard throw.
 // Before the executor loop, verifyStage dispatches artifact-writer 'verify-input-writer-*'
 // calls to materialize the slice inputs; those are handled separately (succeeding by
-// default, or via cfg.sliceWriter) so `agentImpl` sees only executor dispatches with a
-// clean 0-based executor index. Each recorded call is { prompt, ...opts } so tests can
-// read the embedded command from the prompt. Every dispatch asserts the contract.
+// default, or via cfg.sliceWriter) so `agentImpl` sees only executor dispatches.
+//
+// agentImpl(call, sliceIndex, { attempt }) — sliceIndex and attempt (1 or 2) are derived
+// from the dispatch LABEL (`verify-slice-${i}` / `verify-slice-${i}-retry`), not from a
+// monotonic call counter: with per-slice retries a counter no longer equals the slice
+// index (issue #54 harness fix). Existing tests that only read the second positional arg
+// as "the slice index" keep working unchanged — that is still exactly what it is.
 function verifyCtx(agentImpl, cfg = {}) {
   const calls = [];
-  let execIdx = -1;
   let inParallel = 0;
   const agent = async (prompt, opts = {}) => {
     assertPrompt(prompt);
     assertValidSchema(opts.schema);
     const call = { prompt, ...opts };
     calls.push(call);
-    if ((opts.label || '').startsWith('verify-input-writer')) {
+    const label = opts.label || '';
+    if (label.startsWith('verify-input-writer')) {
       if (cfg.sliceWriter) return cfg.sliceWriter(call);
       // Faithful default: echo the exact slice-input paths so the write-proof gate passes.
       const entries = parseWriterPayload(prompt) || [];
       return { written: entries.map((e) => e.path) };
     }
-    if (inParallel > 0 && (opts.label || '').startsWith('verify-slice-')) {
-      throw new Error('verifyStage must use agent() per slice, not parallel()');
+    if (label.startsWith('verify-slice-')) {
+      if (inParallel > 0) {
+        throw new Error('verifyStage must use agent() per slice, not parallel()');
+      }
+      const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
+      const sliceIndex = m ? Number(m[1]) : -1;
+      const attempt = m && m[2] ? 2 : 1;
+      return agentImpl(call, sliceIndex, { attempt });
     }
-    execIdx += 1;
-    return agentImpl(call, execIdx);
+    return agentImpl(call, -1, { attempt: 1 });
   };
   return {
     calls,
     execCalls: () => calls.filter((t) => (t.label || '').startsWith('verify-slice-')),
+    // Every dispatch (attempt 1 and, if present, the retry) for one slice index, in
+    // dispatch order. Handy for asserting "exactly one retry" / "never re-dispatched".
+    execCallsFor: (i) => calls.filter((t) => new RegExp(`^verify-slice-${i}(-retry)?$`).test(t.label || '')),
     agent,
     // parallel() nulls a failed member IN PLACE (Phase 0 contract), preserving input order.
     parallel: async (thunks) => {
@@ -198,16 +216,28 @@ test('(g) large set slices into ceil(n/verifySliceSize) executor calls; all trus
   assert.equal(out.gaps.length, 0);
 });
 
-test('(h) one bad slice among several -> the whole set is UNVERIFIED (all-or-nothing)', async () => {
+test('(h) one bad slice among several -> ONLY that slice degrades, per-slice (issue #54)', async () => {
   const findings = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
   const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
   const slices = [];
   for (let k = 0; k < findings.length; k += 2) slices.push(findings.slice(k, k + 2));
-  const ctx = verifyCtx((_t, i) => okEnvelope(slices[i], { nonce: `n-1.${i}`, n_in: i === 1 ? 999 : slices[i].length }));
+  // Slice 1 (F2, F3) fails deterministically on EVERY attempt (both the first dispatch and
+  // the retry return the same untrusted shape); slices 0 and 2 are trusted on their first try.
+  const ctx = verifyCtx((_t, i) => {
+    if (i === 1) return { status: 'failed', exitCode: 1, stderr: 'boom' };
+    return okEnvelope(slices[i], { nonce: `n-1.${i}`, n_in: slices[i].length });
+  });
   const out = await verifyStage(ctx, input);
-  assert.equal(out.verified, false);
-  assert.equal(out.findings.length, 5);
-  assert.ok(out.findings.every((f) => f.origin === 'unknown'));
+  assert.equal(out.verified, false); // one degraded slice still marks the run as untrusted
+  assert.equal(out.findings.length, 5); // never dropped
+  const byId = Object.fromEntries(out.findings.map((f) => [f.id, f]));
+  for (const id of ['F0', 'F1', 'F4']) assert.notEqual(byId[id].origin, 'unknown', `${id} must stay verified`);
+  for (const id of ['F2', 'F3']) assert.equal(byId[id].origin, 'unknown', `${id} must degrade`);
+  // Output stays in strict slice-index order regardless of which slice degraded.
+  assert.deepEqual(out.findings.map((f) => f.id), ['F0', 'F1', 'F2', 'F3', 'F4']);
+  assert.equal(out.gaps.length, 1, 'exactly one gap, for the one degraded slice');
+  assert.match(out.gaps[0], /slice 1/);
+  assert.match(out.gaps[0], /2 of 5/);
 });
 
 test('(h2) equal-length slices cannot satisfy each other: per-slice nonces are distinct', async () => {
@@ -242,7 +272,7 @@ test('(j) slice inputs are materialized by the artifact-writer BEFORE any execut
   assert.match(ctx.calls[0].prompt, /"id":"F1"/);
 });
 
-test('(k) slice-input writer failure -> whole set UNVERIFIED, no executor dispatched', async () => {
+test('(k) slice-input writer failure -> that slice UNVERIFIED (here: the only slice), no executor dispatched', async () => {
   const input = baseInput();
   const ctx = verifyCtx(
     () => { throw new Error('executor should never run when slice inputs were not written'); },
@@ -256,7 +286,7 @@ test('(k) slice-input writer failure -> whole set UNVERIFIED, no executor dispat
   assert.equal(ctx.execCalls().length, 0, 'no executor ran after the write failure');
 });
 
-test('(l) slice-input writer THROW -> whole set UNVERIFIED (never fabricate)', async () => {
+test('(l) slice-input writer THROW -> that slice UNVERIFIED (here: the only slice), never fabricate', async () => {
   const input = baseInput();
   const ctx = verifyCtx(
     () => okEnvelope(input.findings),
@@ -305,7 +335,7 @@ test('(m1) stamped eliminations -> slice TRUSTED: verified findings threaded, ve
   assert.equal(out.gaps.length, 0);
 });
 
-test('(m2) an UNSTAMPED elimination (fabricated verified->eliminated move) -> whole set UNVERIFIED', async () => {
+test('(m2) an UNSTAMPED elimination (fabricated verified->eliminated move) -> that slice UNVERIFIED, both attempts', async () => {
   const input = baseInput();
   const ctx = verifyCtx((_t, i) => ({
     status: 'ok',
@@ -388,7 +418,7 @@ test('(m5) an echoed agent field is threaded through the verify stage untouched'
 
 // --- Item 5: slice-input writer write-proof ---------------------------------
 
-test('(k2) slice-input writer echo that omits a dispatched path -> whole set UNVERIFIED', async () => {
+test('(k2) slice-input writer echo that omits a dispatched path -> that slice UNVERIFIED (no write proof)', async () => {
   const input = baseInput();
   const ctx = verifyCtx(
     () => { throw new Error('executor must not run when slice inputs were not proven written'); },
@@ -416,4 +446,171 @@ test('the executor command is a single AST-safe python3 word-token invocation', 
   // No shell substitution / heredocs / env-prefix (CLAUDE.md AST-safe emission).
   assert.doesNotMatch(cmd, /\$\(|`|<<|\$\{|&&|\|\|/);
   assert.equal(t.agentType, 'code-gauntlet:executor');
+});
+
+// --- Issue #54: per-slice degradation + the single deterministic retry ------
+
+test('(n1) a slice that fails attempt 1 but succeeds on the retry recovers cleanly: verified===true, zero findings degraded, disclosure gap without UNVERIFIED', async () => {
+  const findings = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
+  const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
+  const slices = [];
+  for (let k = 0; k < findings.length; k += 2) slices.push(findings.slice(k, k + 2));
+  // Slice 1's FIRST dispatch fails; its retry succeeds (with the retry's distinct nonce).
+  // Slices 0 and 2 are trusted on their one and only dispatch.
+  const ctx = verifyCtx((_t, i, { attempt }) => {
+    if (i === 1 && attempt === 1) return { status: 'failed', exitCode: 1, stderr: 'transient' };
+    const nonce = i === 1 && attempt === 2 ? `n-1.${i}.r1` : `n-1.${i}`;
+    return okEnvelope(slices[i], { nonce, n_in: slices[i].length });
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.findings.length, 5);
+  assert.ok(out.findings.every((f) => f.origin !== 'unknown'), 'a recovered slice degrades nothing');
+  assert.equal(ctx.execCallsFor(1).length, 2, 'slice 1: first attempt + retry');
+  assert.deepEqual(ctx.execCallsFor(1).map((t) => t.label), ['verify-slice-1', 'verify-slice-1-retry']);
+  assert.equal(ctx.execCallsFor(0).length, 1, 'slice 0: never retried');
+  assert.equal(ctx.execCallsFor(2).length, 1, 'slice 2: never retried');
+  assert.equal(out.gaps.length, 1);
+  assert.match(out.gaps[0], /verify-slice-retry/);
+  assert.doesNotMatch(out.gaps[0], /UNVERIFIED/, 'a recovered slice discloses, it does not degrade');
+});
+
+test('(n2) a slice failing every attempt gets EXACTLY VERIFY_ATTEMPTS_PER_SLICE (2) dispatches, never a second retry', async () => {
+  const findings = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
+  const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
+  const slices = [];
+  for (let k = 0; k < findings.length; k += 2) slices.push(findings.slice(k, k + 2));
+  const ctx = verifyCtx((_t, i) => {
+    if (i === 1) return { status: 'failed', exitCode: 1, stderr: 'boom' }; // fails on every attempt
+    return okEnvelope(slices[i], { nonce: `n-1.${i}`, n_in: slices[i].length });
+  });
+  await verifyStage(ctx, input);
+  const slice1Calls = ctx.execCallsFor(1);
+  // Asserted against the EXPORTED constant, not a copied literal: raising
+  // VERIFY_ATTEMPTS_PER_SLICE without teaching verifySliceWithRetry to use it fails here
+  // rather than silently leaving worstCaseAgentCount over-counting the real fan-out.
+  assert.equal(VERIFY_ATTEMPTS_PER_SLICE, 2, 'the retry budget this file pins its labels to');
+  assert.equal(slice1Calls.length, VERIFY_ATTEMPTS_PER_SLICE);
+  assert.deepEqual(slice1Calls.map((t) => t.label), ['verify-slice-1', 'verify-slice-1-retry']);
+});
+
+test('(n3) the retry nonce is distinct: a replay of attempt 1\'s receipt does not satisfy the retry', async () => {
+  const findings = Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
+  const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
+  const slices = [findings.slice(0, 2), findings.slice(2, 4)];
+  const commands = [];
+  const ctx = verifyCtx((t, i, { attempt }) => {
+    if (i === 0) return okEnvelope(slices[0], { nonce: 'n-1.0', n_in: 2 });
+    commands.push(t.prompt); // slice 1's commands, in dispatch order: [attempt 1, retry]
+    if (attempt === 1) return { status: 'failed', exitCode: 1, stderr: 'boom' };
+    // The retry: a confused/replaying executor echoes attempt 1's nonce (n-1.1) instead of
+    // the expected retry nonce (n-1.1.r1). trustSlice must reject this, not accept it.
+    return okEnvelope(slices[1], { nonce: 'n-1.1', n_in: 2 });
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false); // slice 1's retry rejected -> slice 1 degrades
+  const byId = Object.fromEntries(out.findings.map((f) => [f.id, f]));
+  assert.notEqual(byId.F0.origin, 'unknown');
+  assert.equal(byId.F2.origin, 'unknown');
+  assert.match(commands[0], /--nonce n-1\.1(\s|$)/, 'attempt 1 embeds the slice nonce');
+  assert.match(commands[1], /--nonce n-1\.1\.r1(\s|$)/, 'the retry embeds a DISTINCT nonce');
+});
+
+// (n4) "a trusted slice is never re-dispatched" is already covered by test (g) above:
+// every slice there is trusted on its first answer and execCalls().length===slices.length
+// (no extra retry dispatches). Not duplicated here.
+
+test('(n5) the loop CONTINUES past a failed slice: later slices are still dispatched', async () => {
+  const findings = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
+  const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
+  const slices = [];
+  for (let k = 0; k < findings.length; k += 2) slices.push(findings.slice(k, k + 2));
+  const ctx = verifyCtx((_t, i) => {
+    if (i === 0) return { status: 'failed', exitCode: 1, stderr: 'boom' }; // fails on every attempt
+    return okEnvelope(slices[i], { nonce: `n-1.${i}`, n_in: slices[i].length });
+  });
+  await verifyStage(ctx, input);
+  const labels = ctx.calls.map((c) => c.label);
+  assert.ok(labels.includes('verify-slice-1'), 'slice 1 still dispatched after slice 0 failed');
+  assert.ok(labels.includes('verify-slice-2'), 'slice 2 still dispatched after slice 0 failed');
+});
+
+test('(n6) an executor THROW on one slice degrades only that slice; the gap names both attempts', async () => {
+  const findings = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
+  const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
+  const slices = [];
+  for (let k = 0; k < findings.length; k += 2) slices.push(findings.slice(k, k + 2));
+  const ctx = verifyCtx((_t, i) => {
+    if (i === 2) throw new Error('schema-retry exhausted'); // throws on every attempt
+    return okEnvelope(slices[i], { nonce: `n-1.${i}`, n_in: slices[i].length });
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  const byId = Object.fromEntries(out.findings.map((f) => [f.id, f]));
+  assert.notEqual(byId.F0.origin, 'unknown'); // slice 0, unaffected
+  assert.notEqual(byId.F2.origin, 'unknown'); // slice 1, unaffected
+  assert.equal(byId.F4.origin, 'unknown'); // slice 2, the one that threw
+  assert.equal(out.gaps.length, 1);
+  assert.match(out.gaps[0], /retried once after the first attempt failed/);
+});
+
+// Force slice 0's --input entry into its OWN writer group: a description well over the
+// 100_000-char SEGMENT_CHAR_BUDGET on its own means chunkBySerializedSize (greedy packer)
+// closes group 0 right after slice 0 and starts group 1 with every other slice — the same
+// technique stages_latency.test.js's bigVerifyFindings uses to force >1 writer group.
+function verifyFindingsWithOversizedFirst(n) {
+  const first = {
+    id: 'F0', file: 'a.js', line_start: 1, origin: 'new', dimension: 'bug', cross_file_refs: [],
+    description: 'd'.repeat(150000),
+  };
+  const rest = Array.from({ length: n - 1 }, (_, i) => ({
+    id: `F${i + 1}`, file: 'a.js', line_start: i + 2, origin: 'new', dimension: 'bug', cross_file_refs: [],
+  }));
+  return [first, ...rest];
+}
+
+test('(n7) a slice-input writer GROUP failure degrades only the slices IT carried', async () => {
+  const findings = verifyFindingsWithOversizedFirst(6);
+  const input = baseInput({ findings, limits: { verifySliceSize: 1 } });
+  const writerLabels = [];
+  const ctx = verifyCtx(
+    (_t, i) => okEnvelope([findings[i]], { nonce: `n-1.${i}`, n_in: 1 }),
+    {
+      sliceWriter: (call) => {
+        writerLabels.push(call.label);
+        const entries = parseWriterPayload(call.prompt) || [];
+        const paths = entries.map((e) => e.path);
+        // Fail only the group carrying slice 0's input path; echo every other group whole.
+        if (paths.some((p) => p.endsWith('.slice0.json'))) return null;
+        return { written: paths };
+      },
+    },
+  );
+  const out = await verifyStage(ctx, input);
+  assert.ok(writerLabels.length > 1, 'the payload must chunk into more than one writer group');
+  const byId = Object.fromEntries(out.findings.map((f) => [f.id, f]));
+  assert.equal(byId.F0.origin, 'unknown');
+  for (let i = 1; i < 6; i += 1) assert.notEqual(byId[`F${i}`].origin, 'unknown', `F${i} unaffected by group 0's failure`);
+  assert.equal(ctx.execCallsFor(0).length, 0, 'slice 0 never reached the executor (no write proof)');
+  assert.equal(out.gaps.length, 1);
+  assert.match(out.gaps[0], /slice 0 \(slice-input group \d+\)/);
+});
+
+test('(n8) every slice degraded -> every finding origin=unknown, one gap PER slice (the old whole-set outcome is still reachable, just no longer the only one)', async () => {
+  const findings = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
+  const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
+  const ctx = verifyCtx(() => ({ status: 'failed', exitCode: 1, stderr: 'boom' })); // every slice, every attempt
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.equal(out.findings.length, 5);
+  assert.ok(out.findings.every((f) => f.origin === 'unknown'));
+  assert.equal(out.gaps.length, 3); // ceil(5/2) = 3 slices -> 3 gaps, one per slice
+  // Gap ORDER is slice-index order, not arrival order — the whole loop is sequential, so
+  // an out-of-order gap list would mean a future refactor had started collecting failures
+  // off the dispatch order and made the run's own degradation record nondeterministic.
+  assert.match(out.gaps[0], /slice 0:/);
+  assert.match(out.gaps[1], /slice 1:/);
+  assert.match(out.gaps[2], /slice 2:/);
+  // Blast radius is per slice: 2 + 2 + 1 of 5, never "all 5" three times over.
+  assert.deepEqual(out.gaps.map((g) => (g.match(/(\d+) of (\d+) finding/) || []).slice(1, 3)), [['2', '5'], ['2', '5'], ['1', '5']]);
 });

@@ -112,8 +112,9 @@ test('the verify echo schema unions EVERY dimension extra, not just one agent se
   //
   // Only the EXECUTOR dispatch's schema is under test here, so the mock is deliberately
   // minimal: the slice-input writer echoes its paths so the write-proof gate passes, and the
-  // executor result is left unusable. verifyStage then degrades to UNVERIFIED, which is fine
-  // — the schema was already handed to the dispatch by then.
+  // executor result is left unusable. A `null` result is untrusted, so the slice takes its
+  // one deterministic retry (VERIFY_ATTEMPTS_PER_SLICE=2) before verifyStage degrades to
+  // UNVERIFIED, which is fine — the schema was already handed to both dispatches by then.
   const execSchemas = [];
   const ctx = {
     agent: async (prompt, opts = {}) => {
@@ -139,7 +140,12 @@ test('the verify echo schema unions EVERY dimension extra, not just one agent se
       diffPath: '/out/code-gauntlet-diff-abc123.patch',
     },
   });
-  assert.equal(execSchemas.length, 1, 'exactly one executor dispatch for a single slice');
+  // A degraded slice dispatches its single deterministic retry (VERIFY_ATTEMPTS_PER_SLICE=2),
+  // so a single slice whose executor result is untrusted on attempt 1 produces 2 dispatches.
+  assert.equal(execSchemas.length, 2, 'a degraded slice dispatches its one deterministic retry');
+  // The retry must carry the SAME schema as attempt 1 — the point of this test is that every
+  // executor dispatch gets the union schema, not just the first one.
+  assert.deepEqual(execSchemas[1], execSchemas[0], 'retry dispatch schema matches attempt 1');
   const schema = execSchemas[0];
 
   const everyField = new Set(Object.keys(FINDING_PROP_TYPES));

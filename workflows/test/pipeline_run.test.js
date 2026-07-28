@@ -72,6 +72,54 @@ test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true
   assert.ok(!out.gaps.some((g) => /UNVERIFIED/.test(g)), `no verify degradation, got: ${out.gaps}`);
 });
 
+test('partially-degraded verify: one failed slice keeps origin=unknown; healthy slices and downstream stages survive', async () => {
+  // End-to-end cover for issue #54's per-slice degradation: unit tests in stages_verify
+  // already pin the stage contract, but nothing else drove runWith with a mixed
+  // origin='new'/origin='unknown' array through Validate → Filter → Challenge → report →
+  // persist. Four findings, verifySliceSize 2 → two slices; fail slice 0 on both attempts.
+  const findings = [
+    makeFinding('F0'), makeFinding('F1'), makeFinding('F2'), makeFinding('F3'),
+  ];
+  const args = validArgs({
+    limits: { validateBatch: 25, verifySliceSize: 2, challengeCap: 40, summarizeBucketSize: 20 },
+  });
+  let persisted = null;
+  const ctx = makeCtx(args, {
+    findings,
+    verifySliceFailIndex: 0,
+    onPersist: (payload) => { persisted = payload; },
+  });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true, `pipeline must complete on a mixed-origin verify; gaps: ${out.gaps}`);
+  assert.equal(out.phaseReached, 'report');
+  assert.equal(out.stats.verified, false);
+  assert.ok(out.gaps.some((g) => /UNVERIFIED/.test(g) && /slice 0/.test(g)), `expected per-slice UNVERIFIED gap, got: ${out.gaps}`);
+  assert.ok(out.gaps.some((g) => /2 of 4/.test(g)), `gap must state the blast radius, got: ${out.gaps}`);
+  // Retry fired for the failed slice; the healthy slice was never re-dispatched.
+  assert.deepEqual(
+    ctx.calls.filter((c) => /^verify-slice-0(-retry)?$/.test(c.label || '')).map((c) => c.label),
+    ['verify-slice-0', 'verify-slice-0-retry'],
+  );
+  assert.deepEqual(
+    ctx.calls.filter((c) => /^verify-slice-1(-retry)?$/.test(c.label || '')).map((c) => c.label),
+    ['verify-slice-1'],
+  );
+  // Downstream stages still ran on the mixed-origin array.
+  assert.ok(ctx.calls.some((c) => (c.label || '').startsWith('validate-batch-')), 'validate ran');
+  assert.ok(ctx.calls.some((c) => (c.label || '').startsWith('challenge-')), 'challenge ran');
+  assert.ok(ctx.calls.some((c) => c.label === 'report-writer'), 'report ran');
+  assert.ok(persisted, 'artifact-writer received a payload');
+  const byId = Object.fromEntries((persisted.findings || []).map((f) => [f.id, f]));
+  for (const id of ['F0', 'F1']) {
+    assert.equal(byId[id].origin, 'unknown', `${id} (failed slice) must stay origin=unknown through persist`);
+  }
+  for (const id of ['F2', 'F3']) {
+    assert.ok(byId[id], `${id} (healthy slice) must reach persist`);
+    assert.notEqual(byId[id].origin, 'unknown', `${id} must not be degraded by the sibling slice`);
+  }
+});
+
 test('sandbox parity: full pipeline runs ok with node-only globals (structuredClone etc.) removed', async () => {
   // Regression guard for the live-smoke crash: applyChallenges used structuredClone, a
   // global the runtime sandbox lacks. With it deleted, the OLD code threw in the challenge
