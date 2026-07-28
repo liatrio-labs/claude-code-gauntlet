@@ -817,9 +817,9 @@ async function materializeVerifySlices(c, inp, slices, policy) {
     const r = results[g];
     // A null member is unreachable while the thunks above swallow their own throws; it is
     // still handled so a platform-side null can never be mistaken for a successful write.
-    const reason = !r
-      ? `slice-input writer group ${g} produced no result`
-      : (r.ok === true ? null : r.reason);
+    let reason = null;
+    if (!r) reason = `slice-input writer group ${g} produced no result`;
+    else if (r.ok !== true) reason = r.reason;
     if (reason === null) continue;
     for (const e of groups[g]) {
       const idx = sliceOfPath.get(e.path);

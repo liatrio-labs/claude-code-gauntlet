@@ -112,11 +112,25 @@ export function validArgs(over = {}) {
 //   - findings: replaces the default makeFindings() set that bug-detector discovers AND the
 //     verify-slice executor echoes back — lets a test drive a specific finding shape (e.g. a
 //     long description) end-to-end through the pipeline and assert it survives to persist.
+//   - verifySliceFailIndex: when set to a slice index N, both `verify-slice-N` and
+//     `verify-slice-N-retry` return an untrusted envelope so that slice degrades after its
+//     one retry; other slices still echo a trusted per-slice receipt. Multi-slice tests must
+//     keep limits.verifySliceSize under the agent-count coarsening guard (same constraint
+//     the mock uses when reconstructing slices from seed findings + args.limits).
 export function makeCtx(args, opts = {}) {
   const calls = [];
   const violations = [];
   const A = args;
   const seedFindings = () => (opts.findings ? opts.findings.map((f) => ({ ...f })) : makeFindings());
+
+  // Mirror verifyStage's chunking so a multi-slice mock can echo the right findings and
+  // per-slice nonce. Uses args.limits.verifySliceSize — callers that need >1 slice must
+  // choose a size that coarsenLimits will not widen before verify runs.
+  const sliceForIndex = (i) => {
+    const all = seedFindings();
+    const size = Math.max(1, (A.limits && A.limits.verifySliceSize) || all.length || 1);
+    return all.slice(i * size, i * size + size);
+  };
 
   const agent = async (prompt, dispatch = {}) => {
     try {
@@ -142,12 +156,21 @@ export function makeCtx(args, opts = {}) {
       return { written: entries.map((e) => e.path) };
     }
     if (label.startsWith('verify-slice-')) {
-      // A receipt the verify stage will TRUST: same head sha, per-slice nonce `${nonce}.0`
-      // (one slice, verifySliceSize > nFindings), n_in === slice length, arrays accounting.
-      const verified = seedFindings().map((f) => ({ ...f, origin: 'new' }));
+      // Per-slice receipt: label carries the index (and optional -retry); nonce is
+      // `${nonce}.${i}` on attempt 1 and `${nonce}.${i}.r1` on the retry. Echo only THIS
+      // slice's findings so n_in matches when verifySliceSize < nFindings.
+      const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
+      const sliceIndex = m ? Number(m[1]) : 0;
+      const isRetry = Boolean(m && m[2]);
+      if (opts.verifySliceFailIndex === sliceIndex) {
+        return { status: 'failed', exitCode: 1, stderr: `injected verify failure on slice ${sliceIndex}` };
+      }
+      const slice = sliceForIndex(sliceIndex);
+      const verified = slice.map((f) => ({ ...f, origin: 'new' }));
+      const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.r1` : `${A.nonce}.${sliceIndex}`;
       return {
         status: 'ok',
-        receipt: { sha: A.headShaShort, n_in: verified.length, nonce: `${A.nonce}.0` },
+        receipt: { sha: A.headShaShort, n_in: verified.length, nonce: sliceNonce },
         result: { verified, eliminated: [], batches: [], stats: {} },
       };
     }
