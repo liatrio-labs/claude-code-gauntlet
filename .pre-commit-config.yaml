@@ -60,3 +60,14 @@ repos:
         types: [python]
         pass_filenames: false
         stages: [pre-push]
+
+      # The hook above is scoped `types: [python]`, so a CLAUDE.md-only commit never
+      # fires it — and CLAUDE.md-only commits are exactly how this file grows. This
+      # runs the budget test at commit time for local feedback; CI's unconditional
+      # pytest job is the check that cannot be skipped (issue #46).
+      - id: claude-md-budget
+        name: CLAUDE.md stays within its byte budget
+        entry: python -m pytest tests/test_claude_md_budget.py -q
+        language: system
+        files: ^CLAUDE\.md$
+        pass_filenames: false
