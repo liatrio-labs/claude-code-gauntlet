@@ -31,8 +31,7 @@ first, then propagate the change to every agent file with a
 > No fenced code blocks, no multi-line snippets, no bullet lists. Code
 > pointers go in `evidence` (single short line, ≤200 chars) and
 > `cross_file_refs` (array of file paths). If you need to show a fix,
-> keep `suggestion` to one or two sentences — multi-line fix code belongs
-> in `suggested_fix_code` if the schema includes it, not in `description`.
+> keep `suggestion` to one or two sentences of prose — not in `description`.
 >
 > **BAD — literal newline splits one finding into two corrupt lines:**
 >

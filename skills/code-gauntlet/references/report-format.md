@@ -34,25 +34,47 @@ For self-hosted instances, replace the hostname with the one detected from the g
 
 ## Finding Fields Reference
 
-Each finding produced by the review pipeline has these fields:
+The pipeline's declaration lives in `workflows/src/registry.js`. A field this table lists but the registry does not declare is dropped silently before any stage sees it — which is why `tests/test_dimensions_registry.py` pins this table, the registry, and the agent contracts to each other.
+
+### Canonical fields — every finding, every dimension
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | string | yes | Unique ID, e.g. `bug-1`, `sec-2` |
-| `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
-| `severity` | string | yes | `critical`, `high`, `medium`, or `low` |
-| `confidence` | number | yes | 0-100 confidence score |
 | `file` | string | yes | Relative file path |
 | `line_start` | number | yes | Starting line number |
-| `line_end` | number | yes | Ending line number |
+| `line_end` | number | no | Ending line number |
 | `title` | string | yes | One-line summary |
-| `description` | string | yes | Detailed explanation |
-| `evidence` | string | yes | Code snippet or behavior demonstrating the issue |
-| `suggestion` | string | yes | Prose fix or improvement advice |
-| `suggested_fix_code` | string | no | Direct code replacement for `file:line_start-line_end`. When present, `post_review.py` renders it as a GitHub/GitLab `suggestion` block (one-click apply). Null when the agent has no concrete fix to propose. |
+| `description` | string | yes | Detailed explanation. Single-paragraph prose, at most 500 chars, no code blocks or bullet lists. |
+| `severity` | string | yes | `critical`, `high`, `medium`, or `low` |
+| `confidence` | number | yes | 0-100 CERTAINTY score |
+| `dimension` | string | yes | Review dimension (bug, security, cross-file, etc.) |
+| `origin` | string | no | Blame classification stamped by `scripts/verify_findings.py` — the one canonical field no agent emits. |
+| `evidence` | string | no | Code snippet or behavior demonstrating the issue. Required by the discovery PROMPT (must be non-empty) though schema-optional. |
+| `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
+| `claude_md_rule` | string | no | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
 
-**`suggested_fix_code` usage:** Agents that can propose an exact code replacement populate this field with the replacement source code. Agents that cannot (e.g., the fix is architectural or requires user judgment) leave it null. The field is rendered by `scripts/post_review.py` as a committable suggestion block in PR comments -- see `references/delivery-guide.md` for the full delivery JSON schema.
+### Per-dimension fields
+
+| Field | Type | Dimension | Description |
+|-------|------|-----------|-------------|
+| `hidden_errors` | string | bug | Errors the fix would surface that the visible code path hides |
+| `attack_vector` | string | security | How the issue is exploited |
+| `affected_consumers` | array | cross_file_impact | Other call sites/files impacted by the change |
+| `criticality` | number | test_coverage | A 1-10 IMPACT scale, distinct from `confidence`'s 0-100 certainty scale, emitted as a number and never quoted. |
+| `failure_scenario` | string | test_coverage | Concrete scenario the missing coverage would miss |
+| `spec_text` | string | intent | The spec/requirement text the code is checked against |
+| `invalid_state_example` | string | type_design | A concrete value the current types allow but shouldn't |
+| `behavior_preserved` | string | simplification | Why the simplification is behavior-preserving |
+
+Per-dimension fields are optional and never nullable (a not-applicable value is OMITTED). `required` is one flat list shared by all dimensions, so a field a contract calls required for its own dimension is enforced by the agent contract prose, not the schema.
+
+### Delivery-side fields — not produced by the review pipeline
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `suggested_fix_code` | string | Exact replacement source for `file:line_start-line_end`; `scripts/post_review.py` renders it as a committable GitHub/GitLab `suggestion` block (one-click apply) IF a caller supplies it. No agent emits it and no schema declares it, so the review pipeline never populates it. It is retained as a delivery-side capability for callers that construct their own post-review JSON. Emitting it from agents was deliberately deferred because a one-click-apply patch generated with no deterministic check that it applies at the stated line range is worse than no patch. |
 
 ---
 
@@ -112,7 +134,11 @@ Example: "This PR adds JWT-based authentication to the API layer. The token vali
 **Suggested fix:**
 {finding.suggestion}
 
-{If finding.suggested_fix_code is present — render as a committable suggestion block:}
+{If finding.claude_md_rule or finding.spec_text is present — the rule the finding is measured
+against. `agents/report-writer.md` instructs the same:}
+**Cited rule:** {finding.claude_md_rule or finding.spec_text}
+
+{If a caller supplied suggested_fix_code — the review pipeline never does:}
 ```suggestion
 {finding.suggested_fix_code}
 ```
@@ -253,26 +279,36 @@ The `findings` key is reserved/optional — present only when the caller supplie
 
 ## Inline PR Comment Format
 
-When posting inline comments at specific lines:
+**You do not compose this body — `scripts/post_review.py::render_comment_body` does.** You supply
+the finding fields (see `references/delivery-guide.md` for the input JSON); the script renders
+them. What follows is a transcription of that function's output so you can predict a posted
+comment, and it must be kept in step with it — a template that promises a rendering the code
+does not perform is the exact defect class issue #47 was filed for.
+
+Every section after the description is emitted **only when its field is present**; `null`, `""`
+and whitespace-only all count as absent, and no heading is emitted at all.
 
 ```markdown
-**[{severity}] [{dimension}]** {title}
+**{emoji} [{SEVERITY}] {title}**
 
-[View in context](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line-1}-L{line+1})
-
-{description}
+{body}
 
 **Suggested fix:**
 {suggestion}
 
-[If suggested_fix_code is present — append a committable suggestion block:]
+**Cited rule:** {claude_md_rule, falling back to spec_text when there is no rule}
+
+[If a caller supplied suggested_fix_code — the review pipeline never does:]
 ```suggestion
 {suggested_fix_code}
 ```
+```
 
----
-*Confidence: {confidence}% | code-gauntlet*
+`{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the severity uppercased,
+and `{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits
+no permalink and no confidence footer — those belong to the report markdown, not to inline
+comments.
 
 ```
 
-**`suggested_fix_code` field:** Optional. When an agent can propose a direct code replacement for the lines at `finding.file:line_start-line_end`, it populates `suggested_fix_code` with the replacement code. The `scripts/post_review.py` delivery script renders this as a GitHub `suggestion` block (one-click apply) or GitLab suggestion. When null or absent, only the prose `suggestion` field is shown. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.
+**`suggested_fix_code` field:** Optional and delivery-side only. No agent emits it and no schema declares it, so the review pipeline never populates this field. `scripts/post_review.py` renders it as a GitHub `suggestion` block (one-click apply) or GitLab suggestion IF a caller supplying their own post-review JSON sets it. Absent that, only the prose `suggestion` field is shown. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.

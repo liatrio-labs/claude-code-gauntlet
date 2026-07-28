@@ -20,7 +20,12 @@ Input JSON schema:
                 "severity": "high",
                 "title": "SQL injection risk",
                 "body": "...",
-                "suggested_fix_code": "..."  # optional — renders as suggestion block
+                "suggestion": "...",         # optional — renders as a "Suggested fix:" prose block
+                "claude_md_rule": "...",     # optional — renders as "Cited rule:"; wins over spec_text
+                "spec_text": "...",          # optional — renders as "Cited rule:" when there is
+                                             #            no claude_md_rule (intent findings)
+                "suggested_fix_code": "..."  # optional — renders as suggestion block. Caller-supplied
+                                             #            only: no review-pipeline agent emits it.
             }
         ],
         "platform": "github",            # optional — auto-detected from git remote
@@ -327,6 +332,27 @@ def is_new_file(new_files, filepath):
 # Comment body rendering
 # ---------------------------------------------------------------------------
 
+def _rendered_text(value):
+    """Normalize a finding field for optional rendering.
+
+    Returns ``None`` for ``None``, ``""``, and whitespace-only strings — all
+    treated as absent, mirroring the established ``suggested_fix_code``
+    semantics. A non-string value (e.g. a number) is coerced via ``str()``
+    rather than crashing the renderer. LEADING and trailing newlines are both
+    stripped: the sections below are joined with their own blank lines, so a value
+    padded on either side puts a stray blank line into the comment. Only NEWLINES
+    are stripped, never spaces — ``suggested_fix_code`` runs through here too and
+    its first line's indentation is part of the replacement.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    if not value.strip():
+        return None
+    return value.strip("\n")
+
+
 def render_comment_body(finding):
     """Build the markdown comment body for a finding."""
     severity = finding.get("severity", "medium").lower()
@@ -340,15 +366,37 @@ def render_comment_body(finding):
 
     title = finding.get("title", "Finding")
     body = finding.get("body", "")
-    suggested_fix = finding.get("suggested_fix_code", "")
+    # Through the same normalizer as the fields below: a non-string here used to reach
+    # .rstrip() and raise, and a whitespace-only value used to render a ```suggestion fence
+    # whose one-click apply would BLANK the cited lines. Both are now treated as absent.
+    suggested_fix = _rendered_text(finding.get("suggested_fix_code"))
 
     parts = [f"**{emoji} [{severity.upper()}] {title}**", "", body]
+
+    # Prose fix suggestion (issue #47). Sourced from `suggestion`; rendered
+    # only when non-empty, ahead of the ```suggestion fence below.
+    suggestion_text = _rendered_text(finding.get("suggestion"))
+    if suggestion_text:
+        parts += ["", "**Suggested fix:**", suggestion_text]
+
+    # Cited rule (issue #47). `claude_md_rule` wins when both it and
+    # `spec_text` are present.
+    rule_text = _rendered_text(finding.get("claude_md_rule"))
+    if not rule_text:
+        rule_text = _rendered_text(finding.get("spec_text"))
+    if rule_text:
+        parts += ["", f"**Cited rule:** {rule_text}"]
+
+    # `criticality`, `failure_scenario`, `evidence`, `confidence`, and
+    # `dimension` are deliberately NOT rendered into posted PR comments
+    # (issue #47) — they are scoped to the artifact/report consumers, not
+    # this deterministic comment renderer. Do not "helpfully" add them here.
 
     if suggested_fix:
         parts += [
             "",
             "```suggestion",
-            suggested_fix.rstrip("\n"),
+            suggested_fix,
             "```",
         ]
 

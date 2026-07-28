@@ -45,6 +45,15 @@ CANONICAL_FIELDS = [
 # The v2 aliases the retained post_review poster indexes/reads.
 V2_ALIAS_FIELDS = ["file", "line", "body", "end_line"]
 
+# The fields issue #47 added to the schema. Before that change every one of them was
+# instructed by an agent contract, declared by no schema, and therefore discarded at the
+# discovery StructuredOutput boundary — so nothing downstream, including this boundary,
+# ever saw them. The recorder seeds them onto the findings it drives through the WIRED
+# pipeline, which makes the assertions below an end-to-end carriage proof rather than a
+# restatement of the registry: if any stage between discovery and persist starts
+# reconstructing findings field-by-field, they vanish here.
+ISSUE_47_FIELDS = ["suggestion", "claude_md_rule", "spec_text", "criticality", "failure_scenario"]
+
 
 def load_pipeline_findings():
     """Run the wired pipeline (via the node recorder) and return its REAL persisted
@@ -126,6 +135,28 @@ class TestSchemaCarriesBoundaryFields(unittest.TestCase):
         self.assertEqual(f["end_line"], f["line_end"])
         self.assertEqual(f["body"], f["description"])
 
+    def test_issue_47_fields_survive_the_whole_pipeline_to_persist(self):
+        # Discovery -> merge -> verify echo -> validate -> filter -> challenge -> persist.
+        # Every hop must carry these; the two schema hops (discovery dispatch and the verify
+        # echo) are the ones that used to drop them.
+        seen = {field for f in PERSISTED_FINDINGS for field in f}
+        missing = [field for field in ISSUE_47_FIELDS if field not in seen]
+        self.assertEqual(missing, [],
+                         f"fields lost somewhere between discovery and persist: {missing}")
+
+    def test_issue_47_field_values_are_not_hollowed_out(self):
+        # Present-but-empty is the failure mode a presence check alone would pass: a stage
+        # that reconstructs findings through an under-declared schema tends to keep the key
+        # and drop the content (exactly what the verify executor once did to `description`).
+        values = {}
+        for f in PERSISTED_FINDINGS:
+            for field in ISSUE_47_FIELDS:
+                if field in f:
+                    values.setdefault(field, []).append(f[field])
+        for field, vals in values.items():
+            self.assertTrue(any(v not in (None, "", []) for v in vals),
+                            f"'{field}' survived to persist but every value is empty")
+
 
 class TestVerifyFindingsBoundary(unittest.TestCase):
     """verify_findings.py (positional path) consumes the persisted schema cleanly."""
@@ -194,6 +225,51 @@ class TestPostReviewBoundary(unittest.TestCase):
         self.assertEqual(cap["platform"], "github")
         # Every persisted finding rendered into an inline comment (file:line valid).
         self.assertEqual(len(cap["payload"]["comments"]), len(PERSISTED_FINDINGS))
+
+    def test_the_posted_comment_renders_the_suggestion_and_cited_rule(self):
+        # The end of the chain issue #47 is about: a reviewer reads a PR comment, not
+        # findings.json. This drives the REAL persisted findings through the REAL poster and
+        # asserts the rendered comment bodies actually carry the prose fix and the cited
+        # rule — the promise report-format.md's inline-comment template makes.
+        diff = build_gh_diff(PERSISTED_FINDINGS)
+        self._write(PERSISTED_FINDINGS)
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)):
+            post_review.main()
+
+        with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
+            comments = json.load(fh)["payload"]["comments"]
+        bodies = "\n".join(c["body"] for c in comments)
+
+        self.assertIn("**Suggested fix:**", bodies,
+                      "the prose suggestion never reached the posted comment")
+        self.assertIn("**Cited rule:**", bodies,
+                      "the cited rule never reached the posted comment")
+        # The actual VALUES, not just the headings — a heading with an empty body would
+        # satisfy the assertions above while telling the reviewer nothing.
+        for finding in PERSISTED_FINDINGS:
+            if finding.get("suggestion"):
+                self.assertIn(finding["suggestion"], bodies)
+            rule = finding.get("claude_md_rule") or finding.get("spec_text")
+            if rule:
+                self.assertIn(rule, bodies)
+
+    def test_the_posted_comment_omits_the_artifact_only_fields(self):
+        # criticality / failure_scenario ride the schema end to end but are deliberately
+        # kept out of the comment body (issue #47). Asserted against REAL pipeline output so
+        # the scoping decision is pinned where it actually takes effect.
+        diff = build_gh_diff(PERSISTED_FINDINGS)
+        self._write(PERSISTED_FINDINGS)
+        with patch.object(sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)):
+            post_review.main()
+
+        with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
+            comments = json.load(fh)["payload"]["comments"]
+        bodies = "\n".join(c["body"] for c in comments)
+        for finding in PERSISTED_FINDINGS:
+            if finding.get("failure_scenario"):
+                self.assertNotIn(finding["failure_scenario"], bodies)
 
     def test_missing_v2_aliases_would_break_the_retained_poster(self):
         # Documents why the aliases are load-bearing: strip them from the REAL findings

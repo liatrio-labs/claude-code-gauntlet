@@ -14,22 +14,35 @@ Implementation details for each delivery method in Phase 8.
 
 ### Comment body format
 
+**You do not compose the comment body.** `scripts/post_review.py::render_comment_body` builds it
+from the fields you supply. Its output, for reference:
+
 ```
-**{emoji} [{severity}] {finding.title}**
+**{emoji} [{SEVERITY}] {finding.title}**
 
-{finding.description}
+{body}
 
-[If finding.suggestion is a direct code replacement — use a suggestion block:]
+**Suggested fix:**
+{suggestion}
+
+**Cited rule:** {claude_md_rule, falling back to spec_text}
+
 ```suggestion
-{the fixed code lines}
+{suggested_fix_code}
 ```
-
-[If finding.suggestion is prose advice — use plain text:]
-**Suggested fix:** {finding.suggestion}
 
 ```
 
-**Suggestion blocks vs prose heuristic:** If `suggestion` contains code that could directly replace lines at `finding.file:line_start-line_end` (syntax characters, matches file language, complete statement/block), use a `suggestion` block. If advisory text ("consider using...", "add validation for..."), use prose. When in doubt, use prose — a broken suggestion block is worse than none.
+Every section after `{body}` is emitted only when its field is present — `null`, `""` and
+whitespace-only all count as absent and produce no heading.
+
+**`suggestion` always renders as prose; it never becomes a suggestion block.** Only
+`suggested_fix_code` produces the committable ```suggestion fence, and no review-pipeline agent
+emits that field. This used to be documented as a per-finding judgement call ("if `suggestion`
+looks like code, fence it"), which is precisely the wrong shape: a ```suggestion fence is a
+one-click APPLY button, so turning prose into one on a hunch writes the guess straight into the
+author's branch. The rule is now structural — a fence comes from a field that exists to be a
+patch, or it does not appear.
 
 Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 
@@ -44,6 +57,8 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 **Findings JSON schema:**
 
+> `suggested_fix_code` below is caller-supplied only — no review-pipeline agent emits it and no dispatch schema declares it. `post_review.py` still renders it when present, for callers that construct their own post-review JSON.
+
 ```json
 {
     "review_body": "Executive summary comment with finding counts (post_review.py appends the footer)",
@@ -55,6 +70,9 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
             "severity": "critical|high|medium|low",
             "title": "Finding title",
             "body": "Detailed description (note: delivery schema uses 'body', not 'description' — the orchestrator maps description→body when constructing delivery JSON)",
+            "suggestion": "prose fix advice (optional; renders as a **Suggested fix:** block)",
+            "claude_md_rule": "the cited project rule (optional; renders as **Cited rule:**)",
+            "spec_text": "the contradicted spec text (optional; renders as **Cited rule:** when there is no claude_md_rule)",
             "suggested_fix_code": "code block (optional; renders as suggestion)"
         }
     ],
@@ -76,7 +94,10 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
   - `severity` — emoji selected from: critical, high, medium, low
   - `title` — one-line finding summary
   - `body` — explanation and context
-  - `suggested_fix_code` — optional code block rendered as GitHub/GitLab suggestion
+  - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
+  - `claude_md_rule` / `spec_text` — optional; whichever is present renders as a single **Cited rule:** line, `claude_md_rule` winning when both are. These are how a convention or intent finding shows the reviewer the rule it is measured against.
+  - `suggested_fix_code` — optional code block rendered as GitHub/GitLab suggestion; caller-supplied only, never populated by the review pipeline
+  - Every optional field above treats `null`, `""` and whitespace-only identically to absent: no heading is emitted at all.
 - `owner` — repository owner (GitHub org/user or GitLab group)
 - `repo` — repository name
 - `pr_number` — GitHub PR number or GitLab MR IID

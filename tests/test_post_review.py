@@ -368,6 +368,230 @@ class TestRenderCommentBody(unittest.TestCase):
         self.assertIn("```suggestion", body)
         self.assertIn("line1\nline2\nline3", body)
 
+    # -- suggestion (issue #47) -------------------------------------------
+
+    def test_suggestion_present_renders_prose_block(self):
+        finding = {
+            "severity": "high",
+            "title": "Bug",
+            "body": "desc",
+            "suggestion": "Use parameterized queries instead.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**", body)
+        self.assertIn("Use parameterized queries instead.", body)
+
+    def test_suggestion_absent_no_heading(self):
+        finding = {"severity": "high", "title": "Bug", "body": "desc"}
+        body = render_comment_body(finding)
+        self.assertNotIn("Suggested fix:", body)
+
+    def test_suggestion_empty_string_no_heading(self):
+        finding = {"severity": "high", "title": "Bug", "body": "desc", "suggestion": ""}
+        body = render_comment_body(finding)
+        self.assertNotIn("Suggested fix:", body)
+
+    def test_suggestion_none_no_heading(self):
+        finding = {"severity": "high", "title": "Bug", "body": "desc", "suggestion": None}
+        body = render_comment_body(finding)
+        self.assertNotIn("Suggested fix:", body)
+
+    def test_suggestion_whitespace_only_no_heading(self):
+        finding = {"severity": "high", "title": "Bug", "body": "desc", "suggestion": "   \n  "}
+        body = render_comment_body(finding)
+        self.assertNotIn("Suggested fix:", body)
+
+    # -- claude_md_rule / spec_text (issue #47) ---------------------------
+
+    def test_claude_md_rule_present_renders_cited_rule(self):
+        finding = {
+            "severity": "medium",
+            "title": "Convention violation",
+            "body": "desc",
+            "claude_md_rule": "Scripts must be stdlib-only Python.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:** Scripts must be stdlib-only Python.", body)
+
+    def test_spec_text_present_claude_md_rule_absent_renders_as_cited_rule(self):
+        finding = {
+            "severity": "medium",
+            "title": "Intent mismatch",
+            "body": "desc",
+            "spec_text": "The spec says X must happen before Y.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:** The spec says X must happen before Y.", body)
+
+    def test_both_claude_md_rule_and_spec_text_present_rule_wins(self):
+        finding = {
+            "severity": "medium",
+            "title": "Both",
+            "body": "desc",
+            "claude_md_rule": "The CLAUDE.md rule.",
+            "spec_text": "The spec text.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:** The CLAUDE.md rule.", body)
+        self.assertNotIn("The spec text.", body)
+
+    def test_neither_claude_md_rule_nor_spec_text_no_heading(self):
+        finding = {"severity": "medium", "title": "Neither", "body": "desc"}
+        body = render_comment_body(finding)
+        self.assertNotIn("Cited rule:", body)
+
+    def test_claude_md_rule_empty_falls_back_to_spec_text(self):
+        finding = {
+            "severity": "medium",
+            "title": "Fallback",
+            "body": "desc",
+            "claude_md_rule": "",
+            "spec_text": "The spec text wins here.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:** The spec text wins here.", body)
+
+    # -- ordering / combinations -------------------------------------------
+
+    def test_suggestion_and_suggested_fix_code_both_render_prose_before_fence(self):
+        finding = {
+            "severity": "high",
+            "title": "Fix",
+            "body": "desc",
+            "suggestion": "Explain the fix in words.",
+            "suggested_fix_code": "return None",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**", body)
+        self.assertIn("Explain the fix in words.", body)
+        self.assertIn("```suggestion", body)
+        self.assertIn("return None", body)
+        prose_idx = body.index("**Suggested fix:**")
+        fence_idx = body.index("```suggestion")
+        self.assertLess(prose_idx, fence_idx,
+                         "the prose suggestion block must come before the fence")
+        # The fence is still the last thing in the body.
+        self.assertTrue(body.rstrip("\n").endswith("```"))
+
+    def test_multiline_suggestion_renders_without_corrupting_markdown(self):
+        finding = {
+            "severity": "medium",
+            "title": "Fix",
+            "body": "desc",
+            "suggestion": "First do this.\nThen do that.\nFinally this.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**", body)
+        self.assertIn("First do this.\nThen do that.\nFinally this.", body)
+
+    def test_non_string_suggestion_and_rule_do_not_crash(self):
+        finding = {
+            "severity": "medium",
+            "title": "Weird types",
+            "body": "desc",
+            "suggestion": 42,
+            "claude_md_rule": 7,
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**", body)
+        self.assertIn("42", body)
+        self.assertIn("**Cited rule:** 7", body)
+
+    def test_no_new_fields_produces_byte_identical_output(self):
+        """Regression pin: a finding with none of the new fields must produce
+        exactly the same output as before this change, so the addition cannot
+        silently reflow an ordinary comment."""
+        finding = {
+            "severity": "high",
+            "title": "SQL Injection",
+            "body": "User input is not sanitized before being passed to the database query.",
+        }
+        body = render_comment_body(finding)
+        self.assertEqual(
+            body,
+            "**\U0001f7e0 [HIGH] SQL Injection**\n\n"
+            "User input is not sanitized before being passed to the database query.",
+        )
+
+    def test_whitespace_only_claude_md_rule_falls_back_to_spec_text(self):
+        # Symmetry with the empty-string fallback above: blank-but-present must be
+        # indistinguishable from absent on BOTH halves of the cited-rule lookup, or an
+        # agent that emits "  " suppresses the spec_text it should have deferred to.
+        finding = {
+            "severity": "low",
+            "title": "Intent drift",
+            "body": "desc",
+            "claude_md_rule": "   ",
+            "spec_text": "The endpoint MUST return 422 on a schema violation.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:** The endpoint MUST return 422 on a schema violation.", body)
+
+    def test_non_string_spec_text_does_not_crash(self):
+        finding = {"severity": "low", "title": "T", "body": "b", "spec_text": 9}
+        self.assertIn("**Cited rule:** 9", render_comment_body(finding))
+
+    def test_leading_newlines_are_stripped_from_rendered_values(self):
+        # The sections are joined with their own blank lines, so a value padded at the FRONT
+        # (a model that opens its suggestion with a newline) put a second blank line under the
+        # heading. Only newlines are stripped — leading spaces belong to the value.
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "suggestion": "\n\n  indented advice",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**\n  indented advice", body)
+
+    def test_trailing_newlines_are_stripped_from_rendered_values(self):
+        # _rendered_text promises this; without it a multi-line suggestion pushes a blank
+        # line into whatever section follows (and, at the end, trails the comment).
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "suggestion": "Line one\nLine two\n\n",
+            "claude_md_rule": "Rule text\n",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**\nLine one\nLine two\n\n**Cited rule:** Rule text", body)
+        self.assertFalse(body.endswith("\n"))
+
+    def test_non_string_suggested_fix_code_does_not_crash(self):
+        # Pre-#47 this reached .rstrip() and raised AttributeError. The field now goes
+        # through the same normalizer as the prose fields.
+        finding = {"severity": "low", "title": "T", "body": "b", "suggested_fix_code": 123}
+        self.assertIn("```suggestion\n123\n```", render_comment_body(finding))
+
+    def test_whitespace_only_suggested_fix_code_renders_no_fence(self):
+        # A whitespace-only replacement would render a one-click-apply block that BLANKS
+        # the cited lines — treat it as absent, like every other optional field.
+        finding = {"severity": "low", "title": "T", "body": "b", "suggested_fix_code": "   \n  "}
+        self.assertNotIn("```suggestion", render_comment_body(finding))
+
+    def test_artifact_only_fields_never_reach_the_comment_body(self):
+        # A deliberate scoping decision from issue #47, pinned so it is a decision and not
+        # a comment: these fields are carried end-to-end to the artifact and the report, but
+        # the posted comment stays short. Changing that should require changing this test.
+        finding = {
+            "severity": "high",
+            "title": "Missing rollback test",
+            "body": "The rollback path is untested.",
+            "suggestion": "Add a test that raises PaymentGatewayError.",
+            "criticality": 9,
+            "failure_scenario": "SENTINEL_FAILURE_SCENARIO",
+            "evidence": "SENTINEL_EVIDENCE",
+            "confidence": 90,
+            "dimension": "test_coverage",
+            "origin": "new",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**", body)
+        for sentinel in ("SENTINEL_FAILURE_SCENARIO", "SENTINEL_EVIDENCE",
+                         "criticality", "test_coverage", "90"):
+            self.assertNotIn(sentinel, body, f"{sentinel!r} leaked into the comment body")
+
 
 # ---------------------------------------------------------------------------
 # build_footer

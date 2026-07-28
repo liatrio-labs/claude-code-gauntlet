@@ -1760,15 +1760,65 @@ const TYPO_NAMING_SWEEP_PROMPT_EXTRA = 'Additionally run an explicit typo and na
 // Finer scopes later = introduce additional flag tokens here; no agentActive change needed.
 const DEEP = 'deep';
 
-// `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema —
+// --- The canonical finding schema ------------------------------------------
+//
+// FINDING_PROP_TYPES + FINDING_REQUIRED + each DIMENSIONS row's `schemaExtra` are, together,
+// the WHOLE declaration of what a finding may carry. They live in this one file on purpose
+// (issue #47): the canonical half used to sit in stages.js, the per-dimension half here, and
+// `cross_file_refs` was a third hardcoded special case inside findingItemSchema — three places
+// to add a finding field, which is how `suggestion`/`claude_md_rule` (instructed by all 7
+// discovery contracts) and `spec_text`/`criticality`/`failure_scenario` (one contract each)
+// went years declared by no schema and silently dropped at the StructuredOutput boundary.
+// Adding a finding field is now ONE entry here plus the owning agent's .md output contract,
+// and tests/test_dimensions_registry.py fails the build when those two drift apart.
+//
+// A value is EITHER a type-name shorthand string ('string'/'number', expanded by
+// findingItemSchema to { type: <name> }) OR a full JSON-Schema fragment used verbatim — which
+// is how array-valued fields (cross_file_refs, cross_file_impact's affected_consumers) are
+// declared, since the platform's schema validator requires `items` on an array.
+//
+// `origin` is the one canonical field NO agent emits: verify_findings.py stamps it during
+// blame classification. Everything else here must appear in every discovery contract's output
+// block, and the lockstep test asserts exactly that (declared − instructed == {origin}).
+const FINDING_PROP_TYPES = {
+  // confidence is a NUMBER end-to-end: agents emit a numeric 0-100 score per their .md
+  // contracts, so declaring it `number` here makes StructuredOutput return the number at
+  // EVERY by-value boundary (discovery included) — the string form "85" the schema used to
+  // declare simply never exists, so the filter's consensus `+` boost can never
+  // string-concatenate ("85"+10 -> "8510"). pinNumericFields stays as defense-in-depth for
+  // legacy/checkpoint-resume findings that predate this pin.
+  id: 'string', file: 'string', line_start: 'number', line_end: 'number',
+  title: 'string', description: 'string', severity: 'string', confidence: 'number',
+  dimension: 'string', origin: 'string', evidence: 'string',
+  // Instructed by all 7 discovery contracts, declared by none of them until issue #47.
+  // `suggestion` is the prose fix advice report-format.md renders and post_review.py posts;
+  // `claude_md_rule` is the cited project rule that justifies a finding (REQUIRED non-null
+  // for convention findings per agents/conventions-and-intent.md — prompt-enforced, see the
+  // FINDING_REQUIRED note below). Both are OPTIONAL here and NOT nullable: a not-applicable
+  // value must be OMITTED, never emitted as null (see the nullability note under DIMENSIONS).
+  suggestion: 'string', claude_md_rule: 'string',
+  cross_file_refs: { type: 'array', items: { type: 'string' } },
+};
+
+// The subset findingItemSchema marks `required`. Deliberately NOT extended by this fix:
+// `required` is ONE flat list shared by every dimension's dispatch schema and by the verify
+// echo (which carries findings from all agents mixed together), so a field that is required
+// for one dimension — claude_md_rule for convention, spec_text for intent, criticality and
+// failure_scenario for test_coverage — cannot be marked required here without making it
+// required for all nine. Those stay contract-required/schema-optional, enforced by the agent
+// .md prose, the same bucket hidden_errors and invalid_state_example already sit in. Adding a
+// per-dimension `requiredExtra` mechanism is tracked separately; do not fake it by appending
+// a single-dimension field to this array.
+const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
+
+// `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema above —
 // the extras each agent's .md output contract actually emits (findingItemSchema in stages.js
 // unions them onto that agent's discovery item schema, and the verify echo item schema unions
-// them ALL). A value is EITHER a type-name shorthand string ('string'/'number', expanded to
-// { type: <name> }) OR a full JSON-Schema fragment used verbatim, which is how array-valued
-// extras (cross_file_impact's affected_consumers) are declared. Each row MUST match its
-// contract (agents/<agent>.md output line) or the executor drops the field when transcribing
-// findings "verbatim via the schema": bug -> hidden_errors, security -> attack_vector,
-// cross_file_impact -> affected_consumers (ARRAY), type_design -> invalid_state_example,
+// them ALL). Each row MUST match its contract (agents/<agent>.md output block) or the executor
+// drops the field when transcribing findings "verbatim via the schema": bug -> hidden_errors,
+// security -> attack_vector, cross_file_impact -> affected_consumers (ARRAY), intent ->
+// spec_text, test_coverage -> criticality (NUMBER, a 1-10 impact scale distinct from
+// confidence's 0-100 certainty) + failure_scenario, type_design -> invalid_state_example,
 // simplification -> behavior_preserved. The pre-reconciliation declarations (type_design
 // encapsulation/invariants/enforcement/usefulness; simplification before/after) named fields
 // no agent ever emitted top-level and no code consumes — pure schema noise now removed.
@@ -1776,14 +1826,20 @@ const DEEP = 'deep';
 // platform schema contract pins `type` to a single string (no union types), so a
 // not-applicable extra must be OMITTED, never emitted as null — the agent contracts say
 // "OMIT this field", and a null here is the same retry-storm class as string confidence.
+// A multi-dimension agent (conventions-and-intent) dispatches ONCE with the UNION of its
+// rows' extras (agentSpecs in stages.js), so scoping spec_text to the `intent` row still
+// makes it declarable on that agent's convention and comment_accuracy findings — the
+// per-dimension scoping is documentation of ownership, not an emission restriction.
 const DIMENSIONS = [
   { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
     schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, modelOverride: null, promptExtra: null },
-  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: null },
+  { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
+    schemaExtra: { criticality: 'number', failure_scenario: 'string' }, modelOverride: null, promptExtra: null },
   { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
+    schemaExtra: { spec_text: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
     schemaExtra: { invalid_state_example: 'string' }, modelOverride: null, promptExtra: null },
@@ -2392,19 +2448,6 @@ function agentActive(spec, agentFlags) {
   return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || flags[flag] !== false);
 }
 
-// Canonical finding property types. confidence is a NUMBER end-to-end: agents emit a
-// numeric 0-100 score per their .md contracts, so declaring it `number` here makes
-// StructuredOutput return the number at EVERY by-value boundary (discovery included) —
-// the string form "85" the schema used to declare simply never exists, so the filter's
-// consensus `+` boost can never string-concatenate ("85"+10 -> "8510"). pinNumericFields
-// stays as defense-in-depth for legacy/checkpoint-resume findings that predate this pin.
-const FINDING_PROP_TYPES = {
-  id: 'string', file: 'string', line_start: 'number', line_end: 'number',
-  title: 'string', description: 'string', severity: 'string', confidence: 'number',
-  dimension: 'string', origin: 'string', evidence: 'string',
-};
-const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
-
 // The canonical finding ITEM schema (one array element). Declared IN FULL — every
 // canonical property with a concrete type, `description` among them — everywhere an agent
 // returns findings BY VALUE. An items schema of `{ type:'object', properties:{} }` is the
@@ -2412,17 +2455,24 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 // transcribing findings back "verbatim via the schema" is free to drop the single largest
 // field — `description` — which is exactly what the verify executor did, emptying
 // descriptions for every downstream stage (validate/filter/challenge) and false-firing the
-// filter's short-description injection guard on high-confidence findings. confidence is
-// NUMBER everywhere now (FINDING_PROP_TYPES), so there is no per-stage confidence override.
-// `schemaExtra` entries are EITHER a type-name shorthand string ({ k: 'string' } ->
-// { type:'string' }) OR a full JSON-Schema fragment used verbatim (how array-valued extras
-// like affected_consumers are declared); the shorthand keeps the common case terse while
-// the fragment form supports arrays the platform's schema validator requires `items` on.
+// filter's short-description injection guard on high-confidence findings.
+//
+// An UNDECLARED property is dropped by the same mechanism, silently and by design — which is
+// why FINDING_PROP_TYPES and every dimension's `schemaExtra` live together in registry.js and
+// are pinned against the agent .md output contracts by tests/test_dimensions_registry.py
+// (issue #47: `suggestion`/`claude_md_rule`/`spec_text`/`criticality`/`failure_scenario` were
+// instructed by the contracts, declared by nothing, and dropped at this boundary on every run).
+// Entries are EITHER a type-name shorthand string ({ k: 'string' } -> { type:'string' }) OR a
+// full JSON-Schema fragment used verbatim (how array-valued fields like cross_file_refs and
+// affected_consumers are declared); the shorthand keeps the common case terse while the
+// fragment form supports arrays the platform's schema validator requires `items` on.
+// schemaExtra wins on a key collision — a dimension may narrow a canonical field, never the
+// reverse — and `required` is always the flat FINDING_REQUIRED (see its note in registry.js).
 function findingItemSchema(schemaExtra) {
   const props = {};
-  for (const [k, t] of Object.entries(FINDING_PROP_TYPES)) props[k] = { type: t };
-  props.cross_file_refs = { type: 'array', items: { type: 'string' } };
-  for (const [k, t] of Object.entries(schemaExtra || {})) props[k] = typeof t === 'string' ? { type: t } : t;
+  for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
+    props[k] = typeof t === 'string' ? { type: t } : t;
+  }
   return { type: 'object', properties: props, required: FINDING_REQUIRED };
 }
 
