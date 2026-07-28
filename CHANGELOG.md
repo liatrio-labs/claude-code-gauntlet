@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.2.5 (2026-07-28)
+
+### Bug Fixes
+
+- **verify**: Address PR #71 review comments
+  ([#71](https://github.com/liatrio-labs/claude-code-gauntlet/pull/71),
+  [`fa5d2a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fa5d2a40f7b102a309924b4e76b63caea25f2c2b))
+
+- **verify**: Degrade only the failed slice, and retry it once first (#54, #25 PR1)
+  ([#71](https://github.com/liatrio-labs/claude-code-gauntlet/pull/71),
+  [`fa5d2a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fa5d2a40f7b102a309924b4e76b63caea25f2c2b))
+
+### Documentation
+
+- Drop the CLAUDE.md section this change added
+  ([#71](https://github.com/liatrio-labs/claude-code-gauntlet/pull/71),
+  [`fa5d2a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fa5d2a40f7b102a309924b4e76b63caea25f2c2b))
+
+- **verify**: Correct the stale per-slice dispatch wording the review pass found
+  ([#71](https://github.com/liatrio-labs/claude-code-gauntlet/pull/71),
+  [`fa5d2a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fa5d2a40f7b102a309924b4e76b63caea25f2c2b))
+
+- **verify**: Name the right detector in the never-drop qualifier
+  ([#71](https://github.com/liatrio-labs/claude-code-gauntlet/pull/71),
+  [`fa5d2a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fa5d2a40f7b102a309924b4e76b63caea25f2c2b))
+
+- **verify**: Qualify the never-drop claim — trustSlice binds shape, not content
+  ([#71](https://github.com/liatrio-labs/claude-code-gauntlet/pull/71),
+  [`fa5d2a4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fa5d2a40f7b102a309924b4e76b63caea25f2c2b))
+
+
 ## v3.2.4 (2026-07-28)
 
 ### Bug Fixes
