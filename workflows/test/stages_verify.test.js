@@ -272,7 +272,7 @@ test('(j) slice inputs are materialized by the artifact-writer BEFORE any execut
   assert.match(ctx.calls[0].prompt, /"id":"F1"/);
 });
 
-test('(k) slice-input writer failure -> whole set UNVERIFIED, no executor dispatched', async () => {
+test('(k) slice-input writer failure -> that slice UNVERIFIED (here: the only slice), no executor dispatched', async () => {
   const input = baseInput();
   const ctx = verifyCtx(
     () => { throw new Error('executor should never run when slice inputs were not written'); },
@@ -286,7 +286,7 @@ test('(k) slice-input writer failure -> whole set UNVERIFIED, no executor dispat
   assert.equal(ctx.execCalls().length, 0, 'no executor ran after the write failure');
 });
 
-test('(l) slice-input writer THROW -> whole set UNVERIFIED (never fabricate)', async () => {
+test('(l) slice-input writer THROW -> that slice UNVERIFIED (here: the only slice), never fabricate', async () => {
   const input = baseInput();
   const ctx = verifyCtx(
     () => okEnvelope(input.findings),
@@ -335,7 +335,7 @@ test('(m1) stamped eliminations -> slice TRUSTED: verified findings threaded, ve
   assert.equal(out.gaps.length, 0);
 });
 
-test('(m2) an UNSTAMPED elimination (fabricated verified->eliminated move) -> whole set UNVERIFIED', async () => {
+test('(m2) an UNSTAMPED elimination (fabricated verified->eliminated move) -> that slice UNVERIFIED, both attempts', async () => {
   const input = baseInput();
   const ctx = verifyCtx((_t, i) => ({
     status: 'ok',
@@ -418,7 +418,7 @@ test('(m5) an echoed agent field is threaded through the verify stage untouched'
 
 // --- Item 5: slice-input writer write-proof ---------------------------------
 
-test('(k2) slice-input writer echo that omits a dispatched path -> whole set UNVERIFIED', async () => {
+test('(k2) slice-input writer echo that omits a dispatched path -> that slice UNVERIFIED (no write proof)', async () => {
   const input = baseInput();
   const ctx = verifyCtx(
     () => { throw new Error('executor must not run when slice inputs were not proven written'); },

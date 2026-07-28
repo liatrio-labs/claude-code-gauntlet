@@ -2730,9 +2730,10 @@ const VERIFY_SCHEMA = {
 const VERIFY_ATTEMPTS_PER_SLICE = 2;
 
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
-// Slices findings into limits.verifySliceSize chunks and dispatches ONE `executor`
-// agent per slice, SEQUENTIALLY (not parallel()) so each envelope pairs to its slice by
-// order. Each executor runs the pinned verify_findings.py receipt command and returns
+// Slices findings into limits.verifySliceSize chunks and dispatches an `executor` agent
+// per slice — one call, plus at most one retry (below) — SEQUENTIALLY (not parallel())
+// so each envelope pairs to its slice by order. Each executor runs the pinned
+// verify_findings.py receipt command and returns
 // VERIFY_SCHEMA. A slice is TRUSTED only when status==='ok' AND the receipt echoes the
 // dispatched nonce, head sha, and slice length (n_in — the truncation guard: proof the
 // script saw every finding we sent).
