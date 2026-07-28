@@ -2314,10 +2314,13 @@ function validateArgs(args) {
       errors.push(`${field} must not contain a control character`);
       continue;
     }
-    // headShaShort gets an extra rule: it is interpolated bare into the verify executor's
-    // --head-sha argv, so no whitespace at all, not just no control characters.
-    if (field === 'headShaShort' && /\s/.test(v)) {
-      errors.push('headShaShort must not contain whitespace');
+    // headShaShort is interpolated bare into the verify executor's --head-sha argv
+    // (verifyCommand joins tokens with spaces into a shell-run string). Whitespace alone
+    // is not enough — `;`, `$`, backticks and friends would still reach the shell. A real
+    // short SHA never needs those characters (unlike path fields / issue #75), so apply
+    // the same AST-safe charset NONCE_RE already enforces above.
+    if (field === 'headShaShort' && !NONCE_RE.test(v)) {
+      errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
     }
   }
   // agentFlags is the scope-gating map consumed by agentActive (stages.js): OPT-OUT, so an

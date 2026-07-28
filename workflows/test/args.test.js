@@ -483,12 +483,15 @@ test('validateArgs rejects a path-bearing field carrying an embedded control cha
   }
 });
 
-test('validateArgs rejects headShaShort containing whitespace even without a control character', () => {
-  // headShaShort gets an extra rule (spec 1f.3): no whitespace at all, not just no control
-  // characters — it is interpolated bare into the verify executor's --head-sha argv.
-  const r = validateArgs({ ...good, headShaShort: 'abc 1234' });
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('headShaShort')), r.errors.join('; '));
+test('validateArgs rejects headShaShort that would split or inject in the verify argv', () => {
+  // headShaShort is joined into a shell-run string by verifyCommand (stages.js). Apply the
+  // same NONCE_RE charset as the nonce — whitespace, shell metacharacters, and anything
+  // outside [A-Za-z0-9._-] must fail at the waist. A real short SHA never needs them.
+  for (const bad of ['abc 1234', 'abc;id', 'abc$(id)', 'abc`id`', "abc'x", 'abc|x']) {
+    const r = validateArgs({ ...good, headShaShort: bad });
+    assert.equal(r.ok, false, `headShaShort=${JSON.stringify(bad)} should be rejected`);
+    assert.ok(r.errors.some((e) => e.includes('headShaShort')), `${bad}: ${r.errors.join('; ')}`);
+  }
 });
 
 test('validateArgs still accepts the existing good waist untouched (the path-field guard is not overzealous)', () => {
