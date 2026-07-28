@@ -20,5 +20,11 @@ async function run(rawArgs) {
   return runWith(undefined, rawArgs);
 }
 
+// parseEntryArgs THROWS on a refusal (absent args, a review-target reference like a bare
+// PR number/URL, or any other non-waist shape) rather than returning — the only signal
+// this platform renders as a visible failure (issue #27; see the doc comment on
+// parseEntryArgs in args.js for the verified reasoning). runWith carries the identical
+// wording for its own, throw-free seam, so a naked Workflow call and a programmatic
+// runWith() caller see the same message either way.
 const __args = parseEntryArgs(typeof args === 'undefined' ? undefined : args);
 return await run(__args);

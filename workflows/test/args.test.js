@@ -91,16 +91,29 @@ test('validateArgs rejects a malformed delivery.prIdentity (shape-checked when p
   assert.equal(r2.ok, false);
   assert.match(r2.errors.join(' '), /prIdentity must be an object/);
 });
-// Entry-args guard (live-run L1): a raw-string invocation ("PR 310") must throw an
-// actionable redirect to the skill, not a native JSON.parse stack.
+// Entry-args guard (live-run L1; superseded by issue #27's classified refusal design —
+// see entry_guard.test.js): a raw-string invocation ("PR 310") must throw an actionable
+// redirect to the skill, not a native JSON.parse stack. "PR 310" classifies as a
+// pr_shorthand review target (workflows/src/args.js classifyReviewTarget), so the thrown
+// message also carries the exact copy-paste Skill(...) line naming it back — pinned here,
+// not just loosely matched, because that line is the deliverable of the issue.
 test('parseEntryArgs: a non-JSON raw string throws with a skill redirect (no native parse stack)', () => {
   assert.throws(() => parseEntryArgs('PR 310'), /code-gauntlet skill/);
   assert.throws(() => parseEntryArgs('PR 310'), /PR 310/); // echoes the offending input
+  assert.throws(() => parseEntryArgs('PR 310'), /Skill\("code-gauntlet:code-gauntlet", args="PR 310"\)/);
 });
 test('parseEntryArgs: passes through the two legitimate forms unchanged', () => {
   assert.deepEqual(parseEntryArgs(JSON.stringify(good)), good); // session tool-call form
   assert.deepEqual(parseEntryArgs(good), good);                  // workflow-nesting form
-  assert.equal(parseEntryArgs(undefined), undefined);            // absent args -> graceful validateArgs envelope downstream
+});
+// Issue #27 requirement 5: parseEntryArgs(undefined) used to return `undefined` SILENTLY,
+// leaving the caller least likely to parse a return value (the naked Workflow-tool call) to
+// fall through to a generic downstream validateArgs rejection with no recovery line at all.
+// Absent args is now refused at the entry, exactly like every other unusable shape — this
+// inverts the old assertion `parseEntryArgs(undefined) === undefined` on purpose.
+test('parseEntryArgs(undefined) now THROWS instead of silently returning undefined (requirement 5)', () => {
+  assert.throws(() => parseEntryArgs(undefined), /code-gauntlet skill/);
+  assert.throws(() => parseEntryArgs(undefined), /\(got undefined\)/);
 });
 
 // reviewConfig waist validation (live-run L2): the skill session assembled ignore entries
@@ -359,6 +372,9 @@ test('normalizeArgsReport reports drops on both the object and JSON-string forms
 test('parseEntryArgs does NOT strip stamped nulls — runWith owns the strip so it can disclose it', () => {
   // If the entry stripped first, runWith would see an already-clean waist and the silent
   // config substitution would go unreported on exactly the live path that matters.
+  // Issue #27 unchanged this: the entry now classifies/refuses non-object shapes and
+  // absent args, but a well-formed OBJECT with internal stamped nulls is still a plain
+  // object (accepted) and passes through untouched — the strip contract below still holds.
   const parsed = parseEntryArgs(JSON.stringify({ ...good, reviewConfig: null, persist: null }));
   assert.equal(parsed.reviewConfig, null);
   assert.equal(parsed.persist, null);
@@ -424,4 +440,60 @@ test('contextLines/contextChars are bounded above — an absurd measurement fail
   }
   assert.equal(validateArgs({ ...good, contextLines: 5000000 }).ok, true, 'the ceiling itself is accepted');
   assert.equal(validateArgs({ ...good, contextLines: Number.MAX_SAFE_INTEGER }).ok, false);
+});
+
+// --- Requirement 6 (issue #27): path-bearing waist fields are type/shape-checked ----------
+// repoRoot/outputDir/headShaShort/diffPath interpolate into the shared-context path
+// (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, stages.js:2398), which reaches
+// every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
+// (--head-sha, --diff-file) — the same argv-splitting hazard NONCE_RE already guards against.
+// A present-but-garbage value would otherwise render a junk path into every paid dispatch
+// instead of failing at the waist. Absence stays a REQUIRED-field error (tested elsewhere);
+// these checks fire only when the field is PRESENT.
+const PATH_FIELDS = ['repoRoot', 'outputDir', 'headShaShort', 'diffPath'];
+
+test('validateArgs rejects a non-string value for each path-bearing field when present', () => {
+  for (const field of PATH_FIELDS) {
+    for (const bad of [42, {}, null]) {
+      const r = validateArgs({ ...good, [field]: bad });
+      assert.equal(r.ok, false, `${field}=${JSON.stringify(bad)} should be rejected`);
+      assert.ok(r.errors.some((e) => e.includes(field)), `${field}: ${r.errors.join('; ')}`);
+    }
+  }
+});
+
+test('validateArgs rejects an empty or whitespace-only value for each path-bearing field', () => {
+  for (const field of PATH_FIELDS) {
+    for (const bad of ['', '   ']) {
+      const r = validateArgs({ ...good, [field]: bad });
+      assert.equal(r.ok, false, `${field}=${JSON.stringify(bad)} should be rejected`);
+      assert.ok(r.errors.some((e) => e.includes(field)), `${field}: ${r.errors.join('; ')}`);
+    }
+  }
+});
+
+test('validateArgs rejects a path-bearing field carrying an embedded control character (\\n)', () => {
+  // Write the class with unicode escapes at the implementation site, never a literal
+  // control byte (spec 1f) — this test drives that guard with an actual embedded newline,
+  // the one every path-bearing field is most likely to receive from a mis-templated stamp.
+  for (const field of PATH_FIELDS) {
+    const r = validateArgs({ ...good, [field]: 'a\nb' });
+    assert.equal(r.ok, false, `${field} with an embedded newline should be rejected`);
+    assert.ok(r.errors.some((e) => e.includes(field)), `${field}: ${r.errors.join('; ')}`);
+  }
+});
+
+test('validateArgs rejects headShaShort that would split or inject in the verify argv', () => {
+  // headShaShort is joined into a shell-run string by verifyCommand (stages.js). Apply the
+  // same NONCE_RE charset as the nonce — whitespace, shell metacharacters, and anything
+  // outside [A-Za-z0-9._-] must fail at the waist. A real short SHA never needs them.
+  for (const bad of ['abc 1234', 'abc;id', 'abc$(id)', 'abc`id`', "abc'x", 'abc|x']) {
+    const r = validateArgs({ ...good, headShaShort: bad });
+    assert.equal(r.ok, false, `headShaShort=${JSON.stringify(bad)} should be rejected`);
+    assert.ok(r.errors.some((e) => e.includes('headShaShort')), `${bad}: ${r.errors.join('; ')}`);
+  }
+});
+
+test('validateArgs still accepts the existing good waist untouched (the path-field guard is not overzealous)', () => {
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
 });
