@@ -15,7 +15,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, SKILL_RECOVERY_LINE } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './args.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -2352,11 +2352,11 @@ export async function runWith(ctx, rawArgs) {
   // normalizeArgsReport's JSON.parse below used to sit outside any try/catch, so
   // `runWith(undefined, 'PR 310')` escaped as an uncaught native SyntaxError. So a refusal
   // here RETURNS the same entryArgs(rawArgs) refusal instead of throwing — same
-  // entryRefusalMessage as the entry, wrapped in the standard args-reject shape below, so
-  // the wording cannot drift between the two signals (pinned by a test). This arm is
-  // defensive, not the primary guard: in production the entry throws first, so a live
-  // naked call never reaches here. It is still worth fixing — runWith is exported,
-  // directly unit-tested, and documented as throw-free.
+  // refusalFrom wording as the entry, wrapped in makeArgsRejectEnvelope, so the wording
+  // cannot drift between the two signals (pinned by a test). This arm is defensive, not
+  // the primary guard: in production the entry throws first, so a live naked call never
+  // reaches here. It is still worth fixing — runWith is exported, directly unit-tested,
+  // and documented as throw-free.
   const entry = entryArgs(rawArgs);
   if (!entry.ok) return entry.envelope;
   // Normalization is TOLERANT of a stamped null for the narrow NULLABLE_TOP_LEVEL allowlist
@@ -2376,18 +2376,14 @@ export async function runWith(ctx, rawArgs) {
   const nullArgGaps = nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap);
   const check = validateArgs(A);
   if (!check.ok) {
-    return {
-      ok: false,
-      // The field list says WHAT is wrong; SKILL_RECOVERY_LINE says where the fields come
-      // from. A naked caller that hand-built an object reads only this string (the platform
-      // reports the run as completed either way), so it has to carry both.
-      error: `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
-      phaseReached: 'args',
-      failingPhase: 'args',
-      artifactPaths: {},
-      stats: {},
-      gaps: [...nullArgGaps, ...check.errors],
-    };
+    // The field list says WHAT is wrong; SKILL_RECOVERY_LINE says where the fields come
+    // from. A naked caller that hand-built an object reads only this string (the platform
+    // reports the run as completed either way), so it has to carry both. Shape comes from
+    // makeArgsRejectEnvelope — same factory entryArgs uses for its refusal arm.
+    return makeArgsRejectEnvelope(
+      `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
+      [...nullArgGaps, ...check.errors],
+    );
   }
 
   const c = ctx || defaultCtx();

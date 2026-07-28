@@ -8,12 +8,12 @@
 // throw-free by contract (stages.js:2342 "NEVER lets a throw escape") but its
 // normalizeArgsReport(rawArgs) call sat OUTSIDE its try/catch, so a non-JSON-string rawArgs
 // (e.g. 'PR 310') escaped as an uncaught native SyntaxError — empirically confirmed against
-// this repo's source. runWith's arm therefore RETURNS the same entryRefusalMessage(raw)
-// wrapped in the standard args-reject envelope. Two signals, one message — pinned below by
+// this repo's source. runWith's arm therefore RETURNS the same refusalFrom wording
+// wrapped in makeArgsRejectEnvelope. Two signals, one message — pinned below by
 // the one-message-two-signals test, not by convention.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyReviewTarget, parseEntryArgs, SKILL_RECOVERY_LINE } from '../src/args.js';
+import { classifyReviewTarget, parseEntryArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from '../src/args.js';
 import { runWith } from '../src/stages.js';
 import { validArgs } from './helpers/pipelineMock.js';
 
@@ -64,6 +64,12 @@ const POSITIVE_CASES = [
   ['a !-prefixed shorthand (GitLab MR style)', '!89', 'pr_shorthand', '!89', '89'],
   ['a "PR <n>" shorthand', 'PR 310', 'pr_shorthand', 'PR 310', '310'],
   ['a "MR#<n>" shorthand', 'MR#7', 'pr_shorthand', 'MR#7', '7'],
+  // PR_SHORTHAND_WORD_RE alternatives + case-insensitivity (comment at args.js calls out
+  // lowercase "pr 310" as an intended catch; pin every alternation branch).
+  ['a lowercase "pr <n>" shorthand', 'pr 310', 'pr_shorthand', 'pr 310', '310'],
+  ['a "pull request <n>" shorthand', 'pull request 45', 'pr_shorthand', 'pull request 45', '45'],
+  ['a "merge request <n>" shorthand', 'merge request 89', 'pr_shorthand', 'merge request 89', '89'],
+  ['a bare "pull <n>" shorthand', 'pull 45', 'pr_shorthand', 'pull 45', '45'],
 ];
 
 for (const [desc, raw, kind, ref, number] of POSITIVE_CASES) {
@@ -310,6 +316,22 @@ test('a double-JSON-encoded valid waist is still accepted and fully unwrapped', 
   assert.deepEqual(parseEntryArgs(JSON.stringify(doubled)), good);
 });
 
+// MAX_JSON_UNWRAP = 4: pin the exact accept/refuse boundary. The suite already covers 1–3
+// layers accepted and a 7-layer refusal; these two pin "4 accepted, 5 refused".
+function wrapJson(value, layers) {
+  let raw = value;
+  for (let i = 0; i < layers; i++) raw = JSON.stringify(raw);
+  return raw;
+}
+
+test('a waist JSON-encoded exactly MAX_JSON_UNWRAP (4) times is accepted', () => {
+  assert.deepEqual(parseEntryArgs(wrapJson(good, 4)), good);
+});
+
+test('a waist JSON-encoded one past MAX_JSON_UNWRAP (5) is refused', () => {
+  assert.throws(() => parseEntryArgs(wrapJson(good, 5)), /code-gauntlet skill/);
+});
+
 // Both seams must unwrap to the SAME depth. runWith accepting a double-encoded waist and
 // then re-normalizing from the raw string would peel only one layer and hand validateArgs a
 // string — an accept-then-fail cascade worse than either a clean accept or a clean refusal.
@@ -322,9 +344,8 @@ test('runWith accepts a double-encoded waist and normalizes from the unwrapped o
 });
 
 test('a waist encoded past the unwrap bound is refused, not silently half-unwrapped', () => {
-  let raw = JSON.stringify(good);
-  for (let i = 0; i < 6; i++) raw = JSON.stringify(raw);
-  assert.throws(() => parseEntryArgs(raw), /code-gauntlet skill/);
+  // Well past the bound (7 layers) — still a refusal, never a half-unwrapped accept.
+  assert.throws(() => parseEntryArgs(wrapJson(good, 7)), /code-gauntlet skill/);
 });
 
 test('parseEntryArgs is inert on every waist fixture already used by the suite (good + validArgs())', () => {
@@ -402,18 +423,33 @@ test('a plain non-waist object keeps the field-level cascade AND gains the skill
 });
 
 test('runWith refusal envelope matches the validateArgs-reject envelope shape exactly (field for field)', async () => {
-  const out = await runWith(throwingCtx(), undefined);
-  assert.equal(out.ok, false);
-  assert.equal(typeof out.error, 'string');
-  assert.equal(out.phaseReached, 'args');
-  assert.equal(out.failingPhase, 'args');
-  assert.deepEqual(out.artifactPaths, {});
-  assert.deepEqual(out.stats, {});
-  assert.deepEqual(out.gaps, [out.error]);
+  // Both construction sites go through makeArgsRejectEnvelope — compare them to each
+  // other (and to the factory), not to a hardcoded key list that can drift from one site.
+  const entryRefuse = await runWith(throwingCtx(), undefined);
+  const validateRefuse = await runWith(throwingCtx(), {});
+  assert.equal(entryRefuse.ok, false);
+  assert.equal(validateRefuse.ok, false);
   assert.deepEqual(
-    Object.keys(out).sort(),
-    ['artifactPaths', 'error', 'failingPhase', 'gaps', 'ok', 'phaseReached', 'stats'],
+    Object.keys(entryRefuse).sort(),
+    Object.keys(validateRefuse).sort(),
+    'entry refusal and validateArgs-reject must share the same keys',
   );
+  const factoryShape = makeArgsRejectEnvelope('x', ['x']);
+  assert.deepEqual(
+    Object.keys(entryRefuse).sort(),
+    Object.keys(factoryShape).sort(),
+    'both sites must match makeArgsRejectEnvelope',
+  );
+  assert.equal(typeof entryRefuse.error, 'string');
+  assert.equal(entryRefuse.phaseReached, 'args');
+  assert.equal(entryRefuse.failingPhase, 'args');
+  assert.deepEqual(entryRefuse.artifactPaths, {});
+  assert.deepEqual(entryRefuse.stats, {});
+  assert.deepEqual(entryRefuse.gaps, [entryRefuse.error]);
+  // entryArgs itself returns the factory envelope (not a hand-built twin).
+  const viaEntryArgs = entryArgs(undefined);
+  assert.equal(viaEntryArgs.ok, false);
+  assert.deepEqual(viaEntryArgs.envelope, makeArgsRejectEnvelope(viaEntryArgs.envelope.error, [viaEntryArgs.envelope.error]));
 });
 
 // Every refusal message must stay a single physical line: a literal newline would corrupt

@@ -444,7 +444,7 @@ test('contextLines/contextChars are bounded above — an absurd measurement fail
 
 // --- Requirement 6 (issue #27): path-bearing waist fields are type/shape-checked ----------
 // repoRoot/outputDir/headShaShort/diffPath interpolate into the shared-context path
-// (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, stages.js:2380), which reaches
+// (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, stages.js:2398), which reaches
 // every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
 // (--head-sha, --diff-file) — the same argv-splitting hazard NONCE_RE already guards against.
 // A present-but-garbage value would otherwise render a junk path into every paid dispatch

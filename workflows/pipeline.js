@@ -2146,19 +2146,13 @@ function describeShape(raw) {
   return 'an unrecognized value';
 }
 
-// entryRefusalMessage(raw) -> string | null. The SINGLE owner of the guard's wording and of
-// its accept/refuse decision. Both seams reach it through `entryArgs` — `parseEntryArgs`
-// throws the message, `runWith` returns it inside the envelope — so the two cannot say
-// different things about the same input (pinned by entry_guard.test.js's "one message, two
-// signals" test). This wrapper is the standalone form, for callers that want only the
-// verdict; `null` means the value may proceed to normalizeArgsReport/validateArgs.
-function entryRefusalMessage(raw) {
-  return refusalFrom(raw, unwrapWaist(raw));
-}
-
 // refusalFrom(raw, unwrapped) -> string | null. The wording and the accept/refuse decision,
 // taking the ALREADY-unwrapped result so a caller that needs both the verdict and the waist
-// (parseEntryArgs, runWith) peels the payload once rather than twice.
+// (parseEntryArgs, runWith) peels the payload once rather than twice. Both seams reach this
+// through `entryArgs` — `parseEntryArgs` throws the message, `runWith` returns it inside
+// the envelope — so the two cannot say different things about the same input (pinned by
+// entry_guard.test.js's "one message, two signals" test). `null` means the value may
+// proceed to normalizeArgsReport/validateArgs.
 function refusalFrom(raw, unwrapped) {
   if (raw === undefined || raw === null) {
     const got = raw === undefined ? 'undefined' : 'null';
@@ -2222,34 +2216,35 @@ const SKILL_RECOVERY_LINE = 'The code-gauntlet skill assembles this object in Ph
   + 'run it instead of invoking the workflow directly: '
   + 'Skill("code-gauntlet:code-gauntlet", args="<PR number or URL>")';
 
+// makeArgsRejectEnvelope(message, gaps) -> the ONE args-failure envelope shape.
+// Used by entryArgs (entry refusal) and by runWith's validateArgs-reject arm, so a
+// caller downstream sees one shape for every args failure — not two hand-built literals
+// that a comment claims match. `gaps` is the full gap list for that path (entry refusal:
+// `[message]`; validateArgs reject: `[...nullArgGaps, ...check.errors]`).
+function makeArgsRejectEnvelope(message, gaps) {
+  return {
+    ok: false,
+    error: message,
+    phaseReached: 'args',
+    failingPhase: 'args',
+    artifactPaths: {},
+    stats: {},
+    gaps,
+  };
+}
+
 // entryArgs(raw) -> { ok:true, waist } | { ok:false, envelope }
 // The one seam-agnostic entry check: unwraps ONCE, decides, and hands back either the waist
 // the pipeline should run on or the refusal already wrapped in an envelope. Both callers use
 // it, so neither can drift on how deeply it unwraps — runWith accepting a double-encoded
 // waist and then re-normalizing from the raw string would peel one layer fewer and hand
 // validateArgs a string, an accept-then-fail cascade worse than either clean outcome.
-//
-// The envelope is byte-identical in shape to the one runWith already returns for a
-// validateArgs reject (stages.js, the `!check.ok` arm) — field for field, so a caller
-// downstream sees ONE envelope shape for every args failure, not two. `gaps: [message]`
-// mirrors that arm's `gaps: [...nullArgGaps, ...check.errors]`: this refusal has nothing
-// else to report, so the message IS the (sole) gap.
 function entryArgs(raw) {
   const unwrapped = unwrapWaist(raw);
   const message = refusalFrom(raw, unwrapped);
   if (message === null) return { ok: true, waist: unwrapped.waist };
-  return {
-    ok: false,
-    envelope: {
-      ok: false,
-      error: message,
-      phaseReached: 'args',
-      failingPhase: 'args',
-      artifactPaths: {},
-      stats: {},
-      gaps: [message],
-    },
-  };
+  // This refusal has nothing else to report, so the message IS the (sole) gap.
+  return { ok: false, envelope: makeArgsRejectEnvelope(message, [message]) };
 }
 
 // The bundle entry's args guard (live-run L1 / issue #27): a direct Workflow invocation
@@ -2264,7 +2259,7 @@ function entryArgs(raw) {
 // return value (it branches on status) would read a refused review as a finished one. A
 // throw is the only signal this platform renders as a visible failure. runWith's own seam
 // is throw-free by contract and RETURNS the identical refusal, via the shared entryArgs,
-// instead (stages.js) — two signals, ONE entryRefusalMessage, so the wording cannot drift
+// instead (stages.js) — two signals, ONE refusalFrom wording, so the wording cannot drift
 // between them.
 //
 // Refuses three classes now, not just an unparseable string: absent (undefined/null), a
@@ -2298,7 +2293,7 @@ function validateArgs(args) {
   }
   // Path-bearing waist fields (requirement 6, issue #27). repoRoot/outputDir/headShaShort/
   // diffPath interpolate into the shared-context path
-  // (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, stages.js:2380), which reaches
+  // (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, stages.js:2398), which reaches
   // every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
   // (--head-sha, --diff-file) — the same argv-splitting hazard NONCE_RE already guards
   // against above. A present-but-garbage value would otherwise render a junk path into
@@ -4814,11 +4809,11 @@ async function runWith(ctx, rawArgs) {
   // normalizeArgsReport's JSON.parse below used to sit outside any try/catch, so
   // `runWith(undefined, 'PR 310')` escaped as an uncaught native SyntaxError. So a refusal
   // here RETURNS the same entryArgs(rawArgs) refusal instead of throwing — same
-  // entryRefusalMessage as the entry, wrapped in the standard args-reject shape below, so
-  // the wording cannot drift between the two signals (pinned by a test). This arm is
-  // defensive, not the primary guard: in production the entry throws first, so a live
-  // naked call never reaches here. It is still worth fixing — runWith is exported,
-  // directly unit-tested, and documented as throw-free.
+  // refusalFrom wording as the entry, wrapped in makeArgsRejectEnvelope, so the wording
+  // cannot drift between the two signals (pinned by a test). This arm is defensive, not
+  // the primary guard: in production the entry throws first, so a live naked call never
+  // reaches here. It is still worth fixing — runWith is exported, directly unit-tested,
+  // and documented as throw-free.
   const entry = entryArgs(rawArgs);
   if (!entry.ok) return entry.envelope;
   // Normalization is TOLERANT of a stamped null for the narrow NULLABLE_TOP_LEVEL allowlist
@@ -4838,18 +4833,14 @@ async function runWith(ctx, rawArgs) {
   const nullArgGaps = nullToleranceRejectedKeys(A, droppedNulls).map(nullToleranceGap);
   const check = validateArgs(A);
   if (!check.ok) {
-    return {
-      ok: false,
-      // The field list says WHAT is wrong; SKILL_RECOVERY_LINE says where the fields come
-      // from. A naked caller that hand-built an object reads only this string (the platform
-      // reports the run as completed either way), so it has to carry both.
-      error: `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
-      phaseReached: 'args',
-      failingPhase: 'args',
-      artifactPaths: {},
-      stats: {},
-      gaps: [...nullArgGaps, ...check.errors],
-    };
+    // The field list says WHAT is wrong; SKILL_RECOVERY_LINE says where the fields come
+    // from. A naked caller that hand-built an object reads only this string (the platform
+    // reports the run as completed either way), so it has to carry both. Shape comes from
+    // makeArgsRejectEnvelope — same factory entryArgs uses for its refusal arm.
+    return makeArgsRejectEnvelope(
+      `invalid args: ${check.errors.join('; ')}. ${SKILL_RECOVERY_LINE}`,
+      [...nullArgGaps, ...check.errors],
+    );
   }
 
   const c = ctx || defaultCtx();

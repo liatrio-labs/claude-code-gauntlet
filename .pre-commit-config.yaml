@@ -65,9 +65,13 @@ repos:
       # fires it — and CLAUDE.md-only commits are exactly how this file grows. This
       # runs the budget test at commit time for local feedback; CI's unconditional
       # pytest job is the check that cannot be skipped (issue #46).
+      #
+      # Use stdlib unittest — NOT pytest. CI's lint job installs only pre-commit
+      # (ci.yml `lint`), so `python -m pytest` fails with "No module named pytest"
+      # on every `pre-commit run --all-files` there. unittest is always available.
       - id: claude-md-budget
         name: CLAUDE.md stays within its byte budget
-        entry: python -m pytest tests/test_claude_md_budget.py -q
+        entry: python -m unittest tests.test_claude_md_budget
         language: system
         files: ^CLAUDE\.md$
         pass_filenames: false
