@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.2.4 (2026-07-28)
+
+### Bug Fixes
+
+- **schema**: Address PR #61 review comments and markdownlint
+  ([#61](https://github.com/liatrio-labs/claude-code-gauntlet/pull/61),
+  [`40a1992`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/40a1992b91a632c2cd35232e8e72630f50db5c0e))
+
+- **schema**: Declare the finding fields the agent contracts already instruct
+  ([#61](https://github.com/liatrio-labs/claude-code-gauntlet/pull/61),
+  [`40a1992`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/40a1992b91a632c2cd35232e8e72630f50db5c0e))
+
+- **schema**: Declare the finding fields the agent contracts already instruct (#47)
+  ([#61](https://github.com/liatrio-labs/claude-code-gauntlet/pull/61),
+  [`40a1992`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/40a1992b91a632c2cd35232e8e72630f50db5c0e))
+
+### Chores
+
+- **lint**: Clear CHANGELOG consecutive blank line from 3.2.3 release
+  ([#61](https://github.com/liatrio-labs/claude-code-gauntlet/pull/61),
+  [`40a1992`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/40a1992b91a632c2cd35232e8e72630f50db5c0e))
+
+- **lint**: Exclude generated CHANGELOG.md from markdownlint
+  ([#61](https://github.com/liatrio-labs/claude-code-gauntlet/pull/61),
+  [`40a1992`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/40a1992b91a632c2cd35232e8e72630f50db5c0e))
+
+### Documentation
+
+- **bench**: Record the functional-smoke non-change failure floor
+  ([#61](https://github.com/liatrio-labs/claude-code-gauntlet/pull/61),
+  [`40a1992`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/40a1992b91a632c2cd35232e8e72630f50db5c0e))
+
+
 ## v3.2.3 (2026-07-28)
 
 ### Bug Fixes
