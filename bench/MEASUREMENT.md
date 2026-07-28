@@ -71,8 +71,16 @@ python3 bench/run.py --check <RUN_ID>
 2. Payload parse + adapter-required fields + union-schema findings check
    (requires ≥1 `code-gauntlet-findings-*.json` per PR)
 3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
-   degrade (scans compact-return carriers `workflows/wf_*.json` + `raw.json`,
-   plus report / `code-gauntlet-checkpoint-all-*.json`)
+   degrade. Carriers that own a `gaps` array — `workflows/wf_*.json` (the
+   compact Workflow return) and `code-gauntlet-checkpoint-all-*.json` — are
+   judged from that parsed array alone; their raw bytes are never scanned,
+   because a wf record echoes the whole `workflows/pipeline.js` bundle into its
+   `script` field and the bundle's own source contains those sentinels as
+   string constants. When such a carrier will not parse, or carries no `gaps`
+   at all, it falls back to a raw-text scan with that `script` field blanked
+   first. Carriers with no `gaps` structure to parse — `raw.json` (a result
+   envelope whose `.result` is prose) and `code-gauntlet-report-*.md` — are
+   raw-text scanned as-is; they never embed the bundle.
 4. Plugin identity — when the Headless config echo carries `pipeline_version` and
    `plugin_root`, those receipts are validated against the repo's
    `workflows/pipeline.js` version and plugin root (primary). A complete valid

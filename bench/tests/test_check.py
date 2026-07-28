@@ -385,6 +385,198 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("raw.json" in f and "partial-artifacts" in f for f in result["failures"]))
 
+    def _clean_secondary_carriers(self, pr):
+        """Blank the report/checkpoint carriers so only the wf record can fire."""
+        (pr / "code-gauntlet-report-deadbeef.md").write_text("# Report\n", encoding="utf-8")
+        _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
+
+    def test_wf_script_field_bundle_literals_do_not_fail_g3(self):
+        """Issue #52: a wf record echoes the whole pipeline bundle into its
+        ``script`` field, and that bundle's source carries the degrade
+        sentinels as ordinary string constants. A run whose ``result.gaps`` is
+        clean must not be flagged because of them.
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        self._clean_secondary_carriers(pr)
+        _write_json(
+            pr / "workflows" / "wf_test-0001.json",
+            {
+                "runId": "wf_test-0001",
+                "scriptPath": PIPELINE,
+                "status": "completed",
+                # Escaped quotes matter: a naive "script"\s*:\s*"[^"]*" stops at
+                # the first \" and leaves the rest of the bundle in the scan.
+                "script": (
+                    'function writeArtifacts() {\n'
+                    '  return fail("writer echo did not cover all three primary '
+                    'artifact paths (no write proof)");\n'
+                    '}\n'
+                    'const note = "he said \\"partial-artifacts\\" and moved on";\n'
+                    'gaps.push("artifacts not persisted (partial-artifacts)");\n'
+                ),
+                "result": {
+                    "ok": True,
+                    "partial": False,
+                    "artifactPaths": {
+                        "findings": "code-gauntlet-findings-deadbeef.json",
+                        "report": "code-gauntlet-report-deadbeef.md",
+                        "postReview": "code-gauntlet-post-review-deadbeef.json",
+                        "checkpoints": "code-gauntlet-checkpoint-all-deadbeef.json",
+                    },
+                    "gaps": [],
+                },
+            },
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(result["failures"], [])
+
+    def test_wf_script_field_bundle_literals_with_genuine_gap_fails_g3(self):
+        """The same contaminated ``script`` field, but a genuine degrade in
+        ``result.gaps`` — the fix must not overcorrect into a false negative.
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        self._clean_secondary_carriers(pr)
+        _write_json(
+            pr / "workflows" / "wf_test-0001.json",
+            {
+                "runId": "wf_test-0001",
+                "scriptPath": PIPELINE,
+                "status": "completed",
+                "script": (
+                    'const note = "he said \\"partial-artifacts\\" and moved on";\n'
+                    'gaps.push("(no write proof)");\n'
+                ),
+                "result": {
+                    "ok": True,
+                    "partial": True,
+                    "artifactPaths": {
+                        "findings": None,
+                        "report": None,
+                        "postReview": None,
+                        "checkpoints": None,
+                    },
+                    "gaps": [
+                        "writeArtifacts: writer echo did not account for all four "
+                        "planned artifact paths (no write proof) — artifacts not "
+                        "persisted (partial-artifacts)"
+                    ],
+                },
+            },
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("workflows/wf_" in f and "partial-artifacts" in f for f in result["failures"])
+        )
+
+    def test_unparseable_wf_record_bundle_literals_only_does_not_fail_g3(self):
+        """A wf record truncated mid-write has no structure to consult, so it
+        falls back to a raw-text scan — with the bundle-bearing ``script``
+        field blanked first, including when its closing quote never arrived.
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        self._clean_secondary_carriers(pr)
+        wf_path = pr / "workflows" / "wf_test-0001.json"
+        wf_path.parent.mkdir(parents=True, exist_ok=True)
+        wf_path.write_text(
+            '{\n'
+            '  "runId": "wf_test-0001",\n'
+            '  "scriptPath": ' + json.dumps(PIPELINE) + ',\n'
+            '  "script": "const note = \\"partial-artifacts\\";\\n'
+            'return fail(\\"... (no write proof)\\");\\n',
+            encoding="utf-8",
+        )
+        with open(wf_path, encoding="utf-8") as fh:
+            self.assertRaises(json.JSONDecodeError, json.load, fh)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(
+            any("writer degrade" in f for f in result["failures"]), result["failures"]
+        )
+
+    def test_unparseable_wf_record_with_genuine_gap_fails_g3(self):
+        """Same truncated record, but the degrade phrase survives outside the
+        ``script`` field — the raw-text fallback must still catch it.
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        self._clean_secondary_carriers(pr)
+        wf_path = pr / "workflows" / "wf_test-0001.json"
+        wf_path.parent.mkdir(parents=True, exist_ok=True)
+        wf_path.write_text(
+            '{\n'
+            '  "runId": "wf_test-0001",\n'
+            '  "script": "const note = \\"harmless\\";\\n",\n'
+            '  "result": {\n'
+            '    "gaps": ["writeArtifacts: writer echo did not cover all three '
+            'primary artifact paths (no write proof) — artifacts not persisted '
+            '(partial-artifacts)"',
+            encoding="utf-8",
+        )
+        with open(wf_path, encoding="utf-8") as fh:
+            self.assertRaises(json.JSONDecodeError, json.load, fh)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("workflows/wf_" in f and "partial-artifacts" in f for f in result["failures"])
+        )
+
+    def test_structured_carrier_clean_gaps_ignores_stray_bytes(self):
+        """For a structured carrier the parsed ``gaps`` array is authoritative:
+        a sentinel elsewhere in the document does not make the run degraded.
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        _write_json(
+            pr / "code-gauntlet-checkpoint-all-deadbeef.json",
+            {
+                "gaps": [],
+                "phases": {
+                    "challenge": {
+                        "note": "challenger quoted 'partial-artifacts' from the source"
+                    }
+                },
+            },
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
+    def test_text_carrier_keeps_prose_after_truncated_script_field(self):
+        """A TEXT carrier's bytes are scanned as-is (issue #52).
+
+        Script-blanking is for structured carriers only: the unterminated-field
+        pattern runs to end-of-text, so applying it here would swallow the
+        genuine prose that follows a truncated ``script`` field.
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        (pr / "raw.json").write_text(
+            '{"type": "result", "meta": {"script": "a snippet that never closes\n'
+            "MEANWHILE elsewhere in the prose: no write proof for findings.json\n",
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("raw.json" in f and "no-write-proof" in f for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_degrade_carrier_policy_covers_every_scan_pattern(self):
+        """The scanned patterns and their policies cannot desync (issue #52)."""
+        self.assertEqual(
+            set(check._DEGRADE_SCAN_PATTERNS), set(check._DEGRADE_CARRIER_POLICY)
+        )
+        self.assertTrue(check._DEGRADE_SCAN_PATTERNS)
+        for pattern in check._DEGRADE_SCAN_PATTERNS:
+            self.assertIn(
+                check._DEGRADE_CARRIER_POLICY[pattern],
+                (check._DEGRADE_STRUCTURED, check._DEGRADE_TEXT),
+            )
+
     def test_stale_marketplace_script_path_fails_g4(self):
         _build_ok_run(
             self.run_dir,
