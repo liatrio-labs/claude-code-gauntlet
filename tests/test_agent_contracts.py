@@ -75,15 +75,31 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
         # `string` in schemaExtra; a contract that says "otherwise null" makes agents
         # emit null against a string-typed schema — the same StructuredOutput
         # retry-storm class as string-typed confidence. Not-applicable extras must be
-        # OMITTED. (claude_md_rule is not schema-declared, so its null is fine.)
+        # OMITTED.
+        #
+        # Issue #47 widened the rule's REACH, not its content: claude_md_rule (all 7
+        # contracts) and spec_text (conventions-and-intent) are schema-declared now, so the
+        # "otherwise null" they used to carry became live. This test keeps the named-incident
+        # pins explicit; the DERIVED, whole-schema version of the same rule — no declared
+        # field may be null in any parsed worked example, no placeholder may offer a null
+        # branch, and a field the example omits must say OMIT — lives in
+        # tests/test_dimensions_registry.py::TestContractSchemaLockstep.
         for name, field in [("bug-detector", "hidden_errors"),
-                            ("type-design-analyzer", "invalid_state_example")]:
+                            ("type-design-analyzer", "invalid_state_example"),
+                            ("conventions-and-intent", "claude_md_rule"),
+                            ("conventions-and-intent", "spec_text")]:
             text = (REPO / "agents" / f"{name}.md").read_text()
             self.assertIn("OMIT this field", text, name)
             self.assertNotIn(f'"{field}":null', text,
                              f"{name} example emits null for schema-declared {field}")
             self.assertNotIn("otherwise null", text.split(field)[1][:120],
                              f"{name} contract still offers a null branch for {field}")
+        # claude_md_rule is canonical now, so EVERY discovery contract carries it and every
+        # one of them must instruct omission rather than a null.
+        for name in DISCOVERY_AGENTS:
+            text = (REPO / "agents" / f"{name}.md").read_text()
+            self.assertNotIn('"claude_md_rule":null', text,
+                             f"{name} example emits null for schema-declared claude_md_rule")
 
 
 class TestCompleteReadContract(unittest.TestCase):

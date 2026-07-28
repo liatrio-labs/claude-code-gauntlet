@@ -193,7 +193,7 @@ For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: 
 Each finding is a JSON object with this shape:
 
 ```json
-{"id": "cross-file-<n>", "dimension": "cross_file_impact", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path of the changed file causing the impact>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining what breaks and why — no code blocks, no multi-line snippets; affected files go in affected_consumers and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — update the caller, implementor, or dependent>", "affected_consumers": ["<file paths of callers, implementors, or consumers that break>"], "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<other files involved in this finding>"]}
+{"id": "cross-file-<n>", "dimension": "cross_file_impact", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path of the changed file causing the impact>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining what breaks and why — no code blocks, no multi-line snippets; affected files go in affected_consumers and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — update the caller, implementor, or dependent>", "affected_consumers": ["<file paths of callers, implementors, or consumers that break>"], "claude_md_rule": "<the documented project rule this finding violates, quoted with its source file (CLAUDE.md/REVIEW.md/AGENTS.md). OMIT this field entirely when no documented rule applies — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
 **Example:**
@@ -202,7 +202,7 @@ Each finding is a JSON object with this shape:
 Found real impact — billing module caller at src/billing/invoice.py:103 still expects the old return type.
 
 ```json
-{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 doesn\u0027t check for None before dereferencing, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"claude_md_rule":null,"cross_file_refs":["src/billing/invoice.py"]}
+{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 doesn\u0027t check for None before dereferencing, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"cross_file_refs":["src/billing/invoice.py"]}
 ```
 
 [investigation of renamed config key DATABASE_URL — no issue found]

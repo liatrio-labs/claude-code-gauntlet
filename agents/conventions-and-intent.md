@@ -258,7 +258,7 @@ For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: 
 Each finding is a JSON object with this shape:
 
 ```json
-{"id": "conv-<n>", "dimension": "<convention|intent|comment_accuracy>", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining the violation or inaccuracy — no code blocks, no multi-line snippets; cite the rule in claude_md_rule or spec_text>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix or improvement>", "claude_md_rule": "<REQUIRED for convention findings: quoted rule text and its source file>", "spec_text": "<REQUIRED for intent findings: quoted spec text that the code contradicts>", "cross_file_refs": ["<other files involved in this finding>"]}
+{"id": "conv-<n>", "dimension": "<convention|intent|comment_accuracy>", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining the violation or inaccuracy — no code blocks, no multi-line snippets; cite the rule in claude_md_rule or spec_text>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix or improvement>", "claude_md_rule": "<REQUIRED for convention findings: quoted rule text and its source file. OMIT this field entirely for intent or comment_accuracy findings that cite no documented rule — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "spec_text": "<REQUIRED for intent findings: quoted spec text that the code contradicts. OMIT this field entirely for convention or comment_accuracy findings — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
 **Example:**
@@ -267,15 +267,15 @@ Each finding is a JSON object with this shape:
 Real violation — CLAUDE.md requires structured logging with error_id but handler uses print().
 
 ```json
-{"id":"conv-1","dimension":"convention","severity":"medium","confidence":88,"file":"src/api/handlers.py","line_start":112,"line_end":114,"title":"Error handler uses print() instead of structured logger","description":"CLAUDE.md section 4 requires all error handling to use the structured logger with an error_id field. Line 113 uses print(str(e)) and doesn\u0027t integrate with monitoring.","evidence":"Line 113: print(f\"Error: {e}\")","suggestion":"Replace with: logger.error(\"handler_failed\", error_id=generate_id(), exc_info=True)","claude_md_rule":"All errors must be logged via logger.error() with an error_id (CLAUDE.md section 4)","spec_text":null,"cross_file_refs":[]}
+{"id":"conv-1","dimension":"convention","severity":"medium","confidence":88,"file":"src/api/handlers.py","line_start":112,"line_end":114,"title":"Error handler uses print() instead of structured logger","description":"CLAUDE.md section 4 requires all error handling to use the structured logger with an error_id field. Line 113 uses print(str(e)) and doesn\u0027t integrate with monitoring.","evidence":"Line 113: print(f\"Error: {e}\")","suggestion":"Replace with: logger.error(\"handler_failed\", error_id=generate_id(), exc_info=True)","claude_md_rule":"All errors must be logged via logger.error() with an error_id (CLAUDE.md section 4)","cross_file_refs":[]}
 ```
 
 [investigation of function naming convention — follows project pattern correctly]
 SKIP: function naming in utils.py — uses snake_case per CLAUDE.md section 3; no violation.
 
-For convention findings: the `claude_md_rule` field MUST be non-null and MUST quote the specific rule. Findings without a cited rule will be rejected.
+For convention findings: the `claude_md_rule` field MUST be non-null and MUST quote the specific rule. Findings without a cited rule will be rejected — this is enforced by this contract, not by the dispatch schema (the schema's required list is shared by all dimensions), so omitting the field on the wrong dimension is correct while omitting it on this one is a contract violation.
 
-For intent findings: the `spec_text` field MUST be non-null and MUST quote the specific spec text. Findings without a cited spec will be rejected.
+For intent findings: the `spec_text` field MUST be non-null and MUST quote the specific spec text. Findings without a cited spec will be rejected — this is enforced by this contract, not by the dispatch schema (the schema's required list is shared by all dimensions), so omitting the field on the wrong dimension is correct while omitting it on this one is a contract violation.
 
 Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty findings list.
 

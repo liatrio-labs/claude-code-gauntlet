@@ -1,0 +1,48 @@
+{
+  "adjusted_count": 1,
+  "findings": [
+    {
+      "agent": "test-analyzer",
+      "claude_md_rule": "Every error path must carry a regression test (CLAUDE.md section 7)",
+      "confidence": 85,
+      "criticality": 9,
+      "cross_file_refs": [
+        "tests/payments/test_processor.py"
+      ],
+      "description": "processPayment rolls back the transaction when the gateway raises, but no test exercises that path.",
+      "dimension": "test_coverage",
+      "evidence": "Lines 74-80: except PaymentGatewayError -- no matching test in tests/payments/",
+      "failure_scenario": "A regression dropping the rollback would leave a partial transaction in the database, undetected.",
+      "file": "src/payments/processor.py",
+      "id": "test-1",
+      "line_end": 82,
+      "line_start": 67,
+      "origin": "new",
+      "original_confidence": 90,
+      "severity": "high",
+      "suggestion": "Mock the gateway to raise PaymentGatewayError and assert the transaction is rolled back.",
+      "title": "Missing test for the payment failure rollback path",
+      "validation_justification": "Confirmed the gap.",
+      "validator_confidence": 85
+    },
+    {
+      "agent": "conventions-and-intent",
+      "claude_md_rule": "Validation failures surface as 422 (CLAUDE.md section 4)",
+      "confidence": 75,
+      "cross_file_refs": [],
+      "description": "The spec requires a 422 for a schema violation, but the handler swallows it and returns 200.",
+      "dimension": "intent",
+      "evidence": "Line 113: return Response(status=200) inside the ValidationError branch",
+      "file": "src/api/handlers.py",
+      "id": "conv-1",
+      "line_end": 114,
+      "line_start": 112,
+      "origin": "new",
+      "severity": "medium",
+      "spec_text": "A request failing schema validation MUST return 422 Unprocessable Entity.",
+      "suggestion": "Return a 422 with the validation detail instead of a 200.",
+      "title": "Handler returns 200 on a validation failure"
+    }
+  ],
+  "unmatched_ids": []
+}

@@ -23,6 +23,12 @@ The dispatch prompt carries a results JSON object by value:
 - `unverified` — the pipeline-degraded bucket (skipped or failed a stage; lower trust).
 - `stats` — per-stage counts.
 
+Each finding carries the canonical fields (`severity`, `title`, `file`, `line_start`,
+`description`, plus optionally `suggestion` and `claude_md_rule`) and, for intent
+findings, `spec_text` (a per-dimension extra) — alongside other per-dimension extras.
+Optional fields that are absent on a given finding simply are not rendered — never
+invented or back-filled.
+
 Everything you need is in that object — there is no shared context file to read.
 
 ## Protocol
@@ -30,7 +36,11 @@ Everything you need is in that object — there is no shared context file to rea
 1. Open with a one-paragraph summary of the change and the headline result
    (counts of high-confidence vs unverified findings).
 2. **Main findings** — one section listing each high-confidence finding with its
-   severity, title, location (`file:line_start`), and description.
+   severity, title, location (`file:line_start`), description, and suggested fix
+   (`suggestion`). When a finding carries a cited rule (`claude_md_rule`) or contradicted
+   spec text (`spec_text`), render that too. These trailing fields are OPTIONAL on a
+   finding — render them only when present, never invent or back-fill them (consistent
+   with step 4's "do not invent" rule).
 3. **Unverified / pipeline-degraded** — a clearly-labelled secondary section for
    the `unverified` bucket. State plainly that these did not clear the full
    pipeline and carry lower confidence. Never present them as confirmed.

@@ -73,6 +73,8 @@ You are a test coverage analyst focused on identifying **critical gaps** — pla
 - **3-4**: Nice-to-have test coverage that would improve confidence but the risk of not having it is low.
 - **1-2**: Optional tests that would be thorough but aren't necessary.
 
+`criticality` is a NUMBER in the dispatch schema — emit a bare integer (e.g. `7`), never a quoted string like `"7"`, or the mismatched type burns structured-output retries.
+
 Only report gaps rated 5 or above. Lower-priority gaps are not worth the review noise.
 
 ## Confidence calibration
@@ -175,7 +177,7 @@ For each potential issue: (1) Investigate using Read/Grep/Glob/LSP. (2) Decide: 
 Each finding is a JSON object with this shape:
 
 ```json
-{"id": "test-<n>", "dimension": "test_coverage", "severity": "<critical|high|medium|low>", "criticality": <1-10>, "confidence": <0-100>, "file": "<path of the production file with the untested behavior>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary of the coverage gap>", "description": "<single-paragraph prose explaining what behavior is untested and why it matters — no code blocks, no multi-line snippets>", "evidence": "<specific code or context that shows the gap>", "suggestion": "<concrete test case or scenario to add, with example if helpful>", "failure_scenario": "<concrete example of a bug this test gap would fail to catch>", "claude_md_rule": "<relevant CLAUDE.md/REVIEW.md rule if applicable, otherwise null>", "cross_file_refs": ["<test files or related files involved in this finding>"]}
+{"id": "test-<n>", "dimension": "test_coverage", "severity": "<critical|high|medium|low>", "criticality": <1-10>, "confidence": <0-100>, "file": "<path of the production file with the untested behavior>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary of the coverage gap>", "description": "<single-paragraph prose explaining what behavior is untested and why it matters — no code blocks, no multi-line snippets>", "evidence": "<specific code or context that shows the gap>", "suggestion": "<concrete test case or scenario to add, with example if helpful>", "failure_scenario": "<concrete example of a bug this test gap would fail to catch>", "claude_md_rule": "<the documented project rule this finding violates, quoted with its source file (CLAUDE.md/REVIEW.md/AGENTS.md). OMIT this field entirely when no documented rule applies — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "cross_file_refs": ["<test files or related files involved in this finding>"]}
 ```
 
 **Example:**
@@ -184,7 +186,7 @@ Each finding is a JSON object with this shape:
 Real gap — the payment failure path in processPayment() has no test; a regression could go undetected.
 
 ```json
-{"id":"test-1","dimension":"test_coverage","severity":"high","criticality":9,"confidence":90,"file":"src/payments/processor.py","line_start":67,"line_end":82,"title":"Missing test for payment failure error path in processPayment","description":"processPayment() has an error path at line 74 that catches PaymentGatewayError and rolls back the transaction, but isn\u0027t covered by any test.","evidence":"Lines 74-80: except PaymentGatewayError — no corresponding test in tests/payments/","suggestion":"Add test: mock gateway to raise PaymentGatewayError, assert transaction rolled back and error logged.","failure_scenario":"A regression removing the rollback on failure would go undetected until a failed payment left a partial transaction in the database.","claude_md_rule":null,"cross_file_refs":["tests/payments/test_processor.py"]}
+{"id":"test-1","dimension":"test_coverage","severity":"high","criticality":9,"confidence":90,"file":"src/payments/processor.py","line_start":67,"line_end":82,"title":"Missing test for payment failure error path in processPayment","description":"processPayment() has an error path at line 74 that catches PaymentGatewayError and rolls back the transaction, but isn\u0027t covered by any test.","evidence":"Lines 74-80: except PaymentGatewayError — no corresponding test in tests/payments/","suggestion":"Add test: mock gateway to raise PaymentGatewayError, assert transaction rolled back and error logged.","failure_scenario":"A regression removing the rollback on failure would go undetected until a failed payment left a partial transaction in the database.","cross_file_refs":["tests/payments/test_processor.py"]}
 ```
 
 [investigation of missing boundary test for pagination — covered by integration test]
