@@ -50,7 +50,7 @@ _DEGRADE_RE = re.compile(
 
 # Value of a JSON ``"script"`` field — a workflow record's echo of the whole
 # pipeline bundle, whose own source carries the degrade sentinels as ordinary
-# string constants (issue #52). The escape-aware body is required: a naive
+# substrings (issue #52). The escape-aware body is required: a naive
 # ``[^"]*`` stops at the first ``\"`` and leaves most of the bundle behind.
 _SCRIPT_FIELD_RE = re.compile(r'"script"\s*:\s*"(?:\\.|[^"\\])*"', re.DOTALL)
 # The same field truncated mid-write, with no closing quote.
@@ -72,8 +72,9 @@ PIPELINE_REL = Path("workflows") / "pipeline.js"
 #   workflows/wf_*.json  carries the compact return at ``result.gaps``. It also
 #       echoes the whole ~230 KB workflows/pipeline.js bundle into its
 #       ``script`` field, and that bundle's source contains the sentinels as
-#       ordinary string constants ("no write proof" x4, "partial-artifacts"
-#       x6) — so a raw scan matches on EVERY collected record, degraded or not.
+#       ordinary substrings ("no write proof" x4 string/template literals;
+#       "partial-artifacts" x6 — 1 string literal + 5 comments) — so a raw
+#       scan matches on EVERY collected record, degraded or not.
 #   code-gauntlet-checkpoint-all-*.json  the persisted checkpoint's ``gaps``.
 #
 # TEXT carriers have no ``gaps`` structure to parse, so a raw-text scan is the
@@ -337,20 +338,12 @@ def _gaps_lists(node):
             yield from _gaps_lists(value)
 
 
-def _gaps_strings(node):
-    """Yield string entries from any ``gaps`` array nested under ``node``."""
-    for gaps in _gaps_lists(node):
-        for item in gaps:
-            if isinstance(item, str):
-                yield item
-
-
 def _strip_script_field(text):
     """Blank out any JSON ``"script"`` field value ahead of a raw-text scan.
 
     ``workflows/wf_*.json`` echoes the entire pipeline bundle into that field,
     and the bundle's own source carries the degrade sentinels as ordinary
-    string constants (issue #52). Handles both a well-formed value and one
+    substrings (issue #52). Handles both a well-formed value and one
     truncated mid-write.
 
     Only STRUCTURED carriers get this treatment. The unterminated-field pattern
@@ -390,8 +383,14 @@ def _scan_degrade_text(pr_dir):
                 data = json.loads(text)
             except (json.JSONDecodeError, ValueError):
                 data = None
-            if data is not None and any(True for _ in _gaps_lists(data)):
-                matched = any(_DEGRADE_RE.search(g) for g in _gaps_strings(data))
+            gaps_lists = list(_gaps_lists(data)) if data is not None else []
+            if gaps_lists:
+                matched = any(
+                    _DEGRADE_RE.search(item)
+                    for gaps in gaps_lists
+                    for item in gaps
+                    if isinstance(item, str)
+                )
             else:
                 matched = bool(_DEGRADE_RE.search(_strip_script_field(text)))
         else:

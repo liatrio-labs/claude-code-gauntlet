@@ -393,8 +393,8 @@ class CheckRunTest(unittest.TestCase):
     def test_wf_script_field_bundle_literals_do_not_fail_g3(self):
         """Issue #52: a wf record echoes the whole pipeline bundle into its
         ``script`` field, and that bundle's source carries the degrade
-        sentinels as ordinary string constants. A run whose ``result.gaps`` is
-        clean must not be flagged because of them.
+        sentinels as ordinary substrings (literals and comments). A run whose
+        ``result.gaps`` is clean must not be flagged because of them.
         """
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
