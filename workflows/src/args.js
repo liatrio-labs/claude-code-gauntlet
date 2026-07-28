@@ -377,7 +377,7 @@ export function entryArgs(raw) {
 // repo; anthropics/claude-code#66745, still open) — so the caller least likely to parse a
 // return value (it branches on status) would read a refused review as a finished one. A
 // throw is the only signal this platform renders as a visible failure. runWith's own seam
-// is throw-free by contract and returns entryRefusalEnvelope for the identical refusal
+// is throw-free by contract and RETURNS the identical refusal, via the shared entryArgs,
 // instead (stages.js) — two signals, ONE entryRefusalMessage, so the wording cannot drift
 // between them.
 //

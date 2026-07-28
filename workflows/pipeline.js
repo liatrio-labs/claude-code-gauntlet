@@ -2263,7 +2263,7 @@ function entryArgs(raw) {
 // repo; anthropics/claude-code#66745, still open) — so the caller least likely to parse a
 // return value (it branches on status) would read a refused review as a finished one. A
 // throw is the only signal this platform renders as a visible failure. runWith's own seam
-// is throw-free by contract and returns entryRefusalEnvelope for the identical refusal
+// is throw-free by contract and RETURNS the identical refusal, via the shared entryArgs,
 // instead (stages.js) — two signals, ONE entryRefusalMessage, so the wording cannot drift
 // between them.
 //
@@ -4813,7 +4813,7 @@ async function runWith(ctx, rawArgs) {
   // comment already promised it "NEVER lets a throw escape") and empirically was not:
   // normalizeArgsReport's JSON.parse below used to sit outside any try/catch, so
   // `runWith(undefined, 'PR 310')` escaped as an uncaught native SyntaxError. So a refusal
-  // here RETURNS the same entryRefusalEnvelope(rawArgs) instead of throwing — same
+  // here RETURNS the same entryArgs(rawArgs) refusal instead of throwing — same
   // entryRefusalMessage as the entry, wrapped in the standard args-reject shape below, so
   // the wording cannot drift between the two signals (pinned by a test). This arm is
   // defensive, not the primary guard: in production the entry throws first, so a live

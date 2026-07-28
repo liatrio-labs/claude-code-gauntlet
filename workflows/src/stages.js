@@ -2351,7 +2351,7 @@ export async function runWith(ctx, rawArgs) {
   // comment already promised it "NEVER lets a throw escape") and empirically was not:
   // normalizeArgsReport's JSON.parse below used to sit outside any try/catch, so
   // `runWith(undefined, 'PR 310')` escaped as an uncaught native SyntaxError. So a refusal
-  // here RETURNS the same entryRefusalEnvelope(rawArgs) instead of throwing — same
+  // here RETURNS the same entryArgs(rawArgs) refusal instead of throwing — same
   // entryRefusalMessage as the entry, wrapped in the standard args-reject shape below, so
   // the wording cannot drift between the two signals (pinned by a test). This arm is
   // defensive, not the primary guard: in production the entry throws first, so a live
