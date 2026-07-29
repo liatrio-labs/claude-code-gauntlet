@@ -3253,6 +3253,15 @@ const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 // eliminated by the script and is omitted, exactly as it was omitted from the old echo's
 // verified[] array.
 //
+// PRECONDITION, and the one way this function could ever drop a finding: it must be called
+// only with deltas that trustSlice has already accepted, which is what proves every
+// dispatched id has exactly one delta carrying a boolean `verified`. A finding with NO
+// delta is skipped here — there is no honest alternative, since keeping it would deliver an
+// unverified finding as a verified one — so a caller that skips the coverage check would
+// reintroduce the silent drop this whole change exists to close. Nothing but
+// dispatchVerifySlice (immediately after its trustSlice call) and the golden-fixture test
+// calls it; keep it that way.
+//
 // `agent` is stripped here — the one place where the withholding #25 requirement 1
 // mandates is enforced. It used to happen by omission (the echo schema simply did not
 // declare `agent`, so StructuredOutput dropped it... most of the time — measured surviving
