@@ -376,23 +376,36 @@ Do not re-run the review stages yourself and do not reconstruct findings from th
 
 ### Wait protocol — MANDATORY
 
-The `Workflow` invocation can run as a **background task** (the CLI may detach a long-running review). If the session ends its turn while the workflow is still running, the CLI kills the background task at its 600-second ceiling — *before* Phase 8 — so no compact return is ever observed, no artifacts are picked up, and the review is silently lost. This is model-discretionary today (a session that happens to hold its turn completes fine, one that yields does not), which is exactly the failure to eliminate.
+The `Workflow` call hands back a **Task ID**, not the compact return: `Workflow launched in background. Task ID: <id>`. The return arrives later, in a completion notification — and notifications are delivered only **between** turns. So the two obvious ways to wait are both wrong. Yielding the turn to collect the notification is the failure mode itself: in a `claude -p` run the CLI waits for still-running background tasks only up to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) and then terminates them (`Background tasks still running after 600s; terminating.`), so a review longer than that is killed before Phase 8 and silently lost — the `config_echo_mismatch`/no-payload symptom. And simply holding the turn makes the notification undeliverable. The way out is to **observe the result from inside the turn**, which is what `await_workflow.py` does.
 
-**You MUST NOT end your turn, and MUST NOT begin Phase 8, until you hold a terminal workflow result** — either the completion notification with the compact return in hand, or a terminal result read from the workflow's task output file.
+**You MUST NOT end your turn, and MUST NOT begin Phase 8, until a terminal result is in hand.**
 
-- **If the compact return is delivered inline** (the tool call resolved in-turn) → proceed to Phase 8 with it.
-- **If the Workflow call returned a task handle / output-file path instead of the compact result** (backgrounded) → **poll** it, in-turn, until terminal. Take the task output file path from the `Workflow` tool result and loop with bounded Bash sleeps:
+- **If the tool result already carries the compact return inline** (no Task ID) → proceed to Phase 8 with it.
+- **Otherwise** → take the Task ID from the tool result and run the awaiter. One Bash call, turn held:
 
-  ```bash
-  # repeat up to 30 times; stop as soon as the output file holds a terminal { ok: ... } result
-  Bash(command="sleep 60")            # one bounded wait per iteration
-  Read(<task output file path>)        # terminal when it contains the compact { ok, phaseReached, ... } object
+  ```
+  Bash(
+    command: python3 "{plugin_root}/scripts/await_workflow.py" --attempt 1
+             --artifacts-dir "{output_dir}" --head-sha {head_sha_short} -- <task-id>,
+    timeout: 600000
+  )
   ```
 
-  Poll at most **30 iterations** (~30 minutes). Each iteration: `sleep 60`, then Read the output file; the moment it shows a terminal `{ ok, ... }` object, stop polling and carry it into Phase 8.
-- **If 30 iterations elapse with no terminal result** → declare a **`workflow-timeout` gap**, stop polling, and deliver whatever partial artifacts exist per the Phase 8 degradation rules (resume-from-checkpoint if the last-seen state offers it, else deliver the partial report + gaps). Never fabricate a result and never claim delivery without one.
+  **`timeout: 600000` is required** — the Bash tool defaults to 120s and would cut the wait short, killing the script before it prints anything for you to read. The target rides last, behind `--`, which is also the shape the awaiter prints for every following attempt: one form to recognize, not two.
 
-**Never start Phase 8 with no terminal workflow result.** A missing/empty compact return is a failure to surface (a `workflow-timeout` gap), never an empty-but-successful review.
+Branch on the **exit code**. Never on your own judgment about what the output "looks like":
+
+| exit | what it means | what you do |
+|---|---|---|
+| **0** | stdout is the terminal compact `{ ok, ... }` return | Carry it into Phase 8. |
+| **3** | not terminal yet, attempts remain | Run stdout's `next_command` **verbatim** (same `timeout: 600000`). Do not edit it, do not add a wait of your own, do not end the turn. |
+| **5** | the persisted artifacts landed but the return was never observed | Declare a **`workflow-timeout`** gap quoting the marker's `detail`, then deliver from the artifacts on disk (`{output_dir}/code-gauntlet-*-{head_sha_short}.*`) per the Phase 8 rules. |
+| **4** | attempts exhausted, or the awaiter failed | Declare a **`workflow-timeout`** gap and deliver whatever partial artifacts exist per the Phase 8 degradation rules (resume-from-checkpoint if the last-seen state offers it, else partial report + gaps). |
+| **2** | the command itself is malformed — stdout is empty, argparse put the reason on stderr | Not a workflow outcome. Fix the command against the block above and re-run it; never treat this as a timeout. |
+
+The script counts the attempts, carries its own state forward, and prints the next command; there is nothing here for you to tally or infer. Four attempts of 540s is 36 minutes of held turn — longer than the 30-minute cap this replaced.
+
+**Never start Phase 8 with no terminal workflow result.** A missing/empty compact return is a failure to surface (a `workflow-timeout` gap), never an empty-but-successful review. And **never state an `ok`, a stat, or a gap you did not read from the awaiter's stdout** — "terminal result in hand" is a claim about a specific object you are holding, not a summary of how the run seemed to go.
 
 > **Permission-mode note.** Default permission mode runs clean. Under `acceptEdits` the dynamic-workflow review gate and the executor's `verify_findings.py` Bash command must be pre-approved before the run, or the workflow stalls waiting on approval it cannot surface. (Provisional per artifact 29 / Phase 0 test 4 — confirm against the live gate.)
 
@@ -414,7 +427,7 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
    - On any mid-run workflow **crash** (a thrown `error` with no return value, a killed background task, or a lost compact return), follow `references/crash-recovery.md` — **`resumeFromRunId` first** (replays completed agents from cache at zero re-billed cost), journal-first diagnosis (`failingPhase` names the stage that threw), and only then the checkpoint paths above.
 3. **Surface `gaps`** in the methodology regardless of `ok` — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 
-> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — a headless `-p` child session backgrounds the workflow and is killed at the CLI's 600s ceiling if it yields its turn, so headless runs must **poll the task output file to a terminal result before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap (the interactive walkthrough is unavailable); posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
+> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap (the interactive walkthrough is unavailable); posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
 
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver via chat/markdown only).
 >

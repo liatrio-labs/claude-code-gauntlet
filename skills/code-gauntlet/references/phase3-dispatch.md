@@ -22,14 +22,26 @@ Workflow(
 
 ## Wait Protocol (MANDATORY — do not end the turn early)
 
-The `Workflow` call can be **detached to a background task**. If the session yields its turn while the workflow runs, the CLI kills the background task at its **600-second ceiling** before Phase 8 — the compact return is never observed and the review is silently lost (the `config_echo_mismatch`/no-payload bench symptom). This is model-discretionary, so it must be forced:
+`Workflow` typically runs the pipeline as a **background task**. What comes back is a Task ID, a transcript dir, and a Run ID — **not** the compact return, and not the task output file's path either. The return and that path both appear only in the completion `<task-notification>`, and notifications are delivered only **between** turns. That is a circularity, and it is the whole problem: a session that yields its turn to receive the notification is the session that gets killed, and a session that holds its turn can never be handed the notification. Neither can wait correctly by itself, so the waiting is done by a script that watches the file directly. (If the tool result ever carries the compact return inline with no Task ID, step 2 below still applies.)
 
-1. **Never end the turn and never begin Phase 8 without a terminal workflow result** — either the inline compact return or a terminal `{ ok, ... }` read from the workflow's task output file.
-2. **If the compact return resolved inline** → carry it into Phase 8.
-3. **If the call handed back a task handle / output-file path (backgrounded)** → poll it in-turn: `sleep 60`, then Read the output file; repeat until it holds a terminal `{ ok, phaseReached, ... }` object. **Cap at 30 iterations** (~30 min).
-4. **On 30 iterations with no terminal result** → declare a `workflow-timeout` gap, stop polling, and deliver partial artifacts per the Phase 8 degradation rules (resume-from-checkpoint if available, else partial report + gaps). Never fabricate a result.
+The kill is real but narrower than it used to be written here. It is a `claude -p` mechanism, not a general turn-end one: a `-p` run blocks on background tasks still running when the main turn ends, but only up to `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms), then prints `Background tasks still running after Ns; terminating.` and exits. A Phase 3 review routinely exceeds that — `smoke-20260719-190902-a14b4cc` lost all three PRs exactly this way, which is why `bench/runner/invoke.py` exports the variable as `"0"` (wait unbounded) for its own children. Interactive sessions are not subject to that ceiling; the #38-profiled run yielded its turn for 994.1s and resumed cleanly. **The protocol does not branch on which mode it is in** — holding the turn and observing the file is correct in both, and a protocol that had to know which one it was running under would be one more thing to get wrong.
 
-Headless `-p` child sessions are the highest-risk case (they background aggressively) — they must poll, never assume completion. A missing/empty compact return is a failure to surface, not an empty-but-successful review.
+1. **Never end the turn and never begin Phase 8 without a terminal workflow result.**
+2. **If the tool result carries the compact return inline** (no Task ID) → carry it into Phase 8.
+3. **Otherwise** → run the awaiter with the Task ID, in-turn, under an explicit Bash `timeout: 600000` (the tool's 120s default would kill it mid-wait):
+
+   ```
+   python3 "{plugin_root}/scripts/await_workflow.py" --attempt 1
+           --artifacts-dir "{output_dir}" --head-sha {head_sha_short} -- <task-id>
+   ```
+
+4. **Branch on the exit code:** `0` → stdout is the terminal `{ ok, phaseReached, ... }` return, carry it into Phase 8. `3` → run stdout's `next_command` verbatim, unedited. `5` → the persisted artifacts are present but the return was never observed; declare a `workflow-timeout` gap and deliver from the on-disk artifacts. `4` → exhausted; declare a `workflow-timeout` gap and deliver partial artifacts per the Phase 8 degradation rules. Never fabricate a result.
+
+The awaiter watches `<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output`, which it resolves from the Task ID (`$CODE_GAUNTLET_TASKS_DIR` overrides the search). Detection is structural, not a keyword match: the file is an envelope of `{summary, agentCount, logs, result, workflowProgress, totalTokens, totalToolCalls}` with the pipeline's return nested at **`.result`**, so a bare `ok` is not enough to qualify — the assemble receipt carries one too, and mistaking a receipt for the return would hand Phase 8 the wrong object. A terminal result requires a boolean `ok` plus at least one field only the compact return carries. Unparseable input is never an error, only "not yet terminal" — the target reads as absent or zero bytes for most of a run, so a detector that raised or exited on unparseable input would turn the ordinary case into a lost review. Partial-write tolerance is the awaiter's job and not an assumption it gets to skip: the file has not been caught mid-write in sampling to date, but "not yet observed" is not "cannot happen", and a torn read that ends just after some nested object closes is exactly how a scan gets fooled into accepting an agent receipt as the pipeline's return.
+
+Because the task file lives at a path the harness owns and this script has to derive, `--artifacts-dir`/`--head-sha` arm a second, independent observable: the four persisted artifacts, which are *ours*, at a path Phase 2 constructs. A layout change on the harness side alone cannot lose a review, and a writer failure alone cannot either. Only artifacts newer than the wait's start count, so a stale set left at the same head SHA can never be delivered as if it were this run.
+
+A missing/empty compact return is a failure to surface, not an empty-but-successful review — and a result is "in hand" only when it was read from the awaiter's stdout.
 
 ---
 
