@@ -357,11 +357,17 @@ class TestFindTerminalEmbedded(unittest.TestCase):
         found, _, _ = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
 
-    def test_indented_object_at_line_start(self):
+    def test_indented_object_at_line_start_is_not_a_document(self):
+        """Leading spaces/tabs must not create probe sites.
+
+        Pretty-printed nested values (indent=2) start their lines indented. If
+        the scan skipped that whitespace, a torn mid-write envelope could promote
+        a complete nested receipt as the compact return. Column zero only.
+        """
         for indent in ("  ", "    ", "\t", " \t "):
             text = "preamble\n" + indent + json.dumps(SUCCESS_RETURN) + "\n"
             found, _, _ = find_terminal(text)
-            self.assertEqual(found, SUCCESS_RETURN, repr(indent))
+            self.assertIsNone(found, repr(indent))
 
     def test_utf8_bom_does_not_defeat_detection(self):
         """A BOM is neither whitespace nor '{', so an unhandled one would make the
@@ -629,8 +635,33 @@ class TestTruncatedFragmentIsNotPromoted(unittest.TestCase):
         found, _, _ = find_terminal(fragment)
         self.assertIsNone(found)
 
+    def test_indented_array_element_in_torn_pretty_envelope_is_rejected(self):
+        """Regression: indent=2 puts array-element `{` on its own indented line.
+
+        Skipping that whitespace made a complete nested object with ok+stats a
+        probe site on a mid-write read — promoting it as the compact return.
+        """
+        env = {
+            "summary": "x",
+            "result": None,
+            "workflowProgress": [
+                {"ok": True, "stats": {"found": 4}, "phaseReached": "report"},
+            ],
+        }
+        pretty = json.dumps(env, indent=2)
+        decoder = json.JSONDecoder()
+        brace = pretty.find("{", pretty.find("["))
+        _, end = decoder.raw_decode(pretty, brace)
+        fragment = pretty[:end]
+        found, _, _ = find_terminal(fragment)
+        self.assertIsNone(found)
+
     def test_a_complete_envelope_is_unaffected(self):
         found, _, _ = find_terminal(json.dumps(envelope(SUCCESS_RETURN)))
+        self.assertEqual(found, SUCCESS_RETURN)
+
+    def test_a_complete_pretty_envelope_is_unaffected(self):
+        found, _, _ = find_terminal(json.dumps(envelope(SUCCESS_RETURN), indent=2))
         self.assertEqual(found, SUCCESS_RETURN)
 
 

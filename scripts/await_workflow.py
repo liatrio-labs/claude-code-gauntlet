@@ -415,7 +415,7 @@ def _note(bounds, reason):
 def _document_starts(text):
     """Yield the offsets at which a JSON *document* may plausibly begin.
 
-    Only a ``{`` that is the first non-whitespace character of its line counts.
+    Only a ``{`` at column zero of its line counts — no leading spaces or tabs.
     That single restriction does two jobs, and it is the reason the scan is both
     fast and safe:
 
@@ -428,20 +428,17 @@ def _document_starts(text):
       after some nested object closes. One such nested object — an agent's
       recorded receipt inside `workflowProgress` — carries a boolean ``ok`` and a
       field name that overlaps COMPACT_RETURN_KEYS, so scanning mid-line offsets
-      accepted it as the pipeline's return. Nested values never start a line at
-      column zero, so they are no longer reachable.
+      accepted it as the pipeline's return. Pretty-printed nested values
+      (``indent=2``, which the tool writes) start their lines with spaces, so
+      skipping leading whitespace would put them back in reach; requiring column
+      zero keeps them unreachable even on a mid-write read.
 
     Documents that are genuinely appended after other output — the case issue #26
-    R2 names — do start their own line, so they are still found.
+    R2 names — do start their own line at column zero, so they are still found.
     """
     for line_start in _line_starts(text):
-        cursor = line_start
-        # \r is in the skip set for CRLF input: lines are split on \n, so a stray
-        # carriage return can sit between the split point and the brace.
-        while cursor < len(text) and text[cursor] in " \t\r":
-            cursor += 1
-        if cursor < len(text) and text[cursor] == "{":
-            yield cursor
+        if line_start < len(text) and text[line_start] == "{":
+            yield line_start
 
 
 def _line_starts(text):
