@@ -2,6 +2,47 @@
 
 <!-- version list -->
 
+## v3.2.7 (2026-07-29)
+
+### Bug Fixes
+
+- **wait**: Address PR #77 review comments on awaiter error paths
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Close the /dev/null descriptor on the broken-pipe fallback
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Disclose every scan bound, and degrade a broken pipe
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Harden the awaiter against torn reads, BOMs and early abandonment
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Replace the Phase 3 sleep/Read poll loop with a blocking awaiter
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Replace the Phase 3 sleep/Read poll loop with a blocking awaiter (#26)
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Report the search paths even when no candidate root exists
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Require column-zero document starts in the awaiter scan
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+- **wait**: Stop the scan bounds from dropping real results
+  ([#77](https://github.com/liatrio-labs/claude-code-gauntlet/pull/77),
+  [`15364f7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/15364f77798f0e04508ee1ee9b799a867b68ea39))
+
+
 ## v3.2.6 (2026-07-28)
 
 ### Bug Fixes
