@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.3.0 (2026-07-29)
+
+### Bug Fixes
+
+- **collect_project_rules**: Address PR79 parser/security issues
+  ([#79](https://github.com/liatrio-labs/claude-code-gauntlet/pull/79),
+  [`5ce6bfa`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5ce6bfa2c4991ef0fd82880a492c79ee594207a6))
+
+- **context**: Make the walk bound a tunable runaway guard, not a policy cap
+  ([#79](https://github.com/liatrio-labs/claude-code-gauntlet/pull/79),
+  [`5ce6bfa`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5ce6bfa2c4991ef0fd82880a492c79ee594207a6))
+
+- **context**: Restore the walk bound and disclose non-markdown pointers
+  ([#79](https://github.com/liatrio-labs/claude-code-gauntlet/pull/79),
+  [`5ce6bfa`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5ce6bfa2c4991ef0fd82880a492c79ee594207a6))
+
+### Documentation
+
+- **context**: Fix duplication and agent policy
+  ([#79](https://github.com/liatrio-labs/claude-code-gauntlet/pull/79),
+  [`5ce6bfa`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5ce6bfa2c4991ef0fd82880a492c79ee594207a6))
+
+### Features
+
+- **context**: Resolve @import pointers so project rules actually reach agents
+  ([#79](https://github.com/liatrio-labs/claude-code-gauntlet/pull/79),
+  [`5ce6bfa`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5ce6bfa2c4991ef0fd82880a492c79ee594207a6))
+
+- **context**: Resolve @import pointers so project rules actually reach agents (#49)
+  ([#79](https://github.com/liatrio-labs/claude-code-gauntlet/pull/79),
+  [`5ce6bfa`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5ce6bfa2c4991ef0fd82880a492c79ee594207a6))
+
+
 ## v3.2.7 (2026-07-29)
 
 ### Bug Fixes
