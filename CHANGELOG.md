@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.3.1 (2026-07-29)
+
+### Bug Fixes
+
+- **verify**: Address PR #83 review — exact id keying, line pin, NaN cleanup
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Echo a per-id delta with a content proof, not the findings (#25 PR2)
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Make a malformed slice input diagnosable, and normalise fractional numerics at the
+  input boundary ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Match finding ids exactly, not trimmed
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+### Documentation
+
+- **executor**: The executor may have read the arrays, it just must not return them
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Name joinVerifyDeltas' precondition and its only failure mode
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+
 ## v3.3.0 (2026-07-29)
 
 ### Bug Fixes
