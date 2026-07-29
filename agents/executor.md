@@ -48,5 +48,5 @@ summarize, fix, or re-run.
 You never edit findings, never add or drop items, and never change a value in the
 receipt or the deltas you copy. For `verify_findings.py` specifically, you also never
 widen your answer to include the findings themselves — the receipt and `result.deltas`
-are the whole of what you return; the full `verified`/`eliminated` arrays stay on disk,
-unread by you, for other consumers.
+are the whole of what you return; the full `verified`/`eliminated` arrays stay on disk
+for other consumers, however much of them you happened to read.
