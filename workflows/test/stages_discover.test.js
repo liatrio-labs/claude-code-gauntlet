@@ -264,9 +264,13 @@ test('absent size limits mirror stage defaults — the guard never goes NaN-sile
   // summarize bucket 20, verify/validate ONE slice/batch over all findings.
   const n = worstCaseAgentCount({}, 20000, 1000);
   assert.ok(Number.isFinite(n), 'worst case must be a real number');
-  // verify's slice term is doubled: VERIFY_ATTEMPTS_PER_SLICE=2 (one deterministic retry
-  // per slice on an untrusted result), so 1 slice -> 2 executor dispatches worst case.
-  assert.equal(n, (1000 + 1) + 7 + 1 * 2 + 1 + 1000 + 2); // 20000/20 buckets +merge, 7 discovery, 1 slice x2 verify attempts, 1 batch, challenge-all, report+writer
+  // verify's slice term is TRIPLED: VERIFY_ATTEMPTS_PER_SLICE=2 executor dispatches (one
+  // deterministic retry per slice on an untrusted result) plus VERIFY_REWRITES_PER_SLICE=1
+  // artifact-writer re-materialize of that slice's --input file, taken when the first
+  // attempt was input-implicated (issue #25 PR3). The rewrite is counted rather than left
+  // to headroom because, unlike the report/persist writer terms, it scales with the
+  // finding count — which is the whole reason this term is the exact one.
+  assert.equal(n, (1000 + 1) + 7 + 1 * 3 + 1 + 1000 + 2); // 20000/20 buckets +merge, 7 discovery, 1 slice x(2 verify attempts + 1 rewrite), 1 batch, challenge-all, report+writer
   // Coarsening fires and converges from fully-absent limits.
   const coarse = coarsenLimits({}, 20000, 5000);
   assert.ok(worstCaseAgentCount(coarse, 20000, 5000) < 900);

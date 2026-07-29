@@ -615,6 +615,12 @@ function gradeInputProof(receipt, expected) {
 // dispatch-count test fails instead of the guard silently over-counting.
 export const VERIFY_ATTEMPTS_PER_SLICE = 2;
 
+// The artifact-writer dispatches ONE slice can additionally cost: the re-materialize of
+// its --input file, taken only when the first attempt was input-implicated (issue #25
+// PR3). Same reason it is a named constant: worstCaseAgentCount's verify term must not
+// undercount a dispatch verifySliceWithRetry can actually make.
+export const VERIFY_REWRITES_PER_SLICE = 1;
+
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
 // Slices findings into limits.verifySliceSize chunks and dispatches an `executor` agent
 // per slice — one call, plus at most one retry (below) — SEQUENTIALLY (not parallel())
@@ -1427,7 +1433,13 @@ export function worstCaseAgentCount(limits, nFiles, nFindings) {
   const files = Math.max(0, nFiles || 0);
   const findings = Math.max(0, nFindings || 0);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
-  const verifyCalls = ceilDiv(findings, effectiveSliceSize(L, findings)) * VERIFY_ATTEMPTS_PER_SLICE;
+  // Per slice: VERIFY_ATTEMPTS_PER_SLICE executor dispatches, plus at most ONE
+  // artifact-writer re-materialize of its --input file before the retry (issue #25 PR3).
+  // The rewrite is counted rather than left to headroom precisely because it scales with
+  // the finding count, which is the property that made this term the exact one — the
+  // report/writer/persist terms below stay nominal because they do not.
+  const verifySlices = ceilDiv(findings, effectiveSliceSize(L, findings));
+  const verifyCalls = verifySlices * (VERIFY_ATTEMPTS_PER_SLICE + VERIFY_REWRITES_PER_SLICE);
   const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
