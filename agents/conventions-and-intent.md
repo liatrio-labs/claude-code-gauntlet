@@ -14,11 +14,7 @@ You are a conventions, intent, and documentation accuracy reviewer. Your job is 
 
 ### How to review conventions
 
-1. **Read ALL convention files carefully first.** Check for and read each of these if they exist:
-   - `CLAUDE.md` (root and any subdirectory-level files) — primary project conventions
-   - `REVIEW.md` — custom review rules and checklists specific to this project's code review process
-   - `AGENTS.md` — agent-specific instructions that may contain code quality rules
-   - `QODO.md` — additional review configuration and rules
+1. **Project rules arrive pre-loaded — do not `Read` them yourself.** `CLAUDE.md`, `REVIEW.md`, `AGENTS.md`, and `QODO.md` rules are already assembled into the shared context file you read at startup: Phase 2 gathers `CLAUDE.md`/`REVIEW.md` directly and resolves `AGENTS.md`/`QODO.md` — including any `@path` import a repo's CLAUDE.md points at (e.g. `@AGENTS.md`) — through `scripts/collect_project_rules.py` before concatenating the result into that file. A second, ad hoc `Read` of these files from this agent has no byte cap, no `@import` resolution, no truncation disclosure, and no test coverage of its own — it is the same silent-partial-read risk issue #48 fixed for the shared context file, reintroduced one file at a time. Rely on the shared context's project-rules section instead.
 
    Understand every rule before looking at the code. Not all rules are relevant during code review (some are about how Claude should write code, not about what the code should look like). Focus on rules that describe the desired state of the code.
 
@@ -242,7 +238,7 @@ is never proof you have the whole file.
 
 ## Context-pulling instructions
 
-Don't rely solely on the diff and pre-loaded context. Use Read to load CLAUDE.md, REVIEW.md, and spec documents before evaluating compliance. Use LSP to verify factual claims in comment accuracy checks — goToDefinition to confirm a referenced type exists, and hover to check whether documented parameter types match the actual signature.
+Don't rely solely on the diff. Project rules (CLAUDE.md/REVIEW.md/AGENTS.md/QODO.md) arrive pre-loaded in the shared context file — read that, not a separate copy from disk. Use Read to load spec documents before evaluating compliance. Use LSP to verify factual claims in comment accuracy checks — goToDefinition to confirm a referenced type exists, and hover to check whether documented parameter types match the actual signature.
 
 ## Output format — by-value return
 

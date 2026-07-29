@@ -36,7 +36,17 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 #   1. Does the new content fail to be derivable from the code?
 #   2. Is it NOT already adequately stated by a comment at the site that owns it?
 # If either answer is no, the content belongs in a code comment, not here.
-CLAUDE_MD_BYTE_CEILING = 23_982
+#
+# Raised 2026-07-29 to 24,469 (+487 bytes) for issue #49: a new "Scripts" bullet
+# documenting `scripts/collect_project_rules.py`'s existence and its `@import`
+# repo-confinement contract. Neither part of the two-part test lets this sit in
+# a code comment instead — the rule the byte ceiling exists to enforce is about
+# a *behavioral* contract (realpath confinement, depth/size bounds before `open`)
+# spanning a new script and several docs, not something derivable by reading the
+# script alone, and CLAUDE.md is where every other cross-cutting script rule in
+# this file already lives (stdlib-only, language-agnostic, repo-root-for-searches
+# — the three bullets directly above this one).
+CLAUDE_MD_BYTE_CEILING = 24_469
 
 
 class TestClaudeMdBudget(unittest.TestCase):
