@@ -508,6 +508,21 @@ const VERIFY_SCHEMA = {
         // Optional in the SCHEMA, mandatory in trustSlice — an absent proof is a legal
         // thing for the executor to say and an untrusted thing for the workflow to act on.
         deltas_checksum: { type: 'string' },
+        // The SLICE-INPUT content proof (issue #25 req 4): fnv1a32 over the canonical
+        // form of the document the script actually parsed. Graded against the pipeline's
+        // own sliceInputProof, never against itself.
+        //
+        // Its absence is treated more permissively than deltas_checksum's, deliberately.
+        // A missing deltas_checksum means the ECHO cannot be trusted at all, so the slice
+        // degrades. A missing input_checksum means only that the input is unproven — the
+        // state every run was in before this landed — and hard-degrading there would turn
+        // a version skew (a stale plugin's older verify_findings.py, which this repo has
+        // measured happening) into a total loss of classification for every slice of the
+        // run. Unproven is disclosed as a gap and counted in stats.inputProof instead.
+        input_checksum: { type: 'string' },
+        // Present only when the script needed its lenient parse: how many bytes followed
+        // the complete document. Absence means a clean read.
+        input_trailing_bytes: { type: 'number' },
       },
     },
     result: {
@@ -532,9 +547,62 @@ const VERIFY_SCHEMA = {
     },
     exitCode: { type: 'number' },
     stderr: { type: 'string' },
+    // A machine-readable classification of a status:'failed' envelope. The script tags
+    // ONLY faults in the --input file itself (INPUT_FAULT_REASONS below); anything else
+    // — a git call, a bug in the verification body — carries no reason at all. The
+    // workflow spends a writer re-materialize dispatch on exactly these codes, so the
+    // decision is structural, never a match on stderr prose (this repo has already had a
+    // phrase-keyed guard defeated by one rewording — CLAUDE.md, the context-read guard).
+    reason: { type: 'string' },
   },
   required: ['status'], // discriminated union: receipt/result only present on status:'ok'
 };
+
+// The reason codes verify_findings.py tags an INPUT-FILE fault with, mirrored from that
+// script's INPUT_FAULT_REASONS. These two lists are one list in two runtimes: a code
+// added on the Python side and not here is a corrupted input the workflow will never
+// re-materialize, and it will fail identically on the retry (measured: wf_3f640577-31c
+// failed both attempts at the same byte offset, because the retry re-dispatches the
+// executor and never the writer).
+const INPUT_FAULT_REASONS = ['input_unreadable', 'input_unparseable', 'input_invalid'];
+
+// The workflow's own code for "the file parsed, but it is not the file we sent". The
+// script cannot report this one — it never learns the expectation — so the comparison
+// happens here and this code joins the script's at the re-materialize decision.
+const INPUT_PROOF_MISMATCH = 'input_proof_mismatch';
+
+// inputFaultOf(env) -> code | null. Structural: reads the declared `reason` field, never
+// the message. An envelope that failed for any other cause returns null and takes the
+// ordinary retry, because re-writing a file that was never the problem is not free —
+// the artifact-writer's own transcription drifted on 3 of 10 measured runs, so a
+// needless rewrite can turn a fine file into a bad one.
+function inputFaultOf(env) {
+  if (!env || typeof env !== 'object') return null;
+  const reason = typeof env.reason === 'string' ? env.reason.trim() : '';
+  return INPUT_FAULT_REASONS.includes(reason) ? reason : null;
+}
+
+// gradeInputProof(receipt, expected) -> { state, detail, trailingBytes }
+// state is 'match' | 'unproven' | 'mismatch'. Called ONLY after trustSlice has accepted
+// the envelope: an untrusted envelope's receipt is not evidence of anything, including
+// about its own input_checksum.
+function gradeInputProof(receipt, expected) {
+  const r = receipt || {};
+  const got = typeof r.input_checksum === 'string' ? r.input_checksum.trim() : '';
+  const trailingBytes = Number.isFinite(r.input_trailing_bytes) && r.input_trailing_bytes > 0
+    ? r.input_trailing_bytes
+    : 0;
+  if (!expected) {
+    return { state: 'unproven', trailingBytes, detail: 'the pipeline could not compute an expectation for this slice (a value in it has no cross-runtime spelling)' };
+  }
+  if (!got) {
+    return { state: 'unproven', trailingBytes, detail: "the executor's receipt carried no input_checksum" };
+  }
+  if (got !== expected) {
+    return { state: 'mismatch', trailingBytes, detail: `the slice-input file on disk is not the document the pipeline dispatched (expected ${expected}, the script read ${got})` };
+  }
+  return { state: 'match', trailingBytes, detail: null };
+}
 
 // Dispatches per verify slice: the first executor call plus EXACTLY ONE deterministic
 // re-dispatch when that call comes back untrusted (verifySliceWithRetry).
@@ -617,6 +685,14 @@ export async function verifyStage(ctx, input) {
   const out = [];
   const gaps = [];
   let degradedSlices = 0;
+  // The slice-input drift ledger (issue #25 PR3). Until this existed the repo could not
+  // measure how often the artifact-writer's transcription of a slice input was wrong —
+  // only notice, after the fact, that a run had lost a slice. `recovered` is the headline:
+  // the measured 12.9%-of-files corruption class that used to cost a slice its whole
+  // classification and now survives with a content proof behind it.
+  const inputProofStats = { slices: 0, proven: 0, unproven: 0, recovered: 0, rewritten: 0, degraded: 0 };
+  const unprovenSlices = [];
+  let unprovenDetail = '';
 
   // The output is assembled in SLICE-INDEX order — trusted output and degraded originals
   // alike — because downstream ranking (applyChallenges' stable sort on severity then
@@ -651,10 +727,38 @@ export async function verifyStage(ctx, input) {
       continue;
     }
 
-    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids });
+    inputProofStats.slices += 1;
+    const attempt = await verifySliceWithRetry(c, inp, i, slice, {
+      model,
+      writerModel: modelFor('code-gauntlet:artifact-writer', policy),
+      nonce,
+      headShaShort,
+      ids: ids.ids,
+      inputProof: sliceInputProofFor(slice, (inp.verify || {}).baseBranch),
+    });
+    if (attempt.rewritten) inputProofStats.rewritten += 1;
     if (!attempt.ok) {
+      // A slice whose input never came back proven degrades like every other untrusted
+      // slice — origin='unknown', findings kept, loud gap. It is NOT delivered with its
+      // verdicts intact and a run-level footnote: verify_findings.py computed those
+      // verdicts from data known not to be ours, and this stage's contract is that every
+      // finding leaves either as trusted output or as itself marked unknown. Degrading
+      // also keeps the failure inside the signal bench already watches (G3 counts
+      // origin=unknown), instead of inventing a second, softer failure state that no
+      // existing gate can see.
+      inputProofStats.degraded += 1;
       degrade(`slice ${i}: ${attempt.reason}`);
       continue;
+    }
+    if (attempt.proof) {
+      if (attempt.proof.state === 'unproven') {
+        inputProofStats.unproven += 1;
+        unprovenSlices.push(i);
+        unprovenDetail = attempt.proof.detail;
+      } else {
+        inputProofStats.proven += 1;
+      }
+      if (attempt.proof.trailingBytes > 0 && attempt.proof.state === 'match') inputProofStats.recovered += 1;
     }
     // Trusted: this slice's OWN findings, enriched by the script's delta (origin
     // new/surfaced, the surfaced severity downgrade, the factual-verification confidence
@@ -667,7 +771,25 @@ export async function verifyStage(ctx, input) {
     if (attempt.gap) gaps.push(attempt.gap);
   }
 
-  return { findings: out, verified: degradedSlices === 0, gaps };
+  // ONE gap for however many slices went unproven. Unproven is not a degradation — the
+  // findings keep their classification, and it is precisely the state every run was in
+  // before slice-input proofs existed — so this deliberately carries no UNVERIFIED token
+  // and does not make `verified` false. It is still said out loud: silence here would let
+  // a stale plugin, or an executor that quietly stops echoing the field, roll the whole
+  // guarantee back with nothing anywhere saying so. Same contract as the
+  // context_unmeasured disclosure.
+  if (unprovenSlices.length > 0) {
+    gaps.push(
+      `verify-input-unproven: ${unprovenSlices.length} of ${inputProofStats.slices} slice(s) `
+      + `(${unprovenSlices.join(', ')}) were verified against a slice-input file whose content `
+      + `could not be checked against what the pipeline dispatched — ${unprovenDetail}. `
+      + `Their classification stands and no finding was dropped, but it is not proven. `
+      + `Expect a receipt \`input_checksum\` from verify_findings.py; its absence usually means `
+      + `an older copy of that script, or an executor that did not echo the field.`,
+    );
+  }
+
+  return { findings: out, verified: degradedSlices === 0, gaps, inputProof: inputProofStats };
 }
 
 // One slice's share of the UNVERIFIED degradation: its ORIGINAL findings re-emitted with
@@ -716,12 +838,45 @@ function verifyDegradeGap(detail, k, n) {
 // The nonce is now COMPUTED ONCE and threaded into verifyPrompt/verifyCommand. It used
 // to be derived independently at both sites, which silently required the two formulas to
 // stay identical; an attempt-varying nonce makes that a live bug rather than a latent one.
-async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids }) {
+// THE RETRY RE-MATERIALIZES THE INPUT WHEN — AND ONLY WHEN — THE INPUT IS IMPLICATED
+// (issue #25 PR3). Before this, the retry re-dispatched the executor over the SAME file,
+// which is useless for the failure class that actually dominates this boundary: 4 of the
+// 31 slice-input files this repo has retained (12.9%) are unparseable, and wf_3f640577-31c
+// failed BOTH of its attempts at the identical byte offset for exactly that reason. So a
+// first attempt that reports an input fault (the script's own reason code) or whose input
+// content proof mismatched now gets a fresh artifact-writer sample of its --input file
+// before the second dispatch.
+//
+// The trigger is narrow on purpose. A rewrite is not free: the writer's transcription
+// diverged from its payload on 3 of 10 measured runs, so re-writing a file that was never
+// the problem has a real chance of making it worse. An unrelated failure (a dropped nonce
+// echo, a garbled delta) therefore takes the old plain retry, untouched.
+//
+// This costs no extra EXECUTOR attempt — VERIFY_ATTEMPTS_PER_SLICE is still 2 and the
+// rewrite rides inside the existing budget, adding at most one writer dispatch per slice.
+async function verifySliceWithRetry(c, inp, i, slice, { model, writerModel, nonce, headShaShort, ids, inputProof }) {
   const attempt = (sliceNonce, label) =>
-    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids });
+    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, inputProof });
 
   const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
-  if (first.ok) return { ok: true, verified: first.verified, gap: null };
+  if (first.ok) return { ok: true, verified: first.verified, gap: first.gap, proof: first.proof };
+
+  let rewriteNote = '';
+  if (first.inputFault) {
+    const rewrite = await writeSliceInputs(
+      c, [sliceInputEntry(inp, i, slice)], writerModel, `verify-input-rewriter-${i}`,
+    );
+    if (!rewrite.ok) {
+      // The file on disk is unchanged and still bad, so a second executor dispatch would
+      // read the same bytes and fail the same way. Degrade now rather than spend it.
+      return {
+        ok: false,
+        rewritten: true,
+        reason: `${first.reason} — re-materializing this slice's input failed (${rewrite.reason}), so the retry was skipped: a second dispatch would have read the same bytes`,
+      };
+    }
+    rewriteNote = ` (the slice input was re-materialized first: ${first.inputFault})`;
+  }
 
   const second = await attempt(`${nonce}.${i}.r1`, `verify-slice-${i}-retry`);
   if (second.ok) {
@@ -731,15 +886,22 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaSho
     return {
       ok: true,
       verified: second.verified,
-      gap: `verify-slice-retry: slice ${i}'s first executor dispatch was untrusted (${first.reason}); a second dispatch was trusted and this slice's verified findings are from that attempt`,
+      rewritten: !!first.inputFault,
+      proof: second.proof,
+      gap: `verify-slice-retry: slice ${i}'s first executor dispatch was untrusted (${first.reason})${rewriteNote}; a second dispatch was trusted and this slice's verified findings are from that attempt`
+        + (second.gap ? ` | ${second.gap}` : ''),
     };
   }
-  return { ok: false, reason: `${second.reason} — retried once after the first attempt failed (${first.reason})` };
+  return {
+    ok: false,
+    rewritten: !!first.inputFault,
+    reason: `${second.reason} — retried once after the first attempt failed (${first.reason})${rewriteNote}`,
+  };
 }
 
 // One executor dispatch for one slice. Never throws: a thrown agent() becomes an
 // untrusted result carrying the message, exactly as the pre-retry loop recorded it.
-async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids }) {
+async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, inputProof }) {
   let env;
   try {
     // agent(promptString, opts); the pinned command is embedded in the prompt
@@ -753,9 +915,46 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, slic
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
+  // A fault the SCRIPT reported in the --input FILE. Read before trustSlice, because a
+  // status:'failed' envelope has no receipt for trustSlice to grade — and it is the one
+  // failure class where re-dispatching without re-writing the file is provably wasted.
+  const inputFault = inputFaultOf(env);
+  if (inputFault) {
+    return { ok: false, inputFault, reason: `slice-input rejected by the verify script (${inputFault}): ${env.stderr || 'no detail given'}` };
+  }
   const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids });
   if (!trust.ok) return { ok: false, reason: trust.reason };
-  return { ok: true, verified: joinVerifyDeltas(slice, env.result.deltas) };
+
+  // The envelope is trusted, so its receipt is now evidence — including about the FILE
+  // the script read. Grade that last: an untrusted echo's input_checksum proves nothing.
+  const proof = gradeInputProof(env.receipt, inputProof);
+  if (proof.state === 'mismatch') {
+    return { ok: false, inputFault: INPUT_PROOF_MISMATCH, reason: `slice-input content proof mismatch: ${proof.detail}` };
+  }
+  return {
+    ok: true,
+    verified: joinVerifyDeltas(slice, env.result.deltas),
+    proof,
+    gap: inputProofGap(i, proof),
+  };
+}
+
+// The disclosure for an accepted attempt whose input was not cleanly proven, or was
+// proven only after surviving trailing bytes. Returns null for the ordinary clean case.
+//
+// A RECOVERY IS NEVER SILENT. Accepting a document that had bytes appended after it is
+// safe only BECAUSE the proof matched — so the run says both things in one sentence, and
+// a reader can tell a proven recovery from an unproven guess without reading the code.
+function inputProofGap(i, proof) {
+  // The unproven case is NOT reported here. It is a per-RUN condition in practice — an
+  // older verify_findings.py, or an executor habitually dropping the field, makes every
+  // slice unproven at once — and one near-identical gap per slice would bury the gaps
+  // channel in a message that says the same thing N times. verifyStage emits a single
+  // aggregated gap instead (see unprovenInputGap).
+  if (proof.trailingBytes > 0) {
+    return `verify-input-recovered: slice ${i}: the slice-input file carried ${proof.trailingBytes} byte(s) after a complete JSON document (the artifact-writer transcription defect of issue #69). The recovered document's content proof MATCHES what the pipeline dispatched, so its verification stands.`;
+  }
+  return null;
 }
 
 // dispatchableIds(slice) -> { ok:true, ids:[...] } | { ok:false, reason }
@@ -898,45 +1097,14 @@ function pinNumericFields(finding) {
 // are contiguous in that index, so gap order is fixed by construction, not by which
 // parallel member happened to settle first.
 async function materializeVerifySlices(c, inp, slices, policy) {
-  const v = inp.verify || {};
-  const inputPathBase = v.inputPathBase || 'phase4-input';
   const model = modelFor('code-gauntlet:artifact-writer', policy);
-  const entries = slices.map((slice, i) => ({
-    path: `${inputPathBase}.slice${i}.json`,
-    content: { findings: slice.map(pinNumericFields), base_branch: v.baseBranch },
-  }));
+  const entries = slices.map((slice, i) => sliceInputEntry(inp, i, slice));
   // path -> slice index. Keyed on the PATH (unique per slice by construction) rather than
   // on a group's position, so attributing a group's failure to its slices cannot be
   // silently invalidated by a future change to how entries are chunked.
   const sliceOfPath = new Map(entries.map((e, i) => [e.path, i]));
   const groups = chunkBySerializedSize(entries, SEGMENT_CHAR_BUDGET);
-  const thunks = groups.map((group, g) => async () => {
-    let result;
-    try {
-      result = await c.agent(verifySliceWriterPrompt(group), {
-        label: `verify-input-writer-${g}`,
-        agentType: 'code-gauntlet:artifact-writer',
-        model,
-        schema: WRITTEN_SCHEMA,
-      });
-    } catch (e) {
-      return { ok: false, reason: `slice-input writer threw (${(e && e.message) || 'unknown'})` };
-    }
-    if (!result) return { ok: false, reason: 'slice-input writer returned null' };
-    // Write-proof: the echoed `written` list must cover every slice-input path this group
-    // dispatched. WRITTEN_SCHEMA declares no `required`, so an empty { written: [] } is
-    // schema-valid — without this a writer that persisted nothing would pass and the
-    // executor would then read slice-input files that were never written. An uncovered
-    // path degrades THIS GROUP's slices to UNVERIFIED (findings kept), never a fabricated
-    // verify. The literal "(no write proof)" is the bench checker's degrade sentinel
-    // (bench/runner/check.py _DEGRADE_RE) — do not paraphrase it.
-    const written = new Set(Array.isArray(result.written) ? result.written : []);
-    const dispatchedPaths = group.map((e) => e.path);
-    if (!dispatchedPaths.every((p) => written.has(p))) {
-      return { ok: false, reason: 'slice-input writer echo did not cover all dispatched slice paths (no write proof)' };
-    }
-    return { ok: true };
-  });
+  const thunks = groups.map((group, g) => () => writeSliceInputs(c, group, model, `verify-input-writer-${g}`));
 
   const results = await c.parallel(thunks);
   const failed = new Map();
@@ -954,6 +1122,101 @@ async function materializeVerifySlices(c, inp, slices, policy) {
     }
   }
   return { failed };
+}
+
+// One artifact-writer dispatch persisting one group of slice-input entries.
+// -> { ok:true } | { ok:false, reason }. NEVER throws: a thrown agent() becomes a
+// reason string, which is what lets materializeVerifySlices' parallel() fan-out (issue
+// #38, D2.3) keep its members from ever nulling.
+//
+// Factored out so the bulk group write and the single-slice RE-MATERIALIZE (issue #25
+// PR3, verifySliceWithRetry) are the same code. A second implementation would be free
+// to drift on the one thing that must not: the write-proof gate below.
+async function writeSliceInputs(c, group, model, label) {
+  let result;
+  try {
+    result = await c.agent(verifySliceWriterPrompt(group), {
+      label,
+      agentType: 'code-gauntlet:artifact-writer',
+      model,
+      schema: WRITTEN_SCHEMA,
+    });
+  } catch (e) {
+    return { ok: false, reason: `slice-input writer threw (${(e && e.message) || 'unknown'})` };
+  }
+  if (!result) return { ok: false, reason: 'slice-input writer returned null' };
+  // Write-proof: the echoed `written` list must cover every slice-input path this group
+  // dispatched. WRITTEN_SCHEMA declares no `required`, so an empty { written: [] } is
+  // schema-valid — without this a writer that persisted nothing would pass and the
+  // executor would then read slice-input files that were never written. An uncovered
+  // path degrades THIS GROUP's slices to UNVERIFIED (findings kept), never a fabricated
+  // verify. The literal "(no write proof)" is the bench checker's degrade sentinel
+  // (bench/runner/check.py _DEGRADE_RE) — do not paraphrase it.
+  //
+  // This is a LIVENESS check only, and always was: the writer reports on itself, and
+  // nothing here reads the bytes that landed. What the echo cannot tell you is whether
+  // the file's CONTENT is what was dispatched — that is `input_checksum`'s job, graded
+  // one dispatch later against the pipeline's own computation (see sliceInputProof).
+  const written = new Set(Array.isArray(result.written) ? result.written : []);
+  const dispatchedPaths = group.map((e) => e.path);
+  if (!dispatchedPaths.every((p) => written.has(p))) {
+    return { ok: false, reason: 'slice-input writer echo did not cover all dispatched slice paths (no write proof)' };
+  }
+  return { ok: true };
+}
+
+// sliceInputEntry(inp, i, slice) -> { path, content }
+// THE single definition of what slice i's --input file must contain and where it lives.
+// materializeVerifySlices writes it, verifySliceWithRetry re-writes it, and
+// sliceInputProof checksums it — all from here, so the proof can never be computed over
+// a document that differs from the one dispatched. (A second construction site is
+// exactly how a content proof turns from a guard into a permanent false alarm.)
+function sliceInputContent(slice, baseBranch) {
+  return { findings: slice.map(pinNumericFields), base_branch: baseBranch };
+}
+
+function sliceInputEntry(inp, i, slice) {
+  const v = inp.verify || {};
+  return {
+    path: `${v.inputPathBase || 'phase4-input'}.slice${i}.json`,
+    content: sliceInputContent(slice, v.baseBranch),
+  };
+}
+
+// sliceInputProof(content) -> "fnv1a32:0x........" | null
+// The pipeline's own expectation for what verify_findings.py should read back, and the
+// workflow half of the slice-input content proof (issue #25 requirement 4).
+//
+// CANONICAL-VALUE, NOT RAW-BYTES, and that choice is keyed to the WRITER'S WIRE CONTRACT
+// rather than to the file being JSON. Slice inputs are the one artifact handed to the
+// writer as an OBJECT to serialize ("write its content as JSON") — so the bytes on disk
+// are the writer's to choose, and a raw-byte proof would report its indentation as
+// corruption. What the consumer consumes is the PARSED VALUE, so that is what is proven:
+// both runtimes serialize the parsed document through the same pretty printer
+// (JSON.stringify(x, null, 2) here, js_stringify_pretty there) and checksum that.
+// Artifacts written under the VERBATIM-STRING contract (findings.json, report.md, the
+// persist plan) keep the raw-bytes proof, because there byte identity is the contract.
+//
+// Measured, not assumed: over all 27 parseable slice-input files this repo has retained,
+// Python's canonical form and node's agree on every one — 27/27, zero disagreement.
+//
+// Returns null when the document contains a number the two runtimes would spell
+// differently (firstUnsafeNumber — the same precondition the persist path applies). A
+// null expectation means the slice is UNPROVEN and says so; it never blocks the run.
+function sliceInputProof(content) {
+  if (firstUnsafeNumber(content, 'sliceInput') !== null) return null;
+  return fnv1a32(JSON.stringify(content, null, 2));
+}
+
+// sliceInputProofFor(slice, baseBranch) -> the proof verify_findings.py must report for
+// this slice, or null if it is not computable.
+//
+// Exported for the tests, on the same reasoning the adjacent deltaContentProof export
+// already states: a harness that builds a valid receipt by RE-DERIVING the canonical form
+// would happily agree with a broken implementation. Test mocks must call the real
+// computation, through the same single construction site the dispatch uses.
+export function sliceInputProofFor(slice, baseBranch) {
+  return sliceInputProof(sliceInputContent(slice, baseBranch));
 }
 
 function verifySliceWriterPrompt(entries) {
@@ -2825,6 +3088,12 @@ export async function runWith(ctx, rawArgs) {
         discovered: (discoverOut.findings || []).length,
         merged: (mergeOut.findings || []).length,
         verified: verifyOut.verified,
+        // The slice-input drift ledger (issue #25 PR3). Emitted structurally so the bench
+        // checker reads counters rather than grepping gap prose, and so a run can report
+        // how often the artifact-writer's transcription of a slice input was wrong — a
+        // rate this repo had no way to measure before. Absent on a resumed verify phase
+        // whose checkpoint predates this field, which reads as "not measured", not zero.
+        inputProof: verifyOut.inputProof,
         highConfidence: (challengeOut.findings || []).length,
         unverified: (challengeOut.unverified || []).length,
         degraded: discoverOut.degraded || [],

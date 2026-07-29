@@ -25,7 +25,11 @@ array-vs-object:
   `text` **VERBATIM** to its `path`: byte for byte, no re-indenting, no re-serializing,
   no wrapping. The `text` is already the exact file content.
 - **Verify slice inputs** — an array of `{ path, content }` entries: for each entry,
-  write its `content` as JSON to its `path`.
+  write its `content` as JSON to its `path`. A downstream script re-reads this file and
+  reports a checksum of the document it parsed back; the workflow compares that against
+  its own expectation for exactly the content you were handed. Persist the value
+  faithfully — an altered, dropped, or garbled field costs that slice its verification,
+  not just a mismatch notice.
 - **Legacy full payload** — an object `{ findings, postReview, report, checkpoints }`:
   write `findings` as pretty JSON to the findings path, `postReview` (the pre-selected
   PR-comment delivery set) as pretty JSON to the post-review path, `report` verbatim to
@@ -49,4 +53,8 @@ array-vs-object:
 
 Return the structured object the prompt asks for — `{ written }` (final artifacts,
 slice inputs) or `{ artifactPaths }` (the legacy full payload) — echoing the paths you
-wrote. The echo is a write proof: never list a path you did not actually write.
+wrote. The echo is a write proof that a path exists: never list a path you did not
+actually write. It proves nothing about the CONTENT that landed there. For final
+artifacts, that is what Protocol step 3 above enforces (exact bytes, nothing after the
+final byte); for verify slice inputs, a downstream script checksums the document it
+reads back, so a correct `written` list does not excuse a wrong `content`.

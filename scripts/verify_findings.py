@@ -85,7 +85,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from typing import NoReturn
 
 # The delta echo's content proof reuses the ONE Python implementation of the
 # cross-runtime checksum pair rather than growing a third copy of it. fnv1a32 and
@@ -155,12 +155,33 @@ class InputError(Exception):
     As an ordinary Exception it lands in the receipt path's honest failure envelope,
     carrying the real message; ``main()``'s legacy path converts it back to exit 1, so
     that behavior is byte-for-byte what it always was.
+
+    It also carries a machine-readable ``reason`` code (issue #25 PR3). The workflow
+    decides whether to RE-MATERIALIZE a slice's --input file before retrying, and that
+    decision must not be made by matching prose in ``stderr``: this repo has already
+    watched a phrase-keyed guard get defeated by a one-word rewording (CLAUDE.md, the
+    ``Read the shared context at`` counter). Only faults in the INPUT FILE ITSELF are
+    tagged — see ``_run_receipt``'s two-stage try/except.
     """
 
+    def __init__(self, msg, reason=None):
+        super().__init__(msg)
+        self.reason = reason
 
-def die(msg):
+
+# Reason codes for a receipt-mode failure caused by the --input file itself. A
+# failure with NONE of these codes is a fault somewhere else (a git call, a bug in
+# the verification body), and re-writing the input file would not fix it — so the
+# workflow must not spend a writer dispatch on one.
+INPUT_UNREADABLE = "input_unreadable"
+INPUT_UNPARSEABLE = "input_unparseable"
+INPUT_INVALID = "input_invalid"
+INPUT_FAULT_REASONS = (INPUT_UNREADABLE, INPUT_UNPARSEABLE, INPUT_INVALID)
+
+
+def die(msg, reason=None) -> NoReturn:
     print(f"ERROR: {msg}", file=sys.stderr)
-    raise InputError(msg)
+    raise InputError(msg, reason)
 
 
 def warn(msg):
@@ -978,22 +999,103 @@ def _coerce_numeric_fields(finding):
     return finding
 
 
-def load_input(findings_json_path):
-    """Load and validate the input JSON file."""
+def _parse_input_text(text, lenient):
+    """Parse the input document, optionally tolerating TRAILING bytes.
+
+    Returns ``(data, trailing_bytes)``. ``trailing_bytes`` is 0 for a clean document.
+
+    WHY LENIENT PARSING IS NOT A GUESS (issue #25 PR3). Measured over every verify
+    slice-input file this repo has retained, 4 of 31 (12.9%) are unparseable, and
+    EVERY ONE fails the same way: a complete document followed by trailing bytes the
+    artifact-writer appended after its final byte — ``}`` x3
+    (smoke-20260728-144630-a162ecd x2, smoke-20260729-191253-8ae2ee3) and
+    ``</content>\\n</invoke>`` x1 (custom-20260723-070640-c1dd46f). Each cost a whole
+    slice its classification; ``bench/MEASUREMENT.md`` records "2 of 3 PRs - 23
+    findings lost". The pre-PR3 retry could not recover any of them, because it
+    re-dispatches the EXECUTOR and never the WRITER, so the same bad file is read
+    twice (wf_3f640577-31c failed both attempts at the IDENTICAL byte offset).
+
+    Accepting the leading document would be a guess on its own — but it is not on its
+    own. ``input_checksum`` is computed over exactly the value parsed here, and the
+    workflow compares it against the content it dispatched, so a leniently-parsed
+    document is only ever ACTED ON once it is PROVEN to be the document we sent. If
+    the proof does not match, the workflow re-materializes and retries, and degrades
+    the slice honestly if that fails too. ``raw_decode`` also demands a COMPLETE JSON
+    value, so a truncated document still fails here rather than being half-accepted.
+
+    The legacy positional path passes ``lenient=False``: it has no content proof, so
+    there tolerating trailing bytes really would be a guess.
+    """
     try:
-        with open(findings_json_path) as fh:
-            data = json.load(fh)
+        return json.loads(text), 0
+    except json.JSONDecodeError as strict_error:
+        if not lenient:
+            die(f"Invalid JSON in findings file: {strict_error}", INPUT_UNPARSEABLE)
+        # raw_decode does not skip leading whitespace the way json.loads does.
+        start = len(text) - len(text.lstrip())
+        try:
+            data, end = json.JSONDecoder().raw_decode(text, start)
+        except ValueError:
+            die(f"Invalid JSON in findings file: {strict_error}", INPUT_UNPARSEABLE)
+        return data, len(text) - end
+
+
+def read_input_document(findings_json_path, lenient=False):
+    """Read, parse and shape-check the --input file. -> ``(data, trailing_bytes)``.
+
+    Every failure here is tagged with an INPUT_* reason code, and nothing outside
+    this function is. Opened as ``utf-8-sig`` so a BOM the Write tool may prepend is
+    consumed rather than reported as unparseable JSON (the same tolerance
+    ``assemble_artifacts.normalize_content`` applies on the persist boundary).
+    """
+    try:
+        with open(findings_json_path, encoding="utf-8-sig") as fh:
+            text = fh.read()
     except FileNotFoundError:
-        die(f"Findings file not found: {findings_json_path}")
-    except json.JSONDecodeError as e:
-        die(f"Invalid JSON in findings file: {e}")
+        die(f"Findings file not found: {findings_json_path}", INPUT_UNREADABLE)
+    except OSError as e:
+        die(f"Findings file could not be read: {e}", INPUT_UNREADABLE)
+
+    data, trailing = _parse_input_text(text, lenient)
 
     if not isinstance(data, dict):
-        die("Input JSON must be an object with a 'findings' key.")
+        die("Input JSON must be an object with a 'findings' key.", INPUT_INVALID)
     if "findings" not in data:
-        die("Input JSON is missing required 'findings' array.")
+        die("Input JSON is missing required 'findings' array.", INPUT_INVALID)
     if not isinstance(data["findings"], list):
-        die("'findings' must be an array.")
+        die("'findings' must be an array.", INPUT_INVALID)
+
+    return data, trailing
+
+
+def input_content_proof(data):
+    """The slice-input content proof, or None when the document will not serialise.
+
+    ``fnv1a32(js_stringify_pretty(data))`` over the document AS PARSED — the same
+    checksum pair ``deltas_checksum`` and the persist boundary already use, so the
+    plugin holds exactly one checksum definition and ``tests/test_assemble_artifacts.py``
+    is the single parity guard for all of them.
+
+    Computed BEFORE ``_coerce_numeric_fields`` runs, deliberately. The workflow builds
+    its expectation from findings it has ALREADY put through ``pinNumericFields``, so
+    on an honest write coercion here is a no-op and the two sides agree; on a write
+    that turned a bare ``153`` into a quoted ``"153"``, coercion would silently repair
+    the corruption and the proof would go blind to it. Faithfulness beats tidiness.
+
+    Returns None rather than raising, mirroring ``deltas_checksum``: an unrepresentable
+    value anywhere in the document (a float, per ``assert_js_reproducible``) makes the
+    proof ABSENT — which the workflow discloses as unproven — where an exception would
+    take out the whole envelope and cost every finding in the slice its classification.
+    """
+    try:
+        return fnv1a32(js_stringify_pretty(data))
+    except JsSerializationError:
+        return None
+
+
+def load_input(findings_json_path):
+    """Load, validate and numerically coerce the input JSON file (strict parse)."""
+    data, _trailing = read_input_document(findings_json_path, lenient=False)
 
     # Defensive int-cast at the --input boundary: numbers that arrived quoted must not
     # crash the arithmetic downstream (see _coerce_numeric_fields).
@@ -1255,26 +1357,62 @@ def _run_receipt(args):
     notice, so what it has to echo must sit at the front of the document, ahead of
     the two full finding arrays. Rebuilding also leaves ``run_verification``'s own
     return value — the legacy positional path's entire output — untouched.
+
+    TWO STAGES, TWO try/excepts, ON PURPOSE (issue #25 PR3). The INPUT stage below is
+    the only place that can tag a failure with an INPUT_* reason code, and the
+    workflow spends an artifact-writer re-materialize dispatch on exactly those codes.
+    Folding these back into the single try/except this used to be would make a bug
+    anywhere in ``run_verification`` indistinguishable from a corrupted input file:
+    the run would burn a writer dispatch re-writing a perfectly good file and then
+    blame "input corrupted" for a code defect. ``tests/test_verify_findings.py``
+    pins the boundary — a raise from the verification body must carry NO reason code.
     """
     sha = args.head_sha or _resolve_head_sha() or ""
+
+    def failed(exc, reason=None):
+        envelope = {"status": "failed", "exitCode": 1, "stderr": str(exc)}
+        if reason:
+            envelope["reason"] = reason
+        return envelope
+
+    # --- INPUT STAGE: the file, and nothing but the file ---------------------
     try:
-        data = load_input(args.input)
+        data, trailing = read_input_document(args.input, lenient=True)
+        # The proof describes the document as it was READ — before coercion mutates it.
+        proof = input_content_proof(data)
+        for finding in data["findings"]:
+            _coerce_numeric_fields(finding)
+    except InputError as e:
+        _write_output(failed(e, e.reason or INPUT_INVALID), args.output)
+        return
+    except Exception as e:  # noqa: BLE001 — honest failure is the contract
+        _write_output(failed(e), args.output)
+        return
+
+    # --- VERIFICATION STAGE: never carries an input reason code ---------------
+    try:
         findings = data["findings"]
         base_branch = data.get("base_branch") or args.base_branch
         result = run_verification(findings, base_branch, args.diff_file, verbose=False)
         deltas = build_deltas(findings, result["verified"])
+        receipt = {
+            "sha": sha,
+            "n_in": len(findings),
+            "nonce": args.nonce,
+            "deltas_checksum": deltas_checksum(deltas),
+            "input_checksum": proof,
+        }
+        # Present only when the document needed the lenient parse, so its absence
+        # means "clean read" rather than "this script does not report it".
+        if trailing:
+            receipt["input_trailing_bytes"] = trailing
         envelope = {
             "status": "ok",
-            "receipt": {
-                "sha": sha,
-                "n_in": len(findings),
-                "nonce": args.nonce,
-                "deltas_checksum": deltas_checksum(deltas),
-            },
+            "receipt": receipt,
             "result": {"deltas": deltas, **result},
         }
     except Exception as e:  # noqa: BLE001 — honest failure is the contract
-        envelope = {"status": "failed", "exitCode": 1, "stderr": str(e)}
+        envelope = failed(e)
     _write_output(envelope, args.output)
 
 

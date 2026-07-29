@@ -47,6 +47,11 @@ The Verify executor echoes a per-id **delta** of what `verify_findings.py` decid
 - **`agent` is deleted at the join, and re-lands only with #22.** It used to be withheld by a schema omission that worked only stochastically (2 of 6 PRs measured surviving); joining a delta onto findings the stage already holds would have made survival deterministic, which is the measured dedup recall-collapse mechanism (eliminations 7 -> 33, same-6 recall 20/30 -> 13/30).
 - **The checksum reuses `assemble_artifacts.py`'s `fnv1a32`/`js_stringify_pretty`** instead of growing a third copy, so `tests/test_assemble_artifacts.py` is the cross-runtime parity guard for this boundary as well as the persist one.
 
+The delta echo proves what the executor SAID. The slice-input proof (`receipt.input_checksum`) proves what it READ — rationale and policy at the sites (`sliceInputProof`/`gradeInputProof`/`verifySliceWithRetry` in `stages.js`, `input_content_proof` in `verify_findings.py`). Two more rules that span two files:
+
+- **The proof KIND is keyed to the writer's wire contract, not the file type.** An artifact handed to the artifact-writer as a pre-serialized STRING to reproduce verbatim (findings.json, report.md, the persist plan) gets the raw-bytes proof — byte identity is the contract. One handed to it as an OBJECT to serialize (the verify slice input) gets the canonical-VALUE proof, because the bytes are the writer's to choose and only the parsed value is the contract. findings.json is JSON too and still sits on the raw-bytes side: the axis is the contract, not the format.
+- **`INPUT_FAULT_REASONS` is one list in two runtimes** (`verify_findings.py`, `stages.js`), same rationale as `_DELTA_FIELDS`/`DELTA_KEYS`: a code added to one side only is a corrupted input the workflow never recognizes as input-implicated, so it never gets re-materialized and the retry re-reads the same bad bytes.
+
 ## Findings schema
 
 All pipeline stages use the **canonical agent schema**. These field names are non-negotiable:

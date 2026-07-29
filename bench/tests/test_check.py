@@ -112,6 +112,19 @@ def _wf_record(script_path=PIPELINE, *, include_verify=True):
     return rec
 
 
+def _wf_record_with_input_proof(input_proof=None, script_path=PIPELINE):
+    """A wf record carrying a compact-return ``result.stats.inputProof`` block
+    (issue #25 PR3). ``input_proof=None`` omits ``stats.inputProof`` entirely,
+    modeling a record recorded before PR3 landed — the "not measured" case.
+    """
+    rec = _wf_record(script_path)
+    stats = {}
+    if input_proof is not None:
+        stats["inputProof"] = input_proof
+    rec["result"] = {"ok": True, "gaps": [], "stats": stats}
+    return rec
+
+
 def _identity_echo_block(*, plugin_root=None, pipeline_version=None):
     """Headless config identity lines for raw.json / report carriers."""
     root = str(plugin_root if plugin_root is not None else REPO_ROOT)
@@ -731,6 +744,111 @@ class CheckRunTest(unittest.TestCase):
             ),
             result["failures"],
         )
+
+    # --- input_proof: reported stat, not a gate (issue #25 PR3) ---
+
+    def test_input_proof_present_nonzero_aggregates(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        _write_json(
+            pr / "workflows" / "wf_test-0001.json",
+            _wf_record_with_input_proof({
+                "slices": 4, "proven": 2, "unproven": 0,
+                "recovered": 1, "rewritten": 1, "degraded": 1,
+            }),
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(
+            result["stats"]["input_proof"],
+            {
+                "slices": 4, "proven": 2, "unproven": 0,
+                "recovered": 1, "rewritten": 1, "degraded": 1,
+                "measured_prs": 1, "unmeasured_prs": 0,
+            },
+        )
+
+    def test_input_proof_present_all_zero_is_distinct_from_absent(self):
+        """An all-zero measured object must not collapse into "not measured"."""
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        _write_json(
+            pr / "workflows" / "wf_test-0001.json",
+            _wf_record_with_input_proof({
+                "slices": 0, "proven": 0, "unproven": 0,
+                "recovered": 0, "rewritten": 0, "degraded": 0,
+            }),
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(
+            result["stats"]["input_proof"],
+            {
+                "slices": 0, "proven": 0, "unproven": 0,
+                "recovered": 0, "rewritten": 0, "degraded": 0,
+                "measured_prs": 1, "unmeasured_prs": 0,
+            },
+        )
+
+    def test_input_proof_absent_reports_not_measured(self):
+        """A pre-PR3 run (no ``result.stats.inputProof`` anywhere) must report
+        ``None`` — never a zeroed dict, which would claim a measurement that
+        never happened.
+        """
+        _build_ok_run(self.run_dir)  # default wf record carries no `result` key
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertIsNone(result["stats"]["input_proof"])
+
+    def test_input_proof_mixed_measured_and_unmeasured_prs(self):
+        """One PR measured, one not — the run-level aggregate must reflect
+        only the measured PR's counters while still surfacing the split.
+        """
+        urls = [
+            "https://github.com/example/repo/pull/1",
+            "https://github.com/example/repo/pull/2",
+        ]
+        _build_ok_run(self.run_dir, pr_urls=urls)
+        pr1 = self.run_dir / "pr-example-repo-1"
+        _write_json(
+            pr1 / "workflows" / "wf_test-0001.json",
+            _wf_record_with_input_proof({
+                "slices": 3, "proven": 3, "unproven": 0,
+                "recovered": 0, "rewritten": 0, "degraded": 0,
+            }),
+        )
+        # pr-example-repo-2 keeps the default _wf_record() (no `result` at
+        # all) planted by _build_ok_run — the "not measured" PR.
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(
+            result["stats"]["input_proof"],
+            {
+                "slices": 3, "proven": 3, "unproven": 0,
+                "recovered": 0, "rewritten": 0, "degraded": 0,
+                "measured_prs": 1, "unmeasured_prs": 1,
+            },
+        )
+
+    def test_extract_input_proof_returns_none_for_missing_stats(self):
+        wf = self.run_dir / "wf_no_stats.json"
+        _write_json(
+            wf,
+            {"runId": "wf_x", "scriptPath": PIPELINE, "result": {"ok": True, "gaps": []}},
+        )
+        self.assertIsNone(check._extract_input_proof(wf))
+
+    def test_extract_input_proof_returns_dict_when_present(self):
+        wf = self.run_dir / "wf_with_stats.json"
+        proof = {
+            "slices": 2, "proven": 2, "unproven": 0,
+            "recovered": 0, "rewritten": 0, "degraded": 0,
+        }
+        _write_json(
+            wf,
+            {"runId": "wf_x", "scriptPath": PIPELINE, "result": {"stats": {"inputProof": proof}}},
+        )
+        self.assertEqual(check._extract_input_proof(wf), proof)
 
     def test_zero_comments_fails_g5(self):
         _build_ok_run(self.run_dir, n_comments=0)

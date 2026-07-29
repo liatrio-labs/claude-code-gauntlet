@@ -92,6 +92,19 @@ python3 bench/run.py --check <RUN_ID>
    which is only the result envelope — parsed tolerantly for preamble/stderr).
 5. ≥1 delivered comment across the run set
 
+Plus one **reported stat, not a gate** — `--check` prints an `input_proof` line
+built from each PR's `workflows/wf_*.json` `result.stats.inputProof` (issue #25
+PR3): the verify stage's slice-input content-proof measurement, aggregated
+across the run's PRs as `slices` / `proven` / `unproven` / `recovered` /
+`rewritten` / `degraded`, plus `measured_prs` / `unmeasured_prs`. It stays a
+stat rather than a sixth gate deliberately — a slice whose input never got
+proven degrades to `origin=unknown`, which gate 3 already fails, so a second
+verdict on the identical root cause would just double-count it. Read
+structurally (`result.stats.inputProof`), never by regex — see gate 3's note
+on why a wf record's raw bytes are unsafe to scan. Absent on any run recorded
+before PR3 landed (and printed as `not measured`, never as zeros — a run that
+was never measured is not the same fact as a run that measured zero drift).
+
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
 
@@ -129,6 +142,19 @@ complete document, on 2 of 3 PRs — 23 findings lost, all recoverable with
 `raw_decode`; see issue #69). Until that is fixed in the parser, expect gate 3
 to be the tier's least stable gate, and diff the run's `wf_*.json` `gaps`
 against the previous smoke before attributing it to the change under test.
+
+Issue #25 PR3 targets exactly this: `verify_findings.py` now accepts a
+complete document plus trailing bytes (the shape all measured corruption so
+far has taken) and reports a content proof of what it parsed, so the workflow
+can tell a proven-clean slice input from one it must re-materialize and retry.
+A gate-3 FAIL on a run recorded after PR3 landed should be read alongside the
+`--check` output's `input_proof` line before being attributed to the change
+under test: `recovered` > 0 means a corrupted input was caught and repaired
+(informational, not itself a failure); a slice counted in `degraded` is one
+whose input stayed unproven even after a retry, and *that* is the gate-3
+`origin=unknown` finding you are looking at. `input_proof: not measured` means
+the run predates PR3 or the record could not be read — treat gate 3 the same
+as before on that run.
 
 CI: `.github/workflows/bench-smoke.yml` (`workflow_dispatch`) runs smoke then
 `--check` on the newest run dir; the job fails if either step fails. Bare

@@ -32,18 +32,26 @@ summarize, fix, or re-run.
    - **`verify_findings.py`** — the `--output` file holds a `status`, a `receipt`, and a
      `result` that in turn holds a short `deltas` array FOLLOWED BY large `verified` and
      `eliminated` finding arrays. Return only: `status`; every field of `receipt`
-     (`sha`, `n_in`, `nonce`, `deltas_checksum`), copied exactly; and every entry of
-     `result.deltas`, copied exactly. Do NOT return `result.verified`, `result.eliminated`,
-     `result.batches`, or `result.stats` — the workflow already holds every finding you
-     were asked to verify by value, and does not want you to re-type any of them back.
+     (`sha`, `n_in`, `nonce`, `deltas_checksum`, `input_checksum`, and
+     `input_trailing_bytes` when the script printed one), copied exactly; and every entry
+     of `result.deltas`, copied exactly. Do NOT return `result.verified`,
+     `result.eliminated`, `result.batches`, or `result.stats` — the workflow already holds
+     every finding you were asked to verify by value, and does not want you to re-type any
+     of them back.
      Copy the fields you do return character for character: the deltas carry a checksum
      computed over exactly what the script wrote, and a single altered value — one
      flipped `origin`, one shifted `confidence` — makes the workflow's recomputed
      checksum disagree, which costs the WHOLE slice its verification (every one of its
      findings falls back to unclassified) rather than silently accepting a drifted echo.
+     `input_checksum` is the script's proof of the slice-input FILE it read; dropping it
+     does not fail the slice, but it does cost the run its only evidence that the file on
+     disk was the one the workflow sent, so copy it whenever it is there.
    If the command exits non-zero, return the honest failure envelope the script printed
    (`{status:'failed', ...}` or `{"ok": false, "errors": [...]}`) — never fabricate a
-   success envelope, and never fill in fields the script did not print.
+   success envelope, and never fill in fields the script did not print. When the failure
+   envelope carries a `reason`, copy it verbatim: the workflow reads that one word to
+   decide whether the slice-input file itself needs re-writing before it retries, and a
+   dropped `reason` means it retries against the same bad file.
 
 You never edit findings, never add or drop items, and never change a value in the
 receipt or the deltas you copy. For `verify_findings.py` specifically, you also never

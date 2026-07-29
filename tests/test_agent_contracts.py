@@ -188,5 +188,58 @@ class TestCompleteReadContract(unittest.TestCase):
         self.assertIn("contextReadPlan", bundle, "the shipped bundle carries no read plan")
 
 
+class TestExecutorReceiptEnumeration(unittest.TestCase):
+    """executor.md must NAME every receipt field VERIFY_SCHEMA declares (issue #25 PR3).
+
+    This is the #47 lesson applied to the echo boundary. StructuredOutput returns only
+    what the schema declares, but an agent only reliably COPIES what its contract names:
+    the old `agent`-field withholding "worked" purely by schema omission and survived on
+    just 2 of 6 measured PRs. A field declared in the schema and absent from the
+    executor's copy-instructions is therefore not a field the workflow can count on — it
+    is a field that arrives stochastically, which is the worst of both worlds because the
+    guard reading it silently changes behaviour run to run.
+
+    So the enumeration in agents/executor.md and the receipt properties in
+    workflows/src/registry.js's consumer (stages.js VERIFY_SCHEMA) are one list in two
+    files, and this test is what stops them drifting. It reads the SCHEMA as the source of
+    truth and asserts the prose names each key — adding a receipt field without telling
+    the executor to copy it fails here.
+    """
+
+    def _verify_schema_receipt_keys(self):
+        """The receipt property names, parsed out of the schema literal in stages.js."""
+        src = (REPO / "workflows" / "src" / "stages.js").read_text()
+        start = src.index("const VERIFY_SCHEMA = {")
+        receipt = src.index("receipt: {", start)
+        # The receipt block ends at the sibling `result:` key of the same literal.
+        end = src.index("result: {", receipt)
+        block = src[receipt:end]
+        # Property lines look like `        sha: { type: 'string' },`
+        return set(re.findall(r"^\s{6,}([a-z_]+):\s*\{\s*type:", block, re.MULTILINE))
+
+    def test_every_declared_receipt_field_is_named_in_the_copy_instructions(self):
+        keys = self._verify_schema_receipt_keys()
+        # Sanity: the parse found a real list, not an empty set that would pass vacuously.
+        self.assertIn("nonce", keys)
+        self.assertIn("deltas_checksum", keys)
+        self.assertIn("input_checksum", keys)
+
+        executor = (REPO / "agents" / "executor.md").read_text()
+        for key in sorted(keys):
+            self.assertIn(
+                f"`{key}`",
+                executor,
+                f"VERIFY_SCHEMA declares receipt.{key} but agents/executor.md never names "
+                f"it, so the executor is not told to copy it — the field will arrive "
+                f"stochastically or not at all",
+            )
+
+    def test_the_failure_envelope_reason_is_named_too(self):
+        """`reason` drives the re-materialize decision, so a dropped one costs a slice
+        the recovery it was entitled to."""
+        executor = (REPO / "agents" / "executor.md").read_text()
+        self.assertIn("`reason`", executor)
+
+
 if __name__ == "__main__":
     unittest.main()

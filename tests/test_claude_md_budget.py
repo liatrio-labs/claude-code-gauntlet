@@ -60,7 +60,25 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # The first draft of this section ran to +4,292 bytes; it was cut by ~60% to exactly
 # these cross-file rules, and everything derivable from one site — the incident history,
 # the excluded audit fields, the not-authentication framing — was left at that site.
-CLAUDE_MD_BYTE_CEILING = 26_209
+#
+# Raised 2026-07-29 to 27,413 (+1,204 bytes) for issue #25 PR3 (verify SLICE-INPUT proof),
+# as two bullets appended to that same section. Both span two files:
+# (1) THE PROOF-KIND RULE — an artifact handed to the artifact-writer as a pre-serialized
+#     string gets the raw-bytes proof, one handed to it as an object to serialize gets the
+#     canonical-value proof. This governs the persist boundary and the verify boundary at
+#     once, and no comment at either owns it; the adversarial review pass on this PR called
+#     out that without it written down "the next artifact type added will guess" — and
+#     misread the axis as JSON-vs-text on its first pass, which is precisely the error the
+#     bullet prevents (findings.json is JSON and sits on the raw-bytes side).
+# (2) `INPUT_FAULT_REASONS` is one list in two runtimes, the same shape as the
+#     `_DELTA_FIELDS`/`DELTA_KEYS` bullet directly above it.
+# The first draft of this addition ran to +4,069 bytes across five bullets and a prose
+# paragraph. Three bullets were cut for failing the second half of the two-part test —
+# the narrow re-materialize trigger, the unproven-vs-degraded asymmetry, and the
+# residual-mismatch degrade are each stated in full at the site that implements them
+# (verifySliceWithRetry, VERIFY_SCHEMA's input_checksum comment, verifyStage) and pinned
+# by a named test in workflows/test/stages_verify_input_proof.test.js.
+CLAUDE_MD_BYTE_CEILING = 27_413
 
 
 class TestClaudeMdBudget(unittest.TestCase):

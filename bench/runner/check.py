@@ -17,6 +17,17 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
       (scriptPath-only fallback).
   G5  ≥1 delivered inline comment across the run set
 
+Reported stats (not gates):
+
+  input_proof  Slice-input content-proof measurement (issue #25 PR3), read
+      structurally from each ``workflows/wf_*.json`` record's
+      ``result.stats.inputProof``. Deliberately NOT a gate — a slice whose
+      input never got proven degrades to ``origin=unknown``, which G3 already
+      fails; a second verdict on the same root cause would double-count it.
+      Absent on any run recorded before PR3 landed, and reported as such
+      (``None``), never as zeros — a checker that printed 0/0 for a
+      never-measured run would claim a clean measurement it never made.
+
 Stdlib-only (CLAUDE.md).
 """
 
@@ -41,6 +52,13 @@ _CANONICAL_OR_ALIAS = (
 )
 # line identity: at least one of these must be present
 _LINE_FIELDS = ("line_start", "line")
+
+# ``stats.inputProof`` counters on the compact Workflow return (issue #25 PR3).
+# Fixed contract, mirrored from workflows/src/stages.js: every key is an integer,
+# and the whole object is ABSENT (not zeroed) on a run recorded before PR3 landed.
+_INPUT_PROOF_FIELDS = (
+    "slices", "proven", "unproven", "recovered", "rewritten", "degraded",
+)
 
 _SCRIPT_PATH_RE = re.compile(r'"scriptPath"\s*:\s*"([^"]+)"')
 _DEGRADE_RE = re.compile(
@@ -237,6 +255,34 @@ def _extract_script_paths(path):
         return [m.group(1)] if m else []
     sp = scriptpath_from_record(data)
     return [sp] if sp else []
+
+
+def _extract_input_proof(path):
+    """Return a ``wf_*.json`` record's ``result.stats.inputProof`` dict, or None.
+
+    Structural only — ``json.loads`` then dict-walk, never a regex over prose
+    (issue #52's lesson applies here too: this same file embeds the whole
+    pipeline bundle in its ``script`` field). No fallback for a record that
+    will not parse or whose shape does not match: an unreadable record is
+    reported as "not measured" for this stat, the same disclose-don't-fabricate
+    stance the rest of this module takes for absent/degraded signals — it must
+    never be confused with a present-and-zero measurement.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return None
+    stats = result.get("stats")
+    if not isinstance(stats, dict):
+        return None
+    proof = stats.get("inputProof")
+    return proof if isinstance(proof, dict) else None
 
 
 def _script_path_ok(script_path, expected_pipeline, repo_root=None):
@@ -447,7 +493,14 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         "script_paths": 0,
         "unknown_origin": 0,
         "workflow_records": 0,
+        # Not measured until proven otherwise (see module docstring): None means
+        # no wf_*.json record in this run carried result.stats.inputProof, which
+        # is the honest reading for both "no records" and "pre-PR3 records".
+        "input_proof": None,
     }
+    input_proof_totals = {k: 0 for k in _INPUT_PROOF_FIELDS}
+    input_proof_measured_prs = 0
+    input_proof_unmeasured_prs = 0
 
     if not run_dir.is_dir():
         return {
@@ -616,7 +669,37 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                         )
                     )
 
+        # --- input_proof: reported stat, not a gate (see module docstring) ---
+        # Only PRs that produced a wf record are counted as measured/unmeasured;
+        # a PR with zero wf records already failed G4 above and would otherwise
+        # be double-counted here under a different name.
+        if wf_records:
+            pr_proof = None
+            for wf_path in wf_records:
+                proof = _extract_input_proof(wf_path)
+                if proof is None:
+                    continue
+                if pr_proof is None:
+                    pr_proof = {k: 0 for k in _INPUT_PROOF_FIELDS}
+                for k in _INPUT_PROOF_FIELDS:
+                    v = proof.get(k)
+                    # Contract says every key is an integer; a producer bug that
+                    # violates it must not corrupt the aggregate with a float or
+                    # a bool (bool is an int subclass in Python).
+                    if isinstance(v, int) and not isinstance(v, bool):
+                        pr_proof[k] += v
+            if pr_proof is None:
+                input_proof_unmeasured_prs += 1
+            else:
+                input_proof_measured_prs += 1
+                for k in _INPUT_PROOF_FIELDS:
+                    input_proof_totals[k] += pr_proof[k]
+
     stats["delivered_comments"] = total_comments
+    if input_proof_measured_prs > 0:
+        stats["input_proof"] = dict(input_proof_totals)
+        stats["input_proof"]["measured_prs"] = input_proof_measured_prs
+        stats["input_proof"]["unmeasured_prs"] = input_proof_unmeasured_prs
 
     # --- G5: ≥1 delivered comment across the set ---
     if total_comments < 1:

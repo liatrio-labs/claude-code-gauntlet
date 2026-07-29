@@ -10,7 +10,7 @@
 // with this helper is the trust/join/degradation LOGIC; that the computation itself
 // matches Python's is pinned separately by the golden fixture in
 // tests/fixtures/parity/verify_deltas/, whose checksum verify_findings.py produced.
-import { deltaContentProof } from '../../src/stages.js';
+import { deltaContentProof, sliceInputProofFor } from '../../src/stages.js';
 
 // The exact string run_verification() stamps on every real elimination. Tests that
 // synthesise an eliminated delta must use it — trustSlice requires a non-empty stamp,
@@ -44,17 +44,34 @@ export function deltasFor(findings, overridesById = {}) {
 //                          dispatched findings' ids, which is what trustSlice will use
 //   checksum             — overrides the computed proof (drift tests)
 //   overrides            — per-id delta overrides, passed to deltasFor
+//   inputChecksum        — overrides the SLICE-INPUT proof; pass null to model a script
+//                          (or executor) that did not report one, which is the UNPROVEN
+//                          path (issue #25 PR3)
+//   baseBranch           — the base branch the slice input carries; only affects the
+//                          input proof, and must match the stage input's verify.baseBranch
+//   inputTrailingBytes   — models the lenient parse having taken trailing bytes off a
+//                          complete document (the measured corruption class)
 export function deltaEnvelope(findings, opts = {}) {
   const deltas = opts.deltas || deltasFor(findings, opts.overrides || {});
   const ids = opts.ids || findings.map((f) => f.id);
-  return {
-    status: 'ok',
-    receipt: {
-      sha: opts.sha === undefined ? 'abc123' : opts.sha,
-      nonce: opts.nonce === undefined ? 'n-1' : opts.nonce,
-      n_in: opts.n_in === undefined ? findings.length : opts.n_in,
-      deltas_checksum: opts.checksum === undefined ? deltaContentProof(ids, deltas) : opts.checksum,
-    },
-    result: { deltas },
+  // `in opts`, not `=== undefined`: a caller threading the args' own baseBranch must be
+  // able to pass an ABSENT one and have this model it faithfully. Defaulting an explicit
+  // undefined to 'main' makes an honest receipt look like a corrupted input file, because
+  // JSON.stringify omits an undefined value's key and the two documents then differ.
+  const baseBranch = 'baseBranch' in opts ? opts.baseBranch : 'main';
+  const receipt = {
+    sha: opts.sha === undefined ? 'abc123' : opts.sha,
+    nonce: opts.nonce === undefined ? 'n-1' : opts.nonce,
+    n_in: opts.n_in === undefined ? findings.length : opts.n_in,
+    deltas_checksum: opts.checksum === undefined ? deltaContentProof(ids, deltas) : opts.checksum,
+    // Computed with the REAL exported computation for the same reason deltas_checksum is:
+    // by default this helper models a HONEST script reading the file the stage dispatched,
+    // so the trust logic under test is exercised against a truthful receipt.
+    input_checksum: opts.inputChecksum === undefined
+      ? sliceInputProofFor(findings, baseBranch)
+      : opts.inputChecksum,
   };
+  if (receipt.input_checksum === null) delete receipt.input_checksum;
+  if (opts.inputTrailingBytes) receipt.input_trailing_bytes = opts.inputTrailingBytes;
+  return { status: 'ok', receipt, result: { deltas } };
 }

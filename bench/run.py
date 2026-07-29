@@ -989,6 +989,20 @@ def _check_only(run_id):
             stats.get("unknown_origin"),
         )
     )
+    # Reported stat, not a gate (issue #25 PR3) — absent means not measured on
+    # this run (e.g. recorded before PR3 landed), never zeros; see check.py's
+    # module docstring for why it stays a print-only stat, not a G-gate.
+    input_proof = stats.get("input_proof")
+    if input_proof is None:
+        print("  input_proof: not measured")
+    else:
+        print(
+            "  input_proof: measured_prs={measured_prs} unmeasured_prs={unmeasured_prs} "
+            "slices={slices} proven={proven} unproven={unproven} "
+            "recovered={recovered} rewritten={rewritten} degraded={degraded}".format(
+                **input_proof
+            )
+        )
     for failure in result.get("failures") or []:
         print("  FAIL: {}".format(failure), file=sys.stderr)
     # Naive-anchor refusal is a usage error (exit 2), not a smoke-gate failure.

@@ -34,6 +34,7 @@ import unittest
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
+from scripts.verify_findings import input_content_proof  # noqa: E402
 from scripts.assemble_artifacts import (  # noqa: E402
     JsSerializationError,
     assemble,
@@ -962,6 +963,121 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
         for text, want in zip(provable, expected):
             naive = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
             self.assertNotEqual(naive, want, "%s no longer diverges" % text)
+
+
+class TestSliceInputProofEndpointsAgree(unittest.TestCase):
+    """The two ENDPOINTS of the slice-input content proof must agree (issue #25 PR3).
+
+    TestCrossRuntimeStringifyParity above pins the shared SERIALIZER. This pins the two
+    functions that actually face each other in production, over a whole slice-input
+    document: `verify_findings.input_content_proof` (what the script reports in
+    `receipt.input_checksum`, computed over the document it parsed off disk) against
+    `sliceInputProofFor` in workflows/src/stages.js (what the workflow expects, computed
+    over the document it dispatched). If those two ever disagree, EVERY slice of EVERY
+    run reports a content-proof mismatch and every one of them degrades — so this is the
+    test standing between a serializer tweak and a pipeline that verifies nothing.
+
+    Measured baseline for the claim this guards: over all 27 parseable slice-input files
+    this repo has retained, the two runtimes' canonical forms agreed on 27 of 27.
+    """
+
+    # The real JS function, imported from source rather than re-derived here — a helper
+    # that recomputed the canonical form would agree with a broken implementation just as
+    # happily as with a correct one (the same reasoning the JS-side export comment gives).
+    JS_SLICE_PROOF = (
+        "import { sliceInputProofFor } from '%s/workflows/src/stages.js';"
+        "const docs = JSON.parse(process.argv[1]);"
+        "process.stdout.write(JSON.stringify(docs.map((t) => {"
+        "  const d = JSON.parse(t);"
+        "  return sliceInputProofFor(d.findings, d.base_branch);"
+        "})));"
+    ) % REPO_ROOT
+
+    def js_proofs(self, documents):
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", self.JS_SLICE_PROOF,
+             json.dumps([json.dumps(d) for d in documents])],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(proc.stderr)
+        # argv carries each document as TEXT so escapes survive the hop; parse it back.
+        return json.loads(proc.stdout)
+
+    def documents(self):
+        """Slice-input documents (`{findings, base_branch}` — the shape
+        verify_findings.py reads), spanning the traps the corpus above enumerates."""
+        return [
+            {"findings": [], "base_branch": "main"},
+            {"findings": [finding("F1")], "base_branch": "main"},
+            {"findings": [finding("F1"), finding("F2")], "base_branch": "develop"},
+            # The escape/unicode traps, inside a real finding's prose fields.
+            {"findings": [finding(
+                "F3",
+                description="café — naïve 日本語 𝕏 astral 😀",
+                evidence="quote \" backslash \\ slash / tab\t newline\n",
+                title="\u2028line sep\u2029para sep\u0000\u001f",
+            )], "base_branch": "main"},
+            # A base branch is free text too.
+            {"findings": [finding("F4")], "base_branch": "release/2.0 — naïve"},
+        ]
+
+    def test_python_and_js_agree_over_slice_input_documents(self):
+        node_or_skip(self)
+        docs = self.documents()
+        expected = self.js_proofs(docs)
+        for doc, want in zip(docs, expected):
+            self.assertEqual(
+                input_content_proof(doc), want,
+                "the script and the workflow disagree about %r" % doc.get("base_branch"),
+            )
+
+    def test_a_lone_surrogate_in_a_finding_still_agrees(self):
+        """Kept separate because it cannot round-trip through json.dumps into argv the
+        way the others do — it is built on both sides from an escape."""
+        node_or_skip(self)
+        doc = {"findings": [finding("F5", description="pre\ud800post")], "base_branch": "main"}
+        self.assertEqual(input_content_proof(doc), self.js_proofs([doc])[0])
+
+    def test_deep_nesting_agrees(self):
+        """The one trap the corpus above asserts by design intent rather than by
+        fixture: assert_js_reproducible is iterative on purpose, but nothing exercised a
+        genuinely deep document through the full serializer in both runtimes."""
+        node_or_skip(self)
+        nested = {"leaf": 1}
+        for _ in range(60):
+            nested = {"n": [nested]}
+        doc = {"findings": [finding("F6", cross_file_refs=[nested])], "base_branch": "main"}
+        self.assertEqual(input_content_proof(doc), self.js_proofs([doc])[0])
+
+    def test_a_fractional_confidence_is_PINNED_before_dispatch_so_both_sides_agree(self):
+        """The asymmetry that looks like a bug and is the point.
+
+        JS computes its expectation over `slice.map(pinNumericFields)`, which half-up
+        rounds a fractional confidence — so the document that reaches disk carries the
+        INTEGER, and that is what Python parses back and checksums. The two therefore
+        agree even though they are handed different-looking inputs. Pinned here because
+        the first version of this test asserted the opposite and failed: the naive
+        reading (Python refuses the float, JS accepts it, every slice mismatches) is only
+        true for a document that production never writes.
+        """
+        node_or_skip(self)
+        dispatched = {"findings": [finding("F7", confidence=90.5)], "base_branch": "main"}
+        on_disk = {"findings": [finding("F7", confidence=91)], "base_branch": "main"}
+        self.assertEqual(input_content_proof(on_disk), self.js_proofs([dispatched])[0])
+
+    def test_a_number_NEITHER_side_can_spell_is_refused_by_BOTH(self):
+        """A float in a field pinNumericFields does not touch (here, nested inside
+        cross_file_refs) is unrepresentable on both sides. Both must refuse: Python
+        returns None, JS returns null, and gradeInputProof reads the pair as UNPROVEN.
+        A one-sided refusal would read as a mismatch and degrade the slice instead."""
+        node_or_skip(self)
+        doc = {
+            "findings": [finding("F8", cross_file_refs=[{"weight": 0.5}])],
+            "base_branch": "main",
+        }
+        self.assertIsNone(input_content_proof(doc))
+        self.assertIsNone(self.js_proofs([doc])[0])
 
 
 class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):

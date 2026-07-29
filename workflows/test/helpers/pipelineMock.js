@@ -8,7 +8,7 @@
 //   agent(prompt, opts)   — prompt is a STRING; opts = { label, agentType, model, schema }
 //   parallel(thunks)      — thunks is an array of ZERO-ARG FUNCTIONS each calling agent(...);
 //                           a thrown member resolves to null (siblings unaffected).
-import { parseWriterPayload, plannedArtifactPaths } from '../../src/stages.js';
+import { parseWriterPayload, plannedArtifactPaths, sliceInputProofFor } from '../../src/stages.js';
 import { AGENTS } from '../../src/registry.js';
 import { deltaEnvelope } from './verifyDelta.js';
 
@@ -136,6 +136,17 @@ export function makeCtx(args, opts = {}) {
     return all.slice(i * size, i * size + size);
   };
 
+  // slice index -> the slice-input document the writer was handed (issue #25 PR3).
+  const writtenSliceInputs = new Map();
+  // What verify_findings.py would report having read back for slice i. null when the
+  // writer was never dispatched for it (the mock then models an executor answering about
+  // a file that was never written, which is the UNPROVEN path).
+  const sliceInputChecksumFor = (i) => {
+    const content = writtenSliceInputs.get(i);
+    if (!content) return null;
+    return sliceInputProofFor(content.findings || [], content.base_branch);
+  };
+
   const agent = async (prompt, dispatch = {}) => {
     try {
       assertPrompt(prompt);
@@ -152,11 +163,25 @@ export function makeCtx(args, opts = {}) {
     if (label === 'summarize' || label === 'summarize-merge' || label.startsWith('summarize-bucket-')) {
       return { summary: 'the PR changes X' };
     }
-    if (label.startsWith('verify-input-writer')) {
+    // Both the bulk group write (`verify-input-writer-N`) and the single-slice
+    // re-materialize a failed slice takes before its retry (`verify-input-rewriter-N`,
+    // issue #25 PR3) — one faithful writer, since they share one implementation.
+    if (label.startsWith('verify-input-')) {
       // Faithful slice-input writer: echo back the exact paths it was asked to write, so
       // materializeVerifySlices' write-proof gate (written must cover the dispatched paths)
       // passes on the happy path. The dispatched entries ride after the payload marker.
       const entries = parseWriterPayload(prompt) || [];
+      // ...and REMEMBER what it was handed, keyed by slice index. An honest writer puts
+      // exactly this on disk, so this is what verify_findings.py would parse back and
+      // checksum. Modelling the proof from the DISPATCHED document (rather than from a
+      // reconstruction of the findings) is the only way the mock can be faithful: the
+      // stage dispatches post-merge findings, which no reconstruction here reproduces
+      // byte for byte — and a proof computed over the wrong document is exactly the
+      // false alarm the real design must never produce.
+      for (const e of entries) {
+        const m = /\.slice(\d+)\.json$/.exec(e.path || '');
+        if (m) writtenSliceInputs.set(Number(m[1]), e.content);
+      }
       return { written: entries.map((e) => e.path) };
     }
     if (label.startsWith('verify-slice-')) {
@@ -184,6 +209,9 @@ export function makeCtx(args, opts = {}) {
         nonce: sliceNonce,
         n_in: slice.length,
         overrides: originOverrides,
+        // The proof an honest script reports: computed over the document the writer was
+        // actually handed for THIS slice (captured above), not over a reconstruction.
+        inputChecksum: sliceInputChecksumFor(sliceIndex),
       });
     }
     if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
