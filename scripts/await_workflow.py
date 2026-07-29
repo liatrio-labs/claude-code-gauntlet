@@ -51,7 +51,8 @@ Output — exactly ONE compact JSON line on stdout for every WAIT outcome.
 
     `pending`, `timeout` and `artifacts_only` share one field set: await, attempt,
     max_attempts, waited_seconds, target, resolved_path, file_bytes, since_epoch,
-    artifacts, saw_ok_without_corroborator, scan_skipped — plus `searched` only
+    artifacts, saw_ok_without_corroborator, scan_skipped, scan_stop_reason —
+    plus `searched` only
     when resolution failed, `next_command` only on `pending`, and `gap`/`detail`
     only on the two that declare one. `error` is deliberately a REDUCED shape
     (await, gap, message, target, attempt, max_attempts): it is emitted from the
@@ -397,6 +398,12 @@ def terminal_from(value):
     return None, saw_bare_ok
 
 
+def _note(bounds, reason):
+    """Record the FIRST bound that stopped a scan early, if anyone is listening."""
+    if bounds is not None and not bounds.get("stopped"):
+        bounds["stopped"] = reason
+
+
 def _document_starts(text):
     """Yield the offsets at which a JSON *document* may plausibly begin.
 
@@ -438,8 +445,9 @@ def _line_starts(text):
         idx = text.find("\n", idx + 1)
 
 
-def _iter_json_objects(text, max_candidates=SCAN_MAX_CANDIDATES,
-                       max_probes=SCAN_MAX_PROBES):
+def _iter_json_objects(text, bounds=None, max_candidates=SCAN_MAX_CANDIDATES,
+                       max_probes=SCAN_MAX_PROBES,
+                       max_deep=SCAN_MAX_DEEP_CANDIDATES):
     """Yield each JSON object decodable at a document start in *text*, in order.
 
     Escaped braces inside a JSON string cannot start a valid object (``{\\"``
@@ -453,7 +461,15 @@ def _iter_json_objects(text, max_candidates=SCAN_MAX_CANDIDATES,
     deep = 0
     consumed_to = -1
     for idx in _document_starts(text):
-        if yielded >= max_candidates or probes >= max_probes:
+        # Every bound that stops the scan early records WHY. A bound that
+        # truncates the search silently is the same defect as the ones this scan
+        # has already shipped twice: a real terminal object further down the file
+        # is dropped, and nothing anywhere says the file was not fully searched.
+        if yielded >= max_candidates:
+            _note(bounds, "max_candidates")
+            return
+        if probes >= max_probes:
+            _note(bounds, "max_probes")
             return
         if idx < consumed_to:
             continue  # already inside an object this scan decoded
@@ -467,7 +483,8 @@ def _iter_json_objects(text, max_candidates=SCAN_MAX_CANDIDATES,
             # well-formed terminal object further down the file was being dropped
             # — and dropped silently, since nothing recorded that it happened.
             deep += 1
-            if deep >= SCAN_MAX_DEEP_CANDIDATES:
+            if deep >= max_deep:
+                _note(bounds, "max_deep_candidates")
                 return
             continue
         except ValueError:
@@ -487,7 +504,12 @@ def _iter_json_objects(text, max_candidates=SCAN_MAX_CANDIDATES,
 
 
 def find_terminal(text):
-    """Return ``(terminal_or_None, saw_bare_ok, scan_skipped)`` for a file's text.
+    """Return ``(terminal_or_None, saw_bare_ok, stop_reason)`` for a file's text.
+
+    *stop_reason* is None when the whole file was searched, else the name of the
+    bound that cut the search short (``max_chars``, ``max_candidates``,
+    ``max_probes``, ``max_deep_candidates``). It reaches the caller's marker so a
+    truncated search is disclosed rather than reported as "nothing here".
 
     ``None`` ALWAYS means "not yet terminal, keep waiting" — never an error. A
     half-written file is the normal state of the target for most of the wait, so
@@ -500,7 +522,7 @@ def find_terminal(text):
     means final and a retried producer can leave two.
     """
     if not text or not text.strip():
-        return None, False, False
+        return None, False, None
 
     saw_bare_ok = False
     try:
@@ -511,20 +533,23 @@ def find_terminal(text):
         found, bare = terminal_from(whole)
         saw_bare_ok = saw_bare_ok or bare
         if found is not None:
-            return found, saw_bare_ok, False
+            return found, saw_bare_ok, None
 
     # Checked BEFORE the scan allocates anything: the point of a bound is to be
     # cheaper than the work it is bounding.
     if len(text) > SCAN_MAX_CHARS:
-        return None, saw_bare_ok, True
+        return None, saw_bare_ok, "max_chars"
 
+    bounds = {}
     found = None
-    for candidate in _iter_json_objects(text):
+    for candidate in _iter_json_objects(text, bounds):
         hit, bare = terminal_from(candidate)
         saw_bare_ok = saw_bare_ok or bare
         if hit is not None:
             found = hit
-    return found, saw_bare_ok, False
+    # A bound that tripped AFTER the terminal object was already found did not
+    # cost anything, so it is not reported as a truncated search.
+    return found, saw_bare_ok, (None if found is not None else bounds.get("stopped"))
 
 
 # ---------------------------------------------------------------------------
@@ -631,7 +656,21 @@ def emit(payload):
             "gap": "workflow-timeout",
             "message": "result would not serialize: %s" % exc,
         }, separators=(",", ":"))
-    print(line)
+    try:
+        print(line)
+        sys.stdout.flush()
+    except OSError:
+        # A reader that closed the pipe early (`| head -1`) raises BrokenPipeError
+        # here, and letting it escape would exit 1 — a code the caller's branch
+        # table does not cover — after a half-written line. Retarget stdout at
+        # /dev/null so the interpreter's shutdown flush cannot raise again, and
+        # let the caller fall through to a documented degrade.
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except OSError:
+            pass
+        raise
 
 
 def build_marker(kind, args, observed, since_epoch, started_at):
@@ -647,7 +686,12 @@ def build_marker(kind, args, observed, since_epoch, started_at):
         "since_epoch": since_epoch,
         "artifacts": observed["artifacts"],
         "saw_ok_without_corroborator": observed["saw_bare_ok"],
-        "scan_skipped": observed["scan_skipped"],
+        # Two fields, because they answer two questions: did the search cover the
+        # whole file, and if not, which bound stopped it. A truncated search that
+        # reported plain "nothing here" is how a real terminal object gets dropped
+        # with nothing anywhere saying so.
+        "scan_skipped": observed["scan_stopped"] is not None,
+        "scan_stop_reason": observed["scan_stopped"],
     }
     if observed["resolved_path"] is None:
         # Only useful when resolution actually failed; on the happy path it is
@@ -677,7 +721,7 @@ def await_terminal(args, environ=None):
         "file_bytes": None,
         "artifacts": artifacts_state(None, None, since_epoch),
         "saw_bare_ok": False,
-        "scan_skipped": False,
+        "scan_stopped": None,
     }
 
     while True:
@@ -686,9 +730,9 @@ def await_terminal(args, environ=None):
         observed["searched"] = searched
         observed["file_bytes"] = file_size(path)
 
-        terminal, saw_bare_ok, scan_skipped = find_terminal(read_text(path))
+        terminal, saw_bare_ok, scan_stopped = find_terminal(read_text(path))
         observed["saw_bare_ok"] = observed["saw_bare_ok"] or saw_bare_ok
-        observed["scan_skipped"] = scan_skipped
+        observed["scan_stopped"] = scan_stopped
         if terminal is not None:
             # Deliberately silent on stderr here. The documented caller is a Bash
             # tool call, which MERGES the two streams — so a diagnostic line would
@@ -839,7 +883,14 @@ def main(argv=None, environ=None):
             "attempt": args.attempt, "max_attempts": args.max_attempts,
         })
         return 4
-    emit(payload)
+    try:
+        emit(payload)
+    except OSError:
+        # The payload could not be delivered at all, so there is nothing useful to
+        # print — but the exit code must still be one the caller's branch table
+        # covers. 4 is the degrade-and-disclose family; exit 1 was not documented
+        # anywhere and would read as an interpreter crash.
+        return 4
     return code
 
 

@@ -286,10 +286,10 @@ class TestPartialAndUnreadable(unittest.TestCase):
     """Every unparseable input is "not yet terminal" — never an exception."""
 
     def test_empty_string(self):
-        self.assertEqual(find_terminal(""), (None, False, False))
+        self.assertEqual(find_terminal(""), (None, False, None))
 
     def test_whitespace_only(self):
-        self.assertEqual(find_terminal("   \n\t \n"), (None, False, False))
+        self.assertEqual(find_terminal("   \n\t \n"), (None, False, None))
 
     def test_truncated_mid_object(self):
         text = json.dumps(envelope(SUCCESS_RETURN))[: len(json.dumps(envelope(SUCCESS_RETURN))) // 2]
@@ -390,9 +390,9 @@ class TestScanBounds(unittest.TestCase):
 
     def test_oversized_input_skips_the_scan(self):
         text = "x" * (SCAN_MAX_CHARS + 1) + json.dumps(SUCCESS_RETURN)
-        found, _, skipped = find_terminal(text)
+        found, _, stopped = find_terminal(text)
         self.assertIsNone(found)
-        self.assertTrue(skipped)
+        self.assertEqual(stopped, "max_chars")
 
     def test_oversized_but_whole_file_parseable_still_detects(self):
         """The whole-file path runs first, so a huge VALID file still resolves."""
@@ -464,6 +464,82 @@ class TestScanDoesNotDropLaterDocuments(unittest.TestCase):
         text = '{"a": ' + deep + "}\n" + json.dumps(SUCCESS_RETURN) + "\n"
         found, _, _ = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
+
+
+class TestEveryBoundIsDisclosed(unittest.TestCase):
+    """A bound that truncates the search must say so.
+
+    The char cap always did; the three added later did not, so a real terminal
+    object further down the file was dropped and the marker reported an ordinary
+    "nothing here". That is the same silent-drop class twice over.
+    """
+
+    def _deep_line(self):
+        return '{"a": ' + "[" * 60_000 + "1" + "]" * 60_000 + "}"
+
+    def test_deep_candidate_bound_is_reported(self):
+        text = "\n".join(self._deep_line() for _ in range(9)) + "\n"
+        found, _, stopped = find_terminal(text)
+        self.assertIsNone(found)
+        self.assertEqual(stopped, "max_deep_candidates")
+
+    def test_under_the_deep_bound_a_later_terminal_is_still_found(self):
+        text = ("\n".join(self._deep_line() for _ in range(7)) + "\n"
+                + json.dumps(SUCCESS_RETURN) + "\n")
+        found, _, stopped = find_terminal(text)
+        self.assertEqual(found, SUCCESS_RETURN)
+        self.assertIsNone(stopped)
+
+    def test_candidate_bound_is_reported(self):
+        text = "\n".join('{"n":%d}' % i for i in range(2000)) + "\n"
+        found, _, stopped = find_terminal(text)
+        self.assertIsNone(found)
+        self.assertIn(stopped, ("max_candidates", "max_probes"))
+
+    def test_a_bound_tripping_after_the_terminal_is_not_reported(self):
+        """It cost nothing, so it is not a truncated search."""
+        text = (json.dumps(SUCCESS_RETURN) + "\n"
+                + "\n".join('{"n":%d}' % i for i in range(2000)) + "\n")
+        found, _, stopped = find_terminal(text)
+        self.assertEqual(found, SUCCESS_RETURN)
+        self.assertIsNone(stopped)
+
+    def test_the_marker_carries_the_reason(self):
+        with _Workspace() as ws:
+            path = ws.write(
+                "w1.output",
+                "\n".join(self._deep_line() for _ in range(9)) + "\n",
+            )
+            _, out, _ = run_main([path, "--timeout-seconds", "0"])
+        marker = sole_json_line(out)
+        self.assertTrue(marker["scan_skipped"])
+        self.assertEqual(marker["scan_stop_reason"], "max_deep_candidates")
+
+
+class TestBrokenPipeDegradesToADocumentedCode(unittest.TestCase):
+    """A reader that closes the pipe early must not surface as an exit-1 crash."""
+
+    def test_broken_pipe_exits_four_not_one(self):
+        with _Workspace() as ws:
+            big = dict(SUCCESS_RETURN)
+            big["stats"] = {"pad": "x" * 2_000_000}
+            path = ws.write("w1.output", json.dumps(envelope(big)))
+            script = os.path.join(REPO_ROOT, "scripts", "await_workflow.py")
+            reader = subprocess.Popen(
+                ["head", "-c", "20"],
+                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+            )
+            writer = subprocess.Popen(
+                ["python3", script, "--timeout-seconds", "0", "--", path],
+                stdout=reader.stdin, stderr=subprocess.PIPE, text=True,
+            )
+            assert reader.stdin is not None
+            reader.stdin.close()
+            _, err = writer.communicate()
+            reader.wait()
+        self.assertIn(writer.returncode, (0, 4), err)
+        self.assertNotIn("BrokenPipeError", err)
+        self.assertNotIn("Traceback", err)
 
 
 class TestResolutionPrefersFreshness(unittest.TestCase):
@@ -836,7 +912,8 @@ class TestExitCodeContract(unittest.TestCase):
         marker = sole_json_line(out)
         for key in ("await", "attempt", "max_attempts", "waited_seconds", "target",
                     "resolved_path", "file_bytes", "since_epoch", "artifacts",
-                    "saw_ok_without_corroborator", "scan_skipped"):
+                    "saw_ok_without_corroborator", "scan_skipped",
+                    "scan_stop_reason"):
             self.assertIn(key, marker)
 
 
