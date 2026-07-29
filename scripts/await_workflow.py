@@ -207,14 +207,20 @@ def looks_like_path(target):
 
 
 def task_roots(environ=None):
-    """Return the existing directories that may hold this session's tasks/ tree.
+    """Return every directory that MAY hold this session's tasks/ tree.
 
     Background-task output lives at
     ``<tmp-root>/<project-slug>/<session-uuid>/tasks/<task-id>.output``. The
     tmp-root is `claude-<uid>` under the system temp directory, but which spelling
     of that directory is real varies (on macOS ``/tmp`` is a symlink to
-    ``/private/tmp``), so every candidate is probed and de-duplicated by realpath
+    ``/private/tmp``), so every candidate is listed and de-duplicated by realpath
     rather than assumed.
+
+    Candidates that do not exist are RETAINED, not filtered out. They cost nothing
+    to skip at glob time, and dropping them made the failure undiagnosable: on a
+    machine with no such directory at all, `searched` came back empty, so a run
+    that could not resolve its target reported no reason and pointed at no fix.
+    A caller reading the marker needs to see what was looked for.
     """
     environ = os.environ if environ is None else environ
     bases = ["/tmp", "/private/tmp"]
@@ -224,8 +230,6 @@ def task_roots(environ=None):
     roots, seen = [], set()
     for base in bases:
         candidate = os.path.join(base, "claude-%d" % os.getuid())
-        if not os.path.isdir(candidate):
-            continue
         real = os.path.realpath(candidate)
         if real in seen:
             continue
@@ -285,7 +289,10 @@ def resolve_target(target, environ=None):
 
     for root in task_roots(environ):
         pattern = os.path.join(root, "*", "*", "tasks", target + ".output")
+        # Recorded whether or not the root exists — see task_roots on why.
         searched.append(pattern)
+        if not os.path.isdir(root):
+            continue
         try:
             hits = glob.glob(pattern)
         except OSError:

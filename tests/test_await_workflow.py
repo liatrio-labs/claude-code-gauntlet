@@ -712,6 +712,16 @@ class TestResolveTarget(unittest.TestCase):
         self.assertIsNone(path)
         self.assertTrue(all("wnosuchtask000.output" in p for p in searched))
 
+    def test_searched_is_reported_even_when_no_root_exists(self):
+        """A machine with no claude-<uid> temp dir at all must still say what it
+        looked for. Filtering non-existent roots made `searched` empty there, so
+        the marker named no reason and pointed at no fix — which is the whole
+        job of that field. CI is exactly such a machine."""
+        path, searched = resolve_target("wnosuchtask000", {"TMPDIR": "/no/such/tmp"})
+        self.assertIsNone(path)
+        self.assertTrue(searched, "searched must never be empty on a failure")
+        self.assertTrue(any("/no/such/tmp" in p for p in searched))
+
     def test_env_override_miss_falls_through_to_the_globs(self):
         path, searched = resolve_target(
             "wnosuchtask000", {"CODE_GAUNTLET_TASKS_DIR": "/nonexistent-dir"}
