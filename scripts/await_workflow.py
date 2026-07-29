@@ -29,9 +29,17 @@ Target
     separator or ending in `.output` is used verbatim) or the bare Task ID printed
     by the `Workflow` tool, which is resolved by bounded glob — see resolve_target.
 
-Output — exactly ONE compact JSON line on stdout, in every outcome, always.
-    An empty stdout is indistinguishable from a dead process, so there is no code
-    path that prints nothing. Diagnostics go to stderr.
+Output — exactly ONE compact JSON line on stdout for every WAIT outcome.
+    An empty stdout is indistinguishable from a dead process, so no outcome of the
+    wait itself prints nothing. On a terminal result nothing is written to stderr
+    either, so a caller that merges the streams (the Bash tool does) still sees
+    exactly one line.
+
+    The one exception is exit 2, and it is argparse's, not the wait's: a malformed
+    invocation is rejected before the wait starts, with the reason on stderr and
+    an EMPTY stdout. That is reachable only from a command the skill itself got
+    wrong — never from anything the workflow did — so it is a build-time bug to
+    fix, not a run outcome to degrade on.
 
         exit 0  the terminal compact return itself, e.g.
                 {"ok":true,"phaseReached":"report","stats":{...},...}
@@ -120,6 +128,10 @@ DEFAULT_ARTIFACTS_GRACE_SECONDS = 120
 SCAN_MAX_CANDIDATES = 500
 SCAN_MAX_PROBES = 2000
 SCAN_MAX_CHARS = 8_000_000
+#: How many stack-exhausting candidates to step over before giving up on the file.
+#: One is not a reason to stop — a later document start does not re-descend the
+#: structure that blew the stack — but a file full of them is not task output.
+SCAN_MAX_DEEP_CANDIDATES = 8
 
 #: Fields that only the pipeline's own compact return carries. A bare `ok` is NOT
 #: enough to call an object terminal: the assemble receipt
@@ -221,6 +233,33 @@ def task_roots(environ=None):
     return roots
 
 
+def _newest(paths):
+    """Return the most recently modified of *paths*, or None. Never raises.
+
+    Task ids are short and random, so a glob across every session directory can in
+    principle match more than one. Lexicographic order would then be arbitrary —
+    and arbitrarily wrong, because the loser might be a COMPLETED run from another
+    session, whose terminal result would be handed to Phase 8 as if it were this
+    review's. Newest-first is the only ordering that correlates with "the run we
+    just dispatched".
+
+    An mtime FLOOR would be the stronger guard and is deliberately not used here:
+    a fast failure (args validation returns in well under a second) can land
+    before the orchestrator gets around to issuing the Bash call, so a floor would
+    reject the very result it was meant to protect. The artifacts signal can
+    afford that floor because artifacts are written mid-run; this file is not.
+    """
+    best, best_mtime = None, None
+    for path in paths:
+        try:
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        if best_mtime is None or mtime > best_mtime:
+            best, best_mtime = path, mtime
+    return best
+
+
 def resolve_target(target, environ=None):
     """Return ``(path_or_None, searched)`` for *target*. Never raises.
 
@@ -247,11 +286,11 @@ def resolve_target(target, environ=None):
         pattern = os.path.join(root, "*", "*", "tasks", target + ".output")
         searched.append(pattern)
         try:
-            hits = sorted(glob.glob(pattern))
+            hits = glob.glob(pattern)
         except OSError:
             hits = []
         if hits:
-            return hits[0], searched
+            return _newest(hits) or sorted(hits)[0], searched
     return None, searched
 
 
@@ -411,6 +450,7 @@ def _iter_json_objects(text, max_candidates=SCAN_MAX_CANDIDATES,
     decoder = json.JSONDecoder()
     yielded = 0
     probes = 0
+    deep = 0
     consumed_to = -1
     for idx in _document_starts(text):
         if yielded >= max_candidates or probes >= max_probes:
@@ -421,20 +461,25 @@ def _iter_json_objects(text, max_candidates=SCAN_MAX_CANDIDATES,
         try:
             obj, end = decoder.raw_decode(text, idx)
         except RecursionError:
-            # Nesting deep enough to exhaust the interpreter stack is not a
-            # credible task-output document, and every later probe would descend
-            # the same structure again. Stop the scan rather than pay for it N
-            # more times.
-            return
-        except ValueError as exc:
-            # Skip past whatever the decoder DID consume before it gave up.
-            # Without this, a file of line-leading JSON fragments re-scans the
-            # same tail from each probe site, which is the quadratic behaviour
-            # SCAN_MAX_PROBES alone only caps rather than removes.
-            failed_at = getattr(exc, "pos", None)
-            if isinstance(failed_at, int) and failed_at > idx:
-                consumed_to = max(consumed_to, failed_at)
+            # Skip THIS candidate, never the rest of the scan. Aborting outright
+            # was wrong: a later document start is at a different offset and does
+            # not re-descend the structure that blew the stack, so a wholly
+            # well-formed terminal object further down the file was being dropped
+            # — and dropped silently, since nothing recorded that it happened.
+            deep += 1
+            if deep >= SCAN_MAX_DEEP_CANDIDATES:
+                return
             continue
+        except ValueError:
+            # Deliberately NOT skipping forward to the decoder's error position.
+            # A failed decode's `pos` is where it gave up, which can be far past a
+            # later — and perfectly valid — document start; using it as a floor
+            # made the scan refuse to probe that offset at all, losing a real
+            # terminal object. The cost this was meant to control is already
+            # handled by only probing document starts and by SCAN_MAX_PROBES.
+            continue
+        # A SUCCESSFUL decode is different: it really did consume that span, and
+        # any document start inside it is a nested value, not a sibling document.
         consumed_to = end
         if isinstance(obj, dict):
             yielded += 1
@@ -645,11 +690,12 @@ def await_terminal(args, environ=None):
         observed["saw_bare_ok"] = observed["saw_bare_ok"] or saw_bare_ok
         observed["scan_skipped"] = scan_skipped
         if terminal is not None:
-            sys.stderr.write(
-                "await_workflow: terminal after %.1fs (attempt %d/%d) at %s\n"
-                % (time.time() - started_at, args.attempt, args.max_attempts,
-                   path or args.target)
-            )
+            # Deliberately silent on stderr here. The documented caller is a Bash
+            # tool call, which MERGES the two streams — so a diagnostic line would
+            # arrive as a second line in front of the payload, and "stdout is the
+            # terminal return" would stop being true for the one caller that
+            # matters. Diagnostics are reserved for the non-terminal outcomes,
+            # whose marker already carries the same facts as fields.
             return terminal, 0
 
         observed["artifacts"] = artifacts_state(

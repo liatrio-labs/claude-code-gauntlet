@@ -35,6 +35,7 @@ from unittest.mock import patch
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.await_workflow import (  # noqa: E402
+    _newest,
     ARTIFACT_BASENAMES,
     COMPACT_RETURN_KEYS,
     DEFAULT_TIMEOUT_SECONDS,
@@ -439,6 +440,94 @@ class TestScanCostIsBounded(unittest.TestCase):
         self.assertLess(elapsed, 1.0)
 
 
+class TestScanDoesNotDropLaterDocuments(unittest.TestCase):
+    """Regression: bounding the scan must not cost it real results.
+
+    Two over-corrections, both found by adversarial re-verification of the first
+    fix. Each silently dropped a wholly well-formed terminal object that appeared
+    later in the same file.
+    """
+
+    def test_a_failed_decode_does_not_skip_past_a_later_document(self):
+        """The decoder's error `pos` is where it GAVE UP, which can be far past a
+        later document start. Using it as a floor refused to probe that offset."""
+        text = ('{"a": [\n'
+                + json.dumps(SUCCESS_RETURN)
+                + "\nBROKEN NON JSON GARBAGE THAT MAKES THE OUTER FAIL\n")
+        found, _, _ = find_terminal(text)
+        self.assertEqual(found, SUCCESS_RETURN)
+
+    def test_a_stack_blowing_candidate_does_not_abort_the_scan(self):
+        """A later document start is at a different offset and does not
+        re-descend the structure that exhausted the stack."""
+        deep = "[" * 60_000 + "1" + "]" * 60_000
+        text = '{"a": ' + deep + "}\n" + json.dumps(SUCCESS_RETURN) + "\n"
+        found, _, _ = find_terminal(text)
+        self.assertEqual(found, SUCCESS_RETURN)
+
+
+class TestResolutionPrefersFreshness(unittest.TestCase):
+    """Regression: lexicographic tie-breaking could return another session's run.
+
+    Task ids are short and random, so a glob across every session directory can
+    match more than one. Picking by path spelling is arbitrary — and arbitrarily
+    dangerous, because the loser may be a COMPLETED run whose terminal result
+    would be handed to Phase 8 as if it were this review's.
+    """
+
+    def test_newest_candidate_wins_over_the_alphabetically_first(self):
+        with _Workspace() as ws:
+            old = os.path.join(ws.path, "aaa", "tasks")
+            new = os.path.join(ws.path, "zzz", "tasks")
+            os.makedirs(old)
+            os.makedirs(new)
+            stale = os.path.join(old, "wdup123.output")
+            fresh = os.path.join(new, "wdup123.output")
+            for path, mtime in ((stale, time.time() - 3600), (fresh, time.time())):
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("{}")
+                os.utime(path, (mtime, mtime))
+            self.assertEqual(_newest([stale, fresh]), fresh)
+            self.assertEqual(_newest([fresh, stale]), fresh)
+
+    def test_newest_tolerates_a_vanished_candidate(self):
+        with _Workspace() as ws:
+            real = ws.write("present.output", "{}")
+            self.assertEqual(_newest(["/nonexistent/gone.output", real]), real)
+
+    def test_newest_of_nothing_is_none(self):
+        self.assertIsNone(_newest([]))
+
+
+class TestTerminalPathIsSilentOnStderr(unittest.TestCase):
+    """The documented caller is a Bash tool call, which merges the streams.
+
+    A diagnostic line on the success path would arrive in FRONT of the payload,
+    so "stdout is the terminal return" would stop being true for the only caller
+    that matters.
+    """
+
+    def test_no_stderr_on_a_terminal_result(self):
+        with _Workspace() as ws:
+            path = ws.write("w1.output", json.dumps(envelope(SUCCESS_RETURN)))
+            code, out, err = run_main([path, "--timeout-seconds", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        self.assertEqual(sole_json_line(out), SUCCESS_RETURN)
+
+    def test_merged_streams_still_yield_exactly_one_line(self):
+        with _Workspace() as ws:
+            path = ws.write("w1.output", json.dumps(envelope(SUCCESS_RETURN)))
+            proc = subprocess.run(
+                ["python3", os.path.join(REPO_ROOT, "scripts", "await_workflow.py"),
+                 "--timeout-seconds", "0", "--", path],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            )
+        self.assertEqual(proc.returncode, 0)
+        self.assertEqual(len([x for x in proc.stdout.split("\n") if x]), 1)
+        self.assertEqual(json.loads(proc.stdout.strip()), SUCCESS_RETURN)
+
+
 class TestTruncatedFragmentIsNotPromoted(unittest.TestCase):
     """Regression: a torn read must not yield a nested receipt as the return.
 
@@ -664,7 +753,7 @@ class TestExitCodeContract(unittest.TestCase):
             code, out, err = run_main([path, "--timeout-seconds", "0"])
         self.assertEqual(code, 0)
         self.assertEqual(sole_json_line(out), SUCCESS_RETURN)
-        self.assertIn("await_workflow: terminal", err)
+        self.assertEqual(err, "", "the terminal path must not write to stderr")
 
     def test_terminal_failure_return_also_exits_zero(self):
         """ok:false is a terminal result, not a timeout."""
@@ -835,10 +924,13 @@ class TestNextCommand(unittest.TestCase):
     """The next attempt is copy-paste, not inference."""
 
     def _args(self, **over):
-        argv = [over.pop("target", "w1"), "--timeout-seconds", "0"]
+        target = over.pop("target", "w1")
+        argv = ["--timeout-seconds", "0"]
         for key, value in over.items():
             argv += ["--" + key.replace("_", "-"), str(value)]
-        return build_parser({}).parse_args(argv)
+        # Target last, behind `--` — the same shape the script emits, and the
+        # only shape that survives a target beginning with a dash.
+        return build_parser({}).parse_args(argv + ["--", target])
 
     def test_increments_the_attempt(self):
         cmd = build_next_command(self._args(attempt=2, max_attempts=4), None, 1.0)
@@ -878,17 +970,24 @@ class TestNextCommand(unittest.TestCase):
         self.assertTrue(cmd.rstrip().endswith("-- -weird.output"), cmd)
 
     def test_a_leading_dash_target_round_trips(self):
+        """The target must lead with '-' at the ARGV-TOKEN level to reproduce the
+        bug. An absolute path with a dashed basename starts with '/', so argparse
+        never sees an option-like token — a fixture built that way passes even
+        with the fix reverted, which makes it decoration rather than a guard.
+        """
         with _Workspace() as ws:
-            path = ws.write("-dashy.output", "")
-            args = self._args(target=path)
-            cmd = build_next_command(args, path, 1.0)
-            # Run it exactly as emitted — nothing may be appended, because the
-            # target rides behind a trailing `--` and a later flag would be
-            # swallowed as a positional.
-            proc = subprocess.run(cmd, shell=True,
-                                  capture_output=True, text=True, cwd=REPO_ROOT)
+            ws.write("-dashy.output", "")
+            args = self._args(target="-dashy.output")
+            cmd = build_next_command(args, "-dashy.output", 1.0)
+            self.assertIn("-- -dashy.output", cmd)
+            # Run it exactly as emitted, from the workspace, so the target really
+            # is the bare relative token `-dashy.output`.
+            proc = subprocess.run(cmd, shell=True, capture_output=True,
+                                  text=True, cwd=ws.path)
         self.assertEqual(proc.returncode, 3, proc.stderr)
-        self.assertEqual(json.loads(proc.stdout.strip())["attempt"], 2)
+        marker = json.loads(proc.stdout.strip())
+        self.assertEqual(marker["attempt"], 2)
+        self.assertEqual(marker["target"], "-dashy.output")
 
     def test_is_actually_runnable(self):
         """Round-trip it: the printed command must run and behave identically."""

@@ -401,6 +401,7 @@ Branch on the **exit code**. Never on your own judgment about what the output "l
 | **3** | not terminal yet, attempts remain | Run stdout's `next_command` **verbatim** (same `timeout: 600000`). Do not edit it, do not add a wait of your own, do not end the turn. |
 | **5** | the persisted artifacts landed but the return was never observed | Declare a **`workflow-timeout`** gap quoting the marker's `detail`, then deliver from the artifacts on disk (`{output_dir}/code-gauntlet-*-{head_sha_short}.*`) per the Phase 8 rules. |
 | **4** | attempts exhausted, or the awaiter failed | Declare a **`workflow-timeout`** gap and deliver whatever partial artifacts exist per the Phase 8 degradation rules (resume-from-checkpoint if the last-seen state offers it, else partial report + gaps). |
+| **2** | the command itself is malformed — stdout is empty, argparse put the reason on stderr | Not a workflow outcome. Fix the command against the block above and re-run it; never treat this as a timeout. |
 
 The script counts the attempts, carries its own state forward, and prints the next command; there is nothing here for you to tally or infer. Four attempts of 540s is 36 minutes of held turn — longer than the 30-minute cap this replaced.
 
