@@ -1,0 +1,55 @@
+{
+  "dispatched": [
+    {
+      "id": "xfi-77",
+      "file": "src/handlers/order.py",
+      "line_start": 220,
+      "line_end": 225,
+      "title": "Downstream consumer assumes synchronous commit",
+      "description": "order.save() is followed immediately by billing.sync(order.id), but the consumer in billing/sync.py reads the order row before the write transaction commits.",
+      "severity": "high",
+      "confidence": 70,
+      "dimension": "cross_file_impact",
+      "evidence": "order.save(); billing.sync(order.id)",
+      "suggestion": "Await the commit, or pass the in-memory order object directly instead of re-reading it.",
+      "affected_consumers": ["billing/sync.py"],
+      "cross_file_refs": ["billing/sync.py:41"]
+    }
+  ],
+  "result": {
+    "verified": [
+      {
+        "id": "xfi-77",
+        "file": "src/handlers/order.py",
+        "line_start": 220,
+        "line_end": 225,
+        "title": "Downstream consumer assumes synchronous commit",
+        "description": "order.save() is followed immediately by billing.sync(order.id), but the consumer in billing/sync.py reads the order row before the write transaction commits.",
+        "severity": "medium",
+        "confidence": 70,
+        "dimension": "cross_file_impact",
+        "evidence": "order.save(); billing.sync(order.id)",
+        "suggestion": "Await the commit, or pass the in-memory order object directly instead of re-reading it.",
+        "affected_consumers": ["billing/sync.py"],
+        "cross_file_refs": ["billing/sync.py:41"],
+        "origin": "surfaced",
+        "blame_metadata": {
+          "classification": "surfaced",
+          "author": null,
+          "date": null,
+          "original_severity": "high"
+        },
+        "factual_verification": {
+          "verified": true,
+          "reason": "file content and symbols verified",
+          "code_at_lines": "order.save(); billing.sync(order.id)"
+        },
+        "diff_validation": {
+          "in_diff": false,
+          "reason": "lines 220-225 of 'src/handlers/order.py' not found in diff — tagged as surfaced (was: surfaced)"
+        }
+      }
+    ],
+    "eliminated": []
+  }
+}

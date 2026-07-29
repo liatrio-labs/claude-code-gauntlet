@@ -1,0 +1,53 @@
+{
+  "dispatched": [
+    {
+      "id": "bug-101",
+      "file": "src/util.py",
+      "line_start": 12,
+      "line_end": 14,
+      "title": "Off-by-one in retry loop",
+      "description": "The retry loop increments the attempt counter before checking it against the configured maximum, allowing one extra retry beyond the intended limit.",
+      "severity": "high",
+      "confidence": 80,
+      "dimension": "bug",
+      "evidence": "for attempt in range(max_attempts + 1):",
+      "suggestion": "Use range(max_attempts) instead of range(max_attempts + 1).",
+      "cross_file_refs": []
+    }
+  ],
+  "result": {
+    "verified": [
+      {
+        "id": "bug-101",
+        "file": "src/util.py",
+        "line_start": 12,
+        "line_end": 14,
+        "title": "Off-by-one in retry loop",
+        "description": "The retry loop increments the attempt counter before checking it against the configured maximum, allowing one extra retry beyond the intended limit.",
+        "severity": "high",
+        "confidence": 80,
+        "dimension": "bug",
+        "evidence": "for attempt in range(max_attempts + 1):",
+        "suggestion": "Use range(max_attempts) instead of range(max_attempts + 1).",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Jamie Lin",
+          "date": "2026-07-20",
+          "original_severity": "high"
+        },
+        "factual_verification": {
+          "verified": true,
+          "reason": "file content and symbols verified",
+          "code_at_lines": "for attempt in range(max_attempts + 1):"
+        },
+        "diff_validation": {
+          "in_diff": true,
+          "reason": "line 12 found in diff"
+        }
+      }
+    ],
+    "eliminated": []
+  }
+}

@@ -38,6 +38,15 @@ The sandbox has no disk, so every persisted byte must be emitted as some agent's
 - **The legacy by-value path stays live** and is taken when `args.persist` is absent or when finding ids are missing/duplicated. Do not delete it — it is the safety net for pathological input.
 - **The report is unwrapped where the string is first received.** The report-writer intermittently returns its markdown already wrapped as `{"report": "# Code Gauntlet Report..."}` (~15 of 25 dated runs since 2026-07-22 — flaky, not a regression), and the writer persists that wrapper verbatim, as its contract requires. `dispatchReportSegment` unwraps it, so the single-dispatch and segmented paths are covered by one rule and the *persisted* artifact is markdown. Conservative by construction: a successful `JSON.parse` **and** a plain object **and** a string `report` member with no other meaningful content, else the string is returned untouched. Phase 8 also unwraps at delivery — belt-and-braces, not one of them dead.
 
+## Verify boundary (delta echo)
+
+The Verify executor echoes a per-id **delta** of what `verify_findings.py` decided — never findings — and `joinVerifyDeltas` rebuilds each slice from the findings the stage itself dispatched. The rationale and threat model live at the sites (`VERIFY_SCHEMA`/`trustSlice` in `stages.js`, the `_DELTA_FIELDS` audit block in `verify_findings.py`, `references/validation-pipeline.md`). What no single site can hold, because each rule spans two files:
+
+- **`_DELTA_FIELDS` (Python) and `DELTA_KEYS` (JS) are one list in two runtimes.** Both sides walk it in the same order to build the checksummed canonical form, so a field added to one and not the other either silently drops out of the content proof or makes every honest receipt fail it.
+- **`result.deltas` must stay the FIRST key of `result`.** The executor's `Read` of that file is length-capped and gives no truncation notice (see "Reading the shared context file"), so what it echoes has to be a PREFIX of the document — ahead of the full `verified`/`eliminated` arrays the same file still carries, unchanged, for bench/v2 consumers.
+- **`agent` is deleted at the join, and re-lands only with #22.** It used to be withheld by a schema omission that worked only stochastically (2 of 6 PRs measured surviving); joining a delta onto findings the stage already holds would have made survival deterministic, which is the measured dedup recall-collapse mechanism (eliminations 7 -> 33, same-6 recall 20/30 -> 13/30).
+- **The checksum reuses `assemble_artifacts.py`'s `fnv1a32`/`js_stringify_pretty`** instead of growing a third copy, so `tests/test_assemble_artifacts.py` is the cross-runtime parity guard for this boundary as well as the persist one.
+
 ## Findings schema
 
 All pipeline stages use the **canonical agent schema**. These field names are non-negotiable:

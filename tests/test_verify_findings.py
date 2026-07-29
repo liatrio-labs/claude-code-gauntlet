@@ -14,6 +14,7 @@ Covers:
 """
 
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -35,7 +36,24 @@ from scripts.verify_findings import (
     _coerce_numeric_fields,
     load_input,
     run,
+    run_verification,
+    build_deltas,
+    deltas_checksum,
+    _delta_confidence,
+    _DELTA_FIELDS,
     REPO_ROOT,
+)
+# JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
+# imported from the sibling module rather than re-hardcoded so the two never drift.
+from scripts.assemble_artifacts import JS_MAX_SAFE_INTEGER
+
+# Absolute path to the script file, for the delta-echo tests that must invoke the REAL
+# CLI as a subprocess rather than calling main() in-process with a patched argv: the
+# result key ORDER on disk and the sibling assemble_artifacts import both depend on how
+# the interpreter actually loads and runs this file, which an in-process main() call
+# (used by TestReceipt above) cannot exercise.
+SCRIPT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "scripts", "verify_findings.py")
 )
 
 
@@ -1389,12 +1407,16 @@ class TestReceipt(unittest.TestCase):
             with open(receipt_out) as fh:
                 envelope = json.load(fh)
 
-            # (a) envelope shape + receipt fields
+            # (a) envelope shape + receipt fields. deltas_checksum is the delta echo's
+            # content proof (issue #25 PR2) -- it now rides alongside sha/n_in/nonce.
             self.assertEqual(envelope["status"], "ok")
-            self.assertEqual(set(envelope["receipt"].keys()), {"sha", "n_in", "nonce"})
+            self.assertEqual(
+                set(envelope["receipt"].keys()), {"sha", "n_in", "nonce", "deltas_checksum"}
+            )
             self.assertEqual(envelope["receipt"]["sha"], "deadbeef")
             self.assertEqual(envelope["receipt"]["n_in"], len(findings))
             self.assertEqual(envelope["receipt"]["nonce"], "NONCE-123")
+            self.assertRegex(envelope["receipt"]["deltas_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$")
 
             # (b) result.verified is exactly what the legacy path produces
             self.assertEqual(envelope["result"]["verified"], legacy["verified"])
@@ -1430,6 +1452,336 @@ class TestReceipt(unittest.TestCase):
             self.assertIn("boom", envelope["stderr"])
         finally:
             os.unlink(findings_path)
+
+
+class TestBuildDeltas(unittest.TestCase):
+    """Unit tests for build_deltas: the per-finding delta list keyed by id and ordered
+    by the INPUT findings array (issue #25 req 1/2). These pin the exact contract the
+    workflow's join (joinVerifyDeltas in stages.js) relies on -- a regression here
+    would silently corrupt every verify slice's echo without any test elsewhere
+    noticing, since the JS side trusts whatever shape this script emits.
+    """
+
+    def test_one_entry_per_finding_in_input_order_with_identity_based_verified(self):
+        # Regression this guards: ordering deltas verified-then-eliminated (rather than
+        # by input order) would still pass the order-blind checksum, but would break
+        # anything downstream that assumes delta[i] answers for findings[i] -- and
+        # would make "verified" look like anything other than a straight per-finding
+        # boolean. f2 is "eliminated" by simply not appearing in the verified list,
+        # by object identity, not by matching its id.
+        f1 = {"id": "bug-1"}
+        f2 = {"id": "bug-2"}
+        f3 = {"id": "bug-3"}
+        findings = [f1, f2, f3]
+        verified = [f1, f3]
+        deltas = build_deltas(findings, verified)
+        self.assertEqual([d["id"] for d in deltas], ["bug-1", "bug-2", "bug-3"])
+        self.assertEqual([d["verified"] for d in deltas], [True, False, True])
+        for d in deltas:
+            self.assertIsInstance(d["verified"], bool)
+
+    def test_verified_membership_is_by_identity_not_by_id(self):
+        # Regression this guards: keying membership on id (instead of object identity)
+        # would flip BOTH twins of a duplicated id "verified", mis-reporting an
+        # eliminated finding as kept just because some OTHER dict shares its id.
+        # merge/persistDerivable are supposed to have already rejected duplicate ids
+        # upstream, but build_deltas's own docstring calls this out explicitly, so it
+        # must hold even on input the pipeline should never have produced.
+        dup_a = {"id": "same-id"}
+        dup_b = {"id": "same-id"}
+        deltas = build_deltas([dup_a, dup_b], [dup_a])
+        self.assertEqual(deltas[0]["verified"], True)
+        self.assertEqual(deltas[1]["verified"], False)
+
+    def test_elimination_reason_present_only_on_the_eliminated_finding(self):
+        # Regression this guards: the delta must carry run_verification's
+        # elimination_reason stamp for a REAL elimination and must NOT invent one for
+        # a finding that was kept. Runs the actual pipeline (not a synthetic dict) so
+        # a future refactor of the stamping site in run_verification is caught here,
+        # not just in a hand-built fixture that could drift from reality.
+        eliminated_finding = {
+            "id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
+            "file": "nope/does-not-exist-xyz.py", "line_start": 1, "title": "t",
+            "description": "d", "evidence": "e", "cross_file_refs": [],
+        }
+        verified_finding = {
+            "id": "bug-2", "dimension": "bug", "severity": "low", "confidence": 50,
+            "file": "nope/does-not-exist-abc.py", "title": "t2", "description": "d2",
+            "evidence": "e2", "cross_file_refs": [],
+        }
+        findings = [eliminated_finding, verified_finding]
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+            empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
+        try:
+            import io
+            with patch("sys.stderr", new_callable=io.StringIO):
+                result = run_verification(findings, "main", diff_file=empty_diff)
+            self.assertEqual(len(result["eliminated"]), 1)
+            self.assertEqual(len(result["verified"]), 1)
+            deltas = build_deltas(findings, result["verified"])
+            by_id = {d["id"]: d for d in deltas}
+            self.assertIn("elimination_reason", by_id["bug-1"])
+            self.assertTrue(by_id["bug-1"]["elimination_reason"].strip())
+            self.assertNotIn("elimination_reason", by_id["bug-2"])
+        finally:
+            os.unlink(empty_diff)
+
+    def test_only_delta_fields_appear_excluded_keys_absent(self):
+        # Regression this guards: a delta key outside {id, verified} union
+        # _DELTA_FIELDS would silently widen what the executor has to echo back,
+        # reintroducing the transcription risk this boundary exists to remove.
+        # blame_metadata/factual_verification/diff_validation are this script's own
+        # audit trail (no workflow schema declares them); agent is merge-injected
+        # identity withheld at this boundary ON PURPOSE (#25 req 1) -- see the audit
+        # comment above _DELTA_FIELDS in verify_findings.py for both rationales.
+        finding = {
+            "id": "bug-1",
+            "origin": "surfaced", "severity": "low", "confidence": 42,
+            "elimination_reason": "evidence does not match file content",
+            "blame_metadata": {"classification": "surfaced"},
+            "factual_verification": {"verified": True},
+            "diff_validation": {"in_diff": True},
+            "agent": "bug-detector",
+        }
+        deltas = build_deltas([finding], [])
+        self.assertEqual(len(deltas), 1)
+        allowed = {"id", "verified"} | set(_DELTA_FIELDS)
+        delta_keys = set(deltas[0].keys())
+        self.assertTrue(delta_keys.issubset(allowed), delta_keys - allowed)
+        for excluded in ("blame_metadata", "factual_verification", "diff_validation", "agent"):
+            self.assertNotIn(excluded, deltas[0])
+
+    def test_missing_blank_or_non_string_id_is_skipped(self):
+        # Regression this guards: the delta is keyed by id, so a finding with nothing
+        # usable to key it on must be OMITTED rather than emitted with a fabricated
+        # or coerced id -- per build_deltas's docstring, the workflow's id-coverage
+        # guard then sees an uncovered dispatched id and degrades that slice honestly,
+        # which is the right outcome for input the merge stage should have dropped.
+        findings = [
+            {"dimension": "bug"},               # no id key at all
+            {"id": "", "dimension": "bug"},      # blank string
+            {"id": "   ", "dimension": "bug"},   # whitespace-only
+            {"id": 123, "dimension": "bug"},     # non-string id
+            {"id": "bug-ok", "dimension": "bug"},
+        ]
+        deltas = build_deltas(findings, [])
+        self.assertEqual([d["id"] for d in deltas], ["bug-ok"])
+
+
+class TestDeltaConfidence(unittest.TestCase):
+    """_delta_confidence canonicalises confidence for the checksummed delta, or
+    returns None to omit the key entirely. Per the docstring: this function is a
+    no-op on every REAL pipeline path (confidence is always an int by contract) --
+    it exists purely so a non-integral or out-of-range value can never reach the
+    delta, where it would make the checksum diverge between JS and Python spelling.
+    """
+
+    def test_int_passes_through_unchanged(self):
+        # The common case: nothing to canonicalise, nothing to reject.
+        self.assertEqual(_delta_confidence(75), 75)
+        self.assertEqual(_delta_confidence(0), 0)
+
+    def test_float_rounds_half_up_to_int(self):
+        # Regression this guards: Python's round() is half-to-even (banker's
+        # rounding), which would make the delta's spelling of a .5 value depend on
+        # whether the integer part is odd or even. 74.5 is the discriminating case --
+        # round(74.5) == 74 in Python (74 is even) but explicit half-up must give 75.
+        self.assertEqual(_delta_confidence(75.5), 76)
+        self.assertEqual(_delta_confidence(75.4), 75)
+        self.assertEqual(_delta_confidence(75.6), 76)
+        self.assertEqual(_delta_confidence(74.5), 75)
+        self.assertNotEqual(round(74.5), _delta_confidence(74.5))
+
+    def test_bool_returns_none(self):
+        # Regression this guards: bool is an int subclass in Python (isinstance(True,
+        # int) is True), so a naive isinstance(value, (int, float)) check would let a
+        # stray boolean confidence through as 1/0 instead of being omitted.
+        self.assertIsNone(_delta_confidence(True))
+        self.assertIsNone(_delta_confidence(False))
+
+    def test_non_number_returns_none(self):
+        for value in ("80", None, [], {}, object()):
+            self.assertIsNone(_delta_confidence(value))
+
+    def test_nan_and_inf_return_none(self):
+        # Regression this guards: NaN/Infinity have no JSON.stringify spelling JS and
+        # Python agree on (JS emits null; json.dumps would emit the bare token NaN,
+        # which is not valid JSON) -- these must never reach the checksummed delta.
+        self.assertIsNone(_delta_confidence(float("nan")))
+        self.assertIsNone(_delta_confidence(float("inf")))
+        self.assertIsNone(_delta_confidence(float("-inf")))
+
+    def test_out_of_js_safe_range_int_returns_none(self):
+        # Regression this guards: an integer outside JS's safe range would have been
+        # parsed lossily on the JS side, so the two runtimes would no longer agree on
+        # the value even though both spell it without a dot or exponent.
+        self.assertIsNone(_delta_confidence(JS_MAX_SAFE_INTEGER + 1))
+        self.assertIsNone(_delta_confidence(-(JS_MAX_SAFE_INTEGER + 1)))
+        self.assertEqual(_delta_confidence(JS_MAX_SAFE_INTEGER), JS_MAX_SAFE_INTEGER)
+
+
+class TestDeltasChecksum(unittest.TestCase):
+    """deltas_checksum is fnv1a32(js_stringify_pretty(deltas)) -- the SAME checksum
+    pair the persist boundary's content proofs use (CLAUDE.md: "one checksum
+    definition in the plugin and one parity test guarding it"). These tests pin that
+    the workflow's trustSlice recomputation is an actual CONTENT proof and not a
+    constant that would validate any echo regardless of what it says.
+    """
+
+    def test_checksum_changes_when_a_delta_value_is_mutated(self):
+        # Regression this guards: if the checksum were computed over something
+        # coarser than delta content (e.g. just the id list, or a fixed schema
+        # marker), an executor that echoed a wrong origin/severity/confidence would
+        # still pass trustSlice's content-proof check.
+        deltas = [{"id": "bug-1", "verified": True, "origin": "new", "severity": "high"}]
+        original = deltas_checksum(deltas)
+        mutated = [dict(deltas[0], origin="surfaced")]
+        self.assertNotEqual(original, deltas_checksum(mutated))
+
+    def test_checksum_is_deterministic_for_identical_content(self):
+        # The flip side of the mutation test: two structurally-equal-but-distinct
+        # delta lists must produce the SAME checksum, or the workflow's recomputed
+        # proof would never match even an honest, faithful echo.
+        deltas = [{"id": "bug-1", "verified": False, "elimination_reason": "x"}]
+        self.assertEqual(deltas_checksum(deltas), deltas_checksum([dict(deltas[0])]))
+
+    def test_checksum_format(self):
+        self.assertRegex(deltas_checksum([]), r"^fnv1a32:0x[0-9a-f]{8}$")
+
+
+class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
+    """Real-subprocess coverage for the delta echo (issue #25 PR2). Everything above
+    calls build_deltas/_delta_confidence/deltas_checksum directly; these tests instead
+    invoke the actual CLI the way the workflow's Bash dispatch does, so a wiring bug in
+    _run_receipt (wrong key order, a broken argv wire-up, a broken sibling import) is
+    caught even when every unit-level function above stays correct in isolation.
+    """
+
+    def _findings(self):
+        # Same zero-git-dependency shape TestReceipt uses above: nonexistent files,
+        # no line_start, so classify_blame short-circuits on os.path.exists and
+        # verify_factual skips (no line reference to check) -- both findings end up
+        # verified, deterministically, with no git subprocess involved.
+        return [
+            {"id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
+             "file": "nope/does-not-exist-xyz.py", "title": "t", "description": "d",
+             "evidence": "e", "cross_file_refs": []},
+            {"id": "bug-2", "dimension": "bug", "severity": "low", "confidence": 50,
+             "file": "nope/does-not-exist-abc.py", "title": "t2", "description": "d2",
+             "evidence": "e2", "cross_file_refs": []},
+        ]
+
+    def _write_input(self, findings):
+        import json
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"findings": findings, "base_branch": "main"}, f)
+            return f.name
+
+    def _empty_diff(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+            return f.name
+
+    def test_result_key_order_starts_with_deltas_full_arrays_unchanged(self):
+        # Regression this guards: the executor's Read of this file is length-capped
+        # with NO truncation notice (CLAUDE.md), so the delta MUST be a prefix of the
+        # document rather than sitting after two full finding arrays. list(dict)
+        # preserves json.load's insertion order, so this is a real structural
+        # assertion on the file as written, not a restatement of the docstring.
+        import json
+        findings = self._findings()
+        in_path = self._write_input(findings)
+        empty_diff = self._empty_diff()
+        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        try:
+            proc = subprocess.run(
+                [sys.executable, SCRIPT, "--input", in_path,
+                 "--diff-file", empty_diff, "--output", out_path,
+                 "--nonce", "N-1", "--head-sha", "deadbeef"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            with open(out_path) as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "ok", envelope)
+            result_keys = list(envelope["result"])
+            self.assertEqual(result_keys[0], "deltas")
+            self.assertEqual(
+                set(result_keys), {"deltas", "verified", "eliminated", "batches", "stats"}
+            )
+            # The full v2/bench-consumed arrays are unchanged in shape: two findings
+            # in, both verified (no line_start -> verify_factual skips), zero
+            # eliminated -- the same result the legacy positional path would produce.
+            self.assertEqual(len(envelope["result"]["verified"]), 2)
+            self.assertEqual(envelope["result"]["eliminated"], [])
+            self.assertEqual(envelope["result"]["stats"]["total"], 2)
+            self.assertEqual(len(envelope["result"]["deltas"]), 2)
+            self.assertRegex(
+                envelope["receipt"]["deltas_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
+            )
+        finally:
+            for p in (in_path, empty_diff, out_path):
+                os.unlink(p)
+
+    def test_legacy_positional_path_emits_no_deltas_and_no_checksum(self):
+        # Regression this guards: the legacy CLI path's output shape must stay
+        # byte-for-byte what it always was -- bench and v2 consumers read this file
+        # directly off disk and have no envelope-unwrapping logic of their own.
+        import json
+        findings = self._findings()
+        in_path = self._write_input(findings)
+        empty_diff = self._empty_diff()
+        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        try:
+            proc = subprocess.run(
+                [sys.executable, SCRIPT, in_path,
+                 "--diff-file", empty_diff, "--output", out_path],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            with open(out_path) as fh:
+                output = json.load(fh)
+            self.assertEqual(set(output.keys()), {"verified", "eliminated", "batches", "stats"})
+            self.assertNotIn("deltas", output)
+            self.assertNotIn("receipt", output)
+            self.assertNotIn("status", output)
+        finally:
+            for p in (in_path, empty_diff, out_path):
+                os.unlink(p)
+
+    def test_runs_as_subprocess_from_an_unrelated_cwd(self):
+        # Regression this guards: "the one failure mode that would break every verify
+        # slice of every run" per the comment above the sys.path.append in
+        # verify_findings.py -- the sibling `from assemble_artifacts import ...` must
+        # resolve via os.path.dirname(os.path.abspath(__file__)), which must NOT
+        # depend on the interpreter's cwd. Run from a tempdir that is neither the
+        # repo root nor scripts/, with every path passed absolute so this test
+        # isolates the import concern from ordinary path-resolution concerns.
+        import json
+        findings = self._findings()
+        in_path = self._write_input(findings)
+        empty_diff = self._empty_diff()
+        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        unrelated_cwd = tempfile.mkdtemp()
+        try:
+            proc = subprocess.run(
+                [sys.executable, SCRIPT, "--input", in_path,
+                 "--diff-file", empty_diff, "--output", out_path,
+                 "--nonce", "N-2", "--head-sha", "cafef00d"],
+                capture_output=True, text=True, cwd=unrelated_cwd,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.assertNotIn("ImportError", proc.stderr)
+            self.assertNotIn("ModuleNotFoundError", proc.stderr)
+            with open(out_path) as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "ok", envelope)
+            self.assertRegex(
+                envelope["receipt"]["deltas_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
+            )
+        finally:
+            for p in (in_path, empty_diff, out_path):
+                os.unlink(p)
+            os.rmdir(unrelated_cwd)
 
 
 class TestCoerceNumericFields(unittest.TestCase):

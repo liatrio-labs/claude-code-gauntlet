@@ -1,0 +1,55 @@
+{
+  "dispatched": [
+    {
+      "id": "conv-401",
+      "file": "src/models/order.py",
+      "line_start": "42",
+      "line_end": "42",
+      "title": "Inconsistent naming: getOrderId vs get_order_id",
+      "description": "This method uses camelCase while every other method in the module uses snake_case.",
+      "severity": "low",
+      "confidence": 55,
+      "dimension": "convention",
+      "evidence": "def getOrderId(self):",
+      "suggestion": "Rename to get_order_id for consistency with the rest of the module.",
+      "claude_md_rule": "Use snake_case for all method names (CLAUDE.md > Style).",
+      "cross_file_refs": []
+    }
+  ],
+  "result": {
+    "verified": [
+      {
+        "id": "conv-401",
+        "file": "src/models/order.py",
+        "line_start": 42,
+        "line_end": 42,
+        "title": "Inconsistent naming: getOrderId vs get_order_id",
+        "description": "This method uses camelCase while every other method in the module uses snake_case.",
+        "severity": "low",
+        "confidence": 55,
+        "dimension": "convention",
+        "evidence": "def getOrderId(self):",
+        "suggestion": "Rename to get_order_id for consistency with the rest of the module.",
+        "claude_md_rule": "Use snake_case for all method names (CLAUDE.md > Style).",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Dana Wu",
+          "date": "2026-07-22",
+          "original_severity": "low"
+        },
+        "factual_verification": {
+          "verified": true,
+          "reason": "file content and symbols verified",
+          "code_at_lines": "def getOrderId(self):"
+        },
+        "diff_validation": {
+          "in_diff": true,
+          "reason": "line 42 found in diff"
+        }
+      }
+    ],
+    "eliminated": []
+  }
+}

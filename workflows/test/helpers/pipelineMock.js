@@ -10,6 +10,7 @@
 //                           a thrown member resolves to null (siblings unaffected).
 import { parseWriterPayload, plannedArtifactPaths } from '../../src/stages.js';
 import { AGENTS } from '../../src/registry.js';
+import { deltaEnvelope } from './verifyDelta.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
 
@@ -109,14 +110,17 @@ export function validArgs(over = {}) {
 //     dispatch (lets a test/recorder capture the REAL persisted findings/checkpoints)
 //   - reportText: when present, the report-writer returns this exact string (drives the
 //     empty-report guard — e.g. '' or '   ' for a whitespace-only false-negative report)
-//   - findings: replaces the default makeFindings() set that bug-detector discovers AND the
-//     verify-slice executor echoes back — lets a test drive a specific finding shape (e.g. a
-//     long description) end-to-end through the pipeline and assert it survives to persist.
+//   - findings: replaces the default makeFindings() set that bug-detector discovers. Under
+//     the delta echo (issue #25 PR2) the verify-slice executor never receives or returns the
+//     finding itself — only a per-id DECISION — so a specific finding shape (e.g. a long
+//     description) survives verify because trustSlice/joinVerifyDeltas re-attach the delta to
+//     the DISPATCHED slice finding, not because anything here echoes it back. This option
+//     still lets a test drive that shape end-to-end and assert it survives to persist.
 //   - verifySliceFailIndex: when set to a slice index N, both `verify-slice-N` and
 //     `verify-slice-N-retry` return an untrusted envelope so that slice degrades after its
-//     one retry; other slices still echo a trusted per-slice receipt. Multi-slice tests must
-//     keep limits.verifySliceSize under the agent-count coarsening guard (same constraint
-//     the mock uses when reconstructing slices from seed findings + args.limits).
+//     one retry; other slices still echo a trusted per-slice delta envelope. Multi-slice
+//     tests must keep limits.verifySliceSize under the agent-count coarsening guard (same
+//     constraint the mock uses when reconstructing slices from seed findings + args.limits).
 export function makeCtx(args, opts = {}) {
   const calls = [];
   const violations = [];
@@ -156,9 +160,10 @@ export function makeCtx(args, opts = {}) {
       return { written: entries.map((e) => e.path) };
     }
     if (label.startsWith('verify-slice-')) {
-      // Per-slice receipt: label carries the index (and optional -retry); nonce is
-      // `${nonce}.${i}` on attempt 1 and `${nonce}.${i}.r1` on the retry. Echo only THIS
-      // slice's findings so n_in matches when verifySliceSize < nFindings.
+      // Per-slice DELTA receipt (issue #25 PR2): label carries the index (and optional
+      // -retry); nonce is `${nonce}.${i}` on attempt 1 and `${nonce}.${i}.r1` on the retry.
+      // Build the envelope over only THIS slice's findings so n_in and the id-coverage
+      // check in trustSlice match when verifySliceSize < nFindings.
       const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
       const sliceIndex = m ? Number(m[1]) : 0;
       const isRetry = Boolean(m && m[2]);
@@ -166,13 +171,20 @@ export function makeCtx(args, opts = {}) {
         return { status: 'failed', exitCode: 1, stderr: `injected verify failure on slice ${sliceIndex}` };
       }
       const slice = sliceForIndex(sliceIndex);
-      const verified = slice.map((f) => ({ ...f, origin: 'new' }));
       const sliceNonce = isRetry ? `${A.nonce}.${sliceIndex}.r1` : `${A.nonce}.${sliceIndex}`;
-      return {
-        status: 'ok',
-        receipt: { sha: A.headShaShort, n_in: verified.length, nonce: sliceNonce },
-        result: { verified, eliminated: [], batches: [], stats: {} },
-      };
+      // deltaEnvelope builds a TRUSTED delta echo for this slice — one {id, verified, ...}
+      // decision per dispatched finding, never the finding itself (the executor can no
+      // longer supply findings at all under the delta echo). The old by-value mock stamped
+      // origin:'new' onto every echoed finding so the pipeline's happy-path tests could tell
+      // "verified" apart from "unknown"/degraded origin; the override here reproduces that
+      // same signal on every delta in the slice.
+      const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new' }]));
+      return deltaEnvelope(slice, {
+        sha: A.headShaShort,
+        nonce: sliceNonce,
+        n_in: slice.length,
+        overrides: originOverrides,
+      });
     }
     if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };

@@ -1,0 +1,29 @@
+{
+  "checksum": "fnv1a32:0x307b33d1",
+  "deltas": [
+    {
+      "confidence": 62,
+      "id": "bug-301",
+      "origin": "new",
+      "severity": "medium",
+      "verified": true
+    }
+  ],
+  "joined": [
+    {
+      "confidence": 62,
+      "cross_file_refs": [],
+      "description": "parseResponsePayload() is called without first checking whether response is None.",
+      "dimension": "bug",
+      "evidence": "data = parseResponsePayload(response)",
+      "file": "src/api/handlers.py",
+      "id": "bug-301",
+      "line_end": 33,
+      "line_start": 30,
+      "origin": "new",
+      "severity": "medium",
+      "suggestion": "Add a None check before calling parseResponsePayload.",
+      "title": "Missing null check before dereferencing response"
+    }
+  ]
+}

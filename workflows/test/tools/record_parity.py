@@ -96,6 +96,53 @@ def _apply_validations(inp):
     return {"findings": findings, "adjusted_count": adjusted_count, "unmatched_ids": unmatched_ids}
 
 
+# The script's own audit trail (blame_metadata / factual_verification / diff_validation
+# -- see verify_findings.py's "DELIBERATELY EXCLUDED" comment above its _DELTA_FIELDS
+# constant) plus the deliberately withheld `agent` identity (issue #25 requirement 1).
+# No workflow schema declares any of the first three, and joinVerifyDeltas (stages.js)
+# only ever writes DELTA_VALUE_KEYS onto the finding it already holds -- it never carries
+# any of these four across the join either -- so a golden "joined" finding must not either.
+_VERIFY_DELTA_DROP = ("blame_metadata", "factual_verification", "diff_validation", "agent")
+
+
+def _project_verify_delta(finding):
+    return {k: v for k, v in finding.items() if k not in _VERIFY_DELTA_DROP}
+
+
+def _verify_deltas(inp):
+    # Pins issue #25 requirement 1's equivalence claim: the findings the workflow
+    # rebuilds by joining the delta onto the dispatched slice must equal, for every
+    # field any downstream stage consumes, what verify_findings.py itself left on the
+    # finding (minus its own audit trail and the withheld `agent` -- see
+    # _VERIFY_DELTA_DROP above). Python (this function, via the real build_deltas/
+    # deltas_checksum) owns the producing half; the JS twin (joinVerifyDeltas/
+    # deltaContentProof, asserted in workflows/test/parity.test.js) owns the
+    # reconstructing half; this golden is what sits between them.
+    from verify_findings import build_deltas, deltas_checksum
+
+    verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
+    post_by_id = dict(verified_by_id)
+    post_by_id.update({f["id"]: f for f in inp["result"]["eliminated"]})
+
+    # Reorder to DISPATCH order using the SAME dict objects as result["verified"] /
+    # result["eliminated"] (looked up from post_by_id, not re-serialized) -- build_deltas
+    # decides membership by object identity (id(finding) in {id(f) for f in verified}),
+    # exactly mirroring how verify_findings.py's own findings/verified pair are the same
+    # mutated-in-place objects. Passing the DISPATCHED (pre-verification) objects instead
+    # would make every finding look eliminated, since none of them is literally one of the
+    # objects in result["verified"].
+    ordered = [post_by_id[f["id"]] for f in inp["dispatched"]]
+
+    deltas = build_deltas(ordered, inp["result"]["verified"])
+    checksum = deltas_checksum(deltas)
+    joined = [
+        _project_verify_delta(post_by_id[f["id"]])
+        for f in inp["dispatched"]
+        if f["id"] in verified_by_id
+    ]
+    return {"deltas": deltas, "checksum": checksum, "joined": joined}
+
+
 def _apply_challenges(inp):
     # Mirrors apply_challenges.py main()'s bridge composition (:444-480) --
     # apply_challenges() -> dedup_cross_agent() re-run -> rank_findings() --
@@ -132,6 +179,7 @@ RECORDERS = {
     "filter_findings": _filter_findings,
     "apply_validations": _apply_validations,
     "apply_challenges": _apply_challenges,
+    "verify_deltas": _verify_deltas,
 }
 
 

@@ -171,6 +171,52 @@ class TestApplyChallengesParity(unittest.TestCase):
                 self.assertEqual(got, expected)
 
 
+# The script's own audit trail (blame_metadata / factual_verification / diff_validation --
+# see verify_findings.py's "DELIBERATELY EXCLUDED" comment above its _DELTA_FIELDS
+# constant) plus the deliberately withheld `agent` identity (issue #25 requirement 1). No
+# workflow schema declares any of the first three, and joinVerifyDeltas (stages.js) only
+# ever writes DELTA_VALUE_KEYS onto the finding it already holds -- it never carries any
+# of these four across the join either -- so a golden "joined" finding must not either.
+# Duplicated from record_parity.py's own _VERIFY_DELTA_DROP/_project_verify_delta rather
+# than imported, matching this file's existing convention of re-deriving each recorder's
+# computation independently (e.g. TestApplyChallengesParity re-composes apply_challenges'
+# bridge rather than calling record_parity.py's _apply_challenges) -- a shared import
+# would let a recorder bug and its "parity" test agree with each other by construction.
+_VERIFY_DELTA_DROP = ("blame_metadata", "factual_verification", "diff_validation", "agent")
+
+
+def _project_verify_delta(finding):
+    return {k: v for k, v in finding.items() if k not in _VERIFY_DELTA_DROP}
+
+
+class TestVerifyDeltasParity(unittest.TestCase):
+    def test_all_cases(self):
+        from verify_findings import build_deltas, deltas_checksum
+        for case_dir in sorted((FIXTURES / "verify_deltas").iterdir()):
+            if not case_dir.is_dir():
+                continue
+            with self.subTest(case=case_dir.name):
+                inp, expected = _load(case_dir)
+                verified_by_id = {f["id"]: f for f in inp["result"]["verified"]}
+                post_by_id = dict(verified_by_id)
+                post_by_id.update({f["id"]: f for f in inp["result"]["eliminated"]})
+                # Reorder to dispatch order using the SAME dict objects as
+                # result["verified"]/result["eliminated"] (looked up from post_by_id) --
+                # build_deltas decides membership by object identity, mirroring how
+                # verify_findings.py's own findings/verified pair are literally the same
+                # mutated-in-place objects.
+                ordered = [post_by_id[f["id"]] for f in inp["dispatched"]]
+                deltas = build_deltas(ordered, inp["result"]["verified"])
+                checksum = deltas_checksum(deltas)
+                joined = [
+                    _project_verify_delta(post_by_id[f["id"]])
+                    for f in inp["dispatched"]
+                    if f["id"] in verified_by_id
+                ]
+                got = {"deltas": deltas, "checksum": checksum, "joined": joined}
+                self.assertEqual(got, expected)
+
+
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
         before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}

@@ -31,7 +31,7 @@ Input JSON schema:
         "repo": "name"
     }
 
-Output JSON schema:
+Output JSON schema (legacy positional path — unchanged):
     {
         "verified": [...],
         "eliminated": [...],
@@ -51,16 +51,63 @@ Output JSON schema:
     Each finding in "eliminated" has an added "elimination_reason" field explaining
     why it was removed (e.g., "line not in diff", "evidence mismatch", etc.).
 
+Receipt mode (--input/--nonce/--head-sha) wraps that same result in the envelope the
+workflow's verify stage consumes, and adds the DELTA ECHO (issue #25 req 1/2):
+
+    {
+      "status": "ok",
+      "receipt": {"sha": ..., "n_in": N, "nonce": ..., "deltas_checksum": "fnv1a32:0x..."},
+      "result": {
+        "deltas": [ {"id", "verified", "origin", "severity", "confidence",
+                     "elimination_reason"?}, ... ],   <- FIRST key, see below
+        "verified": [...], "eliminated": [...], "batches": [...], "stats": {...}
+      }
+    }
+
+    `deltas` carries ONLY what this script changed, keyed by finding id and ordered by
+    the input findings array, so the executor agent echoes a few hundred bytes instead of
+    re-typing every finding it was handed. The workflow joins the delta onto the findings
+    it already holds by value. `deltas` is deliberately the FIRST key of `result`: the
+    executor reads this file with a tool whose return is length-capped and gives NO
+    truncation notice (CLAUDE.md), so the answer it must echo is a short PREFIX of the
+    document rather than something buried after two full finding arrays.
+
+    The full `verified`/`eliminated`/`batches`/`stats` arrays stay on disk unchanged for
+    bench and v2 consumers; nothing but the echo shape changes.
+
 No external Python dependencies — stdlib only.
 """
 
 import argparse
 import json
+import math
 import os
 import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+
+# The delta echo's content proof reuses the ONE Python implementation of the
+# cross-runtime checksum pair rather than growing a third copy of it. fnv1a32 and
+# js_stringify_pretty are defined in assemble_artifacts.py and pinned against their JS
+# twins (stages.js) by tests/test_assemble_artifacts.py over surrogates, astral pairs,
+# U+2028/U+2029 and control characters — CLAUDE.md calls that test "the only thing
+# standing between a serializer tweak and a silently divergent artifact", which is
+# exactly the guarantee this boundary needs too. Both scripts ship in the same plugin
+# directory, and sys.path[0] is that directory whether this file is run as a script or
+# imported by the suite. The append below is belt-and-braces for the one way that stops
+# being true (`python3 -P` / PYTHONSAFEPATH, which drops the script-directory entry): an
+# ImportError here would fail EVERY verify slice of EVERY run, so the cheapest possible
+# insurance is worth taking. Appended, never inserted, so nothing in this directory can
+# shadow a stdlib module.
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from assemble_artifacts import (  # noqa: E402 — sibling script, see above
+    JS_MAX_SAFE_INTEGER,
+    JsSerializationError,
+    fnv1a32,
+    js_stringify_pretty,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -912,6 +959,135 @@ def _resolve_head_sha():
     return None
 
 
+# ---------------------------------------------------------------------------
+# Delta echo (issue #25 requirements 1 and 2)
+# ---------------------------------------------------------------------------
+#
+# The workflow already holds every dispatched finding BY VALUE. The only thing it cannot
+# know is what THIS script decided, so that is the only thing the executor needs to carry
+# back. Everything else the by-value echo used to transcribe was a round trip of the
+# workflow's own data through a sampled agent — 22.95s of one profiled executor's 31.9s
+# generation, and the surface on which a live run turned a 10-verified/0-eliminated disk
+# result into a 7/3 echo with a valid receipt.
+#
+# WHAT THE DELTA MUST COVER — audited against every mutation site in this file (there is
+# no `del` and no `.pop`: every mutation is an assignment, so the delta is complete iff it
+# names every key this script assigns that anything downstream consumes):
+#
+#   origin              classify_blame (always) + validate_diff_lines ("surfaced" flip)
+#   severity            the one-step downgrade, at most once, from either of those two
+#   confidence          verify_factual's zeroing / proportional reduction
+#   elimination_reason  run_verification's stamp on a real elimination
+#
+# DELIBERATELY EXCLUDED, each for a reason that must survive a future edit:
+#
+#   blame_metadata / factual_verification / diff_validation — this script's own audit
+#     trail. No workflow schema declares them (registry.js FINDING_PROP_TYPES is the whole
+#     declaration), so the by-value echo ALREADY dropped them on every run and no stage
+#     downstream of verify reads them. They stay in the on-disk document, which is
+#     unchanged, for bench/v2 consumers and for anything that wants the audit trail.
+#   agent — merge-injected identity, withheld at this boundary ON PURPOSE (#25 req 1).
+#     Deterministic `agent` survival past verify is the measured dedup recall-collapse
+#     mechanism (mini-subset A: dedup eliminations 7 -> 33, recall 20/30 -> 13/30); it
+#     re-lands only with the cross-dimension consolidation redesign (#22). This script
+#     never writes `agent`, so excluding it here is automatic — the workflow-side join is
+#     where the withholding is actually enforced, and a test pins it there.
+_DELTA_FIELDS = ("origin", "severity", "confidence", "elimination_reason")
+
+
+def _delta_confidence(value):
+    """Canonicalise a confidence for the delta, or None to omit it.
+
+    Confidence is an INTEGER 0-100 by contract (registry.js declares it `number`; every
+    agent .md emits an integer score; all four of this script's own mutation sites
+    produce ints; ``_coerce_numeric_fields`` only ever produces ints). This function is
+    therefore a no-op on every real path — it exists because the delta is checksummed,
+    and a non-integral double is spelled differently by JS and Python (the divergence
+    ``assemble_artifacts.assert_js_reproducible`` refuses outright). Rounding ONCE here,
+    in one runtime, is what keeps the two sides from having to agree on float spelling
+    at all: the workflow only ever sees an integer and rejects anything else.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+        # Explicit half-up, not round(): Python's round() is half-to-even, and the
+        # spelling of this decision should not depend on which runtime reads the code.
+        value = int(math.floor(value + 0.5))
+    if abs(value) > JS_MAX_SAFE_INTEGER:
+        return None
+    return int(value)
+
+
+def build_deltas(findings, verified):
+    """The per-finding delta list, ordered by the INPUT findings array.
+
+    ``findings`` is the dispatched slice in dispatch order; ``verified`` is
+    ``run_verification``'s verified list, which holds the SAME dict objects (this script
+    mutates in place), so membership is decided by object identity — not by id, which
+    would mis-handle a duplicated id.
+
+    Ordering by the input array, rather than by verified-then-eliminated, is what lets
+    the workflow rebuild the exact same sequence for the checksum from data it already
+    holds: the echo's own array order then cannot affect the proof, so an executor that
+    reorders the list is tolerated while one that changes a VALUE is caught.
+
+    A finding with no usable string id is skipped: the delta is keyed by id and there is
+    nothing to key it on. The workflow's id-coverage guard then sees an uncovered
+    dispatched id and degrades that slice honestly — findings kept, degradation
+    disclosed — which is the right outcome for input the merge stage should have
+    dropped (mergeFindings drops id-less findings; persistDerivable refuses on missing
+    or duplicate ids).
+    """
+    kept = {id(f) for f in verified}
+    deltas = []
+    for finding in findings:
+        if not isinstance(finding, dict):
+            continue
+        fid = finding.get("id")
+        if not isinstance(fid, str) or not fid.strip():
+            continue
+        delta = {"id": fid, "verified": id(finding) in kept}
+        for key in _DELTA_FIELDS:
+            value = finding.get(key)
+            if value is None:
+                continue
+            if key == "confidence":
+                value = _delta_confidence(value)
+                if value is None:
+                    continue
+            delta[key] = value
+        deltas.append(delta)
+    return deltas
+
+
+def deltas_checksum(deltas):
+    """The delta echo's content proof, or None when the deltas will not serialise.
+
+    ``fnv1a32(js_stringify_pretty(deltas))`` — the same pair the persist path's content
+    proofs use, so there is exactly one checksum definition in the plugin and one parity
+    test guarding it. The workflow recomputes this over the deltas the executor echoed
+    back, rebuilt in canonical key order from the dispatched slice, and refuses the slice
+    on a mismatch.
+
+    Threat model, stated plainly and identically to trustSlice's: this is a consistency
+    check against a STALE, DRIFTING or CONFUSED executor, not authentication. The
+    checksum travels in the same envelope as the data it covers, so a Byzantine executor
+    could recompute it — but an LLM transcribing a document cannot, which is precisely
+    the failure this boundary keeps observing (the by-value writer's transcription of
+    findings.json diverged on 3 of 3 measured runs).
+
+    Returns None rather than raising if the deltas contain something unserialisable: an
+    absent proof makes the workflow degrade the slice honestly, where an exception here
+    would take out the whole envelope including the honest failure shape.
+    """
+    try:
+        return fnv1a32(js_stringify_pretty(deltas))
+    except JsSerializationError:
+        return None
+
+
 def run_verification(findings, base_branch, diff_file=None, verbose=False):
     """Run the full verify pipeline over ``findings`` and return the result dict
     ``{verified, eliminated, batches, stats}``.
@@ -993,11 +1169,18 @@ def _run_receipt(args):
     """Receipt mode (Task 11): load findings, run the shared verification, and emit
     the discriminated-union envelope the JS verify stage trusts.
 
-    On success:  ``{status:'ok', receipt:{sha, n_in, nonce}, result:{...}}``.
+    On success:  ``{status:'ok', receipt:{sha, n_in, nonce, deltas_checksum},
+    result:{deltas, verified, eliminated, batches, stats}}``.
     On an uncaught exception during the body: ``{status:'failed', exitCode:1,
     stderr:str(e)}`` — written with exit 0 because an honest failure is
     schema-valid; the workflow routes it to the UNVERIFIED path rather than
     trusting a fabricated success under retry pressure.
+
+    The result dict is REBUILT here with ``deltas`` first rather than mutated in
+    place: the executor's Read of this file is length-capped with no truncation
+    notice, so what it has to echo must sit at the front of the document, ahead of
+    the two full finding arrays. Rebuilding also leaves ``run_verification``'s own
+    return value — the legacy positional path's entire output — untouched.
     """
     sha = args.head_sha or _resolve_head_sha() or ""
     try:
@@ -1005,10 +1188,16 @@ def _run_receipt(args):
         findings = data["findings"]
         base_branch = data.get("base_branch") or args.base_branch
         result = run_verification(findings, base_branch, args.diff_file, verbose=False)
+        deltas = build_deltas(findings, result["verified"])
         envelope = {
             "status": "ok",
-            "receipt": {"sha": sha, "n_in": len(findings), "nonce": args.nonce},
-            "result": result,
+            "receipt": {
+                "sha": sha,
+                "n_in": len(findings),
+                "nonce": args.nonce,
+                "deltas_checksum": deltas_checksum(deltas),
+            },
+            "result": {"deltas": deltas, **result},
         }
     except Exception as e:  # noqa: BLE001 — honest failure is the contract
         envelope = {"status": "failed", "exitCode": 1, "stderr": str(e)}

@@ -46,7 +46,21 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # script alone, and CLAUDE.md is where every other cross-cutting script rule in
 # this file already lives (stdlib-only, language-agnostic, repo-root-for-searches
 # — the three bullets directly above this one).
-CLAUDE_MD_BYTE_CEILING = 24_469
+#
+# Raised 2026-07-29 to 26,209 (+1,740 bytes) for issue #25 PR2 (verify delta echo): a
+# "Verify boundary" section carrying four rules, each of which SPANS two files and so
+# cannot sit in a comment at any one site — which is exactly what the two-part test
+# asks. (1) `_DELTA_FIELDS` in scripts/verify_findings.py and `DELTA_KEYS` in
+# workflows/src/stages.js are one list in two runtimes, walked in the same order to
+# build a checksummed canonical form. (2) `result.deltas` must stay the first key of
+# the script's `result`, because of a platform property of the READER (a length-capped
+# Read with no truncation notice) that the writing script cannot state alone.
+# (3) `agent` is deleted at the join, with the measured recall evidence for why.
+# (4) the checksum reuses assemble_artifacts.py's pair rather than growing a third copy.
+# The first draft of this section ran to +4,292 bytes; it was cut by ~60% to exactly
+# these cross-file rules, and everything derivable from one site — the incident history,
+# the excluded audit fields, the not-authentication framing — was left at that site.
+CLAUDE_MD_BYTE_CEILING = 26_209
 
 
 class TestClaudeMdBudget(unittest.TestCase):

@@ -1,0 +1,29 @@
+{
+  "checksum": "fnv1a32:0x36c21c9a",
+  "deltas": [
+    {
+      "confidence": 80,
+      "id": "bug-101",
+      "origin": "new",
+      "severity": "high",
+      "verified": true
+    }
+  ],
+  "joined": [
+    {
+      "confidence": 80,
+      "cross_file_refs": [],
+      "description": "The retry loop increments the attempt counter before checking it against the configured maximum, allowing one extra retry beyond the intended limit.",
+      "dimension": "bug",
+      "evidence": "for attempt in range(max_attempts + 1):",
+      "file": "src/util.py",
+      "id": "bug-101",
+      "line_end": 14,
+      "line_start": 12,
+      "origin": "new",
+      "severity": "high",
+      "suggestion": "Use range(max_attempts) instead of range(max_attempts + 1).",
+      "title": "Off-by-one in retry loop"
+    }
+  ]
+}

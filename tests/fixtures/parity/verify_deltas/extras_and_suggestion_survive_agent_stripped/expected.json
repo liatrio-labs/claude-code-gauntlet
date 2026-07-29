@@ -1,0 +1,32 @@
+{
+  "checksum": "fnv1a32:0xe38794aa",
+  "deltas": [
+    {
+      "confidence": 60,
+      "id": "tc-501",
+      "origin": "new",
+      "severity": "medium",
+      "verified": true
+    }
+  ],
+  "joined": [
+    {
+      "claude_md_rule": "Every new code path requires a corresponding test (CLAUDE.md > Tests).",
+      "confidence": 60,
+      "criticality": "high",
+      "cross_file_refs": [],
+      "description": "The refund flow is only tested for full-order refunds; a partial shipment followed by a refund request is untested.",
+      "dimension": "test_coverage",
+      "evidence": "def test_refund_full_order(): ...",
+      "failure_scenario": "A partial shipment followed by a refund silently double-credits the customer, because the untested branch skips the shipped-quantity adjustment.",
+      "file": "tests/test_orders.py",
+      "id": "tc-501",
+      "line_end": 40,
+      "line_start": 10,
+      "origin": "new",
+      "severity": "medium",
+      "suggestion": "Add a test for refund_after_partial_ship.",
+      "title": "No test covers the refund-after-partial-ship path"
+    }
+  ]
+}

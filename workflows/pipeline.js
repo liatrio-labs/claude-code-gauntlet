@@ -2755,39 +2755,6 @@ function findingItemSchema(schemaExtra) {
   return { type: 'object', properties: props, required: FINDING_REQUIRED };
 }
 
-// The union of EVERY dimension's schemaExtra. The verify slice carries findings from ALL
-// agents mixed together (post-merge), so its echo item schema must declare every agent's
-// per-dimension extras — not one agent's — or a field one agent emitted is dropped when the
-// executor transcribes the --output file "verbatim via the schema" (the same field-dropping
-// class the empty-properties trap caused for description).
-function allSchemaExtras() {
-  const out = {};
-  for (const d of DIMENSIONS) for (const [k, t] of Object.entries(d.schemaExtra || {})) out[k] = t;
-  return out;
-}
-
-// The verify echo item schema: the full canonical finding shape (numeric confidence) PLUS
-// (1) the union of all per-dimension extras; and (2) elimination_reason —
-// run_verification() ALWAYS stamps it on a real elimination (verify_findings.py), and
-// trustSlice's content-fidelity gate requires it on every eliminated[] entry, so it must be
-// declarable or an honest elimination's stamp is dropped in transcription and the gate false-
-// fires. (eliminated_by is a JS-pipeline-only field the verify script never sets — declaring
-// it would only invite the executor to fabricate it, so it is intentionally NOT declared.)
-//
-// `agent` is intentionally NOT declared (V3.1 item 4, REVERTED after mini-subset A):
-// declaring it made the merge-injected agent identity survive the echo deterministically,
-// which activated the filter's proximity-keyed cross-agent dedup everywhere (it requires
-// 2+ distinct agents in a 5-line bucket — starved when agent is absent). Measured on the
-// pre-registered 6-PR subset: dedup eliminations 7 -> 33 and same-6 recall 0.667 -> 0.433
-// (-7 goldens), with dedup firing on exactly the Gate-1 PRs where agent happened to
-// survive. Deterministic agent identity re-lands ONLY together with the cross-dimension
-// consolidation redesign (issue #17, D20 entry) — they are one design problem.
-function verifyItemSchema() {
-  const item = findingItemSchema(allSchemaExtras());
-  item.properties.elimination_reason = { type: 'string' };
-  return item;
-}
-
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
 // per-agent result envelope { findings, complete, total_seen }. REAL JSON Schema —
 // {type, properties, required, items} — because the platform validates schemas before
@@ -2960,31 +2927,67 @@ function mergeStage(discoverOut, meta) {
 
 // --- Phase 4: Verify --------------------------------------------------------
 
+// The canonical key order of one delta, and the ONLY keys that carry meaning. Both the
+// dispatch schema and the checksum canonicalisation are built from this one list, so a
+// field added to the delta cannot be declared in one place and forgotten in the other.
+// It mirrors verify_findings.py's `_DELTA_FIELDS` plus the two structural keys; the
+// script's audit comment is the authority for why the set is exactly this.
+const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
+
 // The discriminated-union envelope the executor returns. Both shapes coexist so an
 // honest failure is schema-valid — the executor never fabricates a success under
 // StructuredOutput retry pressure ({status:'failed'} is a legal answer).
+//
+// `result.deltas` REPLACED the by-value verified/eliminated finding arrays (#25 req 1).
+// The workflow already holds every dispatched finding, so the only thing the executor can
+// tell it is what the SCRIPT decided; re-transcribing the findings themselves bought
+// nothing and cost everything — 22.95s of one profiled executor's 31.9s generation, a
+// 1,990-byte schema (the file's largest) dispatched per slice, and the entire surface on
+// which a live run's 10-verified/0-eliminated disk result came back as a 7/3 echo under a
+// valid receipt. The item shape is deliberately flat and typed: six scalars, no nested
+// objects, no per-dimension extras to union, nothing whose absence can silently empty a
+// finding field downstream (the `description`-stripping class this schema used to enable).
+//
+// `agent` is not declarable here because no finding is echoed at all any more — the
+// withholding that used to depend on leaving one property out of a finding schema is now
+// structural. joinVerifyDeltas strips it from the findings it emits, and a test fails if a
+// joined finding is ever filter-visibly tagged (V3.1 item 4 was reverted for exactly this:
+// deterministic agent identity past verify moved mini-subset A's dedup eliminations
+// 7 -> 33 and same-6 recall 20/30 -> 13/30; it re-lands only with #22's redesign).
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
     status: { type: 'string' }, // 'ok' | 'failed'
     receipt: {
       type: 'object',
-      properties: { sha: { type: 'string' }, n_in: { type: 'number' }, nonce: { type: 'string' } },
+      properties: {
+        sha: { type: 'string' },
+        n_in: { type: 'number' },
+        nonce: { type: 'string' },
+        // The delta echo's content proof (fnv1a32 over the script's own serialisation).
+        // Optional in the SCHEMA, mandatory in trustSlice — an absent proof is a legal
+        // thing for the executor to say and an untrusted thing for the workflow to act on.
+        deltas_checksum: { type: 'string' },
+      },
     },
     result: {
       type: 'object',
       properties: {
-        // verified/eliminated carry findings BY VALUE — verifyStage collects result.verified
-        // as THE findings for every later stage — so their items must declare the FULL finding
-        // shape (verifyItemSchema). An empty-properties item let the executor drop `description`
-        // when echoing the --output file "verbatim", which emptied descriptions downstream and
-        // false-fired the filter's injection guard. verifyItemSchema declares numeric confidence,
-        // the injected `agent` field (detectDisagreement routes on it), every per-dimension extra,
-        // and elimination_reason (the script's real-elimination stamp, gated by trustSlice).
-        verified: { type: 'array', items: verifyItemSchema() },
-        eliminated: { type: 'array', items: verifyItemSchema() },
-        batches: { type: 'array', items: { type: 'object', properties: {} } },
-        stats: { type: 'object', properties: {} },
+        deltas: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              verified: { type: 'boolean' },
+              origin: { type: 'string' },
+              severity: { type: 'string' },
+              confidence: { type: 'number' },
+              elimination_reason: { type: 'string' },
+            },
+            required: ['id', 'verified'],
+          },
+        },
       },
     },
     exitCode: { type: 'number' },
@@ -3008,10 +3011,13 @@ const VERIFY_ATTEMPTS_PER_SLICE = 2;
 // Slices findings into limits.verifySliceSize chunks and dispatches an `executor` agent
 // per slice — one call, plus at most one retry (below) — SEQUENTIALLY (not parallel())
 // so each envelope pairs to its slice by order. Each executor runs the pinned
-// verify_findings.py receipt command and returns
-// VERIFY_SCHEMA. A slice is TRUSTED only when status==='ok' AND the receipt echoes the
-// dispatched nonce, head sha, and slice length (n_in — the truncation guard: proof the
-// script saw every finding we sent).
+// verify_findings.py receipt command and returns VERIFY_SCHEMA: the receipt plus a
+// per-finding DELTA, never the findings themselves (#25 req 1). A slice is TRUSTED only
+// when status==='ok', the receipt echoes the dispatched nonce and head sha and n_in, the
+// deltas cover exactly the ids this slice dispatched, and their content proof matches
+// (trustSlice). The verified findings are then rebuilt HERE, by joining the delta onto
+// the findings this stage already holds by value — the executor's transcription is no
+// longer in the data path at all, only in the decision path.
 //
 // DEGRADATION IS PER SLICE (issue #54, and issue #25 requirement 3). An untrusted slice
 // — receipt mismatch, status:'failed', an agent() throw, or a slice whose --input file
@@ -3032,15 +3038,15 @@ const VERIFY_ATTEMPTS_PER_SLICE = 2;
 // ("this stage", not "trustSlice": an agent() throw is caught in dispatchVerifySlice and a
 // missing slice input in materializeVerifySlices — trustSlice never sees either.)
 //
-// The qualifier is load-bearing, so state it plainly: trustSlice does not bind a slice's
-// echoed CONTENT to the findings that slice dispatched (see its own comment). An envelope
-// carrying a same-length sibling slice's findings satisfies the nonce, sha, n_in and count
-// guards, and this loop then threads it — dropping the real slice's findings outright
-// rather than degrading them. That hole predates per-slice degradation and is unchanged
-// here; #25 requirement 2 closes it by turning the count guard into delta-id coverage.
-// What IS new is one more dispatch per failed slice on which it can be hit: before the
-// retry, a slice whose first attempt failed honestly could only reach the conservative
-// degrade. Weigh that against what the retry buys — see verifySliceWithRetry.
+// The never-drop half is now structural rather than merely intended (#25 req 2, which
+// removed the qualifier that used to stand here). The findings this stage emits on the
+// trusted path are the ones IT dispatched — joinVerifyDeltas walks the dispatched slice
+// and enriches it — so no echo, however wrong, can substitute or delete a finding: the
+// worst an untrusted echo achieves is its own slice's honest degrade. The previous design
+// pushed the findings themselves through the executor, where an envelope carrying a
+// same-length SIBLING slice's findings satisfied every guard and the real slice's findings
+// were dropped outright while the run reported verified=true (reproduced end to end during
+// the #54 review). That class is closed here, not mitigated.
 async function verifyStage(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -3092,15 +3098,31 @@ async function verifyStage(ctx, input) {
       continue;
     }
 
-    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort });
+    // The delta echo is keyed by finding id, so a slice whose own findings have no usable
+    // id set cannot be joined no matter how faithfully the executor answers. Checked
+    // BEFORE dispatch: spending an executor on an answer this stage could not use is
+    // strictly worse than degrading now. Degrade-and-disclose rather than reject, so a
+    // merge-side id regression costs one slice its classification and says so, instead of
+    // failing the run (post-merge ids are present by construction — mergeFindings drops
+    // id-less findings — which is why this is a guard, not a routine path).
+    const ids = dispatchableIds(slice);
+    if (!ids.ok) {
+      degrade(`slice ${i}: ${ids.reason} — the delta echo is keyed by id, so this slice cannot be verified`);
+      continue;
+    }
+
+    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids });
     if (!attempt.ok) {
       degrade(`slice ${i}: ${attempt.reason}`);
       continue;
     }
-    // Trusted: collect the enriched verified findings (origin new/surfaced set by Python;
-    // cross_file_refs preserved verbatim for downstream surfaced-classification). Findings
-    // the script really eliminated are absent by design — trustSlice's content-fidelity
-    // stamp is what proves an elimination came from the script and not from the echo.
+    // Trusted: this slice's OWN findings, enriched by the script's delta (origin
+    // new/surfaced, the surfaced severity downgrade, the factual-verification confidence
+    // re-score). Everything the script did not touch — description, evidence,
+    // cross_file_refs, suggestion, every per-dimension extra — is the value this stage
+    // already held, so it cannot be dropped or mangled in transcription. Findings the
+    // script really eliminated are absent by design (their delta says verified:false, and
+    // trustSlice requires the script's elimination stamp on every one of them).
     out.push(...attempt.verified);
     if (attempt.gap) gaps.push(attempt.gap);
   }
@@ -3154,9 +3176,9 @@ function verifyDegradeGap(detail, k, n) {
 // The nonce is now COMPUTED ONCE and threaded into verifyPrompt/verifyCommand. It used
 // to be derived independently at both sites, which silently required the two formulas to
 // stay identical; an attempt-varying nonce makes that a live bug rather than a latent one.
-async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort }) {
+async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids }) {
   const attempt = (sliceNonce, label) =>
-    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label });
+    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids });
 
   const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
   if (first.ok) return { ok: true, verified: first.verified, gap: null };
@@ -3177,7 +3199,7 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaSho
 
 // One executor dispatch for one slice. Never throws: a thrown agent() becomes an
 // untrusted result carrying the message, exactly as the pre-retry loop recorded it.
-async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label }) {
+async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids }) {
   let env;
   try {
     // agent(promptString, opts); the pinned command is embedded in the prompt
@@ -3191,9 +3213,71 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, slic
   } catch (e) {
     return { ok: false, reason: `executor threw (${(e && e.message) || 'unknown'})` };
   }
-  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length });
+  const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids });
   if (!trust.ok) return { ok: false, reason: trust.reason };
-  return { ok: true, verified: env.result && Array.isArray(env.result.verified) ? env.result.verified : [] };
+  return { ok: true, verified: joinVerifyDeltas(slice, env.result.deltas) };
+}
+
+// dispatchableIds(slice) -> { ok:true, ids:[...] } | { ok:false, reason }
+// The delta echo is joined by id, so a slice is only dispatchable when every finding in
+// it carries a non-empty string id and no two share one. Duplicates ACROSS slices are
+// fine — each slice's join is independent — so this is deliberately a per-slice check.
+function dispatchableIds(slice) {
+  const ids = [];
+  const seen = new Set();
+  for (const f of slice) {
+    const id = f && typeof f.id === 'string' ? f.id.trim() : '';
+    if (!id) return { ok: false, reason: 'a dispatched finding has no usable id' };
+    if (seen.has(id)) return { ok: false, reason: `duplicate finding id in the slice (${id})` };
+    seen.add(id);
+    ids.push(id);
+  }
+  return { ok: true, ids };
+}
+
+// The delta keys that carry a VALUE onto a finding (DELTA_KEYS minus the two structural
+// ones). Iterated in the same fixed order the canonicalisation uses.
+const DELTA_VALUE_KEYS = DELTA_KEYS.filter((k) => k !== 'id' && k !== 'verified');
+
+const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
+
+// joinVerifyDeltas(slice, deltas) -> the slice's verified findings, enriched.
+// Exported for the dual-runtime golden fixtures: the parity case records
+// verify_findings.py's own delta and its own verified findings, and asserts THIS function
+// reconstructs the latter from the former — which is the whole equivalence claim #25
+// requirement 1 makes ("the enriched set after the join must be equivalent to today's
+// trusted-path output for every field downstream stages consume").
+//
+// Walks the DISPATCHED slice, never the echo: order, membership and every untouched field
+// come from data this stage already holds. A finding whose delta says verified:false was
+// eliminated by the script and is omitted, exactly as it was omitted from the old echo's
+// verified[] array.
+//
+// `agent` is stripped here — the one place where the withholding #25 requirement 1
+// mandates is enforced. It used to happen by omission (the echo schema simply did not
+// declare `agent`, so StructuredOutput dropped it... most of the time — measured surviving
+// on 2 of 6 PRs). Joining onto findings this stage holds would have made it deterministic,
+// which is the measured dedup recall-collapse mechanism, so the withholding had to become
+// explicit. It re-lands only with the cross-dimension consolidation redesign (#22).
+function joinVerifyDeltas(slice, deltas) {
+  const byId = new Map();
+  for (const d of Array.isArray(deltas) ? deltas : []) {
+    if (d && typeof d.id === 'string') byId.set(d.id.trim(), d);
+  }
+  const out = [];
+  for (const f of slice) {
+    const delta = byId.get(typeof f.id === 'string' ? f.id.trim() : f.id);
+    if (!delta || delta.verified === false) continue;
+    // pinNumericFields for the same reason the degraded path applies it: the script
+    // coerces numeric strings at its --input boundary, so the trusted output has always
+    // carried real numbers, and a leaked "85" makes the filter's consensus boost
+    // string-concatenate ("85" + 10 -> "8510").
+    const joined = pinNumericFields(f);
+    delete joined.agent;
+    for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
+    out.push(joined);
+  }
+  return out;
 }
 
 // Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1,
@@ -3294,46 +3378,73 @@ function verifySliceWriterPrompt(entries) {
   return `Persist each verify slice-input file to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "content" as JSON to its "path". Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
 }
 
+// canonicalDeltas(ids, deltas) -> the deltas in a form both runtimes spell identically.
+// Rebuilt from the DISPATCHED id order, one object per id, keys in DELTA_KEYS order,
+// absent values omitted — so the echo's own array order, key order, and any field it
+// invented cannot move the checksum. Only the VALUES the script decided can.
+// verify_findings.py's build_deltas() emits exactly this shape in exactly this order.
+function canonicalDeltas(ids, byId) {
+  return ids.map((id) => {
+    const src = byId.get(id) || {};
+    const out = {};
+    for (const k of DELTA_KEYS) if (deltaHas(src, k)) out[k] = src[k];
+    return out;
+  });
+}
+
+// deltaContentProof(ids, deltas) -> "fnv1a32:0x........"
+// The workflow half of the delta echo's content proof. Exported because the tests must
+// build valid envelopes with the REAL computation rather than a second copy of it — a
+// helper that re-derives the canonicalisation would happily agree with a broken one. The
+// cross-runtime half is pinned separately, by the golden fixture whose checksum
+// verify_findings.py itself produced.
+function deltaContentProof(ids, deltas) {
+  const byId = new Map();
+  for (const d of Array.isArray(deltas) ? deltas : []) {
+    if (d && typeof d.id === 'string') byId.set(d.id.trim(), d);
+  }
+  return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], byId), null, 2));
+}
+
 // A slice envelope is trusted only if it is the honest success shape AND its receipt
 // echoes exactly what we dispatched: the nonce (this answer is for OUR call), the head
 // sha (same tree the workflow resolved), and n_in (the executor loaded every finding we
-// sent). Two guards beyond the receipt:
-//   (1) COUNT — the result arrays must ACCOUNT for n_in findings (verified + eliminated
-//       === n_in — an invariant run_verification always satisfies), so a receipt that
-//       survives transport while its result body is truncated cannot silently drop findings.
-//   (2) CONTENT FIDELITY — every eliminated[] entry must carry the elimination_reason stamp
-//       that run_verification() ALWAYS writes before pushing a finding to eliminated[]
-//       (verify_findings.py sets f['elimination_reason'] = 'evidence does not match file
-//       content'). An executor that moves a finding verified->eliminated in its ECHO never
-//       ran the script's elimination path for it, so it cannot carry the stamp — the receipt
-//       and count both still pass (observed live: script disk 10v/0e, echo 7v/3e with a valid
-//       receipt), but an unstamped elimination proves the echo is not the script's output.
-//       (The stamp is elimination_reason, NOT eliminated_by: the verify script never sets
-//       eliminated_by — that is a JS-pipeline-only field — so requiring it would reject every
-//       honest elimination.) A failed fidelity check degrades the WHOLE slice to UNVERIFIED,
-//       which is conservative: every original finding is KEPT (origin=unknown), so an
-//       executor claiming a spurious elimination cannot use it to drop a real finding.
+// sent). Three guards beyond the receipt, in increasing strength:
 //
-// Threat model: this defends against a STALE, HALLUCINATING, or CONFUSED executor
-// (an old/wrong result, a fabricated success, or another slice's answer) — NOT a
-// Byzantine one. The nonce is argv-visible by construction, so a malicious executor
-// could always echo it back; this is a consistency/liveness check, not authentication.
+//   (1) DELTA-ID COVERAGE (#25 req 2) — the echoed deltas must name EXACTLY the ids this
+//       slice dispatched: no missing id, no duplicate, no stranger. This replaced a count
+//       guard (verified.length + eliminated.length === n_in) that could only ever catch
+//       transport truncation: verifySliceSize is a constant, so most slices in a run share
+//       a length, and an envelope carrying a SIBLING slice's findings summed identically.
+//       That was not a misclassification — the real slice's findings were dropped outright
+//       while the run reported verified=true (reproduced end to end during the #54 review).
+//       An id set is the cheapest thing that binds an answer to its question.
+//   (2) SHAPE AND STAMP — `verified` must be a boolean; the value fields must be the types
+//       the script emits; a verified:false delta must carry the elimination_reason stamp
+//       run_verification() ALWAYS writes before eliminating ('evidence does not match file
+//       content'), and a verified:true delta must NOT carry one. The stamp check is
+//       preserved from the by-value design, where it was the only defence against an
+//       executor moving a finding verified->eliminated in its echo (observed live: script
+//       disk 10v/0e, echo 7v/3e under a valid receipt). It is now redundant with (3) and
+//       kept anyway, because a precise reason in the gap is worth more than a checksum
+//       mismatch when a human reads the run.
+//   (3) CONTENT PROOF — fnv1a32 over the canonical rebuild must equal the checksum the
+//       SCRIPT computed over its own deltas. This is what closes coherent drift: an
+//       executor that flips one origin, shifts one confidence, or invents a plausible
+//       elimination satisfies (1) and (2) and fails here. It is the same checksum pair the
+//       persist path uses (assemble_artifacts.py <-> fnv1a32/JSON.stringify here), pinned
+//       across runtimes by tests/test_assemble_artifacts.py.
 //
-// KNOWN GAP — the guards above bind the slice's SHAPE, never its CONTENT. Nothing checks
-// that the findings in verified[]/eliminated[] are the ones this slice dispatched. Since
-// verifySliceSize is a constant, most slices in a run share a length, so an envelope
-// carrying a SIBLING slice's findings clears the nonce (it is this slice's), the sha, n_in
-// and the count sum, and is accepted — the real slice's findings are then dropped outright
-// (not degraded) and the run still reports verified=true. Reproduced end-to-end during the
-// #54 review. Predates per-slice degradation and is NOT widened by the guards here.
+// Every failure degrades the WHOLE slice to UNVERIFIED, which is conservative in the
+// direction that matters: every dispatched finding is KEPT (origin=unknown, disclosed in a
+// gap), so no guard here can be used to drop a real finding.
 //
-// The fix belongs to #25 requirement 2 ("the count guard becomes delta-id coverage"), not
-// here: an id-set check changes acceptance on the TRUSTED path, so an echo that merely
-// mangles an id character would start degrading runs that pass today. That is a
-// findings-content change and needs #25's measurement tier, which is exactly why the
-// count guard — a shape check that can only catch transport truncation — is what stands
-// here in the meantime.
-function trustSlice(env, { nonce, headShaShort, n }) {
+// Threat model: this defends against a STALE, DRIFTING or CONFUSED executor (an old/wrong
+// result, a fabricated success, another slice's answer, a garbled transcription) — NOT a
+// Byzantine one. The nonce is argv-visible and the checksum travels in the same envelope
+// as the data it covers, so a malicious executor could recompute both; an LLM transcribing
+// a document cannot, which is exactly the failure class this boundary keeps hitting.
+function trustSlice(env, { nonce, headShaShort, n, ids }) {
   if (!env || typeof env !== 'object') return { ok: false, reason: 'executor returned no envelope' };
   if (env.status !== 'ok') return { ok: false, reason: `status=${env.status == null ? 'missing' : env.status}${env.stderr ? ` (${env.stderr})` : ''}` };
   const r = env.receipt || {};
@@ -3341,18 +3452,45 @@ function trustSlice(env, { nonce, headShaShort, n }) {
   if (r.sha !== headShaShort) return { ok: false, reason: `receipt sha mismatch (got ${r.sha == null ? 'missing' : r.sha})` };
   if (r.n_in !== n) return { ok: false, reason: `receipt n_in mismatch (got ${r.n_in == null ? 'missing' : r.n_in}, expected ${n})` };
   const result = env.result || {};
-  if (!Array.isArray(result.verified) || !Array.isArray(result.eliminated)) {
-    return { ok: false, reason: 'result missing verified/eliminated arrays' };
-  }
-  const accounted = result.verified.length + result.eliminated.length;
-  if (accounted !== r.n_in) {
-    return { ok: false, reason: `result incomplete: verified+eliminated=${accounted} != n_in=${r.n_in} (transport truncation)` };
-  }
-  for (const e of result.eliminated) {
-    const reason = e && typeof e === 'object' ? e.elimination_reason : undefined;
-    if (typeof reason !== 'string' || reason.trim() === '') {
-      return { ok: false, reason: 'eliminated entry missing elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)' };
+  if (!Array.isArray(result.deltas)) return { ok: false, reason: 'result missing deltas array' };
+
+  const expected = new Set(ids || []);
+  const byId = new Map();
+  for (const d of result.deltas) {
+    if (!d || typeof d !== 'object') return { ok: false, reason: 'delta entry is not an object' };
+    const id = typeof d.id === 'string' ? d.id.trim() : '';
+    if (!id) return { ok: false, reason: 'delta entry has no id' };
+    if (!expected.has(id)) return { ok: false, reason: `delta names a finding this slice did not dispatch (${id})` };
+    if (byId.has(id)) return { ok: false, reason: `delta repeats a finding id (${id})` };
+    if (typeof d.verified !== 'boolean') return { ok: false, reason: `delta ${id} has no boolean verified flag` };
+    for (const k of ['origin', 'severity', 'elimination_reason']) {
+      if (deltaHas(d, k) && typeof d[k] !== 'string') return { ok: false, reason: `delta ${id}: ${k} is not a string` };
     }
+    // The script canonicalises confidence to an integer precisely so this side never has
+    // to agree with Python on how a float is spelled (_delta_confidence). A non-integer
+    // here therefore did not come from the script.
+    if (deltaHas(d, 'confidence') && !Number.isInteger(d.confidence)) {
+      return { ok: false, reason: `delta ${id}: confidence is not an integer` };
+    }
+    const stamp = typeof d.elimination_reason === 'string' ? d.elimination_reason.trim() : '';
+    if (d.verified === false && stamp === '') {
+      return { ok: false, reason: `delta ${id}: eliminated without the elimination_reason stamp (fabricated elimination — the verify script always stamps a real one)` };
+    }
+    if (d.verified === true && stamp !== '') {
+      return { ok: false, reason: `delta ${id}: verified finding carries an elimination_reason stamp` };
+    }
+    byId.set(id, d);
+  }
+  const missing = (ids || []).filter((id) => !byId.has(id));
+  if (missing.length) {
+    return { ok: false, reason: `delta does not cover ${missing.length} of ${(ids || []).length} dispatched finding(s) (first: ${missing[0]})` };
+  }
+
+  const proof = typeof r.deltas_checksum === 'string' ? r.deltas_checksum.trim() : '';
+  if (!proof) return { ok: false, reason: 'receipt carries no deltas_checksum (content proof missing)' };
+  const recomputed = deltaContentProof(ids || [], result.deltas);
+  if (proof !== recomputed) {
+    return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
   return { ok: true };
 }
@@ -3385,8 +3523,13 @@ function verifyCommand(inp, i, sliceNonce) {
   return parts.join(' ');
 }
 
+// What the executor is asked for is now a PREFIX of the output document, not the whole of
+// it: the script writes `result.deltas` as the first key precisely so a length-capped Read
+// (which returns no truncation notice — CLAUDE.md) still contains everything this prompt
+// names. The large verified/eliminated arrays that follow are for bench and v2 consumers;
+// naming them here as explicitly-not-wanted is cheaper than letting the agent decide.
 function verifyPrompt(inp, i, sliceNonce) {
-  return `Run exactly this command, then read the --output file and return its contents verbatim via the schema:\n${verifyCommand(inp, i, sliceNonce)}`;
+  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with all four fields (sha, n_in, nonce, deltas_checksum) copied exactly; and every entry of its "result.deltas" array, copied exactly. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce)}`;
 }
 
 // --- Agent-count coarsening -------------------------------------------------

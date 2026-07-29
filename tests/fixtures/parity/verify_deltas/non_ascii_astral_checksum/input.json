@@ -1,0 +1,50 @@
+{
+  "dispatched": [
+    {
+      "id": "bug-601",
+      "file": "src/i18n/format.py",
+      "line_start": 5,
+      "line_end": 5,
+      "title": "Currency formatter drops the fractional part for non-USD currencies",
+      "description": "format_amount() truncates instead of rounding for currencies with more than two minor-unit digits.",
+      "severity": "high",
+      "confidence": 85,
+      "dimension": "bug",
+      "evidence": "return f\"{amount:.0f}\"",
+      "suggestion": "Use round() with the currency's minor-unit precision instead of an implicit floor.",
+      "cross_file_refs": []
+    }
+  ],
+  "result": {
+    "verified": [],
+    "eliminated": [
+      {
+        "id": "bug-601",
+        "file": "src/i18n/format.py",
+        "line_start": 5,
+        "line_end": 5,
+        "title": "Currency formatter drops the fractional part for non-USD currencies",
+        "description": "format_amount() truncates instead of rounding for currencies with more than two minor-unit digits.",
+        "severity": "high",
+        "confidence": 0,
+        "dimension": "bug",
+        "evidence": "return f\"{amount:.0f}\"",
+        "suggestion": "Use round() with the currency's minor-unit precision instead of an implicit floor.",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Noor Aljaber",
+          "date": "2026-07-23",
+          "original_severity": "high"
+        },
+        "factual_verification": {
+          "verified": false,
+          "reason": "file not found: 'src/i18n/format.py'",
+          "code_at_lines": null
+        },
+        "elimination_reason": "evidence does not match file content — café 🔥 文字 test tail"
+      }
+    ]
+  }
+}

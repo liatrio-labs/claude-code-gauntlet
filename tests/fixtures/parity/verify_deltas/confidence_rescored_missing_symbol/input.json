@@ -1,0 +1,56 @@
+{
+  "dispatched": [
+    {
+      "id": "bug-301",
+      "file": "src/api/handlers.py",
+      "line_start": 30,
+      "line_end": 33,
+      "title": "Missing null check before dereferencing response",
+      "description": "parseResponsePayload() is called without first checking whether response is None.",
+      "severity": "medium",
+      "confidence": 90,
+      "dimension": "bug",
+      "evidence": "data = parseResponsePayload(response)",
+      "suggestion": "Add a None check before calling parseResponsePayload.",
+      "cross_file_refs": []
+    }
+  ],
+  "result": {
+    "verified": [
+      {
+        "id": "bug-301",
+        "file": "src/api/handlers.py",
+        "line_start": 30,
+        "line_end": 33,
+        "title": "Missing null check before dereferencing response",
+        "description": "parseResponsePayload() is called without first checking whether response is None.",
+        "severity": "medium",
+        "confidence": 62,
+        "dimension": "bug",
+        "evidence": "data = parseResponsePayload(response)",
+        "suggestion": "Add a None check before calling parseResponsePayload.",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Sam Okafor",
+          "date": "2026-07-21",
+          "original_severity": "medium"
+        },
+        "factual_verification": {
+          "verified": false,
+          "reason": "referenced symbol(s) not found in codebase: parseResponsePayload",
+          "code_at_lines": "data = parseResponsePayload(response)",
+          "original_confidence": 90,
+          "symbols_checked": 1,
+          "symbols_missing": 1
+        },
+        "diff_validation": {
+          "in_diff": true,
+          "reason": "line 30 found in diff"
+        }
+      }
+    ],
+    "eliminated": []
+  }
+}

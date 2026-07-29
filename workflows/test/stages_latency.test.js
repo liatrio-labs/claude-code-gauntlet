@@ -18,6 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith, reportStage, verifyStage, slimPersistedCheckpoints, parseWriterPayload } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
+import { deltaEnvelope } from './helpers/verifyDelta.js';
 
 // Drain the microtask queue far enough that a SEQUENTIAL implementation has provably
 // parked on the gate (it can make no further progress without it).
@@ -449,15 +450,16 @@ test('D2.3: a healthy writer group\'s slices reach the executor and stay verifie
         return { written: entries.map((e) => e.path) };
       }
       if (label.startsWith('verify-slice-')) {
-        // A slice from a HEALTHY writer group reaches the executor. Make it trivially
-        // trusted (retry-agnostic: whichever attempt dispatches, its own nonce is
-        // echoed back), so this fixture proves reachability without asserting on retries.
+        // A slice from a HEALTHY writer group reaches the executor. verifySliceSize is 1
+        // here, so slice index i addresses findings[i] directly. Build a genuinely
+        // TRUSTED delta envelope for that one finding (issue #25 PR2: the executor
+        // answers with a per-id DECISION — verified/origin/severity/confidence — and can
+        // no longer hand back a substitute finding at all). Retry-agnostic: whichever
+        // attempt dispatches, its own nonce is what gets echoed into the receipt, so this
+        // fixture proves reachability without asserting on which attempt landed.
+        const sliceIndex = Number(/^verify-slice-(\d+)(?:-retry)?$/.exec(label)[1]);
         const nonce = (prompt.match(/--nonce (\S+)/) || [])[1];
-        return {
-          status: 'ok',
-          receipt: { sha: 'abc1234', nonce, n_in: 1 },
-          result: { verified: [{ id: `verified-${nonce}` }], eliminated: [], batches: [], stats: {} },
-        };
+        return deltaEnvelope([findings[sliceIndex]], { sha: 'abc1234', nonce, n_in: 1 });
       }
       throw new Error(`unexpected dispatch label: ${label}`);
     },
@@ -494,11 +496,15 @@ test('D2.3: a healthy writer group\'s slices reach the executor and stay verifie
   assert.equal(out.verified, false);
   assert.equal(out.findings.length, findings.length, 'no finding is ever dropped');
 
-  // Slices from the healthy groups are NOT degraded and DID reach the executor.
+  // Slices from the healthy groups are NOT degraded and DID reach the executor. Under
+  // the delta echo (issue #25 PR2) the executor can no longer substitute a different
+  // finding for the one it was dispatched — it only returns a DECISION keyed by id — so
+  // "reached the executor and was verified" can no longer be told apart from "degraded"
+  // by a foreign `verified-${nonce}` id landing in the output; it shows up instead as the
+  // slice's OWN dispatched finding surviving with a non-unknown origin.
   for (const i of healthyIndices) {
     assert.notEqual(out.findings[i].origin, 'unknown', `slice ${i} (healthy group) must not be degraded`);
-    assert.ok(String(out.findings[i].id).startsWith('verified-'), `slice ${i} carries the executor's trusted output, not the original finding`);
-    assert.notEqual(out.findings[i].id, findings[i].id, `slice ${i}'s output id is not the original finding's id`);
+    assert.equal(out.findings[i].id, findings[i].id, `slice ${i} carries its own dispatched finding — an executor cannot substitute one`);
     assert.ok(seen.some((l) => l === `verify-slice-${i}` || l === `verify-slice-${i}-retry`), `slice ${i} was dispatched to the executor`);
   }
   // Slices from the failed writer groups degrade to their ORIGINAL finding, origin=unknown,

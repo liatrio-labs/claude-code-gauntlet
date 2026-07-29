@@ -1,0 +1,61 @@
+{
+  "dispatched": [
+    {
+      "id": "tc-501",
+      "file": "tests/test_orders.py",
+      "line_start": 10,
+      "line_end": 40,
+      "title": "No test covers the refund-after-partial-ship path",
+      "description": "The refund flow is only tested for full-order refunds; a partial shipment followed by a refund request is untested.",
+      "severity": "medium",
+      "confidence": 60,
+      "dimension": "test_coverage",
+      "evidence": "def test_refund_full_order(): ...",
+      "suggestion": "Add a test for refund_after_partial_ship.",
+      "claude_md_rule": "Every new code path requires a corresponding test (CLAUDE.md > Tests).",
+      "criticality": "high",
+      "failure_scenario": "A partial shipment followed by a refund silently double-credits the customer, because the untested branch skips the shipped-quantity adjustment.",
+      "cross_file_refs": [],
+      "agent": "test-coverage-agent"
+    }
+  ],
+  "result": {
+    "verified": [
+      {
+        "id": "tc-501",
+        "file": "tests/test_orders.py",
+        "line_start": 10,
+        "line_end": 40,
+        "title": "No test covers the refund-after-partial-ship path",
+        "description": "The refund flow is only tested for full-order refunds; a partial shipment followed by a refund request is untested.",
+        "severity": "medium",
+        "confidence": 60,
+        "dimension": "test_coverage",
+        "evidence": "def test_refund_full_order(): ...",
+        "suggestion": "Add a test for refund_after_partial_ship.",
+        "claude_md_rule": "Every new code path requires a corresponding test (CLAUDE.md > Tests).",
+        "criticality": "high",
+        "failure_scenario": "A partial shipment followed by a refund silently double-credits the customer, because the untested branch skips the shipped-quantity adjustment.",
+        "cross_file_refs": [],
+        "agent": "test-coverage-agent",
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Robin Alvarez",
+          "date": "2026-07-23",
+          "original_severity": "medium"
+        },
+        "factual_verification": {
+          "verified": true,
+          "reason": "file content and symbols verified",
+          "code_at_lines": "def test_refund_full_order(): ..."
+        },
+        "diff_validation": {
+          "in_diff": true,
+          "reason": "line 10 found in diff"
+        }
+      }
+    ],
+    "eliminated": []
+  }
+}
