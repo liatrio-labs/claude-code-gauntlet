@@ -271,7 +271,10 @@ def read_text(path):
     if not path or not os.path.isfile(path):
         return ""
     try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
+        # utf-8-sig, not utf-8: a leading BOM is not whitespace and not '{', so it
+        # would defeat both the whole-file parse and the document-start scan, and
+        # the file would read as "never terminal" for the entire wait.
+        with open(path, encoding="utf-8-sig", errors="replace") as fh:
             return fh.read()
     except (OSError, ValueError):
         return ""
@@ -379,7 +382,9 @@ def _document_starts(text):
     """
     for line_start in _line_starts(text):
         cursor = line_start
-        while cursor < len(text) and text[cursor] in " \t":
+        # \r is in the skip set for CRLF input: lines are split on \n, so a stray
+        # carriage return can sit between the split point and the brace.
+        while cursor < len(text) and text[cursor] in " \t\r":
             cursor += 1
         if cursor < len(text) and text[cursor] == "{":
             yield cursor
@@ -654,12 +659,19 @@ def await_terminal(args, environ=None):
         if observed["artifacts"]["complete"]:
             if artifacts_complete_at is None:
                 artifacts_complete_at = now
-            # Fire on the grace window OR at the deadline: in both cases we have
-            # waited as long as this invocation is allowed to with the artifacts
-            # already on disk, and reporting the truth beats spending the
-            # remaining attempts on a return that is not coming.
             grace_elapsed = now - artifacts_complete_at >= args.artifacts_grace_seconds
-            if grace_elapsed or now >= deadline:
+            # Two different triggers, because they answer two different questions.
+            #
+            # Unresolved target: the fallback is all we are ever going to get, so
+            # stop as soon as the grace window closes rather than spend the whole
+            # attempt budget re-globbing directories that do not exist.
+            #
+            # Resolved target: we are watching the right file and the return is
+            # still coming, so bailing at the grace window would DISCARD it. Here
+            # the fallback only earns its keep at the very end, where it converts
+            # what would have been a bare timeout into a deliverable result.
+            if ((grace_elapsed and observed["resolved_path"] is None)
+                    or (args.attempt >= args.max_attempts and now >= deadline)):
                 marker = build_marker("artifacts_only", args, observed,
                                       since_epoch, started_at)
                 marker["gap"] = "workflow-timeout"

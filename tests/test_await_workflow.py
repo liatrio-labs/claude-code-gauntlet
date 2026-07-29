@@ -350,6 +350,33 @@ class TestFindTerminalEmbedded(unittest.TestCase):
         found, _, _ = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
 
+    def test_crlf_line_endings(self):
+        text = "log line\r\n" + json.dumps(SUCCESS_RETURN) + "\r\n"
+        found, _, _ = find_terminal(text)
+        self.assertEqual(found, SUCCESS_RETURN)
+
+    def test_indented_object_at_line_start(self):
+        for indent in ("  ", "    ", "\t", " \t "):
+            text = "preamble\n" + indent + json.dumps(SUCCESS_RETURN) + "\n"
+            found, _, _ = find_terminal(text)
+            self.assertEqual(found, SUCCESS_RETURN, repr(indent))
+
+    def test_utf8_bom_does_not_defeat_detection(self):
+        """A BOM is neither whitespace nor '{', so an unhandled one would make the
+        file read as never-terminal for the entire wait."""
+        with _Workspace() as ws:
+            path = ws.write(
+                "w1.output",
+                ("﻿" + json.dumps(envelope(SUCCESS_RETURN))).encode("utf-8"),
+            )
+            code, out, _ = run_main([path, "--timeout-seconds", "0"])
+        self.assertEqual(code, 0)
+        self.assertEqual(sole_json_line(out), SUCCESS_RETURN)
+
+    def test_no_trailing_newline(self):
+        found, _, _ = find_terminal("log\n" + json.dumps(SUCCESS_RETURN))
+        self.assertEqual(found, SUCCESS_RETURN)
+
     def test_escaped_object_inside_a_string_is_not_extracted(self):
         """A return quoted inside another field's string value is not terminal."""
         text = json.dumps({"resultPreview": json.dumps(SUCCESS_RETURN)})
@@ -730,11 +757,14 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
         for template in ARTIFACT_BASENAMES:
             ws.write(template.format(sha=sha), "content")
 
-    def test_artifacts_present_without_a_return_exits_five(self):
+    def test_unresolvable_target_with_artifacts_present_exits_five(self):
+        """Resolution has failed, so the fallback is all there will ever be —
+        stop as soon as the grace window closes instead of spending the budget."""
         with _Workspace() as ws:
             self._write_all(ws, "abc12345")
             code, out, _ = run_main([
                 "wnosuchtask000", "--timeout-seconds", "0",
+                "--artifacts-grace-seconds", "0",
                 "--artifacts-dir", ws.path, "--head-sha", "abc12345",
                 "--since-epoch", str(time.time() - 60),
             ])
@@ -755,6 +785,37 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
             ])
         self.assertEqual(code, 0)
         self.assertEqual(sole_json_line(out), SUCCESS_RETURN)
+
+    def test_a_resolved_target_is_not_abandoned_on_a_non_final_attempt(self):
+        """The return is still coming when we are watching the right file, so the
+        grace window must not discard it — the fallback only converts the FINAL
+        attempt's timeout, never an early one."""
+        with _Workspace() as ws:
+            self._write_all(ws, "abc12345")
+            path = ws.write("w1.output", "")
+            code, out, _ = run_main([
+                path, "--timeout-seconds", "0", "--attempt", "1",
+                "--max-attempts", "4", "--artifacts-grace-seconds", "0",
+                "--artifacts-dir", ws.path, "--head-sha", "abc12345",
+                "--since-epoch", str(time.time() - 60),
+            ])
+        marker = sole_json_line(out)
+        self.assertEqual(code, 3)
+        self.assertEqual(marker["await"], "pending")
+        self.assertTrue(marker["artifacts"]["complete"])
+
+    def test_a_resolved_target_converts_the_final_timeout_into_a_delivery(self):
+        with _Workspace() as ws:
+            self._write_all(ws, "abc12345")
+            path = ws.write("w1.output", "")
+            code, out, _ = run_main([
+                path, "--timeout-seconds", "0", "--attempt", "4",
+                "--max-attempts", "4",
+                "--artifacts-dir", ws.path, "--head-sha", "abc12345",
+                "--since-epoch", str(time.time() - 60),
+            ])
+        self.assertEqual(code, 5)
+        self.assertEqual(sole_json_line(out)["await"], "artifacts_only")
 
     def test_stale_artifacts_do_not_trigger_the_fallback(self):
         with _Workspace() as ws:
