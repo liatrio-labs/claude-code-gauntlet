@@ -40,6 +40,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
 from scripts.collect_project_rules import (  # noqa: E402
+    MAX_FILES,
     MAX_IMPORT_DEPTH,
     PROJECT_RULE_FILENAMES,
     _find_imports,
@@ -161,6 +162,14 @@ class TestPointerResolution(_RepoCase):
         self.assertEqual(code, 0)
         self.assertTrue(receipt["ok"])
         self.assertIn("missing", self.reasons(receipt))
+        # references/phase2-triage.md's Triage Announcement folds gaps[] into a
+        # human-readable note, explicitly naming "a missing import target" as
+        # one of the things it exists to surface — a skip entry alone is not
+        # enough if nothing ever reads skipped[] directly.
+        self.assertTrue(
+            any("NOPE.md" in g for g in receipt["gaps"]),
+            "a missing pointer target must reach the human-readable gaps list",
+        )
 
 
 class TestSecurityBoundary(_RepoCase):
@@ -228,8 +237,9 @@ class TestSecurityBoundary(_RepoCase):
         # reachable, so a committed .env inside the repo needs its own control.
         self.write(".env", "AWS_SECRET=INSIDE-CANARY\n")
         self.write("CLAUDE.md", "@.env\n")
-        _, _, body = self.run_script()
+        _, receipt, body = self.run_script()
         self.assertNotIn("INSIDE-CANARY", body)
+        self.assertIn("not_markdown", self.reasons(receipt))
 
     def test_md_named_symlink_to_an_in_repo_secret_is_refused(self):
         # The extension filter alone is not the control: a pointer CAN end in
@@ -303,6 +313,24 @@ class TestBounds(_RepoCase):
         self.assertIn("total_cap_reached", self.reasons(receipt))
         self.assertTrue(any("project_rules_truncated" in g for g in receipt["gaps"]))
 
+    def test_file_count_cap_bounds_the_walk_even_when_no_bytes_accumulate(self):
+        # The byte caps do NOT bound this: every one of these files is empty, so
+        # total_bytes never moves no matter how many are walked. This test
+        # exists because the constant was once deleted as apparent dead code —
+        # nothing referenced it and nothing failed.
+        self.write("CLAUDE.md",
+                   "\n".join("@f%d.md" % i for i in range(MAX_FILES + 20)) + "\n")
+        for i in range(MAX_FILES + 20):
+            self.write("f%d.md" % i, "")
+        _, receipt, _ = self.run_script()
+        # Only the pointer list itself contributes bytes; the 84 targets are all
+        # empty, so the byte caps are nowhere near tripping and cannot be what
+        # stopped the walk. Only the file-count bound can have.
+        self.assertLess(receipt["total_bytes"], 2000)
+        self.assertLessEqual(len(receipt["sources"]), MAX_FILES)
+        self.assertIn("file_cap_reached", self.reasons(receipt))
+        self.assertTrue(receipt["truncated"])
+
     def test_import_depth_cap_matches_the_real_product_and_is_disclosed(self):
         # Claude Code resolves at most four hops; matching that keeps this
         # script's view of a repo identical to the harness's.
@@ -324,6 +352,12 @@ class TestBounds(_RepoCase):
         self.assertIn("RULE-A", body)
         self.assertIn("RULE-B", body)
         self.assertTrue({"cycle", "duplicate_of"} & set(self.reasons(receipt)))
+        # Same phase2-triage.md contract as the missing-target case above: "a
+        # cycle" is one of the reasons explicitly named as belonging in gaps[].
+        self.assertTrue(
+            any("cycle" in g for g in receipt["gaps"]),
+            "an import cycle must reach the human-readable gaps list: %r" % receipt["gaps"],
+        )
 
 
 class TestDiscovery(_RepoCase):
@@ -426,8 +460,15 @@ class TestPureHelpers(unittest.TestCase):
     def test_find_imports_ignores_mid_word_at_signs(self):
         self.assertEqual(_find_imports("mail me at foo@bar.md please"), [])
 
-    def test_find_imports_ignores_non_markdown_tokens(self):
-        self.assertEqual(_find_imports("@type @param @Override @media @.env"), [])
+    def test_find_imports_ignores_bare_decorator_tokens_without_a_dot(self):
+        # @param/@Override/@media/@type have no extension at all and are pure
+        # prose noise (discourse's real file says "Specify the @type."). A
+        # token that DOES contain a dot, like @.env, must NOT be filtered
+        # here -- it has to reach _resolve_pointer so a genuine non-markdown
+        # pointer is refused AND DISCLOSED as `not_markdown`, rather than
+        # silently vanishing before it is ever classified.
+        self.assertEqual(_find_imports("@type @param @Override @media"), [])
+        self.assertEqual(_find_imports("@.env"), [".env"])
 
     def test_find_imports_deduplicates_preserving_order(self):
         self.assertEqual(_find_imports("@b.md @a.md @b.md"), ["b.md", "a.md"])

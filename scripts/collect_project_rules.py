@@ -55,6 +55,7 @@ Skip reasons appearing in the receipt's ``skipped[]``:
     not_markdown      resolved inside the repo but is not a .md file
     too_large         exceeds the per-file byte cap
     total_cap_reached the total byte cap was already reached
+    file_cap_reached  MAX_FILES sources already collected
     depth_exceeded    beyond MAX_IMPORT_DEPTH import hops
     cycle             already being visited on this import chain
     duplicate_of      same real path already contributed
@@ -99,9 +100,12 @@ MAX_IMPORT_DEPTH = 4
 DEFAULT_MAX_FILE_BYTES = 65536
 DEFAULT_MAX_TOTAL_BYTES = 131072
 
-# Bounds the walk itself, not just each file it reaches. Precedent: contextReadPlan
-# refuses above its chunk ceiling *before* the first allocation, because an
-# unbounded value once OOM-killed the node process.
+# Bounds the WALK, not just the bytes it collects. The byte caps alone do not:
+# an empty file contributes zero bytes, so a repo full of empty .md files (or an
+# import graph that fans out across them) would be walked without limit while
+# `total_bytes` never moves. Precedent: contextReadPlan refuses above its chunk
+# ceiling *before* the first allocation, because an unbounded value once
+# OOM-killed the node process — bound the plan, not only the input.
 MAX_FILES = 64
 
 # A ``@`` that begins a path token: at the start of a line or after whitespace,
@@ -144,25 +148,30 @@ def _strip_code(text):
 
 
 def _find_imports(text):
-    """Return the ``@path`` tokens in *text* that name a markdown file.
+    """Return the ``@path`` tokens in *text* that look like a file reference.
 
-    Only ``.md`` tokens are candidates. A rules file is prose, and prose is full
-    of at-signs that are not imports — discourse's real AI-AGENTS.md says
-    "Specify the ``@type``.", and JSDoc/Java/CSS conventions add ``@param``,
-    ``@Override``, ``@media``. Treating those as pointers and then refusing them
-    is safe but not harmless: each one emits a refusal into the triage
-    announcement, and a disclosure channel that cries wolf on every run is one
-    people learn to skip. Filtering here rather than at refusal time is also
-    strictly the safer direction — it shrinks the set of paths ever considered.
+    A rules file is prose, and prose is full of at-signs that are not
+    imports — discourse's real AI-AGENTS.md says "Specify the ``@type``.",
+    and JSDoc/Java/CSS conventions add ``@param``, ``@Override``, ``@media``.
+    Those are bare words with no ``.`` in them at all, so they are filtered
+    here: treating every one as a refused pointer is safe but not harmless,
+    since each refusal becomes a line in the triage announcement, and a
+    disclosure channel that cries wolf on every run is one people learn to
+    ignore.
 
-    Nothing is lost by it: ``.md`` is the only thing this script will read, so a
-    non-``.md`` token could never have contributed content anyway.
+    A token that DOES contain a ``.`` is always passed through, even when its
+    extension is not ``.md``. `@.env` and `@secrets.yml` must still reach
+    `_resolve_pointer` and be refused — and DISCLOSED — as `not_markdown`;
+    filtering them out HERE instead would drop them silently, with no skip
+    entry and no gap, which is exactly the silent degradation this script's
+    disclosure contract exists to prevent. The `.md` extension is enforced by
+    `_resolve_pointer`, never by this prefilter.
     """
     seen = set()
     found = []
     for raw in _IMPORT_RE.findall(_strip_code(text)):
         token = raw.rstrip(_TRAILING_PUNCT)
-        if not token.lower().endswith(".md"):
+        if "." not in token:
             continue
         if token not in seen:
             seen.add(token)
@@ -241,8 +250,12 @@ class _Collector(object):
         """Read *real* if every bound allows it. Returns (text, None) or (None, reason).
 
         Every bound is checked against ``stat`` *before* ``open``: reading a
-        file and then discarding it for being too big still pays the read.
+        file and then discarding it for being too big still pays the read. The
+        file-count bound comes first, before even the ``stat``.
         """
+        if len(self.sources) >= MAX_FILES:
+            self.truncated = True
+            return None, "file_cap_reached"
         try:
             st = os.stat(real)
         except OSError:
@@ -322,7 +335,7 @@ def _load_changed_files(path):
     """Read the changed-file list. Accepts strings or objects with a 'path'."""
     if not path:
         return []
-    with open(path, "r", errors="replace") as handle:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
         data = json.load(handle)
     if not isinstance(data, list):
         return []
@@ -351,14 +364,25 @@ def render(sources):
 
 
 def write_text_atomic(path, text):
-    """Write via a temp file in the same directory, then rename."""
+    """Write via a temp file in the same directory, then rename (mirrors
+    assemble_artifacts.py's write_text_atomic). Opening the destination
+    directly would truncate it before the encode, leaving a zero-byte file at
+    a planned path on any failure; os.replace() is atomic within a
+    filesystem, so the destination is always either its old content or the
+    complete new content, never a prefix."""
     directory = os.path.dirname(os.path.abspath(path)) or "."
     if not os.path.isdir(directory):
         os.makedirs(directory)
     handle, tmp = tempfile.mkstemp(dir=directory, prefix=".rules-", suffix=".tmp")
     try:
-        with os.fdopen(handle, "w") as out:
+        with os.fdopen(handle, "w", encoding="utf-8", newline="") as out:
             out.write(text)
+        # mkstemp creates the temp file 0600; os.replace would carry that mode
+        # onto the artifact, which a later step running as another user could
+        # no longer read. Restore the mode a plain open() would have produced.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except BaseException:
         try:
@@ -370,7 +394,10 @@ def write_text_atomic(path, text):
 
 def _gaps(collector):
     """Human-readable disclosure lines. Silence about a refusal is the failure
-    mode this codebase's degrade-and-disclose contract exists to prevent."""
+    mode this codebase's degrade-and-disclose contract exists to prevent —
+    every skip reason gets a gap line here except ``duplicate_of``, which is
+    correct dedup (cal.com's symlinked CLAUDE.md reaching the same real file
+    twice), not a degradation."""
     gaps = []
     security = [s for s in collector.skipped
                 if s["reason"] in ("outside_repo", "absolute_path", "not_markdown")]
@@ -380,9 +407,16 @@ def _gaps(collector):
             "markdown file inside the repository" % (entry["path"], entry["reason"])
         )
     for entry in collector.skipped:
-        if entry["reason"] in ("too_large", "total_cap_reached", "depth_exceeded"):
+        if entry["reason"] in ("too_large", "total_cap_reached",
+                               "file_cap_reached", "depth_exceeded"):
             gaps.append("project_rules_truncated: %s (%s) — its rules are NOT in "
                         "the review context" % (entry["path"], entry["reason"]))
+    for entry in collector.skipped:
+        if entry["reason"] in ("missing", "cycle", "not_regular"):
+            gaps.append(
+                "project_rules_unresolved: %s (%s) — this pointer did not resolve "
+                "to rule content" % (entry["path"], entry["reason"])
+            )
     if not collector.sources:
         gaps.append("project_rules_absent: no CLAUDE.md/AGENTS.md/QODO.md found; "
                     "agents receive no project rules for this repository")
@@ -396,6 +430,7 @@ def _emit(receipt):
     except (TypeError, ValueError):
         line = json.dumps({"ok": False, "sources": [], "skipped": [],
                            "total_bytes": 0, "truncated": False,
+                           "out": receipt.get("out") if isinstance(receipt, dict) else None,
                            "gaps": ["project_rules_receipt_unserializable"]})
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
