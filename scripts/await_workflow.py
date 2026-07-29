@@ -139,10 +139,11 @@ SCAN_MAX_DEEP_CANDIDATES = 8
 #: ({ok, planVersion, planChecksum, verified, written, errors}) and other agent
 #: receipts also carry one, and mistaking a receipt for the return would send
 #: Phase 8 off with the wrong object — a far worse outcome than waiting longer.
-#: Both observed return shapes are covered: the success shape
-#: {ok, phaseReached, stats, artifactPaths, resolvedPolicy, checkpoints, gaps} and
-#: the early-failure shape {ok, phaseReached, failingPhase, error, stats,
-#: artifactPaths, gaps}, which omits resolvedPolicy and checkpoints entirely.
+#: Observed shapes this list covers (not an exhaustive field-by-field enum):
+#: the success shape {ok, phaseReached, stats, artifactPaths, resolvedPolicy,
+#: checkpoints, gaps}; the early args-rejection envelope (no checkpoints, no
+#: resolvedPolicy); and the mid-run catch failure (has checkpoints via
+#: buildResumeCheckpoints, omits resolvedPolicy). Any member below corroborates.
 #: `error` is deliberately not in this list — it is far too generic to corroborate.
 COMPACT_RETURN_KEYS = (
     "phaseReached",
@@ -595,9 +596,11 @@ def artifacts_state(artifacts_dir, head_sha, since_epoch):
                      and stat.st_mtime >= since_epoch)
         except OSError:
             fresh = False
-        (state["present"] if fresh else state["missing"]).append(
-            os.path.basename(path)
-        )
+        name = os.path.basename(path)
+        if fresh:
+            state["present"].append(name)
+        else:
+            state["missing"].append(name)
     state["complete"] = not state["missing"]
     return state
 
@@ -646,14 +649,29 @@ def build_next_command(args, resolved_path, since_epoch):
     return " ".join(parts)
 
 
+def _wait_error_payload(args, message):
+    """Build the degrade-and-disclose marker for an unexpected wait failure."""
+    return {
+        "await": "error",
+        "gap": "workflow-timeout",
+        "message": message,
+        "target": args.target,
+        "attempt": args.attempt,
+        "max_attempts": args.max_attempts,
+    }
+
+
 def emit(payload):
-    """Print *payload* as exactly one compact JSON line. Never raises.
+    """Print *payload* as exactly one compact JSON line.
 
     Compact, never indent=2: this is `assemble_artifacts.py`'s rule and it holds
     for the same reason — a pretty-printer's embedded newlines would split the one
     line the caller is told to read. If the payload will not serialize, a
     hand-built minimal line goes out instead, because printing nothing is the one
     outcome that leaves the caller unable to tell a failure from a dead process.
+
+    Re-raises ``OSError`` after a broken-pipe redirect so the caller can degrade
+    to a documented exit code; every other failure still produces a line.
     """
     try:
         line = json.dumps(payload, separators=(",", ":"))
@@ -884,20 +902,15 @@ def main(argv=None, environ=None):
     except KeyboardInterrupt:
         # Even an interrupt gets a line: the caller branches on stdout, and a
         # silent exit is the one shape it cannot interpret.
-        emit({
-            "await": "error", "gap": "workflow-timeout",
-            "message": "interrupted", "target": args.target,
-            "attempt": args.attempt, "max_attempts": args.max_attempts,
-        })
-        return 4
+        payload, code = _wait_error_payload(args, "interrupted"), 4
     except Exception as exc:  # noqa: BLE001 - the never-print-nothing contract
-        emit({
-            "await": "error", "gap": "workflow-timeout",
-            "message": "%s: %s" % (type(exc).__name__, exc),
-            "target": args.target,
-            "attempt": args.attempt, "max_attempts": args.max_attempts,
-        })
-        return 4
+        payload, code = (
+            _wait_error_payload(args, "%s: %s" % (type(exc).__name__, exc)),
+            4,
+        )
+    # One emit site for every outcome — including the error markers above — so a
+    # broken pipe during an interrupt/exception report degrades the same way as
+    # a broken pipe on the happy path, instead of escaping as exit 1.
     try:
         emit(payload)
     except OSError:

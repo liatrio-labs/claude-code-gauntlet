@@ -45,6 +45,7 @@ from scripts.await_workflow import (  # noqa: E402
     build_next_command,
     build_parser,
     default_timeout_seconds,
+    emit,
     find_terminal,
     is_terminal_return,
     main,
@@ -914,6 +915,35 @@ class TestExitCodeContract(unittest.TestCase):
         self.assertEqual(marker["await"], "error")
         self.assertEqual(marker["gap"], "workflow-timeout")
         self.assertIn("boom", marker["message"])
+
+    def test_keyboard_interrupt_prints_interrupted_marker(self):
+        """KeyboardInterrupt is not an Exception subclass — its branch is distinct."""
+        with patch("scripts.await_workflow.await_terminal",
+                   side_effect=KeyboardInterrupt()):
+            code, out, _ = run_main(["w1", "--timeout-seconds", "0"])
+        marker = sole_json_line(out)
+        self.assertEqual(code, 4)
+        self.assertEqual(marker["await"], "error")
+        self.assertEqual(marker["gap"], "workflow-timeout")
+        self.assertEqual(marker["message"], "interrupted")
+
+    def test_broken_pipe_during_error_report_exits_four(self):
+        """Error-path emit must share the happy-path OSError degrade, not exit 1."""
+        with patch("scripts.await_workflow.await_terminal",
+                   side_effect=KeyboardInterrupt()):
+            with patch("builtins.print", side_effect=BrokenPipeError()):
+                code, out, err = run_main(["w1", "--timeout-seconds", "0"])
+        self.assertEqual(code, 4)
+        self.assertNotIn("Traceback", err)
+
+    def test_non_serializable_payload_emits_fallback_line(self):
+        out = io.StringIO()
+        with patch("sys.stdout", new=out):
+            emit({"await": "ok", "bad": {1, 2, 3}})
+        marker = sole_json_line(out.getvalue())
+        self.assertEqual(marker["await"], "error")
+        self.assertEqual(marker["gap"], "workflow-timeout")
+        self.assertIn("serialize", marker["message"])
 
     def test_marker_fields_are_always_present(self):
         with _Workspace() as ws:
