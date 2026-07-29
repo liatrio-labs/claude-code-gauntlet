@@ -94,7 +94,11 @@ class _RepoCase(unittest.TestCase):
         # "" for a missing file as well as an empty one; the distinction between
         # those two states is load-bearing and is asserted explicitly, on
         # os.path.exists, by test_repo_with_no_convention_files_*.
-        body = open(self.out).read() if os.path.exists(self.out) else ""
+        if os.path.exists(self.out):
+            with open(self.out, "r", encoding="utf-8") as handle:
+                body = handle.read()
+        else:
+            body = ""
         return code, receipt, body
 
     def reasons(self, receipt):
@@ -253,6 +257,19 @@ class TestSecurityBoundary(_RepoCase):
         self.assertNotIn("SYMLINK-CANARY", body)
         self.assertIn("not_markdown", self.reasons(receipt))
 
+    def test_md_named_first_class_symlink_to_an_in_repo_secret_is_refused(self):
+        # A symlinked first-class source needs the realpath ".md" check too,
+        # not just pointer indirection.
+        self.write(".env", "AWS_SECRET=SYMLINK-CANARY\n")
+        os.symlink(".env", os.path.join(self.repo, "CLAUDE.md"))
+        _, receipt, body = self.run_script()
+        self.assertNotIn("SYMLINK-CANARY", body)
+        self.assertIn("not_markdown", self.reasons(receipt))
+        self.assertTrue(
+            any("project_rules_refused" in g for g in receipt["gaps"]),
+            "a first-class non-markdown source must be surfaced as a refusal gap",
+        )
+
     def test_refusals_are_surfaced_as_gaps_not_only_as_skip_entries(self):
         self.write("CLAUDE.md", "@../outside.md\n")
         self.write("outside.md", "OUTSIDE\n", root=self.base)
@@ -392,6 +409,42 @@ class TestDiscovery(_RepoCase):
         for name in PROJECT_RULE_FILENAMES:
             self.assertIn("RULE-FROM-%s" % name.replace(".md", ""), body)
 
+    def test_changed_files_accepts_dict_shaped_entries(self):
+        self.write("CLAUDE.md", "ROOT-RULE\n")
+        self.write("pkg/storage/AGENTS.md", "DIR-RULE\n")
+        changed = self.write(
+            "../changed.json",
+            json.dumps([{"path": "pkg/storage/impl.go"}]),
+        )
+        _, _, body = self.run_script("--changed-files", changed)
+        self.assertIn("DIR-RULE", body)
+
+    def test_changed_files_rejects_malformed_input_without_crashing(self):
+        self.write("CLAUDE.md", "ROOT-RULE\n")
+        self.write("pkg/storage/AGENTS.md", "DIR-RULE\n")
+        changed = self.write(
+            "../changed.json",
+            json.dumps({"path": "pkg/storage/impl.go"}),
+        )
+        _, receipt, body = self.run_script("--changed-files", changed)
+        self.assertIn("ROOT-RULE", body)
+        self.assertNotIn("DIR-RULE", body)
+        self.assertTrue(receipt["ok"])
+
+
+class TestFirstClassFileTypes(_RepoCase):
+    def test_not_regular_first_class_source_is_disclosed(self):
+        # A directory named CLAUDE.md passes confinement and ".md" extension
+        # checks, but must still be refused at stat-time.
+        os.makedirs(os.path.join(self.repo, "CLAUDE.md"))
+        _, receipt, body = self.run_script()
+        self.assertEqual(body, "")
+        self.assertIn("not_regular", self.reasons(receipt))
+        self.assertTrue(
+            any("project_rules_unresolved" in g and "not_regular" in g for g in receipt["gaps"]),
+            "non-regular first-class rule sources must be disclosed via gaps[]",
+        )
+
     def test_review_md_is_deliberately_not_a_source(self):
         # REVIEW.md has its own structured parse path and precedence semantics;
         # collecting it as free rule text here would give one file two meanings.
@@ -458,6 +511,17 @@ class TestPureHelpers(unittest.TestCase):
         self.assertNotIn("@x.md", stripped)
         self.assertNotIn("@y.md", stripped)
         self.assertIn("@z.md", stripped)
+
+    def test_strip_code_nested_different_length_fences_dont_close_early(self):
+        text = (
+            "````\n"
+            "@OUTER1.md\n"
+            "```\n"
+            "@MISPARSED.md\n"
+            "````\n"
+            "@AFTER.md\n"
+        )
+        self.assertEqual(_find_imports(text), ["AFTER.md"])
 
     def test_find_imports_handles_inline_and_trailing_punctuation(self):
         self.assertEqual(

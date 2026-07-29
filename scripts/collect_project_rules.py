@@ -145,10 +145,13 @@ def _strip_code(text):
     for line in text.splitlines():
         match = _FENCE_RE.match(line)
         if match:
-            marker = match.group(1)[0]
+            marker = match.group(1)
             if fence is None:
                 fence = marker
-            elif fence == marker:
+            # Markdown permits longer closing fences (>= opening length).
+            # Track fence run length so nested shorter fences do not close
+            # the outer fence early.
+            elif fence[0] == marker[0] and len(marker) >= len(fence):
                 fence = None
             out.append("")
             continue
@@ -223,6 +226,8 @@ class _Collector(object):
             if _within(real, self.repo_root):
                 return os.path.relpath(real, self.repo_root)
         except OSError:
+            # Broken symlinks, missing targets, and other path errors should
+            # never crash receipt emission; fall back to a basename-only view.
             pass
         return os.path.basename(str(path))
 
@@ -235,9 +240,13 @@ class _Collector(object):
         Native Claude Code asks a human to approve an import that resolves
         outside the working directory; this script cannot prompt, so it refuses.
         """
-        if raw.startswith("~") or raw.startswith("\\") or "\\" in raw:
-            return None, "absolute_path"
-        if os.path.isabs(raw) or _WINDOWS_DRIVE_RE.match(raw):
+        if (
+            raw.startswith("~")
+            or raw.startswith("\\")
+            or "\\" in raw
+            or os.path.isabs(raw)
+            or _WINDOWS_DRIVE_RE.match(raw)
+        ):
             return None, "absolute_path"
 
         # Relative paths resolve against the directory of the file containing
@@ -398,6 +407,8 @@ def write_text_atomic(path, text):
         try:
             os.unlink(tmp)
         except OSError:
+            # Best-effort cleanup: unlink can fail (already removed, perms,
+            # races). Never mask the original write/replace error.
             pass
         raise
 
@@ -433,15 +444,36 @@ def _gaps(collector):
     return gaps
 
 
+def _receipt(*, ok, out, sources, skipped, total_bytes, truncated, gaps):
+    """Canonical receipt shape for stdout (and for _emit fallback)."""
+    return {
+        "ok": ok,
+        "sources": sources,
+        "skipped": skipped,
+        "total_bytes": total_bytes,
+        "truncated": truncated,
+        "out": out,
+        "gaps": gaps,
+    }
+
+
 def _emit(receipt):
     """EXACTLY one line of JSON on stdout, on every path."""
     try:
         line = json.dumps(receipt)
     except (TypeError, ValueError):
-        line = json.dumps({"ok": False, "sources": [], "skipped": [],
-                           "total_bytes": 0, "truncated": False,
-                           "out": receipt.get("out") if isinstance(receipt, dict) else None,
-                           "gaps": ["project_rules_receipt_unserializable"]})
+        out = receipt.get("out") if isinstance(receipt, dict) else None
+        line = json.dumps(
+            _receipt(
+                ok=False,
+                out=out,
+                sources=[],
+                skipped=[],
+                total_bytes=0,
+                truncated=False,
+                gaps=["project_rules_receipt_unserializable"],
+            )
+        )
     sys.stdout.write(line + "\n")
     sys.stdout.flush()
 
@@ -460,9 +492,17 @@ def main(argv=None):
     collector = None
     try:
         if not os.path.isdir(args.repo_root):
-            _emit({"ok": False, "sources": [], "skipped": [], "total_bytes": 0,
-                   "truncated": False, "out": args.out,
-                   "gaps": ["project_rules_failed: --repo-root is not a directory"]})
+            _emit(
+                _receipt(
+                    ok=False,
+                    out=args.out,
+                    sources=[],
+                    skipped=[],
+                    total_bytes=0,
+                    truncated=False,
+                    gaps=["project_rules_failed: --repo-root is not a directory"],
+                )
+            )
             return 1
 
         collector = _Collector(args.repo_root, args.max_file_bytes,
@@ -481,21 +521,29 @@ def main(argv=None):
                 if not _within(real, collector.repo_root):
                     collector._skip(candidate, "outside_repo")
                     continue
+                # First-class sources need the same markdown-realpath check as
+                # pointers: a symlink named CLAUDE.md can target an in-repo
+                # secret like .env and defeat extension-only filtering.
+                if not real.lower().endswith(".md"):
+                    collector._skip(candidate, "not_markdown")
+                    continue
                 collector.visit(real, "direct", 0, ())
 
         # Written even when empty. A missing file means the step never ran.
         write_text_atomic(args.out, render(collector.sources))
 
-        _emit({
-            "ok": True,
-            "sources": [{k: v for k, v in s.items() if k != "text"}
-                        for s in collector.sources],
-            "skipped": collector.skipped,
-            "total_bytes": collector.total_bytes,
-            "truncated": collector.truncated,
-            "out": args.out,
-            "gaps": _gaps(collector),
-        })
+        _emit(
+            _receipt(
+                ok=True,
+                out=args.out,
+                sources=[{k: v for k, v in s.items() if k != "text"}
+                         for s in collector.sources],
+                skipped=collector.skipped,
+                total_bytes=collector.total_bytes,
+                truncated=collector.truncated,
+                gaps=_gaps(collector),
+            )
+        )
         return 0
     except Exception as exc:  # noqa: BLE001 — a receipt on every path
         sys.stderr.write("collect_project_rules: %s\n" % exc)
@@ -503,10 +551,17 @@ def main(argv=None):
             write_text_atomic(args.out, render(collector.sources) if collector else "")
         except Exception:  # noqa: BLE001
             pass
-        _emit({"ok": False,
-               "sources": [], "skipped": collector.skipped if collector else [],
-               "total_bytes": 0, "truncated": False, "out": args.out,
-               "gaps": ["project_rules_failed: %s" % exc]})
+        _emit(
+            _receipt(
+                ok=False,
+                out=args.out,
+                sources=[],
+                skipped=collector.skipped if collector else [],
+                total_bytes=0,
+                truncated=False,
+                gaps=["project_rules_failed: %s" % exc],
+            )
+        )
         return 1
 
 
