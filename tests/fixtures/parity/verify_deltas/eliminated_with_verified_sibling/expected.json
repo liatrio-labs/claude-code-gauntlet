@@ -1,0 +1,37 @@
+{
+  "checksum": "fnv1a32:0xc3a8f38e",
+  "deltas": [
+    {
+      "confidence": 65,
+      "id": "bug-201",
+      "origin": "new",
+      "severity": "medium",
+      "verified": true
+    },
+    {
+      "confidence": 0,
+      "elimination_reason": "evidence does not match file content",
+      "id": "bug-202",
+      "origin": "new",
+      "severity": "high",
+      "verified": false
+    }
+  ],
+  "joined": [
+    {
+      "confidence": 65,
+      "cross_file_refs": [],
+      "description": "The file opened via open(path) is never closed if the loop below raises, leaking a file descriptor per failed parse.",
+      "dimension": "bug",
+      "evidence": "f = open(path)",
+      "file": "src/parser.py",
+      "id": "bug-201",
+      "line_end": 52,
+      "line_start": 50,
+      "origin": "new",
+      "severity": "medium",
+      "suggestion": "Use a context manager (with open(path) as f) instead.",
+      "title": "Unclosed file handle"
+    }
+  ]
+}

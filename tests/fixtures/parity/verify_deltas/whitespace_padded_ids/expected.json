@@ -1,0 +1,37 @@
+{
+  "checksum": "fnv1a32:0x336f631c",
+  "deltas": [
+    {
+      "confidence": 80,
+      "id": "ws-1",
+      "origin": "new",
+      "severity": "high",
+      "verified": true
+    },
+    {
+      "confidence": 0,
+      "elimination_reason": "evidence does not match file content",
+      "id": " ws-1 ",
+      "origin": "new",
+      "severity": "medium",
+      "verified": false
+    }
+  ],
+  "joined": [
+    {
+      "confidence": 80,
+      "cross_file_refs": [],
+      "description": "Finding whose id is the bare token; must stay distinct from its whitespace-padded twin for the content proof.",
+      "dimension": "bug",
+      "evidence": "x = 1",
+      "file": "src/a.py",
+      "id": "ws-1",
+      "line_end": 12,
+      "line_start": 10,
+      "origin": "new",
+      "severity": "high",
+      "suggestion": "Keep the id exact.",
+      "title": "Whitespace-padded sibling A"
+    }
+  ]
+}

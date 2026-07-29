@@ -105,10 +105,20 @@ test('required is the flat FINDING_REQUIRED — no per-dimension extra sneaks in
   }
 });
 
-test('the verify echo schema unions EVERY dimension extra, not just one agent set', async () => {
-  // The verify slice carries post-merge findings from all agents mixed together, so its echo
-  // item schema must declare every agent's extras or the executor drops a field belonging to
-  // an agent other than the one it happens to be transcribing.
+test('the verify echo declares NO finding item at all — the registry union stops at discovery', async () => {
+  // This test used to assert the opposite: that the verify echo's item schema unioned every
+  // dimension's extras, because the slice carried post-merge findings from all agents mixed
+  // together and any extra it failed to declare was dropped when the executor transcribed
+  // the findings "verbatim via the schema".
+  //
+  // Issue #25 PR2 removed the reason for that union. The executor no longer echoes findings —
+  // it echoes a per-id DELTA of what verify_findings.py decided, and the workflow joins that
+  // onto the findings it already holds. So there is no per-dimension extra to keep in sync at
+  // this boundary any more, and the guarantee is stronger than the union ever was: a field
+  // cannot be dropped in transcription if it is never transcribed. What must be pinned now is
+  // that PROPERTY — that no finding-shaped item reappears here — because re-adding one would
+  // silently re-open both the #47 field-dropping class and the withheld-`agent` constraint
+  // (#25 requirement 1) in a single edit.
   //
   // Only the EXECUTOR dispatch's schema is under test here, so the mock is deliberately
   // minimal: the slice-input writer echoes its paths so the write-proof gate passes, and the
@@ -148,17 +158,30 @@ test('the verify echo schema unions EVERY dimension extra, not just one agent se
   assert.deepEqual(execSchemas[1], execSchemas[0], 'retry dispatch schema matches attempt 1');
   const schema = execSchemas[0];
 
-  const everyField = new Set(Object.keys(FINDING_PROP_TYPES));
-  for (const d of DIMENSIONS) for (const k of Object.keys(d.schemaExtra || {})) everyField.add(k);
-  // elimination_reason is verify-only: run_verification always stamps it on a real
-  // elimination, so it must be declarable or the fidelity gate false-fires.
-  everyField.add('elimination_reason');
+  // No finding-shaped array anywhere in the echo — not under the old names, and not under
+  // any new one: the only array the result declares is `deltas`, and its items are the six
+  // scalar keys verify_findings.py emits. A per-dimension extra or a canonical finding field
+  // appearing here would mean findings crossed the boundary again.
+  const result = schema.properties.result.properties;
+  assert.deepEqual(Object.keys(result), ['deltas'], 'the verify result declares deltas and nothing else');
+  const deltaProps = result.deltas.items.properties;
+  assert.deepEqual(
+    Object.keys(deltaProps).sort(),
+    ['confidence', 'elimination_reason', 'id', 'origin', 'severity', 'verified'],
+    'the delta item declares exactly the keys verify_findings.py _DELTA_FIELDS emits (plus id/verified)',
+  );
 
-  for (const arr of ['verified', 'eliminated']) {
-    const props = schema.properties.result.properties[arr].items.properties;
-    assert.deepEqual(new Set(Object.keys(props)), everyField,
-      `verify echo (${arr}) does not declare exactly the registry union + elimination_reason`);
+  const findingOnly = new Set(Object.keys(FINDING_PROP_TYPES));
+  for (const d of DIMENSIONS) for (const k of Object.keys(d.schemaExtra || {})) findingOnly.add(k);
+  // The four keys a delta legitimately shares with a finding are its whole point — they are
+  // what the script re-decides. Everything else the registry declares must be absent.
+  for (const k of ['id', 'origin', 'severity', 'confidence']) findingOnly.delete(k);
+  for (const k of Object.keys(deltaProps)) {
+    assert.ok(!findingOnly.has(k), `${k} is a finding field and must not ride the delta echo`);
   }
+  // `agent` was never declarable here and must stay that way — but the constraint is now
+  // enforced structurally by joinVerifyDeltas stripping it, pinned in stages_verify_delta.test.js.
+  assert.equal(deltaProps.agent, undefined, 'the delta must not carry agent identity');
 });
 
 test('the fields issue #47 added are declared, on the right agents, with the right types', async () => {

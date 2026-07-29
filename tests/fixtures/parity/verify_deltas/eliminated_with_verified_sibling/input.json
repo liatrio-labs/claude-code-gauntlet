@@ -1,0 +1,95 @@
+{
+  "dispatched": [
+    {
+      "id": "bug-201",
+      "file": "src/parser.py",
+      "line_start": 50,
+      "line_end": 52,
+      "title": "Unclosed file handle",
+      "description": "The file opened via open(path) is never closed if the loop below raises, leaking a file descriptor per failed parse.",
+      "severity": "medium",
+      "confidence": 65,
+      "dimension": "bug",
+      "evidence": "f = open(path)",
+      "suggestion": "Use a context manager (with open(path) as f) instead.",
+      "cross_file_refs": []
+    },
+    {
+      "id": "bug-202",
+      "file": "src/parser.py",
+      "line_start": 900,
+      "line_end": 902,
+      "title": "Claimed race condition in cache eviction",
+      "description": "The finding cites a lock acquisition around cache eviction at these lines, but no such code exists in the current file.",
+      "severity": "high",
+      "confidence": 75,
+      "dimension": "bug",
+      "evidence": "with cache_lock: evict(key)",
+      "suggestion": "Confirm the lock is actually held at the reported location before filing.",
+      "cross_file_refs": []
+    }
+  ],
+  "result": {
+    "verified": [
+      {
+        "id": "bug-201",
+        "file": "src/parser.py",
+        "line_start": 50,
+        "line_end": 52,
+        "title": "Unclosed file handle",
+        "description": "The file opened via open(path) is never closed if the loop below raises, leaking a file descriptor per failed parse.",
+        "severity": "medium",
+        "confidence": 65,
+        "dimension": "bug",
+        "evidence": "f = open(path)",
+        "suggestion": "Use a context manager (with open(path) as f) instead.",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Priya Shah",
+          "date": "2026-07-18",
+          "original_severity": "medium"
+        },
+        "factual_verification": {
+          "verified": true,
+          "reason": "file content and symbols verified",
+          "code_at_lines": "f = open(path)"
+        },
+        "diff_validation": {
+          "in_diff": true,
+          "reason": "line 50 found in diff"
+        }
+      }
+    ],
+    "eliminated": [
+      {
+        "id": "bug-202",
+        "file": "src/parser.py",
+        "line_start": 900,
+        "line_end": 902,
+        "title": "Claimed race condition in cache eviction",
+        "description": "The finding cites a lock acquisition around cache eviction at these lines, but no such code exists in the current file.",
+        "severity": "high",
+        "confidence": 0,
+        "dimension": "bug",
+        "evidence": "with cache_lock: evict(key)",
+        "suggestion": "Confirm the lock is actually held at the reported location before filing.",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Priya Shah",
+          "date": "2026-07-18",
+          "original_severity": "high"
+        },
+        "factual_verification": {
+          "verified": false,
+          "reason": "line_start 900 out of range (file has 120 line(s))",
+          "code_at_lines": null
+        },
+        "elimination_reason": "evidence does not match file content"
+      }
+    ]
+  }
+}

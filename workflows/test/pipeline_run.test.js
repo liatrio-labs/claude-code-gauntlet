@@ -219,17 +219,32 @@ test('every stage dispatch uses an object-rooted schema (no array-rooted 400)', 
 // --- Description flows intact through every stage (regression) ---------------
 
 test('a long description survives merge->verify->validate->filter->challenge->persist unchanged', async () => {
-  // Regression for the mid-pipeline description strip: verifyStage collects the executor's
-  // result.verified BY VALUE as THE findings for every later stage, but VERIFY_SCHEMA once
-  // declared those items as { type:'object', properties:{} }. StructuredOutput leaves an
-  // empty-properties object unconstrained, so the executor dropped the (largest) `description`
-  // field when echoing the --output file "verbatim". Emptied descriptions then flowed through
-  // validate/filter, where the injection guard (short description + high confidence) false-fired
-  // and eliminated high-confidence findings (golden matches). Two guarantees are asserted here:
-  //   (1) the DATA FLOW — no stage strips a description that verify returns; and
-  //   (2) the SCHEMA SHAPE — the verify dispatch declares `description` on its verified/eliminated
-  //       items (the actual root-cause fix; a mock alone can't catch a schema regression because
-  //       it never applies StructuredOutput's field-dropping).
+  // Regression for the mid-pipeline description strip, across two fixes now history:
+  //   - Original bug: verifyStage collected the executor's result.verified BY VALUE as THE
+  //     findings for every later stage, but VERIFY_SCHEMA declared those items as
+  //     { type:'object', properties:{} }. StructuredOutput leaves an empty-properties object
+  //     unconstrained, so the executor dropped the (largest) `description` field when echoing
+  //     the --output file "verbatim". Emptied descriptions then flowed through validate/filter,
+  //     where the injection guard (short description + high confidence) false-fired and
+  //     eliminated high-confidence findings (golden matches).
+  //   - Intermediate fix: VERIFY_SCHEMA declared the FULL finding item on verified/eliminated
+  //     (description present, confidence typed number), so StructuredOutput preserved the
+  //     field instead of letting the executor drop it — but the finding itself still crossed
+  //     the trust boundary a second time, so the item schema was the only thing standing
+  //     between the executor and another silent drop.
+  //   - Current state (issue #25 PR2): the finding never crosses the boundary a second time at
+  //     all. The executor's answer is a per-id DELTA — {id, verified, origin, severity,
+  //     confidence, elimination_reason} — never the finding, so there is no properties:{} (or
+  //     any other item schema) for a description to be dropped BY. verifyStage rebuilds the
+  //     verified findings by joining the delta onto the SAME finding object this stage already
+  //     holds by value (joinVerifyDeltas): the description-strip class is structurally
+  //     impossible now, not merely schema-prevented.
+  // Two guarantees are asserted here:
+  //   (1) the DATA FLOW — no stage strips a description that verify's join reattaches; and
+  //   (2) the SCHEMA SHAPE — the verify dispatch schema declares NO finding-shaped array at
+  //       all (no result.properties.verified / .eliminated to declare description on), and its
+  //       one array (result.properties.deltas) declares exactly the six delta keys — so a
+  //       finding-shaped item schema can't regress back into existence unnoticed.
   const longDescription =
     'When authenticating via the API-key path, organization_context.member is None but line 42 '
     + 'dereferences member.role without a guard, so any API-key request that resolves to a '
@@ -257,17 +272,28 @@ test('a long description survives merge->verify->validate->filter->challenge->pe
   assert.equal(survivor.description, longDescription, 'description reaches persist unchanged');
   assert.equal(survivor.body, longDescription, 'the persisted v2 body alias mirrors the full description');
 
-  // (2) Schema shape: the verify dispatch must declare the FULL finding item — `description`
-  // present, and confidence typed NUMBER (verify_findings.py re-scores it) — so StructuredOutput
-  // preserves description instead of letting the executor drop it. A revert to properties:{} fails here.
+  // (2) Schema shape: the verify dispatch must carry NO finding-shaped array at all — the
+  // verified/eliminated arrays that used to need a `description` property don't exist to
+  // declare one on — and its only result array (deltas) must declare exactly the six delta
+  // keys, with `id`/`verified` required. A revert that reintroduces a findings-shaped verify
+  // result array (with or without `description`) fails here.
   const verifyCall = ctx.calls.find((c) => (c.label || '').startsWith('verify-slice-'));
   assert.ok(verifyCall && verifyCall.schema, 'a verify-slice was dispatched with a schema');
-  for (const arr of ['verified', 'eliminated']) {
-    const itemProps = verifyCall.schema.properties.result.properties[arr].items.properties;
-    assert.ok(itemProps && itemProps.description, `verify ${arr} items must declare description (not properties:{})`);
-    assert.equal(itemProps.description.type, 'string', `verify ${arr} description must be typed string`);
-    assert.equal(itemProps.confidence.type, 'number', `verify ${arr} confidence must be typed number (post-verify numeric)`);
-  }
+  const resultProps = verifyCall.schema.properties.result.properties;
+  assert.ok(!('verified' in resultProps), 'verify result no longer declares a verified findings array');
+  assert.ok(!('eliminated' in resultProps), 'verify result no longer declares an eliminated findings array');
+  assert.ok(resultProps.deltas, 'verify result declares a deltas array');
+  const deltaItemProps = resultProps.deltas.items.properties;
+  assert.deepEqual(
+    Object.keys(deltaItemProps).sort(),
+    ['confidence', 'elimination_reason', 'id', 'origin', 'severity', 'verified'],
+    'the delta item declares exactly the six delta keys — no description, no room to drop one',
+  );
+  assert.deepEqual(
+    (resultProps.deltas.items.required || []).slice().sort(),
+    ['id', 'verified'],
+    'id and verified are the only required delta keys',
+  );
 });
 
 // --- Empty-report false-negative guard --------------------------------------

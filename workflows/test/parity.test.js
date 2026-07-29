@@ -19,6 +19,7 @@ import {
   tagFindings,
 } from '../src/filterFindings.js';
 import { applyChallenges } from '../src/applyChallenges.js';
+import { joinVerifyDeltas, deltaContentProof } from '../src/stages.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, '..', '..', 'tests', 'fixtures', 'parity');
@@ -207,5 +208,36 @@ for (const c of loadCases('apply_challenges')) {
     );
     for (const e of eliminated) assert.ok(e.elimination_reason && e.elimination_reason.length > 0);
     assert.deepEqual(stats, c.expected.stats);
+  });
+}
+
+// --- verify_deltas: issue #25 requirement 1's equivalence claim -----------
+//
+// Python (verify_findings.py's build_deltas/deltas_checksum, run by the recorder) owns
+// the producing half; this block owns the reconstructing half (joinVerifyDeltas/
+// deltaContentProof, the same functions verifyStage actually calls). One golden fixture
+// sits between them, so a change to either side that breaks the join is caught here
+// rather than only by the two runtimes agreeing with themselves.
+for (const c of loadCases('verify_deltas')) {
+  test(`verify_deltas parity: ${c.name}`, () => {
+    // (1) THE join reproduces, for every field any downstream stage consumes, what
+    // verify_findings.py itself left on the finding (minus its own audit trail and the
+    // withheld `agent` -- the recorder's project() drops exactly those four). This is
+    // the equivalence claim itself, not a proxy for it.
+    const joined = joinVerifyDeltas(c.input.dispatched, c.expected.deltas);
+    assert.deepEqual(joined, c.expected.joined);
+
+    // (2) The two runtimes compute the SAME content proof over the SAME deltas --
+    // Python's deltas_checksum(deltas) (over the deltas in dispatch order) against JS's
+    // deltaContentProof (which re-keys by id before stringifying), so an order-dependent
+    // divergence between the two canonicalisations would fail here even though each
+    // runtime's own deltas array already carries the checksum that produced it.
+    const ids = c.input.dispatched.map((f) => f.id);
+    assert.equal(deltaContentProof(ids, c.expected.deltas), c.expected.checksum);
+
+    // (3) The #25 requirement-1 withholding constraint, pinned on the golden path: no
+    // finding joinVerifyDeltas emits may carry `agent`, even though the script's own
+    // output (and the dispatched finding, in the extras-survive fixture) may have one.
+    for (const f of joined) assert.ok(!Object.prototype.hasOwnProperty.call(f, 'agent'));
   });
 }

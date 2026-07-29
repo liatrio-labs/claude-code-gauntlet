@@ -1,0 +1,30 @@
+{
+  "checksum": "fnv1a32:0xd8a0a653",
+  "deltas": [
+    {
+      "confidence": 55,
+      "id": "conv-401",
+      "origin": "new",
+      "severity": "low",
+      "verified": true
+    }
+  ],
+  "joined": [
+    {
+      "claude_md_rule": "Use snake_case for all method names (CLAUDE.md > Style).",
+      "confidence": 55,
+      "cross_file_refs": [],
+      "description": "This method uses camelCase while every other method in the module uses snake_case.",
+      "dimension": "convention",
+      "evidence": "def getOrderId(self):",
+      "file": "src/models/order.py",
+      "id": "conv-401",
+      "line_end": 42,
+      "line_start": 42,
+      "origin": "new",
+      "severity": "low",
+      "suggestion": "Rename to get_order_id for consistency with the rest of the module.",
+      "title": "Inconsistent naming: getOrderId vs get_order_id"
+    }
+  ]
+}

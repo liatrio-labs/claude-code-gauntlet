@@ -1,7 +1,14 @@
 // stages_verify.test.js — orchestration-contract tests for the Verify stage.
 // verifyStage dispatches the `executor` agent (one call per verifySliceSize slice),
-// SEQUENTIALLY, and trusts a slice's result ONLY when status==='ok' and the receipt
-// echoes the dispatched nonce, head sha, and slice finding-count (trustSlice).
+// SEQUENTIALLY, and trusts a slice's result ONLY when status==='ok', the receipt echoes
+// the dispatched nonce/head-sha/n_in, the echoed `result.deltas` cover EXACTLY the ids
+// this slice dispatched (no missing, no duplicate, no stranger), and their content proof
+// (fnv1a32 over the canonical rebuild) matches receipt.deltas_checksum (trustSlice).
+// Under the delta echo (issue #25 PR2) the executor no longer echoes findings at all —
+// only a per-id DELTA of what verify_findings.py decided (origin/severity/confidence/
+// elimination_reason) — so the verified findings are rebuilt HERE, by joining that delta
+// onto the findings this stage already dispatched (joinVerifyDeltas), which also
+// unconditionally strips `agent` from every joined finding.
 // DEGRADATION IS PER SLICE (issue #54, issue #25 requirement 3): an untrusted slice
 // degrades ONLY ITS OWN findings (origin='unknown', surfaced-classification skipped) and
 // the loop keeps going — slices that verify cleanly keep their verified output. Each slice
@@ -15,6 +22,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage, parseWriterPayload, VERIFY_ATTEMPTS_PER_SLICE } from '../src/stages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
+import { deltaEnvelope, deltasFor, ELIMINATION_STAMP } from './helpers/verifyDelta.js';
 
 // Platform contract: agent(promptString, opts). The EXECUTOR slice loop is deliberately
 // SEQUENTIAL bare agent() calls (never parallel() — the order pairs receipts to slices),
@@ -96,25 +104,35 @@ function baseInput(overrides = {}) {
   };
 }
 
-function okEnvelope(findings, { sha = 'abc123', nonce = 'n-1', n_in = findings.length } = {}) {
-  return {
-    status: 'ok',
-    receipt: { sha, nonce, n_in },
-    result: { verified: findings, eliminated: [], batches: [], stats: {} },
-  };
+// okEnvelope(findings, opts) — thin same-signature wrapper around the shared
+// deltaEnvelope helper (verifyDelta.js). Kept under this name because ~30 call sites in
+// this file already read `okEnvelope(...)`; it MUST delegate rather than re-derive the
+// checksum itself — deltaEnvelope's own rationale is that a second copy of the
+// canonicalisation would agree with a broken implementation just as happily as a correct
+// one. By default this builds one delta per finding, each echoing that finding's own
+// origin/severity/confidence (verified:true) — the shape a well-behaved script produces
+// for a slice it changed nothing about. Callers pass `deltas`/`overrides`/`checksum`/`ids`
+// (see deltaEnvelope's own doc comment) to drive the trust-boundary tests below.
+function okEnvelope(findings, opts = {}) {
+  return deltaEnvelope(findings, opts);
 }
 
 test('(a) valid ok envelope with matching receipt -> findings verified, verified===true', async () => {
   const input = baseInput();
-  const verifiedFindings = input.findings.map((f) => ({ ...f, origin: 'new' }));
-  // Per-slice nonce: slice i must echo `${nonce}.${i}` (here slice 0 -> n-1.0).
-  const ctx = verifyCtx((_t, i) => okEnvelope(verifiedFindings, { nonce: `n-1.${i}` }));
+  // Per-slice nonce: slice i must echo `${nonce}.${i}` (here slice 0 -> n-1.0). The
+  // default delta (okEnvelope/deltaEnvelope) echoes each finding's own origin, so this is
+  // exactly the shape a script produces when it changes nothing about the slice.
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, true);
   assert.equal(out.findings.length, 2);
   assert.equal(out.gaps.length, 0);
   assert.ok(out.findings.every((f) => f.origin !== 'unknown'));
   // cross_file_refs survives verbatim (surfaced-classification depends on it downstream).
+  // This used to test that the executor's echo carried it through faithfully; now it is
+  // guaranteed BY CONSTRUCTION rather than by transcription — joinVerifyDeltas enriches the
+  // finding this stage already dispatched, and the delta echo has no cross_file_refs field
+  // at all for an executor to drop or mangle.
   assert.deepEqual(out.findings.find((f) => f.id === 'F2').cross_file_refs, ['c.js:9']);
 });
 
@@ -176,20 +194,22 @@ test('(e) receipt n_in mismatch (dispatched count) -> UNVERIFIED', async () => {
   assert.ok(out.findings.every((f) => f.origin === 'unknown'));
 });
 
-test('(e2) result completeness: verified+eliminated != n_in -> UNVERIFIED (transport truncation)', async () => {
+test('(e2) delta coverage: an echo missing one dispatched id\'s delta -> UNVERIFIED (replaces the old verified+eliminated count-sum guard)', async () => {
   const input = baseInput();
-  // nonce/sha/n_in all match, but the result arrays were truncated in transport:
-  // verified(1)+eliminated(0) != n_in(2). Without this guard a finding silently vanishes.
-  const ctx = verifyCtx((_t, i) => ({
-    status: 'ok',
-    receipt: { sha: 'abc123', nonce: `n-1.${i}`, n_in: input.findings.length },
-    result: { verified: [input.findings[0]], eliminated: [], batches: [], stats: {} },
+  // nonce/sha/n_in all match, but the deltas array covers only F1 — F2's delta never
+  // arrived. The old count guard (verified.length + eliminated.length === n_in) cannot
+  // exist any more now that findings themselves are never echoed; #25 req 2's replacement
+  // is an exact id-coverage check (trustSlice), which is what this pins. Without it a
+  // finding whose delta never arrived would silently vanish.
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, {
+    nonce: `n-1.${i}`,
+    deltas: deltasFor([input.findings[0]]), // F2's delta is missing entirely
   }));
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, false);
   assert.equal(out.findings.length, input.findings.length); // originals preserved
   assert.ok(out.findings.every((f) => f.origin === 'unknown'));
-  assert.ok(out.gaps.some((g) => /incomplete|truncat/i.test(g)));
+  assert.ok(out.gaps.some((g) => /does not cover/i.test(g)));
 });
 
 test('(f) agent() throw -> UNVERIFIED, findings preserved', async () => {
@@ -308,24 +328,20 @@ test('(i) empty finding set -> trivially verified, no executor calls', async () 
 });
 
 // --- Item 2: echo content-fidelity gate -------------------------------------
-// trustSlice must reject a slice whose eliminated[] entries lack the elimination_reason
-// stamp run_verification() ALWAYS writes on a real elimination. Observed live: the script
-// disk had 10 verified/0 eliminated, but the echo claimed 7 verified/3 eliminated with a
-// valid receipt and a passing count-sum — the 3 fabricated eliminations carried no stamp.
-function stampedEliminated(f) {
-  return { ...f, elimination_reason: 'evidence does not match file content' };
-}
+// trustSlice must reject a slice whose delta carries verified:false without the
+// elimination_reason stamp run_verification() ALWAYS writes on a real elimination.
+// Observed live (same underlying script behavior the by-value design also had to guard):
+// the script disk had 10 verified/0 eliminated, but the echo claimed 7 verified/3
+// eliminated with a valid receipt and a passing count check — the 3 fabricated
+// eliminations carried no stamp. Under the delta echo the identical fault is expressed as
+// a verified:false delta with no stamp; ELIMINATION_STAMP (verifyDelta.js) is the exact
+// string the script writes, so fixtures here stay honest about what it actually emits.
 
-test('(m1) stamped eliminations -> slice TRUSTED: verified findings threaded, verified===true', async () => {
+test('(m1) a verified:false delta carrying the elimination stamp -> slice TRUSTED: only the verified finding threaded, verified===true', async () => {
   const input = baseInput(); // F1, F2; one slice
-  const ctx = verifyCtx((_t, i) => ({
-    status: 'ok',
-    receipt: { sha: 'abc123', nonce: `n-1.${i}`, n_in: 2 },
-    result: {
-      verified: [{ ...input.findings[0], origin: 'new' }],
-      eliminated: [stampedEliminated(input.findings[1])], // script-stamped real elimination
-      batches: [], stats: {},
-    },
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, {
+    nonce: `n-1.${i}`,
+    overrides: { F2: { verified: false, elimination_reason: ELIMINATION_STAMP } }, // script-stamped real elimination
   }));
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, true);
@@ -335,16 +351,11 @@ test('(m1) stamped eliminations -> slice TRUSTED: verified findings threaded, ve
   assert.equal(out.gaps.length, 0);
 });
 
-test('(m2) an UNSTAMPED elimination (fabricated verified->eliminated move) -> that slice UNVERIFIED, both attempts', async () => {
+test('(m2) a verified:false delta with NO elimination_reason stamp (fabricated elimination) -> that slice UNVERIFIED, both attempts', async () => {
   const input = baseInput();
-  const ctx = verifyCtx((_t, i) => ({
-    status: 'ok',
-    receipt: { sha: 'abc123', nonce: `n-1.${i}`, n_in: 2 }, // receipt + count-sum both PASS
-    result: {
-      verified: [{ ...input.findings[0], origin: 'new' }],
-      eliminated: [{ ...input.findings[1] }], // NO elimination_reason — the script never omits it
-      batches: [], stats: {},
-    },
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, {
+    nonce: `n-1.${i}`, // receipt + id-coverage both PASS
+    overrides: { F2: { verified: false } }, // NO elimination_reason — the script never omits it
   }));
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, false);
@@ -355,14 +366,9 @@ test('(m2) an UNSTAMPED elimination (fabricated verified->eliminated move) -> th
 
 test('(m3) a blank-string elimination_reason is also rejected (not a real stamp)', async () => {
   const input = baseInput();
-  const ctx = verifyCtx((_t, i) => ({
-    status: 'ok',
-    receipt: { sha: 'abc123', nonce: `n-1.${i}`, n_in: 2 },
-    result: {
-      verified: [{ ...input.findings[0], origin: 'new' }],
-      eliminated: [{ ...input.findings[1], elimination_reason: '   ' }],
-      batches: [], stats: {},
-    },
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, {
+    nonce: `n-1.${i}`,
+    overrides: { F2: { verified: false, elimination_reason: '   ' } },
   }));
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, false);
@@ -370,50 +376,63 @@ test('(m3) a blank-string elimination_reason is also rejected (not a real stamp)
 });
 
 // --- Item 4: verify echo item schema declares agent + reconciled extras -------
+// (superseded by the #25 PR2 delta echo) The by-value item schema used to union every
+// per-dimension extra across all agents so a verified finding's shape survived
+// transcription. The delta echo removes that need entirely: no finding is echoed at all
+// any more, so VERIFY_SCHEMA's result.deltas item is deliberately just the six flat
+// DELTA_KEYS scalars and nothing else — there is no per-dimension extra left to declare
+// or drop. This test now pins that narrowness plus the still-live `agent` withholding
+// (item 4's original point, now structural rather than a schema omission).
 
-test('(m4) verify echo item schema declares reconciled per-dimension extras (array types) + elimination_reason — and NOT agent', async () => {
+test('(m4) verify echo item schema is exactly the six delta scalars — no per-dimension extras, and NOT agent', async () => {
   const input = baseInput();
   const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
   await verifyStage(ctx, input);
   const schema = ctx.execCalls()[0].schema;
-  for (const arr of ['verified', 'eliminated']) {
-    const props = schema.properties.result.properties[arr].items.properties;
-    // agent is INTENTIONALLY not declared (item 4 reverted after mini-subset A): a
-    // deterministic agent echo activated proximity-keyed cross-agent dedup and cost
-    // -7 same-6 goldens. Re-lands only with the #17/D20 consolidation redesign.
-    assert.ok(!('agent' in props), 'agent must not be declared until the D20 redesign');
-    assert.equal(props.confidence.type, 'number');
-    // elimination_reason must be declarable so an honest script stamp survives transcription
-    // (else the item-2 fidelity gate would false-fire on real eliminations).
-    assert.equal(props.elimination_reason.type, 'string');
-    // Reconciled per-dimension extras (union across all agents), matching the .md contracts:
-    assert.equal(props.hidden_errors.type, 'string', 'bug -> hidden_errors');
-    assert.equal(props.attack_vector.type, 'string', 'security -> attack_vector');
-    assert.equal(props.invalid_state_example.type, 'string', 'type_design -> invalid_state_example');
-    assert.equal(props.behavior_preserved.type, 'string', 'simplification -> behavior_preserved');
-    // cross_file_impact -> affected_consumers is an ARRAY of strings (array support).
-    assert.equal(props.affected_consumers.type, 'array');
-    assert.equal(props.affected_consumers.items.type, 'string');
-    // The pre-reconciliation phantom fields (never emitted, never consumed) are gone.
-    for (const ghost of ['encapsulation', 'invariants', 'enforcement', 'usefulness', 'before', 'after']) {
-      assert.ok(!(ghost in props), `phantom field ${ghost} must not be declared`);
-    }
+  const props = schema.properties.result.properties.deltas.items.properties;
+  // agent is INTENTIONALLY not declared — no finding is echoed any more, only a per-id
+  // decision, so there is nothing left for a deterministic agent echo to ride on. That
+  // used to matter as a schema omission (item 4 reverted after mini-subset A: a
+  // deterministic agent echo activated proximity-keyed cross-agent dedup and cost -7
+  // same-6 goldens); it is now unreachable by construction. Re-lands only with the
+  // #17/D20 consolidation redesign.
+  assert.ok(!('agent' in props), 'agent must not be declared until the D20 redesign');
+  assert.equal(props.id.type, 'string');
+  assert.equal(props.verified.type, 'boolean');
+  assert.equal(props.origin.type, 'string');
+  assert.equal(props.severity.type, 'string');
+  assert.equal(props.confidence.type, 'number');
+  // elimination_reason must be declarable so an honest script stamp survives transcription
+  // (else the item-2 fidelity gate would false-fire on real eliminations).
+  assert.equal(props.elimination_reason.type, 'string');
+  // The per-dimension extras (union across all agents, e.g. hidden_errors/attack_vector)
+  // and the pre-reconciliation phantom fields are BOTH gone: the delta item has nothing to
+  // reconstruct a finding from, by construction, not by a field-by-field allowlist.
+  for (const ghost of [
+    'hidden_errors', 'attack_vector', 'affected_consumers', 'invalid_state_example', 'behavior_preserved',
+    'encapsulation', 'invariants', 'enforcement', 'usefulness', 'before', 'after',
+  ]) {
+    assert.ok(!(ghost in props), `field ${ghost} must not be declared on the delta item`);
   }
 });
 
-// With `agent` undeclared in the echo schema (item-4 revert), survival is stochastic in
-// production; this pins the PASS-THROUGH: when the executor does echo it, the stage
-// threads it onward untouched (detectDisagreement's input when present).
-test('(m5) an echoed agent field is threaded through the verify stage untouched', async () => {
+// The by-value design left `agent` undeclared in the echo schema and observed its
+// survival as stochastic (item 4's original PASS-THROUGH pin). Under the delta echo the
+// executor never receives or returns a finding at all — only a per-id decision — so
+// joinVerifyDeltas is the one place `agent` can be threaded onward, and it unconditionally
+// deletes it (issue #25 requirement 1: a filter-visible `agent` past verify is a defect,
+// not a stochastic outcome). This test now pins the opposite of what it used to: `agent`
+// is stripped, always, regardless of what (if anything) the delta says about that id.
+test('(m5) `agent` never survives verify: a dispatched finding carrying it comes out stripped', async () => {
   const findings = [
     { id: 'F1', file: 'a.js', line_start: 1, origin: 'new', dimension: 'bug', agent: 'bug-detector', cross_file_refs: [] },
     { id: 'F2', file: 'a.js', line_start: 2, origin: 'new', dimension: 'convention', agent: 'conventions-and-intent', cross_file_refs: [] },
   ];
   const input = baseInput({ findings });
-  const ctx = verifyCtx((_t, i) => okEnvelope(findings.map((f) => ({ ...f })), { nonce: `n-1.${i}` }));
+  const ctx = verifyCtx((_t, i) => okEnvelope(findings, { nonce: `n-1.${i}` }));
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, true);
-  assert.deepEqual(out.findings.map((f) => f.agent), ['bug-detector', 'conventions-and-intent']);
+  assert.ok(out.findings.every((f) => !('agent' in f)), 'agent must be stripped from every joined finding');
 });
 
 // --- Item 5: slice-input writer write-proof ---------------------------------
