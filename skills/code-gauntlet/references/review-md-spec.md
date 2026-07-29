@@ -247,7 +247,7 @@ For a file in `legacy/`:
 
 ### Discovery
 
-REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Code-gauntlet checks each CLAUDE.md location for a matching REVIEW.md during Phase 2c context gathering.
+REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Code-gauntlet checks each CLAUDE.md location for a matching REVIEW.md during Phase 2c context gathering. AGENTS.md/QODO.md resolution (`references/phase2-triage.md` 2d step 3, `scripts/collect_project_rules.py`) is a separate discovery pass with its own source list and its own directory set — it does not piggyback on this CLAUDE.md-location anchor, and finding no AGENTS.md/QODO.md never affects REVIEW.md discovery or precedence.
 
 #### Detection flow (Phase 2c)
 

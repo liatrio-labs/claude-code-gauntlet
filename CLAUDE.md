@@ -5,6 +5,7 @@
 - **stdlib-only Python.** No pip dependencies. All scripts must use only the Python standard library.
 - **Language-agnostic.** Scripts must not assume any particular programming language in the reviewed codebase. No `--include=*.py` or similar language filters — use `--exclude-dir` for non-source directories instead.
 - **Repo root for searches.** `verify_findings.py` resolves the repo root at startup via `git rev-parse --show-toplevel`. Symbol searches use `git grep -l` with `cwd=REPO_ROOT` and a 3-second per-symbol timeout.
+- **`scripts/collect_project_rules.py` resolves `@path` import pointers, not just filenames (issue #49).** `Read` does not expand Claude Code's `@import` directive, and real repos increasingly ship a CLAUDE.md that is nothing but one (`@AGENTS.md`) — a fixed filename allowlist still misses an arbitrary import target (e.g. `@AI-AGENTS.md`). The script confines every resolved path inside the repo via `realpath`, requires `.md`, and bounds depth/size via `os.stat` before any `open`.
 
 ## Prior-review signal
 
