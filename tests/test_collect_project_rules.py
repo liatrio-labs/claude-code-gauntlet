@@ -40,7 +40,7 @@ REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
 from scripts.collect_project_rules import (  # noqa: E402
-    MAX_FILES,
+    DEFAULT_MAX_FILES,
     MAX_IMPORT_DEPTH,
     PROJECT_RULE_FILENAMES,
     _find_imports,
@@ -318,18 +318,26 @@ class TestBounds(_RepoCase):
         # total_bytes never moves no matter how many are walked. This test
         # exists because the constant was once deleted as apparent dead code —
         # nothing referenced it and nothing failed.
+        cap = 10
         self.write("CLAUDE.md",
-                   "\n".join("@f%d.md" % i for i in range(MAX_FILES + 20)) + "\n")
-        for i in range(MAX_FILES + 20):
+                   "\n".join("@f%d.md" % i for i in range(cap + 20)) + "\n")
+        for i in range(cap + 20):
             self.write("f%d.md" % i, "")
-        _, receipt, _ = self.run_script()
-        # Only the pointer list itself contributes bytes; the 84 targets are all
-        # empty, so the byte caps are nowhere near tripping and cannot be what
-        # stopped the walk. Only the file-count bound can have.
+        _, receipt, _ = self.run_script("--max-files", str(cap))
+        # Only the pointer list itself contributes bytes; every target is empty,
+        # so the byte caps are nowhere near tripping and cannot be what stopped
+        # the walk. Only the file-count bound can have.
         self.assertLess(receipt["total_bytes"], 2000)
-        self.assertLessEqual(len(receipt["sources"]), MAX_FILES)
+        self.assertLessEqual(len(receipt["sources"]), cap)
         self.assertIn("file_cap_reached", self.reasons(receipt))
         self.assertTrue(receipt["truncated"])
+
+    def test_default_file_cap_is_a_runaway_guard_not_a_policy_cap(self):
+        # A cap low enough to bind on a legitimate repo would silently drop real
+        # rules — the exact failure this script exists to end. Real repos measured
+        # at HEAD carry 8 (sentry) and 10 (grafana) rule files, so the default
+        # must stay far above that. This pins the intent, not the number.
+        self.assertGreaterEqual(DEFAULT_MAX_FILES, 100)
 
     def test_import_depth_cap_matches_the_real_product_and_is_disclosed(self):
         # Claude Code resolves at most four hops; matching that keeps this

@@ -55,7 +55,7 @@ Skip reasons appearing in the receipt's ``skipped[]``:
     not_markdown      resolved inside the repo but is not a .md file
     too_large         exceeds the per-file byte cap
     total_cap_reached the total byte cap was already reached
-    file_cap_reached  MAX_FILES sources already collected
+    file_cap_reached  --max-files sources already collected (runaway guard)
     depth_exceeded    beyond MAX_IMPORT_DEPTH import hops
     cycle             already being visited on this import chain
     duplicate_of      same real path already contributed
@@ -69,6 +69,7 @@ Usage:
     python3 collect_project_rules.py --repo-root <path> --out <path>
                                      [--changed-files <path>]
                                      [--max-file-bytes N] [--max-total-bytes N]
+                                     [--max-files N]
 """
 
 import argparse
@@ -106,7 +107,15 @@ DEFAULT_MAX_TOTAL_BYTES = 131072
 # `total_bytes` never moves. Precedent: contextReadPlan refuses above its chunk
 # ceiling *before* the first allocation, because an unbounded value once
 # OOM-killed the node process — bound the plan, not only the input.
-MAX_FILES = 64
+#
+# This is a RUNAWAY GUARD, not a policy cap, and the number is chosen to make
+# that unambiguous: real repos measured at HEAD carry 8 (sentry) and 10
+# (grafana) rule files, so 512 is ~50x the observed need. A cap low enough to
+# bind in a legitimate monorepo would silently drop real rules — the failure
+# this script exists to end — so if this ever fires on a real repository, raise
+# it rather than accept the truncation. Tunable via --max-files, for symmetry
+# with the two byte caps.
+DEFAULT_MAX_FILES = 512
 
 # A ``@`` that begins a path token: at the start of a line or after whitespace,
 # so an email address or a decorator mid-word is not mistaken for an import.
@@ -190,10 +199,11 @@ def _within(path, root):
 
 
 class _Collector(object):
-    def __init__(self, repo_root, max_file_bytes, max_total_bytes):
+    def __init__(self, repo_root, max_file_bytes, max_total_bytes, max_files):
         self.repo_root = os.path.realpath(repo_root)
         self.max_file_bytes = max_file_bytes
         self.max_total_bytes = max_total_bytes
+        self.max_files = max_files
         self.sources = []
         self.skipped = []
         self.total_bytes = 0
@@ -253,7 +263,7 @@ class _Collector(object):
         file and then discarding it for being too big still pays the read. The
         file-count bound comes first, before even the ``stat``.
         """
-        if len(self.sources) >= MAX_FILES:
+        if len(self.sources) >= self.max_files:
             self.truncated = True
             return None, "file_cap_reached"
         try:
@@ -444,6 +454,7 @@ def main(argv=None):
     parser.add_argument("--changed-files")
     parser.add_argument("--max-file-bytes", type=int, default=DEFAULT_MAX_FILE_BYTES)
     parser.add_argument("--max-total-bytes", type=int, default=DEFAULT_MAX_TOTAL_BYTES)
+    parser.add_argument("--max-files", type=int, default=DEFAULT_MAX_FILES)
     args = parser.parse_args(argv)
 
     collector = None
@@ -455,7 +466,7 @@ def main(argv=None):
             return 1
 
         collector = _Collector(args.repo_root, args.max_file_bytes,
-                               args.max_total_bytes)
+                               args.max_total_bytes, args.max_files)
         changed = _load_changed_files(args.changed_files)
 
         for directory in _search_dirs(args.repo_root, changed):
