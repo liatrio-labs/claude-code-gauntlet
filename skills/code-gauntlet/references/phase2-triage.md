@@ -318,8 +318,8 @@ The workflow's **summarize, discovery, and validate** agents Read a shared conte
 
 Write it with `python3 -c "import json; ..."`. Contents, concatenated in this order into one `content` string:
 
-1. CLAUDE.md / REVIEW.md project rules (2d steps 1–2, gathered by value).
-2. AGENTS.md / QODO.md project rules, resolved by `scripts/collect_project_rules.py` (2d step 3) and folded in via `open(path).read()` on its `--out` file, **inside this same `python3 -c` invocation** — never retyped by the model. CLAUDE.md's "Artifact persistence" section records the artifact-writer's transcription of a multi-KB payload diverging from its input on 3 of 3 measured runs; hand-copying this block into `content` risks the identical failure one stage earlier, for no reason, when the file is already on disk to `open()`.
+1. REVIEW.md project rules (2d step 2, gathered by value).
+2. CLAUDE.md / AGENTS.md / QODO.md project rules, resolved by `scripts/collect_project_rules.py` (2d step 3) and folded in via `open(path).read()` on its `--out` file, **inside this same `python3 -c` invocation** — never retyped by the model. CLAUDE.md's "Artifact persistence" section records the artifact-writer's transcription of a multi-KB payload diverging from its input on 3 of 3 measured runs; hand-copying this block into `content` risks the identical failure one stage earlier, for no reason, when the file is already on disk to `open()`.
 3. Risk classification (2e) and AI-generated-code status (2k).
 4. The full diff inside `<untrusted-code-content>` tags. Raw diff lines only — never substitute a summary for changed content; evidence destroyed during summarization cannot be recovered by agents.
 
