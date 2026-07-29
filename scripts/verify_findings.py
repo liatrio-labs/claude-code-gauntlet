@@ -914,6 +914,22 @@ _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
 
 
+def _half_up_int(value):
+    """Half-up round a finite float to ``int``, or ``None`` for NaN/inf.
+
+    Shared by ``_coerce_numeric_fields`` (input boundary) and ``_delta_confidence``
+    (delta canonicalisation) so the finite-number predicate and the rounding rule live
+    in exactly one place. Caller must pass a ``float``; non-floats are the caller's
+    problem. Uses ``math.isfinite`` (False for NaN and both infinities) rather than the
+    ``value != value`` idiom.
+    """
+    if not math.isfinite(value):
+        return None
+    # Explicit half-up, not round(): Python's round() is half-to-even, and the
+    # spelling of this decision should not depend on which runtime reads the code.
+    return int(math.floor(value + 0.5))
+
+
 def _coerce_numeric_fields(finding):
     """Best-effort int-cast of numeric finding fields at the input boundary.
 
@@ -937,6 +953,11 @@ def _coerce_numeric_fields(finding):
     divergence left to disclose. `_delta_confidence` keeps its own float branch as
     defence in depth for callers that bypass this boundary.
 
+    Line fields are deliberately NOT in ``_DELTA_FIELDS`` (this script does not re-decide
+    them). The workflow's ``pinNumericFields`` therefore mirrors this half-up rounding on
+    the join path, so a fractional dispatched ``line_start`` does not survive the join
+    while verification ran against the rounded value.
+
     Everything else passes through untouched — ``None``, non-numeric junk, and integers
     already in range — so the script's own range/existence guards still fire as before.
     Bools are ints in Python but never legitimately appear in these fields; guarded anyway.
@@ -950,9 +971,10 @@ def _coerce_numeric_fields(finding):
             continue
         if isinstance(value, bool) or not isinstance(value, float):
             continue
-        if value != value or value in (float("inf"), float("-inf")):
+        rounded = _half_up_int(value)
+        if rounded is None:
             continue  # NaN/inf: leave it for the guards below to reject as before
-        finding[key] = int(math.floor(value + 0.5))
+        finding[key] = rounded
     return finding
 
 
@@ -1064,11 +1086,9 @@ def _delta_confidence(value):
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     if isinstance(value, float):
-        if value != value or value in (float("inf"), float("-inf")):
+        value = _half_up_int(value)
+        if value is None:
             return None
-        # Explicit half-up, not round(): Python's round() is half-to-even, and the
-        # spelling of this decision should not depend on which runtime reads the code.
-        value = int(math.floor(value + 0.5))
     if abs(value) > JS_MAX_SAFE_INTEGER:
         return None
     return int(value)
@@ -1340,7 +1360,7 @@ def main():
     # InputError rather than calling sys.exit so the RECEIPT path can turn it into an
     # honest failure envelope; this converts it back for the path that always exited).
     try:
-        return _run_legacy(args, parser)
+        _run_legacy(args, parser)
     except InputError:
         sys.exit(1)
 

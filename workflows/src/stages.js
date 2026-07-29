@@ -840,17 +840,41 @@ export function joinVerifyDeltas(slice, deltas) {
 }
 
 // Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1,
-// line comparisons). Pin them to real numbers before the slice-input JSON is written:
-// a value that reaches the script as a string ("153") makes the receipt-path arithmetic
-// raise `unsupported operand type(s) for -: 'str' and 'int'` and degrade the whole slice
-// to UNVERIFIED (the TypeError the live smoke run hit). Coerce only clean numeric strings;
-// leave everything else (null, non-numeric) untouched so the script's own guards still fire.
+// line comparisons). Pin them to real numbers before the slice-input JSON is written
+// AND again on the join path, mirroring verify_findings._coerce_numeric_fields:
+//
+//   1. A clean integer string ("153") becomes a number — a quoted value makes the
+//      receipt-path arithmetic raise `unsupported operand type(s) for -: 'str' and
+//      'int'` and degrade the whole slice to UNVERIFIED (the TypeError the live smoke
+//      run hit).
+//   2. A finite non-integral number is half-up rounded to an int. Line fields are NOT
+//      in the delta (the script does not re-decide them), so without this the join
+//      would keep the fractional dispatched value while verification ran against the
+//      rounded one — the silent divergence the Python input-boundary rounding was
+//      meant to remove. Confidence is also rounded here; a delta that carries a
+//      script-decided confidence overwrites it afterward.
+//
+// Everything else (null, non-numeric, NaN/inf, fractional numeric strings) is left
+// alone so the script's own guards still fire. Fractional numeric strings match
+// Python's `_INT_RE` branch, which only coerces clean integers.
 const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
 function pinNumericFields(finding) {
   const out = { ...finding };
   for (const k of VERIFY_NUMERIC_FIELDS) {
     const val = out[k];
-    if (typeof val === 'string' && val.trim() !== '' && Number.isFinite(Number(val))) out[k] = Number(val);
+    if (typeof val === 'string' && val.trim() !== '' && Number.isFinite(Number(val))) {
+      const n = Number(val);
+      // Clean integer strings only — a fractional numeric string is left alone, matching
+      // verify_findings._coerce_numeric_fields / `_INT_RE`.
+      if (Number.isInteger(n)) out[k] = n;
+      continue;
+    }
+    if (typeof val === 'number' && Number.isFinite(val) && !Number.isInteger(val)) {
+      // Explicit half-up (Math.floor(x + 0.5)), matching Python's
+      // int(math.floor(value + 0.5)) — not Math.round, whose tie-breaking is easy to
+      // misread against the Python spelling this must stay locked to.
+      out[k] = Math.floor(val + 0.5);
+    }
   }
   return out;
 }
@@ -966,7 +990,12 @@ function canonicalDeltas(ids, byId) {
 export function deltaContentProof(ids, deltas) {
   const byId = new Map();
   for (const d of Array.isArray(deltas) ? deltas : []) {
-    if (d && typeof d.id === 'string') byId.set(d.id.trim(), d);
+    // Exact id text — never trim. dispatchableIds, trustSlice, joinVerifyDeltas, and
+    // Python's build_deltas all key on the raw id; trimming here made a whitespace-padded
+    // dispatched id miss its delta (canonical form silently became {}), so an honest
+    // Python deltas_checksum failed the JS recomputation and the whole slice degraded.
+    // Two ids differing only by surrounding whitespace also collided into one map entry.
+    if (d && typeof d.id === 'string') byId.set(d.id, d);
   }
   return fnv1a32(JSON.stringify(canonicalDeltas(ids || [], byId), null, 2));
 }

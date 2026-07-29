@@ -1706,6 +1706,30 @@ class TestDeltasChecksum(unittest.TestCase):
     def test_checksum_format(self):
         self.assertRegex(deltas_checksum([]), r"^fnv1a32:0x[0-9a-f]{8}$")
 
+    def test_checksum_returns_none_for_unserialisable_deltas(self):
+        # Regression this guards: deltas_checksum's docstring promises None (not a raise)
+        # when the deltas contain something the JS/Python serialisation pair cannot spell
+        # identically — specifically so the envelope stays status:'ok' with a
+        # disclosed-missing proof rather than the whole receipt collapsing to a failure
+        # envelope that would throw away a legitimate verified/eliminated result. A float
+        # origin is the cheapest JS-unspellable value assert_js_reproducible rejects.
+        deltas = [{"id": "bug-1", "verified": True, "origin": 1.5, "severity": "high"}]
+        self.assertIsNone(deltas_checksum(deltas))
+
+    def test_build_deltas_checksum_none_when_finding_carries_float_severity(self):
+        # Same None-return path, reached through build_deltas rather than a hand-built
+        # delta list: a finding whose severity is a non-string float (bypassing the
+        # normal string-producing classify_blame / downgrade paths) must still produce a
+        # delta list whose checksum is None, not an exception.
+        finding = {
+            "id": "bug-1", "verified": True, "origin": "new",
+            "severity": 3.14, "confidence": 75,
+        }
+        deltas = build_deltas([finding], [finding])
+        self.assertEqual(len(deltas), 1)
+        self.assertEqual(deltas[0]["severity"], 3.14)
+        self.assertIsNone(deltas_checksum(deltas))
+
 
 class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
     """Real-subprocess coverage for the delta echo (issue #25 PR2). Everything above
@@ -1840,6 +1864,40 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
             for p in (in_path, empty_diff, out_path):
                 os.unlink(p)
             os.rmdir(unrelated_cwd)
+
+    def test_unserialisable_severity_keeps_ok_envelope_with_null_checksum(self):
+        # Regression this guards: when a delta value cannot be spelled identically by
+        # JS and Python (here a float severity that classification never overwrote —
+        # classify_blame always writes a string origin, but severity is only assigned
+        # on a downgrade), deltas_checksum returns None and the receipt must still be
+        # status:'ok' with deltas_checksum:null rather than collapsing to
+        # status:'failed' and throwing away the legitimate verified/eliminated arrays.
+        import json
+        findings = self._findings()
+        findings[0]["severity"] = 3.14  # JS-unspellable; no downgrade will overwrite it
+        in_path = self._write_input(findings)
+        empty_diff = self._empty_diff()
+        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        try:
+            proc = subprocess.run(
+                [sys.executable, SCRIPT, "--input", in_path,
+                 "--diff-file", empty_diff, "--output", out_path,
+                 "--nonce", "N-3", "--head-sha", "deadbeef"],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            with open(out_path) as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "ok", envelope)
+            self.assertIsNone(envelope["receipt"]["deltas_checksum"])
+            self.assertEqual(len(envelope["result"]["verified"]), 2)
+            self.assertEqual(envelope["result"]["eliminated"], [])
+            # The delta still carries the unserialisable value — the proof is what
+            # disclosed the gap, not a silent drop of the field.
+            self.assertEqual(envelope["result"]["deltas"][0]["severity"], 3.14)
+        finally:
+            for p in (in_path, empty_diff, out_path):
+                os.unlink(p)
 
 
 class TestCoerceNumericFields(unittest.TestCase):

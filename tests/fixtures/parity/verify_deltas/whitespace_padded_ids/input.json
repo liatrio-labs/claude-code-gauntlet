@@ -1,0 +1,95 @@
+{
+  "dispatched": [
+    {
+      "id": "ws-1",
+      "file": "src/a.py",
+      "line_start": 10,
+      "line_end": 12,
+      "title": "Whitespace-padded sibling A",
+      "description": "Finding whose id is the bare token; must stay distinct from its whitespace-padded twin for the content proof.",
+      "severity": "high",
+      "confidence": 80,
+      "dimension": "bug",
+      "evidence": "x = 1",
+      "suggestion": "Keep the id exact.",
+      "cross_file_refs": []
+    },
+    {
+      "id": " ws-1 ",
+      "file": "src/b.py",
+      "line_start": 20,
+      "line_end": 22,
+      "title": "Whitespace-padded sibling B",
+      "description": "Finding whose id carries surrounding whitespace; must not collide with the bare-token twin inside deltaContentProof.",
+      "severity": "medium",
+      "confidence": 70,
+      "dimension": "bug",
+      "evidence": "y = 2",
+      "suggestion": "Keep the id exact.",
+      "cross_file_refs": []
+    }
+  ],
+  "result": {
+    "verified": [
+      {
+        "id": "ws-1",
+        "file": "src/a.py",
+        "line_start": 10,
+        "line_end": 12,
+        "title": "Whitespace-padded sibling A",
+        "description": "Finding whose id is the bare token; must stay distinct from its whitespace-padded twin for the content proof.",
+        "severity": "high",
+        "confidence": 80,
+        "dimension": "bug",
+        "evidence": "x = 1",
+        "suggestion": "Keep the id exact.",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Test Author",
+          "date": "2026-07-29",
+          "original_severity": "high"
+        },
+        "factual_verification": {
+          "verified": true,
+          "reason": "file content and symbols verified",
+          "code_at_lines": "x = 1"
+        },
+        "diff_validation": {
+          "in_diff": true,
+          "reason": "line 10 found in diff"
+        }
+      }
+    ],
+    "eliminated": [
+      {
+        "id": " ws-1 ",
+        "file": "src/b.py",
+        "line_start": 20,
+        "line_end": 22,
+        "title": "Whitespace-padded sibling B",
+        "description": "Finding whose id carries surrounding whitespace; must not collide with the bare-token twin inside deltaContentProof.",
+        "severity": "medium",
+        "confidence": 0,
+        "dimension": "bug",
+        "evidence": "y = 2",
+        "suggestion": "Keep the id exact.",
+        "cross_file_refs": [],
+        "origin": "new",
+        "blame_metadata": {
+          "classification": "new",
+          "author": "Test Author",
+          "date": "2026-07-29",
+          "original_severity": "medium"
+        },
+        "factual_verification": {
+          "verified": false,
+          "reason": "evidence does not match file content",
+          "code_at_lines": null
+        },
+        "elimination_reason": "evidence does not match file content"
+      }
+    ]
+  }
+}

@@ -262,6 +262,38 @@ test('a non-integer confidence in a delta degrades the slice', async () => {
   assert.match(unverifiedGap(out.gaps), /confidence is not an integer/);
 });
 
+test('a delta entry that is not an object degrades the slice', async () => {
+  const findings = makeFindings(1);
+  const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, {
+    nonce, deltas: ['not-an-object'], checksum: 'fnv1a32:0xdeadbeef',
+  }));
+  const out = await verifyStage(ctx, baseInput(findings));
+  assert.equal(out.verified, false);
+  assert.match(unverifiedGap(out.gaps), /not an object/);
+});
+
+test('a delta entry with a blank id degrades the slice', async () => {
+  const findings = makeFindings(1);
+  const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, {
+    nonce, deltas: [{ id: '   ', verified: true, origin: 'new' }], checksum: 'fnv1a32:0xdeadbeef',
+  }));
+  const out = await verifyStage(ctx, baseInput(findings));
+  assert.equal(out.verified, false);
+  assert.match(unverifiedGap(out.gaps), /has no id/);
+});
+
+test('a delta whose verified flag is a string degrades the slice', async () => {
+  const findings = makeFindings(1);
+  const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, {
+    nonce,
+    deltas: [{ id: 'F0', verified: 'true', origin: 'new', severity: 'high', confidence: 80 }],
+    checksum: 'fnv1a32:0xdeadbeef',
+  }));
+  const out = await verifyStage(ctx, baseInput(findings));
+  assert.equal(out.verified, false);
+  assert.match(unverifiedGap(out.gaps), /no boolean verified flag/);
+});
+
 test('a missing deltas array degrades the slice', async () => {
   const findings = makeFindings(2);
   const ctx = ctxFor((i, attempt, nonce) => ({
@@ -296,15 +328,40 @@ test('a slice with an unusable id set is never dispatched and degrades with a re
 // whole-slice degrade — and bought nothing, because the content proof compares the id
 // text the script wrote, so a whitespace-altered echo failed there anyway. Found by the
 // adversarial pass on this branch; pinned so the tolerant form cannot come back.
+//
+// The DIFFERENT delta decisions matter: when both were identical, a trim collision still
+// looked like a successful lookup (one entry's values stood in for both). Cross-runtime
+// proof that the checksum itself agrees with Python is the
+// tests/fixtures/parity/verify_deltas/whitespace_padded_ids golden — this test owns the
+// trust/join behaviour for the same shape.
 test('ids differing only by surrounding whitespace are distinct, not a duplicate', async () => {
   const findings = makeFindings(2);
   findings[0].id = 'F1';
   findings[1].id = ' F1 ';
-  const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, { nonce }));
+  const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, {
+    nonce,
+    overrides: { ' F1 ': { verified: false, elimination_reason: ELIMINATION_STAMP } },
+  }));
   const out = await verifyStage(ctx, baseInput(findings));
   assert.equal(out.verified, true, 'two distinct ids must not read as a duplicate');
-  assert.deepEqual(out.findings.map((f) => f.id), ['F1', ' F1 ']);
+  assert.deepEqual(out.findings.map((f) => f.id), ['F1'], 'only the verified bare-token id survives');
   assert.equal(out.gaps.length, 0);
+});
+
+// Direct unit pin for the trim/no-trim defect: deltaContentProof must key by the raw id
+// so a whitespace-padded dispatched id associates with its own delta. The Python-produced
+// checksum in the whitespace_padded_ids golden is the cross-runtime half of this guard.
+test('deltaContentProof keys by exact id text, not trimmed', () => {
+  const ids = ['ws-1', ' ws-1 '];
+  const deltas = [
+    { id: 'ws-1', verified: true, origin: 'new', severity: 'high', confidence: 80 },
+    {
+      id: ' ws-1 ', verified: false, origin: 'new', severity: 'medium', confidence: 0,
+      elimination_reason: ELIMINATION_STAMP,
+    },
+  ];
+  // The golden recorded by verify_findings.build_deltas/deltas_checksum for this shape.
+  assert.equal(deltaContentProof(ids, deltas), 'fnv1a32:0x336f631c');
 });
 
 test('an id that is only whitespace is unusable and degrades without dispatching', async () => {
@@ -406,6 +463,25 @@ test('string-typed numerics on a dispatched finding are pinned by the join', asy
   assert.equal(out.findings[0].line_start, 42);
   assert.equal(out.findings[0].line_end, 44);
   assert.equal(out.findings[0].confidence, 85);
+});
+
+// Line fields are not in the delta (the script does not re-decide them). Without half-up
+// rounding in pinNumericFields, the join would keep a fractional dispatched line_start
+// while verification ran against the value _coerce_numeric_fields rounded at the Python
+// input boundary — the silent divergence Bugbot flagged on this PR.
+test('fractional line fields on a dispatched finding are half-up rounded by the join', async () => {
+  const findings = makeFindings(1);
+  findings[0].line_start = 4.6;
+  findings[0].line_end = 9.2;
+  findings[0].confidence = 82.5;
+  // Delta carries no confidence/line fields — the pin alone decides the joined values.
+  const deltas = [{ id: 'F0', verified: true, origin: 'new', severity: 'high' }];
+  const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, { nonce, deltas }));
+  const out = await verifyStage(ctx, baseInput(findings));
+  assert.equal(out.verified, true);
+  assert.equal(out.findings[0].line_start, 5);
+  assert.equal(out.findings[0].line_end, 9);
+  assert.equal(out.findings[0].confidence, 83);
 });
 
 test('joinVerifyDeltas is pure: it never mutates the findings it is given', () => {
