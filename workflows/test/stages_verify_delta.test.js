@@ -291,6 +291,32 @@ test('a slice with an unusable id set is never dispatched and degrades with a re
   assert.match(unverifiedGap(out.gaps), /keyed by id/);
 });
 
+// Ids are matched EXACTLY at every step. An earlier draft matched on the trimmed form,
+// which collided two ids differing only by surrounding whitespace into a false
+// whole-slice degrade — and bought nothing, because the content proof compares the id
+// text the script wrote, so a whitespace-altered echo failed there anyway. Found by the
+// adversarial pass on this branch; pinned so the tolerant form cannot come back.
+test('ids differing only by surrounding whitespace are distinct, not a duplicate', async () => {
+  const findings = makeFindings(2);
+  findings[0].id = 'F1';
+  findings[1].id = ' F1 ';
+  const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, { nonce }));
+  const out = await verifyStage(ctx, baseInput(findings));
+  assert.equal(out.verified, true, 'two distinct ids must not read as a duplicate');
+  assert.deepEqual(out.findings.map((f) => f.id), ['F1', ' F1 ']);
+  assert.equal(out.gaps.length, 0);
+});
+
+test('an id that is only whitespace is unusable and degrades without dispatching', async () => {
+  const findings = makeFindings(2);
+  findings[1].id = '   ';
+  const ctx = ctxFor(() => { throw new Error('must not dispatch'); });
+  const out = await verifyStage(ctx, baseInput(findings));
+  assert.equal(out.verified, false);
+  assert.deepEqual(ctx.execLabels(), []);
+  assert.match(unverifiedGap(out.gaps), /no usable id/);
+});
+
 test('a slice with duplicate ids degrades without dispatching', async () => {
   const findings = makeFindings(2);
   findings[1].id = findings[0].id;

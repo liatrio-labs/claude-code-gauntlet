@@ -760,14 +760,24 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, slic
 
 // dispatchableIds(slice) -> { ok:true, ids:[...] } | { ok:false, reason }
 // The delta echo is joined by id, so a slice is only dispatchable when every finding in
-// it carries a non-empty string id and no two share one. Duplicates ACROSS slices are
-// fine — each slice's join is independent — so this is deliberately a per-slice check.
+// it carries a usable string id and no two share one. Duplicates ACROSS slices are fine —
+// each slice's join is independent — so this is deliberately a per-slice check.
+//
+// Ids are matched EXACTLY, everywhere: here, in trustSlice's coverage check, and in the
+// join. Only the USABILITY test trims, mirroring verify_findings.py's `id.strip()` guard —
+// an id that is nothing but whitespace is one the script would skip. Matching on the
+// trimmed form was tried and removed: it bought no tolerance the checksum did not
+// immediately take back (the proof compares the id text the script wrote, so an echo that
+// added or stripped whitespace failed there instead), while making two dispatched findings
+// whose ids differ ONLY by surrounding whitespace collide into a false whole-slice degrade
+// the script itself would never have produced. Strict everywhere is both simpler and
+// strictly less likely to lose a slice.
 function dispatchableIds(slice) {
   const ids = [];
   const seen = new Set();
   for (const f of slice) {
-    const id = f && typeof f.id === 'string' ? f.id.trim() : '';
-    if (!id) return { ok: false, reason: 'a dispatched finding has no usable id' };
+    const id = f && typeof f.id === 'string' ? f.id : '';
+    if (!id.trim()) return { ok: false, reason: 'a dispatched finding has no usable id' };
     if (seen.has(id)) return { ok: false, reason: `duplicate finding id in the slice (${id})` };
     seen.add(id);
     ids.push(id);
@@ -811,11 +821,11 @@ const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 export function joinVerifyDeltas(slice, deltas) {
   const byId = new Map();
   for (const d of Array.isArray(deltas) ? deltas : []) {
-    if (d && typeof d.id === 'string') byId.set(d.id.trim(), d);
+    if (d && typeof d.id === 'string') byId.set(d.id, d);
   }
   const out = [];
   for (const f of slice) {
-    const delta = byId.get(typeof f.id === 'string' ? f.id.trim() : f.id);
+    const delta = byId.get(f.id);
     if (!delta || delta.verified === false) continue;
     // pinNumericFields for the same reason the degraded path applies it: the script
     // coerces numeric strings at its --input boundary, so the trusted output has always
@@ -932,6 +942,12 @@ function verifySliceWriterPrompt(entries) {
 // absent values omitted — so the echo's own array order, key order, and any field it
 // invented cannot move the checksum. Only the VALUES the script decided can.
 // verify_findings.py's build_deltas() emits exactly this shape in exactly this order.
+//
+// The rebuild therefore also makes the proof BLIND to any key outside DELTA_KEYS. That is
+// deliberate and not a hole: an undeclared key does not survive StructuredOutput, and
+// joinVerifyDeltas copies only DELTA_VALUE_KEYS, so a key the proof ignores is a key
+// nothing reads. Covering it would buy no protection and would cost the order- and
+// noise-tolerance that keeps a harmless echo quirk from degrading a slice.
 function canonicalDeltas(ids, byId) {
   return ids.map((id) => {
     const src = byId.get(id) || {};
@@ -1007,8 +1023,8 @@ function trustSlice(env, { nonce, headShaShort, n, ids }) {
   const byId = new Map();
   for (const d of result.deltas) {
     if (!d || typeof d !== 'object') return { ok: false, reason: 'delta entry is not an object' };
-    const id = typeof d.id === 'string' ? d.id.trim() : '';
-    if (!id) return { ok: false, reason: 'delta entry has no id' };
+    const id = typeof d.id === 'string' ? d.id : '';
+    if (!id.trim()) return { ok: false, reason: 'delta entry has no id' };
     if (!expected.has(id)) return { ok: false, reason: `delta names a finding this slice did not dispatch (${id})` };
     if (byId.has(id)) return { ok: false, reason: `delta repeats a finding id (${id})` };
     if (typeof d.verified !== 'boolean') return { ok: false, reason: `delta ${id} has no boolean verified flag` };

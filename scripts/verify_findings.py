@@ -1006,6 +1006,16 @@ def _delta_confidence(value):
     ``assemble_artifacts.assert_js_reproducible`` refuses outright). Rounding ONCE here,
     in one runtime, is what keeps the two sides from having to agree on float spelling
     at all: the workflow only ever sees an integer and rejects anything else.
+
+    State the behavioural difference plainly rather than only its rationale: where the
+    by-value echo would have carried a fractional confidence through unchanged, the delta
+    carries it rounded (half-up), a shift of at most 0.5 on a 0-100 score. That is
+    reachable only if an AGENT emitted a fractional confidence — the schema permits
+    `number`, the contracts all say integer — and the alternative designs are worse: the
+    key cannot be omitted (the workflow would keep a stale pre-verification value) and
+    refusing would cost the whole slice its verification over a rounding question. The
+    two runtimes rounding independently is the one option that is not on the table, which
+    is why this happens here and the JS merely rejects a non-integer.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
