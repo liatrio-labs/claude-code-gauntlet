@@ -1453,6 +1453,64 @@ class TestReceipt(unittest.TestCase):
         finally:
             os.unlink(findings_path)
 
+    def test_malformed_input_yields_the_honest_failure_envelope_not_silence(self):
+        """A die() condition in receipt mode must WRITE the failure envelope.
+
+        Regression this guards, measured live on smoke-20260729-191253-8ae2ee3: the
+        artifact-writer appended one stray `}` after an otherwise complete slice-input
+        document (issue #69's transcription defect). load_input reported it through
+        die(), which called sys.exit -- SystemExit is a BaseException, so it flew past
+        `except Exception` and the script exited having written NO output file. The
+        executor found nothing to read, so the slice degraded with "no file" instead of
+        the reason, and diagnosing the run meant re-running the command by hand.
+
+        The fixture is that exact byte: a complete document with one `}` appended.
+        """
+        import io, json
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(json.dumps({"findings": self._findings(), "base_branch": "main"}) + "}")
+            corrupt_path = f.name
+        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        try:
+            with patch("sys.stderr", new_callable=io.StringIO), \
+                    patch.object(sys, "argv", [
+                        "verify_findings.py", "--input", corrupt_path,
+                        "--output", out_path, "--nonce", "N.0", "--head-sha", "abc1234",
+                    ]):
+                from scripts.verify_findings import main
+                main()  # must NOT raise SystemExit
+            with open(out_path) as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "failed")
+            self.assertEqual(envelope["exitCode"], 1)
+            # The REAL reason, not a placeholder — this is the whole point.
+            self.assertIn("Invalid JSON in findings file", envelope["stderr"])
+            self.assertIn("Extra data", envelope["stderr"])
+        finally:
+            os.unlink(corrupt_path)
+            os.unlink(out_path)
+
+    def test_legacy_path_still_exits_nonzero_on_malformed_input(self):
+        """The other half of the same change: die() raising InputError instead of calling
+        sys.exit must not soften the LEGACY positional path, which has always exited 1
+        with the message on stderr and nothing on stdout."""
+        import io, json
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(json.dumps({"findings": self._findings()}) + "}")
+            corrupt_path = f.name
+        try:
+            with patch("sys.stderr", new_callable=io.StringIO) as err, \
+                    patch("sys.stdout", new_callable=io.StringIO) as out, \
+                    patch.object(sys, "argv", ["verify_findings.py", corrupt_path]):
+                from scripts.verify_findings import main
+                with self.assertRaises(SystemExit) as ctx:
+                    main()
+            self.assertEqual(ctx.exception.code, 1)
+            self.assertIn("Invalid JSON in findings file", err.getvalue())
+            self.assertEqual(out.getvalue(), "")
+        finally:
+            os.unlink(corrupt_path)
+
 
 class TestBuildDeltas(unittest.TestCase):
     """Unit tests for build_deltas: the per-finding delta list keyed by id and ordered
@@ -1796,6 +1854,33 @@ class TestCoerceNumericFields(unittest.TestCase):
         self.assertEqual(f, {"line_start": 153, "line_end": 155, "confidence": 80, "line": 1, "end_line": 9})
         for v in f.values():
             self.assertIsInstance(v, int)
+
+    def test_non_integral_floats_are_normalised_at_the_input_boundary(self):
+        # Regression this guards, found by the adversarial review of #25 PR2 and
+        # reproduced end to end: a fractional confidence is REACHABLE (registry.js types
+        # confidence as JSON-Schema `number` and names legacy/checkpoint-resume findings
+        # as a source), and verify_factual's proportional reduction keeps it fractional
+        # (max(30, 82.5 - 18) == 64.5). Normalising at the OUTPUT boundary instead would
+        # leave this script's on-disk verified[] carrying 64.5 while the delta the
+        # workflow joins carried 65 — a silent half-point divergence between what the
+        # script computed and what the run delivers. Normalised here, before any
+        # verification arithmetic, all four copies agree.
+        f = {"confidence": 82.5, "line_start": 4.6, "line_end": 9.2}
+        _coerce_numeric_fields(f)
+        self.assertEqual(f, {"confidence": 83, "line_start": 5, "line_end": 9})
+        for v in f.values():
+            self.assertIsInstance(v, int)
+
+    def test_integral_floats_and_nan_inf_keep_the_prior_behaviour(self):
+        # An integral float is still normalised to int (harmless, and keeps the delta's
+        # JS-reproducible-integer precondition true); NaN/inf are left alone so the
+        # script's own range guards reject them exactly as they did before.
+        f = {"confidence": 80.0, "line_start": float("nan"), "line_end": float("inf")}
+        _coerce_numeric_fields(f)
+        self.assertEqual(f["confidence"], 80)
+        self.assertIsInstance(f["confidence"], int)
+        self.assertNotEqual(f["line_start"], f["line_start"])  # still NaN
+        self.assertEqual(f["line_end"], float("inf"))
 
     def test_signed_and_whitespace_padded_strings_cast(self):
         f = {"line_start": " 42 ", "line_end": "-3"}

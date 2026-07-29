@@ -139,9 +139,28 @@ REPO_ROOT = _resolve_repo_root()
 # Helpers
 # ---------------------------------------------------------------------------
 
+class InputError(Exception):
+    """A fatal condition reported by ``die()`` — malformed input, or a required git
+    command that failed.
+
+    It exists so the two CLI modes can answer it differently. ``die()`` used to call
+    ``sys.exit(1)`` directly, which raises ``SystemExit`` — a BaseException, so it flew
+    straight past ``_run_receipt``'s ``except Exception`` and the script exited having
+    written NO output file at all. The executor then found nothing to read and the slice
+    degraded with "no file" rather than the reason, on the one path whose entire job is to
+    report honestly. Measured on smoke-20260729-191253-8ae2ee3: the artifact-writer
+    appended one stray `}` after an otherwise complete slice-input document (the
+    transcription defect of issue #69), and the run said nothing about why.
+
+    As an ordinary Exception it lands in the receipt path's honest failure envelope,
+    carrying the real message; ``main()``'s legacy path converts it back to exit 1, so
+    that behavior is byte-for-byte what it always was.
+    """
+
+
 def die(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
-    sys.exit(1)
+    raise InputError(msg)
 
 
 def warn(msg):
@@ -898,10 +917,29 @@ _INT_RE = re.compile(r"[+-]?\d+")
 def _coerce_numeric_fields(finding):
     """Best-effort int-cast of numeric finding fields at the input boundary.
 
-    Casts a string that is a clean integer (optionally signed) to ``int``; leaves
-    everything else untouched — ``None``, real numbers, and non-numeric junk pass
-    through so the script's own range/existence guards still fire as before. Bools
-    are numbers in Python but never legitimately appear in these fields; guard anyway.
+    Two normalisations, both at the boundary and both idempotent:
+
+    1. A string that is a clean integer (optionally signed) becomes an ``int`` — the
+       original purpose, guarding the arithmetic below against JS-written quoted numbers.
+    2. A finite NON-INTEGRAL number becomes an ``int`` (half-up). These fields are whole
+       numbers by contract — a line is a line, and confidence is an integer 0-100 that
+       every agent contract says to emit as one — but `FINDING_PROP_TYPES` types them
+       JSON-Schema `number`, so a fractional value is *reachable* (registry.js names
+       legacy/checkpoint-resume findings as a real source).
+
+    (2) exists because of the delta echo. Rounding one field at the OUTPUT boundary
+    instead (in `_delta_confidence`) would leave this script's on-disk `verified[]`
+    carrying 64.5 while the delta the workflow joins carries 65 — a silent, undisclosed
+    half-point divergence between what the script computed and what the run delivers,
+    found by this branch's adversarial review and reproduced end to end. Normalising once
+    HERE, before any verification arithmetic runs, means the input, this script's own
+    output, the delta, and the joined finding all carry the same number: there is no
+    divergence left to disclose. `_delta_confidence` keeps its own float branch as
+    defence in depth for callers that bypass this boundary.
+
+    Everything else passes through untouched — ``None``, non-numeric junk, and integers
+    already in range — so the script's own range/existence guards still fire as before.
+    Bools are ints in Python but never legitimately appear in these fields; guarded anyway.
     """
     if not isinstance(finding, dict):
         return finding
@@ -909,6 +947,12 @@ def _coerce_numeric_fields(finding):
         value = finding.get(key)
         if isinstance(value, str) and _INT_RE.fullmatch(value.strip()):
             finding[key] = int(value.strip())
+            continue
+        if isinstance(value, bool) or not isinstance(value, float):
+            continue
+        if value != value or value in (float("inf"), float("-inf")):
+            continue  # NaN/inf: leave it for the guards below to reject as before
+        finding[key] = int(math.floor(value + 0.5))
     return finding
 
 
@@ -1291,7 +1335,17 @@ def main():
     if args.input is not None:
         return _run_receipt(args)
 
-    # Legacy positional path (unchanged behavior).
+    # Legacy positional path (unchanged behavior — including that a die() condition here
+    # is still an exit-1 with the message on stderr and nothing on stdout. die() raises
+    # InputError rather than calling sys.exit so the RECEIPT path can turn it into an
+    # honest failure envelope; this converts it back for the path that always exited).
+    try:
+        return _run_legacy(args, parser)
+    except InputError:
+        sys.exit(1)
+
+
+def _run_legacy(args, parser):
     source = args.findings_json
     if source is None:
         parser.error(
