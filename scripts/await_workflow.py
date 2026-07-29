@@ -674,8 +674,16 @@ def emit(payload):
         # let the caller fall through to a documented degrade.
         try:
             devnull = os.open(os.devnull, os.O_WRONLY)
-            os.dup2(devnull, sys.stdout.fileno())
+            try:
+                os.dup2(devnull, sys.stdout.fileno())
+            finally:
+                # dup2 DUPLICATES the descriptor, so this one is still ours to
+                # close whether or not the duplication succeeded.
+                os.close(devnull)
         except OSError:
+            # Best-effort only. If even /dev/null cannot be opened or duplicated
+            # there is nothing further to salvage here, and the original write
+            # failure re-raised below is the one the caller needs to see.
             pass
         raise
 
