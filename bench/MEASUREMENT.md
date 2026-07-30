@@ -71,23 +71,34 @@ python3 bench/run.py --check <RUN_ID>
 2. Payload parse + adapter-required fields + union-schema findings check
    (requires ≥1 `code-gauntlet-findings-*.json` per PR)
 3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
-   degrade. **Also fails** when a PR delivers any *unclassified* finding
-   (origin not `new`/`surfaced`, including a finding with no `origin` key at
-   all — strictly wider than the `origin=unknown` check, matching
-   `isClassified` in `workflows/src/stages.js`) whose persisted artifacts
+   degrade. **Also fails** when a **degraded** review's persisted artifacts
    carry no health-degradation banner sentinel
    (`<!-- code-gauntlet:health:begin -->`) on **either** delivery surface —
    `code-gauntlet-report-*.md` **or** `code-gauntlet-post-review-*.json`'s
-   `review_body` field. Both surfaces are checked, and either one is
+   `health_banner`/`review_body` fields (`_HEALTH_BANNER_FIELDS`; the pipeline
+   writes `health_banner` and `post_review.py` prepends it to the caller's
+   `review_body` at post time). "Degraded" is the **union of two independent
+   signals**: any *unclassified* finding re-derived by the checker from the
+   persisted findings (origin not `new`/`surfaced`, including a finding with no
+   `origin` key at all — strictly wider than the `origin=unknown` check,
+   matching `isClassified` in `workflows/src/stages.js`), **or** the pipeline's
+   own `result.stats.health.degraded`. Both are needed: the re-derivation still
+   fires when the pipeline under-reports its own health, and the self-report
+   covers degradation kinds that leave no trace in the findings file — a lost
+   review dimension yields *zero* findings to count, so the findings-derived
+   signal can never fire on it, and that disclosure path had no enforcement at
+   all until the self-report was added to the trigger. Both surfaces are
+   checked, and either one is
    sufficient, deliberately not both: `pr_comments` is a legal standalone
    delivery mode (`references/headless-mode.md`) that never shows `report.md`
    to anyone, and the pipeline's own empty-report path persists no report at
-   all (`bannered = !emptyReport` in `workflows/src/stages.js`), so review_body
-   alone is the correct, documented shape in both cases — requiring both
-   surfaces would fail runs the pipeline is behaving correctly on. This is
+   all (`bannered = !emptyReport` in `workflows/src/stages.js`), so the
+   post-review artifact alone is the correct, documented shape in both cases —
+   requiring both surfaces would fail runs the pipeline is behaving correctly
+   on. This is
    reported as an additional gate-3 failure condition rather than a new gate
-   number — same underlying fault (an unclassified finding shipped in the
-   review), and gate 3 already owns that fault class; what's new is checking
+   number — same underlying fault (a degraded review shipped undisclosed),
+   and gate 3 already owns that fault class; what's new is checking
    that a degraded run actually *disclosed* it (issue #25 req 7). Carriers that own a `gaps` array — `workflows/wf_*.json` (the
    compact Workflow return) and `code-gauntlet-checkpoint-all-*.json` — are
    judged from that parsed array alone; their raw bytes are never scanned,

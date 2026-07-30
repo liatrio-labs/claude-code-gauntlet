@@ -9,16 +9,22 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
   G2  Payload parse + adapter-required fields + union-schema findings check
       (requires ≥1 findings artifact per PR)
   G3  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
-      degrade. ALSO fails when a PR delivers any unclassified finding (origin
-      not 'new'/'surfaced', including a finding with no ``origin`` key at
-      all — a strictly wider test than the ``origin=unknown`` check, see
-      ``_is_classified``) whose persisted artifacts carry no health-degradation
-      banner sentinel on EITHER delivery surface — ``code-gauntlet-report-*.md``
-      or ``code-gauntlet-post-review-*.json``'s ``review_body`` (see
-      ``_report_has_health_banner`` / ``_post_review_has_health_banner``, and
-      the EITHER-not-BOTH note at the call site): a degraded review that never
-      discloses itself is the exact defect issue #25 req 7 exists to prevent,
-      and until this check existed it was undetectable.
+      degrade. ALSO fails when a DEGRADED review's persisted artifacts carry no
+      health-degradation banner sentinel on EITHER delivery surface —
+      ``code-gauntlet-report-*.md`` or ``code-gauntlet-post-review-*.json``
+      (see ``_report_has_health_banner`` / ``_post_review_has_health_banner``,
+      ``_HEALTH_BANNER_FIELDS``, and the EITHER-not-BOTH note at the call
+      site). "Degraded" is the UNION of two independent signals: any
+      unclassified finding re-derived here from the persisted findings (origin
+      not 'new'/'surfaced', including a finding with no ``origin`` key at all —
+      strictly wider than the ``origin=unknown`` check, see ``_is_classified``),
+      OR the pipeline's own ``result.stats.health.degraded``. Both are needed —
+      the re-derivation still fires when the pipeline under-reports itself, and
+      the self-report covers degradation kinds that leave no trace in the
+      findings file (a lost review dimension yields zero findings to count).
+      A degraded review that never discloses itself is the exact defect issue
+      #25 req 7 exists to prevent, and until this check existed it was
+      undetectable.
   G4  Plugin identity — Headless config echo receipts (``pipeline_version``,
       ``plugin_root``) are primary; a complete valid receipt is sufficient when
       no ``workflows/wf_*.json`` records were collected. When records exist,
@@ -865,7 +871,12 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 )
             )
 
-        # --- G3: unclassified findings must carry the disclosure banner ---
+        # Read here rather than at the stats block below, because the banner
+        # check that follows GATES on it. wf_records is reused by G4.
+        wf_records = _iter_workflow_records(pr_dir)
+        pr_health = _select_pr_health_snapshot(wf_records) if wf_records else None
+
+        # --- G3: a degraded review must carry the disclosure banner ---
         # (issue #25 req 7). Reported as an additional G3 failure condition,
         # not a new gate number: the fault is identical to the origin=unknown
         # scan above — an unclassified finding shipped in the review — and
@@ -893,23 +904,52 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         #      carries the banner — the pipeline's own gap message says so
         #      explicitly ("banner rides on the PR review summary only").
         #      Requiring BOTH would fail that documented, correct behavior.
-        if pr_unclassified > 0 and not (
+        #
+        # THE TRIGGER IS A UNION OF TWO INDEPENDENT SIGNALS, and it needs both.
+        #
+        #   1. ``pr_unclassified``, re-derived here from the persisted findings.
+        #      Independent of anything the pipeline says about itself, so it
+        #      still fires when the pipeline UNDER-REPORTS its own health —
+        #      which is the failure this checker exists to catch and is why
+        #      the re-derivation is not simply replaced by signal 2.
+        #
+        #   2. the pipeline's own ``health.degraded``. Required because some
+        #      degradation kinds leave NO trace in the findings file for
+        #      signal 1 to find: a lost review dimension is the shipped
+        #      example — zero findings and zero unclassified findings, yet the
+        #      review is materially degraded and the pipeline correctly bands
+        #      it (``stages_health_banner.test.js``, "the worst false-clean").
+        #      Signal 1 alone can never fire there, so before this the
+        #      dimension-loss disclosure path had no bench-level enforcement
+        #      at all. Keying on ``degraded`` rather than on ``dimensionsLost``
+        #      specifically also means a NEW degradation kind inherits this
+        #      gate for free, instead of needing a fourth hand-written
+        #      re-derivation here that whoever adds it would not think to add.
+        health_degraded = bool(pr_health and pr_health.get("degraded") is True)
+        if (pr_unclassified > 0 or health_degraded) and not (
             _report_has_health_banner(pr_dir) or _post_review_has_health_banner(pr_dir)
         ):
+            if pr_unclassified > 0:
+                why = "{} unclassified finding(s) (origin not 'new'/'surfaced', " \
+                      "including a missing origin key)".format(pr_unclassified)
+            else:
+                # Reachable only via health_degraded, so pr_health is a dict here.
+                lost = (pr_health or {}).get("dimensionsLost")
+                lost = ", ".join(x for x in lost if isinstance(x, str)) if isinstance(lost, list) else ""
+                why = "the pipeline reported health.degraded=true" + (
+                    " (dimension(s) produced no results: {})".format(lost) if lost else ""
+                )
             failures.append(
-                "{}: {} unclassified finding(s) (origin not 'new'/'surfaced', "
-                "including a missing origin key) but neither the persisted "
-                "code-gauntlet-report-*.md nor code-gauntlet-post-review-*.json "
-                "review_body carries the health-degradation banner ({!r}) — a "
-                "degraded review must disclose it on the surface it delivers "
-                "on (issue #25 req 7)".format(label, pr_unclassified, _HEALTH_BANNER_SENTINEL)
+                "{}: {} but neither the persisted code-gauntlet-report-*.md nor "
+                "code-gauntlet-post-review-*.json carries the health-degradation "
+                "banner ({!r}) — a degraded review must disclose it on the surface "
+                "it delivers on (issue #25 req 7)".format(label, why, _HEALTH_BANNER_SENTINEL)
             )
 
         # --- G4: plugin identity (echo receipt primary; scriptPath defense-in-depth) ---
         id_failures, identity_ok = _check_echo_identity(pr_dir, repo_root, label)
         failures.extend(id_failures)
 
-        wf_records = _iter_workflow_records(pr_dir)
         stats["workflow_records"] += len(wf_records)
         if not wf_records:
             # A complete valid echo receipt is sufficient (matches invoke.py).
@@ -981,7 +1021,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         # of four by 90 minutes — so a glob-ordered pick reads a superseded
         # attempt on exactly the PRs that were retried (issue #85).
         if wf_records:
-            pr_health = _select_pr_health_snapshot(wf_records)
+            # pr_health was resolved above, where the G3 banner gate needs it.
             if pr_health is None:
                 health_unmeasured_prs += 1
             else:

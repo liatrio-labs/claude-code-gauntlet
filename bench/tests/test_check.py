@@ -1041,6 +1041,55 @@ class CheckRunTest(unittest.TestCase):
             any("health-degradation banner" in f for f in result["failures"])
         )
 
+    def test_a_lost_dimension_with_no_banner_fails_even_with_zero_findings(self):
+        """THE case the findings-derived trigger can never see.
+
+        A lost review dimension leaves NO trace in the findings file: the agent
+        that would have produced those findings never returned, so there is
+        nothing to count and ``pr_unclassified`` is 0. The review is still
+        materially degraded — nothing was reviewed for that dimension — and the
+        pipeline correctly bands it (``stages_health_banner.test.js``, "the
+        worst false-clean"). Until the gate also keyed on the pipeline's own
+        ``health.degraded``, that disclosure path had no bench-level
+        enforcement at all: the trigger could not fire, so the banner could
+        have silently stopped rendering and every smoke would still be green.
+        """
+        _build_ok_run(self.run_dir, origin="new")  # every finding classified
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_json(
+            pr_dir / "workflows" / "wf_test-0001.json",
+            _wf_record_with_health({
+                "delivered": 0, "notChallenged": 0, "unclassified": 0,
+                "dimensionsLost": ["security"], "evidenceIsFresh": True,
+                "degraded": True,
+            }),
+        )
+        _write_post_review(pr_dir, review_body="", health_banner="")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"], "a lost dimension with no banner must fail")
+        self.assertTrue(
+            any("health-degradation banner" in f and "security" in f
+                for f in result["failures"]),
+            result["failures"],
+        )
+
+    def test_a_lost_dimension_that_IS_disclosed_passes(self):
+        """The other half: the gate must not fire on a degraded run that did
+        band itself, or it would just be noise on correct behaviour."""
+        _build_ok_run(self.run_dir, origin="new")
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_json(
+            pr_dir / "workflows" / "wf_test-0001.json",
+            _wf_record_with_health({
+                "delivered": 0, "notChallenged": 0, "unclassified": 0,
+                "dimensionsLost": ["security"], "evidenceIsFresh": True,
+                "degraded": True,
+            }),
+        )
+        _write_post_review(pr_dir, review_body="", health_banner=_banner_review_body())
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
     def test_unclassified_finding_neither_surface_disclosed_fails(self):
         """Report has no banner AND the persisted post-review review_body is
         present but empty (the healthy-run shape) — still a silent failure.
