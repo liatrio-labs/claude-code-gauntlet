@@ -241,6 +241,9 @@ test('when the re-materialize itself fails, the retry is SKIPPED — a second di
   assert.equal(out.findings.length, 2, 'never-drop holds');
   assert.ok(out.findings.every((f) => f.origin === 'unknown'));
   assert.equal(out.inputProof.degraded, 1);
+  // The rematerialize never landed — counting it as rewritten would make a failed
+  // rewrite look like a successful one that later degraded.
+  assert.equal(out.inputProof.rewritten, 0);
   assert.match(unverifiedGap(out.gaps), /re-materializing this slice's input failed/);
   // The retry was not spent.
   assert.ok(!ctx.labels().includes('verify-slice-0-retry'), `retry must be skipped, got ${ctx.labels()}`);
@@ -251,8 +254,8 @@ test('when the re-materialize itself fails, the retry is SKIPPED — a second di
 test('a NON-input failure takes the plain retry and never re-writes a file that was fine', async () => {
   const input = baseInput(makeFindings(2));
   // A dropped nonce echo: nothing to do with the file. Re-writing here is not free — the
-  // writer's own transcription drifted on 3 of 10 measured runs — so a good file must be
-  // left alone.
+  // by-value writer's transcription of a dispatched payload diverged on 3 of 3 measured
+  // runs — so a good file must be left alone.
   const ctx = ctxFor(faithful, (i, attempt) => (attempt === 1 ? { nonce: 'WRONG' } : {}));
   const out = await verifyStage(ctx, input);
 
@@ -260,6 +263,63 @@ test('a NON-input failure takes the plain retry and never re-writes a file that 
   assert.equal(out.inputProof.rewritten, 0);
   assert.ok(!ctx.labels().includes('verify-input-rewriter-0'), 'a fine file must not be rewritten');
   assert.ok(ctx.labels().includes('verify-slice-0-retry'), 'the ordinary retry still runs');
+});
+
+test('a NON-input failure that still degrades does NOT inflate inputProof.degraded', async () => {
+  // MEASUREMENT.md reads inputProof.degraded as "input stayed unproven after retry".
+  // Counting every trust/nonce failure there mis-attributes ordinary echo failures to
+  // slice-input drift.
+  const input = baseInput(makeFindings(2));
+  const ctx = ctxFor(faithful, () => ({ nonce: 'WRONG' }));
+  const out = await verifyStage(ctx, input);
+
+  assert.equal(out.verified, false);
+  assert.ok(out.findings.every((f) => f.origin === 'unknown'), 'the slice still degrades for G3');
+  assert.equal(out.inputProof.degraded, 0, 'nonce mismatch is not an input-proof failure');
+  assert.equal(out.inputProof.rewritten, 0);
+});
+
+test('trailing bytes on an UNPROVEN receipt must not claim a proven recovery', async () => {
+  // gradeInputProof reports trailingBytes independently of state. An uncomputable
+  // expectation (null expected) with stray trailing-byte metadata must NOT emit the
+  // MATCHES recovery gap — that contradicts the aggregate unproven disclosure.
+  const findings = makeFindings(2);
+  findings[1].hidden_errors = [{ weight: 0.5 }]; // pinNumericFields does not pin this
+  assert.equal(sliceInputProofFor(findings, 'main'), null);
+  const input = baseInput(findings);
+  const ctx = ctxFor(
+    (i, content) => ({ content, trailingBytes: 3 }),
+    () => ({ inputChecksum: null }),
+  );
+  const out = await verifyStage(ctx, input);
+
+  assert.equal(out.verified, true);
+  assert.equal(out.inputProof.unproven, 1);
+  assert.equal(out.inputProof.recovered, 0);
+  assert.ok(
+    !(out.gaps || []).some((g) => /verify-input-recovered/.test(g)),
+    `unproven+trailing must not claim MATCHES, got: ${out.gaps}`,
+  );
+  assert.ok((out.gaps || []).some((g) => /verify-input-unproven/.test(g)));
+});
+
+test('empty findings still emit a zeroed inputProof ledger (measured, not absent)', async () => {
+  const out = await verifyStage({ agent: async () => { throw new Error('no dispatch'); } }, baseInput([]));
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.inputProof, {
+    slices: 0, proven: 0, unproven: 0, recovered: 0, rewritten: 0, degraded: 0,
+  });
+});
+
+test('verifyPrompt names the input-proof receipt fields the executor must echo', async () => {
+  const input = baseInput(makeFindings(1));
+  const ctx = ctxFor(faithful);
+  await verifyStage(ctx, input);
+  const prompt = ctx.calls.find((c) => (c.label || '').startsWith('verify-slice-'))?.prompt || '';
+  assert.match(prompt, /input_checksum/);
+  assert.match(prompt, /input_trailing_bytes/);
+  assert.match(prompt, /\breason\b/);
+  assert.ok(!/all four fields/.test(prompt), 'stale "four fields" wording would drop the new proofs');
 });
 
 // --- 5. Unproven is disclosed, never fatal -----------------------------------

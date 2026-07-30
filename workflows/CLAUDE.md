@@ -53,8 +53,20 @@ The executor echoes a per-id delta, never findings.
 
 - `_DELTA_FIELDS` (Python) and `DELTA_KEYS` (JS) are one list in two runtimes, walked in the same
   order.
+- `INPUT_FAULT_REASONS` is the same list in two runtimes (`scripts/verify_findings.py` and
+  `workflows/src/stages.js`). A code added on one side and not the other is a corrupted input the
+  workflow will never re-materialize.
 - `result.deltas` must stay the **first** key of `result` — the reading executor's `Read` is
   length-capped with no truncation notice, so what it echoes must be a prefix.
+- **Proof kind follows the wire contract.** An artifact handed to the writer as a pre-serialized
+  **string** gets the raw-bytes content proof; one handed over as an **object** to serialize gets
+  the canonical-value proof. Slice inputs are objects; the findings primary is a pre-serialized
+  string.
+- **Health is derived, never asked for.** `reviewHealth` / `applyHealthBanner` / `health_banner`
+  compute degradation from the delivered findings' own `origin` values. The report-writer is never
+  handed enough data to characterise health, so any health sentence it writes is composed from data
+  that does not contain the answer. A `pr_comments`-only delivery never shows the report artifact
+  to anyone, so the banner also rides the post-review wrapper.
 
 ## Reading the shared context file
 

@@ -29,7 +29,7 @@ The plan file
       "postReview": {
         "path": ..., "source": ...,
         "ids": [ ...ordered finding ids... ],
-        "wrapper": { "owner", "repo", "pr_number", "sha", "review_body" } | null
+        "wrapper": { "owner", "repo", "pr_number", "sha", "health_banner", "review_body" } | null
       },
       "checkpoint": {
         "path": ..., "source": ...,

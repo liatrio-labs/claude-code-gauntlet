@@ -3038,7 +3038,8 @@ const INPUT_PROOF_MISMATCH = 'input_proof_mismatch';
 // inputFaultOf(env) -> code | null. Structural: reads the declared `reason` field, never
 // the message. An envelope that failed for any other cause returns null and takes the
 // ordinary retry, because re-writing a file that was never the problem is not free —
-// the artifact-writer's own transcription drifted on 3 of 10 measured runs, so a
+// the by-value writer's transcription of a dispatched payload diverged on 3 of 3
+// measured runs (see the persist-boundary comment on writeArtifactsDerived), so a
 // needless rewrite can turn a fine file into a bad one.
 function inputFaultOf(env) {
   if (!env || typeof env !== 'object') return null;
@@ -3136,7 +3137,17 @@ async function verifyStage(ctx, input) {
   const sliceSize = Math.max(1, limits.verifySliceSize || findings.length || 1);
 
   // Empty set: nothing to verify, trivially trusted (no executor dispatched).
-  if (findings.length === 0) return { findings: [], verified: true, gaps: [] };
+  // Still emit a zeroed inputProof ledger: this run DID execute post-PR3 and simply
+  // had zero slices to prove. Omitting the field would collapse into the same
+  // "not measured" signal bench --check uses for pre-PR3 records.
+  if (findings.length === 0) {
+    return {
+      findings: [],
+      verified: true,
+      gaps: [],
+      inputProof: { slices: 0, proven: 0, unproven: 0, recovered: 0, rewritten: 0, degraded: 0 },
+    };
+  }
 
   const model = modelFor('code-gauntlet:executor', policy);
 
@@ -3216,7 +3227,11 @@ async function verifyStage(ctx, input) {
       // also keeps the failure inside the signal bench already watches (G3 counts
       // origin=unknown), instead of inventing a second, softer failure state that no
       // existing gate can see.
-      inputProofStats.degraded += 1;
+      //
+      // `degraded` in THIS ledger counts only input-implicated failures — the ones
+      // MEASUREMENT.md attributes to slice-input drift. A nonce/trust/executor failure
+      // still degrades the slice for G3, but must not inflate the input-proof counter.
+      if (attempt.inputImplicated) inputProofStats.degraded += 1;
       degrade(`slice ${i}: ${attempt.reason}`);
       continue;
     }
@@ -3321,10 +3336,11 @@ function verifyDegradeGap(detail, k, n) {
 // content proof mismatched now gets a fresh artifact-writer sample of its --input file
 // before the second dispatch.
 //
-// The trigger is narrow on purpose. A rewrite is not free: the writer's transcription
-// diverged from its payload on 3 of 10 measured runs, so re-writing a file that was never
-// the problem has a real chance of making it worse. An unrelated failure (a dropped nonce
-// echo, a garbled delta) therefore takes the old plain retry, untouched.
+// The trigger is narrow on purpose. A rewrite is not free: the by-value writer's
+// transcription of a dispatched payload diverged on 3 of 3 measured runs (see the
+// persist-boundary comment on writeArtifactsDerived), so re-writing a file that was
+// never the problem has a real chance of making it worse. An unrelated failure (a
+// dropped nonce echo, a garbled delta) therefore takes the old plain retry, untouched.
 //
 // This costs no extra EXECUTOR attempt — VERIFY_ATTEMPTS_PER_SLICE is still 2 and the
 // rewrite rides inside the existing budget, adding at most one writer dispatch per slice.
@@ -3336,6 +3352,7 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, writerModel, nonc
   if (first.ok) return { ok: true, verified: first.verified, gap: first.gap, proof: first.proof };
 
   let rewriteNote = '';
+  let rewritten = false;
   if (first.inputFault) {
     const rewrite = await writeSliceInputs(
       c, [sliceInputEntry(inp, i, slice)], writerModel, `verify-input-rewriter-${i}`,
@@ -3343,12 +3360,17 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, writerModel, nonc
     if (!rewrite.ok) {
       // The file on disk is unchanged and still bad, so a second executor dispatch would
       // read the same bytes and fail the same way. Degrade now rather than spend it.
+      // `rewritten` stays false — the rematerialize never landed — but `inputImplicated`
+      // is true so the inputProof.degraded counter still attributes this to slice-input
+      // drift rather than an ordinary echo failure.
       return {
         ok: false,
-        rewritten: true,
+        rewritten: false,
+        inputImplicated: true,
         reason: `${first.reason} — re-materializing this slice's input failed (${rewrite.reason}), so the retry was skipped: a second dispatch would have read the same bytes`,
       };
     }
+    rewritten = true;
     rewriteNote = ` (the slice input was re-materialized first: ${first.inputFault})`;
   }
 
@@ -3360,7 +3382,7 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, writerModel, nonc
     return {
       ok: true,
       verified: second.verified,
-      rewritten: !!first.inputFault,
+      rewritten,
       proof: second.proof,
       gap: `verify-slice-retry: slice ${i}'s first executor dispatch was untrusted (${first.reason})${rewriteNote}; a second dispatch was trusted and this slice's verified findings are from that attempt`
         + (second.gap ? ` | ${second.gap}` : ''),
@@ -3368,7 +3390,8 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, writerModel, nonc
   }
   return {
     ok: false,
-    rewritten: !!first.inputFault,
+    rewritten,
+    inputImplicated: !!first.inputFault,
     reason: `${second.reason} — retried once after the first attempt failed (${first.reason})${rewriteNote}`,
   };
 }
@@ -3425,7 +3448,12 @@ function inputProofGap(i, proof) {
   // slice unproven at once — and one near-identical gap per slice would bury the gaps
   // channel in a message that says the same thing N times. verifyStage emits a single
   // aggregated gap instead (see unprovenInputGap).
-  if (proof.trailingBytes > 0) {
+  //
+  // Trailing-byte metadata alone is not a recovery: gradeInputProof reports
+  // trailingBytes independently of state, so an UNPROVEN receipt can still carry a
+  // nonzero count. Claiming MATCHES there would contradict the aggregate unproven gap
+  // for the same slice. Same predicate the recovered counter uses.
+  if (proof.state === 'match' && proof.trailingBytes > 0) {
     return `verify-input-recovered: slice ${i}: the slice-input file carried ${proof.trailingBytes} byte(s) after a complete JSON document (the artifact-writer transcription defect of issue #69). The recovered document's content proof MATCHES what the pipeline dispatched, so its verification stands.`;
   }
   return null;
@@ -3871,7 +3899,11 @@ function verifyCommand(inp, i, sliceNonce) {
 // names. The large verified/eliminated arrays that follow are for bench and v2 consumers;
 // naming them here as explicitly-not-wanted is cheaper than letting the agent decide.
 function verifyPrompt(inp, i, sliceNonce) {
-  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with all four fields (sha, n_in, nonce, deltas_checksum) copied exactly; and every entry of its "result.deltas" array, copied exactly. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce)}`;
+  // Field list must stay aligned with VERIFY_SCHEMA / agents/executor.md: naming only
+  // the four pre-PR3 receipt fields here is how every slice stayed `unproven` and
+  // input-implicated retries never rematerialized — the executor copies what this
+  // per-dispatch instruction names, not what the agent file says in the abstract.
+  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field the script printed (sha, n_in, nonce, deltas_checksum, input_checksum, and input_trailing_bytes when present) copied exactly; its "reason" when the envelope is a failure; and every entry of its "result.deltas" array, copied exactly. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce)}`;
 }
 
 // --- Agent-count coarsening -------------------------------------------------
@@ -3951,11 +3983,13 @@ function coarsenLimits(limits, nFiles, nFindings) {
       L.summarizeBucketSize = effectiveBucketSize(L) * 2;
       continue;
     }
-    // Same VERIFY_ATTEMPTS_PER_SLICE scaling worstCaseAgentCount applies, so the "reduce
-    // whichever term is largest" choice is made against each term's real contribution to
-    // the count it is trying to pull down. Doubling verifySliceSize still strictly halves
-    // this term, so the loop's termination argument is unchanged.
-    const verifyTerm = ceilDiv(findings, effectiveSliceSize(L, findings)) * VERIFY_ATTEMPTS_PER_SLICE;
+    // Same VERIFY_ATTEMPTS_PER_SLICE + VERIFY_REWRITES_PER_SLICE scaling
+    // worstCaseAgentCount applies, so the "reduce whichever term is largest" choice is
+    // made against each term's real contribution to the count it is trying to pull down.
+    // Doubling verifySliceSize still strictly halves this term, so the loop's
+    // termination argument is unchanged.
+    const verifyTerm = ceilDiv(findings, effectiveSliceSize(L, findings))
+      * (VERIFY_ATTEMPTS_PER_SLICE + VERIFY_REWRITES_PER_SLICE);
     const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     if (validateTerm >= verifyTerm && validateTerm >= challengeTerm) {
@@ -5964,6 +5998,11 @@ async function runWith(ctx, rawArgs) {
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,
+      // The rendered degradation banner (issue #25 req 7), also at the top level so the
+      // legacy bare-array hand-wrap path — which has no prIdentity-stamped wrapper to
+      // carry health_banner — can still attach the disclosure Phase 8 is forbidden from
+      // composing itself. Empty string on a healthy run.
+      healthBanner: healthBanner(health),
       resolvedPolicy: {
         subagentModel: policy.subagentModel || null,
       },

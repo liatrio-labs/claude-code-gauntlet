@@ -1400,8 +1400,13 @@ def _run_receipt(args):
             "n_in": len(findings),
             "nonce": args.nonce,
             "deltas_checksum": deltas_checksum(deltas),
-            "input_checksum": proof,
         }
+        # Omit rather than emit null: VERIFY_SCHEMA types input_checksum as a string, so
+        # a null value is not a legal Structured Output echo. Absence is the soft
+        # "unproven" signal the workflow already grades; a null key would risk failing
+        # the executor call and hard-degrading the slice instead.
+        if proof is not None:
+            receipt["input_checksum"] = proof
         # Present only when the document needed the lenient parse, so its absence
         # means "clean read" rather than "this script does not report it".
         if trailing:

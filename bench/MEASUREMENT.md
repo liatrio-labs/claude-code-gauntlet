@@ -132,6 +132,8 @@ structurally (`result.stats.inputProof`), never by regex — see gate 3's note
 on why a wf record's raw bytes are unsafe to scan. Absent on any run recorded
 before PR3 landed (and printed as `not measured`, never as zeros — a run that
 was never measured is not the same fact as a run that measured zero drift).
+`degraded` here is input-implicated only — a nonce/trust/executor failure that
+still marks findings `origin=unknown` does not inflate this counter.
 
 A second reported stat, also **not a gate** — `--check` prints a `health` line
 built from each PR's `workflows/wf_*.json` `result.stats.health` (issue #25
@@ -145,17 +147,18 @@ derived directly from the persisted findings artifact and report, so it still
 fires correctly on a run that collected no `wf_*.json` records at all — the
 case where this stat reads `not measured` rather than a gate failure.
 
-When a PR has more than one `wf_*.json` record (e.g. it was retried),
-`_select_pr_health_snapshot` picks the snapshot to report by the record's own
-`timestamp` field — **never** by sorted glob order. `wf_*.json` filenames are
-`wf_<random>`, so that sort is arbitrary; on a measured run one four-record PR
-sorted its OLDEST record (by 90 minutes) last. This is the same currency
-problem issue #85 files against `_iter_workflow_records` generally (a
-superseded record has already won a different gate's verdict once — a dead
-first attempt outliving a clean `--retry-failed` rerun); this only narrows
-the fix to the health snapshot. When no candidate has a usable timestamp,
-the fallback prefers any record reporting `degraded: true` over a quieter
-one, since under-reporting is the wrong direction to fail in for a
+When a PR has more than one `wf_*.json` record (e.g. it was retried), both
+`input_proof` and `health` pick **one** snapshot by the record's own
+`timestamp` field — **never** by sorted glob order, and never by summing
+every record (each is a full stage snapshot, not a per-dispatch delta).
+`wf_*.json` filenames are `wf_<random>`, so that sort is arbitrary; on a
+measured run one four-record PR sorted its OLDEST record (by 90 minutes)
+last. This is the same currency problem issue #85 files against
+`_iter_workflow_records` generally (a superseded record has already won a
+different gate's verdict once — a dead first attempt outliving a clean
+`--retry-failed` rerun). For health, when no candidate has a usable
+timestamp, the fallback prefers any record reporting `degraded: true` over a
+quieter one, since under-reporting is the wrong direction to fail in for a
 disclosure signal.
 
 Exit code is the smoke verdict. The checker never imports or calls the scorer.

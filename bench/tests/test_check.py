@@ -112,16 +112,21 @@ def _wf_record(script_path=PIPELINE, *, include_verify=True):
     return rec
 
 
-def _wf_record_with_input_proof(input_proof=None, script_path=PIPELINE):
+def _wf_record_with_input_proof(input_proof=None, script_path=PIPELINE, *, timestamp=None):
     """A wf record carrying a compact-return ``result.stats.inputProof`` block
     (issue #25 PR3). ``input_proof=None`` omits ``stats.inputProof`` entirely,
     modeling a record recorded before PR3 landed — the "not measured" case.
+    ``timestamp`` sets the record's own top-level ``timestamp`` field (the
+    field ``_select_pr_input_proof_snapshot`` orders candidate records by —
+    same issue #85 currency problem as health).
     """
     rec = _wf_record(script_path)
     stats = {}
     if input_proof is not None:
         stats["inputProof"] = input_proof
     rec["result"] = {"ok": True, "gaps": [], "stats": stats}
+    if timestamp is not None:
+        rec["timestamp"] = timestamp
     return rec
 
 
@@ -920,6 +925,46 @@ class CheckRunTest(unittest.TestCase):
             {"runId": "wf_x", "scriptPath": PIPELINE, "result": {"stats": {"inputProof": proof}}},
         )
         self.assertEqual(check._extract_input_proof(wf), proof)
+
+    def test_input_proof_uses_newest_record_not_sum_of_retries(self):
+        """Each wf record's inputProof is a full verify-stage snapshot. Summing
+        every record on a retried PR double-counts; pick the newest by
+        timestamp, same currency fix as health (issue #85).
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        # Alphabetically-last filename is the OLDER attempt — glob order must
+        # not win. Precondition so the fixture cannot quietly stop exercising
+        # the bug if filenames change.
+        old_name = "wf_z_sorts_last_but_is_oldest.json"
+        new_name = "wf_a_sorts_first_but_is_newest.json"
+        self.assertGreater(old_name, new_name)
+        _write_json(
+            pr / "workflows" / old_name,
+            _wf_record_with_input_proof(
+                {"slices": 4, "proven": 1, "unproven": 0,
+                 "recovered": 0, "rewritten": 0, "degraded": 3},
+                timestamp="2026-07-29T18:00:00Z",
+            ),
+        )
+        _write_json(
+            pr / "workflows" / new_name,
+            _wf_record_with_input_proof(
+                {"slices": 4, "proven": 4, "unproven": 0,
+                 "recovered": 1, "rewritten": 0, "degraded": 0},
+                timestamp="2026-07-29T19:30:00Z",
+            ),
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(
+            result["stats"]["input_proof"],
+            {
+                "slices": 4, "proven": 4, "unproven": 0,
+                "recovered": 1, "rewritten": 0, "degraded": 0,
+                "measured_prs": 1, "unmeasured_prs": 0,
+            },
+        )
 
     # --- G3 banner-pairing: unclassified findings must be disclosed ---
     # (issue #25 req 7)

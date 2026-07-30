@@ -326,3 +326,26 @@ test('END TO END: a clean run persists a report with no banner and no degradatio
   assert.ok(!/code-gauntlet:health/.test(persisted), 'a healthy run stays quiet');
   assert.ok(!(out.gaps || []).some((g) => g.startsWith('review_degraded:')));
 });
+
+test('END TO END: empty report + degraded still surfaces the banner on the compact return and post-review wrapper', async () => {
+  // bannered = !emptyReport gates whether the report body is banded. When the report is
+  // empty AND the review is degraded, the disclosure must still reach the surfaces a
+  // reader actually sees — the post-review wrapper and the compact return's top-level
+  // healthBanner (the legacy bare-array hand-wrap's only source).
+  const args = validArgs({ delivery: { prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'a'.repeat(40) } } });
+  let payload = null;
+  const ctx = makeCtx(args, {
+    verifySliceFailIndex: 0,
+    reportText: '   ',
+    onPersist: (p) => { payload = p; },
+  });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.stats.health.degraded, true);
+  assert.equal(out.artifactPaths.report, null, 'empty report path is nulled');
+  assert.ok((out.gaps || []).some((g) => /empty_report/.test(g)));
+  assert.ok((out.gaps || []).some((g) => /review_degraded:/.test(g) && /PR review summary only/.test(g)));
+  assert.match(out.healthBanner || '', /This review is degraded/);
+  assert.match(payload.postReview.health_banner || '', /This review is degraded/);
+  assert.equal(payload.postReview.review_body, '', 'Phase 8\'s slot stays empty');
+});

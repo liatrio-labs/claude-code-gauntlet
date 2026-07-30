@@ -321,8 +321,8 @@ def _extract_script_paths(path):
     return [sp] if sp else []
 
 
-def _extract_input_proof(path):
-    """Return a ``wf_*.json`` record's ``result.stats.inputProof`` dict, or None.
+def _extract_stats_field(path, field):
+    """Return a ``wf_*.json`` record's ``result.stats.<field>`` dict, or None.
 
     Structural only — ``json.loads`` then dict-walk, never a regex over prose
     (issue #52's lesson applies here too: this same file embeds the whole
@@ -345,33 +345,31 @@ def _extract_input_proof(path):
     stats = result.get("stats")
     if not isinstance(stats, dict):
         return None
-    proof = stats.get("inputProof")
-    return proof if isinstance(proof, dict) else None
+    value = stats.get(field)
+    return value if isinstance(value, dict) else None
+
+
+def _extract_input_proof(path):
+    """Return a ``wf_*.json`` record's ``result.stats.inputProof`` dict, or None."""
+    return _extract_stats_field(path, "inputProof")
 
 
 def _extract_review_health(path):
-    """Return a ``wf_*.json`` record's ``result.stats.health`` dict, or None.
+    """Return a ``wf_*.json`` record's ``result.stats.health`` dict, or None."""
+    return _extract_stats_field(path, "health")
 
-    Structural only, mirroring :func:`_extract_input_proof` exactly — same
-    file, same embedded pipeline bundle in ``script``, same reason this is
-    never a regex scan. An unreadable or misshapen record reads as "not
-    measured" for this stat, never as a present-and-healthy one.
+
+def _add_int_fields(dest, source, fields):
+    """Add integer (non-bool) ``fields`` from ``source`` into ``dest`` in place.
+
+    Contract says every key is an integer; a producer bug that violates it
+    must not corrupt the aggregate with a float or a bool (bool is an int
+    subclass in Python).
     """
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(data, dict):
-        return None
-    result = data.get("result")
-    if not isinstance(result, dict):
-        return None
-    stats = result.get("stats")
-    if not isinstance(stats, dict):
-        return None
-    health = stats.get("health")
-    return health if isinstance(health, dict) else None
+    for k in fields:
+        v = source.get(k)
+        if isinstance(v, int) and not isinstance(v, bool):
+            dest[k] += v
 
 
 # Loose ISO8601 prefix (date + time-of-day) — shape only, not full calendar
@@ -401,46 +399,58 @@ def _record_timestamp(path):
     return ts if isinstance(ts, str) and _ISO8601_RE.match(ts) else None
 
 
-def _select_pr_health_snapshot(wf_records):
-    """Pick the single canonical ``result.stats.health`` snapshot for a PR
-    out of its (possibly several) ``wf_*.json`` records.
+def _select_pr_stats_snapshot(wf_records, extract, *, prefer_degraded=False):
+    """Pick one ``result.stats.*`` snapshot for a PR out of its wf records.
 
-    A health object is a snapshot of the WHOLE delivered review, not a
-    per-dispatch delta (see the aggregation note in ``check_run``), so
-    picking the wrong record for a retried PR silently reports a superseded
-    attempt's counts instead of the live one. ``wf_*.json`` filenames are
-    ``wf_<random>`` (issue #85: ``_iter_workflow_records`` globs every record
-    with no notion of which attempt is current, and a superseded record has
-    already produced a wrong verdict once — grafana's first attempt died to a
-    sustained API 529, ``--retry-failed`` ran clean, and the checker read the
-    dead record). SORTED GLOB ORDER IS NOT CHRONOLOGICAL ORDER, so it must
-    never be used to pick "the latest" — this function replaces that.
+    Both ``inputProof`` and ``health`` are full verify-/delivery-stage
+    snapshots on the compact return, not per-dispatch deltas — summing every
+    ``wf_*.json`` on a retried PR double-counts. ``wf_*.json`` filenames are
+    ``wf_<random>`` (issue #85), so sorted glob order is not chronological and
+    must never be used to pick "the latest".
 
     Ordering key is each record's own ``timestamp`` field (ISO8601, so
     lexicographic max == chronological max — see ``_record_timestamp``).
-    When NO candidate has a usable timestamp, ordering is simply impossible,
-    so the fallback shifts from "pick something" to "pick safely": a record
-    that already reports ``degraded: true`` wins, because under-reporting a
+    When NO candidate has a usable timestamp and ``prefer_degraded`` is set,
+    a record that already reports ``degraded: true`` wins — under-reporting a
     real degradation is the wrong direction to fail in for a disclosure
-    signal. Only when nothing is timestamped AND nothing is degraded does
-    this fall back to the last candidate in caller-supplied order, purely
-    for determinism — there is no better signal left to break the tie with.
+    signal. Otherwise the last candidate in caller-supplied order wins,
+    purely for determinism.
     """
-    candidates = []  # (timestamp_or_None, health_dict)
+    candidates = []  # (timestamp_or_None, value_dict)
     for wf_path in wf_records:
-        h = _extract_review_health(wf_path)
-        if h is None:
+        value = extract(wf_path)
+        if value is None:
             continue
-        candidates.append((_record_timestamp(wf_path), h))
+        candidates.append((_record_timestamp(wf_path), value))
     if not candidates:
         return None
-    timestamped = [(ts, h) for ts, h in candidates if ts is not None]
+    timestamped = [(ts, v) for ts, v in candidates if ts is not None]
     if timestamped:
         return max(timestamped, key=lambda pair: pair[0])[1]
-    degraded = [h for _, h in candidates if h.get("degraded") is True]
-    if degraded:
-        return degraded[0]
+    if prefer_degraded:
+        degraded = [v for _, v in candidates if v.get("degraded") is True]
+        if degraded:
+            return degraded[0]
     return candidates[-1][1]
+
+
+def _select_pr_health_snapshot(wf_records):
+    """Pick the single canonical ``result.stats.health`` snapshot for a PR."""
+    return _select_pr_stats_snapshot(
+        wf_records, _extract_review_health, prefer_degraded=True,
+    )
+
+
+def _select_pr_input_proof_snapshot(wf_records):
+    """Pick the single canonical ``result.stats.inputProof`` snapshot for a PR.
+
+    Same currency problem as :func:`_select_pr_health_snapshot` (issue #85):
+    each record's ``inputProof`` is a full verify-stage ledger, so summing
+    every record on a retried PR double-counts slices/proven/degraded. No
+    ``degraded: true`` flag lives on this object, so the untimestamped
+    fallback is caller order only.
+    """
+    return _select_pr_stats_snapshot(wf_records, _extract_input_proof)
 
 
 def _script_path_ok(script_path, expected_pipeline, repo_root=None):
@@ -983,36 +993,25 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         # Only PRs that produced a wf record are counted as measured/unmeasured;
         # a PR with zero wf records already failed G4 above and would otherwise
         # be double-counted here under a different name.
+        #
+        # Each record's inputProof is a full verify-stage snapshot (same shape
+        # of currency problem as health — issue #85), so a retried PR must
+        # contribute ONE record's counters, not the sum of every attempt.
         if wf_records:
-            pr_proof = None
-            for wf_path in wf_records:
-                proof = _extract_input_proof(wf_path)
-                if proof is None:
-                    continue
-                if pr_proof is None:
-                    pr_proof = {k: 0 for k in _INPUT_PROOF_FIELDS}
-                for k in _INPUT_PROOF_FIELDS:
-                    v = proof.get(k)
-                    # Contract says every key is an integer; a producer bug that
-                    # violates it must not corrupt the aggregate with a float or
-                    # a bool (bool is an int subclass in Python).
-                    if isinstance(v, int) and not isinstance(v, bool):
-                        pr_proof[k] += v
+            pr_proof = _select_pr_input_proof_snapshot(wf_records)
             if pr_proof is None:
                 input_proof_unmeasured_prs += 1
             else:
                 input_proof_measured_prs += 1
-                for k in _INPUT_PROOF_FIELDS:
-                    input_proof_totals[k] += pr_proof[k]
+                _add_int_fields(input_proof_totals, pr_proof, _INPUT_PROOF_FIELDS)
 
         # --- health: reported stat, not a gate (see module docstring) ---
         # The gate-facing half of this signal is the banner-pairing check
         # above, which is derived from the findings/report directly, not from
         # this. A health object is a SNAPSHOT of the whole delivered review,
-        # not a per-dispatch delta like input_proof's counters — so when a PR has
-        # multiple wf_*.json records (e.g. a run that was retried), this takes
-        # ONE of them rather than summing, which would double-count a single
-        # delivered set.
+        # not a per-dispatch delta — so when a PR has multiple wf_*.json
+        # records (e.g. a run that was retried), this takes ONE of them rather
+        # than summing, which would double-count a single delivered set.
         #
         # WHICH ONE is _select_pr_health_snapshot's whole subject: the newest by
         # the record's own ``timestamp``, never by glob order, because record
@@ -1026,10 +1025,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 health_unmeasured_prs += 1
             else:
                 health_measured_prs += 1
-                for k in _HEALTH_INT_FIELDS:
-                    v = pr_health.get(k)
-                    if isinstance(v, int) and not isinstance(v, bool):
-                        health_totals[k] += v
+                _add_int_fields(health_totals, pr_health, _HEALTH_INT_FIELDS)
                 dl = pr_health.get("dimensionsLost")
                 if isinstance(dl, list):
                     health_dimensions_lost.update(x for x in dl if isinstance(x, str))

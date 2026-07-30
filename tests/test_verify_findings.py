@@ -1438,7 +1438,7 @@ class TestReceipt(unittest.TestCase):
     def test_receipt_failure_envelope_is_schema_valid(self):
         """An uncaught exception mid-verification yields a status=='failed' envelope
         on stdout with exit 0 (honest failure is schema-valid, never fabricated)."""
-        import io, json
+        import io
         findings = self._findings()
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump({"findings": findings}, f)
@@ -1465,7 +1465,7 @@ class TestReceipt(unittest.TestCase):
 
     def _receipt_for(self, text):
         """Run receipt mode over `text` as the --input file; return the envelope."""
-        import io, json
+        import io
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(text)
             in_path = f.name
@@ -1555,7 +1555,7 @@ class TestReceipt(unittest.TestCase):
 
     def test_missing_input_file_is_tagged_unreadable(self):
         """A missing --input file is an input fault and says so with a code."""
-        import io, json
+        import io
         out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
         missing = os.path.join(tempfile.mkdtemp(), "never-written.json")
         try:
@@ -1600,7 +1600,7 @@ class TestReceipt(unittest.TestCase):
         tags it. The first version of this test used RuntimeError and was proven
         non-discriminating during the adversarial review pass.
         """
-        import io, json
+        import io
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump({"findings": self._findings(), "base_branch": "main"}, f)
             in_path = f.name
@@ -1631,7 +1631,7 @@ class TestReceipt(unittest.TestCase):
 
     def test_a_plain_crash_in_the_verification_body_is_still_untagged(self):
         """The ordinary case, kept beside the discriminating one above."""
-        import io, json
+        import io
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump({"findings": self._findings(), "base_branch": "main"}, f)
             in_path = f.name
@@ -1689,7 +1689,9 @@ class TestReceipt(unittest.TestCase):
             json.dumps({"findings": findings, "base_branch": "main"})
         )
         self.assertEqual(envelope["status"], "ok")
-        self.assertIsNone(envelope["receipt"]["input_checksum"])
+        # Key omitted, not null: VERIFY_SCHEMA types the field as a string, so a null
+        # value is not a legal Structured Output echo (the soft-unproven path).
+        self.assertNotIn("input_checksum", envelope["receipt"])
 
     def test_legacy_path_reads_a_bom_prefixed_file_rather_than_dying_on_it(self):
         """The one LEGACY-path behaviour change this PR makes, pinned rather than left
@@ -1722,7 +1724,7 @@ class TestReceipt(unittest.TestCase):
         """The other half of the same change: die() raising InputError instead of calling
         sys.exit must not soften the LEGACY positional path, which has always exited 1
         with the message on stderr and nothing on stdout."""
-        import io, json
+        import io
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(json.dumps({"findings": self._findings()}) + "}")
             corrupt_path = f.name
