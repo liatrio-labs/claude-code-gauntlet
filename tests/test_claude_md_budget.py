@@ -78,7 +78,22 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # residual-mismatch degrade are each stated in full at the site that implements them
 # (verifySliceWithRetry, VERIFY_SCHEMA's input_checksum comment, verifyStage) and pinned
 # by a named test in workflows/test/stages_verify_input_proof.test.js.
-CLAUDE_MD_BYTE_CEILING = 27_413
+#
+# Raised 2026-07-30 to 28,169 (+756 bytes) for issue #25 PR4 (the degradation banner), as
+# ONE bullet: no agent is ever asked how healthy the review was. It spans four files that
+# must agree — reportPrompt in stages.js, agents/report-writer.md, references/
+# report-format.md, and the reviewHealth/applyHealthBanner derivation — so no single site
+# owns it, and the failure it prevents is not hypothetical: a report claimed "0 unverified/
+# pipeline-degraded findings" while every delivered finding was unclassified, on two
+# separate recorded runs. The specific way a future contributor re-opens it is by adding a
+# health sentence back to one of the three prompt/template surfaces, which is a plausible
+# and well-intentioned edit, so the prohibition has to be somewhere all four are in view.
+# Everything else PR4 learned stayed at its site: why the banner is applied at the
+# persistence boundary (a resume replays the report and bypasses reportStage), why it is
+# idempotent, why absent `origin` counts as unclassified, and why unproven inputs do not
+# raise it — each is a comment where the code is, each pinned by a named test in
+# workflows/test/stages_health_banner.test.js.
+CLAUDE_MD_BYTE_CEILING = 28_169
 
 
 class TestClaudeMdBudget(unittest.TestCase):

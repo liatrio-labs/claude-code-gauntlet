@@ -197,6 +197,20 @@ test('END TO END: a degraded verify slice puts the banner on the PERSISTED repor
   assert.ok((out.gaps || []).some((g) => g.startsWith('review_degraded:')), `got: ${out.gaps}`);
 });
 
+test('a review that found NOTHING but lost a dimension is still banded — the worst false-clean', async () => {
+  // The most dangerous shape this banner exists for: zero findings reads as "all clear",
+  // and it is indistinguishable from "the agent that would have found them never ran".
+  // There is no finding here to carry an origin, so the findings-based signal is silent
+  // and the dimension signal is the only thing standing between a reader and a false
+  // clean bill of health.
+  const health = reviewHealth({ delivered: [], notChallenged: [], dimensionsLost: ['security'] });
+  assert.equal(health.degraded, true);
+  assert.equal(health.unclassified, 0, 'no finding is unclassified — there are no findings');
+  const out = applyHealthBanner('# Code Gauntlet\n\nNo issues found.', health);
+  assert.match(out, /This review is degraded/);
+  assert.match(out, /produced no results at all/);
+});
+
 test('END TO END: a clean run persists a report with no banner and no degradation gap', async () => {
   const args = validArgs();
   let persisted = null;
