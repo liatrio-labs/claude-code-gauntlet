@@ -25,21 +25,62 @@ The v3 review pipeline runs inside `workflows/pipeline.js`, invoked from SKILL.m
 
 ## Artifact persistence
 
-The sandbox has no disk, so every persisted byte must be emitted as some agent's tool-call argument at least once. The floor is **one generation pass per unique byte** — not zero. `writeArtifacts` therefore has the artifact-writer emit only *unique* content (findings JSON, report markdown, a persist-plan JSON) and a pinned executor derive the rest:
+> **The premise this section was built on is FALSE, and it is what sent the design off the rails.**
+> It read: *"The sandbox has no disk, so every persisted byte must be emitted as some agent's
+> tool-call argument at least once. The floor is one generation pass per unique byte — not zero."*
+> True of the current design; not of the platform. **Measured 2026-07-30, zero-subagent probe:** a
+> workflow's return value is serialized **by the harness** to `tasks/<taskid>.output` — byte-exact
+> at 200 KB, 500 KB and **4,000,000 chars**, fnv1a32-verified against the value computed inside the
+> sandbox, preserving even a lone surrogate left by slicing an emoji in half. No model touches it.
+> `await_workflow.py` already resolves and parses that file and Phase 8 has Bash, so a **zero**-
+> transcription path exists and always did. Findings + report top out at ~66 KB, 1.6% of the
+> proven-safe size. One run whose writer failed and persisted nothing was found with its whole
+> output sitting in that file, recoverable all along.
+>
+> What follows describes the CURRENT writer-based design, which is being replaced. Read it as a
+> description of the code, not a justification for it. Do not cite the deleted premise.
 
-- **Derived, never re-typed.** `post-review.json` is a ranked/capped id projection of `findings.json`; the checkpoint's `phases.challenge.findings` is its alias-stripped twin. `scripts/assemble_artifacts.py --plan <path>` builds both. Re-adding a derivable array to the writer payload re-introduces the cost this design exists to remove (measured: ~66% of the writer's 88 KB was re-transcription of one 21.4 KB array).
-- **`fnv1a32` is defined over UTF-16 code units and MUST agree between runtimes.** JS uses `charCodeAt` + `Math.imul` (language builtins — `TextEncoder`/`Buffer` are unavailable); Python reads `s.encode('utf-16-le')` as 2-byte LE units. `chars` is the code-unit count on both sides. `tests/test_assemble_artifacts.py` pins the parity over surrogates, astral pairs, U+2028/U+2029 and control characters — that test is the only thing standing between a serializer tweak and a silently divergent artifact.
-- **Structural failures hard-fail; PRIMARY content-proof mismatches do not.** A missing file, unparseable JSON, a missing/duplicate id, or a bad **plan** checksum writes nothing and returns `ok:false` (the plan is the instruction set, not data). A mismatch on a *primary's* checksum still derives from on-disk truth and emits a loud gap — refusing there would invent a new way to lose a run, against the never-fabricate contract. A mismatch on a **derived** document is the opposite call: the derivation itself is wrong and there is no second copy, so `trustAssembleReceipt` degrades to partial-artifacts — *unless* `findings.json` (the sole source of both projections) itself came back `mismatch`, in which case the derived difference is the expected consequence of the tolerated one and is reported as a gap instead.
-- **One retry on a structural assemble refusal, then degrade — and NEVER a legacy fallback.** The writer is a sampled agent, not a function, so a second dispatch is a fresh sample: `writeArtifactsDerived` re-runs the whole derived persist (writer + assembler) **exactly once** when the script refuses (unparseable JSON, missing/duplicate id, bad plan checksum, derived-document mismatch), then degrades. A *tolerated* primary content-proof mismatch is not retried — that is a successful persist with a disclosed divergence. A writer throw/null/failed write-proof is not retried either — nothing reached the script to refuse. Falling back to the legacy by-value writer here was considered and **rejected**: it carries no content proof, so it would convert a visible failure into a silent one. Both attempts are named in the gaps, whichever way the retry lands.
-- **The wire carries NO run of two backslashes (`hardenEscapeRuns`), and no Python change pairs with it.** Rationale and the measured 18/18 collapse are at the site in `stages.js`; what only CLAUDE.md can hold is that this is deliberately a JS-only fix — `\u005c` is a standard JSON escape, the primaries are proven on raw bytes over the hardened string, and the plan's proof is value-level — so `tests/test_assemble_artifacts.py::TestEscapeHardenedPrimaryIsAcceptedUnchanged` (which shells out to node rather than growing a Python twin) is the guard on that claim. `report.md` is markdown and stays unhardened.
-- **A refused assemble receipt keeps the primaries it PROVED** (`provenPrimaryPaths`), so SKILL.md's Phase 8 "deliver whatever `artifactPaths.report` exists" branch is reachable — it had been dead since it was written, and a run whose report was byte-perfect still reached the user as nothing. Grading is `trustAssembleReceipt`'s, unrelaxed; `partial` stays true; derived documents are never salvaged.
-- **The by-value writer is not trustworthy — that is what the proof is for.** First measured with a content proof on the 2026-07-27 smoke (3 PRs): the artifact-writer's transcription of `findings.json` diverged from the payload it was handed on **3 of 3** runs — 16 chars, 8 chars, and one document broken outright by `\"` over-escaped to `\\"`. Re-serializing the on-disk JSON through the same pretty printer reproduced the on-disk bytes exactly, so the drift is in the DATA, not the serializer. This is long-standing; only the detection is new.
-- **Both derived documents carry a content proof, not just a path.** The plan's `derive` block holds `{path, chars, checksum}` for post-review.json and checkpoint-all.json, computed in JS from `writerPayload(inp).postReview`/`.checkpoints` through the same `normalizeForChecksum` + `fnv1a32` as the primaries; the script reports its own numbers in `written[]` and `trustAssembleReceipt` compares. Like `trustSlice`, this is a consistency/liveness check against a stale or confused executor and against serializer divergence — **not authentication**: the plan is on disk, so any executor can read the values it names.
-- **The two runtimes' checkpoint-skeleton guards must stay in lockstep.** `persistPlan` empties `phases.challenge.findings` only when it holds an ARRAY; `assemble_artifacts.py` refills it under the identical predicate. A looser Python predicate fabricates an array the pipeline never had.
-- **`writeArtifacts` never throws.** Its try/catch covers the WHOLE body — the plan/primary computation runs before any dispatch and a throw there degrades to partial-artifacts like any writer failure (SKILL.md Error Recovery: writer failure is non-fatal). `assemble_artifacts.py`'s `main()` likewise always emits one receipt line, falling back to a hand-built minimal one if the receipt will not serialize: an empty stdout is indistinguishable from a dead executor.
-- **Numbers must be JS-reproducible.** Both runtimes refuse non-integer or out-of-safe-range numeric values rather than write an artifact whose float spelling differs between languages; the JS side falls back to the legacy by-value writer instead of degrading.
-- **The legacy by-value path stays live** and is taken when `args.persist` is absent or when finding ids are missing/duplicated. Do not delete it — it is the safety net for pathological input.
-- **The report is unwrapped where the string is first received.** The report-writer intermittently returns its markdown already wrapped as `{"report": "# Code Gauntlet Report..."}` (~15 of 25 dated runs since 2026-07-22 — flaky, not a regression), and the writer persists that wrapper verbatim, as its contract requires. `dispatchReportSegment` unwraps it, so the single-dispatch and segmented paths are covered by one rule and the *persisted* artifact is markdown. Conservative by construction: a successful `JSON.parse` **and** a plain object **and** a string `report` member with no other meaningful content, else the string is returned untouched. Phase 8 also unwraps at delivery — belt-and-braces, not one of them dead.
+- **The writer is a language model, and it does not transcribe.** Two independent measurements: 2 of
+  5 recorded runs corrupted; and on 2026-07-30 a 53 KB findings.json lost 18 of 18 backslash-run
+  sites, then — after `hardenEscapeRuns` removed every run from the wire — **0 of 28** `\`
+  escapes survived, the writer having rewritten them all back to `\\`. Both spellings fail: one gets
+  collapsed, the other expanded. **No further encoding tweak is worth trying**, and encoding is not
+  even the whole fault: the same run showed the writer expanding an ellipsis inside a finding's
+  quoted evidence by opening the file the quote referenced. Nothing stops a model editing content it
+  believes it is improving. `hardenEscapeRuns` ships because it is harmless and its cross-runtime
+  claim is guarded, but **it is not the fix**.
+- **Re-dispatching does not repair corruption.** The retry's stated rationale — *"the writer is a
+  sampled agent, not a function, so a second dispatch is a fresh sample"* — holds only for a
+  stochastic fault. Twice, on two different documents, the retry corrupted the same sites and failed
+  at the **identical byte offset**. It is kept for genuinely flaky writer failures; it is not a
+  mitigation for mangling.
+- **`fnv1a32` is defined over UTF-16 code units and MUST agree between runtimes.** JS uses
+  `charCodeAt` + `Math.imul` (language builtins — `TextEncoder`/`Buffer` are unavailable); Python
+  reads `s.encode('utf-16-le')` as 2-byte LE units. `chars` is the code-unit count on both sides.
+  `tests/test_assemble_artifacts.py` pins the parity over surrogates, astral pairs, U+2028/U+2029
+  and control characters — that test is the only thing between a serializer tweak and a silently
+  divergent artifact.
+- **The two runtimes' checkpoint-skeleton guards must stay in lockstep.** `persistPlan` empties
+  `phases.challenge.findings` only when it holds an ARRAY; `assemble_artifacts.py` refills it under
+  the identical predicate. A looser Python predicate fabricates an array the pipeline never had.
+- **Structural failures hard-fail; PRIMARY content-proof mismatches do not.** A missing file,
+  unparseable JSON, a missing/duplicate id or a bad **plan** checksum writes nothing and returns
+  `ok:false`. A *primary* mismatch still derives from on-disk truth and emits a loud gap — refusing
+  there would invent a new way to lose a run. A **derived** mismatch is structural (the derivation
+  itself is wrong and there is no second copy) *unless* `findings.json` also came back `mismatch`,
+  which makes the derived difference its expected consequence. Full rationale at
+  `trustAssembleReceipt`; it is here because the policy spans both runtimes.
+- **A refused receipt keeps the primaries it PROVED** (`provenPrimaryPaths`), which is what makes
+  SKILL.md's Phase 8 "deliver whatever `artifactPaths.report` exists" branch reachable — it was dead
+  from the day it was written, and a run whose report was byte-perfect still reached the user as
+  nothing. Grading is `trustAssembleReceipt`'s, unrelaxed; derived documents are never salvaged.
+- **The legacy by-value path stays live** and is taken when `args.persist` is absent or finding ids
+  are missing/duplicated. It is the safety net for pathological input; do not delete it.
+- **The report is unwrapped at BOTH sites, deliberately.** The report-writer intermittently returns
+  its markdown wrapped as `{"report": "..."}` (~15 of 25 dated runs since 2026-07-22 — flaky, not a
+  regression) and the writer persists the wrapper verbatim, as its contract requires.
+  `dispatchReportSegment` unwraps it and Phase 8 unwraps again at delivery: belt-and-braces, neither
+  one dead.
 
 ## Verify boundary (delta echo)
 

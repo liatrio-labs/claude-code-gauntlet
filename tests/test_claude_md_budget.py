@@ -76,7 +76,23 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # grading rules. The first draft ran to +3,204 bytes; all four are stated in full at their
 # sites (hardenEscapeRuns, provenPrimaryPaths) and pinned by mutation-verified tests in
 # workflows/test/stages_persist.test.js.
-CLAUDE_MD_BYTE_CEILING = 27_591
+# LOWERED 2026-07-30 to 25,399 (-2,192 bytes). Not a feature landing — a correction. The
+# "Artifact persistence" section opened on a premise that is false: "the sandbox has no disk,
+# so every persisted byte must be emitted as some agent's tool-call argument at least once;
+# the floor is one generation pass per unique byte." A zero-subagent probe showed the harness
+# serializes a workflow return to tasks/<id>.output byte-exact at 4,000,000 chars. The premise
+# was never measured; it was asserted, and then a whole subsystem was justified by it.
+#
+# The correction itself cost ~1.7 KB. It is a NET reduction because the same pass deleted four
+# bullets that failed this file's own two-part test — the derived-document content proof, the
+# never-throws invariant, the JS-reproducible-numbers precondition, and the derived-never-retyped
+# cost argument. Each was already stated in full in a comment at the code that implements it, and
+# the last of them was reasoning FROM the false premise.
+#
+# The lesson for whoever raises this next: the two-part test screens for duplication, and it did
+# not catch any of this, because unverified claims read exactly like verified ones when they are
+# written in the same confident voice. Prefer a sentence that names its measurement.
+CLAUDE_MD_BYTE_CEILING = 25_399
 
 
 class TestClaudeMdBudget(unittest.TestCase):
