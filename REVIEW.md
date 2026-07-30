@@ -57,9 +57,9 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
 - **A rule stated in prose that could be enforced by code is a finding.** Prompt text, agent
   contracts and instruction files are the fallback for what cannot be made structural, not the
   first fix.
-- **Cross-runtime lists must change together.** `_DELTA_FIELDS`/`DELTA_KEYS` and
-  `INPUT_FAULT_REASONS` exist in both Python and JS. A change to one side only is a defect even
-  though both files still pass their own tests.
+- **Cross-runtime lists must change together.** `_DELTA_FIELDS` and `DELTA_KEYS` are one list in
+  two runtimes. A change to one side only is a defect even though both files still pass their own
+  tests.
 - **`workflows/src/` must not reference host globals.** `structuredClone`, `Buffer`,
   `TextEncoder`, `URL`, `setTimeout`, `process` and `console` exist under `node --test` but not in
   the workflow sandbox, so a reference passes every test and throws on first live dispatch.

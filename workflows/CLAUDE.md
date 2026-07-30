@@ -52,20 +52,9 @@ and do not try to fix transcription with a different encoding.**
 The executor echoes a per-id delta, never findings.
 
 - `_DELTA_FIELDS` (Python) and `DELTA_KEYS` (JS) are one list in two runtimes, walked in the same
-  order. So is `INPUT_FAULT_REASONS`.
+  order.
 - `result.deltas` must stay the **first** key of `result` — the reading executor's `Read` is
   length-capped with no truncation notice, so what it echoes must be a prefix.
-- Proof kind follows the writer's wire contract, not the file type: an artifact handed over as a
-  pre-serialized **string** gets the raw-bytes proof; one handed over as an **object** to serialize
-  gets the canonical-value proof.
-
-## Health is derived, never asked for
-
-No agent is ever asked how healthy the review was. The report-writer receives findings and challenge
-buckets only — never verify/discover outcomes — so any claim it makes about degradation is composed
-from data that does not contain the answer. Health is computed in code from findings' own `origin`.
-Adding a health line to `reportPrompt`, `agents/report-writer.md`, or `references/report-format.md`
-re-opens a defect that shipped twice.
 
 ## Reading the shared context file
 

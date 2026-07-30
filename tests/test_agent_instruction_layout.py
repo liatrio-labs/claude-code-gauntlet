@@ -208,5 +208,84 @@ class TestCollectorDedup(unittest.TestCase):
                 )
 
 
+class TestClaimsResolve(unittest.TestCase):
+    """Every file and symbol an instruction file names must exist in THIS tree.
+
+    Instruction files are read as fact by four different tools. A rule naming a function
+    that does not exist sends an agent looking for it, and nothing reports the dangling
+    reference — the same silent-failure shape as the rest of this module.
+
+    This caught three real defects on the branch that introduced it: a cross-runtime
+    constant, a proof-kind rule, and a whole section on health derivation, all describing
+    code that lived only on an unmerged branch. Documenting code before it lands reads
+    exactly like documenting code that shipped.
+
+    Deliberately no exclusion list for this module: naming a missing symbol here would let
+    it vouch for itself, so this docstring describes those defects without spelling them.
+    """
+
+    FILES = [
+        "AGENTS.md", "CLAUDE.md", "REVIEW.md",
+        "workflows/AGENTS.md", "scripts/AGENTS.md", "agents/AGENTS.md",
+    ]
+
+    # Backticked prose terms that are English, schema field names, or host globals named
+    # precisely because they are ABSENT — none of them are repo symbols.
+    NOT_SYMBOLS = {
+        "description", "evidence", "suggestion", "severity", "confidence", "dimension",
+        "origin", "criticality", "findings", "complete", "total_seen", "markdown",
+        "optimized", "realpath", "structuredClone", "setTimeout", "queueMicrotask",
+        "console", "process", "Buffer", "TextEncoder", "TextDecoder", "package.json",
+        "node_modules",
+    }
+
+    def repo_files(self):
+        out = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True)
+        return set(out.stdout.split())
+
+    def test_referenced_paths_exist(self):
+        tracked = self.repo_files()
+        basenames = {Path(p).name for p in tracked}
+        pattern = re.compile(r"`([A-Za-z0-9_./-]+\.(?:py|js|md|json|yaml|yml))`")
+        for doc in self.FILES:
+            text = (REPO / doc).read_text(encoding="utf-8")
+            for ref in sorted(set(pattern.findall(text))):
+                if ref in self.NOT_SYMBOLS or "*" in ref:
+                    continue
+                with self.subTest(doc=doc, ref=ref):
+                    self.assertTrue(
+                        ref in tracked
+                        or Path(ref).name in basenames
+                        or (REPO / Path(doc).parent / ref).exists(),
+                        f"{doc} names {ref}, which is not in this tree",
+                    )
+
+    def test_referenced_symbols_exist(self):
+        """A grep, deliberately — the claim is only that the name occurs in the code."""
+        pattern = re.compile(r"`([a-z][a-zA-Z0-9_]{4,}|[A-Z][A-Z0-9_]{4,})`")
+        docs = set(self.FILES)
+        for doc in self.FILES:
+            text = (REPO / doc).read_text(encoding="utf-8")
+            for sym in sorted(set(pattern.findall(text))):
+                if sym in self.NOT_SYMBOLS:
+                    continue
+                with self.subTest(doc=doc, symbol=sym):
+                    found = subprocess.run(
+                        ["git", "grep", "-l", "--", sym], cwd=REPO,
+                        capture_output=True, text=True,
+                    ).stdout.split()
+                    # Hits in the instruction files themselves prove nothing: the twins
+                    # are copies, so a symbol could otherwise vouch for itself.
+                    real = [
+                        f for f in found
+                        if f not in docs and not f.endswith("/CLAUDE.md")
+                    ]
+                    self.assertTrue(
+                        real,
+                        f"{doc} names `{sym}`, which appears nowhere in the code. If it "
+                        "lands with an unmerged branch, document it in that branch.",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()
