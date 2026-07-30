@@ -42,6 +42,10 @@ from scripts.verify_findings import (
     deltas_checksum,
     _delta_confidence,
     _DELTA_FIELDS,
+    INPUT_FAULT_REASONS,
+    INPUT_UNREADABLE,
+    INPUT_UNPARSEABLE,
+    INPUT_INVALID,
     InputError,
     REPO_ROOT,
 )
@@ -2282,6 +2286,78 @@ class TestEliminationReasonStamp(unittest.TestCase):
             self.assertTrue(reason.strip())
         finally:
             os.unlink(empty_diff)
+
+
+class TestCrossRuntimeFieldListParity(unittest.TestCase):
+    """The two-runtime field lists must actually BE one list in two runtimes.
+
+    CLAUDE.md states this rule for both pairs and names the failure each way, but
+    until this test nothing executed it — the rule lived only in prose, which is
+    the same shape as a guard that does not guard. Both drifts are silent:
+
+    ``_DELTA_FIELDS`` / ``DELTA_KEYS`` — a field on one side only either drops out
+    of the checksummed canonical form (the content proof goes blind to it) or makes
+    every honest receipt fail the proof, degrading every slice of every run.
+
+    ``INPUT_FAULT_REASONS`` — a reason code on the Python side only is a corrupted
+    input the workflow never recognizes as input-implicated, so the slice is never
+    re-materialized and the retry re-reads the same bad bytes (measured:
+    wf_3f640577-31c failed both attempts at the identical byte offset).
+
+    The JS values are IMPORTED from stages.js, never restated here: a copy of the
+    list in this file would agree with a drifted implementation exactly as happily
+    as with a correct one, which is the failure mode this test exists to catch.
+    """
+
+    JS = (
+        "import { DELTA_KEYS, INPUT_FAULT_REASONS } from "
+        "'%s/workflows/src/stages.js';"
+        "process.stdout.write(JSON.stringify({ DELTA_KEYS, INPUT_FAULT_REASONS }));"
+    ) % os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+    def js_values(self):
+        import shutil
+        if shutil.which("node") is None:
+            self.skipTest("node not available")
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", self.JS],
+            capture_output=True, text=True,
+        )
+        if proc.returncode != 0:
+            raise AssertionError(proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_delta_fields_match_delta_keys(self):
+        """DELTA_KEYS is _DELTA_FIELDS plus the two STRUCTURAL keys, in order.
+        Order matters as much as membership: both sides walk the list to build
+        the checksummed canonical form, so a reordering breaks the proof exactly
+        as a missing field does.
+        """
+        js = self.js_values()
+        self.assertEqual(
+            js["DELTA_KEYS"], ["id", "verified"] + list(_DELTA_FIELDS),
+            "DELTA_KEYS in workflows/src/stages.js has drifted from _DELTA_FIELDS "
+            "in scripts/verify_findings.py; they are one list in two runtimes",
+        )
+
+    def test_input_fault_reasons_match(self):
+        js = self.js_values()
+        self.assertEqual(
+            js["INPUT_FAULT_REASONS"], list(INPUT_FAULT_REASONS),
+            "INPUT_FAULT_REASONS in workflows/src/stages.js has drifted from "
+            "scripts/verify_findings.py; a code on one side only is an input fault "
+            "the workflow never re-materializes",
+        )
+
+    def test_the_reason_codes_the_script_can_actually_raise_are_all_listed(self):
+        """Membership parity is not enough on its own: a code the script raises
+        but never lists is invisible to BOTH runtimes. Pin the constants that
+        exist against the tuple that enumerates them.
+        """
+        self.assertEqual(
+            set(INPUT_FAULT_REASONS),
+            {INPUT_UNREADABLE, INPUT_UNPARSEABLE, INPUT_INVALID},
+        )
 
 
 if __name__ == "__main__":
