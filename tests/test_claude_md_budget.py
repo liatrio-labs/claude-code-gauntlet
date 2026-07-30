@@ -93,7 +93,22 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # idempotent, why absent `origin` counts as unclassified, and why unproven inputs do not
 # raise it — each is a comment where the code is, each pinned by a named test in
 # workflows/test/stages_health_banner.test.js.
-CLAUDE_MD_BYTE_CEILING = 28_169
+#
+# Raised 2026-07-30 to 29,008 (+839 bytes) for the mutation-check rule in "Tests". This
+# one is a testing DISCIPLINE rather than a structural fact, which normally argues for
+# leaving it at the site — and it is at the sites, in both repaired fixtures. It is here
+# anyway because the failure it prevents recurred TWICE inside a single branch, written
+# by two different authors hours apart, and neither would have been caught by reading the
+# test: both had accurate names and accurate docstrings and still could not distinguish
+# the correct implementation from the bug. A contributor writing the NEXT ordering test
+# will not read the two fixtures that already got this wrong.
+#
+# That recurrence is the same empirical signal this guard's own existence rests on (a
+# block added twice in adjacent PRs). And it is repo-specific despite sounding generic:
+# this project's guards ARE its product, and it has shipped more than one that did not
+# guard — the phrase-count context-read guard defeated by a rewording, and the `agent`
+# withholding that worked on 2 of 6 measured PRs. The rule belongs where those are.
+CLAUDE_MD_BYTE_CEILING = 29_008
 
 
 class TestClaudeMdBudget(unittest.TestCase):
