@@ -1240,10 +1240,30 @@ test('the return channel dispatches NO agent and carries the three primaries hom
 test('the returned bytes are byte-identical to what the writer path would have been handed', async () => {
   // The equality that makes the channel a swap rather than a rewrite: same serializer,
   // same hardening, same plan — so the plan's expect[]/planChecksum still prove them.
-  const inp = returnInput();
+  //
+  // The fixture carries a LITERAL BACKSLASH ahead of a quote in a checkpoint gap — prose
+  // the skeleton keeps, so it reaches the plan TEXT (a finding's own description does
+  // not: the plan carries the primaries only by checksum, and the skeleton empties
+  // challenge.findings). That is the one byte the two channels can spell differently,
+  // since hardenEscapeRuns respells `\\` as `\u005c` for the transcribing writer. With
+  // plain findings there is no such run, so this equality used to hold by accident and
+  // prove nothing. It is why both channels now serialize through persistEntries.
+  const nasty = {
+    checkpoints: {
+      ...persistInput().checkpoints,
+      phases: {
+        challenge: {
+          ...persistInput().checkpoints.phases.challenge,
+          gaps: ['verify: the executor wrote \\"receipt\\" to C:\\tmp and stopped'],
+        },
+      },
+    },
+  };
+  const inp = returnInput(nasty);
+  assert.match(JSON.stringify(persistPlan(inp, PATHS)), /\\\\/, 'the fixture reaches the plan with a run to harden');
   const viaReturn = await writeArtifacts(persistCtx(), inp);
   const writerCtx = persistCtx();
-  await writeArtifacts(writerCtx, persistInput());
+  await writeArtifacts(writerCtx, persistInput(nasty));
   const dispatched = parseWriterPayload(writerCtx.calls.find((c) => c.label === 'artifact-writer').prompt);
 
   assert.deepEqual(viaReturn.persistReturn.entries, dispatched);
@@ -1293,6 +1313,38 @@ test('returnPrimaries is opt-in: without it the derived writer path is unchanged
   const out = await writeArtifacts(ctx, persistInput());
   assert.equal(out.persistReturn, undefined);
   assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
+});
+
+test('returnPrimaries alone takes the return channel — it does not need a script path', async () => {
+  // The flag used to be read only INSIDE the assembleScriptPath branch, so this args
+  // object — which says, in the only way the waist offers, "do not put a model in the
+  // persist path" — silently took the LEGACY by-value writer, the one path carrying no
+  // content proof at all. Phase 8's materializer imports the assembler directly, so the
+  // script path is the writer path's dependency, never this channel's.
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, persistInput({ persist: { returnPrimaries: true } }));
+
+  assert.deepEqual(labels(ctx), [], 'nothing was dispatched');
+  assert.equal(out.persistReturn.channel, 'return');
+  assert.deepEqual(out.gaps, []);
+  assert.deepEqual(out.artifactPaths, PATHS);
+});
+
+test('without a script path, an oversized run still falls back — to the legacy writer, and says so', async () => {
+  // The size refusal is the return channel's only one, and with no script path there is
+  // no derived path to fall back TO. It degrades to the by-value writer rather than
+  // costing the run its artifacts, and the gap names the transcription that buys.
+  const huge = Array.from({ length: 40 }, (_, i) => makeFinding(`F${i}`, { description: 'z'.repeat(30000) }));
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, persistInput({
+    persist: { returnPrimaries: true }, findings: huge, postReview: huge,
+  }));
+
+  assert.equal(out.partial, false, `gaps: ${out.gaps}`);
+  assert.equal(out.persistReturn, undefined);
+  assert.deepEqual(labels(ctx), ['artifact-writer'], 'the legacy writer — there is no assembler to derive with');
+  assert.match(out.gaps[0], /over the 1000000-char return budget/);
+  assert.match(out.gaps[0], /transcribes the bytes/);
 });
 
 test('runWith surfaces persistReturn LAST and keeps the compact return compact elsewhere', async () => {

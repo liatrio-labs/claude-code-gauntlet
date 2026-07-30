@@ -1762,13 +1762,15 @@ function writerEchoCoversPaths(echoed, paths) {
 // THREE persistence paths, one PUBLIC contract (same return shape, the same four
 // artifactPaths keys, the same partial-artifacts degradation):
 //
-//   RETURN (taken when args.persist.returnPrimaries is true — the primary path).
+//   RETURN (taken whenever args.persist.returnPrimaries is true — the primary path, and
+//     independent of assembleScriptPath, which only the writer path's executor needs).
 //     No agent is dispatched at all. The three primaries ride home in the workflow's
 //     own return value, which the HARNESS serializes; Phase 8 materializes them with
 //     scripts/materialize_artifacts.py and derives the projections from disk. See
 //     returnChannelPersist for the measurement and the failure mode it removes.
 //
-//   DERIVED (issue #38, D3; taken when args.persist.assembleScriptPath is present).
+//   DERIVED (issue #38, D3; taken when args.persist.assembleScriptPath is present and
+//     the return channel was not asked for or could not carry the run).
 //     Measured on a real run: of the 88,389 B the writer emitted, the post-review
 //     findings array was canonically byte-identical to findings.json, the checkpoint's
 //     phases.challenge.findings was the alias-stripped twin of the same array, and the
@@ -1821,9 +1823,20 @@ export async function writeArtifacts(ctx, input) {
     const policy = inp.policy || {};
     const paths = plannedArtifactPaths(outputDir, sha);
 
-    const assembleScriptPath = (inp.persist || {}).assembleScriptPath;
-    if (typeof assembleScriptPath === 'string' && assembleScriptPath !== '') {
-      // The guard that keeps the derived path safe under pathological input. Every
+    const persist = inp.persist || {};
+    const scriptPath = typeof persist.assembleScriptPath === 'string' && persist.assembleScriptPath !== ''
+      ? persist.assembleScriptPath
+      : null;
+    // The two flags are read INDEPENDENTLY. `returnPrimaries` used to be consulted only
+    // inside the script-path branch, which made `{ returnPrimaries: true }` alone opt a
+    // caller silently into the legacy by-value writer — the one path with no content proof
+    // at all — while its args said it had opted out of transcription entirely. The return
+    // channel has no use for the script: Phase 8's materializer imports the assembler
+    // directly, so the path is only ever needed by the executor dispatch on the writer
+    // path, and requiring it here would be a dependency that does not exist.
+    const wantsReturn = persist.returnPrimaries === true;
+    if (scriptPath || wantsReturn) {
+      // The guard that keeps BOTH derived paths safe under pathological input. Every
       // projection is by finding id, so a missing/duplicate id — or a delivery/challenge
       // entry that is not a byte-identical twin of its findings.json row — makes the
       // derivation unfaithful. Rather than degrade the run (null paths, no artifacts) we
@@ -1832,18 +1845,19 @@ export async function writeArtifacts(ctx, input) {
       if (derivable.ok) {
         // The RETURN channel first: it dispatches nothing and is the only path on which
         // no model transcribes the bytes. Its ONE refusal is size (see RETURN_CHAR_BUDGET),
-        // and it falls through to the writer rather than degrading the run.
-        if ((inp.persist || {}).returnPrimaries === true) {
+        // and it falls through to a writer rather than degrading the run — the derived one
+        // when a script path is in hand, the legacy one otherwise. Either way the fallback
+        // says what it costs, because a run that quietly demoted to a transcriber is
+        // exactly the failure this channel exists to remove.
+        if (wantsReturn) {
           const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
           if (viaReturn.ok) return viaReturn.result;
-          const fallback = await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath);
-          return {
-            ...fallback,
-            gaps: [`writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`]
-              .concat(fallback.gaps || []),
-          };
+          const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
+          if (!scriptPath) return await writeArtifactsLegacy(c, inp, paths, policy, partial, [gap]);
+          const fallback = await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
+          return { ...fallback, gaps: [gap].concat(fallback.gaps || []) };
         }
-        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath);
+        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
       }
       return await writeArtifactsLegacy(c, inp, paths, policy, partial, [
         `writeArtifacts: derived persistence unavailable (${derivable.reason}) — persisted the full by-value payload instead`,
@@ -1879,6 +1893,40 @@ async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
   }
 }
 
+// persistEntries(inp, paths, outputDir, sha) -> { plan, planPath, entries }
+//
+// The ONE serialization of the three primaries, shared by both channels that persist them:
+// the RETURN channel carries these entries home for Phase 8 to write, the derived writer
+// path dispatches these same entries to be transcribed. A second copy of this arithmetic
+// would be a second spelling of the same three documents, drifting apart the moment either
+// side changed — and the plan's `expect[]` proves the primaries by checksum, so a drift is
+// a failed content proof on whichever channel did not get the edit.
+//
+// The plan text is escape-hardened for the WIRE (see hardenEscapeRuns), which is
+// load-bearing on the writer path — the plan is transcribed by the same model and carries
+// checkpoint prose, and a mangled plan is a HARD failure (bad planChecksum) rather than a
+// tolerated mismatch — and dead weight on a channel with no transcriber. It is applied to
+// both anyway: hardening cannot move a proof (assemble_artifacts.py recomputes
+// planChecksum from the PARSED plan, and `\u005c` parses to the same backslash `\\` does),
+// so the cost of one spelling is nothing and the cost of two is a divergence.
+function persistEntries(inp, paths, outputDir, sha) {
+  const planPath = persistPlanPath(outputDir, sha);
+  const { findingsJson, reportMd } = persistPrimaries(inp);
+  // Kept as an OBJECT as well as a string: trustAssembleReceipt grades the receipt against
+  // the expectations the pipeline itself computed, never against the ones the receipt
+  // echoes back at us.
+  const plan = persistPlan(inp, paths);
+  return {
+    plan,
+    planPath,
+    entries: [
+      { path: paths.findings, text: findingsJson },
+      { path: paths.report, text: reportMd },
+      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, 2)) },
+    ],
+  };
+}
+
 // returnChannelPersist(inp, paths, outputDir, sha) -> { ok: true, result } | { ok:false, reason }
 //
 // The persist path that dispatches NOTHING. It hands the three primaries — findings.json,
@@ -1912,23 +1960,15 @@ async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
 // instead of growing a second grader; nothing here recomputes a checksum.
 //
 // The primaries are the SAME strings the writer path would have been handed, hardening
-// included (persistPrimaries is the single serializer, and the plan's expect[] is computed
-// over its output). The hardening is dead weight on a channel with no transcriber, but a
-// second spelling would be a second thing to keep in step for no gain.
+// included — not by agreement but because persistEntries is the only place either channel
+// serializes them.
 //
 // artifactPaths and `partial: false` are exactly as on the writer path: what changed is who
 // writes the bytes, not which four paths the run produces. Nothing is on disk until Phase 8
 // materializes — and that is a LOUD absence (the files are simply not there) where the
 // writer's failure mode is a silent paraphrase.
 function returnChannelPersist(inp, paths, outputDir, sha) {
-  const planPath = persistPlanPath(outputDir, sha);
-  const { findingsJson, reportMd } = persistPrimaries(inp);
-  const plan = persistPlan(inp, paths);
-  const entries = [
-    { path: paths.findings, text: findingsJson },
-    { path: paths.report, text: reportMd },
-    { path: planPath, text: JSON.stringify(plan, null, 2) },
-  ];
+  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha);
   const chars = JSON.stringify(entries).length;
   if (chars > RETURN_CHAR_BUDGET) {
     return {
@@ -1982,23 +2022,7 @@ function returnChannelPersist(inp, paths, outputDir, sha) {
 //   * BOTH attempts are disclosed, whichever way the retry lands, so a degraded (or
 //     narrowly-rescued) run stays honest about what happened.
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
-  const planPath = persistPlanPath(outputDir, sha);
-  const { findingsJson, reportMd } = persistPrimaries(inp);
-  // Kept as an OBJECT as well as a string: trustAssembleReceipt grades the receipt
-  // against the expectations the pipeline itself computed, never against the ones the
-  // receipt echoes back at us.
-  const plan = persistPlan(inp, paths);
-  // Escape-hardened for the WIRE only (see hardenEscapeRuns). The plan is transcribed by
-  // the same writer and carries checkpoint prose, so it is exposed to the same collapse —
-  // and a mangled plan is a HARD failure (bad planChecksum), not a tolerated mismatch.
-  // Hardening cannot move that checksum: assemble_artifacts.py recomputes it from the
-  // PARSED plan, and `\u005c` parses to the same backslash `\\` does.
-  const planJson = hardenEscapeRuns(JSON.stringify(plan, null, 2));
-  const entries = [
-    { path: paths.findings, text: findingsJson },
-    { path: paths.report, text: reportMd },
-    { path: planPath, text: planJson },
-  ];
+  const { plan, planPath, entries } = persistEntries(inp, paths, outputDir, sha);
   const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, policy, assembleScriptPath);
 
   // The primaries a refused receipt still proved, keyed by artifactPaths name. Only the
