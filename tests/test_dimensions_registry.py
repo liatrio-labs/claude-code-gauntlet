@@ -3,7 +3,7 @@
 `workflows/src/registry.js` declares the WHOLE finding schema — `FINDING_PROP_TYPES`
 (canonical), `FINDING_REQUIRED` (the flat required subset) and each `DIMENSIONS` row's
 `schemaExtra` (per-dimension). Three other places describe that same schema in prose: the
-nine dimension names in CLAUDE.md, the field lists in CLAUDE.md's "Findings schema" section,
+nine dimension names in agents/AGENTS.md, the field lists there,
 and `references/report-format.md`'s Finding Fields Reference tables. A fourth — the seven
 discovery agents' `.md` output contracts — tells the models what to emit.
 
@@ -70,7 +70,7 @@ _UNQUOTED_PLACEHOLDER = re.compile(r"(?<=:)\s*<[^>]*>")
 # backticked field name and nothing else.
 _FIELD_ROW = re.compile(r"^\|\s*`([a-z_][a-z0-9_]*)`\s*\|(.+)\|\s*$")
 
-# A backticked lowercase identifier — how CLAUDE.md's two enumeration bullets name fields.
+# A backticked lowercase identifier — how the two enumeration bullets name fields.
 # Deliberately excludes CamelCase (`schemaExtra`) and dotted names (`verify_findings.py`),
 # so ordinary prose on those lines cannot be mistaken for a field.
 _BACKTICKED_FIELD = re.compile(r"`([a-z_][a-z0-9_]*)`")
@@ -208,11 +208,11 @@ def table_named(tables, keyword):
 
 
 def claude_md_bullet(anchor):
-    """The single CLAUDE.md line containing `anchor`."""
-    lines = [l for l in (REPO / "CLAUDE.md").read_text().splitlines() if anchor in l]
+    """The single agents/AGENTS.md line containing `anchor`."""
+    lines = [l for l in (REPO / "agents" / "AGENTS.md").read_text().splitlines() if anchor in l]
     if len(lines) != 1:
         raise AssertionError(
-            f"expected exactly one CLAUDE.md line containing {anchor!r}, found {len(lines)}"
+            f"expected exactly one agents/AGENTS.md line containing {anchor!r}, found {len(lines)}"
         )
     return lines[0]
 
@@ -220,14 +220,14 @@ def claude_md_bullet(anchor):
 class TestDimensionsRegistry(unittest.TestCase):
     def test_claude_md_dimension_list_matches_registry(self):
         registry_dims = {d["dimension"] for d in registry()["dimensions"]}
-        # CLAUDE.md "Findings schema" lists the dimensions on the bullet line that
+        # agents/AGENTS.md lists the dimensions on the bullet line that
         # contains "short name from agent output", each as a `"name"` token. The
         # leading token is `- `dimension`` (with backticks), so splitting on the
         # bare string "dimension —" would not match — grab the whole line instead.
         line = claude_md_bullet("short name from agent output")
         listed = set(re.findall(r'`"(\w+)"`', line))
         self.assertEqual(registry_dims, listed,
-                         f"registry {registry_dims} != CLAUDE.md {listed}")
+                         f"registry {registry_dims} != agents/AGENTS.md {listed}")
 
     def test_every_dimension_maps_to_an_agent_contract_file(self):
         for row in registry()["dimensions"]:
@@ -382,20 +382,20 @@ class TestContractSchemaLockstep(unittest.TestCase):
 
 
 class TestClaudeMdFieldLists(unittest.TestCase):
-    """CLAUDE.md's two field enumerations are the human index of the registry."""
+    """agents/AGENTS.md's two field enumerations are the human index of the registry."""
 
     def test_canonical_bullet_matches_registry(self):
         line = claude_md_bullet("**Canonical fields**")
         listed = set(_BACKTICKED_FIELD.findall(line))
         self.assertEqual(set(registry()["propTypes"]), listed,
-                         "CLAUDE.md's canonical field bullet has drifted from "
+                         "agents/AGENTS.md's canonical field bullet has drifted from "
                          "registry.js FINDING_PROP_TYPES")
 
     def test_per_dimension_bullet_matches_registry(self):
         line = claude_md_bullet("**Per-dimension extras**")
         listed = set(_BACKTICKED_FIELD.findall(line))
         self.assertEqual(set(all_extras()), listed,
-                         "CLAUDE.md's per-dimension extras bullet has drifted from "
+                         "agents/AGENTS.md's per-dimension extras bullet has drifted from "
                          "registry.js DIMENSIONS[].schemaExtra")
 
 

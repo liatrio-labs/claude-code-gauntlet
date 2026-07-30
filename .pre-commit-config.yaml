@@ -69,9 +69,12 @@ repos:
       # Use stdlib unittest — NOT pytest. CI's lint job installs only pre-commit
       # (ci.yml `lint`), so `python -m pytest` fails with "No module named pytest"
       # on every `pre-commit run --all-files` there. unittest is always available.
-      - id: claude-md-budget
-        name: CLAUDE.md stays within its byte budget
-        entry: python -m unittest tests.test_claude_md_budget
+      - id: agent-instruction-layout
+        name: agent instruction layout stays within budget and its pointers resolve
+        entry: python -m unittest tests.test_agent_instruction_layout
         language: system
-        files: ^CLAUDE\.md$
+        # Any file in the layout can break it: a rule pointer can go stale when its target
+        # is renamed, and the Codex size cap is a property of the AGENTS.md set as a whole,
+        # not of whichever file happens to be edited.
+        files: ^(CLAUDE\.md|AGENTS\.md|[^/]+/(AGENTS|CLAUDE)\.md|scripts/sync_agent_rules\.py)$
         pass_filenames: false

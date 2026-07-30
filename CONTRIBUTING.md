@@ -93,7 +93,7 @@ The review pipeline runs inside Claude Code's workflow runtime, so it carries co
   every source change and commit the result.
 - **Only JSON-safe language globals are guaranteed.** Host globals that `node --test` hands you — `structuredClone`,
   `setTimeout`/`queueMicrotask`, `process`, and others — are absent from the workflow runtime sandbox, so a
-  reference keeps every local test green and then throws on the first live dispatch. `CLAUDE.md` holds the
+  reference keeps every local test green and then throws on the first live dispatch. `workflows/AGENTS.md` holds the
   normative list; deep-clone with the bundle's `deepClone` helper, never `structuredClone`.
 - **CI pins the Node major, not the patch.** `.github/workflows/ci.yml` runs the workflow tests and the build on
   `node-version: "24"`; 24.18.0 is the reference build this repo develops against. There is no `package.json` and
@@ -261,7 +261,9 @@ enforcement contact the Code of Conduct names. Suspected vulnerabilities are a d
 ## References
 
 - `README.md` — overview and quick start
-- `CLAUDE.md` — repo conventions the pipeline itself is held to (schema, runtime, plugin layout)
+- `AGENTS.md` — repo conventions the pipeline itself is held to (schema, runtime, plugin layout).
+  Directory-specific rules live in `workflows/`, `scripts/` and `agents/` AGENTS.md; each has a
+  generated `CLAUDE.md` twin, so edit AGENTS.md and run `python3 scripts/sync_agent_rules.py`
 - `SECURITY.md` — supported versions, private reporting channel, and scope
 - `bench/MEASUREMENT.md` — ratcheted measurement policy (canonical)
 - `docs/maintainer-issues.md` — maintainer work-queue issue standard

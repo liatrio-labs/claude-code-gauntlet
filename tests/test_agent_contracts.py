@@ -44,6 +44,15 @@ def _canonical_complete_read_block():
 # ("Bash is available ONLY for writing findings"), so its grant goes with it.
 RESIDUE = re.compile(r"printf|ndjson|validate_ndjson|Bash", re.IGNORECASE)
 
+# The agents/ directory rules load alongside every contract in the directory, so emission
+# mechanics living there re-teach exactly what the scrub removed from the 7 bodies. That
+# is how it came back: the rules file was created carrying the whole v2 printf contract,
+# pointing at retained v2-compat surface, at a moment when every contract it governs had
+# already dropped Bash and returned findings by value. The move also corrupted the
+# apostrophe rule from `\u0027` to a bare `'` — a real defect in a shell-quoting rule for
+# a shell command no agent can run, which is the tell that the section itself was stale.
+DIRECTORY_RULES = ["AGENTS.md", "CLAUDE.md"]
+
 
 class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
     def test_no_ndjson_emission_residue_in_discovery_agents(self):
@@ -55,6 +64,25 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
                 offenders[name] = hits
         self.assertEqual(offenders, {},
                          f"v2 NDJSON emission residue returned: {offenders}")
+
+    def test_no_ndjson_emission_residue_in_the_agents_directory_rules(self):
+        offenders = {}
+        for name in DIRECTORY_RULES:
+            text = (REPO / "agents" / name).read_text()
+            hits = sorted(set(RESIDUE.findall(text)))
+            if hits:
+                offenders[name] = hits
+        self.assertEqual(offenders, {},
+                         "v2 emission residue in the agents/ directory rules — these load "
+                         "with the contracts, so the instruction reaches the agent even "
+                         f"though the 7 bodies are clean: {offenders}")
+
+    def test_agents_directory_rules_state_the_by_value_contract(self):
+        # Removing the stale section is only half the fix; the positive rule has to be
+        # there, or the next contributor has no statement of how findings get back.
+        text = (REPO / "agents" / "AGENTS.md").read_text()
+        self.assertIn("by value", text)
+        self.assertIn("{ findings, complete,", text)
 
     def test_discovery_agents_keep_by_value_contract_and_exclusions(self):
         for name in DISCOVERY_AGENTS:

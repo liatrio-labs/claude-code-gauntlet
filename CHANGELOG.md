@@ -2,6 +2,73 @@
 
 <!-- version list -->
 
+## v3.3.3 (2026-07-30)
+
+### Bug Fixes
+
+- **agents**: Drop the v2 emission contract the directory rules re-taught
+  ([#99](https://github.com/liatrio-labs/claude-code-gauntlet/pull/99),
+  [`fe52e75`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fe52e758c6854e2b80289b32b18602ef59626231))
+
+- **rules**: Apply the total-byte budget after dedup, not before it
+  ([#99](https://github.com/liatrio-labs/claude-code-gauntlet/pull/99),
+  [`fe52e75`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fe52e758c6854e2b80289b32b18602ef59626231))
+
+- **rules**: Deliver directory rules as generated twins, not pointers
+  ([#99](https://github.com/liatrio-labs/claude-code-gauntlet/pull/99),
+  [`fe52e75`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fe52e758c6854e2b80289b32b18602ef59626231))
+
+- **rules**: Remove claims about code that is not on main, and guard the class
+  ([#99](https://github.com/liatrio-labs/claude-code-gauntlet/pull/99),
+  [`fe52e75`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fe52e758c6854e2b80289b32b18602ef59626231))
+
+### Documentation
+
+- Make AGENTS.md canonical and give every tool one source
+  ([#99](https://github.com/liatrio-labs/claude-code-gauntlet/pull/99),
+  [`fe52e75`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/fe52e758c6854e2b80289b32b18602ef59626231))
+
+
+## v3.3.2 (2026-07-30)
+
+### Bug Fixes
+
+- **persist**: Stop the wire from carrying backslash runs the writer cannot transcribe
+  ([#92](https://github.com/liatrio-labs/claude-code-gauntlet/pull/92),
+  [`1bd722b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1bd722b2c853037b910e9f99a2fef78ed6569761))
+
+
+## v3.3.1 (2026-07-29)
+
+### Bug Fixes
+
+- **verify**: Address PR #83 review — exact id keying, line pin, NaN cleanup
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Echo a per-id delta with a content proof, not the findings (#25 PR2)
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Make a malformed slice input diagnosable, and normalise fractional numerics at the
+  input boundary ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Match finding ids exactly, not trimmed
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+### Documentation
+
+- **executor**: The executor may have read the arrays, it just must not return them
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+- **verify**: Name joinVerifyDeltas' precondition and its only failure mode
+  ([#83](https://github.com/liatrio-labs/claude-code-gauntlet/pull/83),
+  [`2c219f4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2c219f44e5f094bd5fbd9a5e53c6c04d47d5fd89))
+
+
 ## v3.3.0 (2026-07-29)
 
 ### Bug Fixes

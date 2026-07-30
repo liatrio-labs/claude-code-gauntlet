@@ -330,6 +330,36 @@ class TestBounds(_RepoCase):
         self.assertIn("total_cap_reached", self.reasons(receipt))
         self.assertTrue(any("project_rules_truncated" in g for g in receipt["gaps"]))
 
+    def test_a_free_duplicate_does_not_trip_the_total_cap(self):
+        # The CLAUDE.md/AGENTS.md twin is the common cross-tool convention, and content
+        # dedup makes the second copy cost nothing. Charging it against the byte budget
+        # anyway trips the cap and discloses `project_rules_truncated` — a gap claiming
+        # rules were dropped while that exact content sits in `sources` already. A
+        # fabricated gap is as wrong as a fabricated success, and it is worse than the
+        # duplication it replaced: the run now lies about its own completeness.
+        body = "r" * 400
+        self.write("CLAUDE.md", body)
+        self.write("AGENTS.md", body)
+        _, receipt, _ = self.run_script("--max-total-bytes", "500")
+
+        self.assertFalse(
+            receipt["truncated"],
+            "a duplicate costs no bytes, so it must not trip the total cap",
+        )
+        self.assertNotIn("total_cap_reached", self.reasons(receipt))
+        self.assertIn("duplicate_of", self.reasons(receipt))
+        self.assertEqual([], receipt["gaps"])
+        self.assertEqual(1, len(receipt["sources"]), receipt["sources"])
+
+    def test_total_cap_still_fires_on_genuinely_distinct_content(self):
+        # The companion to the test above: moving the budget check after dedup must not
+        # disable it. Same sizes, different bytes.
+        self.write("CLAUDE.md", "a" * 400)
+        self.write("AGENTS.md", "b" * 400)
+        _, receipt, _ = self.run_script("--max-total-bytes", "500")
+        self.assertTrue(receipt["truncated"])
+        self.assertIn("total_cap_reached", self.reasons(receipt))
+
     def test_file_count_cap_bounds_the_walk_even_when_no_bytes_accumulate(self):
         # The byte caps do NOT bound this: every one of these files is empty, so
         # total_bytes never moves no matter how many are walked. This test
