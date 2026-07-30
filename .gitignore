@@ -21,8 +21,12 @@ Thumbs.db
 __pycache__/
 *.pyc
 
-# Claude Code local settings
-.claude/
+# Claude Code local settings. `.claude/rules/` is shipped — it is the path-scoped half of
+# the agent instructions and contributors need it. Ignore the directory's contents, then
+# re-include that one subtree (git will not descend into a wholly-ignored directory, so
+# `.claude/*` rather than `.claude/` is required for the negation to be reachable).
+.claude/*
+!.claude/rules/
 
 # Internal development artifacts (not shipped)
 docs/specs/

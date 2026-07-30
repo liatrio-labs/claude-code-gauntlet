@@ -1,0 +1,7 @@
+---
+description: "Subagent contracts — schema registry, duplication doctrine, NDJSON emission"
+globs: "agents/**"
+alwaysApply: false
+---
+
+@agents/AGENTS.md

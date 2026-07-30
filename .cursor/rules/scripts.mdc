@@ -1,0 +1,7 @@
+---
+description: "Retained Python — stdlib-only, parity twins, receipt discipline"
+globs: "scripts/**"
+alwaysApply: false
+---
+
+@scripts/AGENTS.md
