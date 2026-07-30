@@ -209,7 +209,7 @@ Severity has been downgraded one level from the original classification (see the
 
 ## Review Dimensions Summary
 
-{Brief per-dimension summary of what each agent found, from the findings you were handed. This table reports counts, not completeness: you are never told whether a dimension's agent actually ran, failed to dispatch, or was disabled for this run — only the pipeline knows that, and it discloses dimension loss separately, in the report's degradation banner, when it applies. A dimension with 0 findings is reported as "no findings returned" — never as "Clean" or "Skipped", both of which claim something about the agent's own execution that this table cannot support.}
+{Brief per-dimension summary of what each agent found. A dimension with 0 findings is reported as **"no findings returned"**, never as "Clean" or "Skipped" — those claim something about the agent's own execution, and the two cases are not the same fact: an agent that ran and found nothing and an agent that never returned both show 0 here. You CAN tell them apart — `stats.health.dimensionsLost` and `stats.degraded` name the dimensions that produced nothing at all — so a dimension listed there is reported as "no results (agent did not complete)" and never counted as clean. The degradation banner states the same loss at the top of the report; this table agrees with it rather than contradicting it.}
 
 | Dimension | Agent | Findings | Notes |
 |-----------|-------|----------|-------|
@@ -223,14 +223,20 @@ Severity has been downgraded one level from the original classification (see the
 
 ## Review Methodology
 
-{This table covers only what the writer is actually given: `reportPrompt` serializes exactly `{summary, findings, unverified, stats}` into the writer's prompt and nothing else reaches it — no policy, no model resolution, no scope, no base sha, no wall clock. Five rows that used to live here are gone for that reason: Agents dispatched, Failed/skipped agents, Total review time, Model tier, and Review scope. The first three are categorically unfillable — nothing to reword them into. Model tier and Review scope are worth naming explicitly, because an unfilled row for either quietly defaults to something reassuring: "Review scope: Full" is a completeness claim in exactly the shape "Failed/skipped agents: none" was — the unknown case rendering as the healthy one. When a dimension produced no results or a finding could not be classified, the report's degradation banner states so, prepended deterministically and not authored by you; this table does not repeat or anticipate it.}
+{**Fill every row from the workflow envelope, never from impression.** THIS TEMPLATE IS YOURS — Phase 8's — not the report-writer agent's: the writer is handed only `{summary, findings, unverified, stats}` and could not answer most of these, but you hold the compact return and your own Workflow tool result, so you can. Each row below names its source. A row whose source is genuinely absent is written as "not measured" — never as the healthy-looking default, because "Failed/skipped agents: none" and "Review scope: Full" are completeness claims, and the unknown case rendering as the reassuring one is the exact defect the degradation banner exists to end. The banner states dimension loss and unclassified findings deterministically and is prepended for you; this table reports, it does not reassure.}
 
-| Aspect | Details |
-|--------|---------|
-| **Findings pipeline** | {N raw findings → M after deterministic verification → K after confidence filter → J after dedup} |
-| **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} |
-| **Blind challenge round** | {N findings blind-challenged, M downgraded, K boosted, J contested} |
-| **Prompt injection** | {N injection artifacts detected and discarded, or "none detected"} |
+| Aspect | Details | Source |
+|--------|---------|--------|
+| **Agents dispatched** | {N dispatched, M completed} | your Workflow tool result |
+| **Failed/skipped agents** | {list from `stats.health.dimensionsLost` + `stats.degraded`, or "none" ONLY when both are present and empty} | envelope |
+| **Model tier** | {`resolvedPolicy.subagentModel`, or the tier you set} | envelope |
+| **Review scope** | {Full, or Incremental since {sha} (N commits)} | your Phase 2 scope decision |
+| **Total review time** | {wall clock} | your own session |
+| **Findings pipeline** | {N raw findings → M after deterministic verification → K after confidence filter → J after dedup} | `stats` |
+| **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} | `stats.filter` |
+| **Blind challenge round** | {N findings blind-challenged, M downgraded, K boosted, J contested} | `stats.challenge` |
+| **Slice-input proof** | {`stats.inputProof`: N of M slices proven, K recovered, J unproven — or "not measured"} | envelope |
+| **Prompt injection** | {N injection artifacts detected and discarded, or "none detected"} | `stats.filter.injections_removed` |
 
 ```
 
