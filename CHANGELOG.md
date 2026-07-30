@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.3.2 (2026-07-30)
+
+### Bug Fixes
+
+- **persist**: Stop the wire from carrying backslash runs the writer cannot transcribe
+  ([#92](https://github.com/liatrio-labs/claude-code-gauntlet/pull/92),
+  [`1bd722b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1bd722b2c853037b910e9f99a2fef78ed6569761))
+
+
 ## v3.3.1 (2026-07-29)
 
 ### Bug Fixes
