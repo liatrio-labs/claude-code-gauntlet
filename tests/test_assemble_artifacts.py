@@ -299,6 +299,89 @@ class TestCrossRuntimeChecksumParity(unittest.TestCase):
             )
 
 
+class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
+    """The cross-runtime half of hardenEscapeRuns (see workflows/src/stages.js).
+
+    The JS side respells every escaped backslash in findings.json as \\u005c so the
+    artifact-writer never has to transcribe a run of backslashes — the failure that
+    cost run wf_adc1a803-912 (2026-07-30) every artifact. That fix ships with NO
+    Python change, and this is the guard on that claim: the hardened bytes must be
+    read, checksummed and derived from exactly like any other findings.json.
+
+    Deliberately shells out to node for the hardened string rather than
+    reimplementing the transform here — a Python twin of it could drift, and the
+    thing under test is precisely that the two runtimes agree on the bytes.
+    """
+
+    PROSE = 'gradeInputProof produces \\"the executor\'s receipt carried no input_checksum\\" here'
+
+    def _hardened(self, findings):
+        js = (
+            "const { persistPrimaries } = await import(process.argv[1]);"
+            "process.stdout.write(persistPrimaries({ findings: JSON.parse(process.argv[2]) }).findingsJson);"
+        )
+        proc = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                js,
+                os.path.join(REPO_ROOT, "workflows", "src", "stages.js"),
+                json.dumps(findings),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout
+
+    def setUp(self):
+        if shutil.which("node") is None:
+            self.skipTest("node not available")
+
+    def test_hardened_findings_json_carries_no_backslash_run(self):
+        findings = [dict(finding("F1"), description=self.PROSE)]
+        hardened = self._hardened(findings)
+        self.assertNotIn("\\\\", hardened, "a run of two backslashes is what the writer collapses")
+        self.assertIn("\\u005c", hardened, "precondition: the fixture actually exercises the transform")
+        self.assertEqual(json.loads(hardened)[0]["description"], self.PROSE)
+
+    def test_assembler_accepts_it_and_derives_the_same_documents(self):
+        findings = [dict(finding("F1"), description=self.PROSE)]
+        hardened = self._hardened(findings)
+        with _Workspace(findings=json.loads(hardened), findings_json=hardened) as ws:
+            proc = run_script(ws.write_plan(ws.plan()))
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            receipt = json.loads(proc.stdout)
+            self.assertTrue(receipt["ok"], receipt)
+            self.assertEqual(receipt["errors"], [])
+            # The content proof is over the HARDENED bytes on both sides.
+            proofs = {e["path"]: e["content_proof"] for e in receipt["verified"]}
+            self.assertEqual(proofs[ws.findings_path], "match")
+            # The derived documents are spelled the ORDINARY way (Python re-serializes
+            # the parsed value), and carry the finding text byte for byte.
+            post = json.loads(ws.read(ws.post_path))
+            self.assertEqual(post[0]["description"], self.PROSE)
+            self.assertNotIn("\\u005c", ws.read(ws.post_path), "hardening is a WIRE spelling, not a data change")
+            checkpoint = json.loads(ws.read(ws.checkpoint_path))
+            self.assertEqual(
+                checkpoint["phases"]["challenge"]["findings"][0]["description"], self.PROSE
+            )
+
+    def test_the_unhardened_spelling_of_the_same_document_still_works(self):
+        """Hardening must be OPTIONAL to the reader: an artifact written the old way
+        (or by the legacy by-value path) is still a valid input."""
+        findings = [dict(finding("F1"), description=self.PROSE)]
+        with _Workspace(findings=findings) as ws:
+            self.assertIn("\\\\", ws.findings_json, "precondition: this fixture is the UNhardened spelling")
+            proc = run_script(ws.write_plan(ws.plan()))
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            receipt = json.loads(proc.stdout)
+            self.assertTrue(receipt["ok"], receipt)
+            post = json.loads(ws.read(ws.post_path))
+            self.assertEqual(post[0]["description"], self.PROSE)
+
+
 class TestRoundTripDerivation(unittest.TestCase):
 
     def test_derives_post_review_and_checkpoint(self):

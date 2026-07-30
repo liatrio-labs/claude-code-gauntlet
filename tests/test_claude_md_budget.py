@@ -60,7 +60,23 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # The first draft of this section ran to +4,292 bytes; it was cut by ~60% to exactly
 # these cross-file rules, and everything derivable from one site — the incident history,
 # the excluded audit fields, the not-authentication framing — was left at that site.
-CLAUDE_MD_BYTE_CEILING = 26_209
+# Raised 2026-07-30 to 27,591 (+1,382 bytes) for the persist-corruption fix, as three
+# bullets. Each is a two-runtime or two-file fact that no single site owns:
+# (1) hardenEscapeRuns ships with NO Python counterpart, and the guard on that claim is a
+#     pytest that shells out to node. The stages.js comment can state what the transform
+#     does; it cannot state that the OTHER runtime was deliberately left alone, which is
+#     exactly the thing a future contributor would "fix" by adding a Python twin.
+# (2) provenPrimaryPaths exists to make a branch in SKILL.md's Phase 8 reachable. The JS
+#     site cannot see that the branch had been dead, and SKILL.md cannot see why the paths
+#     are now non-null on a partial run.
+# (3) meta.name vs the skill name is a collision between workflows/src/pipeline_entry.js
+#     and skills/code-gauntlet/SKILL.md — two files, neither of which owns the rule.
+# What was cut for failing the second half of the two-part test: the 18/18 run-length
+# table, the double-escaping mechanism, the determinism of the retry, and the salvage
+# grading rules. The first draft ran to +3,204 bytes; all four are stated in full at their
+# sites (hardenEscapeRuns, provenPrimaryPaths) and pinned by mutation-verified tests in
+# workflows/test/stages_persist.test.js.
+CLAUDE_MD_BYTE_CEILING = 27_591
 
 
 class TestClaudeMdBudget(unittest.TestCase):

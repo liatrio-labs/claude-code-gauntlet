@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import {
   writeArtifacts, writerPayload, plannedArtifactPaths, persistPlanPath,
   persistPlan, persistPrimaries, persistDerivable, fnv1a32, normalizeForChecksum,
-  parseWriterPayload, runWith,
+  parseWriterPayload, runWith, hardenEscapeRuns, provenPrimaryPaths,
 } from '../src/stages.js';
 import { validateArgs } from '../src/args.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
@@ -625,8 +625,13 @@ test('receipt gate: ok:false degrades to partial-artifacts (never a fabricated s
   const ctx = persistCtx({ receiptFrom: (r) => ({ ...r, ok: false, errors: ['duplicate id F1 in source'] }) });
   const out = await writeArtifacts(ctx, persistInput());
   assert.equal(out.partial, true);
-  assert.equal(out.artifactPaths.findings, null);
+  assert.equal(out.artifactPaths.postReview, null, 'nothing derived them, so they are never salvaged');
+  assert.equal(out.artifactPaths.checkpoints, null);
   assert.ok(out.gaps.some((g) => /partial-artifacts/.test(g) && /duplicate id F1/.test(g)), out.gaps);
+  // The refusal is about DERIVATION, and this receipt still content-proves both primaries
+  // against the pipeline's own expectations — so they stay reachable (provenPrimaryPaths).
+  assert.equal(out.artifactPaths.findings, PATHS.findings);
+  assert.equal(out.artifactPaths.report, PATHS.report);
 });
 
 test('receipt gate: a missing WRITTEN path degrades to partial-artifacts', async () => {
@@ -733,7 +738,11 @@ test('retry: a second structural refusal degrades, naming BOTH attempts', async 
   const out = await writeArtifacts(ctx, persistInput());
 
   assert.equal(out.partial, true);
-  assert.deepEqual(out.artifactPaths, { findings: null, report: null, postReview: null, checkpoints: null });
+  assert.deepEqual(
+    out.artifactPaths,
+    { findings: PATHS.findings, report: PATHS.report, postReview: null, checkpoints: null },
+    'the second receipt content-proved both primaries; only the DERIVED documents are lost',
+  );
   assert.equal(labels(ctx).filter((l) => l === 'artifact-writer').length, 2, 'exactly one retry, never a loop');
   assert.equal(labels(ctx).filter((l) => l === 'assemble-artifacts').length, 2);
   const gap = out.gaps.find((g) => /partial-artifacts/.test(g));
@@ -1046,4 +1055,153 @@ test('runWith without args.persist never dispatches the assembler', async () => 
   const out = await runWith(ctx, args);
   assert.equal(out.ok, true);
   assert.ok(!ctx.calls.some((c) => c.label === 'assemble-artifacts'));
+});
+
+// --- escape-run hardening: the 2026-07-30 lost-artifacts run ------------------
+//
+// The shape that broke run wf_adc1a803-912: a challenger's prose carried ONE literal
+// backslash ahead of a quote. findings.json escapes it to `\\\"`, and the PAYLOAD_JSON
+// wire line escapes THAT again to a run of seven — which the artifact-writer collapsed at
+// all 18 sites in the document, yielding `\\"` = escaped-backslash + an unterminated
+// string. assemble_artifacts.py refused, the retry (a fresh sample) reproduced the
+// corruption byte-for-byte, and the run lost every artifact.
+//
+// These go RED without hardenEscapeRuns: verified by mutation (make it the identity
+// function and the run-length assertions below fail, not just the unit test).
+
+// One literal backslash before each quote — exactly the recorded prose.
+const BACKSLASH_PROSE = 'gradeInputProof produces \\"the executor\'s receipt carried no input_checksum\\" here';
+
+function longestBackslashRun(text) {
+  let longest = 0;
+  for (const run of text.match(/\\+/g) || []) longest = Math.max(longest, run.length);
+  return longest;
+}
+
+test('hardenEscapeRuns respells every escaped backslash and leaves no run of two', () => {
+  const json = JSON.stringify({ d: BACKSLASH_PROSE }, null, 2);
+  assert.equal(longestBackslashRun(json), 3, 'precondition: raw JSON.stringify emits a run per literal backslash');
+
+  const hardened = hardenEscapeRuns(json);
+  assert.equal(longestBackslashRun(hardened), 1, 'no two backslashes are ever adjacent afterwards');
+  assert.deepEqual(JSON.parse(hardened), { d: BACKSLASH_PROSE }, 'same value — this is a respelling, not an edit');
+  assert.equal(hardenEscapeRuns(hardened), hardened, 'idempotent: nothing left to harden');
+  assert.equal(hardenEscapeRuns(json).includes('\\u005c'), true);
+});
+
+test('hardenEscapeRuns never splits an escape: \\\\\\" becomes \\u005c\\" and re-parses', () => {
+  // The dangerous adjacency. A naive per-backslash replace would emit `\` for the
+  // THIRD backslash too, orphaning the quote and breaking the document.
+  const json = JSON.stringify({ d: '\\"' });
+  assert.equal(json, '{"d":"\\\\\\""}');
+  assert.equal(hardenEscapeRuns(json), '{"d":"\\u005c\\""}');
+  assert.equal(JSON.parse(hardenEscapeRuns(json)).d, '\\"');
+});
+
+test('hardenEscapeRuns bounds run length INDEPENDENTLY of the data', () => {
+  // Not "7 became 3" — any number of literal backslashes becomes that many separate
+  // \ escapes instead of one run of 2k. This is the durable property.
+  for (const k of [1, 2, 3, 8, 40]) {
+    const value = '\\'.repeat(k);
+    const hardened = hardenEscapeRuns(JSON.stringify({ d: value }, null, 2));
+    assert.equal(longestBackslashRun(hardened), 1, `k=${k}`);
+    assert.equal(JSON.parse(hardened).d, value, `k=${k} round-trips`);
+  }
+});
+
+test('persistPrimaries hands the writer a findings.json with no backslash run', () => {
+  const finding = { ...makeFinding('F1'), description: BACKSLASH_PROSE };
+  const { findingsJson } = persistPrimaries(persistInput({ findings: [finding], postReview: [finding] }));
+
+  assert.equal(longestBackslashRun(findingsJson), 1);
+  const parsed = JSON.parse(findingsJson);
+  assert.equal(parsed[0].description, BACKSLASH_PROSE, 'the finding text is unchanged');
+  assert.equal(parsed[0].body, BACKSLASH_PROSE, 'the v2 alias too');
+});
+
+test('persistPlan checksums the HARDENED findings string — one text, both runtimes', () => {
+  const finding = { ...makeFinding('F1'), description: BACKSLASH_PROSE };
+  const inp = persistInput({ findings: [finding], postReview: [finding] });
+  const { findingsJson } = persistPrimaries(inp);
+  const plan = persistPlan(inp, PATHS);
+  // If the plan checksummed the UNHARDENED string, every honest writer would now fail
+  // the content proof — the fix would trade a corrupt document for a permanent mismatch.
+  assert.equal(plan.expect[0].chars, findingsJson.length);
+  assert.equal(plan.expect[0].checksum, fnv1a32(findingsJson));
+});
+
+test('the dispatched writer prompt carries no run longer than an ordinary escaped quote', async () => {
+  const finding = { ...makeFinding('F1'), description: BACKSLASH_PROSE };
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, persistInput({ findings: [finding], postReview: [finding] }));
+  assert.equal(out.partial, false, `gaps: ${out.gaps}`);
+
+  const writer = ctx.calls.find((c) => c.label === 'artifact-writer');
+  // 3 is the everyday spelling of an escaped quote inside the wire line — measured
+  // transcribed correctly 45/45 on the same run that lost 18/18 of the 7-runs.
+  assert.ok(longestBackslashRun(writer.prompt) <= 3, `writer prompt run length: ${longestBackslashRun(writer.prompt)}`);
+
+  const entries = parseWriterPayload(writer.prompt);
+  const findingsEntry = entries.find((e) => e.path === PATHS.findings);
+  assert.equal(JSON.parse(findingsEntry.text)[0].description, BACKSLASH_PROSE);
+});
+
+test('the persist PLAN is hardened on the wire without moving its own checksum', async () => {
+  // The plan's proof is VALUE-level: assemble_artifacts.py parses, drops planChecksum and
+  // re-serializes. So hardening its bytes must be invisible to it — if this ever stops
+  // holding, every derived persist hard-fails on a plan-checksum mismatch.
+  // The plan's `skeleton` EMPTIES challenge.findings, so the backslash has to ride in on a
+  // phase the skeleton actually keeps — otherwise this test proves nothing about the plan.
+  const inp = persistInput();
+  inp.checkpoints = { ...inp.checkpoints, phases: { ...inp.checkpoints.phases, verify: { gaps: [BACKSLASH_PROSE] } } };
+  const ctx = persistCtx();
+  await writeArtifacts(ctx, inp);
+
+  const entries = parseWriterPayload(ctx.calls.find((c) => c.label === 'artifact-writer').prompt);
+  const planText = entries[entries.length - 1].text;
+  assert.ok(planText.includes('receipt carried no input_checksum'), 'precondition: the prose reached the plan');
+  assert.equal(longestBackslashRun(planText), 1);
+
+  const parsed = JSON.parse(planText);
+  const declared = parsed.planChecksum;
+  delete parsed.planChecksum;
+  assert.equal(fnv1a32(JSON.stringify(parsed, null, 2)), declared, 'recomputed from the PARSED plan, as Python does');
+});
+
+// --- provenPrimaryPaths: salvage, graded exactly like the success path --------
+
+const provenPlan = () => persistPlan(persistInput(), PATHS);
+const provenReceipt = (plan, over = {}) => ({
+  ok: false,
+  planChecksum: plan.planChecksum,
+  verified: [
+    { path: PATHS.findings, chars: plan.expect[0].chars, expected_chars: plan.expect[0].chars, checksum: plan.expect[0].checksum, expected_checksum: plan.expect[0].checksum, content_proof: 'match' },
+    { path: PATHS.report, chars: plan.expect[1].chars, expected_chars: plan.expect[1].chars, checksum: plan.expect[1].checksum, expected_checksum: plan.expect[1].checksum, content_proof: 'match' },
+  ],
+  ...over,
+});
+
+test('provenPrimaryPaths returns the primaries a refused receipt still content-proved', () => {
+  const plan = provenPlan();
+  assert.deepEqual(provenPrimaryPaths(provenReceipt(plan), PATHS, plan), [PATHS.findings, PATHS.report]);
+});
+
+test('provenPrimaryPaths salvages NOTHING from a receipt that cannot be trusted', () => {
+  const plan = provenPlan();
+  const only = (over) => provenPrimaryPaths(provenReceipt(plan, over), PATHS, plan);
+
+  assert.deepEqual(only({ planChecksum: 'fnv1a32:0xdeadbeef' }), [], 'a receipt from another plan proves nothing');
+  assert.deepEqual(provenPrimaryPaths(null, PATHS, plan), [], 'no receipt at all');
+  assert.deepEqual(
+    only({ verified: [{ path: PATHS.report, chars: 9, expected_chars: 9, checksum: 'fnv1a32:0x00000009', expected_checksum: 'fnv1a32:0x00000009', content_proof: 'match' }] }),
+    [],
+    'a FOREIGN expectation: self-consistent, but not what the pipeline handed the writer',
+  );
+  const mismatched = provenReceipt(plan);
+  mismatched.verified[1] = { ...mismatched.verified[1], chars: 1, checksum: 'fnv1a32:0x00000001', content_proof: 'mismatch' };
+  assert.deepEqual(provenPrimaryPaths(mismatched, PATHS, plan), [PATHS.findings], 'a diverged primary is not salvaged');
+
+  const incoherent = provenReceipt(plan);
+  incoherent.verified[0] = { ...incoherent.verified[0], chars: 1, checksum: 'fnv1a32:0x00000001' };
+  assert.deepEqual(provenPrimaryPaths(incoherent, PATHS, plan), [PATHS.report], 'content_proof:"match" contradicting its own numbers');
 });

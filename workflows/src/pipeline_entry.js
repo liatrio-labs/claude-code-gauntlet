@@ -9,7 +9,16 @@
 import { runWith } from './stages.js';
 import { parseEntryArgs } from './args.js';
 
-export const meta = { name: 'code-gauntlet', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
+// meta.name MUST NOT equal the skill's name (`code-gauntlet`). Both are registered by
+// this plugin, so an identical name made `/code-gauntlet:code-gauntlet` resolve to the
+// WORKFLOW rather than the skill — and the workflow, invoked by name, receives the raw
+// user string ("PR 87") where it requires the Phases 1-2 args waist. Measured 2026-07-30:
+// the first task of that session failed by construction, and recovering from it the model
+// went hunting for the plugin root with `find /` and ran an OLD cached version. The name
+// is otherwise cosmetic here — the skill invokes this bundle by `scriptPath`, never by
+// name — so it is free to disambiguate. `whenToUse` says the same thing to whoever reads
+// the workflow list instead of this comment.
+export const meta = { name: 'code-gauntlet-pipeline', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', whenToUse: 'Never invoke by name — the code-gauntlet SKILL runs this bundle by scriptPath after Phases 1-2 build the args waist. Invoked by name it receives a raw user string instead of args and fails immediately.', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
 const PIPELINE_VERSION = '3.3.1';
 
 // run(rawArgs) — the thin public entry. Builds the real-globals ctx and delegates to
