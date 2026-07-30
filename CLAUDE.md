@@ -40,15 +40,24 @@ The v3 review pipeline runs inside `workflows/pipeline.js`, invoked from SKILL.m
 > What follows describes the CURRENT writer-based design, which is being replaced. Read it as a
 > description of the code, not a justification for it. Do not cite the deleted premise.
 
-- **The writer is a language model, and it does not transcribe.** Two independent measurements: 2 of
-  5 recorded runs corrupted; and on 2026-07-30 a 53 KB findings.json lost 18 of 18 backslash-run
-  sites, then — after `hardenEscapeRuns` removed every run from the wire — **0 of 28** `\`
-  escapes survived, the writer having rewritten them all back to `\\`. Both spellings fail: one gets
-  collapsed, the other expanded. **No further encoding tweak is worth trying**, and encoding is not
-  even the whole fault: the same run showed the writer expanding an ellipsis inside a finding's
-  quoted evidence by opening the file the quote referenced. Nothing stops a model editing content it
-  believes it is improving. `hardenEscapeRuns` ships because it is harmless and its cross-runtime
-  claim is guarded, but **it is not the fix**.
+- **The writer is a language model, and it does not transcribe. Census over every recorded run
+  (2026-07-30, 38 writer journals / 84 artifacts): 26 of 73 attempted writes — 36% — failed their
+  own contract, plus 12 artifacts never written at all.** Corruption is pervasive, not a slip:
+  median 8 divergence sites per bad document, max 46, only 2 of 10 single-site. **Nothing predicts
+  it.** Not size (a 47 KB findings.json with 104 backslashes came through byte-perfect; a 6.4 KB
+  zero-backslash `.md` was truncated), not escape density, not the two combined — so there is no
+  safe-size rule to design to. And **no encoding tweak is worth trying**: 18 of 18 backslash-run
+  sites collapsed, then after `hardenEscapeRuns` cleared every run from the wire, **0 of 28**
+  `\u005c` escapes survived, rewritten back to `\\`. Both spellings fail, in opposite directions.
+- **The worst failures are SILENT SUMMARIZATION, which no encoding or format can prevent.** Same
+  census: one checkpoint lost 29,132 chars because the writer dropped 11 fields from *every*
+  finding; another lost 13,008 chars with its schema fully intact, the writer having simply
+  rewritten long prose shorter (`challenge_justification` 2,109 chars -> 75; every
+  `validation_justification` ~200-350 -> 10). A third run expanded an ellipsis inside a finding's
+  quoted evidence by opening the file the quote referenced. All of these parse cleanly and are
+  invisible without a content proof — the one mechanism that has actually been catching this.
+  `hardenEscapeRuns` ships because it is harmless and its cross-runtime claim is guarded, but
+  **it is not the fix**.
 - **Re-dispatching does not repair corruption.** The retry's stated rationale — *"the writer is a
   sampled agent, not a function, so a second dispatch is a fresh sample"* — holds only for a
   stochastic fault. Twice, on two different documents, the retry corrupted the same sites and failed

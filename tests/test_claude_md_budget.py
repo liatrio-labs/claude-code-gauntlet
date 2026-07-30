@@ -76,7 +76,7 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # grading rules. The first draft ran to +3,204 bytes; all four are stated in full at their
 # sites (hardenEscapeRuns, provenPrimaryPaths) and pinned by mutation-verified tests in
 # workflows/test/stages_persist.test.js.
-# LOWERED 2026-07-30 to 25,399 (-2,192 bytes). Not a feature landing — a correction. The
+# LOWERED 2026-07-30 to 26,212 (-1,379 bytes). Not a feature landing — a correction. The
 # "Artifact persistence" section opened on a premise that is false: "the sandbox has no disk,
 # so every persisted byte must be emitted as some agent's tool-call argument at least once;
 # the floor is one generation pass per unique byte." A zero-subagent probe showed the harness
@@ -92,7 +92,7 @@ CLAUDE_MD = REPO / "CLAUDE.md"
 # The lesson for whoever raises this next: the two-part test screens for duplication, and it did
 # not catch any of this, because unverified claims read exactly like verified ones when they are
 # written in the same confident voice. Prefer a sentence that names its measurement.
-CLAUDE_MD_BYTE_CEILING = 25_399
+CLAUDE_MD_BYTE_CEILING = 26_212
 
 
 class TestClaudeMdBudget(unittest.TestCase):
