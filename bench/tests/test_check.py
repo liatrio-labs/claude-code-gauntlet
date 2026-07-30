@@ -1238,8 +1238,12 @@ class CheckRunTest(unittest.TestCase):
         minutes. Picking by glob order would silently report the superseded
         attempt's counts.
         """
-        old = self.run_dir / "wf_a_sorts_first_but_is_oldest.json"
-        new = self.run_dir / "wf_z_sorts_last_but_is_newest.json"
+        # The NEWEST record deliberately sorts FIRST and is passed FIRST. If it
+        # sorted (or were passed) last, a "take the last one" implementation would
+        # give the same answer as a correct one and this test would pass against
+        # the very bug it names — which is how it was originally written.
+        new = self.run_dir / "wf_a_sorts_first_but_is_newest.json"
+        old = self.run_dir / "wf_z_sorts_last_but_is_oldest.json"
         _write_json(
             old,
             _wf_record_with_health(
@@ -1256,9 +1260,8 @@ class CheckRunTest(unittest.TestCase):
                 timestamp="2026-07-29T21:44:17Z",
             ),
         )
-        # Passed in the "wrong" (glob-ascending, old-then-new) order deliberately —
-        # the function must still pick by timestamp, not by list position.
-        snapshot = check._select_pr_health_snapshot([old, new])
+        # Glob-ascending order, which now puts the NEWEST first and the OLDEST last.
+        snapshot = check._select_pr_health_snapshot([new, old])
         self.assertEqual(snapshot["delivered"], 9)
         self.assertFalse(snapshot["degraded"])
 
@@ -1283,7 +1286,9 @@ class CheckRunTest(unittest.TestCase):
                 "dimensionsLost": [], "evidenceIsFresh": True, "degraded": True,
             }),
         )
-        snapshot = check._select_pr_health_snapshot([healthy, degraded])
+        # Degraded FIRST: with it last, "take the last one" would agree with the
+        # correct answer and the fallback would go untested.
+        snapshot = check._select_pr_health_snapshot([degraded, healthy])
         self.assertTrue(snapshot["degraded"])
         self.assertEqual(snapshot["unclassified"], 2)
 
@@ -1300,7 +1305,7 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir, origin="new")
         pr_dir = self.run_dir / "pr-example-repo-1"
         _write_json(
-            pr_dir / "workflows" / "wf_a_sorts_first_but_is_oldest.json",
+            pr_dir / "workflows" / "wf_z_sorts_last_but_is_oldest.json",
             _wf_record_with_health(
                 {"delivered": 1, "notChallenged": 0, "unclassified": 1,
                  "dimensionsLost": ["security"], "evidenceIsFresh": True, "degraded": True},
@@ -1308,7 +1313,7 @@ class CheckRunTest(unittest.TestCase):
             ),
         )
         _write_json(
-            pr_dir / "workflows" / "wf_z_sorts_last_but_is_newest.json",
+            pr_dir / "workflows" / "wf_a_sorts_first_but_is_newest.json",
             _wf_record_with_health(
                 {"delivered": 9, "notChallenged": 0, "unclassified": 0,
                  "dimensionsLost": [], "evidenceIsFresh": True, "degraded": False},
