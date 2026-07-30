@@ -55,9 +55,10 @@ V2_ALIAS_FIELDS = ["file", "line", "body", "end_line"]
 ISSUE_47_FIELDS = ["suggestion", "claude_md_rule", "spec_text", "criticality", "failure_scenario"]
 
 
-def load_pipeline_findings():
+def load_pipeline_output():
     """Run the wired pipeline (via the node recorder) and return its REAL persisted
-    high-confidence findings — v2-aliased at the writeArtifacts boundary."""
+    output: the high-confidence findings (v2-aliased at the writeArtifacts boundary)
+    and the post-review wrapper a DEGRADED run with a PR identity persists."""
     tmp = tempfile.mkdtemp()
     try:
         out = os.path.join(tmp, "persisted.json")
@@ -68,13 +69,15 @@ def load_pipeline_findings():
         if proc.returncode != 0:
             raise RuntimeError(f"recorder failed: {proc.stderr}")
         with open(out) as fh:
-            return json.load(fh)["findings"]
+            return json.load(fh)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
 # Recorded once for the module — the pipeline persist output is deterministic.
-PERSISTED_FINDINGS = load_pipeline_findings()
+_PIPELINE_OUTPUT = load_pipeline_output()
+PERSISTED_FINDINGS = _PIPELINE_OUTPUT["findings"]
+DEGRADED_POST_REVIEW = _PIPELINE_OUTPUT["degradedPostReview"]
 
 
 def build_gh_diff(findings):
@@ -284,6 +287,65 @@ class TestPostReviewBoundary(unittest.TestCase):
              patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS))):
             with self.assertRaises(KeyError):
                 post_review.main()
+
+
+class TestDegradationBannerBoundary(unittest.TestCase):
+    """THE banner boundary: the field the pipeline WRITES is the field the poster READS.
+
+    The degradation banner (issue #25 req 7) crosses three sites that must agree on one
+    name — ``writerPayload``/``persistPlan`` in workflows/src/stages.js write it,
+    ``scripts/post_review.py::compose_review_body`` prepends it, and
+    ``bench/runner/check.py`` detects it. Each side is unit-tested against its own idea
+    of that name, so a rename on one side alone leaves every one of those tests green
+    while a degraded review silently posts looking clean — the exact failure the live
+    smoke on 2026-07-30 caught, and the reason the banner no longer shares ``review_body``
+    with Phase 8's summary at all.
+
+    This drives the REAL wrapper a degraded pipeline run persists (from the node recorder,
+    not a hand-authored fixture) through the REAL poster, and asserts the banner is in the
+    bytes that would reach GitHub. It fails on a rename at either end.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "post-review.json")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        post_review.DRY_RUN = False
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    def _post(self, wrapper):
+        with open(self.path, "w") as fh:
+            json.dump(dict(wrapper, platform="github"), fh)
+        diff = build_gh_diff(wrapper["findings"])
+        with patch.object(sys, "argv", ["post_review.py", self.path, "--dry-run"]), \
+             patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)):
+            post_review.main()
+        with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
+            return json.load(fh)["payload"]["body"]
+
+    def test_the_banner_a_degraded_run_persists_reaches_the_posted_body(self):
+        banner = DEGRADED_POST_REVIEW["health_banner"]
+        self.assertTrue(banner.strip(), "the recorder's degraded run raised no banner — "
+                                        "this test proves nothing until it does")
+        self.assertIn(banner, self._post(DEGRADED_POST_REVIEW))
+
+    def test_phase_8_composing_its_summary_cannot_displace_it(self):
+        """Phase 8 owns review_body and writes it. Under the pre-split contract that
+        single slot held both, so this is the regression the field split exists for."""
+        summary = "## Summary\nFound 2 issues: 1 high, 1 medium."
+        wrapper = dict(DEGRADED_POST_REVIEW, review_body=summary)
+        body = self._post(wrapper)
+        self.assertIn(DEGRADED_POST_REVIEW["health_banner"], body)
+        self.assertIn(summary, body)
+        self.assertLess(body.index(DEGRADED_POST_REVIEW["health_banner"]), body.index(summary))
+
+    def test_the_pipeline_leaves_phase_8s_slot_empty(self):
+        """The producer half of the same contract: if the pipeline started writing
+        review_body again the two would be sharing a slot once more, silently."""
+        self.assertEqual(DEGRADED_POST_REVIEW["review_body"], "")
 
 
 if __name__ == "__main__":

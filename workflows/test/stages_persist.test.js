@@ -209,10 +209,12 @@ test('persistPlan emits wrapper:null without a PR identity and the envelope with
   const id = { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'deadbeefcafe' };
   const wrapped = persistPlan(persistInput({ prIdentity: id }), PATHS);
   assert.deepEqual(wrapped.postReview.wrapper, {
-    owner: 'o', repo: 'r', pr_number: 7, sha: 'deadbeefcafe', review_body: '',
+    owner: 'o', repo: 'r', pr_number: 7, sha: 'deadbeefcafe', health_banner: '', review_body: '',
   });
   // Key ORDER is the wire contract: post_review.py's envelope, findings appended last.
-  assert.deepEqual(Object.keys(wrapped.postReview.wrapper), ['owner', 'repo', 'pr_number', 'sha', 'review_body']);
+  // health_banner precedes review_body because that is the order post_review.py composes
+  // them in — the banner leads the caller's summary.
+  assert.deepEqual(Object.keys(wrapped.postReview.wrapper), ['owner', 'repo', 'pr_number', 'sha', 'health_banner', 'review_body']);
 });
 
 test('persistPlan skeleton is the checkpoint MINUS the challenge findings, key order intact', () => {

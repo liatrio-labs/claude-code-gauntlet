@@ -761,6 +761,137 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Health banner composition (issue #25 req 7)
+# ---------------------------------------------------------------------------
+
+BANNER = (
+    "<!-- code-gauntlet:health:begin -->\n"
+    "> [!WARNING]\n"
+    "> ## This review is degraded\n"
+    ">\n"
+    "> **2 of 9 finding(s) in this report were never classified.**\n"
+    "<!-- code-gauntlet:health:end -->"
+)
+
+
+class TestHealthBannerComposition(unittest.TestCase):
+    """The banner reaches the posted body because the SCRIPT puts it there.
+
+    The pipeline writes the degradation banner to its own ``health_banner``
+    field and the caller (Phase 8) writes its narrative to ``review_body``.
+    Because the two never share a slot, a caller that composes ``review_body``
+    from scratch — which is exactly what Phase 8 does, and what the 2026-07-30
+    smoke caught it doing — cannot drop the disclosure.
+
+    These drive the REAL ``post_github`` / ``post_gitlab`` in DRY_RUN and read
+    the captured payload, for the reason
+    ``TestReviewMarkerRoundTripThroughRealPoster`` gives: a test that
+    re-implements the composition proves only that the re-implementation
+    works. Every assertion below fails if ``compose_review_body`` stops being
+    called, stops prepending, or lets the caller's summary win.
+    """
+
+    def setUp(self):
+        post_review.DRY_RUN = True
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    def tearDown(self):
+        post_review.DRY_RUN = False
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+
+    @staticmethod
+    def _data(**over):
+        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": "a" * 40,
+                "review_body": "", "findings": []}
+        data.update(over)
+        return data
+
+    @patch("scripts.post_review.check_tool")
+    def _github_body(self, data, _tool):
+        post_review.post_github(data, set())
+        return post_review._CAPTURED[0]["payload"]["body"]
+
+    @patch("scripts.post_review.check_tool")
+    @patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start"))
+    def _gitlab_body(self, data, _shas, _tool):
+        post_review.post_gitlab(data, set())
+        return post_review._CAPTURED[0]["payload"]["body"]
+
+    def test_banner_reaches_the_posted_body(self):
+        body = self._github_body(self._data(health_banner=BANNER))
+        self.assertIn(BANNER, body)
+
+    def test_a_caller_authored_summary_does_not_displace_the_banner(self):
+        """THE regression this whole field split exists for. Phase 8 composes
+        review_body itself; under the old single-field contract that was one
+        model turn away from posting a degraded review looking clean."""
+        summary = "## Summary\nFound 9 issues: 2 high, 7 medium."
+        body = self._github_body(
+            self._data(review_body=summary, health_banner=BANNER))
+        self.assertIn(BANNER, body, "the caller's summary displaced the banner")
+        self.assertIn(summary, body, "the caller's summary was lost")
+        self.assertLess(body.index(BANNER), body.index(summary),
+                        "the banner must lead — a reader must not have to scroll "
+                        "past the summary to learn the review is degraded")
+
+    def test_the_banner_is_not_doubled_when_the_body_already_carries_it(self):
+        """A caller that inherited the banner under the old contract, or a
+        re-post of an already-composed body, gets one banner, not two."""
+        body = self._github_body(
+            self._data(review_body=BANNER + "\n\nMy summary.", health_banner=BANNER))
+        self.assertEqual(body.count(BANNER), 1)
+
+    def test_a_decoy_sentinel_cannot_suppress_the_real_banner(self):
+        """Same threat model as build_footer's sha check: text a model copied
+        from a reference rendering must not suppress the real signal. Only a
+        VERBATIM copy of this run's banner suppresses the prepend."""
+        decoy = ("<!-- code-gauntlet:health:begin -->\nlooks fine to me\n"
+                 "<!-- code-gauntlet:health:end -->")
+        body = self._github_body(
+            self._data(review_body=decoy, health_banner=BANNER))
+        self.assertIn(BANNER, body, "a decoy sentinel suppressed the real banner")
+        self.assertLess(body.index(BANNER), body.index(decoy),
+                        "the real banner must lead the decoy")
+
+    def test_gitlab_composes_the_banner_the_same_way(self):
+        """Both delivery paths share compose_review_body; a fix applied to one
+        platform only is how the surfaces drift apart."""
+        summary = "## MR Review\nContext for the reviewer."
+        body = self._gitlab_body(
+            self._data(review_body=summary, health_banner=BANNER))
+        self.assertIn(BANNER, body)
+        self.assertLess(body.index(BANNER), body.index(summary))
+
+    def test_a_healthy_run_posts_exactly_what_the_caller_wrote(self):
+        """No banner field, no banner, and no stray separator either — a
+        healthy review's summary must not acquire leading whitespace."""
+        summary = "## Summary\nNo issues found."
+        body = self._github_body(self._data(review_body=summary))
+        self.assertTrue(body.startswith(summary), repr(body[:80]))
+        self.assertNotIn("code-gauntlet:health", body)
+
+    def test_a_blank_or_non_string_banner_is_treated_as_absent(self):
+        for banner in ("", "   \n ", None, 42, {"report": BANNER}, [BANNER]):
+            with self.subTest(banner=banner):
+                body = self._github_body(
+                    self._data(review_body="S.", health_banner=banner))
+                self.assertTrue(body.startswith("S."), repr(body[:40]))
+
+    def test_the_marker_footer_still_round_trips_under_a_banner(self):
+        """The banner is prepended before build_footer sees the body, so the
+        footer's own idempotency guards read a body that already has it."""
+        sha = "e" * 40
+        body = self._github_body(
+            self._data(sha=sha, review_body="Summary.", health_banner=BANNER))
+        signal = review_marker.detect_signal(body)
+        self.assertIsNotNone(signal, f"no signal recovered: {body!r}")
+        self.assertEqual(signal["sha"], sha)
+        self.assertIn(BANNER, body)
+
+
+# ---------------------------------------------------------------------------
 # gitlab_project_id
 # ---------------------------------------------------------------------------
 

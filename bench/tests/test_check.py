@@ -169,12 +169,18 @@ def _banner_review_body():
     return _report_with_banner(body="")
 
 
-def _write_post_review(pr_dir, review_body=None, *, sha="deadbeef", with_identity=True):
+def _write_post_review(pr_dir, review_body=None, *, sha="deadbeef", with_identity=True,
+                       health_banner=None):
     """A persisted ``code-gauntlet-post-review-*.json`` — the SECOND delivery
     surface (issue #25 req 7). ``with_identity=True`` writes the PR-identity
-    wrapper shape ``{owner, repo, pr_number, sha, review_body, findings}``
-    (live-run L3); ``with_identity=False`` writes the bare-array shape a run
-    with no PR identity persists, which carries no ``review_body`` key at all.
+    wrapper shape ``{owner, repo, pr_number, sha, health_banner, review_body,
+    findings}`` (live-run L3); ``with_identity=False`` writes the bare-array
+    shape a run with no PR identity persists, which carries neither field.
+
+    ``health_banner`` is where the pipeline writes the banner today;
+    ``review_body`` is the caller's own narrative slot and the pre-split
+    carrier. Both are settable here because the check must find the banner in
+    either — see ``_HEALTH_BANNER_FIELDS``.
     """
     path = Path(pr_dir) / "code-gauntlet-post-review-{}.json".format(sha)
     if with_identity:
@@ -182,6 +188,7 @@ def _write_post_review(pr_dir, review_body=None, *, sha="deadbeef", with_identit
             path,
             {
                 "owner": "example", "repo": "repo", "pr_number": 1, "sha": sha,
+                "health_banner": health_banner or "",
                 "review_body": review_body or "", "findings": [],
             },
         )
@@ -1011,6 +1018,23 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir, origin="stale")  # default report has no banner
         pr_dir = self.run_dir / "pr-example-repo-1"
         _write_post_review(pr_dir, _banner_review_body())
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertFalse(
+            any("health-degradation banner" in f for f in result["failures"])
+        )
+
+    def test_unclassified_finding_disclosed_via_health_banner_field_passes(self):
+        """The field the PIPELINE actually writes. ``writerPayload`` /
+        ``persistPlan`` put the banner in ``health_banner``, not in
+        ``review_body`` — that slot belongs to Phase 8's narrative, and
+        scripts/post_review.py prepends the two at post time. A check that
+        looked only at ``review_body`` would read every real degraded run as
+        undisclosed while G3 quietly passed on report.md alone.
+        """
+        _build_ok_run(self.run_dir, origin="stale")  # default report has no banner
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_post_review(pr_dir, review_body="", health_banner=_banner_review_body())
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertTrue(result["ok"], result["failures"])
         self.assertFalse(

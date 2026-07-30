@@ -156,11 +156,14 @@ test('writerPayload with prIdentity emits the post_review-ready wrapper; without
   const pr = [{ id: 'D1', line_start: 7, line_end: 9, description: 'body text', report_tag: 'main' }];
   const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'deadbeefcafe' };
   const wrapped = writerPayload({ findings: [], postReview: pr, prIdentity: id });
-  assert.deepEqual(Object.keys(wrapped.postReview), ['owner', 'repo', 'pr_number', 'sha', 'review_body', 'findings']);
+  assert.deepEqual(Object.keys(wrapped.postReview), ['owner', 'repo', 'pr_number', 'sha', 'health_banner', 'review_body', 'findings']);
   assert.equal(wrapped.postReview.owner, 'o');
   assert.equal(wrapped.postReview.repo, 'r');
   assert.equal(wrapped.postReview.pr_number, 310);
   assert.equal(wrapped.postReview.sha, 'deadbeefcafe');
+  assert.equal(wrapped.postReview.health_banner, '');
+  // The pipeline NEVER writes review_body — that slot is Phase 8's, and keeping the two
+  // apart is what stops a composed summary from displacing the degradation banner.
   assert.equal(wrapped.postReview.review_body, '');
   const bare = writerPayload({ findings: [], postReview: pr });
   assert.ok(Array.isArray(bare.postReview));

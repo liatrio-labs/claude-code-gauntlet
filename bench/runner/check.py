@@ -618,18 +618,29 @@ def _report_has_health_banner(pr_dir):
     return False
 
 
+# Fields of the persisted post-review wrapper that may carry the banner.
+# ``health_banner`` is where the pipeline writes it (``writerPayload`` /
+# ``persistPlan`` in ``workflows/src/stages.js``); ``scripts/post_review.py``
+# prepends it to the caller's ``review_body`` at post time. ``review_body`` is
+# checked too because it is the OTHER legitimate carrier: a caller that
+# hand-builds the wrapper, or an artifact written before the fields were split,
+# puts the banner there. Checking only one field is how this check goes quietly
+# blind — G3 pairs on EITHER surface, so a post-review artifact that silently
+# stopped carrying the banner would still pass on report.md alone.
+_HEALTH_BANNER_FIELDS = ("health_banner", "review_body")
+
+
 def _post_review_has_health_banner(pr_dir):
     """True if any persisted ``code-gauntlet-post-review-*.json`` under
-    ``pr_dir`` carries the health-degradation banner sentinel in its
-    ``review_body`` field — the SECOND delivery surface (issue #25 req 7):
-    ``reviewBodyOf``/``writerPayload``/``persistPlan`` in
-    ``workflows/src/stages.js`` put the same banner text here so a
-    ``pr_comments``-only delivery, which never shows ``report.md`` to anyone,
-    still discloses degradation on the surface it actually delivers on.
+    ``pr_dir`` carries the health-degradation banner sentinel in any of
+    ``_HEALTH_BANNER_FIELDS`` — the SECOND delivery surface (issue #25 req 7).
+    The pipeline puts the banner on this artifact so a ``pr_comments``-only
+    delivery, which never shows ``report.md`` to anyone, still discloses
+    degradation on the surface it actually delivers on.
 
     Structural (JSON-parsed, then a plain field read), matching how every
     other JSON-shaped artifact in this module is read. The bare-array shape
-    (no PR identity — live-run L3 not wired) carries no ``review_body`` key at
+    (no PR identity — live-run L3 not wired) carries none of these keys at
     all; that reads as absent here, same as a file that fails to parse, never
     as an error.
     """
@@ -641,9 +652,10 @@ def _post_review_has_health_banner(pr_dir):
             continue
         if not isinstance(data, dict):
             continue
-        body = data.get("review_body")
-        if isinstance(body, str) and _HEALTH_BANNER_SENTINEL in body:
-            return True
+        for field in _HEALTH_BANNER_FIELDS:
+            value = data.get(field)
+            if isinstance(value, str) and _HEALTH_BANNER_SENTINEL in value:
+                return True
     return False
 
 

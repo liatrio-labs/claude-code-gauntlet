@@ -62,6 +62,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 ```json
 {
     "review_body": "Executive summary comment with finding counts (post_review.py appends the footer)",
+    "health_banner": "the pipeline's degradation banner, or absent (post_review.py prepends it)",
     "findings": [
         {
             "file": "src/foo.py",
@@ -86,7 +87,8 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 **Fields:**
 
-- `review_body` — executive summary comment (counts, no spoilers). Arrives pre-filled with a degradation banner when the review is degraded; append your summary after it rather than replacing it (see `phase8-delivery.md`).
+- `review_body` — executive summary comment (counts, no spoilers). Yours to compose; the pipeline always persists it as `""`.
+- `health_banner` — optional; the pipeline's degradation banner (issue #25 req 7). `post_review.py` prepends it to `review_body` mechanically and idempotently, exactly as it appends the metadata footer, so it is never merged into the summary slot and a caller composing `review_body` cannot displace it. Do not hand-write it; do not delete it from a persisted wrapper.
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)

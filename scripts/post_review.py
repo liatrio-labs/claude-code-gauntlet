@@ -11,7 +11,13 @@ Usage:
 
 Input JSON schema:
     {
-        "review_body": "...",
+        "review_body": "...",            # the caller's summary narrative
+        "health_banner": "...",          # optional — the pipeline's degradation
+                                         # banner. Prepended to review_body, never
+                                         # merged into it: the two fields have
+                                         # different owners, so a caller composing
+                                         # its own summary cannot overwrite the
+                                         # disclosure. See compose_review_body.
         "findings": [
             {
                 "file": "src/foo.py",
@@ -441,6 +447,41 @@ def resolve_marker_sha(data):
     return head
 
 
+def compose_review_body(data, findings_count, sha):
+    """Return the summary body to post: health banner, caller's summary, footer.
+
+    THE TWO FIELDS HAVE DIFFERENT OWNERS, WHICH IS THE ENTIRE POINT. ``review_body``
+    belongs to the caller — Phase 8 composes its narrative there and always has.
+    ``health_banner`` belongs to the PIPELINE: ``workflows/src/stages.js`` puts the
+    degradation banner in it (issue #25 req 7) so that a ``pr_comments``-only
+    delivery, which never shows ``report.md`` to anyone, still discloses that the
+    review is degraded on the surface it actually delivers on.
+
+    Both used to be ``review_body``, and the live smoke on 2026-07-30 showed why
+    that could not hold: Phase 8 *writes* that field, so the banner was one model
+    turn away from being overwritten and a degraded review posting as if it were
+    clean. The instruction "append, never replace" was tried first and is exactly
+    the class of guard this project does not accept — a prompt doing code's job.
+    Separate fields remove the conflict instead of policing it: there is no shared
+    slot to overwrite, so Phase 8 composes ``review_body`` freely and the banner
+    cannot be lost by anything short of deleting a field nobody was told to touch.
+
+    Composition is mechanical and idempotent, the same contract ``build_footer``
+    already provides for the footer. The suppression guard is ``banner in body``:
+    only a VERBATIM copy of the real banner — a caller that inherited it under the
+    old contract, or a re-post of an already-composed body — suppresses the
+    prepend. A decoy that merely carries the sentinel does not, for the reason
+    ``build_footer`` checks the sha rather than the marker's presence: text a model
+    copied from a reference rendering must never suppress the real signal.
+    """
+    body = data.get("review_body")
+    body = body if isinstance(body, str) else ""
+    banner = data.get("health_banner")
+    if isinstance(banner, str) and banner.strip() and banner not in body:
+        body = f"{banner}\n\n{body}" if body else banner
+    return body + build_footer(findings_count, sha, body=body)
+
+
 # ---------------------------------------------------------------------------
 # GitHub delivery
 # ---------------------------------------------------------------------------
@@ -486,8 +527,7 @@ def post_github(data, valid_lines):
         comments.append(comment)
 
     sha = resolve_marker_sha(data)
-    review_body = data.get("review_body", "")
-    review_body += build_footer(len(findings), sha, body=review_body)
+    review_body = compose_review_body(data, len(findings), sha)
 
     payload = {
         "body": review_body,
@@ -563,8 +603,7 @@ def post_gitlab(data, valid_lines, new_files=None):
     base_sha, head_sha, start_sha = fetch_gitlab_shas(project_id, mr_iid)
 
     sha = resolve_marker_sha(data)
-    review_body = data.get("review_body", "")
-    review_body += build_footer(len(findings), sha, body=review_body)
+    review_body = compose_review_body(data, len(findings), sha)
 
     # Post the review summary as a top-level MR note first
     summary_payload = {"body": review_body}

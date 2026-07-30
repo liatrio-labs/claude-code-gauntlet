@@ -251,16 +251,22 @@ test('END TO END: the banner also rides the PR review summary, the other deliver
 
   assert.equal(out.stats.health.degraded, true);
   const wrapper = payload && payload.postReview;
-  assert.ok(wrapper && typeof wrapper.review_body === 'string', `expected a post-review wrapper, got ${JSON.stringify(payload && payload.postReview)}`);
-  assert.match(wrapper.review_body, /This review is degraded/);
+  assert.ok(wrapper && typeof wrapper.health_banner === 'string', `expected a post-review wrapper, got ${JSON.stringify(payload && payload.postReview)}`);
+  assert.match(wrapper.health_banner, /This review is degraded/);
+  // The banner rides its OWN field. review_body belongs to Phase 8, which composes its
+  // summary there; sharing one slot is how a composed summary silently displaced the
+  // disclosure (caught by the 2026-07-30 live smoke, not by any test).
+  // scripts/post_review.py::compose_review_body joins them at post time.
+  assert.equal(wrapper.review_body, '', 'the pipeline must not write Phase 8\'s slot');
 });
 
-test('END TO END: a clean run leaves the PR review summary empty', async () => {
+test('END TO END: a clean run leaves both summary fields empty', async () => {
   const args = validArgs({ delivery: { prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'a'.repeat(40) } } });
   let payload = null;
   const ctx = makeCtx(args, { onPersist: (p) => { payload = p; } });
   const out = await runWith(ctx, args);
   assert.equal(out.stats.health.degraded, false);
+  assert.equal(payload.postReview.health_banner, '', 'a healthy run raises no banner');
   assert.equal(payload.postReview.review_body, '', 'a healthy run adds nothing to the summary');
 });
 

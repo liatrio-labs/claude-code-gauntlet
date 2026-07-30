@@ -2932,6 +2932,7 @@ function mergeStage(discoverOut, meta) {
 // field added to the delta cannot be declared in one place and forgotten in the other.
 // It mirrors verify_findings.py's `_DELTA_FIELDS` plus the two structural keys; the
 // script's audit comment is the authority for why the set is exactly this.
+// Exported for the same cross-runtime parity guard as INPUT_FAULT_REASONS below.
 const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimination_reason'];
 
 // The discriminated-union envelope the executor returns. Both shapes coexist so an
@@ -3024,6 +3025,9 @@ const VERIFY_SCHEMA = {
 // re-materialize, and it will fail identically on the retry (measured: wf_3f640577-31c
 // failed both attempts at the same byte offset, because the retry re-dispatches the
 // executor and never the writer).
+// Exported for tests/test_verify_findings.py's cross-runtime parity guard, which imports
+// this value rather than re-deriving it — a helper that restated the list would agree with
+// a drifted one just as happily as with a correct one.
 const INPUT_FAULT_REASONS = ['input_unreadable', 'input_unparseable', 'input_invalid'];
 
 // The workflow's own code for "the file parsed, but it is not the file we sent". The
@@ -4479,15 +4483,28 @@ function reviewHealth(inp) {
 const HEALTH_BEGIN = '<!-- code-gauntlet:health:begin -->';
 const HEALTH_END = '<!-- code-gauntlet:health:end -->';
 
-// reviewBodyOf(inp) -> the PR review summary body the persist boundary should carry.
+// healthBannerOf(inp) -> the degradation banner the persist boundary should carry.
 // THE SECOND DELIVERY SURFACE. The banner on report.md is unmissable only to someone
 // reading report.md, and `pr_comments` delivery is a legal configuration that never shows
-// it to anyone — the reader gets inline comments plus this summary body and nothing else.
-// So the same banner rides here. Defined once and read by BOTH wrapper builders
-// (writerPayload and persistPlan) so the derived post-review document and the by-value one
-// cannot disagree, which their shared content proof would otherwise fail on.
-function reviewBodyOf(inp) {
-  return (inp && typeof inp.reviewBody === 'string') ? inp.reviewBody : '';
+// it to anyone — the reader gets inline comments plus the PR summary body and nothing
+// else. So the same banner rides on the post-review wrapper.
+//
+// IT RIDES IN ITS OWN FIELD (`health_banner`), NOT IN `review_body`, AND THAT SEPARATION
+// IS THE GUARANTEE. `review_body` is Phase 8's slot — it composes its summary narrative
+// there and always has. The 2026-07-30 live smoke showed all three PRs' persisted
+// `review_body` holding a Phase-8-authored narrative, so a banner sharing that slot was
+// one model turn from being overwritten and a degraded review posting as if it were clean.
+// Instructing Phase 8 to "append, never replace" was tried first and is exactly the shape
+// of guard this project rejects: a prompt doing code's job. With two fields there is no
+// shared slot to overwrite, and `scripts/post_review.py::compose_review_body` prepends the
+// banner to whatever the caller wrote — mechanically and idempotently, the same contract
+// `build_footer` already provides for the marker footer.
+//
+// Defined once and read by BOTH wrapper builders (writerPayload and persistPlan) so the
+// derived post-review document and the by-value one cannot disagree, which their shared
+// content proof would otherwise fail on.
+function healthBannerOf(inp) {
+  return (inp && typeof inp.healthBanner === 'string') ? inp.healthBanner : '';
 }
 
 // healthBanner(health) -> the markdown block, or '' when the review is healthy.
@@ -5001,10 +5018,11 @@ function writerPayload(inp) {
     // artifact IS the post_review.py input wrapper — Phase 8 posts it without hand-
     // assembling { owner, repo, pr_number, ... } around a bare array (the wrap was
     // documented but got reverse-engineered anyway, ~8 turns in the PR-310 run).
-    // review_body carries the DEGRADATION BANNER when the review is degraded, and is ''
-    // otherwise (issue #25 req 7). Phase 8 composes the summary narrative and may add to
-    // it; post_review.py treats '' as a valid empty summary. This is not a duplicate of
-    // the report banner — it is the same text on the OTHER delivery surface. A
+    // health_banner carries the DEGRADATION BANNER when the review is degraded and is ''
+    // otherwise (issue #25 req 7); review_body is Phase 8's own summary slot and the
+    // pipeline always leaves it ''. The two are separate fields on purpose — see
+    // healthBannerOf — and post_review.py composes them at post time. This is not a
+    // duplicate of the report banner; it is the same text on the OTHER delivery surface. A
     // pr_comments-only delivery never shows report.md to anyone, so a banner that lived
     // only there would be unmissable exactly where nobody was looking. sha is provenance
     // (post_review.py resolves its own HEAD); platform stays absent so post_review.py
@@ -5015,7 +5033,7 @@ function writerPayload(inp) {
     // and the derived post-review document is content-proofed against the by-value one, so
     // a value present in one and not the other fails that proof. Both read it from `inp`.
     postReview: id
-      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: reviewBodyOf(inp), findings: postReviewSet }
+      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, health_banner: healthBannerOf(inp), review_body: '', findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -5196,7 +5214,7 @@ function persistPlan(inp, paths) {
       // Identical construction to writerPayload's — see the note there. Both read the
       // banner from `inp`, so the derived document and the by-value one cannot disagree.
       wrapper: id
-        ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: reviewBodyOf(inp) }
+        ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, health_banner: healthBannerOf(inp), review_body: '' }
         : null,
     },
     checkpoint: {
@@ -5770,8 +5788,9 @@ async function runWith(ctx, rawArgs) {
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       report: reportOut.report,
       // The degradation banner on the OTHER delivery surface (issue #25 req 7): a
-      // pr_comments-only run never shows report.md to anyone.
-      reviewBody: healthBanner(health),
+      // pr_comments-only run never shows report.md to anyone. It rides in its own
+      // wrapper field so Phase 8's summary cannot displace it — see healthBannerOf.
+      healthBanner: healthBanner(health),
       // Persist a SLIM checkpoint: only the resume-consumed phase (challenge) carries full
       // output; every other phase is reduced to a count, so the single artifact-writer
       // prompt no longer duplicates every phase's findings bulk by value. readCheckpoints

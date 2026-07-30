@@ -46,6 +46,28 @@ if (!result.ok || !persisted) {
   process.exit(1);
 }
 
+// A SECOND run, deliberately DEGRADED and carrying a PR identity, so the recorder also
+// emits the real post-review wrapper for a review that raises the health banner. That
+// wrapper is the input tests/test_boundary_parity.py hands to post_review.py: the banner
+// only reaches a GitHub reader if the field the pipeline WRITES is the field the poster
+// READS, and nothing short of driving both halves proves that. `verifySliceFailIndex`
+// leaves findings unclassified, which is what reviewHealth keys `degraded` on.
+const degradedArgs = validArgs({
+  delivery: { prIdentity: { owner: 'o', repo: 'r', pr_number: 5, sha_full: 'a'.repeat(40) } },
+});
+let degradedPersisted = null;
+const degradedCtx = makeCtx(degradedArgs, {
+  verifySliceFailIndex: 0,
+  onPersist: (payload) => { degradedPersisted = payload; },
+});
+await runWith(degradedCtx, degradedArgs);
+
+if (!degradedPersisted || !degradedPersisted.postReview) {
+  console.error('degraded run persisted no post-review wrapper');
+  process.exit(1);
+}
+
 writeFileSync(outPath, JSON.stringify({
   findings: persisted.findings,
+  degradedPostReview: degradedPersisted.postReview,
 }, null, 2));
