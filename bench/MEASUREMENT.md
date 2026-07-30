@@ -71,7 +71,16 @@ python3 bench/run.py --check <RUN_ID>
 2. Payload parse + adapter-required fields + union-schema findings check
    (requires ≥1 `code-gauntlet-findings-*.json` per PR)
 3. Zero `origin=unknown` findings; no writer no-write-proof / partial-artifacts
-   degrade. Carriers that own a `gaps` array — `workflows/wf_*.json` (the
+   degrade. **Also fails** when a PR delivers any *unclassified* finding
+   (origin not `new`/`surfaced`, including a finding with no `origin` key at
+   all — strictly wider than the `origin=unknown` check, matching
+   `isClassified` in `workflows/src/stages.js`) whose persisted
+   `code-gauntlet-report-*.md` carries no health-degradation banner sentinel
+   (`<!-- code-gauntlet:health:begin -->`). This is reported as an additional
+   gate-3 failure condition rather than a new gate number — same underlying
+   fault (an unclassified finding shipped in the review), and gate 3 already
+   owns that fault class; what's new is checking that a degraded run actually
+   *disclosed* it (issue #25 req 7). Carriers that own a `gaps` array — `workflows/wf_*.json` (the
    compact Workflow return) and `code-gauntlet-checkpoint-all-*.json` — are
    judged from that parsed array alone; their raw bytes are never scanned,
    because a wf record echoes the whole `workflows/pipeline.js` bundle into its
@@ -104,6 +113,18 @@ structurally (`result.stats.inputProof`), never by regex — see gate 3's note
 on why a wf record's raw bytes are unsafe to scan. Absent on any run recorded
 before PR3 landed (and printed as `not measured`, never as zeros — a run that
 was never measured is not the same fact as a run that measured zero drift).
+
+A second reported stat, also **not a gate** — `--check` prints a `health` line
+built from each PR's `workflows/wf_*.json` `result.stats.health` (issue #25
+reqs 7-9): the delivered review's own health as the pipeline itself computed
+it (`delivered` / `notChallenged` / `unclassified` counts, `dimensionsLost`,
+whether verify's corroborating signals were fresh), aggregated across the
+run's PRs as `measured_prs` / `unmeasured_prs` / `degraded_prs` plus the
+summed counters and the union of `dimensionsLost`. This is a *different*
+signal from the gate-3 banner-pairing failure condition above: that check is
+derived directly from the persisted findings artifact and report, so it still
+fires correctly on a run that collected no `wf_*.json` records at all — the
+case where this stat reads `not measured` rather than a gate failure.
 
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
@@ -155,6 +176,20 @@ whose input stayed unproven even after a retry, and *that* is the gate-3
 `origin=unknown` finding you are looking at. `input_proof: not measured` means
 the run predates PR3 or the record could not be read — treat gate 3 the same
 as before on that run.
+
+**A gate-3 FAIL naming "no persisted code-gauntlet-report-\*.md carries the
+health-degradation banner" is a different class from the two above and should
+NOT be waved off as tier noise.** It fires on a PR whose findings artifact
+already contains an unclassified finding (so the `origin=unknown` transcription
+drift above may well be the underlying cause) but whose *report* additionally
+failed to disclose that fact. That second half — `reviewHealth` /
+`applyHealthBanner` in `workflows/src/stages.js` computing and prepending the
+banner — is deterministic pipeline logic, not a sampled agent's transcription,
+so a FAIL here on a run recorded after the banner landed points at a bug in
+that logic (or in a resume path bypassing it), not at ordinary artifact-writer
+drift. Cross-check the run's `health` stat line: `degraded_prs` > 0 with the
+gate still failing means the pipeline *knew* the run was degraded and still
+shipped a report without the banner.
 
 CI: `.github/workflows/bench-smoke.yml` (`workflow_dispatch`) runs smoke then
 `--check` on the newest run dir; the job fails if either step fails. Bare

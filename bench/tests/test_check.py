@@ -125,6 +125,37 @@ def _wf_record_with_input_proof(input_proof=None, script_path=PIPELINE):
     return rec
 
 
+def _wf_record_with_health(health=None, script_path=PIPELINE):
+    """A wf record carrying a compact-return ``result.stats.health`` block
+    (issue #25 reqs 7-9). ``health=None`` omits ``stats.health`` entirely,
+    modeling a record recorded before this landed — the "not measured" case.
+    """
+    rec = _wf_record(script_path)
+    stats = {}
+    if health is not None:
+        stats["health"] = health
+    rec["result"] = {"ok": True, "gaps": [], "stats": stats}
+    return rec
+
+
+HEALTH_BANNER_SENTINEL = "<!-- code-gauntlet:health:begin -->"
+
+
+def _report_with_banner(body="# Report\n\nAll good.\n"):
+    """A persisted report body carrying the health-degradation banner
+    sentinel, mirroring what applyHealthBanner() prepends in stages.js. Only
+    the begin sentinel matters to the checker (see _report_has_health_banner),
+    but both are included for fidelity to the real shape.
+    """
+    return (
+        "{}\n"
+        "> [!WARNING]\n"
+        "> ## This review is degraded\n"
+        "<!-- code-gauntlet:health:end -->\n\n"
+        "{}"
+    ).format(HEALTH_BANNER_SENTINEL, body)
+
+
 def _identity_echo_block(*, plugin_root=None, pipeline_version=None):
     """Headless config identity lines for raw.json / report carriers."""
     root = str(plugin_root if plugin_root is not None else REPO_ROOT)
@@ -849,6 +880,158 @@ class CheckRunTest(unittest.TestCase):
             {"runId": "wf_x", "scriptPath": PIPELINE, "result": {"stats": {"inputProof": proof}}},
         )
         self.assertEqual(check._extract_input_proof(wf), proof)
+
+    # --- G3 banner-pairing: unclassified findings must be disclosed ---
+    # (issue #25 req 7)
+
+    def test_unclassified_finding_with_banner_passes(self):
+        """An unclassified finding (origin present but not 'new'/'surfaced',
+        and deliberately NOT the literal 'unknown' G3 already scans for) whose
+        report DOES carry the health banner must not fail — the run discloses
+        exactly what it should.
+        """
+        _build_ok_run(self.run_dir, origin="stale")
+        report = self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
+        report.write_text(_report_with_banner(), encoding="utf-8")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(result["stats"]["unclassified_findings"], 1)
+        self.assertEqual(result["stats"]["unknown_origin"], 0)
+        self.assertFalse(
+            any("health-degradation banner" in f for f in result["failures"])
+        )
+
+    def test_unclassified_finding_without_banner_fails(self):
+        """Same unclassified finding, but the persisted report carries no
+        banner — the exact silent-degradation defect req 7 exists to prevent.
+        """
+        _build_ok_run(self.run_dir, origin="stale")  # default report has no banner
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["stats"]["unclassified_findings"], 1)
+        self.assertTrue(
+            any(
+                "unclassified finding(s)" in f and "health-degradation banner" in f
+                for f in result["failures"]
+            )
+        )
+
+    def test_all_classified_findings_no_banner_is_clean(self):
+        """A healthy run (all origins classified) needs no banner at all."""
+        _build_ok_run(self.run_dir, origin="new")  # default report has no banner
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(result["stats"]["unclassified_findings"], 0)
+        self.assertFalse(
+            any("health-degradation banner" in f for f in result["failures"])
+        )
+
+    def test_missing_origin_key_counts_as_unclassified(self):
+        """A finding with no ``origin`` key at all must count as unclassified
+        (mirrors isClassified in stages.js, which _is_classified deliberately
+        matches). It also independently fails G2's union-schema origin-
+        required check — that is expected and unrelated; this test asserts
+        the NEW pairing signal specifically, in both directions.
+        """
+        _build_ok_run(self.run_dir)
+        finding = _ok_finding()
+        del finding["origin"]
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_json(pr_dir / "code-gauntlet-findings-deadbeef.json", [finding])
+
+        # Banner absent (default report): both G2 (missing origin field) and
+        # the new pairing check fire.
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["stats"]["unclassified_findings"], 1)
+        self.assertEqual(result["stats"]["unknown_origin"], 0)
+        self.assertTrue(
+            any("missing required field group origin" in f for f in result["failures"])
+        )
+        self.assertTrue(
+            any(
+                "unclassified finding(s)" in f and "health-degradation banner" in f
+                for f in result["failures"]
+            )
+        )
+
+        # Banner present: the pairing check is satisfied even though G2 still
+        # fails for its own, unrelated reason.
+        report = pr_dir / "code-gauntlet-report-deadbeef.md"
+        report.write_text(_report_with_banner(), encoding="utf-8")
+        result2 = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(
+            any("missing required field group origin" in f for f in result2["failures"])
+        )
+        self.assertFalse(
+            any("health-degradation banner" in f for f in result2["failures"])
+        )
+
+    # --- health: reported stat, not a gate (issue #25 reqs 7-9) ---
+
+    def test_health_present_aggregates_across_prs(self):
+        urls = [
+            "https://github.com/example/repo/pull/1",
+            "https://github.com/example/repo/pull/2",
+        ]
+        _build_ok_run(self.run_dir, pr_urls=urls, origin="new")
+        pr1 = self.run_dir / "pr-example-repo-1"
+        pr2 = self.run_dir / "pr-example-repo-2"
+        _write_json(
+            pr1 / "workflows" / "wf_test-0001.json",
+            _wf_record_with_health({
+                "delivered": 5, "notChallenged": 1, "unclassified": 2,
+                "dimensionsLost": ["security"], "evidenceIsFresh": True,
+                "degraded": True,
+            }),
+        )
+        _write_json(
+            pr2 / "workflows" / "wf_test-0001.json",
+            _wf_record_with_health({
+                "delivered": 3, "notChallenged": 0, "unclassified": 0,
+                "dimensionsLost": [], "evidenceIsFresh": True,
+                "degraded": False,
+            }),
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertEqual(
+            result["stats"]["health"],
+            {
+                "delivered": 8, "notChallenged": 1, "unclassified": 2,
+                "verifySlicesDegraded": 0, "inputUnproven": 0, "inputRecovered": 0,
+                "measured_prs": 2, "unmeasured_prs": 0, "degraded_prs": 1,
+                "dimensionsLost": ["security"],
+            },
+        )
+
+    def test_health_absent_reports_not_measured(self):
+        """A run whose wf records carry no ``result.stats.health`` at all
+        (e.g. recorded before this landed) must report ``None`` — never a
+        zeroed dict, which would claim a measurement that never happened.
+        """
+        _build_ok_run(self.run_dir)  # default wf record carries no `result` key
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertIsNone(result["stats"]["health"])
+
+    def test_extract_review_health_returns_none_for_missing_stats(self):
+        wf = self.run_dir / "wf_no_stats.json"
+        _write_json(
+            wf,
+            {"runId": "wf_x", "scriptPath": PIPELINE, "result": {"ok": True, "gaps": []}},
+        )
+        self.assertIsNone(check._extract_review_health(wf))
+
+    def test_extract_review_health_returns_dict_when_present(self):
+        wf = self.run_dir / "wf_with_health.json"
+        health = {
+            "delivered": 4, "notChallenged": 0, "unclassified": 0,
+            "dimensionsLost": [], "evidenceIsFresh": True, "degraded": False,
+        }
+        _write_json(
+            wf,
+            {"runId": "wf_x", "scriptPath": PIPELINE, "result": {"stats": {"health": health}}},
+        )
+        self.assertEqual(check._extract_review_health(wf), health)
 
     def test_zero_comments_fails_g5(self):
         _build_ok_run(self.run_dir, n_comments=0)

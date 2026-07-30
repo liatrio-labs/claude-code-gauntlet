@@ -209,30 +209,28 @@ Severity has been downgraded one level from the original classification (see the
 
 ## Review Dimensions Summary
 
-{Brief per-dimension summary showing what each agent found or confirmed was clean.}
+{Brief per-dimension summary of what each agent found, from the findings you were handed. This table reports counts, not completeness: you are never told whether a dimension's agent actually ran, failed to dispatch, or was disabled for this run — only the pipeline knows that, and it discloses dimension loss separately, in the report's degradation banner, when it applies. A dimension with 0 findings is reported as "no findings returned" — never as "Clean" or "Skipped", both of which claim something about the agent's own execution that this table cannot support.}
 
 | Dimension | Agent | Findings | Notes |
 |-----------|-------|----------|-------|
-| Correctness & Error Handling | bug-detector | {N issues} | {summary or "Clean"} |
-| Security | security-reviewer | {N issues} | {summary} |
-| Cross-file Impact | cross-file-impact | {N issues} | {summary} |
-| Test Coverage | test-analyzer | {N issues} | {summary} |
-| Conventions & Intent | conventions-and-intent | {N issues} | {summary} |
-| Type Design | type-design-analyzer | {N issues or "Skipped"} | {summary} |
-| Code Simplification | code-simplifier | {N issues or "Skipped"} | {summary} |
+| Correctness & Error Handling | bug-detector | {N issues} | {summary, or "no findings returned" if N is 0} |
+| Security | security-reviewer | {N issues} | {summary, or "no findings returned" if N is 0} |
+| Cross-file Impact | cross-file-impact | {N issues} | {summary, or "no findings returned" if N is 0} |
+| Test Coverage | test-analyzer | {N issues} | {summary, or "no findings returned" if N is 0} |
+| Conventions & Intent | conventions-and-intent | {N issues} | {summary, or "no findings returned" if N is 0} |
+| Type Design | type-design-analyzer | {N issues} | {summary, or "no findings returned" if N is 0} |
+| Code Simplification | code-simplifier | {N issues} | {summary, or "no findings returned" if N is 0} |
 
 ## Review Methodology
 
+{This table covers only what the writer is actually given — findings and per-stage counts. Agent dispatch status, dimension coverage, and review timing are NOT in it: the report-writer is never handed the discover/verify outcomes or a wall clock, so a row claiming e.g. "Agents dispatched: 7/7 completed" or "Failed/skipped agents: none" would be an invented health claim — the same defect class the degradation banner below the title exists to prevent. When a dimension produced no results or a finding could not be classified, that banner states so, prepended deterministically and not authored by you; this table does not repeat or anticipate it.}
+
 | Aspect | Details |
 |--------|---------|
-| **Agents dispatched** | {list each agent with completion status: completed/failed/skipped} |
-| **Model tier** | {optimized — list which agents used which model} |
 | **Review scope** | {Full, or Incremental since {sha} (N commits)} |
 | **Findings pipeline** | {N raw findings → M after deterministic verification → K after confidence filter → J after dedup} |
 | **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} |
 | **Blind challenge round** | {N findings blind-challenged, M downgraded, K boosted, J contested} |
-| **Failed/skipped agents** | {list or "none"} |
-| **Total review time** | {duration from Phase 1 to Phase 8} |
 | **Prompt injection** | {N injection artifacts detected and discarded, or "none detected"} |
 
 ```

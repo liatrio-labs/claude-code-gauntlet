@@ -978,7 +978,8 @@ def _check_only(run_id):
     stats = result.get("stats") or {}
     print(
         "Check {}: ok={} pr_dirs={} comments={} findings_files={} "
-        "workflow_records={} script_paths={} unknown_origin={}".format(
+        "workflow_records={} script_paths={} unknown_origin={} "
+        "unclassified_findings={}".format(
             run_id,
             result.get("ok"),
             stats.get("pr_dirs"),
@@ -987,6 +988,7 @@ def _check_only(run_id):
             stats.get("workflow_records"),
             stats.get("script_paths"),
             stats.get("unknown_origin"),
+            stats.get("unclassified_findings"),
         )
     )
     # Reported stat, not a gate (issue #25 PR3) — absent means not measured on
@@ -1002,6 +1004,18 @@ def _check_only(run_id):
             "recovered={recovered} rewritten={rewritten} degraded={degraded}".format(
                 **input_proof
             )
+        )
+    # Same "absent means not measured" contract, for the delivered review's
+    # own health (issue #25 reqs 7-9) — see check.py's module docstring.
+    health = stats.get("health")
+    if health is None:
+        print("  health: not measured")
+    else:
+        print(
+            "  health: measured_prs={measured_prs} unmeasured_prs={unmeasured_prs} "
+            "degraded_prs={degraded_prs} delivered={delivered} "
+            "notChallenged={notChallenged} unclassified={unclassified} "
+            "dimensionsLost={dimensionsLost}".format(**health)
         )
     for failure in result.get("failures") or []:
         print("  FAIL: {}".format(failure), file=sys.stderr)

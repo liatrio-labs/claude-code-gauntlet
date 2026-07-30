@@ -9,6 +9,13 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
   G2  Payload parse + adapter-required fields + union-schema findings check
       (requires ≥1 findings artifact per PR)
   G3  Zero ``origin=unknown`` findings; no writer no-write-proof / partial-artifacts
+      degrade. ALSO fails when a PR delivers any unclassified finding (origin
+      not 'new'/'surfaced', including a finding with no ``origin`` key at
+      all — a strictly wider test than the ``origin=unknown`` check, see
+      ``_is_classified``) whose persisted report carries no health-degradation
+      banner sentinel: a degraded review that never discloses itself is the
+      exact defect issue #25 req 7 exists to prevent, and until this check
+      existed it was undetectable (``_report_has_health_banner``).
   G4  Plugin identity — Headless config echo receipts (``pipeline_version``,
       ``plugin_root``) are primary; a complete valid receipt is sufficient when
       no ``workflows/wf_*.json`` records were collected. When records exist,
@@ -27,6 +34,15 @@ Reported stats (not gates):
       Absent on any run recorded before PR3 landed, and reported as such
       (``None``), never as zeros — a checker that printed 0/0 for a
       never-measured run would claim a clean measurement it never made.
+
+  health  The delivered review's own health (issue #25 reqs 7-9), read
+      structurally from each ``workflows/wf_*.json`` record's
+      ``result.stats.health`` and aggregated across the run's PRs. This is a
+      DIFFERENT signal from the G3 banner-pairing failure condition above:
+      that check is derived directly from the persisted findings artifact and
+      report, so it still fires correctly even on a run that collected no
+      ``wf_*.json`` records at all — the case where this stat reads ``None``
+      ("not measured"). Same absent-means-unmeasured contract as input_proof.
 
 Stdlib-only (CLAUDE.md).
 """
@@ -59,6 +75,45 @@ _LINE_FIELDS = ("line_start", "line")
 _INPUT_PROOF_FIELDS = (
     "slices", "proven", "unproven", "recovered", "rewritten", "degraded",
 )
+
+# ``stats.health`` on the compact Workflow return (issue #25 reqs 7-9), mirrored
+# from reviewHealth() in workflows/src/stages.js. Same "structural read, never
+# regex" and "absent means not measured, never zero" contract as
+# _INPUT_PROOF_FIELDS above — kept as the JS contract's own (camelCase) key
+# spelling rather than translated to snake_case, so a reader cross-referencing
+# stages.js finds the same names; synthesized aggregate keys this module adds
+# on top (``measured_prs``, ``degraded_prs``, ...) follow this module's own
+# snake_case convention instead, matching input_proof's ``measured_prs``. Only
+# the plain-integer counters are listed here; `dimensionsLost` (array) and
+# `degraded`/`evidenceIsFresh` (booleans) are handled separately below.
+_HEALTH_INT_FIELDS = (
+    "delivered", "notChallenged", "unclassified",
+    "verifySlicesDegraded", "inputUnproven", "inputRecovered",
+)
+
+# The health-degradation banner's begin sentinel (issue #25 req 7) — a literal
+# copy of HEALTH_BEGIN in workflows/src/stages.js. applyHealthBanner() prepends
+# this exact string to the persisted report whenever reviewHealth().degraded is
+# true, and strips any stale copy (with its END pair) before recomputing on a
+# resume, so a substring scan for it is a sound presence/absence signal without
+# parsing markdown.
+_HEALTH_BANNER_SENTINEL = "<!-- code-gauntlet:health:begin -->"
+
+# Origins verify's classify_blame actually decided are 'new' or 'surfaced';
+# anything else — INCLUDING A MISSING origin KEY — is unclassified. Mirrors
+# CLASSIFIED_ORIGINS / isClassified in workflows/src/stages.js exactly, and is
+# deliberately broader than the literal `origin == "unknown"` scan G3 already
+# does below: that scan is what G3's existing failure fires on, but the
+# banner's real production trigger (reviewHealth -> isClassified) fires on
+# this wider set, so pairing the banner against only the narrower set would
+# under-detect exactly the silent-degradation class issue #25 req 7 exists to
+# catch.
+_CLASSIFIED_ORIGINS = ("new", "surfaced")
+
+
+def _is_classified(finding):
+    return isinstance(finding, dict) and finding.get("origin") in _CLASSIFIED_ORIGINS
+
 
 _SCRIPT_PATH_RE = re.compile(r'"scriptPath"\s*:\s*"([^"]+)"')
 _DEGRADE_RE = re.compile(
@@ -285,6 +340,31 @@ def _extract_input_proof(path):
     return proof if isinstance(proof, dict) else None
 
 
+def _extract_review_health(path):
+    """Return a ``wf_*.json`` record's ``result.stats.health`` dict, or None.
+
+    Structural only, mirroring :func:`_extract_input_proof` exactly — same
+    file, same embedded pipeline bundle in ``script``, same reason this is
+    never a regex scan. An unreadable or misshapen record reads as "not
+    measured" for this stat, never as a present-and-healthy one.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    result = data.get("result")
+    if not isinstance(result, dict):
+        return None
+    stats = result.get("stats")
+    if not isinstance(stats, dict):
+        return None
+    health = stats.get("health")
+    return health if isinstance(health, dict) else None
+
+
 def _script_path_ok(script_path, expected_pipeline, repo_root=None):
     """True when scriptPath is the repo's ``workflows/pipeline.js``.
 
@@ -447,6 +527,25 @@ def _scan_degrade_text(pr_dir):
     return hits
 
 
+def _report_has_health_banner(pr_dir):
+    """True if any persisted ``code-gauntlet-report-*.md`` under ``pr_dir``
+    carries the health-degradation banner's begin sentinel.
+
+    A markdown report has no parse step to consult (same TEXT-carrier
+    reasoning as ``_DEGRADE_CARRIER_POLICY``'s report entry), so this is a
+    literal-substring scan rather than a regex — the sentinel is a fixed
+    string with no variable parts to match.
+    """
+    for path in sorted(Path(pr_dir).glob("code-gauntlet-report-*.md")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _HEALTH_BANNER_SENTINEL in text:
+            return True
+    return False
+
+
 def _checkpoint_statuses(run_dir):
     """Map golden URL -> status from state/*.json if present."""
     state_dir = Path(run_dir) / "state"
@@ -492,15 +591,27 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         "findings_files": 0,
         "script_paths": 0,
         "unknown_origin": 0,
+        # Broader than unknown_origin — see _CLASSIFIED_ORIGINS: every finding
+        # whose origin is not 'new'/'surfaced', including one with no origin
+        # key at all. Drives the G3 banner-pairing failure condition below.
+        "unclassified_findings": 0,
         "workflow_records": 0,
         # Not measured until proven otherwise (see module docstring): None means
         # no wf_*.json record in this run carried result.stats.inputProof, which
         # is the honest reading for both "no records" and "pre-PR3 records".
         "input_proof": None,
+        # Same "None means not measured" reading as input_proof, for
+        # result.stats.health (issue #25 reqs 7-9).
+        "health": None,
     }
     input_proof_totals = {k: 0 for k in _INPUT_PROOF_FIELDS}
     input_proof_measured_prs = 0
     input_proof_unmeasured_prs = 0
+    health_totals = {k: 0 for k in _HEALTH_INT_FIELDS}
+    health_measured_prs = 0
+    health_unmeasured_prs = 0
+    health_degraded_prs = 0
+    health_dimensions_lost = set()
 
     if not run_dir.is_dir():
         return {
@@ -573,6 +684,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
 
     for pr_dir in pr_dirs:
         label = pr_dir.name
+        pr_unclassified = 0  # drives the G3 banner-pairing check below
 
         # --- G2: payload ---
         payload_path = pr_dir / "post-review-payload.json"
@@ -626,6 +738,11 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                     failures.append(
                         "{}: origin=unknown (verify/slice degrade)".format(flabel)
                     )
+                # --- G3: unclassified (broader than the literal "unknown"
+                # check above — see _CLASSIFIED_ORIGINS) ---
+                if not _is_classified(finding):
+                    pr_unclassified += 1
+                    stats["unclassified_findings"] += 1
 
         # --- G3: writer no-write-proof / partial-artifacts ---
         for hit in _scan_degrade_text(pr_dir):
@@ -633,6 +750,28 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 "{}: writer degrade signal in {} (no-write-proof / partial-artifacts)".format(
                     label, hit
                 )
+            )
+
+        # --- G3: unclassified findings must carry the disclosure banner ---
+        # (issue #25 req 7). Reported as an additional G3 failure condition,
+        # not a new gate number: the fault is identical to the origin=unknown
+        # scan above — an unclassified finding shipped in the review — and
+        # input_proof was kept a stat rather than a sixth gate for the
+        # matching reason (a second verdict on one root cause double-counts
+        # it). What is new here is the DISCLOSURE half of that same fault: G3
+        # already refuses a run that ships an unclassified finding, but until
+        # now nothing checked whether such a run also told anyone via the
+        # report. A degraded run whose report stays silent is precisely the
+        # defect req 7 exists to prevent, and it was undetectable before this.
+        # This check is necessarily per-PR (findings vs. that PR's own report)
+        # rather than per-finding like the loop above, so it lives here.
+        if pr_unclassified > 0 and not _report_has_health_banner(pr_dir):
+            failures.append(
+                "{}: {} unclassified finding(s) (origin not 'new'/'surfaced', "
+                "including a missing origin key) but no persisted "
+                "code-gauntlet-report-*.md carries the health-degradation "
+                "banner ({!r}) — a degraded review must disclose it "
+                "(issue #25 req 7)".format(label, pr_unclassified, _HEALTH_BANNER_SENTINEL)
             )
 
         # --- G4: plugin identity (echo receipt primary; scriptPath defense-in-depth) ---
@@ -695,11 +834,46 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                 for k in _INPUT_PROOF_FIELDS:
                     input_proof_totals[k] += pr_proof[k]
 
+        # --- health: reported stat, not a gate (see module docstring) ---
+        # The gate-facing half of this signal is the banner-pairing check
+        # above, which is derived from the findings/report directly, not from
+        # this. A health object is a SNAPSHOT of the whole delivered review,
+        # not a per-dispatch delta like input_proof's counters — so when a PR has
+        # multiple wf_*.json records (e.g. a resumed run produced more than
+        # one), this takes the LAST one that carries `stats.health` (sorted
+        # glob order, same as wf_records above) rather than summing across
+        # records, which would double-count a single delivered set.
+        if wf_records:
+            pr_health = None
+            for wf_path in wf_records:
+                h = _extract_review_health(wf_path)
+                if h is not None:
+                    pr_health = h
+            if pr_health is None:
+                health_unmeasured_prs += 1
+            else:
+                health_measured_prs += 1
+                for k in _HEALTH_INT_FIELDS:
+                    v = pr_health.get(k)
+                    if isinstance(v, int) and not isinstance(v, bool):
+                        health_totals[k] += v
+                dl = pr_health.get("dimensionsLost")
+                if isinstance(dl, list):
+                    health_dimensions_lost.update(x for x in dl if isinstance(x, str))
+                if pr_health.get("degraded") is True:
+                    health_degraded_prs += 1
+
     stats["delivered_comments"] = total_comments
     if input_proof_measured_prs > 0:
         stats["input_proof"] = dict(input_proof_totals)
         stats["input_proof"]["measured_prs"] = input_proof_measured_prs
         stats["input_proof"]["unmeasured_prs"] = input_proof_unmeasured_prs
+    if health_measured_prs > 0:
+        stats["health"] = dict(health_totals)
+        stats["health"]["measured_prs"] = health_measured_prs
+        stats["health"]["unmeasured_prs"] = health_unmeasured_prs
+        stats["health"]["degraded_prs"] = health_degraded_prs
+        stats["health"]["dimensionsLost"] = sorted(health_dimensions_lost)
 
     # --- G5: ≥1 delivered comment across the set ---
     if total_comments < 1:
