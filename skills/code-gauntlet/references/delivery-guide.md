@@ -86,7 +86,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 **Fields:**
 
-- `review_body` — executive summary comment (counts, no spoilers)
+- `review_body` — executive summary comment (counts, no spoilers). Arrives pre-filled with a degradation banner when the review is degraded; append your summary after it rather than replacing it (see `phase8-delivery.md`).
 - `findings` — array of inline comments
   - `file` — relative path in repository
   - `line` — line number in diff (new version)
