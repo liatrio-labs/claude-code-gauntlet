@@ -4479,6 +4479,17 @@ function reviewHealth(inp) {
 const HEALTH_BEGIN = '<!-- code-gauntlet:health:begin -->';
 const HEALTH_END = '<!-- code-gauntlet:health:end -->';
 
+// reviewBodyOf(inp) -> the PR review summary body the persist boundary should carry.
+// THE SECOND DELIVERY SURFACE. The banner on report.md is unmissable only to someone
+// reading report.md, and `pr_comments` delivery is a legal configuration that never shows
+// it to anyone — the reader gets inline comments plus this summary body and nothing else.
+// So the same banner rides here. Defined once and read by BOTH wrapper builders
+// (writerPayload and persistPlan) so the derived post-review document and the by-value one
+// cannot disagree, which their shared content proof would otherwise fail on.
+function reviewBodyOf(inp) {
+  return (inp && typeof inp.reviewBody === 'string') ? inp.reviewBody : '';
+}
+
 // healthBanner(health) -> the markdown block, or '' when the review is healthy.
 // GitHub alert syntax so it renders as an unmissable callout in a PR comment and still
 // reads correctly as plain text everywhere else.
@@ -4534,19 +4545,26 @@ function healthBanner(health) {
 // banner: it would describe a health state this run did not measure. So any existing
 // sentinel-delimited block is removed first and a freshly computed one is prepended.
 //
-// Stripping walks with indexOf rather than a regex: the input is arbitrary agent-authored
-// markdown, and a non-greedy dot-all regex over an unbounded document is exactly the shape
-// that backtracks pathologically. An unterminated begin-sentinel is left ALONE rather than
-// treated as "delete to end of document" — losing the report to a malformed marker would
-// be a far worse failure than a visible stray comment.
+// The strip is ANCHORED AT POSITION 0, which is what makes it safe on a document nobody
+// controls. A banner is only ever written at the very front, so only the very front is
+// ever removed. An unanchored search would splice out everything between the first
+// begin-sentinel and the next end-sentinel ANYWHERE in the body — and this tool reviews
+// its own repository, where a finding's evidence quoting these very literals is not a
+// hypothetical: it would silently delete the report between them. Anchoring makes report
+// content structurally unreachable by the strip instead of relying on nobody quoting it.
+//
+// A leading begin-sentinel with no terminator is left ALONE rather than treated as "delete
+// to end of document": losing the whole review to a malformed marker would be a far worse
+// failure than a visible stray comment. indexOf rather than a regex, because a non-greedy
+// dot-all match over an unbounded agent-authored document is the shape that backtracks
+// pathologically.
 function applyHealthBanner(report, health) {
   let body = typeof report === 'string' ? report : '';
-  for (;;) {
-    const start = body.indexOf(HEALTH_BEGIN);
-    if (start === -1) break;
-    const end = body.indexOf(HEALTH_END, start);
+  while (body.startsWith(HEALTH_BEGIN)) {
+    const end = body.indexOf(HEALTH_END);
     if (end === -1) break;
-    body = body.slice(0, start) + body.slice(end + HEALTH_END.length);
+    body = body.slice(end + HEALTH_END.length);
+    while (body.charAt(0) === '\n') body = body.slice(1);
   }
   while (body.charAt(0) === '\n') body = body.slice(1);
   const banner = healthBanner(health);
@@ -4983,13 +5001,21 @@ function writerPayload(inp) {
     // artifact IS the post_review.py input wrapper — Phase 8 posts it without hand-
     // assembling { owner, repo, pr_number, ... } around a bare array (the wrap was
     // documented but got reverse-engineered anyway, ~8 turns in the PR-310 run).
-    // review_body is intentionally '' — Phase 8 composes the summary narrative and may
-    // fill it before posting; post_review.py treats '' as a valid empty summary. sha is
-    // provenance (post_review.py resolves its own HEAD); platform stays absent so
-    // post_review.py auto-detects. The findings SET is byte-identical either way —
-    // the wrapper only changes the envelope, never the scored content (D16).
+    // review_body carries the DEGRADATION BANNER when the review is degraded, and is ''
+    // otherwise (issue #25 req 7). Phase 8 composes the summary narrative and may add to
+    // it; post_review.py treats '' as a valid empty summary. This is not a duplicate of
+    // the report banner — it is the same text on the OTHER delivery surface. A
+    // pr_comments-only delivery never shows report.md to anyone, so a banner that lived
+    // only there would be unmissable exactly where nobody was looking. sha is provenance
+    // (post_review.py resolves its own HEAD); platform stays absent so post_review.py
+    // auto-detects. The findings SET is byte-identical either way — the wrapper only
+    // changes the envelope, never the scored content (D16).
+    //
+    // MUST stay identical to persistPlan's wrapper construction: both build this envelope,
+    // and the derived post-review document is content-proofed against the by-value one, so
+    // a value present in one and not the other fails that proof. Both read it from `inp`.
     postReview: id
-      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '', findings: postReviewSet }
+      ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: reviewBodyOf(inp), findings: postReviewSet }
       : postReviewSet,
     report: inp.report || '',
     checkpoints: inp.checkpoints || {},
@@ -5167,8 +5193,10 @@ function persistPlan(inp, paths) {
       // Same envelope decision writerPayload makes (live-run L3, D16): with a PR
       // identity the artifact IS the post_review.py input wrapper; without one it is a
       // bare array. Key order is the wire contract — findings are appended last.
+      // Identical construction to writerPayload's — see the note there. Both read the
+      // banner from `inp`, so the derived document and the by-value one cannot disagree.
       wrapper: id
-        ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: '' }
+        ? { owner: id.owner, repo: id.repo, pr_number: id.pr_number, sha: id.sha_full, review_body: reviewBodyOf(inp) }
         : null,
     },
     checkpoint: {
@@ -5719,12 +5747,19 @@ async function runWith(ctx, rawArgs) {
       dimensionsLost: discoverOut.degraded || [],
       evidenceIsFresh: !replayedDelivery,
     });
-    if (!emptyReport) reportOut = { ...reportOut, report: applyHealthBanner(reportOut.report, health) };
+    const bannered = !emptyReport;
+    if (bannered) reportOut = { ...reportOut, report: applyHealthBanner(reportOut.report, health) };
     if (health.degraded) {
       gaps.push(`review_degraded: ${health.unclassified} of ${health.delivered + health.notChallenged} `
         + `finding(s) in this report were never classified`
         + (health.dimensionsLost.length ? `, and ${health.dimensionsLost.length} dimension(s) produced no results (${health.dimensionsLost.join(', ')})` : '')
-        + '. The report carries a degradation banner stating this; no finding was dropped.');
+        + '. No finding was dropped. '
+        // Says which surfaces actually carry the banner, because on the empty-report path
+        // there is no report to band — claiming one unconditionally would make this gap
+        // the very kind of unearned reassurance the banner exists to stop.
+        + (bannered
+          ? 'The report and the PR review summary both carry a degradation banner stating this.'
+          : 'The report was empty and its artifact path is nulled, so the banner rides on the PR review summary only.'));
     }
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
@@ -5734,6 +5769,9 @@ async function runWith(ctx, rawArgs) {
       postReview,
       prIdentity: (A.delivery || {}).prIdentity, // L3: writer emits the post_review-ready wrapper when present
       report: reportOut.report,
+      // The degradation banner on the OTHER delivery surface (issue #25 req 7): a
+      // pr_comments-only run never shows report.md to anyone.
+      reviewBody: healthBanner(health),
       // Persist a SLIM checkpoint: only the resume-consumed phase (challenge) carries full
       // output; every other phase is reduced to a count, so the single artifact-writer
       // prompt no longer duplicates every phase's findings bulk by value. readCheckpoints

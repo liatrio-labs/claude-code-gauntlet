@@ -117,10 +117,39 @@ test('a run that RECOVERS clears a previous run\'s banner entirely', () => {
 
 test('an UNTERMINATED begin sentinel is left alone rather than eating the report', () => {
   // Deleting to end-of-document on a malformed marker would lose the whole review to a
-  // stray comment — a far worse failure than a visible artifact.
+  // stray comment — a far worse failure than a visible artifact. Asserted while a banner
+  // is actually being PREPENDED (degraded health), so the strip and the prepend are both
+  // live: a healthy fixture would exercise neither.
   const body = `<!-- code-gauntlet:health:begin -->\n# Report\n\nreal content`;
-  const out = applyHealthBanner(body, reviewHealth({ delivered: [f('A')] }));
-  assert.match(out, /real content/);
+  const out = applyHealthBanner(body, reviewHealth({ delivered: [f('A', { origin: 'unknown' })] }));
+  assert.match(out, /real content/, 'the report survived');
+  assert.match(out, /This review is degraded/, 'and the fresh banner was still added');
+});
+
+test('SELF-REFERENCE: a finding quoting the sentinels cannot splice out the report', () => {
+  // This tool reviews its own repository, where the sentinel literals appear in source —
+  // so a finding whose evidence quotes them is not hypothetical. An unanchored strip would
+  // delete everything between the quoted begin and the next end. The strip is anchored at
+  // position 0, which puts report CONTENT structurally out of its reach.
+  const body = [
+    '# Report',
+    '',
+    '## F1: banner sentinels are not escaped',
+    'evidence: the code emits `<!-- code-gauntlet:health:begin -->` at the top',
+    '',
+    'IMPORTANT MIDDLE CONTENT THAT MUST SURVIVE',
+    '',
+    'and closes with `<!-- code-gauntlet:health:end -->` afterwards.',
+    '',
+    '## F2: a second real finding',
+  ].join('\n');
+  const out = applyHealthBanner(body, reviewHealth({ delivered: [f('A', { origin: 'unknown' })] }));
+  assert.match(out, /IMPORTANT MIDDLE CONTENT THAT MUST SURVIVE/);
+  assert.match(out, /F2: a second real finding/);
+  assert.match(out, /banner sentinels are not escaped/);
+  // ...and it is still banded exactly once, at the front.
+  assert.match(out, /^<!-- code-gauntlet:health:begin -->/);
+  assert.equal(out.split('This review is degraded').length - 1, 1);
 });
 
 // --- 4. Resume: report only what this run can evidence ------------------------
@@ -209,6 +238,76 @@ test('a review that found NOTHING but lost a dimension is still banded — the w
   const out = applyHealthBanner('# Code Gauntlet\n\nNo issues found.', health);
   assert.match(out, /This review is degraded/);
   assert.match(out, /produced no results at all/);
+});
+
+test('END TO END: the banner also rides the PR review summary, the other delivery surface', async () => {
+  // A pr_comments-only delivery never shows report.md to anyone: the reader gets inline
+  // comments plus this summary body. A banner that lived only on the report would be
+  // unmissable exactly where nobody was looking.
+  const args = validArgs({ delivery: { prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'a'.repeat(40) } } });
+  let payload = null;
+  const ctx = makeCtx(args, { verifySliceFailIndex: 0, onPersist: (p) => { payload = p; } });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.stats.health.degraded, true);
+  const wrapper = payload && payload.postReview;
+  assert.ok(wrapper && typeof wrapper.review_body === 'string', `expected a post-review wrapper, got ${JSON.stringify(payload && payload.postReview)}`);
+  assert.match(wrapper.review_body, /This review is degraded/);
+});
+
+test('END TO END: a clean run leaves the PR review summary empty', async () => {
+  const args = validArgs({ delivery: { prIdentity: { owner: 'o', repo: 'r', pr_number: 7, sha_full: 'a'.repeat(40) } } });
+  let payload = null;
+  const ctx = makeCtx(args, { onPersist: (p) => { payload = p; } });
+  const out = await runWith(ctx, args);
+  assert.equal(out.stats.health.degraded, false);
+  assert.equal(payload.postReview.review_body, '', 'a healthy run adds nothing to the summary');
+});
+
+test('END TO END: a lost discovery dimension reaches the banner through runWith', async () => {
+  // The dimensionsLost wiring (discoverOut.degraded -> reviewHealth) exercised through the
+  // real orchestration rather than by handing reviewHealth an array directly.
+  const args = validArgs();
+  let persisted = null;
+  const ctx = makeCtx(args, {
+    // A discovery agent that THROWS is a terminal dispatch failure: that dimension
+    // produced nothing, and its silence is indistinguishable from "found nothing" —
+    // which is exactly the false-clean the dimension signal exists to catch.
+    agentThrowLabel: 'code-gauntlet:security-reviewer',
+    onPersist: (p) => { persisted = p && p.report; },
+  });
+  const out = await runWith(ctx, args);
+
+  assert.ok(out.stats.health.dimensionsLost.length > 0, `expected a lost dimension, got ${JSON.stringify(out.stats.health)}`);
+  assert.equal(out.stats.health.degraded, true);
+  assert.match(persisted, /produced no results at all/);
+});
+
+test('END TO END: a RESUME bands from the replayed findings and withholds the orphaned stage detail', async () => {
+  // The evidenceIsFresh wiring (checkpoints.challenge -> reviewHealth) through the real
+  // orchestration. A resume replays the delivered set and re-runs discover/verify over a
+  // population it then discards, so the banner must speak from the replayed findings'
+  // own origins and stay silent about the recomputation.
+  const first = validArgs();
+  let persistedCheckpoints = null;
+  await runWith(makeCtx(first, {
+    verifySliceFailIndex: 0, // the delivered set is unclassified when it is checkpointed
+    onPersist: (p) => { persistedCheckpoints = p && p.checkpoints; },
+  }), first);
+  assert.ok(persistedCheckpoints, 'the first run persisted a checkpoint to resume from');
+
+  const args = validArgs({ checkpoints: persistedCheckpoints });
+  let persisted = null;
+  const ctx = makeCtx(args, { onPersist: (p) => { persisted = p && p.report; } });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.stats.health.evidenceIsFresh, false, 'the delivery was replayed');
+  assert.equal(out.stats.health.degraded, true, 'the replayed findings are still evidence');
+  assert.match(persisted, /This review is degraded/);
+  assert.match(persisted, /replayed a previous run's findings/);
+  // The freshly re-run verify describes a set this run discards; quoting it here would
+  // print one population's health above another's results.
+  assert.equal(out.stats.health.verifySlicesDegraded, undefined);
 });
 
 test('END TO END: a clean run persists a report with no banner and no degradation gap', async () => {
