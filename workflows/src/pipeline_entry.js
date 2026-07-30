@@ -19,7 +19,7 @@ import { parseEntryArgs } from './args.js';
 // name — so it is free to disambiguate. `whenToUse` says the same thing to whoever reads
 // the workflow list instead of this comment.
 export const meta = { name: 'code-gauntlet-pipeline', description: 'code-gauntlet v3 pipeline: phases 3-8 orchestration (Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report) + artifact persistence', whenToUse: 'Never invoke by name — the code-gauntlet SKILL runs this bundle by scriptPath after Phases 1-2 build the args waist. Invoked by name it receives a raw user string instead of args and fails immediately.', phases: ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge', 'report'] };
-const PIPELINE_VERSION = '3.3.2';
+const PIPELINE_VERSION = '3.3.3';
 
 // run(rawArgs) — the thin public entry. Builds the real-globals ctx and delegates to
 // runWith (in stages.js), which owns arg validation, the top-level try/catch, the full
