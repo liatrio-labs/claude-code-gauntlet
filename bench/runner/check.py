@@ -368,6 +368,75 @@ def _extract_review_health(path):
     return health if isinstance(health, dict) else None
 
 
+# Loose ISO8601 prefix (date + time-of-day) — shape only, not full calendar
+# validity. Real wf_*.json records carry a top-level `timestamp` in this
+# format; bench/profile_run.py's iso_to_ms already relies on the same field
+# for its own "most recent record" ordering.
+_ISO8601_RE = re.compile(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}')
+
+
+def _record_timestamp(path):
+    """Return a ``wf_*.json`` record's own top-level ``timestamp``, or None
+    when absent, not a string, or not ISO8601-shaped.
+
+    A value that does not look like one is treated as missing, not as a
+    reason to raise — this exists purely to support ordering candidate
+    records (see ``_select_pr_health_snapshot``), and an untrustworthy value
+    must fall out of that ordering rather than corrupt it.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    ts = data.get("timestamp")
+    return ts if isinstance(ts, str) and _ISO8601_RE.match(ts) else None
+
+
+def _select_pr_health_snapshot(wf_records):
+    """Pick the single canonical ``result.stats.health`` snapshot for a PR
+    out of its (possibly several) ``wf_*.json`` records.
+
+    A health object is a snapshot of the WHOLE delivered review, not a
+    per-dispatch delta (see the aggregation note in ``check_run``), so
+    picking the wrong record for a retried PR silently reports a superseded
+    attempt's counts instead of the live one. ``wf_*.json`` filenames are
+    ``wf_<random>`` (issue #85: ``_iter_workflow_records`` globs every record
+    with no notion of which attempt is current, and a superseded record has
+    already produced a wrong verdict once — grafana's first attempt died to a
+    sustained API 529, ``--retry-failed`` ran clean, and the checker read the
+    dead record). SORTED GLOB ORDER IS NOT CHRONOLOGICAL ORDER, so it must
+    never be used to pick "the latest" — this function replaces that.
+
+    Ordering key is each record's own ``timestamp`` field (ISO8601, so
+    lexicographic max == chronological max — see ``_record_timestamp``).
+    When NO candidate has a usable timestamp, ordering is simply impossible,
+    so the fallback shifts from "pick something" to "pick safely": a record
+    that already reports ``degraded: true`` wins, because under-reporting a
+    real degradation is the wrong direction to fail in for a disclosure
+    signal. Only when nothing is timestamped AND nothing is degraded does
+    this fall back to the last candidate in caller-supplied order, purely
+    for determinism — there is no better signal left to break the tie with.
+    """
+    candidates = []  # (timestamp_or_None, health_dict)
+    for wf_path in wf_records:
+        h = _extract_review_health(wf_path)
+        if h is None:
+            continue
+        candidates.append((_record_timestamp(wf_path), h))
+    if not candidates:
+        return None
+    timestamped = [(ts, h) for ts, h in candidates if ts is not None]
+    if timestamped:
+        return max(timestamped, key=lambda pair: pair[0])[1]
+    degraded = [h for _, h in candidates if h.get("degraded") is True]
+    if degraded:
+        return degraded[0]
+    return candidates[-1][1]
+
+
 def _script_path_ok(script_path, expected_pipeline, repo_root=None):
     """True when scriptPath is the repo's ``workflows/pipeline.js``.
 
@@ -889,16 +958,18 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         # above, which is derived from the findings/report directly, not from
         # this. A health object is a SNAPSHOT of the whole delivered review,
         # not a per-dispatch delta like input_proof's counters — so when a PR has
-        # multiple wf_*.json records (e.g. a resumed run produced more than
-        # one), this takes the LAST one that carries `stats.health` (sorted
-        # glob order, same as wf_records above) rather than summing across
-        # records, which would double-count a single delivered set.
+        # multiple wf_*.json records (e.g. a run that was retried), this takes
+        # ONE of them rather than summing, which would double-count a single
+        # delivered set.
+        #
+        # WHICH ONE is _select_pr_health_snapshot's whole subject: the newest by
+        # the record's own ``timestamp``, never by glob order, because record
+        # filenames are ``wf_<random>`` and that sort is arbitrary. Measured on
+        # smoke-20260729-193917-f08d4f6, the record that sorts LAST is the OLDEST
+        # of four by 90 minutes — so a glob-ordered pick reads a superseded
+        # attempt on exactly the PRs that were retried (issue #85).
         if wf_records:
-            pr_health = None
-            for wf_path in wf_records:
-                h = _extract_review_health(wf_path)
-                if h is not None:
-                    pr_health = h
+            pr_health = _select_pr_health_snapshot(wf_records)
             if pr_health is None:
                 health_unmeasured_prs += 1
             else:

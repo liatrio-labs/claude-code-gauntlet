@@ -223,11 +223,10 @@ Severity has been downgraded one level from the original classification (see the
 
 ## Review Methodology
 
-{This table covers only what the writer is actually given — findings and per-stage counts. Agent dispatch status, dimension coverage, and review timing are NOT in it: the report-writer is never handed the discover/verify outcomes or a wall clock, so a row claiming e.g. "Agents dispatched: 7/7 completed" or "Failed/skipped agents: none" would be an invented health claim — the same defect class the degradation banner below the title exists to prevent. When a dimension produced no results or a finding could not be classified, that banner states so, prepended deterministically and not authored by you; this table does not repeat or anticipate it.}
+{This table covers only what the writer is actually given: `reportPrompt` serializes exactly `{summary, findings, unverified, stats}` into the writer's prompt and nothing else reaches it — no policy, no model resolution, no scope, no base sha, no wall clock. Five rows that used to live here are gone for that reason: Agents dispatched, Failed/skipped agents, Total review time, Model tier, and Review scope. The first three are categorically unfillable — nothing to reword them into. Model tier and Review scope are worth naming explicitly, because an unfilled row for either quietly defaults to something reassuring: "Review scope: Full" is a completeness claim in exactly the shape "Failed/skipped agents: none" was — the unknown case rendering as the healthy one. When a dimension produced no results or a finding could not be classified, the report's degradation banner states so, prepended deterministically and not authored by you; this table does not repeat or anticipate it.}
 
 | Aspect | Details |
 |--------|---------|
-| **Review scope** | {Full, or Incremental since {sha} (N commits)} |
 | **Findings pipeline** | {N raw findings → M after deterministic verification → K after confidence filter → J after dedup} |
 | **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} |
 | **Blind challenge round** | {N findings blind-challenged, M downgraded, K boosted, J contested} |

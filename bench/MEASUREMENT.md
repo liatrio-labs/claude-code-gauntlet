@@ -74,13 +74,21 @@ python3 bench/run.py --check <RUN_ID>
    degrade. **Also fails** when a PR delivers any *unclassified* finding
    (origin not `new`/`surfaced`, including a finding with no `origin` key at
    all — strictly wider than the `origin=unknown` check, matching
-   `isClassified` in `workflows/src/stages.js`) whose persisted
-   `code-gauntlet-report-*.md` carries no health-degradation banner sentinel
-   (`<!-- code-gauntlet:health:begin -->`). This is reported as an additional
-   gate-3 failure condition rather than a new gate number — same underlying
-   fault (an unclassified finding shipped in the review), and gate 3 already
-   owns that fault class; what's new is checking that a degraded run actually
-   *disclosed* it (issue #25 req 7). Carriers that own a `gaps` array — `workflows/wf_*.json` (the
+   `isClassified` in `workflows/src/stages.js`) whose persisted artifacts
+   carry no health-degradation banner sentinel
+   (`<!-- code-gauntlet:health:begin -->`) on **either** delivery surface —
+   `code-gauntlet-report-*.md` **or** `code-gauntlet-post-review-*.json`'s
+   `review_body` field. Both surfaces are checked, and either one is
+   sufficient, deliberately not both: `pr_comments` is a legal standalone
+   delivery mode (`references/headless-mode.md`) that never shows `report.md`
+   to anyone, and the pipeline's own empty-report path persists no report at
+   all (`bannered = !emptyReport` in `workflows/src/stages.js`), so review_body
+   alone is the correct, documented shape in both cases — requiring both
+   surfaces would fail runs the pipeline is behaving correctly on. This is
+   reported as an additional gate-3 failure condition rather than a new gate
+   number — same underlying fault (an unclassified finding shipped in the
+   review), and gate 3 already owns that fault class; what's new is checking
+   that a degraded run actually *disclosed* it (issue #25 req 7). Carriers that own a `gaps` array — `workflows/wf_*.json` (the
    compact Workflow return) and `code-gauntlet-checkpoint-all-*.json` — are
    judged from that parsed array alone; their raw bytes are never scanned,
    because a wf record echoes the whole `workflows/pipeline.js` bundle into its
@@ -125,6 +133,19 @@ signal from the gate-3 banner-pairing failure condition above: that check is
 derived directly from the persisted findings artifact and report, so it still
 fires correctly on a run that collected no `wf_*.json` records at all — the
 case where this stat reads `not measured` rather than a gate failure.
+
+When a PR has more than one `wf_*.json` record (e.g. it was retried),
+`_select_pr_health_snapshot` picks the snapshot to report by the record's own
+`timestamp` field — **never** by sorted glob order. `wf_*.json` filenames are
+`wf_<random>`, so that sort is arbitrary; on a measured run one four-record PR
+sorted its OLDEST record (by 90 minutes) last. This is the same currency
+problem issue #85 files against `_iter_workflow_records` generally (a
+superseded record has already won a different gate's verdict once — a dead
+first attempt outliving a clean `--retry-failed` rerun); this only narrows
+the fix to the health snapshot. When no candidate has a usable timestamp,
+the fallback prefers any record reporting `degraded: true` over a quieter
+one, since under-reporting is the wrong direction to fail in for a
+disclosure signal.
 
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).

@@ -125,16 +125,22 @@ def _wf_record_with_input_proof(input_proof=None, script_path=PIPELINE):
     return rec
 
 
-def _wf_record_with_health(health=None, script_path=PIPELINE):
+def _wf_record_with_health(health=None, script_path=PIPELINE, *, timestamp=None):
     """A wf record carrying a compact-return ``result.stats.health`` block
     (issue #25 reqs 7-9). ``health=None`` omits ``stats.health`` entirely,
     modeling a record recorded before this landed — the "not measured" case.
+    ``timestamp`` sets the record's own top-level ``timestamp`` field (the
+    field ``_select_pr_health_snapshot`` orders candidate records by, since
+    ``wf_*.json`` filenames are random and glob order is not chronological —
+    issue #85); omitted by default, matching a record with no usable one.
     """
     rec = _wf_record(script_path)
     stats = {}
     if health is not None:
         stats["health"] = health
     rec["result"] = {"ok": True, "gaps": [], "stats": stats}
+    if timestamp is not None:
+        rec["timestamp"] = timestamp
     return rec
 
 
@@ -994,7 +1000,147 @@ class CheckRunTest(unittest.TestCase):
             any("health-degradation banner" in f for f in result2["failures"])
         )
 
+    def test_unclassified_finding_disclosed_via_post_review_only_passes(self):
+        """EITHER surface satisfies the pairing check, not BOTH: a
+        pr_comments-only delivery never shows report.md to anyone, so the
+        banner riding ONLY on the post-review review_body must be sufficient.
+        Also matches the pipeline's own empty-report path, where the report
+        artifact is deliberately not persisted and only review_body carries
+        the banner (see the EITHER-not-BOTH comment at the check site).
+        """
+        _build_ok_run(self.run_dir, origin="stale")  # default report has no banner
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_post_review(pr_dir, _banner_review_body())
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertFalse(
+            any("health-degradation banner" in f for f in result["failures"])
+        )
+
+    def test_unclassified_finding_neither_surface_disclosed_fails(self):
+        """Report has no banner AND the persisted post-review review_body is
+        present but empty (the healthy-run shape) — still a silent failure.
+        """
+        _build_ok_run(self.run_dir, origin="stale")
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_post_review(pr_dir, review_body="")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "health-degradation banner" in f and "code-gauntlet-post-review" in f
+                for f in result["failures"]
+            )
+        )
+
+    def test_post_review_bare_array_shape_has_no_review_body_surface(self):
+        """A run with no PR identity persists a bare findings array for
+        post-review (no review_body key at all) — that must read as "no
+        banner here", not as a parse error masking a real disclosure gap.
+        """
+        _build_ok_run(self.run_dir, origin="stale")
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_post_review(pr_dir, with_identity=False)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("health-degradation banner" in f for f in result["failures"])
+        )
+
+    def test_pairing_check_is_isolated_per_pr(self):
+        """A bug that scans across the whole run dir instead of scoping to
+        each PR's own directory — or that lets one PR's banner satisfy a
+        DIFFERENT PR's unclassified finding — must not pass. One PR is
+        degraded-and-disclosed, the other degraded-and-silent; the failure
+        must be attributed to exactly the silent one.
+        """
+        urls = [
+            "https://github.com/example/repo/pull/1",
+            "https://github.com/example/repo/pull/2",
+        ]
+        _build_ok_run(self.run_dir, pr_urls=urls, origin="stale")
+        pr1 = self.run_dir / "pr-example-repo-1"
+        pr2 = self.run_dir / "pr-example-repo-2"
+        # PR1: degraded and disclosed (report banner).
+        (pr1 / "code-gauntlet-report-deadbeef.md").write_text(
+            _report_with_banner(), encoding="utf-8"
+        )
+        # PR2: degraded and silent — default report (no banner), no post-review file.
+
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+
+        pr1_failures = [f for f in result["failures"] if f.startswith(pr1.name + ":")]
+        pr2_failures = [f for f in result["failures"] if f.startswith(pr2.name + ":")]
+        self.assertFalse(
+            any("health-degradation banner" in f for f in pr1_failures), pr1_failures
+        )
+        self.assertTrue(
+            any("health-degradation banner" in f for f in pr2_failures), pr2_failures
+        )
+        # Both PRs' unclassified findings were still counted at the run level.
+        self.assertEqual(result["stats"]["unclassified_findings"], 2)
+
     # --- health: reported stat, not a gate (issue #25 reqs 7-9) ---
+
+    def test_health_snapshot_picks_the_NEWEST_record_not_the_last_by_filename(self):
+        """A retried PR must report its live attempt, not a superseded one.
+
+        ``wf_*.json`` filenames are ``wf_<random>``, so sorted-glob order says
+        nothing about which attempt is current — this fixture uses the real
+        filenames and timestamps from smoke-20260729-193917-f08d4f6, where the
+        record that sorts LAST is the OLDEST of the set by 90 minutes. Picking
+        by glob order there reports a dead attempt's health as the run's, which
+        is the same class of defect issue #85 files against
+        ``_iter_workflow_records``. The assertion is deliberately written so it
+        FAILS under the glob-order implementation rather than merely passing
+        under the timestamp one.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+
+            def record(name, ts, unclassified):
+                path = d / name
+                path.write_text(json.dumps({
+                    "timestamp": ts,
+                    "result": {"stats": {"health": {
+                        "unclassified": unclassified, "degraded": unclassified > 0,
+                    }}},
+                }), encoding="utf-8")
+                return path
+
+            newest = record("wf_744f098e-8c6.json", "2026-07-29T21:44:17.304Z", 0)
+            middle = record("wf_b081a6b5-340.json", "2026-07-29T20:56:25.962Z", 5)
+            oldest = record("wf_a62f7348-a3f.json", "2026-07-29T20:12:04.222Z", 99)
+
+            records = sorted([newest, middle, oldest])
+            # Precondition the whole test rests on: glob order is not chronological.
+            self.assertEqual(records[-1].name, "wf_b081a6b5-340.json")
+
+            picked = check._select_pr_health_snapshot(records)
+            self.assertEqual(picked["unclassified"], 0, "must be the newest record")
+            self.assertFalse(picked["degraded"])
+
+    def test_health_snapshot_without_timestamps_prefers_a_degraded_record(self):
+        """With nothing to order by, under-reporting degradation is the wrong
+        direction to fail in for a disclosure signal, so a degraded record wins."""
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+
+            def untimestamped(name, unclassified):
+                path = d / name
+                path.write_text(json.dumps({
+                    "result": {"stats": {"health": {
+                        "unclassified": unclassified, "degraded": unclassified > 0,
+                    }}},
+                }), encoding="utf-8")
+                return path
+
+            clean = untimestamped("wf_aaa.json", 0)
+            degraded = untimestamped("wf_zzz.json", 4)
+            picked = check._select_pr_health_snapshot([clean, degraded])
+            self.assertTrue(picked["degraded"])
+            self.assertEqual(picked["unclassified"], 4)
 
     def test_health_present_aggregates_across_prs(self):
         urls = [
@@ -1059,6 +1205,119 @@ class CheckRunTest(unittest.TestCase):
             {"runId": "wf_x", "scriptPath": PIPELINE, "result": {"stats": {"health": health}}},
         )
         self.assertEqual(check._extract_review_health(wf), health)
+
+    # --- health snapshot selection: timestamp, not glob order (issue #85) ---
+    #
+    # wf_*.json filenames are `wf_<random>`, so sorted glob order is arbitrary
+    # and NOT chronological — issue #85 already recorded a superseded record
+    # winning a different gate's verdict this same way. These tests pin that
+    # _select_pr_health_snapshot orders by the record's own `timestamp`
+    # instead, with a disclosure-safe fallback when no timestamp is usable.
+
+    def test_record_timestamp_reads_iso8601_string(self):
+        wf = self.run_dir / "wf_ts.json"
+        _write_json(wf, {"runId": "wf_x", "timestamp": "2026-07-29T21:44:17Z"})
+        self.assertEqual(check._record_timestamp(wf), "2026-07-29T21:44:17Z")
+
+    def test_record_timestamp_none_when_absent_or_invalid(self):
+        no_ts = self.run_dir / "wf_no_ts.json"
+        _write_json(no_ts, {"runId": "wf_x"})
+        self.assertIsNone(check._record_timestamp(no_ts))
+
+        not_a_string = self.run_dir / "wf_bad_type.json"
+        _write_json(not_a_string, {"runId": "wf_x", "timestamp": 12345})
+        self.assertIsNone(check._record_timestamp(not_a_string))
+
+        not_iso = self.run_dir / "wf_bad_shape.json"
+        _write_json(not_iso, {"runId": "wf_x", "timestamp": "not-a-date"})
+        self.assertIsNone(check._record_timestamp(not_iso))
+
+    def test_select_pr_health_snapshot_picks_newest_by_timestamp_not_glob_order(self):
+        """Mirrors the measured smoke-20260729-193917-f08d4f6 shape: the
+        record that sorts LAST alphabetically is actually the OLDEST by 90
+        minutes. Picking by glob order would silently report the superseded
+        attempt's counts.
+        """
+        old = self.run_dir / "wf_a_sorts_first_but_is_oldest.json"
+        new = self.run_dir / "wf_z_sorts_last_but_is_newest.json"
+        _write_json(
+            old,
+            _wf_record_with_health(
+                {"delivered": 1, "notChallenged": 0, "unclassified": 1,
+                 "dimensionsLost": [], "evidenceIsFresh": True, "degraded": True},
+                timestamp="2026-07-29T20:12:04Z",
+            ),
+        )
+        _write_json(
+            new,
+            _wf_record_with_health(
+                {"delivered": 9, "notChallenged": 0, "unclassified": 0,
+                 "dimensionsLost": [], "evidenceIsFresh": True, "degraded": False},
+                timestamp="2026-07-29T21:44:17Z",
+            ),
+        )
+        # Passed in the "wrong" (glob-ascending, old-then-new) order deliberately —
+        # the function must still pick by timestamp, not by list position.
+        snapshot = check._select_pr_health_snapshot([old, new])
+        self.assertEqual(snapshot["delivered"], 9)
+        self.assertFalse(snapshot["degraded"])
+
+    def test_select_pr_health_snapshot_falls_back_to_degraded_when_untimestamped(self):
+        """No candidate has a usable timestamp: ordering is impossible, so
+        the fallback must prefer disclosure over silence — a record already
+        reporting degraded:true wins over a quieter, healthier-looking one.
+        """
+        healthy = self.run_dir / "wf_healthy_no_ts.json"
+        degraded = self.run_dir / "wf_degraded_no_ts.json"
+        _write_json(
+            healthy,
+            _wf_record_with_health({
+                "delivered": 5, "notChallenged": 0, "unclassified": 0,
+                "dimensionsLost": [], "evidenceIsFresh": True, "degraded": False,
+            }),
+        )
+        _write_json(
+            degraded,
+            _wf_record_with_health({
+                "delivered": 5, "notChallenged": 0, "unclassified": 2,
+                "dimensionsLost": [], "evidenceIsFresh": True, "degraded": True,
+            }),
+        )
+        snapshot = check._select_pr_health_snapshot([healthy, degraded])
+        self.assertTrue(snapshot["degraded"])
+        self.assertEqual(snapshot["unclassified"], 2)
+
+    def test_select_pr_health_snapshot_returns_none_without_any_health(self):
+        no_health = self.run_dir / "wf_no_health.json"
+        _write_json(no_health, _wf_record())
+        self.assertIsNone(check._select_pr_health_snapshot([no_health]))
+
+    def test_health_stat_uses_newest_record_not_glob_order(self):
+        """End-to-end through check_run(): a PR with two wf records where the
+        alphabetically-last filename is actually the older attempt. The
+        reported stats.health must reflect the NEWER attempt.
+        """
+        _build_ok_run(self.run_dir, origin="new")
+        pr_dir = self.run_dir / "pr-example-repo-1"
+        _write_json(
+            pr_dir / "workflows" / "wf_a_sorts_first_but_is_oldest.json",
+            _wf_record_with_health(
+                {"delivered": 1, "notChallenged": 0, "unclassified": 1,
+                 "dimensionsLost": ["security"], "evidenceIsFresh": True, "degraded": True},
+                timestamp="2026-07-29T20:12:04Z",
+            ),
+        )
+        _write_json(
+            pr_dir / "workflows" / "wf_z_sorts_last_but_is_newest.json",
+            _wf_record_with_health(
+                {"delivered": 9, "notChallenged": 0, "unclassified": 0,
+                 "dimensionsLost": [], "evidenceIsFresh": True, "degraded": False},
+                timestamp="2026-07-29T21:44:17Z",
+            ),
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertEqual(result["stats"]["health"]["delivered"], 9)
+        self.assertEqual(result["stats"]["health"]["degraded_prs"], 0)
 
     def test_zero_comments_fails_g5(self):
         _build_ok_run(self.run_dir, n_comments=0)
