@@ -170,7 +170,10 @@ test('F2-1: an empty report with ONLY a replayed UNVERIFIED bucket still trips t
   assert.equal(out.stats.unverified, 1, 'but the unverified bucket carries a real finding');
   const gap = out.gaps.find((g) => /empty_report/.test(g));
   assert.ok(gap, `the guard must fire on the replayed unverified bucket, got: ${out.gaps}`);
-  assert.match(gap, /unverified/, 'the wording names the bucket that is actually at risk');
+  // The bucket is named by what it IS (issue #25 req 8): "not blind-challenged", never
+  // "unverified/pipeline-degraded", which was a whole-pipeline health claim this bucket is
+  // in no position to make.
+  assert.match(gap, /not blind-challenged/, 'the wording names the bucket that is actually at risk');
   assert.equal(out.artifactPaths.report, null, 'the empty report path is nulled');
 });
 
@@ -184,7 +187,7 @@ test('F2-1: the resume wording names BOTH replayed buckets by count', async () =
   assert.equal(
     out2.gaps.find((g) => /empty_report/.test(g)),
     'empty_report: report stage produced no report while 2 finding(s) replayed from the resumed '
-    + 'challenge checkpoint would be delivered and 0 would be reported as unverified/pipeline-degraded '
+    + 'challenge checkpoint would be delivered and 0 would be reported as not blind-challenged '
     + '— refusing to ship a silent empty report',
   );
 });

@@ -4410,6 +4410,149 @@ function unwrapWrappedReport(s) {
   return parsed.report;
 }
 
+// --- Review health: the deterministic degradation banner (issue #25 reqs 7-9) ---
+
+// A finding is CLASSIFIED only if verify actually decided what it is. classify_blame
+// returns exactly 'new' or 'surfaced', so anything else is unclassified — including
+// `origin: 'unknown'` (a degraded slice, degradedSlice) AND a MISSING origin, which is
+// reachable: `origin` is not in VERIFY_SCHEMA's delta `required` list, and
+// joinVerifyDeltas only copies a delta key when the echo carried it, so an executor that
+// omits `origin` leaves the finding with whatever it had before verify — and no discovery
+// agent ever sets one. applyChallenges already guards for the absent case for the same
+// reason. Keying this on `=== 'unknown'` would therefore have missed a whole class of
+// unclassified finding, which is precisely the silence this banner exists to end.
+const CLASSIFIED_ORIGINS = ['new', 'surfaced'];
+const isClassified = (f) => CLASSIFIED_ORIGINS.includes(f && f.origin);
+
+// reviewHealth(inp) -> the structured health of the DELIVERED review. Pure and exported.
+//
+// WHAT IT KEYS ON, AND WHY THAT CHOICE IS THE WHOLE DESIGN. The primary evidence is the
+// delivered findings' OWN `origin` values, not the verify stage's report of itself. That
+// is what makes this correct on a RESUME: `PERSISTED_RESUME_PHASES` is `['challenge']`, so
+// a resumed run REPLAYS the delivered set from the checkpoint while re-running
+// discover/verify/filter over a freshly rediscovered population that is then discarded.
+// Reading `verify.verified` on such a run would describe findings that never ship —
+// health for one population, printed over another. Origins travel WITH the findings
+// through the checkpoint, so they describe the delivered set on every path.
+//
+// The stage-level signals are still used, but only as CORROBORATION, and only when the
+// caller says they describe this run's own delivered set (`evidenceIsFresh`). A resumed
+// run therefore reports what it can prove and stays silent about what it cannot, rather
+// than borrowing an unrelated recomputation's clean bill of health.
+//
+// Persistence health is deliberately absent: writeArtifacts runs AFTER the report is
+// rendered, so no report can ever speak to whether its own artifacts landed. That gap is
+// covered by the run's gaps, not by a claim the report is not in a position to make.
+function reviewHealth(inp) {
+  const A = inp || {};
+  const delivered = Array.isArray(A.delivered) ? A.delivered : [];
+  const notChallenged = Array.isArray(A.notChallenged) ? A.notChallenged : [];
+  const evidenceIsFresh = A.evidenceIsFresh !== false;
+  const verify = (evidenceIsFresh && A.verify) || {};
+  const proof = verify.inputProof || {};
+  const dimensionsLost = (evidenceIsFresh && Array.isArray(A.dimensionsLost)) ? A.dimensionsLost : [];
+
+  const unclassified = delivered.filter((f) => !isClassified(f)).length
+    + notChallenged.filter((f) => !isClassified(f)).length;
+
+  const health = {
+    delivered: delivered.length,
+    notChallenged: notChallenged.length,
+    unclassified,
+    dimensionsLost,
+    evidenceIsFresh,
+    // Corroborating, fresh-only. Absent (undefined) reads as "not measured", never as 0 —
+    // the same distinction the inputProof ledger itself draws.
+    verifySlicesDegraded: typeof proof.degraded === 'number' ? proof.degraded : undefined,
+    inputUnproven: typeof proof.unproven === 'number' ? proof.unproven : undefined,
+    inputRecovered: typeof proof.recovered === 'number' ? proof.recovered : undefined,
+  };
+  // DEGRADED means "some of what is being delivered is not backed by the analysis the
+  // report otherwise implies". Unproven slice inputs are deliberately NOT in this test:
+  // PR3 established unproven as the pre-existing baseline rather than a degradation, and a
+  // banner that fires on healthy runs is a banner nobody reads. It is still NAMED in the
+  // banner when one is already firing, so it is disclosed without crying wolf.
+  health.degraded = unclassified > 0 || dimensionsLost.length > 0;
+  return health;
+}
+
+const HEALTH_BEGIN = '<!-- code-gauntlet:health:begin -->';
+const HEALTH_END = '<!-- code-gauntlet:health:end -->';
+
+// healthBanner(health) -> the markdown block, or '' when the review is healthy.
+// GitHub alert syntax so it renders as an unmissable callout in a PR comment and still
+// reads correctly as plain text everywhere else.
+function healthBanner(health) {
+  const h = health || {};
+  if (!h.degraded) return '';
+  const lines = [];
+  if (h.unclassified > 0) {
+    const total = h.delivered + h.notChallenged;
+    lines.push(`> **${h.unclassified} of ${total} finding(s) in this report were never classified.** `
+      + 'The verify stage could not decide whether they describe code this change introduced or '
+      + 'pre-existing code it merely exposed, so the usual new-vs-surfaced split and the '
+      + 'surfaced severity downgrade were not applied to them.');
+  }
+  if (h.dimensionsLost.length > 0) {
+    lines.push(`> **${h.dimensionsLost.length} review dimension(s) produced no results at all** `
+      + `(${h.dimensionsLost.join(', ')}). Nothing was reviewed for those dimensions, so their `
+      + 'absence from this report is not evidence of their absence in the code.');
+  }
+  if (h.verifySlicesDegraded > 0) {
+    lines.push(`> Verify degraded ${h.verifySlicesDegraded} finding-slice(s).`);
+  }
+  if (h.inputUnproven > 0) {
+    lines.push(`> ${h.inputUnproven} slice input(s) could not be proven against what the pipeline `
+      + 'dispatched — their classification stands but is unproven.');
+  }
+  if (h.inputRecovered > 0) {
+    lines.push(`> ${h.inputRecovered} corrupted slice input(s) were recovered and proven intact.`);
+  }
+  if (!h.evidenceIsFresh) {
+    lines.push('> This run replayed a previous run\'s findings from a checkpoint, so only the '
+      + 'findings themselves are evidence here — the stage-level detail above is limited to '
+      + 'what those findings carry.');
+  }
+  lines.push('>', '> No finding was dropped: everything the review found is still in this report. '
+    + 'What is missing is the analysis above, not the results.');
+  return [
+    HEALTH_BEGIN,
+    '> [!WARNING]',
+    '> ## This review is degraded',
+    '>',
+    ...lines,
+    HEALTH_END,
+  ].join('\n');
+}
+
+// applyHealthBanner(report, health) -> the report with exactly the right banner on it.
+//
+// IDEMPOTENT BY CONSTRUCTION, which is what makes it safe at the one place it must run.
+// The only point every report reaches — including a resume that REPLAYS a previous run's
+// report body and never calls reportStage at all — is just before persistence. A replayed
+// body may already carry the PREVIOUS run's banner, and a stale banner is worse than no
+// banner: it would describe a health state this run did not measure. So any existing
+// sentinel-delimited block is removed first and a freshly computed one is prepended.
+//
+// Stripping walks with indexOf rather than a regex: the input is arbitrary agent-authored
+// markdown, and a non-greedy dot-all regex over an unbounded document is exactly the shape
+// that backtracks pathologically. An unterminated begin-sentinel is left ALONE rather than
+// treated as "delete to end of document" — losing the report to a malformed marker would
+// be a far worse failure than a visible stray comment.
+function applyHealthBanner(report, health) {
+  let body = typeof report === 'string' ? report : '';
+  for (;;) {
+    const start = body.indexOf(HEALTH_BEGIN);
+    if (start === -1) break;
+    const end = body.indexOf(HEALTH_END, start);
+    if (end === -1) break;
+    body = body.slice(0, start) + body.slice(end + HEALTH_END.length);
+  }
+  while (body.charAt(0) === '\n') body = body.slice(1);
+  const banner = healthBanner(health);
+  return banner ? `${banner}\n\n${body}` : body;
+}
+
 // Deterministic fallback report (no agent, no wall-clock) built from what the
 // pipeline already knows. Never throws — this is the last-resort degradation.
 function minimalReport(inp) {
@@ -4421,7 +4564,13 @@ function minimalReport(inp) {
     'The report-writer agent was unavailable; this fallback was assembled deterministically from pipeline results.',
     '',
     `- High-confidence findings: ${findings.length}`,
-    `- Unverified / pipeline-degraded findings: ${unverified.length}`,
+    // NOT "unverified / pipeline-degraded" (issue #25 req 8). This bucket is exactly the
+    // findings challengeStage did not blind-challenge — the cap overflow plus the ones
+    // whose challenger came back null — and nothing else. Calling it pipeline health let
+    // a run print "0 unverified/pipeline-degraded findings" while every finding it
+    // delivered carried origin=unknown, twice on the record. The bucket now says what it
+    // is; the health claim belongs to the banner, which derives it from the findings.
+    `- Not blind-challenged (challenge cap overflow, or challenger unavailable): ${unverified.length}`,
   ];
   if (inp.summary) lines.push('', '## Change summary', '', String(inp.summary));
   if (findings.length) {
@@ -4447,7 +4596,14 @@ function reportPrompt(inp, seg) {
     unverified: (!seg || seg.index === 0) ? (inp.unverified || []) : [], // render the unverified bucket once, in segment 0
     stats: inp.stats || {},
   });
-  return `${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
+  // The writer is told what the second bucket ACTUALLY is, and is told not to characterise
+  // the run's health at all (issue #25 reqs 8-9). It cannot do so correctly: it is handed
+  // the delivered findings and the challenge buckets, never the verify/discover outcomes,
+  // so any summary of pipeline health it writes is composed from data that does not
+  // contain the answer. That claim is now made deterministically, by applyHealthBanner,
+  // from the findings' own classification — this prompt's job is to stop inviting a
+  // sentence the writer has no way to get right.
+  return `${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section, and in a clearly-labelled secondary section the findings that were NOT blind-challenged (they overflowed the challenge cap or their challenger was unavailable) — describe that section as exactly that, not as a statement about the review's overall health or completeness. Do not summarise pipeline health, degradation, or how much of the review succeeded: that is added separately and deterministically. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
 }
 
 // --- Persistence: writeArtifacts --------------------------------------------
@@ -5538,7 +5694,37 @@ async function runWith(ctx, rawArgs) {
       // guard fired.
       gaps.push(postFilterCount > 0
         ? `empty_report: report stage produced no report while ${postFilterCount} finding(s) survived the filter — refusing to ship a silent empty report`
-        : `empty_report: report stage produced no report while ${deliveredCount} finding(s) replayed from the resumed challenge checkpoint would be delivered and ${unverifiedCount} would be reported as unverified/pipeline-degraded — refusing to ship a silent empty report`);
+        : `empty_report: report stage produced no report while ${deliveredCount} finding(s) replayed from the resumed challenge checkpoint would be delivered and ${unverifiedCount} would be reported as not blind-challenged — refusing to ship a silent empty report`);
+    }
+
+    // THE DEGRADATION BANNER (issue #25 reqs 7-9), applied HERE and nowhere else.
+    //
+    // This is the single point every report body passes through. reportStage has three
+    // producers of its own (single dispatch, segmented join, minimal fallback), but a
+    // RESUME replays a previous run's report object and never calls reportStage at all —
+    // so banding inside that stage would leave exactly the runs most likely to be degraded
+    // unbannered. Here the string is fixed for both persistence and delivery, and the
+    // health is recomputed from THIS run's delivered set either way.
+    //
+    // `evidenceIsFresh` is false precisely when challenge was replayed: on that path the
+    // freshly re-run discover/verify describe a rediscovered population that this run then
+    // discards, so quoting their stage-level health over the replayed findings would print
+    // one population's health above another's results. The findings' own origins are
+    // replayed with them and remain valid, which is why they are the primary signal.
+    const replayedDelivery = checkpoints.challenge !== undefined;
+    const health = reviewHealth({
+      delivered: challengeOut.findings || [],
+      notChallenged: challengeOut.unverified || [],
+      verify: verifyOut,
+      dimensionsLost: discoverOut.degraded || [],
+      evidenceIsFresh: !replayedDelivery,
+    });
+    if (!emptyReport) reportOut = { ...reportOut, report: applyHealthBanner(reportOut.report, health) };
+    if (health.degraded) {
+      gaps.push(`review_degraded: ${health.unclassified} of ${health.delivered + health.notChallenged} `
+        + `finding(s) in this report were never classified`
+        + (health.dimensionsLost.length ? `, and ${health.dimensionsLost.length} dimension(s) produced no results (${health.dimensionsLost.join(', ')})` : '')
+        + '. The report carries a degradation banner stating this; no finding was dropped.');
     }
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
@@ -5575,6 +5761,9 @@ async function runWith(ctx, rawArgs) {
         discovered: (discoverOut.findings || []).length,
         merged: (mergeOut.findings || []).length,
         verified: verifyOut.verified,
+        // The delivered review's own health (issue #25 req 7-9), structured so a consumer
+        // does not have to parse the banner prose back out of the markdown.
+        health,
         // The slice-input drift ledger (issue #25 PR3). Emitted structurally so the bench
         // checker reads counters rather than grepping gap prose, and so a run can report
         // how often the artifact-writer's transcription of a slice input was wrong — a
