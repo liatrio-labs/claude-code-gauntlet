@@ -73,6 +73,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -212,6 +213,8 @@ class _Collector(object):
         self.total_bytes = 0
         self.truncated = False
         self.included = set()
+        self.seen_content = set()
+        self.walked = 0
 
     def _skip(self, path, reason, detail=None):
         entry = {"path": self._display(path), "reason": reason}
@@ -271,10 +274,16 @@ class _Collector(object):
         Every bound is checked against ``stat`` *before* ``open``: reading a
         file and then discarding it for being too big still pays the read. The
         file-count bound comes first, before even the ``stat``.
+
+        It counts files WALKED, not files included. Content dedup means a duplicate
+        never reaches ``sources``, so counting inclusions would let a repo full of
+        identical (or empty — they all fingerprint alike) markdown files walk without
+        limit while the counter never moves. That is the runaway this bound stops.
         """
-        if len(self.sources) >= self.max_files:
+        if self.walked >= self.max_files:
             self.truncated = True
             return None, "file_cap_reached"
+        self.walked += 1
         try:
             st = os.stat(real)
         except OSError:
@@ -283,9 +292,6 @@ class _Collector(object):
             return None, "not_regular"
         if st.st_size > self.max_file_bytes:
             return None, "too_large"
-        if self.total_bytes + st.st_size > self.max_total_bytes:
-            self.truncated = True
-            return None, "total_cap_reached"
         try:
             with open(real, "r", encoding="utf-8", errors="replace") as handle:
                 text = handle.read()
@@ -307,7 +313,30 @@ class _Collector(object):
             self._skip(real, reason or "missing")
             return
 
+        # Same BYTES at a different path is still one rule set. The path check above
+        # only catches a file reached twice (import plus direct discovery); it cannot
+        # see the extremely common convention of shipping CLAUDE.md as a copy of
+        # AGENTS.md so that Claude Code and Codex each read a file they support. Without
+        # this, such a repo pays for every rule twice and the agents read it twice —
+        # measured on this repo at 25,482 bytes against 13,522 of actual content.
+        # Symlinked twins already collapse via realpath; copied twins need this.
+        fingerprint = hashlib.sha256(_effective(text).encode("utf-8")).hexdigest()
+        if fingerprint in self.seen_content:
+            self._skip(real, "duplicate_of")
+            return
+        self.seen_content.add(fingerprint)
+
         size = len(text.encode("utf-8"))
+        # The total budget is applied HERE, after dedup, not in `_read` against a bare
+        # `stat`. A duplicate contributes zero bytes, so charging it against the budget
+        # could trip the cap and emit a `project_rules_truncated` gap claiming rules were
+        # dropped while the identical content sat in `sources` already — a fabricated gap,
+        # which is exactly as wrong as a fabricated success. The per-file cap still runs on
+        # `stat` before any `open`, so an oversized file is never read.
+        if self.total_bytes + size > self.max_total_bytes:
+            self.truncated = True
+            self._skip(real, "total_cap_reached")
+            return
         self.included.add(real)
         self.total_bytes += size
         self.sources.append(
@@ -325,6 +354,22 @@ class _Collector(object):
                 continue
             self.visit(target, "import:" + self._display(real), depth + 1,
                        chain + (real,))
+
+
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+
+def _effective(text):
+    """The rule text as an agent would receive it, for dedup purposes only.
+
+    Block HTML comments are stripped by Claude Code before a memory file is injected, so
+    two files differing only in a maintainer note carry the same rules. A generated twin
+    normally differs from its source by exactly such a banner, and fingerprinting the raw
+    bytes would therefore fail to collapse the pair it most needs to collapse.
+
+    This normalises for COMPARISON only — what gets emitted is still the file verbatim.
+    """
+    return _HTML_COMMENT_RE.sub("", text).strip()
 
 
 def _search_dirs(repo_root, changed_files):

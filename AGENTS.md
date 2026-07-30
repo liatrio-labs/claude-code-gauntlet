@@ -1,80 +1,95 @@
 # AGENTS.md
 
-## Cursor Cloud specific instructions
+`claude-code-gauntlet` is a Claude Code marketplace plugin — no server, database, or Docker.
+"Running it" means running the test suites and the stdlib-only Python pipeline scripts.
 
-`claude-code-gauntlet` is a **Claude Code marketplace plugin**, not a web app or long-running
-service. "Running the app" means running its test/lint/build tooling and its stdlib-only Python
-pipeline scripts. There is no server, database, or Docker to start.
+Directory-scoped rules live in nested `AGENTS.md` files: `workflows/`, `scripts/`, `agents/`.
+Read the one for the directory you are editing.
 
-### Toolchain / environment caveats
+## Design
 
-- **Node must be v24.** CI and `CLAUDE.md` pin Node `24.18.0`. The VM's default `node` on `PATH`
-  is provided by `/exec-daemon/node` (v22) and shadows the nvm build. Put the nvm Node 24 bin
-  first for JS work:
-  `export PATH="$HOME/.nvm/versions/node/v24.18.0/bin:$PATH"` (or `nvm use 24.18.0` after sourcing
-  `~/.nvm/nvm.sh`). Verify with `node --version` → must print `v24.18.0`.
-- **`pytest` / `pre-commit`** are installed with `pip install --user`, landing in
-  `~/.local/bin`, which is not on `PATH` by default. Prepend it: `export PATH="$HOME/.local/bin:$PATH"`.
-- Pipeline scripts are **stdlib-only Python** — there are no runtime pip dependencies to install.
-- There is **no `package.json` / `node_modules`** — the workflow bundle uses only Node builtins.
+**Build the mechanism, not the instruction.** Whatever code, a schema, a data structure, or a
+removed capability can enforce, it must. Prose in an instruction, prompt, or agent file is the
+fallback for what cannot be made structural.
 
-### Lint / test / build / run (all one-shot; nothing stays running)
+**"Add more text" is a design smell.** If that is the fix under consideration, the shape is
+wrong — change the shape.
 
-Standard commands live in `README.md` (Development), `CONTRIBUTING.md`, and `.github/workflows/ci.yml`:
+**Extending should cost one edit.** A new dimension, field, or agent belongs in one place. If it
+takes coordinated edits across N files, fix the shape rather than documenting the ritual.
 
-- Python pipeline tests: `python -m pytest tests/ -q`
-- Bench self-tests: `python -m pytest bench/tests/ -q`
-- JS workflow tests: `node --test workflows/test/*.test.js` (needs Node 24)
-- Rebuild the generated bundle after editing `workflows/src/*.js`: `node workflows/build.js`,
-  then confirm it is unchanged with `git diff --exit-code workflows/pipeline.js`
-  (`workflows/pipeline.js` is generated — never hand-edit it; see `CLAUDE.md`).
-- Lint: `pre-commit run --all-files`
+## Scripts
 
-### Lint gotcha
+- **stdlib-only Python.** No pip dependencies anywhere in `scripts/`.
+- **Language-agnostic.** Scripts must not assume a language in the reviewed codebase. Use
+  `--exclude-dir` for non-source directories, never `--include=*.py`-style filters.
 
-`markdownlint-fix` **auto-fixes files in place** and then reports failure if it changed anything,
-so a "Failed" result with "files were modified by this hook" means the fixes are already applied —
-just re-stage/commit them and re-run. `CHANGELOG.md` is excluded from this hook on purpose: it is
-rewritten by python-semantic-release on every release commit (which carries the skip-ci token),
-and the default template's trailing blank before the previous version heading used to fail every
-subsequent PR's merge-with-main lint run. Do not re-add it to the markdownlint include set.
+## Tests
 
-`pre-commit run --all-files` means **all git-tracked files**, not all files on disk. A file you
-just created is invisible to every hook until you `git add` it, so a new doc can pass locally and
-then fail cspell or markdownlint in CI the moment it is committed — this is exactly how a new
-`SECURITY.md` reached a PR with three unknown words. `git add` new files before you trust a green
-lint run.
+```bash
+python -m pytest tests/ -q            # pipeline + boundary parity
+python -m pytest bench/tests/ -q      # benchmark harness self-tests
+node --test workflows/test/*.test.js  # needs Node 24; the bare directory is not a valid target
+```
 
-**Never put the literal skip-ci token in a commit message, even when writing *about* it.** GitHub
-Actions scans the whole message, not just the subject, so a commit that merely explains the
-semantic-release convention above suppresses every workflow for that push — the PR shows a
-plausible-looking subset of checks (CodeQL and the bots still report) while the CI, lint-PR-title,
-and plugin-validate runs never exist. Worse on the way out: a squash merge pre-fills its body from
-the commit messages, so the token rides onto `main` and skips the release run there too. Describe
-it as "the skip-ci token" instead; a real occurrence cost a CI cycle on PR #40.
+After editing `workflows/src/*.js`, rebuild and confirm the bundle is unchanged:
 
-### Contribution surface (issue forms, labels) — what cannot be tested pre-merge
+```bash
+node workflows/build.js && git diff --exit-code workflows/pipeline.js
+```
 
-`tests/test_contribution_surface.py` covers what is checkable offline: issue-form schema, the
-label taxonomy in `.github/labels.json`, `bug_report.yml`'s phase list against README's
-Architecture section, and the CI-gate commands quoted in `CONTRIBUTING.md`. Two things it cannot
-reach, both of which need work sequenced *after* a merge and by someone with write access:
+**A regression test must fail against the bug it names.** Verify that by mutating the
+implementation and watching it go red — not by reading the test. Mutate the whole mechanism; a
+partial mutation falls through to a neighbouring fallback and passes misleadingly.
 
-- **GitHub serves issue forms from the default branch only.** A change under
-  `.github/ISSUE_TEMPLATE/` cannot be exercised through the real form until it lands on `main`;
-  the new-issue page keeps rendering the old form until then. Any plan that puts a form
-  submission test before the merge is mis-ordered. This matters because an invalid form does not
-  error — GitHub refuses to render it, silently.
-- **Labels must exist in the repo before a form can apply one.** GitHub drops an unknown
-  issue-form label without reporting it, so the manifest has to be synced with
-  `python3 .github/labels_diff.py --commands --repo <owner>/<repo>` (a write; a read-only token
-  cannot do it) and then confirmed with `--live -` or the `workflow_dispatch` "Verify Label
-  Taxonomy" workflow. See `docs/maintainer-issues.md`.
+## Lint
 
-### Full product E2E (needs external access — usually unavailable in cloud)
+`pre-commit run --all-files` is the gate.
 
-A real review run (`/code-gauntlet`) requires the **Claude Code CLI** (`claude`) with the
-`Workflow` tool, Anthropic API access, and `gh`/`glab` for PR/MR targets. The benchmark harness
-(`bench/run.py`) additionally needs `uv`, an `ANTHROPIC_API_KEY` in `bench/.env`, and real API
-spend. These are out of scope for local dev validation; the pytest/node suites above cover
-pipeline correctness without any API cost.
+- `markdownlint-fix` rewrites files in place, then reports failure if it changed anything. A
+  "Failed / files were modified by this hook" result means the fixes are already applied — re-stage
+  and re-run.
+- `CHANGELOG.md` is excluded from that hook deliberately; it is regenerated on every release. Do
+  not re-add it.
+- pre-commit sees **git-tracked files only**. A new file is invisible to every hook until
+  `git add`, so it can pass locally and fail in CI. Stage new files before trusting a green run.
+- **Never put the literal skip-ci token in a commit message, even when writing about it.** GitHub
+  Actions scans the whole message, so the workflows silently never run — and a squash merge carries
+  it onto `main`. Call it "the skip-ci token".
+
+## Writing JSON for pipeline scripts
+
+Use `python3 -c "import json; ..."`. Not the Write tool (it requires a prior Read), and not a
+heredoc (zsh corrupts `!`).
+
+## Output directory
+
+`{output_dir}` defaults to `.code-gauntlet/` (repo-local, gitignored). Override with
+`$CODE_GAUNTLET_OUTPUT_DIR`.
+
+## Layout
+
+```text
+claude-code-gauntlet/         <- plugin root
+├── agents/                   <- subagent contracts
+├── scripts/                  <- retained Python (verify_findings.py, post_review.py, ...)
+├── workflows/                <- JS pipeline: src/*.js, build.js, pipeline.js (generated), test/
+├── bench/                    <- benchmark harness (stdlib-exempt)
+├── tests/                    <- pytest suite
+└── skills/code-gauntlet/     <- skill base directory
+```
+
+`{plugin_root}` is two levels above the skill base directory. Never locate it by searching the
+filesystem — a `find` hit picks arbitrarily among every cached plugin version.
+
+## Contribution surface
+
+`tests/test_contribution_surface.py` covers the issue-form schema, `.github/labels.json`, and the
+CI commands quoted in `CONTRIBUTING.md`. Two things it cannot reach, both needing write access
+after a merge:
+
+- GitHub serves issue forms from the default branch only, and refuses to render an invalid form
+  without erroring. A plan that tests form submission before the merge is mis-ordered.
+- Labels must exist before a form can apply one; GitHub drops unknown labels silently. Sync with
+  `python3 .github/labels_diff.py --commands --repo <owner>/<repo>`, confirm with `--live -`. See
+  `docs/maintainer-issues.md`.
