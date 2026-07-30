@@ -23,6 +23,18 @@ language in the reviewed codebase.
   fixtures in `tests/fixtures/parity/`. Change one, change both, re-record the fixture.
 - **Numbers crossing to JS must be JS-reproducible.** Both runtimes refuse non-integer or
   out-of-safe-range values rather than write an artifact whose float spelling differs by language.
-- **Always emit exactly one receipt line.** `assemble_artifacts.py`'s `main()` falls back to a
-  hand-built minimal receipt if the real one will not serialize: an empty stdout is
-  indistinguishable from a dead executor.
+- **Always emit exactly one receipt line.** `assemble_artifacts.py`'s and
+  `materialize_artifacts.py`'s `main()` fall back to a hand-built minimal receipt if the real one
+  will not serialize: an empty stdout is indistinguishable from a dead executor.
+- **`materialize_artifacts.py` is what keeps a model out of the persist path.** It reads the
+  workflow's own return out of `tasks/<task-id>.output` and writes the primaries itself. It must
+  reuse `await_workflow.py`'s task resolution and `assemble_artifacts.py`'s checksum, atomic write
+  and derivation — a second copy of either would be a second thing to keep at parity.
+- **A payload from the harness is still confined.** Every entry path is `realpath`-checked inside
+  `--output-dir` before anything is written, so neither a wrong `--output-dir` nor a symlink can
+  scatter a review's artifacts outside it.
+- **Never print a returned payload to stdout.** `await_workflow.py` elides `persistReturn.entries`
+  down to `paths` + `resolvedPath` on purpose: its documented caller is a Bash call straight into
+  the orchestrator's context, and the whole point is that those bytes reach disk without passing
+  through a model. The replacement key is deliberately named differently so a consumer wanting the
+  bytes fails loudly instead of writing empty files.

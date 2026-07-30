@@ -611,6 +611,67 @@ class TestTerminalPathIsSilentOnStderr(unittest.TestCase):
         self.assertEqual(json.loads(proc.stdout.strip()), SUCCESS_RETURN)
 
 
+class TestPersistReturnIsElided(unittest.TestCase):
+    """The RETURN persist channel's payload must not enter the caller's context.
+
+    On that channel the compact return carries the artifacts themselves so the
+    HARNESS can put them on disk without a model retyping them. This stdout is
+    read by a Bash tool call, i.e. straight into the orchestrator's context, and
+    `scripts/materialize_artifacts.py` reads the same payload out of the file —
+    so printing it here is pure waste. What the caller does need is the path of
+    the file it came from.
+    """
+
+    @staticmethod
+    def _return_with_payload(text="x" * 5000):
+        payload = dict(SUCCESS_RETURN)
+        payload["persistReturn"] = {
+            "channel": "return",
+            "nonce": "nonce-abc",
+            "planPath": "/out/code-gauntlet-persist-plan-da09bc08.json",
+            "entries": [
+                {"path": "/out/code-gauntlet-findings-da09bc08.json", "text": text},
+                {"path": "/out/code-gauntlet-report-da09bc08.md", "text": "# report"},
+            ],
+        }
+        return payload
+
+    def test_the_entries_never_reach_stdout(self):
+        with _Workspace() as ws:
+            path = ws.write("w1.output", json.dumps(envelope(self._return_with_payload())))
+            code, out, _err = run_main([path, "--timeout-seconds", "0"])
+        self.assertEqual(code, 0)
+        self.assertNotIn("x" * 5000, out)
+        self.assertLess(len(out), 2000, "the bulk is still crossing the boundary")
+        printed = sole_json_line(out)["persistReturn"]
+        self.assertNotIn("entries", printed, "an entry list without its text invites empty writes")
+        self.assertTrue(printed["elided"])
+        self.assertEqual(printed["paths"], [
+            "/out/code-gauntlet-findings-da09bc08.json",
+            "/out/code-gauntlet-report-da09bc08.md",
+        ])
+
+    def test_the_resolved_path_rides_back_so_the_caller_need_not_re_resolve(self):
+        with _Workspace() as ws:
+            path = ws.write("w1.output", json.dumps(envelope(self._return_with_payload())))
+            _code, out, _err = run_main([path, "--timeout-seconds", "0"])
+        self.assertEqual(sole_json_line(out)["persistReturn"]["resolvedPath"], path)
+
+    def test_every_other_key_is_untouched(self):
+        with _Workspace() as ws:
+            path = ws.write("w1.output", json.dumps(envelope(self._return_with_payload())))
+            _code, out, _err = run_main([path, "--timeout-seconds", "0"])
+        printed = sole_json_line(out)
+        del printed["persistReturn"]
+        self.assertEqual(printed, SUCCESS_RETURN)
+
+    def test_a_return_on_any_other_channel_is_printed_verbatim(self):
+        with _Workspace() as ws:
+            path = ws.write("w1.output", json.dumps(envelope(SUCCESS_RETURN)))
+            _code, out, _err = run_main([path, "--timeout-seconds", "0"])
+        self.assertEqual(sole_json_line(out), SUCCESS_RETURN)
+
+
 class TestTruncatedFragmentIsNotPromoted(unittest.TestCase):
     """Regression: a torn read must not yield a nested receipt as the return.
 

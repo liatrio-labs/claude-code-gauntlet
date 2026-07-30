@@ -1205,3 +1205,123 @@ test('provenPrimaryPaths salvages NOTHING from a receipt that cannot be trusted'
   incoherent.verified[0] = { ...incoherent.verified[0], chars: 1, checksum: 'fnv1a32:0x00000001' };
   assert.deepEqual(provenPrimaryPaths(incoherent, PATHS, plan), [PATHS.report], 'content_proof:"match" contradicting its own numbers');
 });
+
+// --- The RETURN persist channel ----------------------------------------------
+//
+// The primaries ride home in the workflow's own return value, which the HARNESS
+// serializes to tasks/<taskid>.output, and scripts/materialize_artifacts.py writes them
+// from there. No agent transcribes them. tests/test_materialize_artifacts.py owns the
+// disk half (against a task output file this pipeline actually produced); these pin the
+// workflow half: that nothing is dispatched, that the bytes carried are the SAME bytes
+// the writer path would have been handed, and that the one refusal falls back rather
+// than degrading the run.
+
+const returnInput = (over = {}) => persistInput({
+  ...over,
+  persist: { assembleScriptPath: SCRIPT, returnPrimaries: true },
+});
+
+test('the return channel dispatches NO agent and carries the three primaries home', async () => {
+  const inp = returnInput();
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, inp);
+
+  assert.deepEqual(labels(ctx), [], 'no artifact-writer, no assemble executor — nothing is transcribed');
+  assert.equal(out.partial, false);
+  assert.deepEqual(out.gaps, []);
+  assert.deepEqual(out.artifactPaths, PATHS, 'the four planned paths are unchanged');
+
+  const { channel, planPath, entries } = out.persistReturn;
+  assert.equal(channel, 'return');
+  assert.equal(planPath, PLAN_PATH);
+  assert.deepEqual(entries.map((e) => e.path), [PATHS.findings, PATHS.report, PLAN_PATH]);
+});
+
+test('the returned bytes are byte-identical to what the writer path would have been handed', async () => {
+  // The equality that makes the channel a swap rather than a rewrite: same serializer,
+  // same hardening, same plan — so the plan's expect[]/planChecksum still prove them.
+  const inp = returnInput();
+  const viaReturn = await writeArtifacts(persistCtx(), inp);
+  const writerCtx = persistCtx();
+  await writeArtifacts(writerCtx, persistInput());
+  const dispatched = parseWriterPayload(writerCtx.calls.find((c) => c.label === 'artifact-writer').prompt);
+
+  assert.deepEqual(viaReturn.persistReturn.entries, dispatched);
+
+  const { findingsJson, reportMd } = persistPrimaries(inp);
+  const byPath = new Map(viaReturn.persistReturn.entries.map((e) => [e.path, e.text]));
+  assert.equal(byPath.get(PATHS.findings), findingsJson);
+  assert.equal(byPath.get(PATHS.report), reportMd);
+  const plan = JSON.parse(byPath.get(PLAN_PATH));
+  assert.equal(plan.expect[0].checksum, fnv1a32(findingsJson), 'the plan still proves the primary it ships beside');
+});
+
+test('the return channel carries the run nonce so the materializer can find its own file', async () => {
+  const out = await writeArtifacts(persistCtx(), returnInput({ nonce: 'nonce-xyz' }));
+  assert.equal(out.persistReturn.nonce, 'nonce-xyz');
+});
+
+test('primaries over the return budget fall back to the writer, and say so', async () => {
+  // The ONLY refusal on this channel. RETURN_CHAR_BUDGET is 1,000,000 chars — ~15x the
+  // largest run ever recorded — so this is a guard against a pathological run, and it
+  // degrades to the transcribing writer rather than costing the run its artifacts.
+  const huge = Array.from({ length: 40 }, (_, i) => makeFinding(`F${i}`, { description: 'z'.repeat(30000) }));
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, returnInput({ findings: huge, postReview: huge }));
+
+  assert.equal(out.partial, false, `gaps: ${out.gaps}`);
+  assert.equal(out.persistReturn, undefined, 'nothing rides home on the return');
+  assert.ok(labels(ctx).includes('artifact-writer'), 'the writer path ran instead');
+  assert.match(out.gaps[0], /over the 1000000-char return budget/);
+  assert.match(out.gaps[0], /transcribes the bytes/, 'the fallback names what it costs');
+});
+
+test('an id-integrity refusal still reaches the legacy writer, return channel or not', async () => {
+  // persistDerivable gates BOTH derived paths: the return channel derives its projections
+  // with the same script, so pathological input has to take the same by-value fallback.
+  const dup = [makeFinding('DUP'), makeFinding('DUP')];
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, returnInput({ findings: dup, postReview: dup }));
+
+  assert.equal(out.persistReturn, undefined);
+  assert.deepEqual(labels(ctx), ['artifact-writer'], 'the legacy full by-value writer, not the derived one');
+  assert.match(out.gaps[0], /duplicate finding id DUP/);
+});
+
+test('returnPrimaries is opt-in: without it the derived writer path is unchanged', async () => {
+  const ctx = persistCtx();
+  const out = await writeArtifacts(ctx, persistInput());
+  assert.equal(out.persistReturn, undefined);
+  assert.deepEqual(labels(ctx), ['artifact-writer', 'assemble-artifacts']);
+});
+
+test('runWith surfaces persistReturn LAST and keeps the compact return compact elsewhere', async () => {
+  const args = validArgs({
+    persist: { assembleScriptPath: SCRIPT, returnPrimaries: true },
+    outputDir: OUT_DIR,
+    headShaShort: SHA,
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true, `gaps: ${out.gaps}`);
+  assert.equal(out.persistReturn.channel, 'return');
+  assert.equal(Object.keys(out)[Object.keys(out).length - 1], 'persistReturn',
+    'it is the one field measured in tens of KB — a truncating reader gets everything else first');
+  assert.deepEqual(Object.keys(out.checkpoints), ['completed'],
+    'the checkpoint field still carries phase NAMES only');
+  assert.ok(!ctx.calls.some((c) => c.label === 'artifact-writer'), 'no artifact-writer ran');
+  assert.deepEqual(out.artifactPaths, plannedArtifactPaths(OUT_DIR, SHA));
+});
+
+test('the args waist accepts returnPrimaries only as a boolean', () => {
+  const withPersist = (persist) => validateArgs(validArgs({ persist }));
+  assert.ok(withPersist({ assembleScriptPath: SCRIPT, returnPrimaries: true }).ok);
+  assert.ok(withPersist({ assembleScriptPath: SCRIPT, returnPrimaries: false }).ok);
+  assert.ok(withPersist({ assembleScriptPath: SCRIPT }).ok, 'still optional');
+  // writeArtifacts gates on === true, so a stringy "false" must not read as opting in
+  // here while opting out there.
+  const stringy = withPersist({ assembleScriptPath: SCRIPT, returnPrimaries: 'false' });
+  assert.equal(stringy.ok, false);
+  assert.match(stringy.errors.join('; '), /returnPrimaries must be a boolean/);
+});
