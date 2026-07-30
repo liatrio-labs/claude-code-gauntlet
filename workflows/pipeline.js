@@ -2454,10 +2454,20 @@ function validateArgs(args) {
   // guard for a caller that skipped normalization entirely.)
   if (args.persist !== undefined) {
     if (args.persist === null || typeof args.persist !== 'object' || Array.isArray(args.persist)) {
-      errors.push('persist must be an object of the form { assembleScriptPath } when present');
-    } else if (args.persist.assembleScriptPath !== undefined
-      && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
-      errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
+      errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
+    } else {
+      if (args.persist.assembleScriptPath !== undefined
+        && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
+        errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
+      }
+      // `returnPrimaries: true` routes the primaries home in the workflow's RETURN instead
+      // of through the artifact-writer's transcription, and Phase 8 materializes them with
+      // scripts/materialize_artifacts.py. It is checked for a BOOLEAN rather than
+      // truthiness because writeArtifacts gates on `=== true`: a caller that stamped the
+      // string "false" would otherwise read as opting in here and out there.
+      if (args.persist.returnPrimaries !== undefined && typeof args.persist.returnPrimaries !== 'boolean') {
+        errors.push('persist.returnPrimaries must be a boolean when present');
+      }
     }
   }
   return { ok: errors.length === 0, errors };
@@ -2493,10 +2503,28 @@ function modelFor(agentType, policy) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel }).model;
 }
 
-// Shared char budget for a single agent's by-value prompt payload. Above it, stages
+// Shared char budget for a single agent's by-value PROMPT payload. Above it, stages
 // that carry findings by value (report generation, verify slice-input writing) segment
-// into multiple dispatches to stay under the writer's context.
-const SEGMENT_CHAR_BUDGET = 100000;
+// into multiple dispatches to stay under the receiving agent's context.
+//
+// It does NOT bound the workflow's RETURN — that is RETURN_CHAR_BUDGET below. One
+// constant used to do both jobs, the second by analogy with the first, and the analogy
+// is false: a prompt is read by a model and a return is serialized by the harness, so
+// the two have neither the same limit nor the same failure mode. Three recorded runs
+// threw their resume state away against a ceiling that was never measured for it.
+const PROMPT_SEGMENT_CHAR_BUDGET = 100000;
+
+// Char budget for the workflow's RETURN value — the object the HARNESS serializes to
+// `tasks/<taskid>.output`. Measured 2026-07-30 with a zero-subagent probe: the on-disk
+// file was byte-exact against the requested string at 200,000, 500,000 and 4,000,000
+// chars (fnv1a32 match at each, including a lone surrogate left by slicing an emoji in
+// half), in 18-122 ms. No ceiling was found at 4 MB.
+//
+// 1,000,000 is a quarter of the largest proven size, and ~15x the largest run ever
+// recorded (findings 6.8-53 KB across 14 runs, report <=13.5 KB, so ~66 KB of unique
+// content at the top end). It is a guard against a pathological run, not a limit anyone
+// is expected to reach; the return channel falls back to the artifact-writer above it.
+const RETURN_CHAR_BUDGET = 1000000;
 
 // --- Shared context file: the deterministic read plan (issue #48) ---------------
 //
@@ -3369,7 +3397,7 @@ async function materializeVerifySlices(c, inp, slices, policy) {
   // on a group's position, so attributing a group's failure to its slices cannot be
   // silently invalidated by a future change to how entries are chunked.
   const sliceOfPath = new Map(entries.map((e, i) => [e.path, i]));
-  const groups = chunkBySerializedSize(entries, SEGMENT_CHAR_BUDGET);
+  const groups = chunkBySerializedSize(entries, PROMPT_SEGMENT_CHAR_BUDGET);
   const thunks = groups.map((group, g) => async () => {
     let result;
     try {
@@ -4016,7 +4044,7 @@ const REPORT_SCHEMA = { type: 'object', properties: { report: { type: 'string' }
 // from the pipeline stats and a gap is recorded; report failure is NON-FATAL.
 //
 // Segmentation: when the serialized findings payload exceeds
-// SEGMENT_CHAR_BUDGET the findings are chunked and one report-writer is
+// PROMPT_SEGMENT_CHAR_BUDGET the findings are chunked and one report-writer is
 // dispatched PER chunk (through parallel(), each with the same try/catch), then
 // the per-chunk reports are concatenated under titled segment headings. Any single
 // chunk that fails degrades to its own minimal section — the rest still render.
@@ -4030,7 +4058,7 @@ async function reportStage(ctx, input) {
   const model = modelFor('code-gauntlet:report-writer', policy);
 
   const findings = inp.findings || [];
-  const oversized = JSON.stringify(findings).length > SEGMENT_CHAR_BUDGET;
+  const oversized = JSON.stringify(findings).length > PROMPT_SEGMENT_CHAR_BUDGET;
   if (!oversized) {
     return dispatchReportSegment(c, model, inp, findings, null);
   }
@@ -4038,7 +4066,7 @@ async function reportStage(ctx, input) {
   // Segment: one dispatch per chunk through parallel(), titled sections joined IN INDEX
   // ORDER. dispatchReportSegment already owns its try/catch and never throws, so no member
   // can be nulled by parallel(); the null branch below is defense-in-depth only.
-  const chunks = chunkBySerializedSize(findings, SEGMENT_CHAR_BUDGET);
+  const chunks = chunkBySerializedSize(findings, PROMPT_SEGMENT_CHAR_BUDGET);
   const thunks = chunks.map((chunk, i) => () => dispatchReportSegment(c, model, inp, chunk, { index: i, total: chunks.length }));
   const results = await c.parallel(thunks);
   const parts = [];
@@ -4201,10 +4229,18 @@ function writerEchoCoversPaths(echoed, paths) {
 // The workflow script has NO disk access, so agents persist findings.json + report.md
 // + the post-review delivery set + the checkpoint/progress JSON to {output_dir}.
 //
-// TWO persistence paths, one PUBLIC contract (same return shape, the same four
-// artifactPaths keys, the same partial-artifacts degradation — Phase 8 is untouched):
+// THREE persistence paths, one PUBLIC contract (same return shape, the same four
+// artifactPaths keys, the same partial-artifacts degradation):
 //
-//   DERIVED (issue #38, D3; taken when args.persist.assembleScriptPath is present).
+//   RETURN (taken whenever args.persist.returnPrimaries is true — the primary path, and
+//     independent of assembleScriptPath, which only the writer path's executor needs).
+//     No agent is dispatched at all. The three primaries ride home in the workflow's
+//     own return value, which the HARNESS serializes; Phase 8 materializes them with
+//     scripts/materialize_artifacts.py and derives the projections from disk. See
+//     returnChannelPersist for the measurement and the failure mode it removes.
+//
+//   DERIVED (issue #38, D3; taken when args.persist.assembleScriptPath is present and
+//     the return channel was not asked for or could not carry the run).
 //     Measured on a real run: of the 88,389 B the writer emitted, the post-review
 //     findings array was canonically byte-identical to findings.json, the checkpoint's
 //     phases.challenge.findings was the alias-stripped twin of the same array, and the
@@ -4257,16 +4293,41 @@ async function writeArtifacts(ctx, input) {
     const policy = inp.policy || {};
     const paths = plannedArtifactPaths(outputDir, sha);
 
-    const assembleScriptPath = (inp.persist || {}).assembleScriptPath;
-    if (typeof assembleScriptPath === 'string' && assembleScriptPath !== '') {
-      // The guard that keeps the derived path safe under pathological input. Every
+    const persist = inp.persist || {};
+    const scriptPath = typeof persist.assembleScriptPath === 'string' && persist.assembleScriptPath !== ''
+      ? persist.assembleScriptPath
+      : null;
+    // The two flags are read INDEPENDENTLY. `returnPrimaries` used to be consulted only
+    // inside the script-path branch, which made `{ returnPrimaries: true }` alone opt a
+    // caller silently into the legacy by-value writer — the one path with no content proof
+    // at all — while its args said it had opted out of transcription entirely. The return
+    // channel has no use for the script: Phase 8's materializer imports the assembler
+    // directly, so the path is only ever needed by the executor dispatch on the writer
+    // path, and requiring it here would be a dependency that does not exist.
+    const wantsReturn = persist.returnPrimaries === true;
+    if (scriptPath || wantsReturn) {
+      // The guard that keeps BOTH derived paths safe under pathological input. Every
       // projection is by finding id, so a missing/duplicate id — or a delivery/challenge
       // entry that is not a byte-identical twin of its findings.json row — makes the
       // derivation unfaithful. Rather than degrade the run (null paths, no artifacts) we
       // fall back to the legacy full by-value writer and name the reason in a gap.
       const derivable = persistDerivable(inp);
       if (derivable.ok) {
-        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath);
+        // The RETURN channel first: it dispatches nothing and is the only path on which
+        // no model transcribes the bytes. Its ONE refusal is size (see RETURN_CHAR_BUDGET),
+        // and it falls through to a writer rather than degrading the run — the derived one
+        // when a script path is in hand, the legacy one otherwise. Either way the fallback
+        // says what it costs, because a run that quietly demoted to a transcriber is
+        // exactly the failure this channel exists to remove.
+        if (wantsReturn) {
+          const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
+          if (viaReturn.ok) return viaReturn.result;
+          const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
+          if (!scriptPath) return await writeArtifactsLegacy(c, inp, paths, policy, partial, [gap]);
+          const fallback = await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
+          return { ...fallback, gaps: [gap].concat(fallback.gaps || []) };
+        }
+        return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
       }
       return await writeArtifactsLegacy(c, inp, paths, policy, partial, [
         `writeArtifacts: derived persistence unavailable (${derivable.reason}) — persisted the full by-value payload instead`,
@@ -4302,6 +4363,103 @@ async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
   }
 }
 
+// persistEntries(inp, paths, outputDir, sha) -> { plan, planPath, entries }
+//
+// The ONE serialization of the three primaries, shared by both channels that persist them:
+// the RETURN channel carries these entries home for Phase 8 to write, the derived writer
+// path dispatches these same entries to be transcribed. A second copy of this arithmetic
+// would be a second spelling of the same three documents, drifting apart the moment either
+// side changed — and the plan's `expect[]` proves the primaries by checksum, so a drift is
+// a failed content proof on whichever channel did not get the edit.
+//
+// The plan text is escape-hardened for the WIRE (see hardenEscapeRuns), which is
+// load-bearing on the writer path — the plan is transcribed by the same model and carries
+// checkpoint prose, and a mangled plan is a HARD failure (bad planChecksum) rather than a
+// tolerated mismatch — and dead weight on a channel with no transcriber. It is applied to
+// both anyway: hardening cannot move a proof (assemble_artifacts.py recomputes
+// planChecksum from the PARSED plan, and `\u005c` parses to the same backslash `\\` does),
+// so the cost of one spelling is nothing and the cost of two is a divergence.
+function persistEntries(inp, paths, outputDir, sha) {
+  const planPath = persistPlanPath(outputDir, sha);
+  const { findingsJson, reportMd } = persistPrimaries(inp);
+  // Kept as an OBJECT as well as a string: trustAssembleReceipt grades the receipt against
+  // the expectations the pipeline itself computed, never against the ones the receipt
+  // echoes back at us.
+  const plan = persistPlan(inp, paths);
+  return {
+    plan,
+    planPath,
+    entries: [
+      { path: paths.findings, text: findingsJson },
+      { path: paths.report, text: reportMd },
+      { path: planPath, text: hardenEscapeRuns(JSON.stringify(plan, null, 2)) },
+    ],
+  };
+}
+
+// returnChannelPersist(inp, paths, outputDir, sha) -> { ok: true, result } | { ok:false, reason }
+//
+// The persist path that dispatches NOTHING. It hands the three primaries — findings.json,
+// report.md, the persist plan — back to the caller inside the workflow's own return value,
+// and Phase 8 (which has Bash) materializes them with scripts/materialize_artifacts.py.
+//
+// WHY. Every other path puts the bytes on disk through an artifact-writer agent: a
+// language model asked to reproduce ~50 KB of escape-dense JSON verbatim. Measured across
+// every recorded run (38 writer journals / 84 artifacts): 26 of 73 attempted writes — 36% —
+// failed their own content proof and 12 artifacts were never written at all. Nothing about
+// a document predicts it (a 47 KB findings.json with 104 backslashes came back
+// byte-perfect; a 6.4 KB zero-backslash .md was truncated), and the worst losses are
+// SUMMARIZATION, which no encoding prevents: one checkpoint lost 29,132 chars because the
+// writer dropped 11 fields from every finding, another lost 13,008 with its schema intact
+// and its prose simply rewritten shorter. Both parse cleanly. Re-encoding (hardenEscapeRuns)
+// and re-dispatching were both measured and both failed — the retry corrupted the same
+// sites and died at the identical byte offset, twice.
+//
+// A workflow's return value is serialized by the HARNESS. Measured 2026-07-30 with a
+// zero-subagent probe: byte-exact on disk at 200,000 / 500,000 / 4,000,000 chars, in
+// 18-122 ms, with no ceiling found (see RETURN_CHAR_BUDGET). The largest run ever recorded
+// carries ~66 KB of unique content — 1.6% of the proven-safe size. This already happened by
+// accident once: a run whose writer failed and persisted nothing was found with all 58,949
+// chars of its pipeline output sitting in that file, recoverable the whole time, because
+// the design discarded it on the success path.
+//
+// THE PROOF IS UNCHANGED AND UNDUPLICATED. The plan's `expect[]` proves the two primaries,
+// its `planChecksum` proves itself, and its `derive[]` proves the two projections — the
+// same three gradings assemble_artifacts.py already performs, now applied to a
+// harness-written copy rather than a model-written one. The materializer reuses that script
+// instead of growing a second grader; nothing here recomputes a checksum.
+//
+// The primaries are the SAME strings the writer path would have been handed, hardening
+// included — not by agreement but because persistEntries is the only place either channel
+// serializes them.
+//
+// artifactPaths and `partial: false` are exactly as on the writer path: what changed is who
+// writes the bytes, not which four paths the run produces. Nothing is on disk until Phase 8
+// materializes — and that is a LOUD absence (the files are simply not there) where the
+// writer's failure mode is a silent paraphrase.
+function returnChannelPersist(inp, paths, outputDir, sha) {
+  const { planPath, entries } = persistEntries(inp, paths, outputDir, sha);
+  const chars = JSON.stringify(entries).length;
+  if (chars > RETURN_CHAR_BUDGET) {
+    return {
+      ok: false,
+      reason: `the persisted primaries serialize to ${chars} chars, over the ${RETURN_CHAR_BUDGET}-char return budget`,
+    };
+  }
+  return {
+    ok: true,
+    result: {
+      artifactPaths: paths,
+      gaps: [],
+      partial: false,
+      // `nonce` is the run's own id from the args waist. It is what lets the materializer
+      // find THIS run's output file by content when no task id is in hand — the return
+      // arrives inline on a fast run, and the file exists either way.
+      persistReturn: { channel: 'return', nonce: inp.nonce || null, planPath, entries },
+    },
+  };
+}
+
 // The derived persist (issue #38, D3.2): write the three primaries, then derive the two
 // projections on disk. Failure at ANY step takes the same partial-artifacts degradation
 // as the legacy path — a content-proof MISMATCH is the one exception (see below).
@@ -4334,23 +4492,7 @@ async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
 //   * BOTH attempts are disclosed, whichever way the retry lands, so a degraded (or
 //     narrowly-rescued) run stays honest about what happened.
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
-  const planPath = persistPlanPath(outputDir, sha);
-  const { findingsJson, reportMd } = persistPrimaries(inp);
-  // Kept as an OBJECT as well as a string: trustAssembleReceipt grades the receipt
-  // against the expectations the pipeline itself computed, never against the ones the
-  // receipt echoes back at us.
-  const plan = persistPlan(inp, paths);
-  // Escape-hardened for the WIRE only (see hardenEscapeRuns). The plan is transcribed by
-  // the same writer and carries checkpoint prose, so it is exposed to the same collapse —
-  // and a mangled plan is a HARD failure (bad planChecksum), not a tolerated mismatch.
-  // Hardening cannot move that checksum: assemble_artifacts.py recomputes it from the
-  // PARSED plan, and `\u005c` parses to the same backslash `\\` does.
-  const planJson = hardenEscapeRuns(JSON.stringify(plan, null, 2));
-  const entries = [
-    { path: paths.findings, text: findingsJson },
-    { path: paths.report, text: reportMd },
-    { path: planPath, text: planJson },
-  ];
+  const { plan, planPath, entries } = persistEntries(inp, paths, outputDir, sha);
   const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, policy, assembleScriptPath);
 
   // The primaries a refused receipt still proved, keyed by artifactPaths name. Only the
@@ -5052,13 +5194,20 @@ function readCheckpoints(ctx, args) {
 // buildResumeCheckpoints(phaseOutputs) -> resume state for a FAILURE-path return.
 // Carries the full per-phase outputs map ({ phases, completed }) so the skill can resume
 // from the compact return when nothing was persisted — UNLESS that map would exceed the
-// char budget, in which case only the completed-phase NAMES are returned with
-// truncated:true (resume then falls back to re-running rather than shipping findings bulk
-// through the compact return). readCheckpoints unwraps the .phases form directly.
+// RETURN char budget, in which case only the completed-phase NAMES are returned with
+// truncated:true (resume then falls back to re-running from scratch).
+// readCheckpoints unwraps the .phases form directly.
+//
+// The budget here is RETURN_CHAR_BUDGET, not the prompt-segmentation one. This is the
+// only thing the map has to survive — the harness serializes the return to
+// `tasks/<taskid>.output` and no model retypes it — and the prompt budget it used to
+// share was sized for a WRITER'S CONTEXT, a limit that does not apply to this channel at
+// all. Three recorded runs tripped the 100,000-char ceiling and threw away resume state
+// that would have crossed the real one (measured byte-exact to 4 MB) untouched.
 function buildResumeCheckpoints(phaseOutputs) {
   const completed = Object.keys(phaseOutputs);
   const withPhases = { phases: phaseOutputs, completed };
-  if (JSON.stringify(withPhases).length <= SEGMENT_CHAR_BUDGET) return withPhases;
+  if (JSON.stringify(withPhases).length <= RETURN_CHAR_BUDGET) return withPhases;
   return { completed, truncated: true };
 }
 
@@ -5396,6 +5545,9 @@ async function runWith(ctx, rawArgs) {
       outputDir: A.outputDir,
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
+      // The run's own id, echoed in persistReturn so the materializer can find this
+      // run's task output file by content when no task id is in hand.
+      nonce: A.nonce,
       // Optional (issue #38, D3.4): with an assembleScriptPath the writer persists only
       // the unique content and the executor derives the two projections on disk. Absent
       // (bench, older callers) -> the legacy full by-value path, no gap.
@@ -5431,6 +5583,12 @@ async function runWith(ctx, rawArgs) {
       // names+truncated when it would exceed the budget) so the skill can still resume.
       checkpoints: writeOut.partial ? buildResumeCheckpoints(phaseOutputs) : { completed },
       gaps,
+      // The RETURN persist channel's payload — the three primaries, verbatim, for Phase 8
+      // to materialize (absent on every other path). It rides LAST on purpose: it is the
+      // one field measured in tens of KB, and a reader that truncates gets the counts,
+      // paths and gaps before it rather than after. scripts/await_workflow.py elides its
+      // `entries[].text` so the bulk never enters the orchestrator's context at all.
+      ...(writeOut.persistReturn ? { persistReturn: writeOut.persistReturn } : {}),
     };
   } catch (e) {
     // Nothing was persisted on the throw path either — carry the in-memory resume state
