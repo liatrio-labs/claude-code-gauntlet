@@ -12,10 +12,13 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
       degrade. ALSO fails when a PR delivers any unclassified finding (origin
       not 'new'/'surfaced', including a finding with no ``origin`` key at
       all — a strictly wider test than the ``origin=unknown`` check, see
-      ``_is_classified``) whose persisted report carries no health-degradation
-      banner sentinel: a degraded review that never discloses itself is the
-      exact defect issue #25 req 7 exists to prevent, and until this check
-      existed it was undetectable (``_report_has_health_banner``).
+      ``_is_classified``) whose persisted artifacts carry no health-degradation
+      banner sentinel on EITHER delivery surface — ``code-gauntlet-report-*.md``
+      or ``code-gauntlet-post-review-*.json``'s ``review_body`` (see
+      ``_report_has_health_banner`` / ``_post_review_has_health_banner``, and
+      the EITHER-not-BOTH note at the call site): a degraded review that never
+      discloses itself is the exact defect issue #25 req 7 exists to prevent,
+      and until this check existed it was undetectable.
   G4  Plugin identity — Headless config echo receipts (``pipeline_version``,
       ``plugin_root``) are primary; a complete valid receipt is sufficient when
       no ``workflows/wf_*.json`` records were collected. When records exist,
@@ -546,6 +549,35 @@ def _report_has_health_banner(pr_dir):
     return False
 
 
+def _post_review_has_health_banner(pr_dir):
+    """True if any persisted ``code-gauntlet-post-review-*.json`` under
+    ``pr_dir`` carries the health-degradation banner sentinel in its
+    ``review_body`` field — the SECOND delivery surface (issue #25 req 7):
+    ``reviewBodyOf``/``writerPayload``/``persistPlan`` in
+    ``workflows/src/stages.js`` put the same banner text here so a
+    ``pr_comments``-only delivery, which never shows ``report.md`` to anyone,
+    still discloses degradation on the surface it actually delivers on.
+
+    Structural (JSON-parsed, then a plain field read), matching how every
+    other JSON-shaped artifact in this module is read. The bare-array shape
+    (no PR identity — live-run L3 not wired) carries no ``review_body`` key at
+    all; that reads as absent here, same as a file that fails to parse, never
+    as an error.
+    """
+    for path in sorted(Path(pr_dir).glob("code-gauntlet-post-review-*.json")):
+        try:
+            with open(path, encoding="utf-8") as fh:
+                data = json.load(fh)
+        except (OSError, json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        body = data.get("review_body")
+        if isinstance(body, str) and _HEALTH_BANNER_SENTINEL in body:
+            return True
+    return False
+
+
 def _checkpoint_statuses(run_dir):
     """Map golden URL -> status from state/*.json if present."""
     state_dir = Path(run_dir) / "state"
@@ -765,13 +797,31 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         # defect req 7 exists to prevent, and it was undetectable before this.
         # This check is necessarily per-PR (findings vs. that PR's own report)
         # rather than per-finding like the loop above, so it lives here.
-        if pr_unclassified > 0 and not _report_has_health_banner(pr_dir):
+        #
+        # EITHER delivery surface satisfies this, not BOTH. Two independent
+        # reasons, not just one:
+        #   1. `pr_comments` is a legal standalone delivery mode
+        #      (references/headless-mode.md) and is the realistic mode for an
+        #      automated bot — report.md is never shown to anyone in that
+        #      mode, so requiring a banner there would check a surface nobody
+        #      reads while this checker has no way to know which mode ran.
+        #   2. This is not merely a hedge against the unknown: on the
+        #      pipeline's own empty-report path (`bannered = !emptyReport` in
+        #      stages.js, ``runWith``) the report artifact is deliberately
+        #      NOT persisted and its path is nulled, so ONLY review_body
+        #      carries the banner — the pipeline's own gap message says so
+        #      explicitly ("banner rides on the PR review summary only").
+        #      Requiring BOTH would fail that documented, correct behavior.
+        if pr_unclassified > 0 and not (
+            _report_has_health_banner(pr_dir) or _post_review_has_health_banner(pr_dir)
+        ):
             failures.append(
                 "{}: {} unclassified finding(s) (origin not 'new'/'surfaced', "
-                "including a missing origin key) but no persisted "
-                "code-gauntlet-report-*.md carries the health-degradation "
-                "banner ({!r}) — a degraded review must disclose it "
-                "(issue #25 req 7)".format(label, pr_unclassified, _HEALTH_BANNER_SENTINEL)
+                "including a missing origin key) but neither the persisted "
+                "code-gauntlet-report-*.md nor code-gauntlet-post-review-*.json "
+                "review_body carries the health-degradation banner ({!r}) — a "
+                "degraded review must disclose it on the surface it delivers "
+                "on (issue #25 req 7)".format(label, pr_unclassified, _HEALTH_BANNER_SENTINEL)
             )
 
         # --- G4: plugin identity (echo receipt primary; scriptPath defense-in-depth) ---

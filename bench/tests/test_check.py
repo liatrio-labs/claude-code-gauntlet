@@ -156,6 +156,33 @@ def _report_with_banner(body="# Report\n\nAll good.\n"):
     ).format(HEALTH_BANNER_SENTINEL, body)
 
 
+def _banner_review_body():
+    """The banner text as it rides review_body — same sentinel, no report
+    wrapper prose needed since only the sentinel substring is checked.
+    """
+    return _report_with_banner(body="")
+
+
+def _write_post_review(pr_dir, review_body=None, *, sha="deadbeef", with_identity=True):
+    """A persisted ``code-gauntlet-post-review-*.json`` — the SECOND delivery
+    surface (issue #25 req 7). ``with_identity=True`` writes the PR-identity
+    wrapper shape ``{owner, repo, pr_number, sha, review_body, findings}``
+    (live-run L3); ``with_identity=False`` writes the bare-array shape a run
+    with no PR identity persists, which carries no ``review_body`` key at all.
+    """
+    path = Path(pr_dir) / "code-gauntlet-post-review-{}.json".format(sha)
+    if with_identity:
+        _write_json(
+            path,
+            {
+                "owner": "example", "repo": "repo", "pr_number": 1, "sha": sha,
+                "review_body": review_body or "", "findings": [],
+            },
+        )
+    else:
+        _write_json(path, [])
+
+
 def _identity_echo_block(*, plugin_root=None, pipeline_version=None):
     """Headless config identity lines for raw.json / report carriers."""
     root = str(plugin_root if plugin_root is not None else REPO_ROOT)
