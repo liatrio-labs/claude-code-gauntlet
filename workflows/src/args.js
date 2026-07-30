@@ -568,10 +568,20 @@ export function validateArgs(args) {
   // guard for a caller that skipped normalization entirely.)
   if (args.persist !== undefined) {
     if (args.persist === null || typeof args.persist !== 'object' || Array.isArray(args.persist)) {
-      errors.push('persist must be an object of the form { assembleScriptPath } when present');
-    } else if (args.persist.assembleScriptPath !== undefined
-      && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
-      errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
+      errors.push('persist must be an object of the form { assembleScriptPath, returnPrimaries } when present');
+    } else {
+      if (args.persist.assembleScriptPath !== undefined
+        && (typeof args.persist.assembleScriptPath !== 'string' || !args.persist.assembleScriptPath)) {
+        errors.push('persist.assembleScriptPath must be a non-empty string path to scripts/assemble_artifacts.py');
+      }
+      // `returnPrimaries: true` routes the primaries home in the workflow's RETURN instead
+      // of through the artifact-writer's transcription, and Phase 8 materializes them with
+      // scripts/materialize_artifacts.py. It is checked for a BOOLEAN rather than
+      // truthiness because writeArtifacts gates on `=== true`: a caller that stamped the
+      // string "false" would otherwise read as opting in here and out there.
+      if (args.persist.returnPrimaries !== undefined && typeof args.persist.returnPrimaries !== 'boolean') {
+        errors.push('persist.returnPrimaries must be a boolean when present');
+      }
     }
   }
   return { ok: errors.length === 0, errors };

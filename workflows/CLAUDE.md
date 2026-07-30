@@ -31,12 +31,19 @@ The v3 review pipeline. `pipeline.js` is invoked by the skill through the `Workf
 
 ## Persistence
 
-The artifact-writer is a language model asked to reproduce large escape-dense JSON verbatim, and it
-does not: measured across every recorded run, 26 of 73 writes failed their own content proof, with
-failures ranging from escape mangling to silently rewriting long prose shorter. Nothing predicts
-which document fails. **The content proof is the only thing that detects this — do not remove it,
-and do not try to fix transcription with a different encoding.**
+**Artifacts reach disk through the workflow's own return value, not through an agent.** A language
+model asked to reproduce large escape-dense JSON verbatim does not: measured across every recorded
+run, 26 of 73 writes failed their own content proof, ranging from escape mangling to silently
+rewriting long prose shorter, and nothing about a document predicts which fails. So the Persist
+stage returns the three primaries at `persistReturn` and the *harness* serializes them —
+byte-exact at every size probed to 4 MB, against ~66 KB of unique content in the largest recorded
+run. **The content proof survives the move and now grades the harness-written copy; do not remove
+it, and do not try to fix transcription with a different encoding — re-encoding was measured and
+it does not work.**
 
+- The two budgets are unrelated and must not re-merge. `PROMPT_SEGMENT_CHAR_BUDGET` (100k) sizes
+  what a model reads; `RETURN_CHAR_BUDGET` (1M) sizes what the harness serializes. Grading resume
+  state or the returned primaries against the prompt budget throws away recoverable runs.
 - `fnv1a32` is defined over UTF-16 code units and **must agree between runtimes** — JS uses
   `charCodeAt` + `Math.imul`; Python reads `utf-16-le` pairs. `tests/test_assemble_artifacts.py`
   pins the parity over surrogates and control characters.
@@ -45,7 +52,9 @@ and do not try to fix transcription with a different encoding.**
   under the identical predicate. A looser Python predicate fabricates an array.
 - Structural failures (missing file, unparseable JSON, duplicate id, bad plan checksum) hard-fail.
   A *primary* content mismatch does not — it still derives from on-disk truth and raises a gap.
-- The legacy by-value writer path stays live for pathological input. Do not delete it.
+- Both writer paths stay live and are not dead code: the derived one is the automatic fallback when
+  the primaries exceed `RETURN_CHAR_BUDGET`, the legacy by-value one is the safety net for
+  pathological input. Do not delete either.
 
 ## The verify boundary
 

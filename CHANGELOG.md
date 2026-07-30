@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.3.4 (2026-07-30)
+
+### Bug Fixes
+
+- **persist**: Carry the artifacts home in the return, not through a model
+  ([#100](https://github.com/liatrio-labs/claude-code-gauntlet/pull/100),
+  [`93ed5bb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/93ed5bbe3a6e98819ec095b95d3474079a3546a0))
+
+- **persist**: Give both channels one serializer, and honour returnPrimaries on its own
+  ([#100](https://github.com/liatrio-labs/claude-code-gauntlet/pull/100),
+  [`93ed5bb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/93ed5bbe3a6e98819ec095b95d3474079a3546a0))
+
+### Testing
+
+- **rules**: Pin the instruction budgets as ratchets, and drop one unjustified rule
+  ([#100](https://github.com/liatrio-labs/claude-code-gauntlet/pull/100),
+  [`93ed5bb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/93ed5bbe3a6e98819ec095b95d3474079a3546a0))
+
+
 ## v3.3.3 (2026-07-30)
 
 ### Bug Fixes

@@ -30,15 +30,35 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 # Codex concatenates AGENTS.md from the repo root down to the working directory and stops
-# adding files past 32 KiB (`project_doc_max_bytes`), silently. Budget the canonical set
-# well under it so a deep directory still receives its own rules.
+# adding files past 32 KiB (`project_doc_max_bytes`), silently. That is the hard ceiling.
 CODEX_CAP_BYTES = 32_768
-AGENTS_SET_BUDGET_BYTES = 24_000
 
-# Root CLAUDE.md is a pointer, not a document. Both bounds matter: the line cap alone is
-# satisfied by a handful of 300-character lines, which is how the file grew last time.
+# THESE TWO ARE RATCHETS, PINNED AT THE MEASURED SIZE WITH NO HEADROOM.
+#
+# This property was in the byte-budget test these guards replaced, and dropping it was a
+# regression: the replacement checked shape and truth (symbols resolve, twins are fresh,
+# the Codex cap is respected) but carried ~9 KB of slack, so the first PR after it landed
+# grew the instruction files and nothing asked anyone to think about it.
+#
+# The reasoning from the original, which still holds: a cushion is just a smaller quantity
+# of the exact thing being prevented. A reduction always passes. So does a correction that
+# trades text of equal or smaller size. Only NET GROWTH trips it — and then someone must
+# raise a number on a line every reviewer sees, which is the whole mechanism.
+#
+# Raising one is a deliberate act, not a formality. Before you do, apply the two-part test
+# to the addition: (1) does it fail to be derivable from the code, and (2) is it NOT
+# already stated by a comment at the site that owns it? If either answer is no, the content
+# belongs in a code comment. If both are yes, raise the number in the same commit and say
+# what the addition buys.
+#
+# Measured 2026-07-30. Update these ONLY alongside such a justification.
+AGENTS_SET_BUDGET_BYTES = 14_627
+CLAUDE_MD_MAX_BYTES = 856
+
+# Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
+# slack deliberately — the byte ratchet above is what stops growth; this stops a wall of
+# short lines that would satisfy the byte count only by being terse.
 CLAUDE_MD_MAX_LINES = 40
-CLAUDE_MD_MAX_BYTES = 2_000
 
 
 def agents_dirs():
@@ -100,11 +120,16 @@ class TestCodexSizeCap(unittest.TestCase):
         files = [REPO / "AGENTS.md"] + [d / "AGENTS.md" for d in agents_dirs()]
         total = sum(os.stat(p).st_size for p in files)
         detail = ", ".join(f"{p.relative_to(REPO)}={os.stat(p).st_size}" for p in files)
-        self.assertLess(
+        # LessEqual, not Less: the ratchet is pinned AT the measured size, so the current
+        # tree passes exactly and one added byte does not.
+        self.assertLessEqual(
             total,
             AGENTS_SET_BUDGET_BYTES,
-            f"AGENTS.md set is {total} bytes against a {AGENTS_SET_BUDGET_BYTES}-byte "
-            f"budget (Codex hard cap {CODEX_CAP_BYTES}, truncated silently). {detail}",
+            f"AGENTS.md set grew to {total} bytes against a ratchet pinned at "
+            f"{AGENTS_SET_BUDGET_BYTES} (Codex hard cap {CODEX_CAP_BYTES}, truncated "
+            f"silently). This is the guard asking you to justify the addition, not a "
+            f"limit you have reached — apply the two-part test at the constant, then "
+            f"raise it in the same commit. {detail}",
         )
 
     def test_root_agents_md_leaves_room_for_a_nested_file(self):

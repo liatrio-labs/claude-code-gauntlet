@@ -62,6 +62,11 @@ Output — exactly ONE compact JSON line on stdout for every WAIT outcome.
 
     Exit 0's payload is the terminal object with nothing dropped, added, reordered
     by hand, or summarized — re-serialized compactly so it lands on one line.
+    ONE exception, and it is confined to a single key: a `persistReturn` payload
+    (the RETURN persist channel — the artifacts themselves, tens of KB of them)
+    has its `entries` replaced by their paths and gains the resolved path of the
+    file it came from. See elide_persist_return. Every other key is untouched,
+    and a return without that key is byte-identical to what this always printed.
 
 Exit codes
     0  A terminal result was observed. stdout is it; carry it into Phase 8.
@@ -557,6 +562,46 @@ def find_terminal(text):
     return found, saw_bare_ok, (None if found is not None else bounds.get("stopped"))
 
 
+def elide_persist_return(terminal, resolved_path):
+    """Return *terminal* with its `persistReturn` bulk replaced by a pointer.
+
+    On the RETURN persist channel the compact return carries the artifacts
+    themselves — findings.json, report.md and the persist plan, verbatim — so the
+    harness can serialize them to disk without a model retyping them. That is the
+    whole point of the channel, and it is also why this stdout must not carry
+    them: the documented caller is a Bash tool call, so every byte printed here
+    lands in the orchestrator's context. Fine at 1.5 KB, wasteful at 60 KB, and
+    pointless either way — `scripts/materialize_artifacts.py` reads the same
+    payload out of the file, which is the copy nothing has retyped.
+
+    So `entries` is replaced by `paths` — deliberately a DIFFERENT key, not an
+    entry list with the text hollowed out, so a consumer that wanted the bytes
+    fails loudly instead of writing empty files. `resolvedPath` rides along
+    because it is what the materializer needs and this process is the one that
+    already resolved it; the caller no longer has to thread the task id itself.
+
+    Every other key of the terminal object is returned untouched, and a return
+    that carries no `persistReturn` is returned unchanged — this cannot alter the
+    output of a run on any other persist path.
+    """
+    if not isinstance(terminal, dict):
+        return terminal
+    payload = terminal.get("persistReturn")
+    if not isinstance(payload, dict):
+        return terminal
+    entries = payload.get("entries")
+    entries = entries if isinstance(entries, list) else []
+    slim = dict((k, v) for (k, v) in payload.items() if k != "entries")
+    slim["elided"] = True
+    slim["resolvedPath"] = resolved_path
+    slim["paths"] = [
+        e.get("path") for e in entries if isinstance(e, dict)
+    ]
+    out = dict(terminal)
+    out["persistReturn"] = slim
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Secondary signal — the persisted artifacts
 # ---------------------------------------------------------------------------
@@ -770,7 +815,7 @@ def await_terminal(args, environ=None):
             # terminal return" would stop being true for the one caller that
             # matters. Diagnostics are reserved for the non-terminal outcomes,
             # whose marker already carries the same facts as fields.
-            return terminal, 0
+            return elide_persist_return(terminal, path), 0
 
         observed["artifacts"] = artifacts_state(
             args.artifacts_dir, args.head_sha, since_epoch

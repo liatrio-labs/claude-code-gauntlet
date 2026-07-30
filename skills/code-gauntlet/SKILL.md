@@ -191,7 +191,7 @@ After this call: interpret `prior_review`'s JSON per `references/phase1-prefligh
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `prior_review` section still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). A `DEFERRED` truncation resolves the same way it does interactively: run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
 
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (AGENTS.md/QODO.md pointer resolution, `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` before it is written — see "Write the shared agent context file" below). The workflow's artifact-writer produces: `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, and — only on the derived `persist` path (see "Assemble the args object" below) — `persist-plan-*.json`. The Phase 2 stale-file truncation glob (`code-gauntlet-*-{head_sha_short}.*`, see `stale_truncate` above) matches on the `*` between `code-gauntlet-` and `-{head_sha_short}`, so it already covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (AGENTS.md/QODO.md pointer resolution, `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` before it is written — see "Write the shared agent context file" below). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. The Phase 2 stale-file truncation glob (`code-gauntlet-*-{head_sha_short}.*`, see `stale_truncate` above) matches on the `*` between `code-gauntlet-` and `-{head_sha_short}`, so it already covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
 ### Phase 2 Composite B — independent-gather (diff, changed-files, line count, misc)
 
@@ -338,9 +338,13 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   // may not be stamped without contextLines.
   contextLines, contextChars,
 
-  // optional: derive persisted artifacts via a pinned executor script instead of the full by-value writer path.
-  // Omit `persist` entirely to keep the legacy writer (unchanged behavior); artifactPaths and Phase 8 are the same either way.
-  persist: { assembleScriptPath: "{plugin_root}/scripts/assemble_artifacts.py" },
+  // how the run's artifacts reach disk. `returnPrimaries: true` is the default and the
+  // only path on which no model transcribes them — see "`persist`" below. Omit `persist`
+  // entirely to fall back to the legacy by-value writer; artifactPaths are the same either way.
+  persist: {
+    assembleScriptPath: "{plugin_root}/scripts/assemble_artifacts.py",
+    returnPrimaries: true
+  },
 
   // verify handoff (sha-scoped) for the executor's pinned command:
   verify: {
@@ -353,7 +357,13 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
 
 `mode` is `"headless"` under `CODE_GAUNTLET_HEADLESS=1`, else `"interactive"`. Never call `new Date()` inside the workflow — `generatedAt` is the only clock.
 
-**`persist` (optional).** When present, the workflow's artifact-writer emits only unique content — the findings JSON, the report markdown, and a persist-plan JSON — and a pinned executor runs `assemble_artifacts.py` to *derive* the post-review payload and checkpoint artifacts from `findings.json` plus the plan, returning a content-proof receipt instead of re-emitting them by value. When `persist` is absent, the workflow falls back to the legacy full by-value writer path unchanged. Either way, `artifactPaths` and Phase 8 are unaffected.
+**`persist` (optional, but stamp it).** It selects which of three channels puts the artifacts on disk.
+
+- **`{ assembleScriptPath, returnPrimaries: true }` — the RETURN channel. Stamp this.** No agent is dispatched at persist time at all. The workflow returns the three primaries (findings JSON, report markdown, persist plan) inside its own compact return, which the **harness** serializes to `tasks/<task-id>.output`, and Phase 8 writes them from there with `materialize_artifacts.py`. Nothing retypes the bytes.
+- `{ assembleScriptPath }` alone — the **derived writer** path: an artifact-writer transcribes those same three primaries and a pinned executor derives the rest. Still live, and the automatic fallback when a run's primaries exceed the return channel's 1,000,000-char budget. That fallback is the only reason to stamp the script path alongside `returnPrimaries`: the return channel itself never uses it (Phase 8's materializer imports the assembler directly), and `{ returnPrimaries: true }` alone takes the channel just the same — it simply falls back to the legacy writer instead of the derived one.
+- `persist` absent — the **legacy full by-value writer**, unchanged for older callers and bench.
+
+`artifactPaths` and the four artifact names are identical on all three. What differs is who writes the bytes — and on the two writer paths that is a language model, which measurably fails: across every recorded run, 26 of 73 attempted writes (36%) failed their own content proof and 12 artifacts were never written, with silent summarization among the failure modes. When `findings.json` is the casualty, `assemble_artifacts.py` correctly refuses, `post-review.json` is never produced, and **no PR comment can be posted**.
 
 ---
 
@@ -373,10 +383,11 @@ Workflow(
 The workflow returns a **compact** result — counts, artifact paths, and gaps, never the raw findings bulk:
 
 ```
-{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, checkpoints, resolvedPolicy, gaps }
+{ ok, phaseReached, stats, artifactPaths: { findings, report, checkpoints }, checkpoints, resolvedPolicy, gaps,
+  persistReturn }   // RETURN channel only: the artifacts themselves, for Phase 8 to materialize
 ```
 
-Do not re-run the review stages yourself and do not reconstruct findings from the return value — the full findings and report live on disk at `artifactPaths.*` (Phase 8 reads them).
+Do not re-run the review stages yourself and do not reconstruct findings from the return value — the full findings and report live on disk at `artifactPaths.*` (Phase 8 reads them). **`persistReturn` is the one field you never read by hand**: `await_workflow.py` prints it with its `entries` elided down to `paths` + a `resolvedPath`, precisely so the bytes stay out of this session and reach disk through `materialize_artifacts.py` instead.
 
 ### Wait protocol — MANDATORY
 
@@ -407,6 +418,8 @@ Branch on the **exit code**. Never on your own judgment about what the output "l
 | **4** | attempts exhausted, or the awaiter failed | Declare a **`workflow-timeout`** gap and deliver whatever partial artifacts exist per the Phase 8 degradation rules (resume-from-checkpoint if the last-seen state offers it, else partial report + gaps). |
 | **2** | the command itself is malformed — stdout is empty, argparse put the reason on stderr | Not a workflow outcome. Fix the command against the block above and re-run it; never treat this as a timeout. |
 
+On the RETURN persist channel, exit **5** is unreachable by construction — the artifacts do not exist until Phase 8 materializes them, so the artifacts signal can never complete first. That does not cost you the run: on exit **4**, try the Phase 8 materialize step anyway with `--nonce {nonce}`, which finds the run's output file by content. A finished pipeline whose return the awaiter never observed still wrote that file, and its artifacts are recoverable from it.
+
 The script counts the attempts, carries its own state forward, and prints the next command; there is nothing here for you to tally or infer. Four attempts of 540s is 36 minutes of held turn — longer than the 30-minute cap this replaced.
 
 **Never start Phase 8 with no terminal workflow result.** A missing/empty compact return is a failure to surface (a `workflow-timeout` gap), never an empty-but-successful review. And **never state an `ok`, a stat, or a gap you did not read from the awaiter's stdout** — "terminal result in hand" is a claim about a specific object you are holding, not a summary of how the run seemed to go.
@@ -419,6 +432,31 @@ The script counts the attempts, carries its own state forward, and prints the ne
 
 Read the compact return, pick up the persisted artifacts, and run the delivery gates. Four stages: **generate/collect report**, **deliver report**, **offer task board**, **offer dismissed findings** — execute in order. Read `references/phase8-delivery.md` for the full flow.
 
+### Materialize the artifacts — FIRST, when the return carries `persistReturn`
+
+On the RETURN persist channel the workflow returns its primaries instead of dictating them to an artifact-writer, so **nothing is on disk until you run this.** One Bash call, before anything else in Phase 8:
+
+```
+Bash(command: python3 "{plugin_root}/scripts/materialize_artifacts.py"
+              --output-dir "{output_dir}"
+              --task <persistReturn.resolvedPath, or the Phase 3 Task ID>
+              --nonce {nonce})
+```
+
+Pass whichever targets you have — `--task` (the awaiter stamps `persistReturn.resolvedPath`; the Phase 3 Task ID also resolves) and/or `--nonce` (`args.nonce`, which finds the file by content when a fast run returned inline and printed no Task ID). Giving both is the norm and costs nothing.
+
+Branch on the **exit code**, never on how the output reads:
+
+| exit | what it means | what you do |
+|---|---|---|
+| **0** | every artifact is on disk and every content proof matched | Proceed with the collection rules below. |
+| **1** | something failed | Declare an `artifact-materialize` gap quoting the receipt's `gaps`/`errors`, then deliver whatever the receipt's `materialized` list names as landed (the same "deliver what exists" rule as a partial-artifacts run). Never post PR comments unless `post-review.json` is among them. |
+| **2** | the command is malformed — empty stdout, argparse's reason on stderr | Fix the command; not a run outcome. |
+
+Do **not** reconstruct any artifact by hand from `persistReturn` if this fails. Writing those bytes yourself is the exact failure this channel exists to remove: measured across every recorded run, a model asked to transcribe them corrupted 36% of the documents it was given, most damagingly by silently rewriting long prose shorter.
+
+A return with no `persistReturn` came from one of the writer paths — the artifacts are already on disk, so skip this step entirely.
+
 ### Collect artifacts and handle failure
 
 The compact return always carries a `checkpoints` field alongside `artifactPaths`. Its shape tells you where the resume state lives:
@@ -426,7 +464,7 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 1. **On `ok: true` (writer succeeded):** artifacts are persisted. Read `artifactPaths.postReview` (the pipeline's **pre-selected delivery payload** — the challenge-survivors chosen by the delivery tier in `args.delivery.tier`: `all` (default) includes every survivor, `main_only` keeps main-tagged only — then ranked and capped at `limits.deliveryCap`, each carrying its `report_tag`; union-schema aliased so `post_review.py` consumes it unchanged), `artifactPaths.findings` (the full persisted findings JSON, every survivor, same union schema), and `artifactPaths.report` (the markdown — always shows every finding regardless of tier). These are the source of truth for delivery — do not reconstruct, re-filter, or re-rank from the return value. Here `checkpoints` is just `{ completed: [...] }` (phase names); a **slim** resume checkpoint (`{ phases, completed, phaseReached, counts }` — full output only for the resume-consumed `challenge` phase, plus a per-phase `counts` map for every phase including `filter`) is on disk at `artifactPaths.checkpoints`, so a later re-run of a superseded run resumes from it, reusing the delivered `challenge` findings verbatim and re-running the upstream phases — `filter` included: it is a pure, agent-free JS function (no dispatch cost), so it simply re-runs on resume rather than being persisted (issue #38, P1).
 2. **On `ok: false`, or `ok: true` with a partial-artifacts gap** (writer failed): the derived documents were not produced, so the resume state rides back **in the return** as `checkpoints`. Offer **resume-from-checkpoint**:
    - If `checkpoints` has a `.phases` map → re-invoke the same `Workflow` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
-   - If `checkpoints` is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~100k-char budget, so the workflow did **not** ship the findings bulk back) → there is no phase map to resume from and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`), noting the truncation in the methodology.
+   - If `checkpoints` is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~1M-char return budget, so the workflow did **not** ship the findings bulk back) → there is no phase map to resume from and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`), noting the truncation in the methodology.
    - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) via chat and report the `gaps`.
    - **A partial-artifacts run may still carry non-null `artifactPaths.findings`/`.report`.** Those are the primaries whose bytes the assemble script content-proved against the payload the writer was handed, named in the gap text; `postReview`/`checkpoints` are always null here because nothing derived them. Read and deliver them — they are as trustworthy as on a clean run, which is the whole point of the proof. This is not a successful persist: keep the gap, and never post PR comments from a salvaged `findings.json` without the pipeline's `postReview` selection (deliver via chat, or resume/re-run to get a real delivery payload).
    - On any mid-run workflow **crash** (a thrown `error` with no return value, a killed background task, or a lost compact return), follow `references/crash-recovery.md` — **`resumeFromRunId` first** (replays completed agents from cache at zero re-billed cost), journal-first diagnosis (`failingPhase` names the stage that threw), and only then the checkpoint paths above.

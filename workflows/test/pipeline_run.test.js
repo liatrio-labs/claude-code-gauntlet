@@ -776,12 +776,27 @@ test('buildResumeCheckpoints carries the phases map when it fits the budget', ()
 });
 
 test('buildResumeCheckpoints truncates to names-only when the phases map exceeds the budget', () => {
-  // A single phase whose serialized output blows past the 100k char budget.
-  const huge = { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) };
+  // A phases map whose serialized size blows past the 1,000,000-char RETURN budget.
+  const huge = { findings: Array.from({ length: 2000 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) };
   const cp = buildResumeCheckpoints({ discover: huge, verify: huge });
   assert.ok(!('phases' in cp), 'oversized phases map is dropped from the compact return');
   assert.equal(cp.truncated, true);
   assert.deepEqual(cp.completed, ['discover', 'verify']);
+});
+
+// The budget split (PROMPT_SEGMENT_CHAR_BUDGET vs RETURN_CHAR_BUDGET). This map is well
+// over the 100,000-char PROMPT budget the resume state used to be graded against by
+// analogy, and far under the return channel's own measured limit — so it must now survive.
+// Three recorded runs threw exactly this state away.
+test('buildResumeCheckpoints carries a phases map that only the PROMPT budget would have rejected', () => {
+  const big = { findings: Array.from({ length: 400 }, (_, i) => makeFinding(`F${i}`, { description: 'y'.repeat(300) })) };
+  const phaseOutputs = { discover: big, verify: big };
+  const size = JSON.stringify({ phases: phaseOutputs, completed: ['discover', 'verify'] }).length;
+  assert.ok(size > 100000, `fixture must exceed the prompt budget to be meaningful (got ${size})`);
+  assert.ok(size < 1000000, `fixture must stay under the return budget (got ${size})`);
+  const cp = buildResumeCheckpoints(phaseOutputs);
+  assert.deepEqual(cp.phases, phaseOutputs, 'resume state survives the return channel');
+  assert.ok(!cp.truncated);
 });
 
 test('reportStage under the budget stays a single dispatch', async () => {
