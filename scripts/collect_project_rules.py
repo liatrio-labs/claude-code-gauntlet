@@ -292,9 +292,6 @@ class _Collector(object):
             return None, "not_regular"
         if st.st_size > self.max_file_bytes:
             return None, "too_large"
-        if self.total_bytes + st.st_size > self.max_total_bytes:
-            self.truncated = True
-            return None, "total_cap_reached"
         try:
             with open(real, "r", encoding="utf-8", errors="replace") as handle:
                 text = handle.read()
@@ -330,6 +327,16 @@ class _Collector(object):
         self.seen_content.add(fingerprint)
 
         size = len(text.encode("utf-8"))
+        # The total budget is applied HERE, after dedup, not in `_read` against a bare
+        # `stat`. A duplicate contributes zero bytes, so charging it against the budget
+        # could trip the cap and emit a `project_rules_truncated` gap claiming rules were
+        # dropped while the identical content sat in `sources` already — a fabricated gap,
+        # which is exactly as wrong as a fabricated success. The per-file cap still runs on
+        # `stat` before any `open`, so an oversized file is never read.
+        if self.total_bytes + size > self.max_total_bytes:
+            self.truncated = True
+            self._skip(real, "total_cap_reached")
+            return
         self.included.add(real)
         self.total_bytes += size
         self.sources.append(
