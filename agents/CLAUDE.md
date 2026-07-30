@@ -29,16 +29,10 @@ Subagent contracts. Each `.md` is a system prompt with enforced YAML frontmatter
 - **The challenger is structurally blind by design** — title, description, location, and the code it
   opens itself. It is never given the shared context path.
 
-## Emitting findings
+## Returning findings
 
-NDJSON, one physical line per object. Literal newlines, tabs and carriage returns inside string
-values must be written as the two-character escapes — a raw `0x0A` splits one finding into two
-corrupt lines. `description` is single-paragraph prose (≤500 chars, no fenced blocks, no bullet
-lists); code references belong in `evidence` and `cross_file_refs`.
-
-Emit with `printf '%s\n' '...' >> "literal_path"` — **not** `echo`, whose zsh builtin interprets
-`\n` even inside single quotes. For apostrophes in JSON values use `'`. Avoid `$'...'`,
-`$VAR`, heredocs, `python3 -c` and command substitution: the tree-sitter-bash parser treats these
-as unrecognized nodes and they are silently denied under sandbox auto-approval.
-
-Canonical contract: `skills/code-gauntlet/references/ndjson-emission-contract.md`.
+Findings are returned **by value** as the task's structured result — `{ findings, complete,
+total_seen }` per the dispatch schema. There is no findings file, nothing is written to disk, and
+the discovery contracts grant no shell tool. `description` is single-paragraph prose (≤500 chars,
+no fenced blocks, no bullet lists); code references belong in `evidence` and `cross_file_refs`.
+An apostrophe never needs escaping inside a JSON string value.
