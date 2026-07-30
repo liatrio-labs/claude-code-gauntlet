@@ -25,11 +25,12 @@ array-vs-object:
   `text` **VERBATIM** to its `path`: byte for byte, no re-indenting, no re-serializing,
   no wrapping. The `text` is already the exact file content.
 - **Verify slice inputs** — an array of `{ path, content }` entries: for each entry,
-  write its `content` as JSON to its `path`. A downstream script re-reads this file and
-  reports a checksum of the document it parsed back; the workflow compares that against
-  its own expectation for exactly the content you were handed. Persist the value
-  faithfully — an altered, dropped, or garbled field costs that slice its verification,
-  not just a mismatch notice.
+  write its `content` as JSON to its `path`. Indentation and line breaks are yours to
+  choose here, but **nothing else is**: keep every key, every value, and the ORDER they
+  came in. A downstream script re-reads this file and reports a checksum of the document
+  it parsed back, and the workflow compares that against its own expectation for exactly
+  the content you were handed — so an altered, dropped, or reordered field costs that
+  slice its verification, not just a mismatch notice.
 - **Legacy full payload** — an object `{ findings, postReview, report, checkpoints }`:
   write `findings` as pretty JSON to the findings path, `postReview` (the pre-selected
   PR-comment delivery set) as pretty JSON to the post-review path, `report` verbatim to

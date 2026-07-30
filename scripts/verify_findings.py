@@ -1493,10 +1493,19 @@ def main():
     if args.input is not None:
         return _run_receipt(args)
 
-    # Legacy positional path (unchanged behavior — including that a die() condition here
-    # is still an exit-1 with the message on stderr and nothing on stdout. die() raises
-    # InputError rather than calling sys.exit so the RECEIPT path can turn it into an
-    # honest failure envelope; this converts it back for the path that always exited).
+    # Legacy positional path. A die() condition here is still an exit-1 with the message
+    # on stderr and nothing on stdout — die() raises InputError rather than calling
+    # sys.exit so the RECEIPT path can turn it into an honest failure envelope, and this
+    # converts it back for the path that always exited.
+    #
+    # Two READ-side behaviours did change with the slice-input proof (issue #25 PR3),
+    # because both paths share read_input_document: the file is opened as utf-8-sig, so a
+    # BOM is consumed rather than reported as unparseable JSON; and an OSError other than
+    # FileNotFoundError now becomes a clean die() instead of an uncaught traceback. Both
+    # still exit 1 with a message on stderr, so the contract this path documents holds —
+    # but "unchanged behavior" would have been an overstatement, so it does not say that.
+    # The lenient trailing-byte parse is NOT shared: this path passes lenient=False,
+    # because it has no content proof and accepting a truncated tail would be a guess.
     try:
         _run_legacy(args, parser)
     except InputError:

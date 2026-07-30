@@ -42,6 +42,7 @@ from scripts.verify_findings import (
     deltas_checksum,
     _delta_confidence,
     _DELTA_FIELDS,
+    InputError,
     REPO_ROOT,
 )
 # JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
@@ -1584,6 +1585,16 @@ class TestReceipt(unittest.TestCase):
         corrupted" for a code defect. _run_receipt splits its try/except in two so
         only the input stage can tag; this test is what stops a future
         'simplification' collapsing them back into one.
+
+        THE FIXTURE RAISES InputError, NOT RuntimeError, AND THAT IS THE WHOLE POINT.
+        A collapsed single try/except reads `except InputError -> tag` /
+        `except Exception -> do not tag`, so a RuntimeError from the verification body
+        comes back untagged under BOTH the correct split and the collapse this guards
+        against — the obvious version of this test passes against the bug it names.
+        Only an InputError raised from the VERIFICATION stage separates them: the split
+        must leave it untagged (it did not come from the input file), while a collapse
+        tags it. The first version of this test used RuntimeError and was proven
+        non-discriminating during the adversarial review pass.
         """
         import io, json
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
@@ -1593,7 +1604,8 @@ class TestReceipt(unittest.TestCase):
         try:
             with patch("sys.stderr", new_callable=io.StringIO), \
                     patch("scripts.verify_findings.run_verification",
-                          side_effect=RuntimeError("boom inside the verification body")), \
+                          side_effect=InputError("boom inside the verification body",
+                                                 "input_unparseable")), \
                     patch.object(sys, "argv", [
                         "verify_findings.py", "--input", in_path,
                         "--output", out_path, "--nonce", "N.0", "--head-sha", "abc1234",
@@ -1604,10 +1616,56 @@ class TestReceipt(unittest.TestCase):
                 envelope = json.load(fh)
             self.assertEqual(envelope["status"], "failed")
             self.assertIn("boom inside the verification body", envelope["stderr"])
+            self.assertNotIn(
+                "reason", envelope,
+                "an InputError raised from the VERIFICATION stage must not be tagged as "
+                "an input fault — the two try/excepts have been collapsed into one",
+            )
+        finally:
+            os.unlink(in_path)
+            os.unlink(out_path)
+
+    def test_a_plain_crash_in_the_verification_body_is_still_untagged(self):
+        """The ordinary case, kept beside the discriminating one above."""
+        import io, json
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            json.dump({"findings": self._findings(), "base_branch": "main"}, f)
+            in_path = f.name
+        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        try:
+            with patch("sys.stderr", new_callable=io.StringIO), \
+                    patch("scripts.verify_findings.run_verification",
+                          side_effect=RuntimeError("boom")), \
+                    patch.object(sys, "argv", [
+                        "verify_findings.py", "--input", in_path,
+                        "--output", out_path, "--nonce", "N.0", "--head-sha", "abc1234",
+                    ]):
+                from scripts.verify_findings import main
+                main()
+            with open(out_path) as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "failed")
             self.assertNotIn("reason", envelope)
         finally:
             os.unlink(in_path)
             os.unlink(out_path)
+
+    def test_a_bom_prefixed_slice_input_is_read_rather_than_refused(self):
+        """The Write tool may prepend a UTF-8 BOM. `json.load` under the default
+        encoding reports that as unparseable JSON, which would cost a slice its
+        classification over a byte no human put there — so the input is opened as
+        utf-8-sig. Pinned because it is a deliberate behaviour change with no other
+        coverage, and because the proof must be computed over the document WITHOUT the
+        BOM: a BOM-prefixed file and a clean one are the same document, so they must
+        produce the same checksum or the tolerance would just relocate the failure.
+        """
+        clean = json.dumps({"findings": self._findings(), "base_branch": "main"})
+        clean_env = self._receipt_for(clean)
+        bom_env = self._receipt_for("﻿" + clean)
+        self.assertEqual(bom_env["status"], "ok")
+        self.assertEqual(
+            bom_env["receipt"]["input_checksum"], clean_env["receipt"]["input_checksum"],
+        )
 
     def test_an_unrepresentable_number_makes_the_proof_absent_not_fatal(self):
         """A float anywhere in the document costs the PROOF, never the slice.
@@ -1628,6 +1686,33 @@ class TestReceipt(unittest.TestCase):
         )
         self.assertEqual(envelope["status"], "ok")
         self.assertIsNone(envelope["receipt"]["input_checksum"])
+
+    def test_legacy_path_reads_a_bom_prefixed_file_rather_than_dying_on_it(self):
+        """The one LEGACY-path behaviour change this PR makes, pinned rather than left
+        to be discovered.
+
+        `load_input` and the receipt path share `read_input_document`, which opens
+        utf-8-sig — so the positional CLI inherited BOM tolerance. Before, a BOM'd file
+        died with "Invalid JSON in findings file: Unexpected UTF-8 BOM"; now it parses.
+        That is the better behaviour (a BOM is not a content error) but it IS a change,
+        so it gets a test instead of a claim that nothing changed. Everything else about
+        this path is unchanged, including that trailing bytes are still fatal here — the
+        legacy path passes lenient=False because it has no content proof to make a
+        lenient parse safe.
+        """
+        import io
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
+            f.write("﻿" + json.dumps({"findings": self._findings()}))
+            bom_path = f.name
+        try:
+            with patch("sys.stderr", new_callable=io.StringIO) as err, \
+                    patch("sys.stdout", new_callable=io.StringIO), \
+                    patch.object(sys, "argv", ["verify_findings.py", bom_path]):
+                from scripts.verify_findings import main
+                main()  # must NOT exit non-zero
+            self.assertNotIn("Invalid JSON in findings file", err.getvalue())
+        finally:
+            os.unlink(bom_path)
 
     def test_legacy_path_still_exits_nonzero_on_malformed_input(self):
         """The other half of the same change: die() raising InputError instead of calling

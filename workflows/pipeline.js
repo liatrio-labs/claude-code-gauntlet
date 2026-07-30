@@ -3245,8 +3245,12 @@ async function verifyStage(ctx, input) {
   // guarantee back with nothing anywhere saying so. Same contract as the
   // context_unmeasured disclosure.
   if (unprovenSlices.length > 0) {
+    // Denominator = slices that actually reached a proof grade, NOT every slice
+    // dispatched. A degraded slice was never verified against anything, so counting it
+    // here would make the sentence claim a population it does not describe.
+    const graded = inputProofStats.proven + inputProofStats.unproven;
     gaps.push(
-      `verify-input-unproven: ${unprovenSlices.length} of ${inputProofStats.slices} slice(s) `
+      `verify-input-unproven: ${unprovenSlices.length} of ${graded} verified slice(s) `
       + `(${unprovenSlices.join(', ')}) were verified against a slice-input file whose content `
       + `could not be checked against what the pipeline dispatched — ${unprovenDetail}. `
       + `Their classification stands and no finding was dropped, but it is not proven. `
@@ -3665,6 +3669,17 @@ function sliceInputEntry(inp, i, slice) {
 //
 // Measured, not assumed: over all 27 parseable slice-input files this repo has retained,
 // Python's canonical form and node's agree on every one — 27/27, zero disagreement.
+//
+// "VALUE" here means values-and-their-order, not an order-insensitive set. Both runtimes
+// preserve insertion order through parse -> serialize, so a writer that reordered keys or
+// findings without changing a single value would read as drift. That is deliberate and is
+// the opposite call from canonicalDeltas, which rebuilds from the dispatched id order
+// specifically to tolerate reordering — because the two face different actors. The delta
+// echo is an agent AUTHORING a fresh answer, where array order carries no meaning; the
+// slice input is an agent TRANSCRIBING a document it was handed, where reordering is
+// evidence it did not copy what it was given. Tolerating it here would also mean building
+// a second canonicalisation convention, and the cost of the strict reading is bounded:
+// one re-materialize, then an honest degrade.
 //
 // Returns null when the document contains a number the two runtimes would spell
 // differently (firstUnsafeNumber — the same precondition the persist path applies). A

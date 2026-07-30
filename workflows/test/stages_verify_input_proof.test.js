@@ -292,7 +292,26 @@ test('unproven slices are disclosed in ONE aggregated gap, not one per slice', a
   assert.equal(out.inputProof.unproven, 3);
   const unproven = (out.gaps || []).filter((g) => g.includes('verify-input-unproven'));
   assert.equal(unproven.length, 1, 'three unproven slices, one message');
-  assert.match(unproven[0], /3 of 3 slice\(s\) \(0, 1, 2\)/);
+  assert.match(unproven[0], /3 of 3 verified slice\(s\) \(0, 1, 2\)/);
+});
+
+test('the unproven denominator counts GRADED slices, not slices that degraded', async () => {
+  const findings = makeFindings(4);
+  const input = baseInput(findings, { limits: { verifySliceSize: 2 } });
+  // Slice 0 degrades outright (corrupt on both attempts, rewrite also fails); slice 1 is
+  // written faithfully but its receipt carries no proof. Saying "1 of 2" would describe a
+  // population that includes a slice which was never verified against anything at all.
+  const ctx = ctxFor(
+    (i, content, attempt) => (i === 0 ? (attempt > 1 ? null : { content, corrupt: true }) : { content }),
+    (i) => (i === 1 ? { inputChecksum: null } : {}),
+  );
+  const out = await verifyStage(ctx, input);
+
+  assert.equal(out.inputProof.slices, 2);
+  assert.equal(out.inputProof.degraded, 1);
+  assert.equal(out.inputProof.unproven, 1);
+  const unproven = (out.gaps || []).find((g) => g.includes('verify-input-unproven'));
+  assert.match(unproven, /1 of 1 verified slice\(s\) \(1\)/);
 });
 
 // --- 6. Blast radius stays per slice -----------------------------------------
