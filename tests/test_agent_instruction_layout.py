@@ -1,82 +1,88 @@
 """Guards for the cross-tool agent-instruction layout.
 
-`AGENTS.md` is the canonical file; `CLAUDE.md` is a pointer at it plus a Claude-only tail;
-`.claude/rules/` and `.cursor/rules/` carry path scoping whose bodies are references, not
-copied prose. Four readers, one source.
+`AGENTS.md` is canonical — the file Codex and Cursor read natively. Root `CLAUDE.md` is a
+pointer at it plus a Claude-only tail. Each directory's `CLAUDE.md` is a GENERATED twin of
+its `AGENTS.md` (`scripts/sync_agent_rules.py`), because Claude Code's on-demand loader
+injects a subdirectory memory file verbatim and does not expand `@imports` — measured, and
+the reason two earlier pointer-based designs were thrown away.
 
-Every failure this module guards is SILENT — none of them raise, and all of them leave a
-file that still looks correct:
+Every failure guarded here is SILENT. None raise, and all leave a file that still looks
+correct to a human:
 
-* Codex truncates its concatenated instructions at 32 KiB without notice, so the repo can
-  grow past the cap and simply stop delivering the tail.
-* Claude Code's import parser skips code spans and fenced blocks, so one stray backtick
-  around the pointer turns it into decoration and CLAUDE.md silently carries nothing.
-* Prose migrates back into CLAUDE.md over time (it has, twice), which is the bloat the
-  layout exists to prevent and the thing Anthropic's docs name as the cause of Claude
-  ignoring instructions.
-* A rule file can point at a target that was renamed or deleted, and the tool that reads it
-  reports nothing.
+* Codex truncates its concatenated instructions at 32 KiB with no notice.
+* Claude's launch-time import parser skips code spans, so one backtick around the root
+  pointer turns it into decoration and CLAUDE.md carries nothing.
+* A generated twin drifts from its source, and the two tools then read different rules.
+* An `AGENTS.md` is added with no twin, so Cursor and Codex see it and Claude never does.
+* Prose migrates back into root CLAUDE.md, which is the bloat the layout removed.
 
-Sizes here are budgets, not measurements of the current files — raising one is the
-deliberate, reviewable act, exactly as with the byte ceiling this replaced.
+Budgets here are budgets, not measurements of the current files. Raising one is the
+deliberate, reviewable act.
 """
 
 import os
 import re
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
 # Codex concatenates AGENTS.md from the repo root down to the working directory and stops
-# adding files past 32 KiB (`project_doc_max_bytes`), with no notice. Keep the whole set well
-# under it so a deep directory still receives its own rules.
+# adding files past 32 KiB (`project_doc_max_bytes`), silently. Budget the canonical set
+# well under it so a deep directory still receives its own rules.
 CODEX_CAP_BYTES = 32_768
 AGENTS_SET_BUDGET_BYTES = 24_000
 
-# CLAUDE.md is a pointer, not a document. If this needs raising, the content almost
-# certainly belongs in AGENTS.md or a path-scoped rule instead.
+# Root CLAUDE.md is a pointer, not a document. Both bounds matter: the line cap alone is
+# satisfied by a handful of 300-character lines, which is how the file grew last time.
 CLAUDE_MD_MAX_LINES = 40
-
-RULE_BODY = re.compile(r"^---\n(?P<fm>.*?)\n---\n\n@(?P<target>\S+)\n?$", re.S)
-
-
-def agents_files():
-    return sorted(REPO.glob("AGENTS.md")) + sorted(
-        p for p in REPO.glob("*/AGENTS.md") if ".git" not in p.parts
-    )
+CLAUDE_MD_MAX_BYTES = 2_000
 
 
-class TestCanonicalSource(unittest.TestCase):
-    def test_claude_md_imports_agents_md_outside_any_code_span(self):
-        """The pointer must be a bare `@AGENTS.md` at line start.
+def agents_dirs():
+    """Directories carrying an AGENTS.md, excluding the repo root."""
+    return [
+        p.parent
+        for p in sorted(REPO.glob("*/AGENTS.md"))
+        if not p.parent.name.startswith(".")
+    ]
+
+
+class TestCanonicalPointer(unittest.TestCase):
+    def test_root_claude_md_imports_agents_md_outside_any_code_span(self):
+        """Must be a bare `@AGENTS.md` at line start.
 
         Claude Code's import parser skips code spans and fenced blocks, so backticks around
         the pointer leave a CLAUDE.md that reads correctly to a human and imports nothing.
+        This is the one import in the layout that DOES expand — it is launch-time and
+        root-level, unlike the on-demand subdirectory path.
         """
         text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
-        fenced = re.sub(r"```.*?```", "", text, flags=re.S)
-        uncoded = re.sub(r"`[^`\n]*`", "", fenced)
+        uncoded = re.sub(r"`[^`\n]*`", "", re.sub(r"```.*?```", "", text, flags=re.S))
         self.assertRegex(
             uncoded,
             r"(?m)^@AGENTS\.md\s*$",
-            "CLAUDE.md must carry a bare `@AGENTS.md` import on its own line, outside "
+            "root CLAUDE.md must carry a bare `@AGENTS.md` on its own line, outside "
             "backticks and fences — otherwise the import silently does not expand.",
         )
 
-    def test_claude_md_stays_a_pointer(self):
-        lines = (REPO / "CLAUDE.md").read_text(encoding="utf-8").splitlines()
+    def test_root_claude_md_stays_a_pointer(self):
+        text = (REPO / "CLAUDE.md").read_text(encoding="utf-8")
+        lines, size = len(text.splitlines()), len(text.encode("utf-8"))
         self.assertLessEqual(
-            len(lines),
-            CLAUDE_MD_MAX_LINES,
-            f"CLAUDE.md is {len(lines)} lines against a {CLAUDE_MD_MAX_LINES}-line budget. "
-            "It is loaded on every turn and is meant to be a pointer plus a Claude-only "
-            "tail. Portable content belongs in AGENTS.md; directory content belongs in that "
-            "directory's AGENTS.md.",
+            lines, CLAUDE_MD_MAX_LINES, f"root CLAUDE.md is {lines} lines"
+        )
+        self.assertLessEqual(
+            size,
+            CLAUDE_MD_MAX_BYTES,
+            f"root CLAUDE.md is {size} bytes against a {CLAUDE_MD_MAX_BYTES}-byte budget. "
+            "It is loaded on every turn. Portable content belongs in AGENTS.md; "
+            "directory content belongs in that directory's AGENTS.md.",
         )
 
-    def test_no_section_heading_lives_in_both_claude_md_and_agents_md(self):
-        """Duplication is the failure mode the layout exists to remove."""
+    def test_no_section_heading_lives_in_both_root_files(self):
         def headings(p):
             return {
                 line.strip().lstrip("#").strip().lower()
@@ -85,104 +91,121 @@ class TestCanonicalSource(unittest.TestCase):
             }
 
         shared = headings(REPO / "CLAUDE.md") & headings(REPO / "AGENTS.md")
-        self.assertEqual(
-            shared, set(), f"headings present in both CLAUDE.md and AGENTS.md: {sorted(shared)}"
-        )
+        self.assertEqual(shared, set(), f"headings in both files: {sorted(shared)}")
 
 
 class TestCodexSizeCap(unittest.TestCase):
-    def test_agents_files_fit_under_the_codex_cap(self):
-        files = agents_files()
-        self.assertTrue(files, "expected at least a root AGENTS.md")
+    def test_canonical_set_fits_under_the_codex_cap(self):
+        """Only AGENTS.md files count — the generated twins are the same bytes again."""
+        files = [REPO / "AGENTS.md"] + [d / "AGENTS.md" for d in agents_dirs()]
         total = sum(os.stat(p).st_size for p in files)
         detail = ", ".join(f"{p.relative_to(REPO)}={os.stat(p).st_size}" for p in files)
         self.assertLess(
             total,
             AGENTS_SET_BUDGET_BYTES,
-            f"AGENTS.md set is {total} bytes against a {AGENTS_SET_BUDGET_BYTES}-byte budget "
-            f"(Codex hard cap {CODEX_CAP_BYTES}, truncated silently). {detail}",
+            f"AGENTS.md set is {total} bytes against a {AGENTS_SET_BUDGET_BYTES}-byte "
+            f"budget (Codex hard cap {CODEX_CAP_BYTES}, truncated silently). {detail}",
         )
 
-    def test_root_agents_md_alone_is_well_under_the_cap(self):
-        """A nested directory gets root + its own; the root must leave room for the tail."""
+    def test_root_agents_md_leaves_room_for_a_nested_file(self):
         size = os.stat(REPO / "AGENTS.md").st_size
         self.assertLess(size, CODEX_CAP_BYTES // 2, f"root AGENTS.md is {size} bytes")
 
 
-class TestRulePointers(unittest.TestCase):
-    def rule_files(self):
-        return sorted((REPO / ".claude/rules").glob("*.md")) + sorted(
-            (REPO / ".cursor/rules").glob("*.mdc")
-        )
+class TestGeneratedTwins(unittest.TestCase):
+    """The twins are the ONLY way directory rules reach Claude. Drift is silent."""
 
-    def test_rule_files_are_pointers_carrying_no_prose(self):
-        """A rule file is scoping metadata plus one reference. Prose in it is a second copy."""
-        for path in self.rule_files():
-            with self.subTest(rule=str(path.relative_to(REPO))):
-                m = RULE_BODY.match(path.read_text(encoding="utf-8"))
-                self.assertIsNotNone(
-                    m,
-                    "must be exactly YAML frontmatter followed by a single @reference — "
-                    "content belongs in the AGENTS.md it points at",
-                )
-
-    def test_every_rule_target_exists(self):
-        """The two tools resolve a reference from different bases, so the same target is
-        spelled differently in each and neither spelling works in the other.
-
-        Claude Code documents that a relative import resolves against the file containing
-        it, hence `@../../workflows/AGENTS.md` from `.claude/rules/`. Cursor's `@file`
-        references resolve from the project root, hence the bare `@workflows/AGENTS.md`.
-        Getting this backwards yields a rule that loads with no content and says nothing.
-
-        (The Cursor base is convention rather than something its docs state outright. If it
-        turns out to resolve from the rule file, only the base below changes.)
-        """
-        bases = {".claude": lambda p: p.parent, ".cursor": lambda _p: REPO}
-        for path in self.rule_files():
-            with self.subTest(rule=str(path.relative_to(REPO))):
-                m = RULE_BODY.match(path.read_text(encoding="utf-8"))
-                assert m is not None
-                tool = path.relative_to(REPO).parts[0]
-                target = (bases[tool](path) / m.group("target")).resolve()
+    def test_every_agents_md_has_a_twin(self):
+        for directory in agents_dirs():
+            with self.subTest(directory=directory.name):
                 self.assertTrue(
-                    target.is_file(),
-                    f"points at {m.group('target')}, which does not resolve from the "
-                    f"{tool} base. Nothing reports a dangling reference at load time.",
+                    (directory / "CLAUDE.md").is_file(),
+                    f"{directory.name}/AGENTS.md has no CLAUDE.md twin, so Cursor and "
+                    "Codex read these rules and Claude Code never does. Run "
+                    "scripts/sync_agent_rules.py.",
                 )
 
-    def test_frontmatter_values_are_quoted(self):
-        """`description: a: b` is invalid YAML; a glob starting with `*` is too."""
-        for path in self.rule_files():
-            with self.subTest(rule=str(path.relative_to(REPO))):
-                m = RULE_BODY.match(path.read_text(encoding="utf-8"))
-                assert m is not None
-                for line in m.group("fm").splitlines():
-                    key, _, value = line.partition(": ")
-                    if value in ("true", "false"):
-                        continue
-                    self.assertTrue(
-                        value.startswith('"') and value.endswith('"'),
-                        f"{key} must be quoted; got {value!r}",
-                    )
-
-    def test_claude_and_cursor_scope_the_same_directories(self):
-        """Scoping is duplicated per tool because no cross-tool mechanism exists. That is the
-        one accepted duplication, so it must at least stay consistent."""
-        def globs(paths, pattern, key):
-            out = {}
-            for p in sorted(paths.glob(pattern)):
-                m = RULE_BODY.match(p.read_text(encoding="utf-8"))
-                assert m is not None, p
-                for line in m.group("fm").splitlines():
-                    if line.startswith(f"{key}: "):
-                        out[p.stem] = line.split(": ", 1)[1].strip('"')
-            return out
-
-        self.assertEqual(
-            globs(REPO / ".claude/rules", "*.md", "paths"),
-            globs(REPO / ".cursor/rules", "*.mdc", "globs"),
+    def test_no_twin_is_stale(self):
+        """Delegates to the generator's own --check so the two cannot disagree."""
+        result = subprocess.run(
+            [sys.executable, str(REPO / "scripts" / "sync_agent_rules.py"), "--check"],
+            capture_output=True,
+            text=True,
         )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"generated twins are stale: {result.stderr.strip()}",
+        )
+
+    def test_twin_carries_the_do_not_edit_banner(self):
+        """The banner is an HTML comment: stripped before injection, so it is free."""
+        for directory in agents_dirs():
+            with self.subTest(directory=directory.name):
+                head = (directory / "CLAUDE.md").read_text(encoding="utf-8")[:400]
+                self.assertIn("GENERATED from AGENTS.md", head)
+                self.assertTrue(head.lstrip().startswith("<!--"))
+
+
+class TestCollectorDedup(unittest.TestCase):
+    """A repo shipping CLAUDE.md as a copy of AGENTS.md must not pay for both.
+
+    This layout IS that shape, so the collector has to collapse it — otherwise every
+    review of such a repo carries every rule twice. Exercises the real collector rather
+    than its helper: an earlier version of this test asserted only that the twin and its
+    source normalise alike, and stayed green with dedup disabled outright.
+    """
+
+    def collect(self):
+        sys.path.insert(0, str(REPO))
+        import json
+        import tempfile
+
+        changed = [str(d.name) + "/x" for d in agents_dirs()]
+        with tempfile.TemporaryDirectory() as tmp:
+            listing = Path(tmp) / "changed.json"
+            listing.write_text(json.dumps(changed), encoding="utf-8")
+            out = Path(tmp) / "rules.md"
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "scripts" / "collect_project_rules.py"),
+                    "--repo-root", str(REPO),
+                    "--changed-files", str(listing),
+                    "--out", str(out),
+                ],
+                capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+    def test_each_rule_set_is_collected_exactly_once(self):
+        from scripts.collect_project_rules import _effective
+
+        report = self.collect()
+        seen = {}
+        for source in report["sources"]:
+            text = (REPO / source["path"]).read_text(encoding="utf-8")
+            key = _effective(text)
+            self.assertNotIn(
+                key,
+                seen,
+                f"{source['path']} duplicates {seen.get(key)} — the agents would read "
+                "these rules twice and the payload pays for both",
+            )
+            seen[key] = source["path"]
+
+    def test_the_twins_are_the_pairs_being_collapsed(self):
+        """Precondition: without dedup this repo really would double-count."""
+        report = self.collect()
+        skipped = {s["path"] for s in report["skipped"] if s["reason"] == "duplicate_of"}
+        for directory in agents_dirs():
+            with self.subTest(directory=directory.name):
+                pair = {f"{directory.name}/AGENTS.md", f"{directory.name}/CLAUDE.md"}
+                self.assertTrue(
+                    pair & skipped,
+                    f"neither half of {sorted(pair)} was collapsed",
+                )
 
 
 if __name__ == "__main__":

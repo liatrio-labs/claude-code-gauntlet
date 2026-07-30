@@ -1,7 +1,0 @@
----
-description: "JS pipeline — sandbox globals, the generated bundle, persistence, verify boundary"
-globs: "workflows/**"
-alwaysApply: false
----
-
-@workflows/AGENTS.md

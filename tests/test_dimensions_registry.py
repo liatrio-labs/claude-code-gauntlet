@@ -3,7 +3,7 @@
 `workflows/src/registry.js` declares the WHOLE finding schema — `FINDING_PROP_TYPES`
 (canonical), `FINDING_REQUIRED` (the flat required subset) and each `DIMENSIONS` row's
 `schemaExtra` (per-dimension). Three other places describe that same schema in prose: the
-nine dimension names in CLAUDE.md, the field lists in agents/AGENTS.md,
+nine dimension names in agents/AGENTS.md, the field lists there,
 and `references/report-format.md`'s Finding Fields Reference tables. A fourth — the seven
 discovery agents' `.md` output contracts — tells the models what to emit.
 
