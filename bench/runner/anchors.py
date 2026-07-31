@@ -13,7 +13,8 @@ Two entry points:
   diffs the resulting TP/FP/FN counts against the repo's committed
   ``evaluations.json`` for that same judge. Agreement within ±1 per tool (judge
   nondeterminism) proves our invocation reproduces upstream behaviour before any
-  real scoring runs on the 4.8 pin. This makes real (small) API spend.
+  real scoring runs on the harness judge pin (``baselines.json`` ``judge_pin``).
+  This makes real (small) API spend.
 
 * ``rejudge_anchors(judge_pin)`` — the Step-3 machinery: re-judge all three
   anchors on a subset under the pinned judge (dedup regenerated), adjudicate
@@ -153,7 +154,8 @@ def _clear_stale(model_dir):
 
 
 def _counts(ev):
-    """Return ``{tp, fp, fn}`` from a step3 evaluation dict (zeros if absent)."""
+    """Return ``{tp, fp, fn, present}``; a missing key reads 0, a missing
+    evaluation reads None (so tolerance never passes on absent data)."""
     if not isinstance(ev, dict):
         return {"tp": None, "fp": None, "fn": None, "present": False}
     return {
@@ -385,7 +387,7 @@ def rejudge_anchors(
     Results are cached under ``cache_dir`` keyed ``sha256(judge_pin +
     candidates)`` — a settled pin re-reads instead of re-spending. ``run_scorer``
     and ``adjudicator`` are injectable so the whole path runs in tests with no
-    network; this function is not invoked live until the 4.8 pin is settled.
+    network.
     """
     tools = list(tools)
     base_url = base_url or MARTIAN_BASE_URL

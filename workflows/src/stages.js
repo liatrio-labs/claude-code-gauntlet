@@ -1,6 +1,7 @@
-// stages.js — orchestration stage functions for the code-gauntlet v3 pipeline,
-// phases 1-3 (Summarize -> Discover -> Merge) plus the agent-count coarsening
-// formula that keeps the whole run's worst-case fan-out under the platform guard.
+// stages.js — orchestration stage functions for the code-gauntlet v3 pipeline: all eight
+// stages (Summarize -> Discover -> Merge -> Verify -> Validate -> Filter -> Challenge ->
+// Report), persistence, checkpoints and the runWith orchestrator, plus the agent-count
+// coarsening formula that keeps the whole run's worst-case fan-out under the platform guard.
 //
 // Every stage takes an injected `ctx` ({ agent, parallel }) so unit tests can drive
 // it with a mock (the runtime globals do not exist under node:test). Defaults fall
@@ -692,8 +693,11 @@ export async function verifyStage(ctx, input) {
 // origin='unknown' (surfaced-classification skipped). Nothing is dropped and nothing is
 // upgraded. Numeric-string fields are pinned here for the same reason they are pinned on
 // the slice-input path: the trusted path returns the script's re-scored numbers, but this
-// path re-emits discovery-shaped findings whose confidence is the schema's numeric STRING
-// ("85") — leaked downstream, the filter's consensus `+` boost concatenates ("85" + 10 ->
+// path re-emits discovery-shaped findings straight through. The discovery schema now
+// declares confidence a NUMBER (FINDING_PROP_TYPES in registry.js), so the string form
+// "85" no longer arrives from a live dispatch; the pin is defence-in-depth for
+// legacy/checkpoint-resume findings that predate that schema pin — leaked downstream, a
+// string confidence makes the filter's consensus `+` boost concatenate ("85" + 10 ->
 // "8510" -> clamped to 100).
 function degradedSlice(slice) {
   return slice.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' }));
@@ -872,9 +876,8 @@ export function joinVerifyDeltas(slice, deltas) {
 //      meant to remove. Confidence is also rounded here; a delta that carries a
 //      script-decided confidence overwrites it afterward.
 //
-// Everything else (null, non-numeric, NaN/inf, fractional numeric strings) is left
-// alone so the script's own guards still fire. Fractional numeric strings match
-// Python's `_INT_RE` branch, which only coerces clean integers.
+// Everything else (null, non-numeric, NaN/inf, fractionally-valued numeric strings) is
+// left alone so the script's own guards still fire.
 const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
 function pinNumericFields(finding) {
   const out = { ...finding };
@@ -882,8 +885,9 @@ function pinNumericFields(finding) {
     const val = out[k];
     if (typeof val === 'string' && val.trim() !== '' && Number.isFinite(Number(val))) {
       const n = Number(val);
-      // Clean integer strings only — a fractional numeric string is left alone, matching
-      // verify_findings._coerce_numeric_fields / `_INT_RE`.
+      // Any string whose numeric VALUE is an integer ("153", but also "12.0"/"1e5");
+      // a fractionally-valued string is left alone. Python's `_INT_RE` branch is
+      // narrower — it fullmatches plain digits, so only "153" coerces there.
       if (Number.isInteger(n)) out[k] = n;
       continue;
     }
@@ -3005,9 +3009,11 @@ export async function runWith(ctx, rawArgs) {
         filter: filterOut.stats,
         challenge: challengeOut.stats,
       },
-      // No contextPath (issue #38, R1): the report-writer renders from the by-value
+      // No context at all (issue #38, R1): the report-writer renders from the by-value
       // { summary, findings, unverified, stats } above and never needs the shared context
-      // file. Every OTHER stage still receives contextPath — this is scoped to the writer.
+      // file. No stage is ever given contextPath; of the prebuilt contextLine, only
+      // summarize, discover and validate get one — merge, verify, filter and challenge
+      // get none either.
       policy, generatedAt: A.generatedAt,
     };
     let reportOut = await runPhase('report', () => reportStage(c, reportInput));

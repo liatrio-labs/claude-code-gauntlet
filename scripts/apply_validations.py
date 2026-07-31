@@ -25,8 +25,9 @@ Input — findings_json:
         [...]   (bare array)
 
     Only the "verified" / "findings" / bare-array entries are updated.
-    Any additional top-level keys (eliminated, batches, stats) are preserved
-    as-is in the output so downstream scripts can still reference them.
+    The "eliminated" and "batches" top-level keys, if present, are preserved
+    as-is in the output. "stats" is not preserved — it is replaced with this
+    script's own {total, adjusted, unmatched, pass_through} counters.
 
 Input — validations_json:
     [{
@@ -43,9 +44,13 @@ Output JSON:
                                      # without a matching validation)
         "stats": {
             "total":             N,  # total input findings
-            "adjusted":          N,  # findings whose confidence was updated
+            "adjusted":          N,  # validations successfully applied (not
+                                     # deduped by finding id — two validation
+                                     # entries for the same id both count)
             "unmatched":         N,  # validations with no matching finding id
-            "pass_through":      N   # findings without a matching validation
+            "pass_through":      N   # total minus adjusted; can undercount
+                                     # findings actually left untouched if a
+                                     # finding received more than one validation
         },
         "generated_at": "..."
     }
@@ -91,7 +96,8 @@ def load_findings(path):
 
     Returns (findings_list, envelope) where envelope is the original dict
     (or None when input was a bare array).  The envelope is preserved so
-    callers can round-trip extra keys (eliminated, batches, stats).
+    callers can round-trip the "eliminated" and "batches" keys ("stats" is
+    replaced downstream with this script's own counters, not round-tripped).
     """
     try:
         with open(path) as fh:
@@ -166,7 +172,9 @@ def apply_validations(findings, validations):
     the absence of that field).
 
     Returns:
-        adjusted_count   int  — number of findings whose confidence was updated
+        adjusted_count   int  — number of validations successfully applied
+                                (counts validation entries, not distinct
+                                findings — a finding validated twice counts twice)
         unmatched_ids    list — validation ids that had no corresponding finding
     """
     # Build id -> finding index for O(n) lookup

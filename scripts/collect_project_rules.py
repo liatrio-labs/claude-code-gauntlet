@@ -58,7 +58,7 @@ Skip reasons appearing in the receipt's ``skipped[]``:
     file_cap_reached  --max-files sources already collected (runaway guard)
     depth_exceeded    beyond MAX_IMPORT_DEPTH import hops
     cycle             already being visited on this import chain
-    duplicate_of      same real path already contributed
+    duplicate_of      same real path, or byte-identical rule content, already contributed
 
 Exit codes:
     0 — collection completed (including "no convention files found")

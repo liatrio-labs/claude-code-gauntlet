@@ -405,13 +405,15 @@ export function validateArgs(args) {
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
-  // Path-bearing waist fields (requirement 6, issue #27). repoRoot/outputDir/headShaShort/
-  // diffPath interpolate into the shared-context path
-  // (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, stages.js:2398), which reaches
-  // every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
+  // Path-bearing waist fields (requirement 6, issue #27). outputDir/headShaShort
+  // interpolate into the shared-context path
+  // (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in stages.js), which
+  // reaches every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
   // (--head-sha, --diff-file) — the same argv-splitting hazard NONCE_RE already guards
   // against above. A present-but-garbage value would otherwise render a junk path into
-  // every paid dispatch instead of failing here, at the waist. Absence is already a
+  // every paid dispatch instead of failing here, at the waist. repoRoot is shape-checked
+  // alongside them as stamped provenance, though nothing in workflows/src reads it (see
+  // REQUIRED at the top of this file). Absence is already a
   // REQUIRED-field error above; these fire only when the field is PRESENT. Nothing valid is
   // newly rejected: the skill stamps `git rev-parse --show-toplevel`, an absolute
   // {output_dir}, `git rev-parse --short=8 HEAD`, and a `{output_dir}/….patch` path — all

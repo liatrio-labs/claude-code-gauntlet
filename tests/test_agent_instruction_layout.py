@@ -52,7 +52,11 @@ CODEX_CAP_BYTES = 32_768
 # what the addition buys.
 #
 # Measured 2026-07-30. Update these ONLY alongside such a justification.
-AGENTS_SET_BUDGET_BYTES = 14_627
+# Raised 14_627 -> 14_893 (2026-07-30, #55 audit): two corrections of false enforcement
+# claims — which tests delete which sandbox-absent globals, and which duplicated copies are
+# byte-checked vs presence-checked. Both name a cross-file guarantee boundary no single code
+# site owns; the old, shorter text was wrong about what is enforced.
+AGENTS_SET_BUDGET_BYTES = 14_893
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

@@ -87,7 +87,7 @@ python3 bench/run.py --tier smoke|mini|subset|holdout|full [--runs N] [--fidelit
 | `--prs` | URL list or `mini` | — | Explicit golden PR list; labels the run `custom`. The alias `mini` expands to the pre-registered 6-PR mini subset. |
 | `--runs` | int | `1` | Number of sequential runs, each getting its own run directory under `bench/workspace/runs/`. |
 | `--fidelity` | `dry-run` \| `live` | `dry-run` | Recorded in the run manifest. |
-| `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted`). |
+| `--resume` | `RUN_ID` | — | Re-run only the PRs of `RUN_ID` still `pending` (skips `ok`/`invalid`/`drifted` and also `timeout`/`failed` — use `--retry-failed` for those). |
 | `--retry-failed` | `RUN_ID` | — | Re-run only the `timeout`/`failed` PRs of `RUN_ID`. |
 | `--timeout-mins` | int | `45` | Per-PR watchdog: a PR whose invocation exceeds this is killed (whole process group) and marked `timeout`. No auto-retry — use `--retry-failed`. Default calibrated from the smoke shakedown, where full-skill per-PR reviews ran 16–22 minutes. |
 | `--anchor` | `naive` | — | Instead of the code-gauntlet skill, run a bare single-pass same-model review (no plugin, pinned turn budget) through the same adapter, for comparison. The naive prompt requires the model to end its reply with a fenced ```` ```json ```` block containing a `comments` list; a reply where that block can't be parsed is marked `failed` with reason `naive_output_unparseable` (retryable via `--retry-failed`). |
@@ -106,7 +106,7 @@ pass.
 
 > **Note:** `--fidelity` is currently accepted and recorded in the run
 > manifest, but the harness always captures the skill's **dry-run** payload
-> internally (`DEEP_REVIEW_POST_MODE` is pinned to `dry-run` for every bench
+> internally (`CODE_GAUNTLET_POST_MODE` is pinned to `dry-run` for every bench
 > invocation) — `--fidelity live` does not currently change runner
 > behavior.
 
@@ -133,7 +133,7 @@ judge and adjudicator are the same pinned, dated snapshot at temperature 0
 bench runs and to the anchor tools — scoring is blind to which tool
 produced a candidate.
 
-Each scored run's ledger row is labeled by `tool`: `deep-review-v2` for a
+Each scored run's ledger row is labeled by `tool`: `deep-review-v3` for a
 normal skill run, `naive-anchor` for a `--anchor naive` run — both flow
 through the identical candidate/adapter/scoring pipeline, differing only in
 how the candidates were produced and how the row is labeled.

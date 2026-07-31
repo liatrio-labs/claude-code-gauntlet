@@ -394,8 +394,6 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Port of apply_exclusions. First pattern (in list order) whose literal,
-// case-insensitive substring appears in "title\ndescription" wins.
 // --- Part 2: disagreement detection / dimension routing / dedup / tag ------
 // Port of scripts/filter_findings.py:552-1236 (detect_disagreement through
 // tag_findings) plus main()'s pipeline composition (1243-1397).
@@ -936,6 +934,8 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   };
 }
 
+// Port of apply_exclusions. First pattern (in list order) whose literal,
+// case-insensitive substring appears in "title\ndescription" wins.
 export function applyExclusions(findings, exclusionPatterns) {
   if (!exclusionPatterns || !exclusionPatterns.length) return { kept: findings, eliminated: [] };
 

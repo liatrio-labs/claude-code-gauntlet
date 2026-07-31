@@ -298,8 +298,9 @@ def inject_agent_field(
 ) -> None:
     """Inject the 'agent' field into every finding based on its source agent.
 
-    Modifies findings in-place. NDJSON findings take priority, so we process
-    text findings first and then NDJSON overwrites the agent field.
+    Modifies findings in-place; each channel's findings are distinct objects,
+    so the loop order is immaterial. Channel priority on ID collision is
+    enforced by dedup_by_id (see finding_dedup.py), not here.
     """
     for agent, findings in text_findings.items():
         for f in findings:

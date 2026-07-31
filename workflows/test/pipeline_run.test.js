@@ -743,7 +743,7 @@ test('slimPersistedCheckpoints keeps only challenge full, counts every phase, an
 // --- Report segmentation (oversized findings payload) -----------------------
 
 test('reportStage segments an oversized findings payload into >1 dispatch and joins sections', async () => {
-  // ~80 findings x ~2000-char description >> REPORT_SEGMENT_CHAR_BUDGET (100k).
+  // ~80 findings x ~2000-char description >> PROMPT_SEGMENT_CHAR_BUDGET (100k).
   const big = [];
   for (let i = 0; i < 80; i += 1) big.push(makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
 
@@ -842,7 +842,7 @@ test('sweep: bucketed summarize + segmented report emit only contract-valid disp
   assert.ok(sctx.calls.some((c) => c.label.startsWith('summarize-bucket-')));
   assert.ok(sctx.calls.some((c) => c.label === 'summarize-merge'));
 
-  // Segmented report (sequential per-chunk dispatches).
+  // Segmented report (parallel per-chunk dispatches).
   const big = Array.from({ length: 80 }, (_, i) => makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
   const rctx = makeCtx(args);
   await reportStage(rctx, { findings: big, unverified: [], stats: {}, policy: {} });

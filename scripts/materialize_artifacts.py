@@ -47,10 +47,11 @@ What it does
 
 THE CONTENT PROOF IS THE POINT, and it is not reimplemented here. The plan's
 ``expect[]`` proves the two primaries, its ``planChecksum`` proves itself, and
-its ``derive[]`` proves the two projections — the same three gradings
-assemble_artifacts.py already performs, now aimed at a harness-written copy
-rather than a model-written one. Assume truncation, if it ever happens, is
-SILENT: the proof is what would catch it.
+its ``derive[]`` proves the two projections. The first two gradings are
+assemble_artifacts.py's own; the derive[] comparison is done here, in
+proof_gaps(), against the assembler's own reported numbers — aimed at a
+harness-written copy rather than a model-written one. Assume truncation, if it
+ever happens, is SILENT: the proof is what would catch it.
 
 Output
 ------

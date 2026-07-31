@@ -49,7 +49,8 @@ Output JSON:
         "stats": {
             "total_input":          N,  # findings entering this script
             "challenge_removed":    N,  # score < 25, hard removed
-            "challenge_downgraded": N,  # score 25-49, severity/route downgraded
+            "challenge_downgraded": N,  # score 25-49, plus security findings scored
+                                        # <25 (which downgrade instead of being removed)
             "challenge_contested":  N,  # score 50-74, flagged but kept
             "challenge_survived":   N,  # score >= 75, fully passed
             "unchallenged":         N,  # findings with no challenge score

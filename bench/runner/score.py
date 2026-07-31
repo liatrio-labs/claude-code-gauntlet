@@ -13,7 +13,8 @@ This is the seam between a completed bench run (per-PR dry-run payloads under
    only from ``reviews``, so we inject a ``deep-review`` review stub per scored
    URL — without it step3 judges nothing.
 3. Run the scorer's dedup (step2_5) then judge (step3) stages under the pinned
-   Opus 4.8 snapshot via ``uv run`` (never imported — CLAUDE.md stdlib-only).
+   dated Opus judge snapshot (baselines.json ``judge_pin``) via ``uv run``
+   (never imported — CLAUDE.md stdlib-only).
 4. Parse ``evaluations.json`` and perform the BUCKET JOIN: every candidate whose
    text is a ``matched_candidate`` in ``true_positives`` is golden-matched; every
    other candidate goes to the adjudicator. The join is by exact candidate text
@@ -22,9 +23,9 @@ This is the seam between a completed bench run (per-PR dry-run payloads under
 5. Adjudicate each non-golden-matched comment (valid_extra | noise).
 6. Compute per-run metrics, append one ledger row, and write ``scores.json``.
 
-``resolve_judge_pin`` resolves the Opus 4.8 alias to its dated snapshot id once
-(models API) and pins it in ``baselines.json``; scoring refuses to run if the
-pin is null or if a set ``MARTIAN_MODEL`` disagrees with it.
+``resolve_judge_pin`` resolves the dated Opus judge snapshot id once (models
+API) and pins it in ``baselines.json``; scoring refuses to run if the pin is
+null or if a set ``MARTIAN_MODEL`` disagrees with it.
 
 HTTP and the scorer subprocess live behind module functions / injectable
 parameters so the whole pipeline is testable with no network and no keys.
@@ -170,7 +171,7 @@ def _pick_opus_snapshot(models_json):
 
 
 def resolve_judge_pin(env=None, force=False, baselines_path=None):
-    """Resolve and pin the Opus 4.8 dated judge snapshot into ``baselines.json``.
+    """Resolve and pin the dated Opus judge snapshot into ``baselines.json``.
 
     Idempotent: if ``baselines.json`` already carries a ``judge_pin`` it is
     returned without any API call unless ``force=True``. Otherwise the models

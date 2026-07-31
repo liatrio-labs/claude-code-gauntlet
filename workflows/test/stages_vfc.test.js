@@ -6,9 +6,10 @@
 //  - validate: a null validator member leaves its batch UNVALIDATED — those findings
 //    are kept at face value (conservative) and marked validation='skipped'.
 //  - filter: pure + deterministic (same input -> same output, no ctx).
-//  - challenge: the blind prompt carries ONLY {title, description, code} (structural
-//    guarantee); an unchallenged finding (cap overflow OR a null member) is marked
-//    challenge='skipped' and NEVER enters the high-confidence bucket.
+//  - challenge: the blind prompt carries ONLY {title, description, file, line_start,
+//    line_end} (structural guarantee); an unchallenged finding (cap overflow OR a
+//    null member) is marked challenge='skipped' and NEVER enters the high-confidence
+//    bucket.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {

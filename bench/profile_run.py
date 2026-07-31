@@ -430,8 +430,8 @@ def build_critical_path(agents, workflow_start_ms, workflow_end_ms):
 
     Within a fan-out stage the critical member is the one that finishes last
     (its completion gates the next stage's dispatch). merge/filter transform
-    phases are inserted as zero-agent "gap" hops between discover->verify and
-    validate-batch->challenge.
+    time is not a hop -- it is absorbed into the following hop's gap_before
+    (the stage profile carries the explicit zero-agent rows).
     """
     by_stage = _group_by_stage(agents)
 
