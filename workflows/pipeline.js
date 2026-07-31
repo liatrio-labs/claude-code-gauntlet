@@ -2493,9 +2493,10 @@ function validateArgs(args) {
 // calls are wrapped in try/catch. Null members are NOT handled uniformly: discover,
 // validate and challenge keep the results positionally aligned and push a NAMED gap per
 // null member, because a degraded member must be traceable to the exact work it dropped
-// (see validateStage's header). Summarize is the exception — it .filter(Boolean)s its
-// buckets, so a failed bucket is silently dropped and one generic gap is emitted only
-// when every bucket fails. No wall-clock, no import at runtime.
+// (see validateStage's header). Summarize is the exception — it .filter(Boolean)s null
+// bucket members without per-bucket gaps, and emits one generic gap if no partial
+// survives, the merge or single-call result is null, or any summarize dispatch throws.
+// No wall-clock, no import at runtime.
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
