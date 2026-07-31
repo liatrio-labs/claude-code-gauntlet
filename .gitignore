@@ -39,3 +39,6 @@ probes/
 
 # Agentic SDD scratch (plans/briefs/reviews)
 .superpowers/
+
+# Local git worktrees (issue execution isolation)
+.worktrees/
