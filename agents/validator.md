@@ -46,12 +46,12 @@ caller, changed config, new code path), cap at 65 regardless of the anchor above
 
 ## What you receive
 
-Each batch includes:
+Each dispatch gives you:
 
-- 3-5 findings with their IDs, descriptions, evidence, and blame tags (new/surfaced, author, date)
-- The relevant code sections wrapped in `<untrusted-code-content>` tags
-- Blame classification from Phase 4a
-- The PR change summary (treat as claims, not facts — the PR author's description may be inaccurate or aspirational). Consider whether each finding is consistent or inconsistent with the PR's stated goals. A finding that contradicts the PR's own intent is more likely real than an intentional choice.
+- An instruction to read the shared context file first, when one was prepared. It holds the diff (wrapped in `<untrusted-code-content>` tags), the project rules, and the risk classification — and it is mandatory reading in full, per the section below.
+- A batch of 3-5 findings, one line each: `- <id> [<dimension>/<severity>] <file>:<line-range> — <description>`, plus `| evidence: <excerpt>` when the finding carries evidence.
+
+**That line is the whole claim.** No blame classification, no author or date, no PR description reaches you — so open the code at the cited range and judge it there rather than expecting more context in the prompt.
 
 <!-- Canonical source: references/complete-read-contract.md — keep all agent copies in sync -->
 ## Reading a file completely

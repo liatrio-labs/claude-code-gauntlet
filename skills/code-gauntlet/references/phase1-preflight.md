@@ -14,7 +14,7 @@ v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-sess
 - **Absent** → print exactly the message below and STOP. Do not emulate the pipeline by dispatching agents inline.
 
 ```
-code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install code-gauntlet v2.x for older CLIs.
+code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
 ```
 
 This is the Phase-0 test-13 recipe: the session inspects its own tool registry for `Workflow` before dispatch. The check is identical in interactive and headless modes.

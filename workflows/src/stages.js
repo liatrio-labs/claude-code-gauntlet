@@ -8,9 +8,14 @@
 // back to the runtime globals when present, so the shipped bundle needs no wiring.
 //
 // Failure contract (Phase 0): bare agent() THROWS on schema-retry-exhaustion (cap 5)
-// and unknown agentType; parallel() converts a failed member to null. So: single
-// agent() calls are wrapped in try/catch; parallel() results are always .filter(Boolean)ed
-// and a null member is recorded as a gap. No wall-clock, no import at runtime.
+// and unknown agentType; parallel() converts a failed member to null. So single agent()
+// calls are wrapped in try/catch. Null members are NOT handled uniformly: discover,
+// validate and challenge keep the results positionally aligned and push a NAMED gap per
+// null member, because a degraded member must be traceable to the exact work it dropped
+// (see validateStage's header). Summarize is the exception — it .filter(Boolean)s null
+// bucket members without per-bucket gaps, and emits one generic gap if no partial
+// survives, the merge or single-call result is null, or any summarize dispatch throws.
+// No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED } from './registry.js';
 import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';

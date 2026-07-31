@@ -28,9 +28,9 @@ function dedupById(ndjsonFindings, textFindings) {
 
 // --- filterFindings.js ---
 // filterFindings.js — JS twin of scripts/filter_findings.py (Phase 6 filtering).
-// Part 1 (this task): normalize / thresholds / injection / exclusions / REVIEW.md
-// parsing. Part 2 (Task 5): disagreement detection, tagging, dedupCrossAgent,
-// applyFilterPipeline — appended to this same file.
+// Part 1: normalize / thresholds / injection / exclusions / REVIEW.md parsing.
+// Part 2: disagreement detection, tagging, dedupCrossAgent, applyFilterPipeline —
+// appended to this same file.
 
 // --- Field normalization (BF-14) --------------------------------------------
 
@@ -772,7 +772,7 @@ function groupByProximity(findings, lineProximity = 5) {
 // preserves original relative order (Python sort stability + reverse=True
 // keeps ties in forward order, not reversed) -- V8's sort is equally stable,
 // so a single multi-key comparator reproduces this without a second pass.
-// EXPORTED for reuse by applyChallenges (Task 7) — keep this a standalone
+// EXPORTED for reuse by applyChallenges — keep this a standalone
 // plain function with no closure over filterFindings-only state.
 function dedupCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
@@ -1709,7 +1709,7 @@ function applyChallenges(findings, challenges) {
 
   const totalInput = findings.length;
 
-  // Cross-agent dedup re-run (Task 5's dedupCrossAgent, reused not
+  // Cross-agent dedup re-run (filterFindings' dedupCrossAgent, reused not
   // reimplemented) + rank -- mirrors main()'s post-challenge composition.
   const { kept: dedupedActive, dropped: dedupDropped } = dedupCrossAgent(active);
   const ranked = rankFindings(dedupedActive);
@@ -2489,9 +2489,14 @@ function validateArgs(args) {
 // back to the runtime globals when present, so the shipped bundle needs no wiring.
 //
 // Failure contract (Phase 0): bare agent() THROWS on schema-retry-exhaustion (cap 5)
-// and unknown agentType; parallel() converts a failed member to null. So: single
-// agent() calls are wrapped in try/catch; parallel() results are always .filter(Boolean)ed
-// and a null member is recorded as a gap. No wall-clock, no import at runtime.
+// and unknown agentType; parallel() converts a failed member to null. So single agent()
+// calls are wrapped in try/catch. Null members are NOT handled uniformly: discover,
+// validate and challenge keep the results positionally aligned and push a NAMED gap per
+// null member, because a degraded member must be traceable to the exact work it dropped
+// (see validateStage's header). Summarize is the exception — it .filter(Boolean)s null
+// bucket members without per-bucket gaps, and emits one generic gap if no partial
+// survives, the merge or single-call result is null, or any summarize dispatch throws.
+// No wall-clock, no import at runtime.
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.

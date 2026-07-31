@@ -148,7 +148,7 @@ Rules for per-dimension thresholds:
 - Dimension names must match Focus section values: `bugs`, `security`, `cross-file-impact`, `tests`, `conventions`, `types`, `simplification`
 - If a plain number is provided (current format), it applies as the default for all non-security dimensions
 - If per-dimension values are provided, they override the plain number default for that dimension
-- Dimensions not listed use the plain number default (or 70 if no default is set)
+- Dimensions not listed use the plain number default (or 70 if no default is set) — that 70 contradicts the live `DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD` of 55 documented above; #118 (R-043) owns which one is authoritative, so the wording is left as-is until it lands
 - If `security_min_confidence` is set in REVIEW.md, it provides a lower floor for security findings — useful for repos that want to surface more borderline security issues
 - Per-dimension settings in subdirectory REVIEW.md files override the inherited value for that dimension only
 
@@ -247,9 +247,9 @@ For a file in `legacy/`:
 
 ### Discovery
 
-REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Code-gauntlet checks each CLAUDE.md location for a matching REVIEW.md during Phase 2c context gathering. AGENTS.md/QODO.md resolution (`references/phase2-triage.md` 2d step 3, `scripts/collect_project_rules.py`) is a separate discovery pass with its own source list and its own directory set — it does not piggyback on this CLAUDE.md-location anchor, and finding no AGENTS.md/QODO.md never affects REVIEW.md discovery or precedence.
+REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Code-gauntlet checks each CLAUDE.md location for a matching REVIEW.md during Phase 2d context gathering. AGENTS.md/QODO.md resolution (`references/phase2-triage.md` 2d step 3, `scripts/collect_project_rules.py`) is a separate discovery pass with its own source list and its own directory set — it does not piggyback on this CLAUDE.md-location anchor, and finding no AGENTS.md/QODO.md never affects REVIEW.md discovery or precedence.
 
-#### Detection flow (Phase 2c)
+#### Detection flow (Phase 2d)
 
 Find all CLAUDE.md locations, check each for a matching REVIEW.md:
 
@@ -327,7 +327,7 @@ When helping users add rules to REVIEW.md (during scaffolding or when updating),
 
 ## Scaffolding Templates
 
-When the user opts to create a REVIEW.md during Phase 2c, use these templates. The templates set sensible defaults and provide structural guidance without guessing at repo-specific content.
+When the user opts to create a REVIEW.md during Phase 2d, use these templates. The templates set sensible defaults and provide structural guidance without guessing at repo-specific content.
 
 ### Root REVIEW.md template
 
@@ -341,8 +341,10 @@ When the user opts to create a REVIEW.md during Phase 2c, use these templates. T
 
 70
 
-<!-- Minimum confidence (0-100) to include findings. Default: 70.
-     Security findings always use a minimum of 60 regardless of this setting.
+<!-- Minimum confidence (0-100) to include findings. When unset, non-security
+     dimensions default to 55 and security to 70.
+     Security findings use min(this value, security_min_confidence) — there is
+     no fixed security floor.
      Start at 70-80 and adjust based on false-positive rates.
 
      To set per-dimension thresholds, replace the plain number with key:value pairs:
@@ -354,7 +356,10 @@ When the user opts to create a REVIEW.md during Phase 2c, use these templates. T
      types: 75
      simplification: 75
      Omitted dimensions use the plain number default (or 70 if no default is set).
-     Security cannot be set below 60. -->
+     (That 70 contradicts the 55 stated at the top of this block. #118 owns the
+     call between the documented 70 and the implemented 55; not changed here.)
+     Set security lower than the plain number to keep borderline security
+     findings; there is no minimum it cannot go below. -->
 
 ## Severity Threshold
 

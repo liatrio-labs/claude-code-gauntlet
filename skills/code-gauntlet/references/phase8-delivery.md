@@ -22,7 +22,7 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 **On `ok: true` (writer succeeded):** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
 - `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: the challenge-survivors chosen by the delivery tier (`args.delivery.tier` — `all` (default) keeps every survivor, `main_only` keeps main-tagged only), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the PR-comment set — post every entry as a comment, verbatim; the live agent never re-selects.
-- `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. Used by the interactive "Let me pick" walkthrough (the full candidate list).
+- `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. The interactive "Let me pick" walkthrough selects from `artifactPaths.postReview` (deselection from the pipeline's delivery set), not from this full file — Step B.1 replaces the postReview wrapper's `findings` with a strict subset of that wrapper's entries.
 - `artifactPaths.report` — the rendered report markdown (already includes the severity-grouped findings, surfaced section, improvement suggestions, per-dimension summary, and Review Methodology).
 - The return's own `checkpoints` is just `{ completed: [...] }` (phase names). A **slim** resume checkpoint (`{ phases, completed, phaseReached, counts }` — full output only for the resume-consumed `challenge` phase, plus a per-phase `counts` map for every phase including `filter`) is persisted at `artifactPaths.checkpoints`. Read that file if a later re-run needs to resume a successful-but-superseded run: it reuses the delivered `challenge` findings verbatim and re-runs the upstream phases (discover/verify/validate/**filter**/report) — `filter` is deliberately not persisted: it is a pure, agent-free JS function, so re-running it on resume costs nothing (issue #38, P1). The fast full-skip resume map still rides back **in-memory** on the failure path below.
 
@@ -85,7 +85,7 @@ AskUserQuestion(
 ```
 
 - **"Default"** → post the `artifactPaths.postReview` payload verbatim (the tier's survivors, already ranked and capped at `limits.deliveryCap`). Do not re-select.
-- **"Let me pick"** → run the **interactive finding walkthrough** (see below) over the full findings list. Includes Improvement Suggestions. The user hand-selects; all selected findings posted — no cap. This is user-driven deselection, not agent re-filtering.
+- **"Let me pick"** → run the **interactive finding walkthrough** (see below) over the `artifactPaths.postReview` payload. Includes any Improvement Suggestions the pipeline already kept in that set. The user hand-selects a strict subset; all selected findings posted — no additional cap. This is user-driven deselection from the pipeline's delivery set, not agent re-filtering and not a second pass over the uncapped `artifactPaths.findings` file.
 
 Track which findings were selected (**pr_comment_set**) for Stage 2 shortcut.
 
@@ -204,7 +204,7 @@ Reusable selection pattern for both PR comment selection (Stage 1 Step B) and ta
 
 ### Step 1: Show Summary Table
 
-Before prompting for any selection, output the full findings table grouped by severity:
+Before prompting for any selection, output the findings table grouped by severity — **the rows are the `artifactPaths.postReview` entries**, not the uncapped `artifactPaths.findings` file:
 
 ```
 | # | Severity | Title | Confidence | File |
@@ -215,7 +215,7 @@ Before prompting for any selection, output the full findings table grouped by se
 | F-04 | 💡 Low | Deprecated API usage | 65% | src/legacy.py:8 |
 ```
 
-List ALL findings from the main report (including Improvement Suggestions, which are listed after all bug/security findings). Group rows by severity: Critical first, then High, Medium, Low. Use finding IDs that match the report (e.g. F-01, F-02 or S-01, S-02 for surfaced).
+List every entry from the postReview payload (including Improvement Suggestions the pipeline kept under the delivery tier). Group rows by severity: Critical first, then High, Medium, Low. Use finding IDs that match the report (e.g. F-01, F-02 or S-01, S-02 for surfaced).
 
 ### Step 2: Walk Through Each Severity Group
 

@@ -39,8 +39,8 @@ score >= 75  survive     finding kept as-is.
 Surfaced findings (origin="surfaced") with score < 50 are additionally
 re-routed to suggestion regardless of their existing report_destination.
 
-Cross-agent dedup is re-run after challenge processing using the shared
-group_by_proximity utility from filter_findings.py.
+Cross-agent dedup is re-run after challenge processing by calling
+dedup_cross_agent, imported from filter_findings.py.
 
 Output JSON:
     {

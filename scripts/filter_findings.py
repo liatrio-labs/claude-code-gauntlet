@@ -38,7 +38,7 @@ Output JSON schema:
             "passed_threshold":        N,   # passed confidence + severity threshold
             "contested_count":         N,   # findings that bypassed threshold via validator contestation
             "injections_removed":      N,   # removed by injection filter
-            "consensus_boosted":       N,   # confidence boosted due to multi-agent consensus
+            "consensus_boosted":       N,   # confidence boosted for co-location (same file + 10-line bucket, any agent)
             "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
             "dimension_routed":        N,   # findings routed to suggestion by dimension (BF-15a)
             "cross_agent_deduped":      N,   # cross-agent duplicates dropped (winner by priority)
@@ -701,7 +701,8 @@ def detect_disagreement(findings):
         agents_in_group = [f.get("agent", "") for f in group if f.get("agent")]
 
         if count > 1:
-            # Consensus: multiple agents flagged the same location + concern
+            # Consensus: 2+ findings in this (file, 10-line bucket) — regardless of
+            # agent or concern, so same-agent siblings boost each other too.
             boosted_count += count
             for finding in group:
                 other_agents = [a for a in agents_in_group if a != finding.get("agent", "")]
