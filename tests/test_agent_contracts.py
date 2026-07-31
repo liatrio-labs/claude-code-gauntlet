@@ -8,6 +8,7 @@ findings. These tests pin the scrub so the residue cannot return.
 """
 
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -39,9 +40,13 @@ def _canonical_complete_read_block():
     body = text.split("<!-- BEGIN CANONICAL BLOCK -->")[1]
     return body.split("<!-- END CANONICAL BLOCK -->")[0].strip("\n")
 
-# Emission-mechanics markers that must never reappear in a discovery agent
-# contract. 'Bash' is included: the tool was granted solely for NDJSON emission
-# ("Bash is available ONLY for writing findings"), so its grant goes with it.
+# Emission-mechanics markers that must never reappear in any tracked rules file.
+EMISSION_RESIDUE = re.compile(r"printf|ndjson|validate_ndjson", re.IGNORECASE)
+
+# 'Bash' is forbidden in discovery agents and agents/ rules: the tool was granted
+# solely for NDJSON emission ("Bash is available ONLY for writing findings"), so
+# its grant goes with it. Other directory rules may legitimately discuss shells.
+BASH_RESIDUE = re.compile(r"Bash")
 RESIDUE = re.compile(r"printf|ndjson|validate_ndjson|Bash", re.IGNORECASE)
 
 # The agents/ directory rules load alongside every contract in the directory, so emission
@@ -51,7 +56,14 @@ RESIDUE = re.compile(r"printf|ndjson|validate_ndjson|Bash", re.IGNORECASE)
 # already dropped Bash and returned findings by value. The move also corrupted the
 # apostrophe rule from `\u0027` to a bare `'` — a real defect in a shell-quoting rule for
 # a shell command no agent can run, which is the tell that the section itself was stale.
-DIRECTORY_RULES = ["AGENTS.md", "CLAUDE.md"]
+def tracked_rules_files():
+    """Root and one-level AGENTS.md / CLAUDE.md, same shape as sync_agent_rules."""
+    out = subprocess.run(
+        ["git", "ls-files", "-z", "--",
+         "AGENTS.md", "CLAUDE.md", "*/AGENTS.md", "*/CLAUDE.md"],
+        cwd=REPO, capture_output=True, check=True,
+    ).stdout
+    return [Path(p) for p in out.decode().split("\0") if p]
 
 
 class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
@@ -65,17 +77,26 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
         self.assertEqual(offenders, {},
                          f"v2 NDJSON emission residue returned: {offenders}")
 
-    def test_no_ndjson_emission_residue_in_the_agents_directory_rules(self):
+    def test_no_emission_residue_in_tracked_rules_files(self):
         offenders = {}
-        for name in DIRECTORY_RULES:
-            text = (REPO / "agents" / name).read_text()
-            hits = sorted(set(RESIDUE.findall(text)))
+        for rel in tracked_rules_files():
+            text = (REPO / rel).read_text(encoding="utf-8")
+            hits = sorted(set(EMISSION_RESIDUE.findall(text)))
             if hits:
-                offenders[name] = hits
+                offenders[str(rel)] = hits
         self.assertEqual(offenders, {},
-                         "v2 emission residue in the agents/ directory rules — these load "
-                         "with the contracts, so the instruction reaches the agent even "
-                         f"though the 7 bodies are clean: {offenders}")
+                         f"v2 emission residue in rules files: {offenders}")
+
+    def test_no_bash_residue_in_agents_directory_rules(self):
+        offenders = {}
+        for name in ("AGENTS.md", "CLAUDE.md"):
+            rel = Path("agents") / name
+            text = (REPO / rel).read_text(encoding="utf-8")
+            hits = sorted(set(BASH_RESIDUE.findall(text)))
+            if hits:
+                offenders[str(rel)] = hits
+        self.assertEqual(offenders, {},
+                         f"Bash residue in agents/ rules: {offenders}")
 
     def test_agents_directory_rules_state_the_by_value_contract(self):
         # Removing the stale section is only half the fix; the positive rule has to be
