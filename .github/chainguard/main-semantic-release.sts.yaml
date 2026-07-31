@@ -8,5 +8,9 @@ issuer: https://token.actions.githubusercontent.com
 # slug portions — update them here if that ever happens.
 subject: repo:liatrio-labs@223510100/claude-code-gauntlet@1190928743:ref:refs/heads/main
 
+# Live release token confirms this executing-workflow claim; anchors fail closed.
+claim_pattern:
+  job_workflow_ref: "^liatrio-labs/claude-code-gauntlet/\\.github/workflows/release\\.yml@refs/heads/main$"
+
 permissions:
   contents: write

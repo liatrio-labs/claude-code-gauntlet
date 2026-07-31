@@ -4,9 +4,9 @@ This is the canonical NDJSON emission contract from v2, retained as v2-compat
 surface. It is no longer duplicated into any agent: v3 discovery agents return
 findings by value through their dispatch schema, and the emission prose was
 stripped from all 7 contracts. The duplication doctrine it once followed still
-governs the false-positive exclusion list and the complete-read contract — see
-the bullet on those in `agents/AGENTS.md`. Should emission return, update this
-file first, then propagate to every file carrying a
+governs the false-positive exclusion list and the complete-read contract. The
+rule in `agents/AGENTS.md` says "Do not refactor them into a shared read."
+Should emission return, update this file first, then propagate to every file carrying a
 `<!-- Canonical source: references/ndjson-emission-contract.md -->` marker.
 
 ## The contract (drop-in block for agent definitions)

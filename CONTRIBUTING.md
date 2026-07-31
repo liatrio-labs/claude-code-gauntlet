@@ -205,6 +205,15 @@ If a change is breaking, include `!` (e.g., `feat!: change findings JSON schema`
 - Ensure all checks pass (pre-commit and the test suite) before requesting review. The checklist in
   `.github/pull_request_template.md` enumerates every CI-enforced gate; tick the ones that apply and say why for
   any you skipped.
+- **Merges to `main` require the always-on CI check-runs to be green** (lint, pytest
+  matrix, workflow JS tests, bench self-tests, plugin validate, PR title lint). Those
+  contexts are frozen in `REQUIRED_PR_CHECK_CONTEXTS` in
+  `tests/test_contribution_surface.py`, and CI enforces that tuple against the workflow
+  job names. Updating the live `protect-default-branch` ruleset is a same-change
+  maintainer step that CI cannot perform or verify. If a job is renamed without updating
+  the ruleset, merges can remain blocked waiting for the old context, which will never
+  report. Approving reviews stay at zero by design (solo maintainer). The only ruleset
+  bypass is the Octo STS app used by `release.yml` — not a routine admin merge path.
 - Reference related issues where applicable. For work-queue issues, keep the PR aligned with the issue's stated
   requirements and verification steps ([`docs/maintainer-issues.md`](docs/maintainer-issues.md)).
 

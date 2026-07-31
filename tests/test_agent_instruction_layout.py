@@ -237,6 +237,76 @@ class TestCollectorDedup(unittest.TestCase):
                 )
 
 
+class TestRulesFileQuotations(unittest.TestCase):
+    """Quoted spans attributed to AGENTS.md/CLAUDE.md must exist in a rules file."""
+
+    QUOTE_NEAR_RULES = re.compile(
+        r'`?(?:[A-Za-z0-9_./-]+/)?(?:CLAUDE|AGENTS)\.md`?'
+        r'\s+(?:says\s+|states\s+|already applies[^\n(]{0,100}\(\s*)?'
+        r'["\u201c]([^"\u201d\n]{12,})["\u201d]',
+        re.IGNORECASE,
+    )
+    QUOTE_EXEMPTIONS = {
+        (
+            "skills/code-gauntlet/references/false-positive-exclusions.md",
+            "all functions must have JSDoc",
+        ),
+    }
+
+    def _rules_corpus(self):
+        files = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "-z",
+                "--",
+                "AGENTS.md",
+                "CLAUDE.md",
+                "*/AGENTS.md",
+                "*/CLAUDE.md",
+            ],
+            cwd=REPO,
+            capture_output=True,
+            check=True,
+        ).stdout.decode().split("\0")
+        return "\n".join(
+            (REPO / path).read_text(encoding="utf-8") for path in files if path
+        )
+
+    def _docs(self):
+        paths = subprocess.run(
+            ["git", "ls-files", "-z", "--", "skills", "agents"],
+            cwd=REPO,
+            capture_output=True,
+            check=True,
+        ).stdout.decode().split("\0")
+        return [
+            path
+            for path in paths
+            if path.endswith(".md")
+            and (
+                path.startswith("skills/")
+                or (path.startswith("agents/") and path.count("/") == 1)
+            )
+        ]
+
+    def test_rules_file_quotations_resolve(self):
+        corpus = self._rules_corpus()
+        missing = []
+        for doc in self._docs():
+            text = (REPO / doc).read_text(encoding="utf-8")
+            for quote in self.QUOTE_NEAR_RULES.findall(text):
+                if (doc, quote) in self.QUOTE_EXEMPTIONS:
+                    continue
+                if quote not in corpus:
+                    missing.append((doc, quote[:80]))
+        self.assertEqual(
+            missing,
+            [],
+            f"rules quotations not found in any AGENTS/CLAUDE: {missing}",
+        )
+
+
 class TestClaimsResolve(unittest.TestCase):
     """Every file and symbol an instruction file names must exist in THIS tree.
 
