@@ -119,8 +119,34 @@ $ python -m pytest \
 A byte-containment probe over the other marked agent copies produced:
 
 ```text
-false-positive-exclusions.md: exact=0/7; non_exact=[all seven discovery agents]
-investigation-methodology.md: exact=0/9; non_exact=[all nine listed agents]
+$ python3 -c 'from pathlib import Path
+root = Path(".")
+checks = [
+    ("false-positive-exclusions.md", [
+        "bug-detector", "security-reviewer", "cross-file-impact", "test-analyzer",
+        "conventions-and-intent", "type-design-analyzer", "code-simplifier",
+    ], "---\n\n", False),
+    ("investigation-methodology.md", [
+        "bug-detector", "security-reviewer", "cross-file-impact", "test-analyzer",
+        "conventions-and-intent", "type-design-analyzer", "code-simplifier",
+        "validator", "challenger",
+    ], "## LSP-first investigation\n", True),
+]
+for filename, agents, separator, restore_separator in checks:
+    text = (root / "skills/code-gauntlet/references" / filename).read_text()
+    body = text.split(separator, 1)[1]
+    if restore_separator:
+        body = separator + body
+    missing = [
+        name for name in agents
+        if body not in (root / "agents" / f"{name}.md").read_text()
+    ]
+    print(
+        f"{filename}: exact={len(agents) - len(missing)}/{len(agents)}; "
+        f"non_exact={missing}"
+    )'
+false-positive-exclusions.md: exact=0/7; non_exact=['bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer', 'conventions-and-intent', 'type-design-analyzer', 'code-simplifier']
+investigation-methodology.md: exact=0/9; non_exact=['bug-detector', 'security-reviewer', 'cross-file-impact', 'test-analyzer', 'conventions-and-intent', 'type-design-analyzer', 'code-simplifier', 'validator', 'challenger']
 ```
 
 Those 16 results are candidates, not drift verdicts. The canonical investigation file explicitly
