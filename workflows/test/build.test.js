@@ -70,9 +70,30 @@ test('orderMismatches returns empty arrays when sets are equal (including both e
   assert.deepEqual(orderMismatches(['a.js', 'b.js'], ['b.js', 'a.js']), {
     missingFromOrder: [],
     missingFromDisk: [],
+    duplicatedInOrder: [],
   });
   assert.deepEqual(orderMismatches([], []), {
     missingFromOrder: [],
     missingFromDisk: [],
+    duplicatedInOrder: [],
   });
+});
+
+test('orderMismatches flags a name listed twice in ORDER', () => {
+  // Set equality is blind to this: the repeat collapses, so both directions are
+  // clean while the bundler would concatenate the module twice.
+  const result = orderMismatches(['a.js', 'b.js', 'a.js'], ['b.js', 'a.js']);
+  assert.deepEqual(result.duplicatedInOrder, ['a.js']);
+  assert.deepEqual(result.missingFromOrder, []);
+  assert.deepEqual(result.missingFromDisk, []);
+});
+
+test('orderMismatches reports each duplicate once, sorted, beside the other directions', () => {
+  const result = orderMismatches(
+    ['z.js', 'a.js', 'z.js', 'a.js', 'z.js', 'orphan-order.js'],
+    ['a.js', 'stray.js', 'z.js'],
+  );
+  assert.deepEqual(result.duplicatedInOrder, ['a.js', 'z.js']); // deduped and sorted
+  assert.deepEqual(result.missingFromOrder, ['stray.js']);
+  assert.deepEqual(result.missingFromDisk, ['orphan-order.js']);
 });

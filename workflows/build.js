@@ -33,18 +33,28 @@ const isHoisted = (line) => HOIST_META.test(line) || HOIST_VERSION.test(line);
 // ORDER must name every workflows/src/*.js file exactly once. present() used to
 // silently intersect ORDER with disk, so a new module left out of ORDER shipped
 // as an incomplete bundle while unit tests importing ../src/<file>.js stayed green.
+// Set equality alone cannot see a name listed TWICE — the repeat collapses into
+// the set, present() then emits that module twice, and the only failure left is
+// the collision detector naming duplicated identifiers instead of the repeated
+// file. Count duplicates here so the guard enforces the "exactly once" it claims.
 export function orderMismatches(order, onDisk) {
   const inOrder = new Set(order);
   const onDiskSet = new Set(onDisk);
   const missingFromOrder = [...onDiskSet].filter((f) => !inOrder.has(f)).sort();
   const missingFromDisk = [...inOrder].filter((f) => !onDiskSet.has(f)).sort();
-  return { missingFromOrder, missingFromDisk };
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const file of order) {
+    if (seen.has(file)) duplicates.add(file);
+    seen.add(file);
+  }
+  return { missingFromOrder, missingFromDisk, duplicatedInOrder: [...duplicates].sort() };
 }
 
 function present() {
   const found = new Set(readdirSync(SRC).filter((f) => f.endsWith('.js')));
-  const { missingFromOrder, missingFromDisk } = orderMismatches(ORDER, [...found]);
-  if (missingFromOrder.length || missingFromDisk.length) {
+  const { missingFromOrder, missingFromDisk, duplicatedInOrder } = orderMismatches(ORDER, [...found]);
+  if (missingFromOrder.length || missingFromDisk.length || duplicatedInOrder.length) {
     const lines = [];
     if (missingFromOrder.length) {
       lines.push(
@@ -56,6 +66,12 @@ function present() {
       lines.push(
         `in ORDER but not on disk: ${missingFromDisk.join(', ')} `
           + `(remove the name from ORDER, or restore the file)`,
+      );
+    }
+    if (duplicatedInOrder.length) {
+      lines.push(
+        `listed more than once in ORDER: ${duplicatedInOrder.join(', ')} `
+          + `(delete the repeated entry — a duplicate concatenates the module twice)`,
       );
     }
     throw new Error(
