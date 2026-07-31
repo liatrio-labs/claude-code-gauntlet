@@ -4,6 +4,12 @@ docs/machine-parsed-strings.md is the living list of strings another component
 parses. Each row names producer path(s) and parser path(s). Drift here is silent
 and functional — three recent investigations each re-derived this list before
 changing output. Presence/byte checks only; no semantic shape equality.
+
+EVERY listed path must contain the bytes, producers and parsers alike. Requiring
+only one parser to match let four rows name files that never held the string
+(`detect_prior_review.py`, `tests/test_validate_ndjson.py`, `bench/runner/invoke.py`),
+because the producer was also listed and satisfied the check on its own. A row
+with no byte-level reader writes `—` and explains itself in the notes.
 """
 
 import re
@@ -16,6 +22,9 @@ REGISTRY = REPO / "docs" / "machine-parsed-strings.md"
 _ROW = re.compile(
     r"^\|\s*`([^`]+)`\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]*)\|\s*$"
 )
+
+
+NO_PARSER = "—"  # em dash: "nothing reads these bytes", explained in notes
 
 
 def _strip_ticks(token: str) -> str:
@@ -59,32 +68,44 @@ class TestMachineParsedStrings(unittest.TestCase):
             "[validate_ndjson]",
             "the deltas carry a checksum",
             "PAYLOAD_JSON:",
+            'PRODUCT = "code-gauntlet"',
         }
         missing = required - strings
         self.assertEqual(missing, set(), f"registry missing seed strings: {missing}")
 
-    def test_each_string_in_every_producer_and_one_parser(self):
+    def test_every_listed_path_contains_the_string(self):
         rows = parse_registry(REGISTRY.read_text(encoding="utf-8"))
         self.assertGreaterEqual(len(rows), 9)
         offenders = {}
         for row in rows:
             s = row["string"]
-            for prod in row["producers"]:
-                path = REPO / prod
+            listed = [("producer", p) for p in row["producers"]]
+            listed += [
+                ("parser", p) for p in row["parsers"] if p != NO_PARSER
+            ]
+            for role, rel in listed:
+                path = REPO / rel
                 if not path.is_file():
-                    offenders[f"{s} producer {prod}"] = "missing file"
-                    continue
-                if s not in path.read_text(encoding="utf-8"):
-                    offenders[f"{s} producer {prod}"] = "string absent"
-            found_parser = False
-            for pars in row["parsers"]:
-                path = REPO / pars
-                if path.is_file() and s in path.read_text(encoding="utf-8"):
-                    found_parser = True
-                    break
-            if not found_parser:
-                offenders[f"{s} parsers"] = f"none of {row['parsers']} contain string"
+                    offenders[f"{s} {role} {rel}"] = "missing file"
+                elif s not in path.read_text(encoding="utf-8"):
+                    offenders[f"{s} {role} {rel}"] = "string absent"
         self.assertEqual(offenders, {}, f"registry presence failures: {offenders}")
+
+    def test_every_row_names_a_producer_and_resolves_its_parser_column(self):
+        rows = parse_registry(REGISTRY.read_text(encoding="utf-8"))
+        offenders = {}
+        for row in rows:
+            s = row["string"]
+            if not row["producers"]:
+                offenders[s] = "no producer listed"
+            if not row["parsers"]:
+                offenders[f"{s} parsers"] = f"empty — write {NO_PARSER} and explain"
+            elif NO_PARSER in row["parsers"]:
+                if row["parsers"] != [NO_PARSER]:
+                    offenders[f"{s} parsers"] = f"{NO_PARSER} mixed with real paths"
+                elif not row["notes"]:
+                    offenders[f"{s} parsers"] = f"{NO_PARSER} without a note explaining it"
+        self.assertEqual(offenders, {}, f"registry shape failures: {offenders}")
 
 
 if __name__ == "__main__":
