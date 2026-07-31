@@ -2,6 +2,93 @@
 
 <!-- version list -->
 
+## v3.3.6 (2026-07-31)
+
+### Bug Fixes
+
+- **docs**: Address PR #119 review comments on guards and delivery
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **docs**: Apply mechanical v2→v3 residue corrections
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **docs**: Correct Task 6 summarize contracts
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **tests**: Guard verify-receipt seed row in registry presence test
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **tests**: Make the three #37 guards able to fail
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+### Chores
+
+- Ignore .worktrees for isolated issue execution
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **workflows**: Refresh pipeline.js after src comment edits
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+### Documentation
+
+- **audit**: Adjudicate #37 adversarial residue findings
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: Close §6 broader-guards Task 7 follow-up
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: Finalize #37 residue inventory and guards assessment
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: Link deferred #37 residue to filed issues
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: Reconcile adversarial residue accounting
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: Record canonical containment probe
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: Record the guard repairs and the two exports they surfaced
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: Skeleton v3 residue inventory and detector baseline
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **audit**: V2→v3 residue inventory, string registry, and CI guards
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+### Testing
+
+- **docs**: Add machine-parsed string registry and presence CI
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **skills**: Guard references/ against silent orphans
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+- **workflows**: Guard export functions against silent dead paths
+  ([#119](https://github.com/liatrio-labs/claude-code-gauntlet/pull/119),
+  [`5d0a797`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5d0a7979ebb93452f746165a8255fe8e6e595a0c))
+
+
 ## v3.3.5 (2026-07-31)
 
 ### Bug Fixes
