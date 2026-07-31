@@ -420,6 +420,13 @@ Assessment of the deeper guards the design deferred to this pass:
 | `build.js` `ORDER` completeness versus `readdirSync(src)` | **feasible, cheap, filed** | `R-027`'s header comment was corrected in Task 6; the completeness guard is #74 (Wave 1). Latent today because all nine `src/*.js` files are listed, and no test compares `ORDER` to the directory. Mechanical — a set difference in either direction, in the same shape as the existing `detectTopLevelCollisions` guard. |
 | Numeric threshold agreement between prose and `filterFindings.js` | **feasible, filed with reservations — Task 7 complete** | `R-019` and `R-022` were corrected in Task 6; the remaining prose-versus-constant skew is `R-043` (#118). A guard could assert that any prose line naming a confidence default matches the constants. The reservation is precision — prose legitimately names configured examples (`security_min_confidence: 60`) and agent-facing report floors (`>= 60`) that are not the filter default, so a naive grep would be noisy. Scoping deferred to #118's resolution. |
 
+This assessment is complete. Tasks 1–3 shipped the reference-reachability, dead-export
+allowlist, and machine-parsed-string presence guards. The remaining mechanical candidates are
+tracked by #74 (`ORDER` completeness) and #118 (threshold agreement). Full semantic equality
+between prose contracts and JSON/prompt shapes is deliberately skipped: #24, #35, and #36 own the
+related pipeline contracts, and implementing it here would expand #37 into pipeline work. Reassess
+that guard after those issues close.
+
 ## Appendix A. Candidates for adversarial triage
 
 | Candidate | Detector output | Required next judgment |
