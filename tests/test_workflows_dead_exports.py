@@ -206,6 +206,11 @@ class TestWorkflowsDeadExports(unittest.TestCase):
             'const d = "ghostName again";',
             "const t = `prefix ${liveName} suffix ghostName`;",
             'if (!/["\\\\]/.test(x)) callName();',
+            # Keyword-preceded regex branch of _opens_regex (return/case/typeof…):
+            # without it, `/ghostName/` is misread as division and the token survives.
+            "return /ghostName/.test(x);",
+            "case /ghostName/:",
+            "typeof /ghostName/;",
         ])
         scrubbed = strip_comments_and_strings(source)
         self.assertNotIn("ghostName", scrubbed)

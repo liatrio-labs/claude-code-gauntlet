@@ -53,6 +53,30 @@ def parse_registry(text: str) -> list[dict]:
 
 
 class TestMachineParsedStrings(unittest.TestCase):
+    def test_parse_registry_handles_fixture_shapes(self):
+        # Fixture-based unit test: the live-registry presence checks only exercise
+        # today's table shape. A broken _ROW / split / NO_PARSER path must fail
+        # here even when the real registry happens to still parse.
+        fixture = "\n".join([
+            "| string | producer path(s) | parser path(s) | notes |",
+            "| --- | --- | --- | --- |",
+            "| `TokA` | `a.py`, `b.py` | `c.py` | multi producers |",
+            "| `TokB` | `only.py` | `—` | honest empty |",
+            "| `TokC` | `p.py` | `—` | |",  # NO_PARSER without a note — still parses
+            "| string | producer path(s) | parser path(s) | notes |",  # header repeat ignored
+            "| --- | --- | --- | --- |",
+        ])
+        rows = parse_registry(fixture)
+        by_string = {r["string"]: r for r in rows}
+        self.assertEqual(set(by_string), {"TokA", "TokB", "TokC"})
+        self.assertEqual(by_string["TokA"]["producers"], ["a.py", "b.py"])
+        self.assertEqual(by_string["TokA"]["parsers"], ["c.py"])
+        self.assertEqual(by_string["TokA"]["notes"], "multi producers")
+        self.assertEqual(by_string["TokB"]["parsers"], [NO_PARSER])
+        self.assertEqual(by_string["TokB"]["notes"], "honest empty")
+        self.assertEqual(by_string["TokC"]["parsers"], [NO_PARSER])
+        self.assertEqual(by_string["TokC"]["notes"], "")
+
     def test_registry_exists_and_has_seed_rows(self):
         self.assertTrue(REGISTRY.is_file(), "docs/machine-parsed-strings.md missing")
         rows = parse_registry(REGISTRY.read_text(encoding="utf-8"))
