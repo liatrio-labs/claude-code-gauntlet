@@ -148,7 +148,7 @@ Rules for per-dimension thresholds:
 - Dimension names must match Focus section values: `bugs`, `security`, `cross-file-impact`, `tests`, `conventions`, `types`, `simplification`
 - If a plain number is provided (current format), it applies as the default for all non-security dimensions
 - If per-dimension values are provided, they override the plain number default for that dimension
-- Dimensions not listed use the plain number default (or 70 if no default is set)
+- Dimensions not listed use the plain number default (or 70 if no default is set) — that 70 contradicts the live `DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD` of 55 documented above; #118 (R-043) owns which one is authoritative, so the wording is left as-is until it lands
 - If `security_min_confidence` is set in REVIEW.md, it provides a lower floor for security findings — useful for repos that want to surface more borderline security issues
 - Per-dimension settings in subdirectory REVIEW.md files override the inherited value for that dimension only
 
@@ -356,6 +356,8 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
      types: 75
      simplification: 75
      Omitted dimensions use the plain number default (or 70 if no default is set).
+     (That 70 contradicts the 55 stated at the top of this block. #118 owns the
+     call between the documented 70 and the implemented 55; not changed here.)
      Set security lower than the plain number to keep borderline security
      findings; there is no minimum it cannot go below. -->
 

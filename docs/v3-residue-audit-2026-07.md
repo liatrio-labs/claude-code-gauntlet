@@ -76,7 +76,8 @@ filterFindings.js:parseReviewMd -> owned-elsewhere:#24
 filterFindings.js:loadExclusions -> owned-elsewhere:#24
 ```
 
-Result: no new dead-export candidates.
+Result at the pin: no new dead-export candidates. That result did not hold up — the guard was
+counting comment mentions as references. See §6.1; the repaired guard finds `R-044` and `R-045`.
 
 ### 3.4 Stale version and roadmap grep
 
@@ -171,8 +172,9 @@ $ python -m pytest tests/test_machine_parsed_strings.py -q
 ```
 
 The Task 1 guard is green. Seed-row compromise: the registry deliberately proves exact-string
-presence in every producer and at least one parser, not semantic shape equality. Deeper semantic
-contracts remain a skipped-with-reason decision for the adversarial pass.
+presence, not semantic shape equality. Deeper semantic contracts remain a skipped-with-reason
+decision for the adversarial pass. The "at least one parser" rule measured here was later
+tightened to "every listed path" after it was found to admit phantom parser paths — see §6.1.
 
 ### 3.8 Adversarial pass (auditor → blind challenge → adjudicate)
 
@@ -209,7 +211,10 @@ cross-workflow inconsistency and #106 disposition. `R-039` is therefore recorded
 `owned-elsewhere` cross-link rather than #37 work.
 
 The receipt-stream inconsistency in the #110 duplication register was excluded before inventory
-assignment, as §3.6 requires; it is not an allegation-derived residue row. The three Appendix A
+assignment, as §3.6 requires; it is not an allegation-derived residue row. **`R-038` is that
+exclusion** — the ID was reserved for the receipt-stream row and then vacated when §3.6 ruled it out
+of scope, which is why the sequence runs `R-037` → `R-039` with no `R-038` anywhere below. The three
+Appendix A
 candidates were also outside the 29 allegations. Their dispositions add three rows (`R-040`–`R-042`)
 to the 27 allegation-derived rows, yielding 30 adversarial-pass inventory rows in total.
 
@@ -247,6 +252,8 @@ detector candidates are kept in Appendix A until challenged; they are not promot
 | ID | Location | Class | Evidence | Disposition | Fix or issue |
 | --- | --- | --- | --- | --- | --- |
 | R-003 | `filterFindings.js` `parseReviewMd` / `loadExclusions` | dead code path | Dead-export guard passes only through its cited allowlist | owned-elsewhere | #24 |
+| R-044 | `stages.js:2317` `parseWriterPayload` | test-only export | No `workflows/src` caller: the two mentions in `stages.js:2311,2314` are comments. Every real call is a test (`stages_persist`, `stages_verify`, `stages_verify_delta`, `stages_latency`, `finding_schema`, `helpers/pipelineMock`), which is deliberate — it is the inverse of the persist wire the writer prompt encodes, and the `PAYLOAD_JSON:` registry row records why it must not be named a live parser. Invisible until the guard stopped counting comment mentions | intentional-and-documented | none (allowlisted) |
+| R-045 | `args.js:134` `normalizeArgs` | test-only export | No `workflows/src` caller: the pipeline goes through `normalizeArgsReport`, which `normalizeArgs` wraps to drop the drop-report. The one non-declaration mention in `src` is the header comment at `args.js:1`. `workflows/test/args.test.js` uses it as the report-free spelling of the waist normalizer — a deliberate test surface for the same mechanism. Invisible until the guard stopped counting comment mentions | intentional-and-documented | none (allowlisted) |
 
 ### 4.4 Diverged and intentional duplicates
 
@@ -404,6 +411,13 @@ required seed set, and the dead-export allowlist citations now carry the invento
 alongside `owned-elsewhere:#24`, satisfying the design's requirement that every allowlist entry cite
 an inventory ID.
 
+A whole-branch review then established that two of the three could not fail as written, and both
+were repaired (see §6.1). Hardening the dead-export guard surfaced two exports that had been hidden
+behind their own comments, recorded above as `R-044` and `R-045`; they are `intentional-and-documented`
+test surfaces and are carried in the allowlist with those IDs, not deleted. They are guard output,
+not adversarial-pass allegations, so the §5 totals — which count the 30 adversarial rows plus
+`R-043` — are unchanged.
+
 The new registry row was mutation-tested in both directions: removing the marker from
 `workflows/src/stages.js` (producer) and from `agents/artifact-writer.md` (parser) each turn the
 presence test red. The first attempt listed `stages.js` as both producer and parser, and a
@@ -419,6 +433,23 @@ Assessment of the deeper guards the design deferred to this pass:
 | JSON/prompt shape equality beyond registered strings | **deliberately skipped** | `R-016` (validator input contract) is the residue this would catch, but the producer is a template string assembled in `stages.js` and the consumer is prose in an agent contract. Asserting equality means parsing English, so the honest guard is the registry's presence check on discrete tokens, already shipped. |
 | `build.js` `ORDER` completeness versus `readdirSync(src)` | **feasible, cheap, filed** | `R-027`'s header comment was corrected in Task 6; the completeness guard is #74 (Wave 1). Latent today because all nine `src/*.js` files are listed, and no test compares `ORDER` to the directory. Mechanical — a set difference in either direction, in the same shape as the existing `detectTopLevelCollisions` guard. |
 | Numeric threshold agreement between prose and `filterFindings.js` | **feasible, filed with reservations — Task 7 complete** | `R-019` and `R-022` were corrected in Task 6; the remaining prose-versus-constant skew is `R-043` (#118). A guard could assert that any prose line naming a confidence default matches the constants. The reservation is precision — prose legitimately names configured examples (`security_min_confidence: 60`) and agent-facing report floors (`>= 60`) that are not the filter default, so a naive grep would be noisy. Scoping deferred to #118's resolution. |
+
+### 6.1 Guard repairs after whole-branch review
+
+Two of the three guards passed for reasons unrelated to what they claimed to check. Both defects
+share a shape — the assertion was satisfiable without the property holding — so each repair is
+recorded with the mutation that now fails.
+
+| Guard | Defect | Repair | Mutation that now fails |
+| --- | --- | --- | --- |
+| `tests/test_workflows_dead_exports.py` | `is_referenced` searched raw text, so a name discussed in a neighbouring comment or quoted in a string counted as a call. Deleting `parseReviewMd` / `loadExclusions` from the allowlist still passed, and two real dead exports were invisible | Comments, string literals, and regex literals are blanked before the search (`strip_comments_and_strings`), keeping `${...}` interpolations as code. Two tests added: allowlist entries must still be dead, and each must cite an `R-` id | Removing either `#24` entry now reports it as a dead export; adding a live `parseReviewMd` call reports the entry as a stale exemption |
+| `tests/test_machine_parsed_strings.py` | The rule was "every producer and *at least one* parser", so a row could name parser files that never held the string as long as the producer was also listed. Five such phantom paths existed across five rows | Every listed path — producer or parser — must contain the bytes. A row with no byte-level reader writes `—` and must explain it in the notes | Re-adding `scripts/detect_prior_review.py` as a parser of `code-gauntlet-findings`; emptying the notes on a `—` row |
+| `tests/test_references_reachability.py` | The negative test asked whether a name present in no file was absent from the result — true of any implementation, including one returning every reference | Replaced with a fixture graph whose answer is known (a pointed-at file is found, an orphan and a self-mention are not), plus one live positive | Making `inbound_basenames` return every candidate unconditionally |
+
+`Generated by code-gauntlet` needed a further correction: the runtime composes it as
+`f"Generated by {PRODUCT}"`, so the only literal occurrence was the `review_marker.py` docstring and
+a product rename would have left the row green. `PRODUCT = "code-gauntlet"` is now a registered
+string in its own right, and renaming the constant turns the presence test red.
 
 This assessment is complete. Tasks 1–3 shipped the reference-reachability, dead-export
 allowlist, and machine-parsed-string presence guards. The remaining mechanical candidates are
