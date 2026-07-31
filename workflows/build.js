@@ -30,8 +30,40 @@ const HOIST_META = /^\s*export\s+const\s+meta\b/;
 const HOIST_VERSION = /^\s*const\s+PIPELINE_VERSION\b/;
 const isHoisted = (line) => HOIST_META.test(line) || HOIST_VERSION.test(line);
 
+// ORDER must name every workflows/src/*.js file exactly once. present() used to
+// silently intersect ORDER with disk, so a new module left out of ORDER shipped
+// as an incomplete bundle while unit tests importing ../src/<file>.js stayed green.
+export function orderMismatches(order, onDisk) {
+  const inOrder = new Set(order);
+  const onDiskSet = new Set(onDisk);
+  const missingFromOrder = [...onDiskSet].filter((f) => !inOrder.has(f)).sort();
+  const missingFromDisk = [...inOrder].filter((f) => !onDiskSet.has(f)).sort();
+  return { missingFromOrder, missingFromDisk };
+}
+
 function present() {
   const found = new Set(readdirSync(SRC).filter((f) => f.endsWith('.js')));
+  const { missingFromOrder, missingFromDisk } = orderMismatches(ORDER, [...found]);
+  if (missingFromOrder.length || missingFromDisk.length) {
+    const lines = [];
+    if (missingFromOrder.length) {
+      lines.push(
+        `on disk but not in ORDER: ${missingFromOrder.join(', ')} `
+          + `(add each file to ORDER in dependency order, or remove the stray file)`,
+      );
+    }
+    if (missingFromDisk.length) {
+      lines.push(
+        `in ORDER but not on disk: ${missingFromDisk.join(', ')} `
+          + `(remove the name from ORDER, or restore the file)`,
+      );
+    }
+    throw new Error(
+      `build.js: ORDER does not match workflows/src/*.js — every .js file in `
+        + `src/ must appear in ORDER exactly once (and vice versa):\n`
+        + lines.map((l) => `  ${l}`).join('\n'),
+    );
+  }
   return ORDER.filter((f) => found.has(f));
 }
 
@@ -56,17 +88,6 @@ function strip(source) {
 // duplicate name instead. A top-level declaration is one at column 0 (module bodies
 // concatenate flat); const/let/var/function/class, with optional `export`/`async`.
 const TOP_LEVEL_DECL = /^(?:export\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/;
-
-// ORDER must name every workflows/src/*.js file exactly once. present() used to
-// silently intersect ORDER with disk, so a new module left out of ORDER shipped
-// as an incomplete bundle while unit tests importing ../src/<file>.js stayed green.
-export function orderMismatches(order, onDisk) {
-  const inOrder = new Set(order);
-  const onDiskSet = new Set(onDisk);
-  const missingFromOrder = [...onDiskSet].filter((f) => !inOrder.has(f)).sort();
-  const missingFromDisk = [...inOrder].filter((f) => !onDiskSet.has(f)).sort();
-  return { missingFromOrder, missingFromDisk };
-}
 
 export function detectTopLevelCollisions(bundleText) {
   const seen = new Map(); // name -> [lineNumbers]
