@@ -57,6 +57,17 @@ function strip(source) {
 // concatenate flat); const/let/var/function/class, with optional `export`/`async`.
 const TOP_LEVEL_DECL = /^(?:export\s+)?(?:async\s+)?(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/;
 
+// ORDER must name every workflows/src/*.js file exactly once. present() used to
+// silently intersect ORDER with disk, so a new module left out of ORDER shipped
+// as an incomplete bundle while unit tests importing ../src/<file>.js stayed green.
+export function orderMismatches(order, onDisk) {
+  const inOrder = new Set(order);
+  const onDiskSet = new Set(onDisk);
+  const missingFromOrder = [...onDiskSet].filter((f) => !inOrder.has(f)).sort();
+  const missingFromDisk = [...inOrder].filter((f) => !onDiskSet.has(f)).sort();
+  return { missingFromOrder, missingFromDisk };
+}
+
 export function detectTopLevelCollisions(bundleText) {
   const seen = new Map(); // name -> [lineNumbers]
   bundleText.split('\n').forEach((line, i) => {

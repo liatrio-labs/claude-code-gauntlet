@@ -1,10 +1,11 @@
-// build.test.js — the bundler's top-level identifier-collision detector, the
-// build-time guard that turns a would-be runtime `Identifier 'X' has already been
-// declared` SyntaxError (the SEVERITY_ORDER collision the live smoke run hit) into a
-// loud build failure naming the duplicate.
+// build.test.js — the bundler's top-level identifier-collision detector and ORDER
+// completeness guard: the build-time guards that turn a would-be runtime
+// `Identifier 'X' has already been declared` SyntaxError (the SEVERITY_ORDER
+// collision the live smoke run hit) or a silently incomplete bundle into loud
+// build failures naming the duplicate or the missing file.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectTopLevelCollisions, build } from '../build.js';
+import { detectTopLevelCollisions, build, orderMismatches } from '../build.js';
 
 test('detectTopLevelCollisions flags a duplicated top-level declaration', () => {
   const text = [
@@ -41,4 +42,37 @@ test('the real bundle build() produces no top-level collisions', () => {
   // build() itself throws on collision; assert it succeeds AND its output is clean.
   const bundle = build();
   assert.deepEqual(detectTopLevelCollisions(bundle), []);
+});
+
+test('orderMismatches flags a file on disk that is missing from ORDER', () => {
+  const result = orderMismatches(['a.js', 'b.js'], ['b.js', 'a.js', 'stray.js']);
+  assert.deepEqual(result.missingFromOrder, ['stray.js']);
+  assert.deepEqual(result.missingFromDisk, []);
+});
+
+test('orderMismatches flags a name in ORDER that is missing from disk', () => {
+  const result = orderMismatches(['a.js', 'gone.js', 'b.js'], ['b.js', 'a.js']);
+  assert.deepEqual(result.missingFromOrder, []);
+  assert.deepEqual(result.missingFromDisk, ['gone.js']);
+});
+
+test('orderMismatches reports both directions at once, sorted', () => {
+  // Input order is deliberately unsorted so the test proves sorting of returns only.
+  const result = orderMismatches(
+    ['z.js', 'a.js', 'orphan-order.js'],
+    ['stray-b.js', 'a.js', 'stray-a.js', 'z.js'],
+  );
+  assert.deepEqual(result.missingFromOrder, ['stray-a.js', 'stray-b.js']);
+  assert.deepEqual(result.missingFromDisk, ['orphan-order.js']);
+});
+
+test('orderMismatches returns empty arrays when sets are equal (including both empty)', () => {
+  assert.deepEqual(orderMismatches(['a.js', 'b.js'], ['b.js', 'a.js']), {
+    missingFromOrder: [],
+    missingFromDisk: [],
+  });
+  assert.deepEqual(orderMismatches([], []), {
+    missingFromOrder: [],
+    missingFromDisk: [],
+  });
 });
