@@ -700,5 +700,107 @@ class TestContributingDocs(unittest.TestCase):
                 self.assertTrue(scope.match(path), f"cspell scope does not cover {path}")
 
 
+# Required PR check-run names for ruleset 16049246 (protect-default-branch).
+# Any new always-on PR gate must update THIS tuple and the live ruleset in the
+# same change (see #108 / #102 / #105). GitHub matches check-run names, not
+# workflow `name:` titles alone.
+REQUIRED_PR_CHECK_CONTEXTS = (
+    "Run Linting",
+    "Run Tests (3.10)",
+    "Run Tests (3.11)",
+    "Run Tests (3.12)",
+    "Run Workflow JS Tests",
+    "Run Bench Self-Tests (3.11)",
+    "Run Bench Self-Tests (3.12)",
+    "Validate plugin.json",
+    "lint-pr-title",
+)
+
+REQUIRED_PR_CHECK_WORKFLOWS = (
+    ".github/workflows/ci.yml",
+    ".github/workflows/validate.yml",
+    ".github/workflows/pr-title-lint.yml",
+)
+
+
+def _derive_required_pr_check_contexts():
+    """Expand the required checks for ruleset 16049246 (protect-default-branch).
+
+    Update the frozen tuple and live ruleset together. Zero required approvals
+    is deliberate; required checks, conversations, and linear history are the
+    merge gates. Job-level name: wins; else the job id.
+    """
+    contexts = []
+    job_header = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
+    job_name = re.compile(r'^    name:\s*(.+?)\s*$')
+    matrix_versions = re.compile(
+        r'^        python-version:\s*\[(.*)\]\s*$'
+    )
+    for rel in REQUIRED_PR_CHECK_WORKFLOWS:
+        text = _read(rel)
+        lines = text.splitlines()
+        i = 0
+        in_jobs = False
+        while i < len(lines):
+            line = lines[i]
+            if line.startswith("jobs:"):
+                in_jobs = True
+                i += 1
+                continue
+            if not in_jobs:
+                i += 1
+                continue
+            if line and not line.startswith(" ") and not line.startswith("#"):
+                break
+            m = job_header.match(line)
+            if not m:
+                i += 1
+                continue
+            job_id = m.group(1)
+            display = None
+            versions = None
+            i += 1
+            while i < len(lines):
+                nxt = lines[i]
+                if job_header.match(nxt) or (
+                    nxt and not nxt.startswith(" ") and not nxt.startswith("#")
+                ):
+                    break
+                nm = job_name.match(nxt)
+                if nm:
+                    display = _unquote(nm.group(1))
+                vm = matrix_versions.match(nxt)
+                if vm:
+                    versions = [
+                        _unquote(p.strip())
+                        for p in vm.group(1).split(",")
+                        if p.strip()
+                    ]
+                i += 1
+            label = display if display is not None else job_id
+            if versions:
+                contexts.extend(f"{label} ({v})" for v in versions)
+            else:
+                contexts.append(label)
+    return contexts
+
+
+class TestRequiredPrCheckContexts(unittest.TestCase):
+    def test_frozen_tuple_matches_workflow_derived_names(self):
+        derived = tuple(sorted(_derive_required_pr_check_contexts()))
+        frozen = tuple(sorted(REQUIRED_PR_CHECK_CONTEXTS))
+        self.assertEqual(
+            derived,
+            frozen,
+            "workflow job names drifted from REQUIRED_PR_CHECK_CONTEXTS — "
+            "update the tuple AND ruleset 16049246 together",
+        )
+
+    def test_docstring_names_the_ruleset(self):
+        text = (REPO / "tests" / "test_contribution_surface.py").read_text(encoding="utf-8")
+        self.assertIn("16049246", text)
+        self.assertIn("protect-default-branch", text)
+
+
 if __name__ == "__main__":
     unittest.main()
