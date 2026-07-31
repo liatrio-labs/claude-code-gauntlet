@@ -8,8 +8,10 @@
 name: Publish to Marketplace
 
 on:
-  # HOLD (owner decision 2026-07-22): automatic publish-on-release is disabled
-  # until v3.1.0 — v3.0.0 must NOT deploy to the company-wide marketplace.
+  # HOLD: automatic publish-on-release is disabled while the reusable workflow
+  # above is pinned to a diagnostic SHA (see the header) — a release must not
+  # auto-deploy to the company-wide marketplace through an unconfirmed pin.
+  # The original v3.0.0 hold (owner decision 2026-07-22) has since lapsed.
   # Marketplace deployment is a manual owner action via workflow_dispatch.
   # Re-enable automatic publishing by restoring:
   #   release:
@@ -17,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish (e.g. v2.5.0)"
+        description: "Release tag to publish (e.g. v3.3.4)"
         required: true
         type: string
 

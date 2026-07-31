@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// build.js — dependency-free bundler. Concatenates workflows/src/*.js into the
-// single self-contained workflows/pipeline.js. The bundle MUST begin with
+// build.js — dependency-free bundler. Concatenates the workflows/src/*.js files named
+// in ORDER (below) into the single self-contained workflows/pipeline.js — ORDER is a
+// pinned dependency order, so a src file absent from it is silently left out of the
+// bundle rather than appended. The bundle MUST begin with
 // `export const meta` (hoisted from pipeline_entry.js — the ONLY `export` the
 // workflow runtime permits in the bundle; any other `export`, including
 // `export default`, is a runtime SyntaxError) followed by the plain

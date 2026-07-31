@@ -13,18 +13,21 @@ Exit codes:
 
 Why this script exists
 ----------------------
-Phase 3 review agents emit findings via ``printf '%s\\n' '<json>'`` because
-``python3 -c`` and other dynamic-quoting forms are silently denied by the
-subagent sandbox AST parser. That puts the burden of escaping ``\\n``,
-``\\r``, ``\\t``, apostrophes, etc. on the agent. When an agent embeds a
+Under v2, review agents emitted findings via ``printf '%s\\n' '<json>'``
+because ``python3 -c`` and other dynamic-quoting forms are silently denied
+by the subagent sandbox AST parser. That put the burden of escaping ``\\n``,
+``\\r``, ``\\t``, apostrophes, etc. on the agent. When an agent embedded a
 raw newline (or other control character) inside a JSON string value, the
-single ``printf`` call writes two physical lines and the merge pipeline
-sees two malformed records instead of one valid finding.
+single ``printf`` call wrote two physical lines and the merge pipeline saw
+two malformed records instead of one valid finding. Agents ran this script
+as their final action so the bug was caught while the agent was still in
+scope and could re-emit the bad finding(s).
 
-Agents run this script as their final action so the bug is caught while
-the agent is still in scope and can re-emit the bad finding(s) — instead
-of leaving the orchestrator to scrape findings out of the agent's text
-return as a fallback.
+**v3 discovery agents no longer emit NDJSON** — they return findings by
+value through their dispatch schema, and ``tests/test_agent_contracts.py``
+scrubs the emission token from all seven contracts. This script is retained
+as v2-compatibility and benchmark surface; nothing in the v3 review pipeline
+invokes it.
 
 Usage:
     python3 validate_ndjson.py <findings_file>

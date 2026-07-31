@@ -1,7 +1,7 @@
 ---
 name: build-review-md
 description: |
-  Use this skill when the user wants to create or set up a REVIEW.md configuration file for their repository. Trigger for ANY of these: (1) user says "create REVIEW.md", "set up REVIEW.md", or "configure review rules", (2) code-gauntlet Phase 2c detects no REVIEW.md and suggests creating one, (3) user wants to customize what the code-gauntlet skill focuses on or ignores, (4) user asks "how do I configure the reviewer" or "how do I set review rules". Do NOT trigger for: reviewing code (use code-gauntlet), explaining what REVIEW.md does in the abstract, or editing an already-complete REVIEW.md the user is satisfied with. This skill NEVER loads into the main code-gauntlet context — it is a standalone configuration wizard.
+  Use this skill when the user wants to create or set up a REVIEW.md configuration file for their repository. Trigger for ANY of these: (1) user says "create REVIEW.md", "set up REVIEW.md", or "configure review rules", (2) code-gauntlet Phase 2d detects no REVIEW.md and suggests creating one, (3) user wants to customize what the code-gauntlet skill focuses on or ignores, (4) user asks "how do I configure the reviewer" or "how do I set review rules". Do NOT trigger for: reviewing code (use code-gauntlet), explaining what REVIEW.md does in the abstract, or editing an already-complete REVIEW.md the user is satisfied with. This skill NEVER loads into the main code-gauntlet context — it is a standalone configuration wizard.
 ---
 
 # REVIEW.md Builder

@@ -10,7 +10,7 @@ Implementation details for each delivery method in Phase 8.
 
 **Batch ALL inline comments into a single review event** — one GitHub notification instead of N separate ones. Notification fatigue causes teams to auto-dismiss AI review within ~10 days.
 
-**Inline comment default cap: 6.** When the user selects "Default — top 6 by severity," post the top 6 findings as inline comments (highest severity first); remaining findings go in condensed format in the executive summary comment. When the user selects "Let me pick" and chooses findings via the interactive walkthrough, post **all selected findings** as inline comments — no cap applies. The user made a deliberate selection; respect it.
+**The inline comment set is the pipeline's, not yours.** When the user selects "Default — the pipeline's selected set," post the `artifactPaths.postReview` payload verbatim — `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. When the user selects "Let me pick" and chooses findings via the interactive walkthrough, post **the selected subset** as inline comments — deselection only, order preserved, no cap applies. The user made a deliberate selection; respect it.
 
 ### Comment body format
 

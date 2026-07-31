@@ -205,7 +205,7 @@ export function applyChallenges(findings, challenges) {
 
   const totalInput = findings.length;
 
-  // Cross-agent dedup re-run (Task 5's dedupCrossAgent, reused not
+  // Cross-agent dedup re-run (filterFindings' dedupCrossAgent, reused not
   // reimplemented) + rank -- mirrors main()'s post-challenge composition.
   const { kept: dedupedActive, dropped: dedupDropped } = dedupCrossAgent(active);
   const ranked = rankFindings(dedupedActive);

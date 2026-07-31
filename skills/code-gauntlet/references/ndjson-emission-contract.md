@@ -84,10 +84,15 @@ file first, then propagate to every file carrying a
   tree-sitter-bash parser. No unrecognized AST nodes, so the subagent
   sandbox auto-approves the call.
 
-## How agents discover the validator path
+## How agents discovered the validator path (v2)
 
-Phase 2 writes `<plugin_root>/scripts/validate_ndjson.py` into the
-shared context file under a "Validator" section. Every agent reads the
-context file at startup and learns the absolute validator path along
-with the rest of the shared context — the dispatch prompt itself stays
-at ~100 tokens.
+Under v2, Phase 2 wrote `<plugin_root>/scripts/validate_ndjson.py` into
+the shared context file under a "Validator" section, so every agent
+learned the absolute validator path from its startup read of that file
+and the dispatch prompt itself stayed at ~100 tokens.
+
+**That section is no longer written.** `references/phase2-triage.md`
+records the NDJSON `## Validator` section as dropped: v3 agents return
+findings through structured output, so there is no per-agent validator
+step to record a path for. Any consumer of the drop-in block above must
+supply `<plugin_root>` itself.

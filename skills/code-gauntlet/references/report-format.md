@@ -22,7 +22,7 @@ https://github.com/{owner}/{repo}/blob/{full_sha}/{path}#L{start}-L{end}
 https://gitlab.com/{group}/{project}/-/blob/{full_sha}/{path}#L{start}-L{end}
 ```
 
-For self-hosted instances, replace the hostname with the one detected from the git remote URL. See SKILL.md Phase 2a for VCS detection and Phase 8 (Stage 0) for permalink format details.
+For self-hosted instances, replace the hostname with the one detected from the git remote URL. See `references/phase2-triage.md` § "2a. Detect VCS Platform" for VCS detection and Phase 8 (Stage 0) for permalink format details.
 
 **Rules:**
 

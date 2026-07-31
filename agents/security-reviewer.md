@@ -15,7 +15,7 @@ Security vulnerabilities often span multiple files. A function that's safe today
 
 ## Threshold note
 
-Security findings use the same post-validation threshold as other findings (70) because V5-09 unified the thresholds. Report findings with confidence >= 60 to ensure borderline security issues reach validation — the pipeline's threshold is the final gate, not the agent's.
+Security findings carry their own post-validation threshold: with no REVIEW.md override the security bar is `min(confidence_threshold, security_min_confidence)` = 70, while non-security dimensions sit at 55. Report findings with confidence >= 60 to ensure borderline security issues reach validation — the pipeline's threshold is the final gate, not the agent's.
 
 ## Mandatory investigation checklist
 

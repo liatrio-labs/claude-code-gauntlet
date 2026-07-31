@@ -1,7 +1,7 @@
 // filterFindings.js — JS twin of scripts/filter_findings.py (Phase 6 filtering).
-// Part 1 (this task): normalize / thresholds / injection / exclusions / REVIEW.md
-// parsing. Part 2 (Task 5): disagreement detection, tagging, dedupCrossAgent,
-// applyFilterPipeline — appended to this same file.
+// Part 1: normalize / thresholds / injection / exclusions / REVIEW.md parsing.
+// Part 2: disagreement detection, tagging, dedupCrossAgent, applyFilterPipeline —
+// appended to this same file.
 
 // --- Field normalization (BF-14) --------------------------------------------
 
@@ -743,7 +743,7 @@ export function groupByProximity(findings, lineProximity = 5) {
 // preserves original relative order (Python sort stability + reverse=True
 // keeps ties in forward order, not reversed) -- V8's sort is equally stable,
 // so a single multi-key comparator reproduces this without a second pass.
-// EXPORTED for reuse by applyChallenges (Task 7) — keep this a standalone
+// EXPORTED for reuse by applyChallenges — keep this a standalone
 // plain function with no closure over filterFindings-only state.
 export function dedupCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
