@@ -56,7 +56,11 @@ CODEX_CAP_BYTES = 32_768
 # claims — which tests delete which sandbox-absent globals, and which duplicated copies are
 # byte-checked vs presence-checked. Both name a cross-file guarantee boundary no single code
 # site owns; the old, shorter text was wrong about what is enforced.
-AGENTS_SET_BUDGET_BYTES = 14_893
+# Raised 14_893 -> 15_170 (2026-07-31, owner directive on PR #120): the docs-scratch
+# policy line. Enforcement is structural (tests/test_docs_registry.py), but that test
+# fires only after scratch is written; the line is what steers an agent at write time
+# to the PR/issue thread instead. Not derivable from code, no single owning site.
+AGENTS_SET_BUDGET_BYTES = 15_170
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
