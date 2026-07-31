@@ -14,10 +14,10 @@ SRC = REPO / "workflows" / "src"
 
 _EXPORT_FN = re.compile(r"^export\s+(?:async\s+)?function\s+(\w+)\s*\(", re.M)
 
-# key: "filterFindings.js:parseReviewMd" -> citation
+# key: "filterFindings.js:parseReviewMd" -> inventory ID + citation
 EXPORT_ALLOWLIST = {
-    "filterFindings.js:parseReviewMd": "owned-elsewhere:#24",
-    "filterFindings.js:loadExclusions": "owned-elsewhere:#24",
+    "filterFindings.js:parseReviewMd": "R-003 owned-elsewhere:#24",
+    "filterFindings.js:loadExclusions": "R-003 owned-elsewhere:#24",
 }
 
 

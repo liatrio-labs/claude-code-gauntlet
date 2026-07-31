@@ -58,6 +58,7 @@ class TestMachineParsedStrings(unittest.TestCase):
             "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.",
             "[validate_ndjson]",
             "the deltas carry a checksum",
+            "PAYLOAD_JSON:",
         }
         missing = required - strings
         self.assertEqual(missing, set(), f"registry missing seed strings: {missing}")

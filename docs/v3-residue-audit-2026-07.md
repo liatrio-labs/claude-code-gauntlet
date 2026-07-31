@@ -6,8 +6,10 @@
 **This is a point-in-time inventory.** Commands and results below were measured at the pinned HEAD.
 The living machine-string contract is
 [docs/machine-parsed-strings.md](machine-parsed-strings.md); re-run the commands for current state.
-This baseline contains only the cheap detector pass. The adversarial audit, final dispositions, and
-mechanical fixes are deliberately deferred to the next tasks.
+
+The adversarial pass (§3.8, `R-012`–`R-042`) ran at HEAD `a103945` on the same branch. It produced
+dispositions only: mechanical corrections and new issue filings are deliberately left to the
+following tasks, so a `fix-in-place` row here is a decision, not an applied edit.
 
 ## 1. Owned elsewhere
 
@@ -172,6 +174,47 @@ The Task 1 guard is green. Seed-row compromise: the registry deliberately proves
 presence in every producer and at least one parser, not semantic shape equality. Deeper semantic
 contracts remain a skipped-with-reason decision for the adversarial pass.
 
+### 3.8 Adversarial pass (auditor → blind challenge → adjudicate)
+
+Run at HEAD `a103945`. Five auditors took one slice each — `skills/code-gauntlet/`, `agents/`,
+`scripts/`, `workflows/src/`, `.github/` — and were handed the detector candidates plus the
+`R-001`–`R-011` skip list and the #55/#110 clone-pair exclusion.
+
+Every allegation was then challenged by a separate agent that received only the title, the location,
+a self-contained factual description, and the raw excerpt at the alleged location. Challengers did
+**not** receive the auditor's reasoning, the disagreeing-path quote, the suggested disposition, or
+the auditor's confidence, and each was told on which grounds a claim should be rejected or narrowed.
+Challenges were partitioned by subject rather than by auditor slice, so the three threshold
+allegations (`R-019`, `R-021`, `R-022`) were settled against one independently established ground
+truth.
+
+```text
+alleged                     29
+confirmed as alleged        19
+revised (narrowed)          10
+rejected                     0
+challenger verdicts overturned in adjudication   1
+```
+
+The overturned verdict is `R-022`. The challenger labelled it `REJECTED` while its own evidence
+established the opposite — that `filterFindings.js` applies 70 to security and 55 to non-security
+dimensions when `reviewConfig` omits a threshold, which is exactly the contradiction alleged. The
+label was not supported by the body, so adjudication confirmed the allegation.
+
+Nothing was rejected outright. Two confirmed rows are recorded as `owned-elsewhere` cross-links
+rather than #37 work: `R-038` is one of the nine `accidental` duplication-register rows already
+queued in #110, and `R-039` is the Actions pin split already scoped by #106. Recording them here
+prevents a future pass from re-deriving them; it does not re-own them.
+
+Three candidates carried in from Appendix A were dispositioned rather than promoted as defects:
+`C-001` → `R-040`, `C-002` → `R-041`, `C-003` → `R-042`. The `C-002` comparison did surface one real
+semantic narrowing, carved out separately as `R-037`.
+
+Two rows exist only because the #55 comment-accuracy pass corrected one copy of a false statement
+and missed another: `R-023` (`filter_findings.py:41,704` versus the corrected docstring at `:584`)
+and `R-024` (`apply_challenges.py:42-43` versus the corrected `filter_findings.py:946`). A
+single-file comment sweep does not converge on duplicated prose.
+
 ## 4. Findings by class
 
 Every row below is pre-loaded from the approved design or refreshed owned-elsewhere triage. Cheap
@@ -213,11 +256,99 @@ detector candidates are kept in Appendix A until challenged; they are not promot
 | R-010 | v2 persist alias fields | intentional retention | Artifact-writer compatibility boundary | intentional-and-documented | none |
 | R-011 | `ndjson-emission-contract.md` + `validate_ndjson.py` | intentional retention (v2-compat) | Discovery-agent scrub excludes this retained compatibility surface | intentional-and-documented | none |
 
+The remaining sections are the adversarial pass output (§3.8). Line numbers are as of `a103945`.
+
+### 4.6 Adversarial pass — orphaned references and contracts
+
+| ID | Location | Class | Evidence | Disposition | Fix or issue |
+| --- | --- | --- | --- | --- | --- |
+| R-012 | `review-md-spec.md:20-94` | orphaned contract | The spec states a REVIEW.md `## Focus` section restricts which dimensions run ("ONLY the listed dimensions run"). `parseReviewMd` reads only `confidence_threshold`, `security_min_confidence`, `severity_threshold`, and `ignore`; dimension gating is `agentFlags` alone, which `SKILL.md` stamps only from the trivial-scope gate. Nothing maps a focus list to flags | file-as-issue | Task 7 |
+| R-013 | `report-format.md:25` | orphaned reference | `See SKILL.md Phase 2a for VCS detection` — `SKILL.md` has no section labelled Phase 2a. VCS detection is `phase2-triage.md:18` `## 2a. Detect VCS Platform`. Distinct from R-001, which owns this file's delivery to `report-writer` | fix-in-place | Task 6 |
+
+### 4.7 Adversarial pass — dead code paths
+
+| ID | Location | Class | Evidence | Disposition | Fix or issue |
+| --- | --- | --- | --- | --- | --- |
+| R-014 | `delivery-guide.md:13` | dead instruction | Tells the orchestrator to handle a `Default — top 6 by severity` choice and rank findings for inline comments. Phase 8 offers `Default — the pipeline's selected set` and forbids re-ranking (`phase8-delivery.md:69`); `selectDelivery` now ranks and caps inside the pipeline | fix-in-place | Task 6 |
+| R-015 | `ndjson-emission-contract.md:88-90` | dead instruction | Claims Phase 2 writes `validate_ndjson.py` into the shared context file under a `Validator` section. `phase2-triage.md:334` states the opposite: "The NDJSON ## Validator section is likewise dropped". The file's *retention* stays intentional per R-011; only this claim is stale | fix-in-place | Task 6 |
+| R-016 | `validator.md:47-54` | dead contract | "What you receive" promises blame tags, code pre-wrapped in `<untrusted-code-content>`, and "Blame classification from Phase 4a". `validatePrompt` (`stages.js:1352-1364`) sends a context read line plus id/dimension/severity/file/range/description/evidence only. `Phase 4a` appears nowhere else in the repo | fix-in-place | Task 6 |
+| R-017 | `registry.js:140-151` | dead field | `resolvePolicy` returns `note`, non-empty when `CLAUDE_CODE_SUBAGENT_MODEL` bypasses model policy. `modelFor` (`stages.js:33-34`) is the only live consumer and reads `.model`; the run envelope discloses overrides via `resolvedPolicy.subagentModel` instead. Only `workflows/test/registry.test.js` reads `note`. Not visible to the dead-export guard — it is a return field, not an export | file-as-issue | Task 7 |
+| R-018 | `publish-marketplace.yml:35` | dead branch | `github.event.release.tag_name` is unreachable because only `workflow_dispatch` is enabled. The file documents the switch at `:14-16` ("Re-enable automatic publishing by restoring:"), so this is a reversible hold, not conversion residue | intentional-and-documented | none |
+
+### 4.8 Adversarial pass — doc/code contract skew
+
+| ID | Location | Class | Evidence | Disposition | Fix or issue |
+| --- | --- | --- | --- | --- | --- |
+| R-019 | `review-md-spec.md:345` | contract skew | Root scaffolding template: "Security findings always use a minimum of 60 regardless of this setting." No 60 floor exists in either runtime; `DEFAULT_SECURITY_MIN_CONFIDENCE = 70`. The same file documents 55/70 correctly at `:129-131` | fix-in-place | Task 6 |
+| R-020 | `phase2-triage.md:395` | contract skew | Documents `persist` as `{ assembleScriptPath }` with absence falling back to the legacy by-value writer, and never mentions `returnPrimaries`. `SKILL.md:360-364` stamps `{ assembleScriptPath, returnPrimaries: true }` as the default RETURN channel and `args.js:571-586` validates it | fix-in-place | Task 6 |
+| R-021 | `validation-pipeline.md:72` | contract skew | "cap confidence at 65 — below the non-security threshold of 70". The live non-security bar with no REVIEW.md override is 55, so 65 is *above* it and the rubric's intent fails. The same file states 55/70 correctly at `:82`. Filed rather than fixed: correcting the prose keeps a cap that no longer suppresses hypotheticals, and lowering the cap changes validator output | file-as-issue | Task 7 |
+| R-022 | `security-reviewer.md:16-18` | contract skew | "Security findings use the same post-validation threshold as other findings (70) because V5-09 unified the thresholds." `filterFindings.js:151-159` decouples them — security `min(70, 70)`, non-security 55 — and its own comment names the "iter 5" decoupling. `V5-09` in code marks validator contestation, not threshold unification. The adjacent instruction ("report >= 60") stays correct and untouched | fix-in-place | Task 6 |
+| R-023 | `filter_findings.py:41,704` | contract skew | Module output-schema comment and an inline comment in `detect_disagreement` call the +10 boost "multi-agent consensus"; the code boosts whenever `count > 1` in a `(file, 10-line bucket)` group with no distinct-agent check. #55 corrected the sibling docstring at `:584-588`; these two sites survived. The JS twin carries no such comment | fix-in-place | Task 6 |
+| R-024 | `apply_challenges.py:42-43` | contract skew | Docstring: dedup is re-run "using the shared `group_by_proximity` utility from `filter_findings.py`". The script imports and calls `dedup_cross_agent` (`:75`, `:455`); `group_by_proximity` is reached only transitively. #55 corrected the same false claim in `filter_findings.py:946` and missed this copy | fix-in-place | Task 6 |
+| R-025 | `stages.js:10-13` | contract skew | Header: "parallel() results are always .filter(Boolean)ed and a null member is recorded as a gap." Only `summarize` filters (`:207`); discover, validate, and challenge attribute by index and push named per-member gaps — `validateStage` says so at `:1274`. `summarize` silently drops failed buckets and emits one generic gap only when every bucket fails | fix-in-place | Task 6 |
+| R-026 | `stages.js:2307` | contract skew | `PAYLOAD_JSON:` is a cross-component wire marker — emitted by three persist prompt builders, parsed by the agent per `artifact-writer.md:19` — but was absent from `docs/machine-parsed-strings.md`, whose own rule is "Add a row before introducing a new machine-parsed token" | fix-in-place | Registry row added in this task |
+| R-027 | `build.js:2-3` | contract skew | Header claims it "Concatenates workflows/src/\*.js"; `present()` (`:33-36`) emits only files named in the hard-coded `ORDER`, so a new `src/*.js` omitted from `ORDER` is dropped with no failure. Narrowed on challenge: `ORDER` pinning is deliberate (dependency order), so only the comment is wrong — the absent completeness guard is recorded in §6 | fix-in-place | Task 6 (+ §6 guard) |
+| R-028 | `validate.yml:4-7,21-22` | contract skew | `claude plugin validate .` runs on every pull request, but neither `CONTRIBUTING.md:140-146` nor `.github/pull_request_template.md:26-31` lists it, while `CONTRIBUTING.md:205-207` claims the template "enumerates every CI-enforced gate". Filed rather than fixed: the gate needs a global npm install, so whether to list it or soften the claim is a maintainer decision, and `tests/test_contribution_surface.py:623-632` pins the command list | file-as-issue | Task 7 |
+
+### 4.9 Adversarial pass — stale version and roadmap pointers
+
+| ID | Location | Class | Evidence | Disposition | Fix or issue |
+| --- | --- | --- | --- | --- | --- |
+| R-029 | `review-md-spec.md:250`, `build-review-md/SKILL.md:4` | stale pointer | Both say REVIEW.md detection happens in "Phase 2c". `phase2-triage.md:7-8` assigns 2c to the review target and diff capture; hierarchical discovery and the setup prompts are 2d (`:125-186`), which `SKILL.md:254` confirms | fix-in-place | Task 6 |
+| R-030 | `change-summarizer.md:63` | stale pointer | Heading `## Per-file summaries (Phase 2j, PRs > 500 lines)`. `phase2-triage.md:275-277` states "There is no separate 2j step". Narrowed on challenge: the trigger is also incomplete — `stages.js:195` requires `changedLines > 500` **and** `changedFiles.length > bucketSize` (default 20), so line count alone does not fan out | fix-in-place | Task 6 |
+| R-031 | `validate_ndjson.py:14-27` | stale rationale | Present-tense claim that "Phase 3 review agents emit findings via `printf`" and run this script as their final action. `SKILL.md:294` records NDJSON emission as removed from discovery agents, and `tests/test_agent_contracts.py:42-66` scrubs the token from all seven contracts. Retention stays intentional per R-011 | fix-in-place | Task 6 |
+| R-032 | `filterFindings.js:2-4,397,746` | stale pointer | Comments name a "Part 1 / Part 2" split plus "Task 5" and "Task 7". Narrowed on challenge: Part 1/Part 2 still mark real in-file boundaries and should stay; the `Task N` port-era labels resolve to nothing a reader can look up, and collide with unrelated "Task 5/7" uses in `bench/vendor/VENDORED.md` | fix-in-place | Task 6 |
+| R-033 | `publish-marketplace.yml:20` | stale version | `description: "Release tag to publish (e.g. v2.5.0)"` — a pre-rename v2 tag. The release line is 3.x (`plugin.json` `3.3.4`, `tag_format = "v{version}"`) | fix-in-place | Task 6 |
+| R-034 | `publish-marketplace.yml:11-12` | stale version | "automatic publish-on-release is disabled until v3.1.0 — v3.0.0 must NOT deploy". v3.1.0 shipped 2026-07-23 and the plugin is at 3.3.4. Narrowed on challenge: the hold itself is still in force for a different, documented reason (the reusable-workflow pin at `:3-7`), so only the stated rationale is stale | fix-in-place | Task 6 |
+
+### 4.10 Adversarial pass — diverged duplicates
+
+| ID | Location | Class | Evidence | Disposition | Fix or issue |
+| --- | --- | --- | --- | --- | --- |
+| R-035 | `phase1-preflight.md:17` | diverged duplicate | Quotes the Workflow-absent stop message as "Install code-gauntlet v2.x for older CLIs." The registered verbatim message says "Install the pre-rename deep-review v2.x for older CLIs." (`SKILL.md:28`, registry row pinned by `tests/test_machine_parsed_strings.py`). The reference file names a product that never shipped | fix-in-place | Task 6 |
+| R-036 | `phase2-triage.md:90` | diverged duplicate | Defers truncation on `previously_reviewed: true` and `head_advanced: false`. `SKILL.md:158-172` gates on `previously_reviewed and sha_resolvable and last_reviewed_sha == head_sha`, and `:183-188` explicitly rejects `head_advanced` because it also reads false for unresolvable SHAs and rewritten history — cases that must truncate immediately | fix-in-place | Task 6 |
+| R-037 | `false-positive-exclusions.md:82` ↔ 7 discovery agents | diverged duplicate | Canonical rule 6 is two-part: the underlying issue must not be flagged, **and** "The suppression itself may be worth discussing." No agent copy contains that permission (zero hits under `agents/`). Narrowed on challenge: the omission is uniform across all seven, but only four keep an explicit "do not flag the underlying issue"; `test-analyzer`, `code-simplifier`, and `type-design-analyzer` use domain-rewritten rule 6. Filed, not fixed: adding a clause to seven prompts changes what agents may report, and it lands on the R-008 intentional-duplication surface | file-as-issue | Task 7 |
+| R-038 | `filter_findings.py:1396-1400` | diverged duplicate | With `--output` set the receipt prints to stdout; `apply_validations.py:317` and `apply_challenges.py:497` send theirs to stderr. Already recorded as one of the nine `accidental` rows in `docs/duplication-register.md` ("Already drifted: two print the receipt to stderr, one to stdout") | owned-elsewhere | #110 |
+| R-039 | `ci.yml`, `validate.yml`, `release.yml`, `bench-smoke.yml`, `labels-verify.yml` | diverged duplicate | `actions/checkout` is split `@v4`/`@v6` and `actions/setup-python` `@v5`/`@v6`. Narrowed on challenge: this is a supply-chain pin inconsistency, not v2→v3 residue, and `docs/engineering-audit-2026-07.md:318-323` already names the checkout split with remediation scoped to #106 (SHA-pin every `uses:`) | owned-elsewhere | #106 |
+
+### 4.11 Adversarial pass — candidate verdicts (intentional retention)
+
+| ID | Location | Class | Evidence | Disposition | Fix or issue |
+| --- | --- | --- | --- | --- | --- |
+| R-040 | `SKILL.md:28` (candidate C-001) | compatibility wording | The `deep-review v2.x` phrase is correct, not rename residue: v2 shipped under the `deep-review` name, `plugin.json` records "Formerly deep-review", and the version gate matches `V3_MIN_CLAUDE_VERSION = (2, 1, 154)` in `bench/runner/invoke.py`. The whole message is a registered machine-parsed string, so it must not be reworded casually. The stale sibling is R-035, not this line | intentional-and-documented | none |
+| R-041 | 7 false-positive-exclusion copies (candidate C-002) | intentional duplication | All 13 numbered rules survive in every copy; no rule is missing, inverted, or re-thresholded. Byte differences are dropped examples and rationale plus deliberate domain tailoring in `type-design-analyzer` and `code-simplifier`. Compression is intentional; the one genuine narrowing is carved out as R-037 | intentional-and-documented | none |
+| R-042 | 9 investigation-methodology copies (candidate C-003) | intentional adaptation | The canonical file calls its copies "adapted" and every copy preserves the shared contract: LSP-first, `goToDefinition`/`findReferences` primary, `Grep`/`Glob`/`Read` fallback. Domain steps extend rather than negate it; the omissions found (`hover` in `test-analyzer`, `hover`/`Glob` in `challenger`) are non-mandatory. No drift verdict | intentional-and-documented | none |
+
 ## 5. Filed issues summary
 
-No new issue is filed by this detector-only baseline. The adversarial pass will add issue links for
-confirmed non-mechanical findings. Existing ownership is #24, #29, #35, and #36; accidental
-executable-code duplicate remediation remains #110.
+Disposition totals across `R-012`–`R-042` (31 rows):
+
+| Disposition | Count | IDs |
+| --- | --- | --- |
+| `fix-in-place` | 20 | R-013 R-014 R-015 R-016 R-019 R-020 R-022 R-023 R-024 R-025 R-026 R-027 R-029 R-030 R-031 R-032 R-033 R-034 R-035 R-036 |
+| `file-as-issue` | 5 | R-012 R-017 R-021 R-028 R-037 |
+| `intentional-and-documented` | 4 | R-018 R-040 R-041 R-042 |
+| `owned-elsewhere` | 2 | R-038 (#110) R-039 (#106) |
+
+The five `file-as-issue` rows share a shape: each has two defensible remedies and picking one is a
+design decision or changes live behavior. `R-012` (implement `## Focus` or delete the spec),
+`R-017` (surface `resolvePolicy().note` in the run envelope or drop the field), `R-021` (accept that
+a 65 cap no longer suppresses hypotheticals, or lower the cap and move validator output), `R-028`
+(list the plugin-validate gate or soften the completeness claim), `R-037` (restore the suppression
+clause across seven agent prompts, which changes what agents may report). Issue creation is Task 7.
+
+The 20 `fix-in-place` rows are prose, comment, and pointer corrections with no behavioral component;
+`R-026` is already discharged by the registry row added in this task. Application is Task 6.
+
+Existing ownership is unchanged: #24, #29, #35, #36 for `R-001`–`R-007`, #106 for the Actions pin
+split, and #110 for accidental executable-code duplicates.
+
+**Sequencing note for Task 6.** After `R-035` lands, add `skills/code-gauntlet/references/phase1-preflight.md`
+to the producer list of the Workflow-absent message row in
+[docs/machine-parsed-strings.md](machine-parsed-strings.md). It is deliberately absent today: the
+file currently holds the wrong string, so registering it now would fail the presence guard rather
+than catch the drift. Registering it after the fix converts a one-off correction into a standing
+guard against the same divergence.
 
 ## 6. Broader guards assessment
 
@@ -227,10 +358,27 @@ Tasks 1–3 shipped the three approved cheap guards:
 - reference reachability from the live instruction graph;
 - workflow dead-export detection with a cited allowlist.
 
-They are green at the pinned HEAD. Deeper semantic contract guards, including semantic equality of
-adapted canonical-source copies and JSON-shape equality beyond registered strings, are not part of
-these tests. Whether each is feasible and valuable must be assessed during the adversarial pass and
-recorded as implemented, filed, or deliberately skipped with a concrete reason.
+They are green at the pinned HEAD, and the adversarial pass extended two of them: the registry
+gained the `PAYLOAD_JSON:` wire row (`R-026`) with `PAYLOAD_JSON:` added to the presence test's
+required seed set, and the dead-export allowlist citations now carry the inventory ID `R-003`
+alongside `owned-elsewhere:#24`, satisfying the design's requirement that every allowlist entry cite
+an inventory ID.
+
+The new registry row was mutation-tested in both directions: removing the marker from
+`workflows/src/stages.js` (producer) and from `agents/artifact-writer.md` (parser) each turn the
+presence test red. The first attempt listed `stages.js` as both producer and parser, and a
+parser-side mutation passed — `parseWriterPayload` is exercised only from tests, so it is not a live
+parser and naming it let a one-sided mutation fall through to a neighbouring fallback. The row names
+the agent as the sole parser for that reason.
+
+Assessment of the deeper guards the design deferred to this pass:
+
+| Candidate guard | Verdict | Reason |
+| --- | --- | --- |
+| Semantic equality of adapted canonical-source copies | **deliberately skipped** | `R-041` / `R-042` establish that the copies are *intended* to differ — compressed and domain-tailored, with the canonical file calling them "adapted". A byte or structural equality guard would fail by design, and encoding "same 13 rules, any wording" needs a rule-boundary marker the sources do not carry. Making it mechanical means restructuring the canonical files into addressable rule blocks first, which is a design change, not a guard. `R-037` is the residue such a guard would have caught, and it is filed instead. |
+| JSON/prompt shape equality beyond registered strings | **deliberately skipped** | `R-016` (validator input contract) is the residue this would catch, but the producer is a template string assembled in `stages.js` and the consumer is prose in an agent contract. Asserting equality means parsing English, so the honest guard is the registry's presence check on discrete tokens, already shipped. |
+| `build.js` `ORDER` completeness versus `readdirSync(src)` | **feasible, cheap, filed** | `R-027` is latent today because all nine `src/*.js` files are listed, and no test compares `ORDER` to the directory. This one is genuinely mechanical — a set difference in either direction, in the same shape as the existing `detectTopLevelCollisions` guard — and is the strongest guard candidate this pass found. Recorded here and carried into Task 7 rather than added mid-audit. |
+| Numeric threshold agreement between prose and `filterFindings.js` | **feasible, filed with reservations** | Three of this pass's rows (`R-019`, `R-021`, `R-022`) are the same defect class: a number in prose disagreeing with a constant in code. A guard could assert that any prose line naming a confidence default matches the constants. The reservation is precision — prose legitimately names configured examples (`security_min_confidence: 60`) and agent-facing report floors (`>= 60`) that are not the filter default, so a naive grep would be noisy. Worth scoping in Task 7 against the corrected text, not before. |
 
 ## Appendix A. Candidates for adversarial triage
 
@@ -240,4 +388,6 @@ recorded as implemented, filed, or deliberately skipped with a concrete reason.
 | C-002 | Seven false-positive-exclusion copies are not byte-identical to the long-form canonical file | Compare all 13 rules semantically and distinguish deliberate compression from drift |
 | C-003 | Nine investigation-methodology copies are not byte-identical to the canonical file | Confirm each domain adaptation preserves the shared contract |
 
-This appendix is an input to Task 5, not a dispositioned finding set.
+**Closed.** All three were carried through the adversarial pass and dispositioned: `C-001` → `R-040`,
+`C-002` → `R-041` (plus the carve-out `R-037`), `C-003` → `R-042`. None became a defect requiring a
+fix under #37. The appendix is retained as the provenance record for those three rows.
