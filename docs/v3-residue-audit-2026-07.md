@@ -269,7 +269,7 @@ The remaining sections are the adversarial pass output (§3.8). Line numbers are
 
 | ID | Location | Class | Evidence | Disposition | Fix or issue |
 | --- | --- | --- | --- | --- | --- |
-| R-012 | `review-md-spec.md:20-94` | orphaned contract | The spec states a REVIEW.md `## Focus` section restricts which dimensions run ("ONLY the listed dimensions run"). `parseReviewMd` reads only `confidence_threshold`, `security_min_confidence`, `severity_threshold`, and `ignore`; dimension gating is `agentFlags` alone, which `SKILL.md` stamps only from the trivial-scope gate. Nothing maps a focus list to flags | file-as-issue | Task 7 |
+| R-012 | `review-md-spec.md:20-94` | orphaned contract | The spec states a REVIEW.md `## Focus` section restricts which dimensions run ("ONLY the listed dimensions run"). `parseReviewMd` reads only `confidence_threshold`, `security_min_confidence`, `severity_threshold`, and `ignore`; dimension gating is `agentFlags` alone, which `SKILL.md` stamps only from the trivial-scope gate. Nothing maps a focus list to flags | file-as-issue | #113 |
 | R-013 | `report-format.md:25` | orphaned reference | `See SKILL.md Phase 2a for VCS detection` — `SKILL.md` has no section labelled Phase 2a. VCS detection is `phase2-triage.md:18` `## 2a. Detect VCS Platform`. Distinct from R-001, which owns this file's delivery to `report-writer` | fix-in-place | fixed in Task 6 |
 
 ### 4.7 Adversarial pass — dead code paths
@@ -279,7 +279,7 @@ The remaining sections are the adversarial pass output (§3.8). Line numbers are
 | R-014 | `delivery-guide.md:13` | dead instruction | Tells the orchestrator to handle a `Default — top 6 by severity` choice and rank findings for inline comments. Phase 8 offers `Default — the pipeline's selected set` and forbids re-ranking (`phase8-delivery.md:69`); `selectDelivery` now ranks and caps inside the pipeline | fix-in-place | fixed in Task 6 |
 | R-015 | `ndjson-emission-contract.md:88-90` | dead instruction | Claims Phase 2 writes `validate_ndjson.py` into the shared context file under a `Validator` section. `phase2-triage.md:334` states the opposite: "The NDJSON ## Validator section is likewise dropped". The file's *retention* stays intentional per R-011; only this claim is stale | fix-in-place | fixed in Task 6 |
 | R-016 | `validator.md:47-54` | dead contract | "What you receive" promises blame tags, code pre-wrapped in `<untrusted-code-content>`, and "Blame classification from Phase 4a". `validatePrompt` (`stages.js:1352-1364`) sends a context read line plus id/dimension/severity/file/range/description/evidence only. `Phase 4a` appears nowhere else in the repo | fix-in-place | fixed in Task 6 |
-| R-017 | `registry.js:140-151` | dead field | `resolvePolicy` returns `note`, non-empty when `CLAUDE_CODE_SUBAGENT_MODEL` bypasses model policy. `modelFor` (`stages.js:33-34`) is the only live consumer and reads `.model`; the run envelope discloses overrides via `resolvedPolicy.subagentModel` instead. Only `workflows/test/registry.test.js` reads `note`. Not visible to the dead-export guard — it is a return field, not an export | file-as-issue | Task 7 |
+| R-017 | `registry.js:140-151` | dead field | `resolvePolicy` returns `note`, non-empty when `CLAUDE_CODE_SUBAGENT_MODEL` bypasses model policy. `modelFor` (`stages.js:33-34`) is the only live consumer and reads `.model`; the run envelope discloses overrides via `resolvedPolicy.subagentModel` instead. Only `workflows/test/registry.test.js` reads `note`. Not visible to the dead-export guard — it is a return field, not an export | file-as-issue | #114 |
 | R-018 | `publish-marketplace.yml:35` | dead branch | `github.event.release.tag_name` is unreachable because only `workflow_dispatch` is enabled. The file documents the switch at `:14-16` ("Re-enable automatic publishing by restoring:"), so this is a reversible hold, not conversion residue | intentional-and-documented | none |
 
 ### 4.8 Adversarial pass — doc/code contract skew
@@ -288,14 +288,15 @@ The remaining sections are the adversarial pass output (§3.8). Line numbers are
 | --- | --- | --- | --- | --- | --- |
 | R-019 | `review-md-spec.md:345` | contract skew | Root scaffolding template: "Security findings always use a minimum of 60 regardless of this setting." No 60 floor exists in either runtime; `DEFAULT_SECURITY_MIN_CONFIDENCE = 70`. The same file documents 55/70 correctly at `:129-131` | fix-in-place | fixed in Task 6 |
 | R-020 | `phase2-triage.md:395` | contract skew | Documents `persist` as `{ assembleScriptPath }` with absence falling back to the legacy by-value writer, and never mentions `returnPrimaries`. `SKILL.md:360-364` stamps `{ assembleScriptPath, returnPrimaries: true }` as the default RETURN channel and `args.js:571-586` validates it | fix-in-place | fixed in Task 6 |
-| R-021 | `validation-pipeline.md:72` | contract skew | "cap confidence at 65 — below the non-security threshold of 70". The live non-security bar with no REVIEW.md override is 55, so 65 is *above* it and the rubric's intent fails. The same file states 55/70 correctly at `:82`. Filed rather than fixed: correcting the prose keeps a cap that no longer suppresses hypotheticals, and lowering the cap changes validator output | file-as-issue | Task 7 |
+| R-021 | `validation-pipeline.md:72` | contract skew | "cap confidence at 65 — below the non-security threshold of 70". The live non-security bar with no REVIEW.md override is 55, so 65 is *above* it and the rubric's intent fails. The same file states 55/70 correctly at `:82`. Filed rather than fixed: correcting the prose keeps a cap that no longer suppresses hypotheticals, and lowering the cap changes validator output | file-as-issue | #115 |
 | R-022 | `security-reviewer.md:16-18` | contract skew | "Security findings use the same post-validation threshold as other findings (70) because V5-09 unified the thresholds." `filterFindings.js:151-159` decouples them — security `min(70, 70)`, non-security 55 — and its own comment names the "iter 5" decoupling. `V5-09` in code marks validator contestation, not threshold unification. The adjacent instruction ("report >= 60") stays correct and untouched | fix-in-place | fixed in Task 6 |
 | R-023 | `filter_findings.py:41,704` | contract skew | Module output-schema comment and an inline comment in `detect_disagreement` call the +10 boost "multi-agent consensus"; the code boosts whenever `count > 1` in a `(file, 10-line bucket)` group with no distinct-agent check. #55 corrected the sibling docstring at `:584-588`; these two sites survived. The JS twin carries no such comment | fix-in-place | fixed in Task 6 |
 | R-024 | `apply_challenges.py:42-43` | contract skew | Docstring: dedup is re-run "using the shared `group_by_proximity` utility from `filter_findings.py`". The script imports and calls `dedup_cross_agent` (`:75`, `:455`); `group_by_proximity` is reached only transitively. #55 corrected the same false claim in `filter_findings.py:946` and missed this copy | fix-in-place | fixed in Task 6 |
 | R-025 | `stages.js:10-13` | contract skew | Header: "parallel() results are always .filter(Boolean)ed and a null member is recorded as a gap." Only `summarize` filters (`:207`); discover, validate, and challenge attribute by index and push named per-member gaps — `validateStage` says so at `:1274`. `summarize` silently drops null bucket members and emits one generic gap if no partial survives, the merge or single-call result is null, or any summarize dispatch throws | fix-in-place | fixed in Task 6; follow-up corrected the complete failure contract |
 | R-026 | `stages.js:2307` | contract skew | `PAYLOAD_JSON:` is a cross-component wire marker — emitted by three persist prompt builders, parsed by the agent per `artifact-writer.md:19` — but was absent from `docs/machine-parsed-strings.md`, whose own rule is "Add a row before introducing a new machine-parsed token" | fix-in-place | Registry row added in this task |
 | R-027 | `build.js:2-3` | contract skew | Header claims it "Concatenates workflows/src/\*.js"; `present()` (`:33-36`) emits only files named in the hard-coded `ORDER`, so a new `src/*.js` omitted from `ORDER` is dropped with no failure. Narrowed on challenge: `ORDER` pinning is deliberate (dependency order), so only the comment is wrong — the absent completeness guard is recorded in §6 | fix-in-place | fixed in Task 6 (+ §6 guard) |
-| R-028 | `validate.yml:4-7,21-22` | contract skew | `claude plugin validate .` runs on every pull request, but neither `CONTRIBUTING.md:140-146` nor `.github/pull_request_template.md:26-31` lists it, while `CONTRIBUTING.md:205-207` claims the template "enumerates every CI-enforced gate". Filed rather than fixed: the gate needs a global npm install, so whether to list it or soften the claim is a maintainer decision, and `tests/test_contribution_surface.py:623-632` pins the command list | file-as-issue | Task 7 |
+| R-028 | `validate.yml:4-7,21-22` | contract skew | `claude plugin validate .` runs on every pull request, but neither `CONTRIBUTING.md:140-146` nor `.github/pull_request_template.md:26-31` lists it, while `CONTRIBUTING.md:205-207` claims the template "enumerates every CI-enforced gate". Filed rather than fixed: the gate needs a global npm install, so whether to list it or soften the claim is a maintainer decision, and `tests/test_contribution_surface.py:623-632` pins the command list | file-as-issue | #116 |
+| R-043 | `review-md-spec.md:151` and matching template comment | contract skew | Dimensions omitted from a per-dimension block are documented to use the plain-number default, or 70 when no default is set. The live `DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD` is 55. Choosing whether the prose or constant is authoritative changes the REVIEW.md contract or live filtering behavior | file-as-issue | #118 |
 
 ### 4.9 Adversarial pass — stale version and roadmap pointers
 
@@ -314,7 +315,7 @@ The remaining sections are the adversarial pass output (§3.8). Line numbers are
 | --- | --- | --- | --- | --- | --- |
 | R-035 | `phase1-preflight.md:17` | diverged duplicate | Quotes the Workflow-absent stop message as "Install code-gauntlet v2.x for older CLIs." The registered verbatim message says "Install the pre-rename deep-review v2.x for older CLIs." (`SKILL.md:28`, registry row pinned by `tests/test_machine_parsed_strings.py`). The reference file names a product that never shipped | fix-in-place | fixed in Task 6 |
 | R-036 | `phase2-triage.md:90` | diverged duplicate | Defers truncation on `previously_reviewed: true` and `head_advanced: false`. `SKILL.md:158-172` gates on `previously_reviewed and sha_resolvable and last_reviewed_sha == head_sha`, and `:183-188` explicitly rejects `head_advanced` because it also reads false for unresolvable SHAs and rewritten history — cases that must truncate immediately | fix-in-place | fixed in Task 6 |
-| R-037 | `false-positive-exclusions.md:82` ↔ 7 discovery agents | diverged duplicate | Canonical rule 6 is two-part: the underlying issue must not be flagged, **and** "The suppression itself may be worth discussing." No agent copy contains that permission (zero hits under `agents/`). Narrowed on challenge: the omission is uniform across all seven, but only four keep an explicit "do not flag the underlying issue"; `test-analyzer`, `code-simplifier`, and `type-design-analyzer` use domain-rewritten rule 6. Filed, not fixed: adding a clause to seven prompts changes what agents may report, and it lands on the R-008 intentional-duplication surface | file-as-issue | Task 7 |
+| R-037 | `false-positive-exclusions.md:82` ↔ 7 discovery agents | diverged duplicate | Canonical rule 6 is two-part: the underlying issue must not be flagged, **and** "The suppression itself may be worth discussing." No agent copy contains that permission (zero hits under `agents/`). Narrowed on challenge: the omission is uniform across all seven, but only four keep an explicit "do not flag the underlying issue"; `test-analyzer`, `code-simplifier`, and `type-design-analyzer` use domain-rewritten rule 6. Filed, not fixed: adding a clause to seven prompts changes what agents may report, and it lands on the R-008 intentional-duplication surface | file-as-issue | #117 |
 | R-039 | `ci.yml`, `validate.yml`, `release.yml`, `bench-smoke.yml`, `labels-verify.yml` | diverged duplicate | `actions/checkout` is split `@v4`/`@v6` and `actions/setup-python` `@v5`/`@v6`. Narrowed on challenge: this is a supply-chain pin inconsistency, not v2→v3 residue, and `docs/engineering-audit-2026-07.md:318-323` already names the checkout split with remediation scoped to #106 (SHA-pin every `uses:`) | owned-elsewhere | #106 |
 
 ### 4.11 Adversarial pass — candidate verdicts (intentional retention)
@@ -327,21 +328,23 @@ The remaining sections are the adversarial pass output (§3.8). Line numbers are
 
 ## 5. Filed issues summary
 
-Disposition totals across the 30 adversarial-pass rows:
+Disposition totals across the 30 adversarial-pass rows plus the Task 6 design call recorded as
+`R-043`:
 
 | Disposition | Count | IDs |
 | --- | --- | --- |
 | `fix-in-place` | 20 | R-013 R-014 R-015 R-016 R-019 R-020 R-022 R-023 R-024 R-025 R-026 R-027 R-029 R-030 R-031 R-032 R-033 R-034 R-035 R-036 |
-| `file-as-issue` | 5 | R-012 R-017 R-021 R-028 R-037 |
+| `file-as-issue` | 6 | R-012 (#113) R-017 (#114) R-021 (#115) R-028 (#116) R-037 (#117) R-043 (#118) |
 | `intentional-and-documented` | 4 | R-018 R-040 R-041 R-042 |
 | `owned-elsewhere` | 1 | R-039 (#106) |
 
-The five `file-as-issue` rows share a shape: each has two defensible remedies and picking one is a
+The six `file-as-issue` rows share a shape: each has two defensible remedies and picking one is a
 design decision or changes live behavior. `R-012` (implement `## Focus` or delete the spec),
 `R-017` (surface `resolvePolicy().note` in the run envelope or drop the field), `R-021` (accept that
 a 65 cap no longer suppresses hypotheticals, or lower the cap and move validator output), `R-028`
 (list the plugin-validate gate or soften the completeness claim), `R-037` (restore the suppression
-clause across seven agent prompts, which changes what agents may report). Issue creation is Task 7.
+clause across seven agent prompts, which changes what agents may report), and `R-043` (use the
+documented 70 fallback or the implemented 55 default). Filed as #113–#118 in Task 7.
 
 The 20 `fix-in-place` rows are prose, comment, and pointer corrections with no behavioral component;
 `R-026` is already discharged by the registry row added in this task. Application is Task 6.
@@ -375,8 +378,7 @@ matching template comment both say dimensions omitted from a per-dimension block
 number default (or 70 if no default is set)", while `DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD` is
 55. It is the same prose-versus-constant class as `R-019`/`R-021`/`R-022` but was not adjudicated
 by the adversarial pass, and resolving it means deciding whether the documented 70 or the
-implemented 55 is correct — a design call. Carried to Task 7 alongside the threshold-agreement
-guard scoped in §6.
+implemented 55 is correct — a design call. Recorded as `R-043` and filed as #118 in Task 7.
 
 Existing ownership is unchanged: #24, #29, #35, #36 for `R-001`–`R-007`, #106 for the Actions pin
 split, and #110 for accidental executable-code duplicates.
