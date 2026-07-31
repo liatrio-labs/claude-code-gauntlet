@@ -91,9 +91,8 @@ from datetime import datetime, timezone
 # cross-runtime checksum pair rather than growing a third copy of it. fnv1a32 and
 # js_stringify_pretty are defined in assemble_artifacts.py and pinned against their JS
 # twins (stages.js) by tests/test_assemble_artifacts.py over surrogates, astral pairs,
-# U+2028/U+2029 and control characters — CLAUDE.md calls that test "the only thing
-# standing between a serializer tweak and a silently divergent artifact", which is
-# exactly the guarantee this boundary needs too. Both scripts ship in the same plugin
+# U+2028/U+2029 and control characters — that parity guarantee is exactly what this
+# boundary needs too. Both scripts ship in the same plugin
 # directory, and sys.path[0] is that directory whether this file is run as a script or
 # imported by the suite. The append below is belt-and-braces for the one way that stops
 # being true (`python3 -P` / PYTHONSAFEPATH, which drops the script-directory entry): an
@@ -314,7 +313,7 @@ def is_line_in_diff(valid_lines, filepath, line):
 
 
 # ---------------------------------------------------------------------------
-# Stub functions — implemented in follow-on tasks
+# Verification stages — blame classification, factual checks, diff validation, batching
 # ---------------------------------------------------------------------------
 
 def classify_blame(finding, base_branch):
@@ -594,7 +593,7 @@ def verify_factual(finding):
 
     Cases that return False (eliminate):
     - File does not exist on disk
-    - line_start/line_end are out of range for the file
+    - line_start is out of range for the file (line_end is clamped, not rejected)
 
     Cases that reduce confidence but return True (degrade, keep):
     - Referenced symbols extracted from description/evidence do not exist in codebase

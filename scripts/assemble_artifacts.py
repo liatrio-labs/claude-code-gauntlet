@@ -216,7 +216,7 @@ class JsSerializationError(ValueError):
 
 
 # JS numbers are IEEE-754 doubles and Number#toString has its own spelling rules;
-# Python's repr(float) does not share them. The three live divergences:
+# Python's repr(float) does not share them. The five live divergences:
 #
 #     value        JSON.stringify   json.dumps
 #     1e-7         1e-7             1e-07      (exponent zero-padding)
@@ -410,7 +410,7 @@ def plan_checksum(plan):
 
 
 def _load_source(path, cache, errors):
-    """Load and index one findings source file. Returns (order, by_id) or None.
+    """Load and index one findings source file. Returns the id -> finding index, or None.
 
     Every failure here is STRUCTURAL: unreadable, unparseable, not an array, an
     entry without a usable id, or duplicate ids.

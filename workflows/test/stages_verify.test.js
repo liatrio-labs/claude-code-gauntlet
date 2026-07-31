@@ -158,9 +158,10 @@ test('(c) status:failed -> UNVERIFIED path, findings preserved (never dropped)',
 
 test('(c2) UNVERIFIED path pins numeric-string fields — confidence "85" leaves as 85, never fuel for downstream string concatenation', async () => {
   const input = baseInput();
-  // Discovery-shaped findings: the by-value schema declares confidence as a string,
-  // so StructuredOutput renders the agents' numeric score as "85". line_start gets the
-  // same treatment. Non-numeric values must pass through untouched.
+  // Discovery-shaped findings: the schema now declares confidence a NUMBER, so "85"
+  // no longer arrives from a live dispatch, but the pin is defence-in-depth for
+  // legacy/checkpoint-resume findings that predate that schema pin. line_start gets
+  // the same treatment. Non-numeric values must pass through untouched.
   input.findings = [
     { id: 'F1', file: 'a.js', line_start: '3', confidence: '85', origin: 'new', dimension: 'bug', cross_file_refs: [] },
     { id: 'F2', file: 'a.js', line_start: 4, confidence: 90, origin: 'new', dimension: 'bug', cross_file_refs: [] },

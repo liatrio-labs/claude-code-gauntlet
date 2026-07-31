@@ -118,7 +118,10 @@ export const DIMENSIONS = [
 
 export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 
-// Deviations only. Frontmatter is the baseline model; this encodes S5 overrides.
+// The stage agents' models, restating each one's `model:` frontmatter explicitly so a
+// dispatch pins a full model ID instead of inheriting the session variant (see MODEL_IDS
+// below). No entry currently deviates from its frontmatter, and all five match
+// resolvePolicy's own 'sonnet' fallback — this is the one place to change when one should.
 // Keys are matched against `agentType.split(':').pop()`, so they must be the FULL
 // suffix — 'report-writer'/'artifact-writer', not 'report' — or the tunable never binds.
 const STAGE_DEFAULTS = {

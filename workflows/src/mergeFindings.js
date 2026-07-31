@@ -176,9 +176,9 @@ function findEndOfJson(text, start) {
 }
 
 // Port of parse_text_file. Returns id-bearing JSON blocks plus prose/skip flags.
-// The two brace regexes are deliberately NOT unified: block-stripping uses the
-// LOOSER one-level-nested pattern (the Python `re.DOTALL` flag is a no-op there
-// because [^{}] already matches newlines).
+// The brace-stripping regex below is deliberately NOT unified with the balanced-brace
+// scanner above: stripping uses the LOOSER one-level-nested pattern (the Python
+// `re.DOTALL` flag is a no-op there because [^{}] already matches newlines).
 export function parseTextFile(text, agent) {
   const findings = [];
   const warnings = [];

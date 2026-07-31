@@ -5,7 +5,7 @@ A comment that the LLM judge did not match to any golden is not automatically
 The adjudicator makes that call with a deliberately narrow view: the comment
 text, the diff hunk it targets, and a few nearby lines of the changed file, and
 nothing else about the repository (frozen prompt in ``prompt.txt``). It is a
-single, temperature-0 call to the same pinned Opus 4.8 snapshot the judge uses,
+single, temperature-0 call to the same pinned, dated Opus snapshot the judge uses,
 via the Anthropic OpenAI-compatible chat-completions endpoint (spec H5).
 
 Public surface:

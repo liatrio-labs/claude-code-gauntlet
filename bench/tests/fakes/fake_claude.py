@@ -19,6 +19,8 @@ Behavior is selected by env ``FAKE_CLAUDE_MODE``:
   wrong_plugin_echo -> full knobs + stale identity (wrong plugin_root/pipeline_version) + payload.
   wrong_script_path -> clean echo identity + stale Workflow scriptPath record + payload.
   no_identity_echo -> full knob echo without pipeline_version/plugin_root + payload.
+  bg_killed      -> the CLI background-task kill notice ahead of a clean envelope; no echo
+                    anywhere and no payload.
 
 All CLI args are ignored for behavior selection. If FAKE_CLAUDE_PIDFILE is set, the
 process-group id is written there at startup so the watchdog test can prove the group was

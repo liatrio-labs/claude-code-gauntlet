@@ -5,7 +5,7 @@
 // caller as <status>completed</status> — identical to success (recorded bench runs;
 // anthropics/claude-code#66745) — so the entry (pipeline_entry.js -> parseEntryArgs) keeps
 // THROWING; only a throw renders as a visible platform failure. runWith's own seam is
-// throw-free by contract (stages.js:2342 "NEVER lets a throw escape") but its
+// throw-free by contract (stages.js's runWith doc comment: "NEVER lets a throw escape") but its
 // normalizeArgsReport(rawArgs) call sat OUTSIDE its try/catch, so a non-JSON-string rawArgs
 // (e.g. 'PR 310') escaped as an uncaught native SyntaxError — empirically confirmed against
 // this repo's source. runWith's arm therefore RETURNS the same refusalFrom wording
@@ -371,7 +371,7 @@ function throwingCtx() {
 // before this fix, runWith(undefined, 'PR 310') REJECTED with an uncaught
 // `SyntaxError: Unexpected token 'P', "PR 310" is not valid JSON`, because
 // normalizeArgsReport's JSON.parse sat OUTSIDE runWith's own try/catch. runWith's doc
-// comment already promises it "NEVER lets a throw escape" (stages.js:2342) — these three
+// comment already promises it "NEVER lets a throw escape" — these three
 // literal repro inputs from the spec's own verification section must all RESOLVE.
 test('runWith never rejects on a malformed rawArgs — resolves to the refusal envelope', async () => {
   for (const rawArgs of ['PR 310', undefined, [1, 2]]) {

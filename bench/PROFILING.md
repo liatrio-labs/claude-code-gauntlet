@@ -16,7 +16,8 @@ not just the one issue #38 cites.
 
 ## What it reads
 
-Three sources, all under `~/.claude/projects/<project-dir>/<sessionId>/`:
+Three sources, all under `~/.claude/projects/<project-dir>/` (two inside
+`<sessionId>/`, one beside it):
 
 1. **The workflow record** — `workflows/wf_<runId>.json`. Its `workflowProgress[]`
    array is the per-agent summary: `label`, `agentType`, `model`, `state`, `attempt`,
@@ -65,7 +66,8 @@ With neither `--out-json` nor `--out-md`, both are printed to stdout. `RUN_ID` i
   `validate-batch-*`, `challenge-*`, `report-writer`, `artifact-writer`. `avg
   concurrency` = agent-seconds used / stage span (how "full" the stage was on
   average); `max concurrency` is the actual peak overlap from a sweep-line over each
-  agent's `[startedAt, startedAt+durationMs)` interval.
+  agent's `[startedAt, startedAt+durationMs]` interval (closed; a touching start/end
+  counts as overlap).
 - **Parallel-capacity accounting** — for each stage, `capacity = slowest-agent duration
   × slots` (slots = however many agents were actually dispatched in that stage), `used
   = Σ durationMs`, `idle = capacity − used`. High idle % on a fan-out stage means the
@@ -84,10 +86,10 @@ With neither `--out-json` nor `--out-md`, both are printed to stdout. `RUN_ID` i
   `tool_result` found — e.g. a final `StructuredOutput` call with no reply captured
   before the agent terminates) and unmatched `tool_result` counts are reported per
   agent so you can see when the split is on shakier ground.
-- **Output-byte accounting** — for `artifact-writer` and `verify-input-writer` labels
-  specifically (identified by `agentType == code-gauntlet:artifact-writer`), every
-  `Write` tool call's `content` byte length (UTF-8) and how long that specific call
-  took.
+- **Output-byte accounting** — in practice only the `artifact-writer` and
+  `verify-input-writer` agents call `Write`, but the profiler records every
+  `Write` tool call's `content` byte length (UTF-8) and how long that specific
+  call took on any agent's transcript.
 - **Orchestrator phase spans** — Phase 1 ends at the first `AskUserQuestion` tool call
   (the REVIEW.md/delivery-target gate); the time the human takes to answer it is
   reported separately from Phase 1 itself. Phase 2 ends at the `Workflow` tool call

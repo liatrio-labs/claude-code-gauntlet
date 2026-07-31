@@ -569,7 +569,7 @@ class TestVerifyFactual(unittest.TestCase):
             os.unlink(tmppath)
 
     def test_symbol_in_code_at_lines_fast_path(self):
-        """Symbol found in the lines read from disk should skip grep for that symbol."""
+        """A symbol present at the cited lines verifies cleanly."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def calculate_total():\n    return 42\n")
             tmppath = f.name
@@ -663,9 +663,9 @@ class TestVerifyFactual(unittest.TestCase):
             os.unlink(tmppath)
 
     def test_proportional_reduction_partial_match(self):
-        """V5-05: 3 of 4 symbols found → small reduction; 1 of 4 found → large reduction."""
+        """V5-05: 1 of 2 symbols missing → proportional reduction of 35 points."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-            # File contains func_a, func_b, func_c but NOT func_d
+            # File contains func_a but NOT func_d
             f.write("def func_a():\n    pass\n")
             tmppath = f.name
         try:

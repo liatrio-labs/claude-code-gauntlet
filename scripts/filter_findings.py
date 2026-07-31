@@ -10,7 +10,7 @@ Arguments:
     --review-md       Path to REVIEW.md for custom thresholds and ignore patterns.
                       When omitted, built-in defaults are used.
     --exclusions-md   Path to false-positive-exclusions.md.
-                      When omitted, the bundled exclusions list is used.
+                      When omitted, no exclusion filtering is applied.
 
 Input JSON schema:
     A JSON object or array of verified findings. When an object is given, the
@@ -249,7 +249,8 @@ def apply_threshold_filter(findings, config):
 
     A finding passes if:
       - confidence >= config["confidence_threshold"]
-        (security dimensions use config["security_min_confidence"] as minimum)
+        (security dimensions use min(confidence_threshold, security_min_confidence) —
+        i.e. security_min_confidence can only LOWER the bar, never raise it)
       - severity is at or above config["severity_threshold"] in SEVERITY_ORDER
 
     Validator contestation (V5-09C):
@@ -581,11 +582,15 @@ def detect_disagreement(findings):
     Rules applied (per spec section 6c):
 
     Consensus:
-      Multiple agents flag the same file + overlapping line range + related concern.
-      Boost confidence +10 (capped at 100). Annotate with corroborated_by list.
+      Two or more findings land in the same (file, 10-line bucket), regardless of
+      agent or concern. Boost confidence +10 (capped at 100). Annotate with
+      corroborated_by list (other agents in the bucket, excluding same-agent
+      duplicates — which can leave corroborated_by empty).
 
     Singleton:
-      One agent only — pass through unchanged.
+      One finding only in its bucket — annotated with consensus_count=1, and
+      penalized -15 confidence when its dimension is set and outside
+      _CORE_DIMENSIONS (BF-15b).
 
     Contradiction:
       Agents conflict on the same location (opposing severity signals). Flag with
@@ -788,8 +793,7 @@ _SUGGESTION_AGENTS = {
 
 # For conventions-and-intent: pass-3 is comment accuracy -> suggestion.
 # Passes 1-2 (intent/convention checks) -> main.
-# Detection: finding has dimension "comment-accuracy" or "documentation"
-# or the finding's category/subcategory field contains "comment".
+# Detection: the finding's dimension is in _COMMENT_ACCURACY_DIMENSIONS.
 _CONVENTIONS_AGENT = "conventions-and-intent"
 _COMMENT_ACCURACY_DIMENSIONS = {"comment-accuracy", "documentation", "doc-accuracy"}
 
@@ -933,13 +937,15 @@ def group_by_proximity(findings, line_proximity=5):
     rounding line_start to the nearest ``line_proximity`` lines.
 
     Two findings are considered co-located when they reference the same file
-    and their line_start values differ by at most ``line_proximity``.
+    and their line_start values round to the same multiple of ``line_proximity``.
+    Note this is bucketing, not a pairwise distance test: two lines straddling a
+    bucket boundary are not grouped even when adjacent.
 
     Returns a dict mapping (file, line_bucket) -> list[finding].
 
-    This utility is shared between dedup_cross_agent and apply_challenges.py
-    (T04), which uses the same proximity grouping to correlate challenge results
-    with original findings.
+    This utility is shared between dedup_cross_agent and apply_challenges.py,
+    which re-runs that dedup after challenge scoring. (Challenge results are
+    matched to findings by id, not by proximity.)
     """
     def _bucket(line, proximity):
         try:
@@ -1063,11 +1069,11 @@ def _dedup_test_analyzer(findings):
 def tag_findings(findings):
     """
     Tag each finding as "main" (main report) or "suggestion" (improvement suggestions)
-    and apply the test-analyzer dedup rule.
+    and apply cross-agent dedup.
 
-    Step 1 — Dedup: If a test-analyzer finding overlaps with another agent's finding
-    at the same file/line range, the non-test-analyzer finding wins and the
-    test-analyzer duplicate is dropped.
+    Step 1 — Cross-agent dedup: findings from 2+ different agents on the same file
+    within 5 lines are collapsed to one winner, chosen by core-dimension, then
+    confidence, then description length (see dedup_cross_agent).
 
     Step 2 — Dimension-based routing (BF-15a): Check the finding's dimension field
     first. Dimensions like bug/security/cross_file_impact/intent always route to main.

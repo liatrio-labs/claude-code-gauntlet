@@ -1026,14 +1026,14 @@ def parse_args(argv=None):
         "--tool", choices=["deep-review-v2", "deep-review-v3"], default="deep-review-v3",
         help="which deep-review pipeline to invoke/label (default: deep-review-v3)",
     )
-    # Default is per-tool (resolved by _resolve_child_model): sonnet for v3, inherit for v2.
-    # None is the "not specified" sentinel so an explicit flag can be told apart from the
-    # default and the manifest value can win on resume.
+    # Default is `inherit` for every tool (see _resolve_child_model); the flag remains
+    # for experiments. None is the "not specified" sentinel so an explicit flag can be
+    # told apart from the default and the manifest value can win on resume.
     parser.add_argument(
         "--child-model", choices=["sonnet", "sonnet[1m]", "opus", "opus[1m]", "inherit"], default=None,
         dest="child_model",
         help="model for the child orchestrator session "
-        "(default: sonnet for deep-review-v3, inherit for deep-review-v2)",
+        "(default: inherit for every tool)",
     )
     # Which credential the review children spend. None is the "not specified" sentinel
     # (as for --child-model) so the manifest's mode wins on resume. subscription has its

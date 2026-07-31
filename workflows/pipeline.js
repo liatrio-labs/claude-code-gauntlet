@@ -423,8 +423,6 @@ function escapeRegExp(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Port of apply_exclusions. First pattern (in list order) whose literal,
-// case-insensitive substring appears in "title\ndescription" wins.
 // --- Part 2: disagreement detection / dimension routing / dedup / tag ------
 // Port of scripts/filter_findings.py:552-1236 (detect_disagreement through
 // tag_findings) plus main()'s pipeline composition (1243-1397).
@@ -965,6 +963,8 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   };
 }
 
+// Port of apply_exclusions. First pattern (in list order) whose literal,
+// case-insensitive substring appears in "title\ndescription" wins.
 function applyExclusions(findings, exclusionPatterns) {
   if (!exclusionPatterns || !exclusionPatterns.length) return { kept: findings, eliminated: [] };
 
@@ -1177,9 +1177,9 @@ function findEndOfJson(text, start) {
 }
 
 // Port of parse_text_file. Returns id-bearing JSON blocks plus prose/skip flags.
-// The two brace regexes are deliberately NOT unified: block-stripping uses the
-// LOOSER one-level-nested pattern (the Python `re.DOTALL` flag is a no-op there
-// because [^{}] already matches newlines).
+// The brace-stripping regex below is deliberately NOT unified with the balanced-brace
+// scanner above: stripping uses the LOOSER one-level-nested pattern (the Python
+// `re.DOTALL` flag is a no-op there because [^{}] already matches newlines).
 function parseTextFile(text, agent) {
   const findings = [];
   const warnings = [];
@@ -1853,7 +1853,10 @@ const DIMENSIONS = [
 
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 
-// Deviations only. Frontmatter is the baseline model; this encodes S5 overrides.
+// The stage agents' models, restating each one's `model:` frontmatter explicitly so a
+// dispatch pins a full model ID instead of inheriting the session variant (see MODEL_IDS
+// below). No entry currently deviates from its frontmatter, and all five match
+// resolvePolicy's own 'sonnet' fallback — this is the one place to change when one should.
 // Keys are matched against `agentType.split(':').pop()`, so they must be the FULL
 // suffix — 'report-writer'/'artifact-writer', not 'report' — or the tunable never binds.
 const STAGE_DEFAULTS = {
@@ -2291,13 +2294,15 @@ function validateArgs(args) {
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
-  // Path-bearing waist fields (requirement 6, issue #27). repoRoot/outputDir/headShaShort/
-  // diffPath interpolate into the shared-context path
-  // (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, stages.js:2398), which reaches
-  // every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
+  // Path-bearing waist fields (requirement 6, issue #27). outputDir/headShaShort
+  // interpolate into the shared-context path
+  // (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in stages.js), which
+  // reaches every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
   // (--head-sha, --diff-file) — the same argv-splitting hazard NONCE_RE already guards
   // against above. A present-but-garbage value would otherwise render a junk path into
-  // every paid dispatch instead of failing here, at the waist. Absence is already a
+  // every paid dispatch instead of failing here, at the waist. repoRoot is shape-checked
+  // alongside them as stamped provenance, though nothing in workflows/src reads it (see
+  // REQUIRED at the top of this file). Absence is already a
   // REQUIRED-field error above; these fire only when the field is PRESENT. Nothing valid is
   // newly rejected: the skill stamps `git rev-parse --show-toplevel`, an absolute
   // {output_dir}, `git rev-parse --short=8 HEAD`, and a `{output_dir}/….patch` path — all
@@ -2474,9 +2479,10 @@ function validateArgs(args) {
 }
 
 // --- stages.js ---
-// stages.js — orchestration stage functions for the code-gauntlet v3 pipeline,
-// phases 1-3 (Summarize -> Discover -> Merge) plus the agent-count coarsening
-// formula that keeps the whole run's worst-case fan-out under the platform guard.
+// stages.js — orchestration stage functions for the code-gauntlet v3 pipeline: all eight
+// stages (Summarize -> Discover -> Merge -> Verify -> Validate -> Filter -> Challenge ->
+// Report), persistence, checkpoints and the runWith orchestrator, plus the agent-count
+// coarsening formula that keeps the whole run's worst-case fan-out under the platform guard.
 //
 // Every stage takes an injected `ctx` ({ agent, parallel }) so unit tests can drive
 // it with a mock (the runtime globals do not exist under node:test). Defaults fall
@@ -3162,8 +3168,11 @@ async function verifyStage(ctx, input) {
 // origin='unknown' (surfaced-classification skipped). Nothing is dropped and nothing is
 // upgraded. Numeric-string fields are pinned here for the same reason they are pinned on
 // the slice-input path: the trusted path returns the script's re-scored numbers, but this
-// path re-emits discovery-shaped findings whose confidence is the schema's numeric STRING
-// ("85") — leaked downstream, the filter's consensus `+` boost concatenates ("85" + 10 ->
+// path re-emits discovery-shaped findings straight through. The discovery schema now
+// declares confidence a NUMBER (FINDING_PROP_TYPES in registry.js), so the string form
+// "85" no longer arrives from a live dispatch; the pin is defence-in-depth for
+// legacy/checkpoint-resume findings that predate that schema pin — leaked downstream, a
+// string confidence makes the filter's consensus `+` boost concatenate ("85" + 10 ->
 // "8510" -> clamped to 100).
 function degradedSlice(slice) {
   return slice.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' }));
@@ -3342,9 +3351,8 @@ function joinVerifyDeltas(slice, deltas) {
 //      meant to remove. Confidence is also rounded here; a delta that carries a
 //      script-decided confidence overwrites it afterward.
 //
-// Everything else (null, non-numeric, NaN/inf, fractional numeric strings) is left
-// alone so the script's own guards still fire. Fractional numeric strings match
-// Python's `_INT_RE` branch, which only coerces clean integers.
+// Everything else (null, non-numeric, NaN/inf, fractionally-valued numeric strings) is
+// left alone so the script's own guards still fire.
 const VERIFY_NUMERIC_FIELDS = ['line_start', 'line_end', 'line', 'end_line', 'confidence'];
 function pinNumericFields(finding) {
   const out = { ...finding };
@@ -3352,8 +3360,9 @@ function pinNumericFields(finding) {
     const val = out[k];
     if (typeof val === 'string' && val.trim() !== '' && Number.isFinite(Number(val))) {
       const n = Number(val);
-      // Clean integer strings only — a fractional numeric string is left alone, matching
-      // verify_findings._coerce_numeric_fields / `_INT_RE`.
+      // Any string whose numeric VALUE is an integer ("153", but also "12.0"/"1e5");
+      // a fractionally-valued string is left alone. Python's `_INT_RE` branch is
+      // narrower — it fullmatches plain digits, so only "153" coerces there.
       if (Number.isInteger(n)) out[k] = n;
       continue;
     }
@@ -5475,9 +5484,11 @@ async function runWith(ctx, rawArgs) {
         filter: filterOut.stats,
         challenge: challengeOut.stats,
       },
-      // No contextPath (issue #38, R1): the report-writer renders from the by-value
+      // No context at all (issue #38, R1): the report-writer renders from the by-value
       // { summary, findings, unverified, stats } above and never needs the shared context
-      // file. Every OTHER stage still receives contextPath — this is scoped to the writer.
+      // file. No stage is ever given contextPath; of the prebuilt contextLine, only
+      // summarize, discover and validate get one — merge, verify, filter and challenge
+      // get none either.
       policy, generatedAt: A.generatedAt,
     };
     let reportOut = await runPhase('report', () => reportStage(c, reportInput));

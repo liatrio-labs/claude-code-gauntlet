@@ -171,7 +171,7 @@ def _count_delivered_comments(payload):
 
 
 def _validate_payload_fields(payload, label):
-    """G1 adapter-required field checks for one payload."""
+    """G2 adapter-required field checks for one payload."""
     failures = []
     platform = payload.get("platform")
     if platform not in ("github", "gitlab"):

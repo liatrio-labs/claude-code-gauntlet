@@ -15,7 +15,9 @@ The v3 review pipeline. `pipeline.js` is invoked by the skill through the `Workf
   `TextEncoder`/`TextDecoder`, `URL`, `setTimeout`/`queueMicrotask`, `process` and `console` are
   provided by `node --test` but **not** by the sandbox: a reference throws on the first live
   dispatch while every test stays green. Deep-clone with `deepClone`, never `structuredClone`.
-  `pipeline_run.test.js` runs the pipeline with these deleted from `globalThis`.
+  `pipeline_run.test.js` and `stages_persist.test.js` run with all of these except `URL`,
+  `process` and `console` deleted from `globalThis`; a reference to one of those three is caught
+  only on a live dispatch.
 - **No wall-clock.** Timestamps arrive through the args waist (`generatedAt`); environment values
   are read by the skill and passed in `policy`.
 
@@ -60,8 +62,8 @@ it does not work.**
 
 The executor echoes a per-id delta, never findings.
 
-- `_DELTA_FIELDS` (Python) and `DELTA_KEYS` (JS) are one list in two runtimes, walked in the same
-  order.
+- `_DELTA_FIELDS` (Python) and `DELTA_VALUE_KEYS` (JS — `DELTA_KEYS` minus the structural
+  `id`/`verified`) are one list in two runtimes, walked in the same order.
 - `result.deltas` must stay the **first** key of `result` — the reading executor's `Read` is
   length-capped with no truncation notice, so what it echoes must be a prefix.
 

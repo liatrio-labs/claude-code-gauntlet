@@ -25,7 +25,8 @@ Subagent contracts. Each `.md` is a system prompt with enforced YAML frontmatter
 - **The false-positive exclusion list and the complete-read contract are intentionally duplicated**
   into every agent that needs them, so the guarantee survives a failed file read. Each copy carries
   a `<!-- Canonical source: ... -->` pointer. Do not refactor them into a shared read.
-  `tests/test_agent_contracts.py::TestCompleteReadContract` asserts the copies are byte-identical.
+  `tests/test_agent_contracts.py::TestCompleteReadContract` asserts the complete-read copies are
+  byte-identical; the exclusion-list copies are only checked for presence.
 - **The challenger is structurally blind by design** — title, description, location, and the code it
   opens itself. It is never given the shared context path.
 

@@ -154,7 +154,7 @@ test('the verify echo declares NO finding item at all — the registry union sto
   // so a single slice whose executor result is untrusted on attempt 1 produces 2 dispatches.
   assert.equal(execSchemas.length, 2, 'a degraded slice dispatches its one deterministic retry');
   // The retry must carry the SAME schema as attempt 1 — the point of this test is that every
-  // executor dispatch gets the union schema, not just the first one.
+  // executor dispatch gets the same delta-only schema, not just the first one.
   assert.deepEqual(execSchemas[1], execSchemas[0], 'retry dispatch schema matches attempt 1');
   const schema = execSchemas[0];
 

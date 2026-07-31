@@ -1324,11 +1324,12 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
     Phase-8 wrap, for identical findings and identity.
 
     The writer's wrapper is { owner, repo, pr_number, sha, review_body, findings }
-    (see writerPayload in workflows/src/stages.js): `sha` is provenance the script
-    ignores (it resolves its own HEAD), `platform` is absent (auto-detected from the
-    git remote — mocked github here), review_body matches what Phase 8 would set.
-    Byte-identical payloads prove the wrapper only changes the envelope, never the
-    delivery content — the persist-boundary change is scoring-inert.
+    (see writerPayload in workflows/src/stages.js): `sha` is the marker sha the
+    script prefers when it's SHA-shaped (falling back to its own HEAD otherwise —
+    see resolve_marker_sha), `platform` is absent (auto-detected from the git
+    remote — mocked github here), review_body matches what Phase 8 would set.
+    The fixture's sha deliberately matches the mocked `git rev-parse` output, so
+    the manual and wrapper payloads stay byte-identical either way.
     """
 
     FINDINGS = [
@@ -1359,8 +1360,10 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
             "owner": "o", "repo": "r", "pr_number": 5,
             "review_body": "Summary", "findings": self.FINDINGS,
         }
-        # The writer-emitted wrapper: same fields plus the provenance sha the
-        # script ignores. Key order intentionally matches writerPayload's emission.
+        # The writer-emitted wrapper: same fields plus the marker sha the script
+        # prefers (see resolve_marker_sha). Key order intentionally matches
+        # writerPayload's emission; the fixture's sha matches the mocked HEAD so
+        # both payloads stay byte-identical either way.
         wrapper = {
             "owner": "o", "repo": "r", "pr_number": 5, "sha": "deadbeefcafe",
             "review_body": "Summary", "findings": self.FINDINGS,
