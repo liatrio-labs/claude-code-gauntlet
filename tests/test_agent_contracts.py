@@ -46,7 +46,7 @@ EMISSION_RESIDUE = re.compile(r"printf|ndjson|validate_ndjson", re.IGNORECASE)
 # 'Bash' is forbidden in discovery agents and agents/ rules: the tool was granted
 # solely for NDJSON emission ("Bash is available ONLY for writing findings"), so
 # its grant goes with it. Other directory rules may legitimately discuss shells.
-BASH_RESIDUE = re.compile(r"Bash")
+BASH_RESIDUE = re.compile(r"Bash", re.IGNORECASE)
 RESIDUE = re.compile(r"printf|ndjson|validate_ndjson|Bash", re.IGNORECASE)
 
 # The agents/ directory rules load alongside every contract in the directory, so emission
@@ -95,8 +95,12 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
             hits = sorted(set(BASH_RESIDUE.findall(text)))
             if hits:
                 offenders[str(rel)] = hits
-        self.assertEqual(offenders, {},
-                         f"Bash residue in agents/ rules: {offenders}")
+        self.assertEqual(
+            offenders,
+            {},
+            f"Bash residue in agents/ rules: {offenders}; these rules load alongside "
+            "every agent contract and would re-grant the removed emission mechanism",
+        )
 
     def test_agents_directory_rules_state_the_by_value_contract(self):
         # Removing the stale section is only half the fix; the positive rule has to be

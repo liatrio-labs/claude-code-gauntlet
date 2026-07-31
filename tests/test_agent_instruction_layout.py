@@ -241,15 +241,17 @@ class TestRulesFileQuotations(unittest.TestCase):
     """Quoted spans attributed to AGENTS.md/CLAUDE.md must exist in a rules file."""
 
     QUOTE_NEAR_RULES = re.compile(
-        r'(?<!If )(?:CLAUDE\.md|AGENTS\.md)\s+'
-        r'(?:says\s+|already applies[^\n(]{0,100}\()\s*'
-        r'["\u201c]([^"\u201d]{12,})["\u201d]',
+        r'`?(?:[A-Za-z0-9_./-]+/)?(?:CLAUDE|AGENTS)\.md`?'
+        r'\s+(?:says\s+|states\s+|already applies[^\n(]{0,100}\(\s*)?'
+        r'["\u201c]([^"\u201d\n]{12,})["\u201d]',
         re.IGNORECASE,
     )
-    HEADING_ATTR = re.compile(
-        r'see\s+(?:CLAUDE\.md|AGENTS\.md)\s+["\u201c]([^"\u201d]+)["\u201d]',
-        re.IGNORECASE,
-    )
+    QUOTE_EXEMPTIONS = {
+        (
+            "skills/code-gauntlet/references/false-positive-exclusions.md",
+            "all functions must have JSDoc",
+        ),
+    }
 
     def _rules_corpus(self):
         files = subprocess.run(
@@ -293,10 +295,11 @@ class TestRulesFileQuotations(unittest.TestCase):
         missing = []
         for doc in self._docs():
             text = (REPO / doc).read_text(encoding="utf-8")
-            for regex in (self.QUOTE_NEAR_RULES, self.HEADING_ATTR):
-                for quote in regex.findall(text):
-                    if quote not in corpus:
-                        missing.append((doc, quote[:80]))
+            for quote in self.QUOTE_NEAR_RULES.findall(text):
+                if (doc, quote) in self.QUOTE_EXEMPTIONS:
+                    continue
+                if quote not in corpus:
+                    missing.append((doc, quote[:80]))
         self.assertEqual(
             missing,
             [],

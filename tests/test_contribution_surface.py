@@ -798,8 +798,9 @@ class TestRequiredPrCheckContexts(unittest.TestCase):
 
     def test_docstring_names_the_ruleset(self):
         text = (REPO / "tests" / "test_contribution_surface.py").read_text(encoding="utf-8")
-        self.assertIn("16049246", text)
-        self.assertIn("protect-default-branch", text)
+        documented = text.split("class TestRequiredPrCheckContexts")[0]
+        self.assertIn("16049246", documented)
+        self.assertIn("protect-default-branch", documented)
 
 
 if __name__ == "__main__":
