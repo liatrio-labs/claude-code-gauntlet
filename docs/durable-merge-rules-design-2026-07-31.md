@@ -1,8 +1,8 @@
 # Durable merge rules (#58 + #108) — design
 
-Date: 2026-07-31  
-Issues: [#58](https://github.com/liatrio-labs/claude-code-gauntlet/issues/58) (Wave 1), [#108](https://github.com/liatrio-labs/claude-code-gauntlet/issues/108) (Wave 2, #55 audit)  
-Roadmap: [#101](https://github.com/liatrio-labs/claude-code-gauntlet/issues/101)  
+Date: 2026-07-31
+Issues: [#58](https://github.com/liatrio-labs/claude-code-gauntlet/issues/58) (Wave 1), [#108](https://github.com/liatrio-labs/claude-code-gauntlet/issues/108) (Wave 2, #55 audit)
+Roadmap: [#101](https://github.com/liatrio-labs/claude-code-gauntlet/issues/101)
 Tier: suites-only
 
 ## Goal

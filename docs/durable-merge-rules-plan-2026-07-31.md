@@ -43,9 +43,11 @@
 ### Task 1: Branch ruleset — required checks + description
 
 **Files:**
+
 - Modify: live GitHub ruleset `repos/liatrio-labs/claude-code-gauntlet/rulesets/16049246` (no git file)
 
 **Interfaces:**
+
 - Consumes: nine check contexts from the spec
 - Produces: active `required_status_checks` rule readable by later evidence steps and Task 4's docstring
 
@@ -158,10 +160,12 @@ Paste the dated `gh api .../rulesets/16049246` JSON (or a trimmed rules/bypass e
 ### Task 2: Tag ruleset + squash-only repo settings
 
 **Files:**
+
 - Create: live tag ruleset (API)
 - Modify: repo `allow_*_merge` / `delete_branch_on_merge` settings
 
 **Interfaces:**
+
 - Consumes: Octo STS actor id `801323` from Task 1
 - Produces: tag ruleset id for evidence; squash-only repo config
 
@@ -224,6 +228,7 @@ Include tag ruleset id + repo settings jq output.
 **Files:** none (issue comments)
 
 **Interfaces:**
+
 - Consumes: required checks from Task 1
 - Produces: #58/#108 verification evidence for requirement “failing required check cannot merge”
 
@@ -250,10 +255,12 @@ Close #58 as completed via #108 settings work, linking the ruleset dump and smok
 ### Task 4: Frozen required-check names (TDD)
 
 **Files:**
+
 - Modify: `tests/test_contribution_surface.py` (helpers + new test class at end, before `if __name__`)
 - Test: same file
 
 **Interfaces:**
+
 - Consumes: workflow files `ci.yml`, `validate.yml`, `pr-title-lint.yml`
 - Produces: `REQUIRED_PR_CHECK_CONTEXTS` tuple and `_derive_required_pr_check_contexts()` used only by this test module
 
@@ -414,10 +421,12 @@ EOF
 ### Task 5: Expand residue scrub to all tracked rules files
 
 **Files:**
+
 - Modify: `tests/test_agent_contracts.py` (`DIRECTORY_RULES` discovery + scrub tests)
 - Test: same file
 
 **Interfaces:**
+
 - Consumes: `git ls-files` rules paths
 - Produces: `tracked_rules_files()` helper; split residue patterns
 
@@ -498,12 +507,14 @@ EOF
 ### Task 6: Citation prose + rules cross-reference check
 
 **Files:**
+
 - Modify: `skills/code-gauntlet/SKILL.md` (shell hygiene paragraph ~line 37)
 - Modify: `skills/code-gauntlet/references/ndjson-emission-contract.md` (lines 3–8)
 - Modify: `tests/test_agent_instruction_layout.py` (new test class)
 - Test: `tests/test_agent_instruction_layout.py`
 
 **Interfaces:**
+
 - Consumes: tracked rules file texts; quote patterns attributing CLAUDE.md / AGENTS.md
 - Produces: `test_rules_file_quotations_resolve` green on fixed prose
 
@@ -614,9 +625,11 @@ EOF
 ### Task 7: Octo-sts `claim_pattern` pin for release.yml
 
 **Files:**
+
 - Modify: `.github/chainguard/main-semantic-release.sts.yaml`
 
 **Interfaces:**
+
 - Consumes: OIDC claim name + value for release workflow identity
 - Produces: fail-closed minting of `contents: write` only for release.yml on main
 
@@ -680,9 +693,11 @@ EOF
 ### Task 8: CONTRIBUTING note + follow-up ratchet comments
 
 **Files:**
+
 - Modify: `CONTRIBUTING.md` (Pull Requests section ~line 205)
 
 **Interfaces:**
+
 - Consumes: nine check names / bypass story from Tasks 1–4
 - Produces: contributor-visible merge policy
 
