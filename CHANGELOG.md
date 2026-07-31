@@ -2,6 +2,63 @@
 
 <!-- version list -->
 
+## v3.3.5 (2026-07-31)
+
+### Bug Fixes
+
+- **ci**: Durable merge rules — required checks, freeze list, release STS pin
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- **docs**: Retarget rules citations and assert quotations resolve
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- **release**: Pin main-semantic-release STS to release.yml via OIDC claim
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+### Documentation
+
+- Normalize durable merge planning markdown
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- Note that merges to main are CI-gated by the branch ruleset
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- **audit**: Land the #55 engineering audit — inventory, register, and 59 verified comment
+  corrections ([#111](https://github.com/liatrio-labs/claude-code-gauntlet/pull/111),
+  [`1ce6e1b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1ce6e1b883f432539b8b06cd6db261eb3ae4cec7))
+
+- **plan**: Implement durable merge rules for #58 and #108
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- **spec**: Design durable merge rules for #58 and #108
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+### Testing
+
+- **ci**: Freeze required PR check-run names for ruleset 16049246
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- **rules**: Assert ruleset naming in function docstring
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- **rules**: Harden final merge-rule guards
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+- **rules**: Scrub emission residue across every tracked AGENTS/CLAUDE pair
+  ([#112](https://github.com/liatrio-labs/claude-code-gauntlet/pull/112),
+  [`7889940`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7889940fac67639bf1daf9fafcbff98977283a88))
+
+
 ## v3.3.4 (2026-07-30)
 
 ### Bug Fixes
