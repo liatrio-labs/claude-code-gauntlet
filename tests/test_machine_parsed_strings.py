@@ -57,13 +57,14 @@ class TestMachineParsedStrings(unittest.TestCase):
             "HEADLESS INPUT ERROR:",
             "code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.",
             "[validate_ndjson]",
+            "the deltas carry a checksum",
         }
         missing = required - strings
         self.assertEqual(missing, set(), f"registry missing seed strings: {missing}")
 
     def test_each_string_in_every_producer_and_one_parser(self):
         rows = parse_registry(REGISTRY.read_text(encoding="utf-8"))
-        self.assertGreaterEqual(len(rows), 8)
+        self.assertGreaterEqual(len(rows), 9)
         offenders = {}
         for row in rows:
             s = row["string"]
