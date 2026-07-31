@@ -201,10 +201,17 @@ established the opposite — that `filterFindings.js` applies 70 to security and
 dimensions when `reviewConfig` omits a threshold, which is exactly the contradiction alleged. The
 label was not supported by the body, so adjudication confirmed the allegation.
 
-Nothing was rejected outright. Two confirmed rows are recorded as `owned-elsewhere` cross-links
-rather than #37 work: `R-038` is one of the nine `accidental` duplication-register rows already
-queued in #110, and `R-039` is the Actions pin split already scoped by #106. Recording them here
-prevents a future pass from re-deriving them; it does not re-own them.
+Nothing was rejected outright. The 29 allegation outcomes map to 27 inventory rows: the two
+`filter_findings.py` comment allegations were merged as `R-023` because they repeat the same false
+consensus claim about the same mechanism, and the separate `actions/checkout` and
+`actions/setup-python` pin-split allegations were merged as `R-039` because both have the same
+cross-workflow inconsistency and #106 disposition. `R-039` is therefore recorded as an
+`owned-elsewhere` cross-link rather than #37 work.
+
+The receipt-stream inconsistency in the #110 duplication register was excluded before inventory
+assignment, as §3.6 requires; it is not an allegation-derived residue row. The three Appendix A
+candidates were also outside the 29 allegations. Their dispositions add three rows (`R-040`–`R-042`)
+to the 27 allegation-derived rows, yielding 30 adversarial-pass inventory rows in total.
 
 Three candidates carried in from Appendix A were dispositioned rather than promoted as defects:
 `C-001` → `R-040`, `C-002` → `R-041`, `C-003` → `R-042`. The `C-002` comparison did surface one real
@@ -308,7 +315,6 @@ The remaining sections are the adversarial pass output (§3.8). Line numbers are
 | R-035 | `phase1-preflight.md:17` | diverged duplicate | Quotes the Workflow-absent stop message as "Install code-gauntlet v2.x for older CLIs." The registered verbatim message says "Install the pre-rename deep-review v2.x for older CLIs." (`SKILL.md:28`, registry row pinned by `tests/test_machine_parsed_strings.py`). The reference file names a product that never shipped | fix-in-place | Task 6 |
 | R-036 | `phase2-triage.md:90` | diverged duplicate | Defers truncation on `previously_reviewed: true` and `head_advanced: false`. `SKILL.md:158-172` gates on `previously_reviewed and sha_resolvable and last_reviewed_sha == head_sha`, and `:183-188` explicitly rejects `head_advanced` because it also reads false for unresolvable SHAs and rewritten history — cases that must truncate immediately | fix-in-place | Task 6 |
 | R-037 | `false-positive-exclusions.md:82` ↔ 7 discovery agents | diverged duplicate | Canonical rule 6 is two-part: the underlying issue must not be flagged, **and** "The suppression itself may be worth discussing." No agent copy contains that permission (zero hits under `agents/`). Narrowed on challenge: the omission is uniform across all seven, but only four keep an explicit "do not flag the underlying issue"; `test-analyzer`, `code-simplifier`, and `type-design-analyzer` use domain-rewritten rule 6. Filed, not fixed: adding a clause to seven prompts changes what agents may report, and it lands on the R-008 intentional-duplication surface | file-as-issue | Task 7 |
-| R-038 | `filter_findings.py:1396-1400` | diverged duplicate | With `--output` set the receipt prints to stdout; `apply_validations.py:317` and `apply_challenges.py:497` send theirs to stderr. Already recorded as one of the nine `accidental` rows in `docs/duplication-register.md` ("Already drifted: two print the receipt to stderr, one to stdout") | owned-elsewhere | #110 |
 | R-039 | `ci.yml`, `validate.yml`, `release.yml`, `bench-smoke.yml`, `labels-verify.yml` | diverged duplicate | `actions/checkout` is split `@v4`/`@v6` and `actions/setup-python` `@v5`/`@v6`. Narrowed on challenge: this is a supply-chain pin inconsistency, not v2→v3 residue, and `docs/engineering-audit-2026-07.md:318-323` already names the checkout split with remediation scoped to #106 (SHA-pin every `uses:`) | owned-elsewhere | #106 |
 
 ### 4.11 Adversarial pass — candidate verdicts (intentional retention)
@@ -321,14 +327,14 @@ The remaining sections are the adversarial pass output (§3.8). Line numbers are
 
 ## 5. Filed issues summary
 
-Disposition totals across `R-012`–`R-042` (31 rows):
+Disposition totals across the 30 adversarial-pass rows:
 
 | Disposition | Count | IDs |
 | --- | --- | --- |
 | `fix-in-place` | 20 | R-013 R-014 R-015 R-016 R-019 R-020 R-022 R-023 R-024 R-025 R-026 R-027 R-029 R-030 R-031 R-032 R-033 R-034 R-035 R-036 |
 | `file-as-issue` | 5 | R-012 R-017 R-021 R-028 R-037 |
 | `intentional-and-documented` | 4 | R-018 R-040 R-041 R-042 |
-| `owned-elsewhere` | 2 | R-038 (#110) R-039 (#106) |
+| `owned-elsewhere` | 1 | R-039 (#106) |
 
 The five `file-as-issue` rows share a shape: each has two defensible remedies and picking one is a
 design decision or changes live behavior. `R-012` (implement `## Focus` or delete the spec),
