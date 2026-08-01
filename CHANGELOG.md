@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v3.3.7 (2026-08-01)
+
+### Bug Fixes
+
+- **workflows**: Fail build when ORDER drifts from src/*.js
+  ([#120](https://github.com/liatrio-labs/claude-code-gauntlet/pull/120),
+  [`cbbfc72`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cbbfc72c18e8a3b8dfda1bd02ca99340db06a760))
+
+- **workflows**: Fail the build when ORDER omits or invents a src module
+  ([#120](https://github.com/liatrio-labs/claude-code-gauntlet/pull/120),
+  [`cbbfc72`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cbbfc72c18e8a3b8dfda1bd02ca99340db06a760))
+
+- **workflows**: Reject a module listed twice in ORDER
+  ([#120](https://github.com/liatrio-labs/claude-code-gauntlet/pull/120),
+  [`cbbfc72`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cbbfc72c18e8a3b8dfda1bd02ca99340db06a760))
+
+### Chores
+
+- **docs**: Evict session scratch from docs/ and guard the tracked doc surface
+  ([#120](https://github.com/liatrio-labs/claude-code-gauntlet/pull/120),
+  [`cbbfc72`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cbbfc72c18e8a3b8dfda1bd02ca99340db06a760))
+
+### Documentation
+
+- Design the build.js ORDER completeness guard
+  ([#120](https://github.com/liatrio-labs/claude-code-gauntlet/pull/120),
+  [`cbbfc72`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cbbfc72c18e8a3b8dfda1bd02ca99340db06a760))
+
+- Plan the build.js ORDER completeness guard
+  ([#120](https://github.com/liatrio-labs/claude-code-gauntlet/pull/120),
+  [`cbbfc72`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cbbfc72c18e8a3b8dfda1bd02ca99340db06a760))
+
+### Testing
+
+- **workflows**: Prove orderMismatches catches ORDER↔disk drift
+  ([#120](https://github.com/liatrio-labs/claude-code-gauntlet/pull/120),
+  [`cbbfc72`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/cbbfc72c18e8a3b8dfda1bd02ca99340db06a760))
+
+
 ## v3.3.6 (2026-07-31)
 
 ### Bug Fixes
