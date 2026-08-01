@@ -82,6 +82,10 @@ claude-code-gauntlet/         <- plugin root
 `{plugin_root}` is two levels above the skill base directory. Never locate it by searching the
 filesystem — a `find` hit picks arbitrarily among every cached plugin version.
 
+Session scratch — design memos, implementation plans, handoff notes — never lands in the tree; it
+belongs in the PR description or issue thread. Tracked docs are allowlisted by
+`tests/test_docs_registry.py`; a durable doc is added there in the same commit, with a reason.
+
 ## Contribution surface
 
 `tests/test_contribution_surface.py` covers the issue-form schema, `.github/labels.json`, and the
