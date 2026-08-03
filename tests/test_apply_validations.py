@@ -50,10 +50,9 @@ def _make_finding(**kwargs):
 
 def _write_json(data):
     """Write data to a temp file, return the path."""
-    f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-    json.dump(data, f)
-    f.close()
-    return f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(data, f)
+        return f.name
 
 
 # ---------------------------------------------------------------------------
@@ -108,9 +107,8 @@ class TestLoadFindings(unittest.TestCase):
             load_findings("/nonexistent/path/findings.json")
 
     def test_invalid_json_exits(self):
-        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-        f.write("{not valid json}")
-        f.close()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write("{not valid json}")
         try:
             with self.assertRaises(SystemExit):
                 load_findings(f.name)
@@ -164,9 +162,8 @@ class TestLoadValidations(unittest.TestCase):
             load_validations("/nonexistent/validations.json")
 
     def test_invalid_json_exits(self):
-        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-        f.write("not json")
-        f.close()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write("not json")
         try:
             with self.assertRaises(SystemExit):
                 load_validations(f.name)

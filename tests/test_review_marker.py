@@ -356,7 +356,7 @@ class TestMalformed(unittest.TestCase):
                     find_marker(text)
                     has_prose_footer(text)
                     parse_prose_footer(text)
-                except Exception as exc:  # pragma: no cover - this is the failure path
+                except Exception as exc:  # noqa: BLE001  # pragma: no cover
                     self.fail(f"raised {exc!r} on {text!r}")
 
 
@@ -399,7 +399,7 @@ class TestMaxMarkerScans(unittest.TestCase):
         garbage = "<!-- code-gauntlet-findings: {" * 5000
         try:
             result = find_marker(garbage)
-        except Exception as exc:  # pragma: no cover - this is the failure path
+        except Exception as exc:  # noqa: BLE001  # pragma: no cover
             self.fail(f"raised {exc!r} on a garbage-heavy body")
         self.assertIsNone(result)
 

@@ -235,20 +235,20 @@ def plan_entries(payload, output_root, errors):
     checked = []
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
-            errors.append("entry %d is not an object" % index)
+            errors.append(f"entry {index} is not an object")
             return None, None
         path = entry.get("path")
         text = entry.get("text")
         if not isinstance(path, str) or not path:
-            errors.append("entry %d has no usable string path" % index)
+            errors.append(f"entry {index} has no usable string path")
             return None, None
         if not isinstance(text, str):
-            errors.append("entry %d (%s) carries no string text" % (index, path))
+            errors.append(f"entry {index} ({path}) carries no string text")
             return None, None
         if not _confined(path, output_root):
             errors.append(
-                "entry %d writes outside the output directory: %s is not inside %s"
-                % (index, path, output_root)
+                f"entry {index} writes outside the output directory: {path} is not "
+                f"inside {output_root}"
             )
             return None, None
         checked.append((path, text))
@@ -258,8 +258,8 @@ def plan_entries(payload, output_root, errors):
         return None, None
     if plan_path not in [path for path, _text in checked]:
         errors.append(
-            "the named persist plan %s is not among the entries this payload carries"
-            % plan_path
+            f"the named persist plan {plan_path} is not among the entries this "
+            "payload carries"
         )
         return None, None
     return checked, plan_path
@@ -277,9 +277,7 @@ def write_entries(entries, materialized, errors):
         try:
             write_text_atomic(path, text)
         except Exception as exc:  # noqa: BLE001 - reported, never raised
-            errors.append(
-                "could not write %s (%s: %s)" % (path, type(exc).__name__, exc)
-            )
+            errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
             ok = False
             continue
         materialized.append(
@@ -316,15 +314,11 @@ def proof_gaps(receipt, plan_text):
         if not isinstance(entry, dict) or entry.get("content_proof") == "match":
             continue
         gaps.append(
-            "artifact-content-proof: %s on disk differs from the bytes the workflow "
-            "returned (expected %s chars/%s, got %s/%s)"
-            % (
-                entry.get("path"),
-                entry.get("expected_chars"),
-                entry.get("expected_checksum"),
-                entry.get("chars"),
-                entry.get("checksum"),
-            )
+            f"artifact-content-proof: {entry.get('path')} on disk differs from the "
+            "bytes the workflow returned "
+            f"(expected {entry.get('expected_chars')} chars/"
+            f"{entry.get('expected_checksum')}, got {entry.get('chars')}/"
+            f"{entry.get('checksum')})"
         )
     try:
         expected = {
@@ -333,7 +327,7 @@ def proof_gaps(receipt, plan_text):
             if isinstance(item, dict)
         }
     except ValueError:
-        return gaps + ["the persist plan just written is not valid JSON"]
+        return [*gaps, "the persist plan just written is not valid JSON"]
     for entry in receipt.get("written") or []:
         if not isinstance(entry, dict):
             continue
@@ -341,7 +335,7 @@ def proof_gaps(receipt, plan_text):
         if want is None:
             gaps.append(
                 "artifact-content-proof: the persist plan carries no derived-content "
-                "expectation for %s (no content proof)" % entry.get("path")
+                f"expectation for {entry.get('path')} (no content proof)"
             )
             continue
         if entry.get("chars") == want.get("chars") and entry.get(
@@ -349,15 +343,10 @@ def proof_gaps(receipt, plan_text):
         ) == want.get("checksum"):
             continue
         gaps.append(
-            "artifact-content-proof: derived document %s does not match the "
-            "pipeline's own derivation (wrote %s chars/%s, the pipeline derived %s/%s)"
-            % (
-                entry.get("path"),
-                entry.get("chars"),
-                entry.get("checksum"),
-                want.get("chars"),
-                want.get("checksum"),
-            )
+            f"artifact-content-proof: derived document {entry.get('path')} does not "
+            "match the pipeline's own derivation "
+            f"(wrote {entry.get('chars')} chars/{entry.get('checksum')}, the pipeline "
+            f"derived {want.get('chars')}/{want.get('checksum')})"
         )
     return gaps
 
@@ -392,8 +381,8 @@ def materialize(task, nonce, output_dir, environ=None):
     if payload is None:
         errors.append(
             "no task output file carrying this run's returned artifacts was found "
-            "(looked at %d candidate file(s) for target %r / nonce %r)"
-            % (scanned, task, nonce)
+            f"(looked at {scanned} candidate file(s) for target {task!r} / nonce "
+            f"{nonce!r})"
         )
         return _receipt(False, source, scanned, materialized, None, gaps, errors)
 
@@ -433,7 +422,7 @@ def _minimal_receipt_line(exc):
                 [],
                 None,
                 [],
-                ["receipt could not be serialized: %s: %s" % (type(exc).__name__, exc)],
+                [f"receipt could not be serialized: {type(exc).__name__}: {exc}"],
             )
         )
     except Exception:  # noqa: BLE001 - the never-print-nothing contract
@@ -485,7 +474,7 @@ def main(argv=None, environ=None):
             [],
             None,
             [],
-            ["materializer failed unexpectedly: %s: %s" % (type(exc).__name__, exc)],
+            [f"materializer failed unexpectedly: {type(exc).__name__}: {exc}"],
         )
     try:
         line = escape_lone_surrogates(

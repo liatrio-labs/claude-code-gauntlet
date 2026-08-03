@@ -13,13 +13,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import (
+from bench.runner import (  # noqa: E402
     ledger,
     score,
 )
@@ -98,18 +99,22 @@ class ResolveJudgePinTests(unittest.TestCase):
         write_json(self.baselines, {"judge_pin": None})
         # env has no key and BENCH_DIR points at a keyless tmp dir, so the bench/.env
         # fallback finds nothing either -> genuinely keyless, no network call.
-        with mock.patch.object(score, "BENCH_DIR", Path(self._tmp.name)):
-            with self.assertRaises(RuntimeError):
-                resolve_judge_pin(env={}, baselines_path=self.baselines)
+        with (
+            mock.patch.object(score, "BENCH_DIR", Path(self._tmp.name)),
+            self.assertRaises(RuntimeError),
+        ):
+            resolve_judge_pin(env={}, baselines_path=self.baselines)
 
     def test_no_dated_snapshot_raises(self):
         write_json(self.baselines, {"judge_pin": None})
         models = {"data": [{"id": "claude-opus-4-8"}, {"id": "claude-opus-4-8[1m]"}]}
-        with mock.patch.object(score, "_http_get_json", lambda url, headers: models):
-            with self.assertRaises(RuntimeError):
-                resolve_judge_pin(
-                    env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines
-                )
+        with (
+            mock.patch.object(score, "_http_get_json", lambda url, headers: models),
+            self.assertRaises(RuntimeError),
+        ):
+            resolve_judge_pin(
+                env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines
+            )
 
     def test_pick_snapshot_helper_selects_newest(self):
         self.assertEqual(
@@ -524,9 +529,11 @@ class ScorerStageFailureTests(unittest.TestCase):
         fake = SimpleNamespace(
             returncode=1, stdout="", stderr="Traceback: boom in dedup"
         )
-        with mock.patch.object(score.subprocess, "run", return_value=fake):
-            with self.assertRaises(RuntimeError) as ctx:
-                score.run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
+        with (
+            mock.patch.object(score.subprocess, "run", return_value=fake),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            score.run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
         msg = str(ctx.exception)
         self.assertIn("dedup", msg)  # the failing stage is named
         self.assertIn("boom", msg)  # stderr tail is surfaced
@@ -717,7 +724,7 @@ class AuthModeTests(unittest.TestCase):
     here would silently destroy the only record of what the run consumed.
     """
 
-    METRICS = {
+    METRICS: ClassVar[dict] = {
         "n_prs": 1,
         "golden_recall": 0.0,
         "valid_extra_rate": 0.0,
@@ -728,7 +735,11 @@ class AuthModeTests(unittest.TestCase):
         "per_dimension": {},
         "drift": {},
     }
-    COSTS = {"tokens_total": 4321, "cost_usd": 27.0, "per_model": {}}
+    COSTS: ClassVar[dict] = {
+        "tokens_total": 4321,
+        "cost_usd": 27.0,
+        "per_model": {},
+    }
 
     def _row(self, manifest):
         return score._build_ledger_row(

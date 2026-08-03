@@ -30,6 +30,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from typing import ClassVar
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
@@ -100,11 +101,11 @@ def finding(fid, **over):
     artifact-writer boundary adds (line/end_line/body)."""
     f = {
         "id": fid,
-        "file": "src/%s.js" % fid,
+        "file": f"src/{fid}.js",
         "line_start": 10,
         "line_end": 12,
-        "title": "finding %s" % fid,
-        "description": "a real problem in %s" % fid,
+        "title": f"finding {fid}",
+        "description": f"a real problem in {fid}",
         "severity": "high",
         "confidence": 90,
         "dimension": "bug",
@@ -275,7 +276,7 @@ class TestCrossRuntimeChecksumParity(unittest.TestCase):
     """The JS implementation runs in the sandbox; Python runs on disk. They must
     agree exactly — surrogate pairs (emoji, astral plane) are the trap."""
 
-    STRINGS = [
+    STRINGS: ClassVar[list[str]] = [
         "",
         "a",
         "hello world",
@@ -286,7 +287,7 @@ class TestCrossRuntimeChecksumParity(unittest.TestCase):
         "😀",
         "😀🎉🚀",
         "mixed 😀 café 日本語 tail",
-        "𝕏 astral plane 𝔸𝔹ℂ",
+        "\U0001d54f astral plane \U0001d538\U0001d539\u2102",
         "line1\nline2\ttab\r\n",
         "𠜎𠜱𠝹",  # CJK extension B (astral)
     ]
@@ -300,9 +301,9 @@ class TestCrossRuntimeChecksumParity(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             js_checksum, js_chars = proc.stdout.strip().split(" ")
-            self.assertEqual(js_checksum, fnv1a32(s), "checksum mismatch for %r" % s)
+            self.assertEqual(js_checksum, fnv1a32(s), f"checksum mismatch for {s!r}")
             self.assertEqual(
-                int(js_chars), utf16_len(s), "char count mismatch for %r" % s
+                int(js_chars), utf16_len(s), f"char count mismatch for {s!r}"
             )
 
 
@@ -533,7 +534,7 @@ class TestStructuralHardFailures(unittest.TestCase):
         self.assertEqual(receipt["written"], [])
         self.assertTrue(
             any(needle in e for e in receipt["errors"]),
-            "expected %r in %r" % (needle, receipt["errors"]),
+            f"expected {needle!r} in {receipt['errors']!r}",
         )
         self.assertFalse(os.path.exists(ws.post_path))
         self.assertFalse(os.path.exists(ws.checkpoint_path))
@@ -617,7 +618,9 @@ class TestChecksumMismatchIsNotFatal(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, proc.stderr)
             receipt = json.loads(proc.stdout)
             self.assertTrue(receipt["ok"])
-            entry = [e for e in receipt["verified"] if e["path"] == ws.findings_path][0]
+            entry = next(
+                e for e in receipt["verified"] if e["path"] == ws.findings_path
+            )
             self.assertEqual(entry["content_proof"], "mismatch")
             self.assertEqual(entry["expected_checksum"], "fnv1a32:0xdeadbeef")
             self.assertEqual(entry["expected_chars"], 999999)
@@ -645,28 +648,36 @@ class TestWriteToolNormalizationTolerance(unittest.TestCase):
         with _Workspace() as ws:
             ws.write(ws.findings_path, ws.findings_json + "\n")
             receipt = json.loads(run_script(ws.write_plan(ws.plan())).stdout)
-            entry = [e for e in receipt["verified"] if e["path"] == ws.findings_path][0]
+            entry = next(
+                e for e in receipt["verified"] if e["path"] == ws.findings_path
+            )
             self.assertEqual(entry["content_proof"], "match")
 
     def test_crlf_trailing_newline_still_matches(self):
         with _Workspace() as ws:
             ws.write(ws.findings_path, ws.findings_json + "\r\n")
             receipt = json.loads(run_script(ws.write_plan(ws.plan())).stdout)
-            entry = [e for e in receipt["verified"] if e["path"] == ws.findings_path][0]
+            entry = next(
+                e for e in receipt["verified"] if e["path"] == ws.findings_path
+            )
             self.assertEqual(entry["content_proof"], "match")
 
     def test_bom_prefix_still_matches(self):
         with _Workspace() as ws:
             ws.write(ws.findings_path, "﻿" + ws.findings_json)
             receipt = json.loads(run_script(ws.write_plan(ws.plan())).stdout)
-            entry = [e for e in receipt["verified"] if e["path"] == ws.findings_path][0]
+            entry = next(
+                e for e in receipt["verified"] if e["path"] == ws.findings_path
+            )
             self.assertEqual(entry["content_proof"], "match")
 
     def test_two_trailing_newlines_is_a_real_mismatch(self):
         with _Workspace() as ws:
             ws.write(ws.findings_path, ws.findings_json + "\n\n")
             receipt = json.loads(run_script(ws.write_plan(ws.plan())).stdout)
-            entry = [e for e in receipt["verified"] if e["path"] == ws.findings_path][0]
+            entry = next(
+                e for e in receipt["verified"] if e["path"] == ws.findings_path
+            )
             self.assertEqual(entry["content_proof"], "mismatch")
 
 
@@ -676,16 +687,20 @@ class TestNonAsciiContent(unittest.TestCase):
 
     def test_astral_and_cjk_content_round_trips(self):
         findings = [
-            finding("F1", description="日本語の説明 😀 with an astral 𝕏"),
+            finding("F1", description="日本語の説明 😀 with an astral \U0001d54f"),
             finding("F2", title="中文标题 🎉"),
         ]
         with _Workspace(findings=findings) as ws:
             receipt = json.loads(run_script(ws.write_plan(ws.plan())).stdout)
             self.assertTrue(receipt["ok"], receipt)
-            entry = [e for e in receipt["verified"] if e["path"] == ws.findings_path][0]
+            entry = next(
+                e for e in receipt["verified"] if e["path"] == ws.findings_path
+            )
             self.assertEqual(entry["content_proof"], "match")
             post = json.loads(ws.read(ws.post_path))
-            self.assertEqual(post[0]["description"], "日本語の説明 😀 with an astral 𝕏")
+            self.assertEqual(
+                post[0]["description"], "日本語の説明 😀 with an astral \U0001d54f"
+            )
             self.assertEqual(post[1]["title"], "中文标题 🎉")
 
     def test_non_ascii_is_not_escaped_in_the_derived_json(self):
@@ -805,7 +820,7 @@ class TestPlanChecksumCrossRuntime(unittest.TestCase):
         cases = [
             [finding("F1"), finding("F2")],
             [
-                finding("A", description="日本語 😀 astral 𝕏"),
+                finding("A", description="日本語 😀 astral \U0001d54f"),
                 finding("B", title="中文 🎉"),
             ],
             [],
@@ -933,7 +948,7 @@ class TestAnyFailureStillReturnsAReceipt(unittest.TestCase):
         self.assertFalse(receipt["ok"], receipt)
         self.assertTrue(
             any(needle in e for e in receipt["errors"]),
-            "expected %r in %r" % (needle, receipt["errors"]),
+            f"expected {needle!r} in {receipt['errors']!r}",
         )
         self.assertNotIn("Traceback", proc.stderr)
         return receipt
@@ -1026,7 +1041,7 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
     control characters, empty containers, and the numeric edges (L1-3)."""
 
     # Documents as JSON TEXT so escapes survive the argv hop into node unchanged.
-    AGREE = [
+    AGREE: ClassVar[list[str]] = [
         "[]",
         "{}",
         '[{}, [], "", null, true, false]',
@@ -1042,14 +1057,14 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
         '["\\u0000\\u0001\\u001f"]',  # control characters
         '["\\b\\f\\n\\r\\t"]',
         '["quote \\" backslash \\\\ slash /"]',
-        '["café — naïve", "日本語", "𝕏 astral", "\\u007f"]',
+        '["café — naïve", "日本語", "\U0001d54f astral", "\\u007f"]',
         "[0, -0, 1, -1, 9007199254740991, -9007199254740991]",
         '{"line_start": 10, "line_end": 12, "confidence": 90}',
         '[{"id": "F1", "d": "多行\\ntext\\twith escapes"}]',
     ]
 
     # Documents whose naive json.dumps spelling PROVABLY differs from JSON.stringify.
-    DIVERGENT = [
+    DIVERGENT: ClassVar[list[str]] = [
         "[1e-7]",  # 1e-7   vs 1e-07
         "[0.000001]",  # 0.000001 vs 1e-06
         "[90.0]",  # 90     vs 90.0
@@ -1064,7 +1079,8 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
     # does; 1e-7 does not) needs exactly the Number#toString port the precondition
     # exists to avoid. NaN/Infinity are here too — json.loads accepts them bare,
     # JSON.parse rejects them, JSON.stringify spells them `null`.
-    REFUSE = DIVERGENT + [
+    REFUSE: ClassVar[list[str]] = [
+        *DIVERGENT,
         "[1.5]",
         "[1e21]",
         "[9007199254740992]",
@@ -1075,9 +1091,9 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
     def test_python_matches_node_over_the_trap_corpus(self):
         node_or_skip(self)
         expected = js_stringify_many(self.AGREE)
-        for text, want in zip(self.AGREE, expected):
+        for text, want in zip(self.AGREE, expected, strict=True):
             got = js_stringify_pretty(json.loads(text))
-            self.assertEqual(got, want, "divergence for %s" % text)
+            self.assertEqual(got, want, f"divergence for {text}")
 
     def test_the_agreed_output_is_always_utf8_encodable(self):
         # The L1-1 crash: a raw lone surrogate in the output cannot be encoded.
@@ -1095,9 +1111,9 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
         node_or_skip(self)
         provable = [t for t in self.DIVERGENT if t != '{"stats": {"rate": 0.5}}']
         expected = js_stringify_many(provable)
-        for text, want in zip(provable, expected):
+        for text, want in zip(provable, expected, strict=True):
             naive = json.dumps(json.loads(text), indent=2, ensure_ascii=False)
-            self.assertNotEqual(naive, want, "%s no longer diverges" % text)
+            self.assertNotEqual(naive, want, f"{text} no longer diverges")
 
 
 class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):
@@ -1115,7 +1131,10 @@ class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):
 
     def test_written_entries_match_what_node_would_have_computed(self):
         node_or_skip(self)
-        findings = [finding("F1", description="日本語 😀 𝕏 prose"), finding("F2")]
+        findings = [
+            finding("F1", description="日本語 😀 \U0001d54f prose"),
+            finding("F2"),
+        ]
         with _Workspace(findings=findings) as ws:
             receipt = json.loads(run_script(ws.write_plan(ws.plan())).stdout)
             self.assertTrue(receipt["ok"], receipt)
@@ -1220,7 +1239,7 @@ class TestCheckpointSkeletonGuardMirrorsTheJsOne(unittest.TestCase):
         self.assertEqual(receipt["written"], [])
         self.assertTrue(
             any(needle in e for e in receipt["errors"]),
-            "expected %r in %r" % (needle, receipt["errors"]),
+            f"expected {needle!r} in {receipt['errors']!r}",
         )
         self.assertFalse(os.path.exists(ws.checkpoint_path))
 

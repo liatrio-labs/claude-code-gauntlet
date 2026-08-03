@@ -24,9 +24,7 @@ class TestGoldenData(unittest.TestCase):
         cls.minf = _load("benchmark_data.min.json")
         cls.subsets = _load("subsets.json")
         cls.labels = _load("pr_labels.json")
-        cls.raw = {
-            f: _load(f"golden_comments/{f}.json") for f in GOLDEN_FILES
-        }
+        cls.raw = {f: _load(f"golden_comments/{f}.json") for f in GOLDEN_FILES}
 
     # --- totals -------------------------------------------------------------
 

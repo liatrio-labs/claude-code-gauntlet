@@ -24,6 +24,7 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
@@ -1628,7 +1629,7 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
     the manual and wrapper payloads stay byte-identical either way.
     """
 
-    FINDINGS = [
+    FINDINGS: ClassVar[list[dict]] = [
         {
             "file": "foo.py",
             "line": 2,

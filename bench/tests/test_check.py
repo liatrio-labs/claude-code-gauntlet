@@ -938,9 +938,11 @@ class CheckCliTest(unittest.TestCase):
 
     def test_check_cli_fails_on_gate(self):
         (self.run_dir / "pr-example-repo-1" / "post-review-payload.json").unlink()
-        with contextlib.redirect_stdout(io.StringIO()):
-            with contextlib.redirect_stderr(io.StringIO()):
-                rc = run.main(["--check", self.run_dir.name])
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            rc = run.main(["--check", self.run_dir.name])
         self.assertEqual(rc, 1)
 
     def test_check_missing_run_is_exit_2(self):
@@ -964,9 +966,11 @@ class CheckCliTest(unittest.TestCase):
         manifest = json.loads((self.run_dir / "run.json").read_text())
         manifest["anchor"] = "naive"
         _write_json(self.run_dir / "run.json", manifest)
-        with contextlib.redirect_stdout(io.StringIO()):
-            with contextlib.redirect_stderr(io.StringIO()):
-                rc = run.main(["--check", self.run_dir.name])
+        with (
+            contextlib.redirect_stdout(io.StringIO()),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            rc = run.main(["--check", self.run_dir.name])
         self.assertEqual(rc, 2)
 
 

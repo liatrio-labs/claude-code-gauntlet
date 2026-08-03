@@ -206,7 +206,7 @@ def analyze_agent_transcript(path: Path):
     time (per issue-38 requirement 6's own definition of the split).
     """
     rows = read_jsonl(path)
-    result = {
+    result: dict[str, Any] = {
         "transcript_path": str(path),
         "message_count": len(rows),
         "first_ts": None,

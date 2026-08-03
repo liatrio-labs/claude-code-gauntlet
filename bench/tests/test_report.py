@@ -14,6 +14,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -156,7 +157,7 @@ class TestGrouping(unittest.TestCase):
         # anchor + naive + collapsed v2 == 3 table rows, oldest first.
         self.assertEqual(len(groups), 3)
         self.assertEqual(groups[0]["row"]["tool"], "anchor-claude")
-        v2 = [g for g in groups if g["row"]["tool"] == "deep-review-v2"][0]
+        v2 = next(g for g in groups if g["row"]["tool"] == "deep-review-v2")
         self.assertEqual(v2["count"], 2)
         self.assertTrue(v2["identical"])
 
@@ -461,7 +462,7 @@ class TestSubscriptionCostHonesty(unittest.TestCase):
     derived per-golden aggregate drops it, and the table cell keeps it behind a ‡.
     """
 
-    SUB_ROW = {
+    SUB_ROW: ClassVar[dict] = {
         "run_id": "mini-20260724-subauth",
         "ts": "2026-07-24T10:00:00Z",
         "tier": "mini",
@@ -563,7 +564,7 @@ class TestSubscriptionCostHonesty(unittest.TestCase):
         )
 
     def test_rendered_page_marks_a_subscription_run(self):
-        out = _render(rows=FIXTURE_ROWS + [self.SUB_ROW])
+        out = _render(rows=[*FIXTURE_ROWS, self.SUB_ROW])
         self.assertIn("‡", out)
         self.assertIn("auth_mode=subscription", out)
 

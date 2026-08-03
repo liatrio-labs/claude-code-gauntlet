@@ -56,7 +56,7 @@ class CheckpointTestCase(unittest.TestCase):
 
     def test_all_valid_statuses_roundtrip(self):
         valid = ["pending", "ok", "timeout", "invalid", "drifted", "failed"]
-        for status, url in zip(valid, GOLDEN_URLS):
+        for status, url in zip(valid, GOLDEN_URLS, strict=True):
             self.cp.mark(url, status)
             self.assertEqual(self.cp.status(url), status)
 

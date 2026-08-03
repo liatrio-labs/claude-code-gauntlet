@@ -171,7 +171,7 @@ RELEASES = (
         ),
         "what_changed": (
             "Full workflow-native rewrite: an 8-stage pipeline running in the "
-            "Workflow runtime, −49% tokens vs v2."
+            "Workflow runtime, \u221249% tokens vs v2."
         ),
         "bar_check": False,
         "extra_note": "",
@@ -244,7 +244,7 @@ def git_short_sha(cwd=None):
         sha = out.stdout.strip()
         if out.returncode == 0 and sha:
             return sha
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         pass
     return "uncommitted"
 
@@ -267,7 +267,7 @@ def fmt_money(x):
 def fmt_int(x):
     if x is None:
         return "—"
-    return f"{int(round(x)):,}"
+    return f"{round(x):,}"
 
 
 def fmt_millions(x, digits=1):
@@ -285,7 +285,7 @@ def fmt_delta_pp(new, old):
 
 
 def fmt_delta_pct(new, old):
-    """Signed relative change, e.g. tokens −49%."""
+    """Signed relative change, e.g. tokens -49%."""
     if new is None or not old:
         return "—"
     return f"{(new - old) / old * 100:+.0f}%"
@@ -619,7 +619,9 @@ def _run_marker(x, y, tier, var, reverted, headline):
         oy = (-4.6, -1.8, 1.8, 4.6, 1.8, -1.8)
         d = (
             "M"
-            + " L".join(f"{x + dx:.1f},{y + dy:.1f}" for dx, dy in zip(ox, oy))
+            + " L".join(
+                f"{x + dx:.1f},{y + dy:.1f}" for dx, dy in zip(ox, oy, strict=True)
+            )
             + " Z"
         )
         g.append(f'<path class="mk mk-fill" d="{d}" style="fill:var({var})" />')
@@ -642,8 +644,8 @@ def _run_marker(x, y, tier, var, reverted, headline):
 def build_runs_svg(points, top_anchor, v2_base, ceiling):
     """Two stacked panels on a shared, time-ordered run axis.
 
-    Panel A is golden recall (0–100%) with the v2-baseline and top-anchor bars; panel
-    B is noise rate (0–40%) with the ceiling. Colour encodes the tool, marker shape
+    Panel A is golden recall (0-100%) with the v2-baseline and top-anchor bars; panel
+    B is noise rate (0-40%) with the ceiling. Colour encodes the tool, marker shape
     encodes the tier, reverted experiments are faded, and the two gate headlines carry
     a halo + direct label. Every marker has a ≥24px hover/focus target.
     """
@@ -695,7 +697,7 @@ def build_runs_svg(points, top_anchor, v2_base, ceiling):
             )
             parts.append(
                 f'<text class="axis" x="{m_left - 8:.1f}" y="{y + 3.5:.1f}" '
-                f'text-anchor="end">{int(round(t * 100))}%</text>'
+                f'text-anchor="end">{round(t * 100)}%</text>'
             )
 
     panel_grid((0.0, 0.25, 0.5, 0.75, 1.0), yA, A_DOM)
@@ -928,7 +930,8 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
             ("Recall", "= goldens caught ÷ all goldens. The headline, gated metric."),
             (
                 "Noise rate",
-                "= noise ÷ all delivered comments — ‘how often are we wrong’. Gated: must stay under the ceiling.",
+                "= noise ÷ all delivered comments — \u2018how often are we "
+                "wrong\u2019. Gated: must stay under the ceiling.",
             ),
             (
                 "Valid-extra",
@@ -979,10 +982,10 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
         "fail a gate; a mini run is the 6-PR paired cut; a subset run is gate-grade; "
         "a holdout run confirms it on fresh PRs; a custom run is an explicit --prs "
         "list (including pre-mini paired legs such as Gate-2). By owner "
-        "decision v3 delivers ~4× the comments of v2, so its lower precision is a "
+        "decision v3 delivers ~4\u00d7 the comments of v2, so its lower precision is a "
         "bigger denominator, not weaker findings. Gate-2 re-baselined its token target "
-        "to the v2 baseline on 2026-07-21: the original −20%-vs-Gate-1 target was "
-        "self-referential (it measured only −1.8%) and was retired. Two child-model "
+        "to the v2 baseline on 2026-07-21: the original \u221220%-vs-Gate-1 target was "
+        "self-referential (it measured only \u22121.8%) and was retired. Two child-model "
         "smokes render faded because they are confounded experiments — a subagent-model "
         "pin cascaded the [1m] context variant onto the pipeline agents — and were "
         "reverted.</p></div>"
@@ -1096,7 +1099,7 @@ def subset_comparison(rows, baselines):
 
 
 def _efficiency(row, n_goldens):
-    """Per-run value-efficiency figures. ``goldens`` is tp = round(recall × N) —
+    """Per-run value-efficiency figures. ``goldens`` is tp = round(recall x N) —
     distinct known issues caught, the numerator of golden_recall — NOT the
     per_bucket golden_matched comment count (a comment can match several goldens).
 
@@ -1203,10 +1206,10 @@ def build_verdict_html(rows, baselines, ceiling):
             "Comments delivered",
             fmt_int(a["delivered"]),
             fmt_int(b["delivered"]),
-            (f"{b['delivered'] / a['delivered']:.1f}×" if a["delivered"] else "—"),
+            (f"{b['delivered'] / a['delivered']:.1f}\u00d7" if a["delivered"] else "—"),
             arrow(b["delivered"], a["delivered"]),
             "context",
-            "~4× more by design — a bigger denominator, not worse findings",
+            "~4\u00d7 more by design — a bigger denominator, not worse findings",
         ),
     ]
 
@@ -1226,7 +1229,7 @@ def build_verdict_html(rows, baselines, ceiling):
 
     # Takeaway sentence, generated from the numbers above.
     ratio = (a["tok_per_gold"] / b["tok_per_gold"]) if b["tok_per_gold"] else None
-    ratio_txt = f"{ratio:.1f}× leaner" if ratio else "leaner"
+    ratio_txt = f"{ratio:.1f}\u00d7 leaner" if ratio else "leaner"
     noise_dir = "rises" if (b["noise"] or 0) > (a["noise"] or 0) else "falls"
     takeaway = (
         f"v3 catches {b['goldens']} of the {n_goldens} known issues to v2's "
@@ -1482,7 +1485,7 @@ def build_anchor_section_html(baselines, v3_row, v3_holdout_row):
     caption = (
         f"Every tool judged on {gate_desc}. <em>deep-review v3</em> leads on "
         "recall while holding noise far below the external tools; <em>claude</em> is "
-        "the published Claude Code CLI row. Anchors are the upstream tools’ stored "
+        "the published Claude Code CLI row. Anchors are the upstream tools\u2019 stored "
         "candidates re-judged under our pinned judge." + corroboration
     )
     return (
@@ -1516,7 +1519,7 @@ def build_table_html(groups, top_anchor, ceiling):
         run = html.escape(truncate_middle(rid))
         note = ""
         if grp["count"] > 1 and grp["identical"]:
-            note = f' <span class="note">×{grp["count"]} identical</span>'
+            note = f' <span class="note">\u00d7{grp["count"]} identical</span>'
         pb = r.get("per_bucket") or {}
         delivered = sum(pb.values()) if pb else r.get("total_candidates")
         kind, glyph, desc = classify(r, top_anchor, ceiling)
@@ -1602,9 +1605,9 @@ def build_footnotes_html(baselines, rows=None):
         "<b>† Precision (strict)</b> is reported, not gated: it counts valid-extras "
         "— real issues outside the golden answer key — as misses, so it drops as a "
         "run delivers more comments even when quality holds. Noise rate is the gated "
-        "‘how often are we wrong’ metric.",
+        "\u2018how often are we wrong\u2019 metric.",
         pin_line,
-        "Owner-amended N=1 protocol: runs 2–3, baseline extension, and full-50 "
+        "Owner-amended N=1 protocol: runs 2\u20133, baseline extension, and full-50 "
         "tracking were dropped under the budget cap.",
         f"δ_noise = {dn_txt} proposed {html.escape(str(dn.get('proposed', '')))}, "
         "pending owner sign-off.",

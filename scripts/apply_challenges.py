@@ -442,7 +442,7 @@ def main():
     # ------------------------------------------------------------------
     # Load inputs
     # ------------------------------------------------------------------
-    findings, prior_eliminated, envelope = load_filtered(args.filtered_json)
+    findings, prior_eliminated, _envelope = load_filtered(args.filtered_json)
     challenges = load_challenges(args.challenges_json)
 
     total_input = len(findings)

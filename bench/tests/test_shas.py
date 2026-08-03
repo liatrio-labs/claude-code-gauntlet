@@ -144,9 +144,11 @@ class TestFetchOne(unittest.TestCase):
                 return SimpleNamespace(returncode=0, stdout=out, stderr="")
             return SimpleNamespace(returncode=1, stdout="", stderr="compare boom")
 
-        with mock.patch.object(fetch_shas.time, "sleep", lambda *_: None):
-            with self.assertRaises(RuntimeError):
-                fetch_shas.fetch_one("o", "r", 1, run=run)
+        with (
+            mock.patch.object(fetch_shas.time, "sleep", lambda *_: None),
+            self.assertRaises(RuntimeError),
+        ):
+            fetch_shas.fetch_one("o", "r", 1, run=run)
 
 
 if __name__ == "__main__":

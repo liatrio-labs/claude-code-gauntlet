@@ -175,7 +175,7 @@ def run_main(argv, environ=None):
 def sole_json_line(stdout):
     """Assert stdout is exactly one line of JSON and return the parsed object."""
     lines = [line for line in stdout.split("\n") if line != ""]
-    assert len(lines) == 1, "expected exactly one stdout line, got %d" % len(lines)
+    assert len(lines) == 1, f"expected exactly one stdout line, got {len(lines)}"
     return json.loads(lines[0])
 
 
@@ -442,17 +442,17 @@ class TestScanCostIsBounded(unittest.TestCase):
     def test_dense_open_braces_are_fast(self):
         found, elapsed = self._timed("{" * 200_000)
         self.assertIsNone(found)
-        self.assertLess(elapsed, 1.0, "%.2fs for 200k open braces" % elapsed)
+        self.assertLess(elapsed, 1.0, f"{elapsed:.2f}s for 200k open braces")
 
     def test_dense_brace_quote_pairs_are_fast(self):
         found, elapsed = self._timed('{"' * 200_000)
         self.assertIsNone(found)
-        self.assertLess(elapsed, 1.0, "%.2fs for 200k brace-quote pairs" % elapsed)
+        self.assertLess(elapsed, 1.0, f"{elapsed:.2f}s for 200k brace-quote pairs")
 
     def test_many_line_leading_braces_are_fast(self):
         found, elapsed = self._timed('\n{"a":' * 50_000)
         self.assertIsNone(found)
-        self.assertLess(elapsed, 2.0, "%.2fs for 50k line-leading fragments" % elapsed)
+        self.assertLess(elapsed, 2.0, f"{elapsed:.2f}s for 50k line-leading fragments")
 
     def test_a_real_return_after_heavy_noise_is_still_found(self):
         text = "{" * 50_000 + "\n" + json.dumps(SUCCESS_RETURN)
@@ -518,7 +518,7 @@ class TestEveryBoundIsDisclosed(unittest.TestCase):
         self.assertIsNone(stopped)
 
     def test_candidate_bound_is_reported(self):
-        text = "\n".join('{"n":%d}' % i for i in range(2000)) + "\n"
+        text = "\n".join(f'{{"n":{i}}}' for i in range(2000)) + "\n"
         found, _, stopped = find_terminal(text)
         self.assertIsNone(found)
         self.assertIn(stopped, ("max_candidates", "max_probes"))
@@ -528,7 +528,7 @@ class TestEveryBoundIsDisclosed(unittest.TestCase):
         text = (
             json.dumps(SUCCESS_RETURN)
             + "\n"
-            + "\n".join('{"n":%d}' % i for i in range(2000))
+            + "\n".join(f'{{"n":{i}}}' for i in range(2000))
             + "\n"
         )
         found, _, stopped = find_terminal(text)
@@ -1270,7 +1270,7 @@ class TestNextCommand(unittest.TestCase):
             argv += ["--" + key.replace("_", "-"), str(value)]
         # Target last, behind `--` — the same shape the script emits, and the
         # only shape that survives a target beginning with a dash.
-        return build_parser({}).parse_args(argv + ["--", target])
+        return build_parser({}).parse_args([*argv, "--", target])
 
     def test_increments_the_attempt(self):
         cmd = build_next_command(self._args(attempt=2, max_attempts=4), None, 1.0)
@@ -1475,7 +1475,7 @@ class TestArtifactNamingLockstep(unittest.TestCase):
             if "checkpoint" in template:
                 continue  # composed via checkpointPath(); asserted below
             literal = template.replace("{sha}", "${sha}")
-            self.assertIn(literal, source, "%s is not produced by stages.js" % template)
+            self.assertIn(literal, source, f"{template} is not produced by stages.js")
 
     def test_checkpoint_all_is_still_how_the_combined_checkpoint_is_named(self):
         """The checkpoint name is composed, so assert both halves of it."""

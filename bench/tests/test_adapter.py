@@ -235,7 +235,7 @@ class TestPayloadToCandidatesGitHub(unittest.TestCase):
         cands, _ = payload_to_candidates(payload, GOLDEN_A)
         entries = cands[GOLDEN_A]["deep-review"]
         # index i candidate corresponds to index i posted comment
-        for i, (entry, comment) in enumerate(zip(entries, posted)):
+        for i, (entry, comment) in enumerate(zip(entries, posted, strict=True)):
             self.assertEqual(
                 entry["text"],
                 comment["body"],
@@ -287,7 +287,7 @@ class TestPayloadToCandidatesGitLab(unittest.TestCase):
         self.assertEqual(stats, {"n_candidates": len(discussions), "n_skipped": 0})
         entries = cands[GOLDEN_B]["deep-review"]
         self.assertEqual(len(entries), len(discussions))
-        for entry, disc in zip(entries, discussions):
+        for entry, disc in zip(entries, discussions, strict=True):
             self.assertEqual(entry["text"], disc["body"])
             self.assertEqual(entry["path"], disc["position"]["new_path"])
             self.assertEqual(entry["line"], disc["position"]["new_line"])

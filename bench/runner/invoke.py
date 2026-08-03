@@ -21,6 +21,7 @@ import shutil
 import signal
 import subprocess
 import sys
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -134,9 +135,9 @@ class InvokeResult:
     cost_usd: float = 0.0
     per_model: dict = field(default_factory=dict)
     echo_ok: bool = False
-    payload_path: str = None
-    raw_json_path: str = None
-    reason: str = None
+    payload_path: str | None = None
+    raw_json_path: str | None = None
+    reason: str | None = None
 
 
 # --------------------------------------------------------------------------- env
@@ -147,7 +148,7 @@ def _pr_number(pr):
         value = pr.get(key)
         if value is not None:
             return value
-    owner, repo, number = _parse_url(pr.get("url", ""))
+    _owner_name, _repo_name, number = _parse_url(pr.get("url", ""))
     if number is not None:
         return number
     raise KeyError("pr dict has no pr_number/number and no parseable url")
@@ -532,10 +533,8 @@ def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
 
 
 def _kill_group(proc):
-    try:
+    with suppress(ProcessLookupError, PermissionError, OSError):
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except (ProcessLookupError, PermissionError, OSError):
-        pass
 
 
 # ---------------------------------------------------------------- plugin integrity
@@ -626,10 +625,8 @@ def _reset_plugin_repo(repo_root, mutations):
             if target.is_dir():
                 shutil.rmtree(target, ignore_errors=True)
             else:
-                try:
+                with suppress(OSError):
                     target.unlink()
-                except OSError:
-                    pass
         else:
             _git(["checkout", "--", path], repo_root)
 
@@ -1065,10 +1062,8 @@ def invoke_review(
             proc.wait(timeout=timeout_s)
         except subprocess.TimeoutExpired:
             _kill_group(proc)
-            try:
+            with suppress(subprocess.TimeoutExpired):
                 proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                pass
             # A killed child may have left the plugin repo dirty; reset so the NEXT PR
             # starts from a clean plugin (this PR is already invalid via 'timeout').
             leftover = _plugin_mutations(REPO_ROOT, baseline_dirty)

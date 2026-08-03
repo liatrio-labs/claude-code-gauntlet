@@ -302,7 +302,7 @@ def _cache_key(judge_pin, candidates):
 
 
 def _subset_candidates(anchors, urls, tools):
-    """Restrict the anchor candidates to ``urls`` × ``tools`` (empty entries dropped)."""
+    """Restrict anchor candidates to ``urls`` x ``tools`` (empty entries dropped)."""
     out = {}
     for url in urls:
         tools_map = anchors.get(url, {})

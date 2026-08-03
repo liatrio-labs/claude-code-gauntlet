@@ -85,7 +85,7 @@ def _run_main(argv):
     stdout = io.StringIO()
     code = 0
     with (
-        patch.object(sys, "argv", ["detect_prior_review.py"] + list(argv)),
+        patch.object(sys, "argv", ["detect_prior_review.py", *list(argv)]),
         contextlib.redirect_stdout(stdout),
     ):
         try:

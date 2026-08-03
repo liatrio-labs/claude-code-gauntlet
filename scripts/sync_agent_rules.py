@@ -95,11 +95,11 @@ def main(argv=None):
         return 0
     if args.check:
         sys.stderr.write(
-            "stale generated twins: %s\nrun: python3 scripts/sync_agent_rules.py\n"
-            % ", ".join(stale)
+            f"stale generated twins: {', '.join(stale)}\n"
+            "run: python3 scripts/sync_agent_rules.py\n"
         )
         return 1
-    print("regenerated: %s" % ", ".join(stale))
+    print(f"regenerated: {', '.join(stale)}")
     return 0
 
 
