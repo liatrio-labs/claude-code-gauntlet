@@ -13,6 +13,10 @@ dev = [
 
 [tool.coverage.run]
 branch = true
+# patch=["subprocess"] is load-bearing: without it pytest-cov does NOT measure the
+# sys.executable child processes the suites spawn, and labels_diff / sync_agent_rules
+# read 0% (aggregate collapses ~92%->85%). coverage.py >=7.10. See #102 requirement 8.
+patch = ["subprocess"]
 relative_files = true
 parallel = true
 
