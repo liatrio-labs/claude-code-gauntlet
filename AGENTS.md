@@ -41,13 +41,13 @@ tree (an in-tree data file trips the bench plugin-mutation guard):
 ```bash
 COVDIR="$(mktemp -d)"
 COVERAGE_FILE="$COVDIR/.coverage" python -m pytest tests/ -q \
-  --cov=scripts --cov=.github --cov-fail-under=91
+  --cov=scripts --cov=.github --cov-fail-under=91.3
 COVERAGE_FILE="$COVDIR/.coverage" python -m pytest bench/tests/ -q \
   --cov=bench --cov-fail-under=87
 ```
 
-Floors 91 / 87 provisional (measured 92.41 / 88.08 on Python 3.14, 2026-08-03;
-audit 92.13 / 88.08 at ebf399d). Re-pin from the first green 3.12 CI run.
+Floors 91.3 / 87, pinned 2026-08-03 from the first green 3.12 CI run (92.27 /
+87.96); policy: a floor sits no more than 1.0 pp below the CI 3.12 measurement.
 `workflows/test/tools/record_parity.py` is test infrastructure, outside both
 scopes. Lower a floor only in the PR that causes the drop, reason in the body.
 A sudden multi-point drop means broken subprocess capture — fix capture, do not

@@ -76,7 +76,7 @@ jobs:
         run: |
           python -m pytest tests/ -q \
             --cov=scripts --cov=.github \
-            --cov-fail-under=91
+            --cov-fail-under=91.3
 
   workflow-tests:
     name: Run Workflow JS Tests
