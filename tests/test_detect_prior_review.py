@@ -84,17 +84,24 @@ def _run_main(argv):
     """
     stdout = io.StringIO()
     code = 0
-    with patch.object(sys, "argv", ["detect_prior_review.py"] + list(argv)), \
-         contextlib.redirect_stdout(stdout):
+    with (
+        patch.object(sys, "argv", ["detect_prior_review.py"] + list(argv)),
+        contextlib.redirect_stdout(stdout),
+    ):
         try:
             detect_prior_review.main()
         except SystemExit as exc:
-            code = exc.code if isinstance(exc.code, int) else (0 if exc.code is None else 1)
+            code = (
+                exc.code
+                if isinstance(exc.code, int)
+                else (0 if exc.code is None else 1)
+            )
     return stdout.getvalue(), code
 
 
-def _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_count=3,
-                   ancestor=True):
+def _fake_git_run(
+    resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_count=3, ancestor=True
+):
     """A ``subprocess.run`` side_effect mocking the read-only git calls the SHA
     resolution step makes: ``git cat-file -e {sha}^{commit}``, ``git merge-base
     --is-ancestor {sha} {head}``, ``git rev-parse {sha}``/``git rev-parse HEAD``,
@@ -104,17 +111,21 @@ def _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_
     defaults to True — the common case in these tests is a normal forward-moving
     branch where the previously-reviewed commit is still an ancestor of head.
     """
+
     def _run(cmd, *a, **k):
         def res(out="", err="", rc=0):
             return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+
         if "cat-file" in cmd:
             # Faithful to real git: `git cat-file -e <bad>^{commit}` is a
             # "fatal:" error exiting 128, not a plain 1, and it names the
             # object it could not find. Verified empirically: `git cat-file -e
             # 000...0^{commit}` -> "fatal: Not a valid object name
             # 000...0^{commit}", exit 128.
-            return res(rc=0 if resolvable else 128,
-                       err="" if resolvable else f"fatal: Not a valid object name {cmd[-1]}")
+            return res(
+                rc=0 if resolvable else 128,
+                err="" if resolvable else f"fatal: Not a valid object name {cmd[-1]}",
+            )
         if "merge-base" in cmd:
             # Faithful to real git: a plain "not an ancestor" answer from
             # `merge-base --is-ancestor` is silent on stderr and exits 1 — it
@@ -141,18 +152,19 @@ def _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA, commit_
             # revision or path not in the working tree.", exit 128.
             return res(
                 err=f"fatal: ambiguous argument '{rev}': unknown revision or "
-                    "path not in the working tree.",
+                "path not in the working tree.",
                 rc=128,
             )
         if "rev-list" in cmd:
             return res(out=f"{commit_count}\n")
         return res(out="{}")
+
     return _run
 
 
-def _fake_gh_glab_and_git_run(reviews=None, notes=None,
-                               reviews_rc=0, notes_rc=0,
-                               git_run=None):
+def _fake_gh_glab_and_git_run(
+    reviews=None, notes=None, reviews_rc=0, notes_rc=0, git_run=None
+):
     """A combined side_effect for the fetch + SHA-resolution subprocess calls.
 
     Only two API surfaces exist post-contract-change: github `pulls/{n}/reviews`
@@ -166,6 +178,7 @@ def _fake_gh_glab_and_git_run(reviews=None, notes=None,
     def _run(cmd, *a, **k):
         def res(out="", err="", rc=0):
             return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+
         joined = " ".join(cmd)
         if "pulls" in joined and "reviews" in joined:
             if reviews_rc != 0:
@@ -178,6 +191,7 @@ def _fake_gh_glab_and_git_run(reviews=None, notes=None,
         if cmd and cmd[0] == "git":
             return git_run(cmd, *a, **k)
         return res(out="{}")
+
     return _run
 
 
@@ -185,12 +199,15 @@ def _fake_gh_glab_and_git_run(reviews=None, notes=None,
 # Pure collectors
 # ---------------------------------------------------------------------------
 
+
 class TestCollectEntriesGithub(unittest.TestCase):
     """collect_entries_github now takes a single argument (payload_reviews) —
     the issues/{n}/comments surface was dropped."""
 
     def test_maps_reviews_to_entry_shape(self):
-        reviews = [{"id": 1, "body": "review body one", "submitted_at": "2026-01-01T00:00:00Z"}]
+        reviews = [
+            {"id": 1, "body": "review body one", "submitted_at": "2026-01-01T00:00:00Z"}
+        ]
         entries = detect_prior_review.collect_entries_github(reviews)
 
         self.assertEqual(len(entries), 1)
@@ -262,9 +279,10 @@ class TestFetchEntriesGithubPagination(unittest.TestCase):
 
 
 class TestCollectEntriesGitlab(unittest.TestCase):
-
     def test_maps_notes_to_entry_shape(self):
-        notes = [{"id": 3, "body": "note body three", "created_at": "2026-02-02T00:00:00Z"}]
+        notes = [
+            {"id": 3, "body": "note body three", "created_at": "2026-02-02T00:00:00Z"}
+        ]
         entries = detect_prior_review.collect_entries_gitlab(notes)
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["body"], "note body three")
@@ -301,8 +319,15 @@ class TestFetchEntriesGitlabPagination(unittest.TestCase):
 # build_result — the branches.
 # ---------------------------------------------------------------------------
 
-def _git_facts(sha_resolvable, last_reviewed_sha, last_reviewed_sha_short,
-                head_sha, sha_is_ancestor, new_commit_count):
+
+def _git_facts(
+    sha_resolvable,
+    last_reviewed_sha,
+    last_reviewed_sha_short,
+    head_sha,
+    sha_is_ancestor,
+    new_commit_count,
+):
     """Build a git_facts dict from ONLY the six keys resolve_git_facts ever
     emits: head_sha, last_reviewed_sha, last_reviewed_sha_short,
     sha_resolvable, sha_is_ancestor, new_commit_count. head_advanced and
@@ -321,10 +346,12 @@ def _git_facts(sha_resolvable, last_reviewed_sha, last_reviewed_sha_short,
 
 
 class TestBuildResult(unittest.TestCase):
-
     def test_found_and_head_advanced(self):
         signal = {
-            "sha": FULL_SHA, "signal": "marker", "legacy": False, "source": "review",
+            "sha": FULL_SHA,
+            "signal": "marker",
+            "legacy": False,
+            "source": "review",
             "marker": {"version": "3.0", "findings_count": 4, "sha": FULL_SHA},
         }
         facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 3)
@@ -344,14 +371,18 @@ class TestBuildResult(unittest.TestCase):
         self.assertTrue(result["incremental_safe"])
         self.assertEqual(result["marker"], signal["marker"])
         self.assertEqual(
-            result["incremental_safe"], result["sha_resolvable"] and result["head_advanced"],
+            result["incremental_safe"],
+            result["sha_resolvable"] and result["head_advanced"],
         )
 
     def test_found_and_head_not_advanced(self):
         # Same sha as head: previously-reviewed commit is trivially its own
         # ancestor, but there is nothing new to review.
         signal = {
-            "sha": FULL_SHA, "signal": "footer", "legacy": False, "source": "issue_comment",
+            "sha": FULL_SHA,
+            "signal": "footer",
+            "legacy": False,
+            "source": "issue_comment",
             "marker": None,
         }
         facts = _git_facts(True, FULL_SHA, SHORT_SHA, FULL_SHA, True, 0)
@@ -363,13 +394,17 @@ class TestBuildResult(unittest.TestCase):
         self.assertFalse(result["head_advanced"])
         self.assertFalse(result["incremental_safe"])
         self.assertEqual(
-            result["incremental_safe"], result["sha_resolvable"] and result["head_advanced"],
+            result["incremental_safe"],
+            result["sha_resolvable"] and result["head_advanced"],
         )
 
     def test_found_but_sha_unresolvable(self):
         raw_sha = "c" * 40
         signal = {
-            "sha": raw_sha, "signal": "marker", "legacy": True, "source": "note",
+            "sha": raw_sha,
+            "signal": "marker",
+            "legacy": True,
+            "source": "note",
             "marker": {"version": "3.0", "sha": raw_sha},
         }
         facts = _git_facts(False, raw_sha, raw_sha[:8], HEAD_SHA, False, None)
@@ -380,11 +415,14 @@ class TestBuildResult(unittest.TestCase):
         self.assertFalse(result["sha_is_ancestor"])
         self.assertFalse(result["head_advanced"])
         self.assertFalse(result["incremental_safe"])
-        self.assertEqual(result["last_reviewed_sha"], raw_sha, "raw value is kept when unresolvable")
+        self.assertEqual(
+            result["last_reviewed_sha"], raw_sha, "raw value is kept when unresolvable"
+        )
         self.assertIsNone(result["new_commit_count"])
         self.assertTrue(result["legacy"])
         self.assertEqual(
-            result["incremental_safe"], result["sha_resolvable"] and result["head_advanced"],
+            result["incremental_safe"],
+            result["sha_resolvable"] and result["head_advanced"],
         )
 
     def test_found_resolvable_but_not_ancestor_head_not_advanced(self):
@@ -394,7 +432,10 @@ class TestBuildResult(unittest.TestCase):
         new_commit_count 0 — head_advanced and incremental_safe must both stay
         False even though sha_resolvable is True and the shas differ."""
         signal = {
-            "sha": FULL_SHA, "signal": "marker", "legacy": False, "source": "review",
+            "sha": FULL_SHA,
+            "signal": "marker",
+            "legacy": False,
+            "source": "review",
             "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
         }
         facts = _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, False, 0)
@@ -405,7 +446,8 @@ class TestBuildResult(unittest.TestCase):
         self.assertFalse(result["head_advanced"])
         self.assertFalse(result["incremental_safe"])
         self.assertEqual(
-            result["incremental_safe"], result["sha_resolvable"] and result["head_advanced"],
+            result["incremental_safe"],
+            result["sha_resolvable"] and result["head_advanced"],
         )
 
     def test_not_found(self):
@@ -427,11 +469,15 @@ class TestBuildResult(unittest.TestCase):
         both callers."""
         not_found = detect_prior_review.build_result(None, None)
         signal = {
-            "sha": FULL_SHA, "signal": "marker", "legacy": False, "source": "review",
+            "sha": FULL_SHA,
+            "signal": "marker",
+            "legacy": False,
+            "source": "review",
             "marker": {"version": "3.0", "findings_count": 1, "sha": FULL_SHA},
         }
         found = detect_prior_review.build_result(
-            signal, _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 1),
+            signal,
+            _git_facts(True, FULL_SHA, SHORT_SHA, HEAD_SHA, True, 1),
         )
         self.assertEqual(set(not_found.keys()), set(found.keys()))
         self.assertEqual(len(found), 15)
@@ -447,13 +493,21 @@ class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
 
     def _signal(self, sha):
         return {
-            "sha": sha, "signal": "marker", "legacy": False, "source": "review",
+            "sha": sha,
+            "signal": "marker",
+            "legacy": False,
+            "source": "review",
             "marker": {"version": "3.0", "findings_count": 1, "sha": sha},
         }
 
     def test_forward_moving_branch_is_incremental_safe(self):
-        fake_run = _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA,
-                                  commit_count=3, ancestor=True)
+        fake_run = _fake_git_run(
+            resolvable=True,
+            full_sha=FULL_SHA,
+            head_sha=HEAD_SHA,
+            commit_count=3,
+            ancestor=True,
+        )
         with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
             git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
@@ -473,8 +527,13 @@ class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
         fixture; this proves the SAME outcome against resolve_git_facts'
         actual output — the case the module docstring calls out as never
         exercised end to end."""
-        fake_run = _fake_git_run(resolvable=True, full_sha=FULL_SHA, head_sha=HEAD_SHA,
-                                  commit_count=0, ancestor=False)
+        fake_run = _fake_git_run(
+            resolvable=True,
+            full_sha=FULL_SHA,
+            head_sha=HEAD_SHA,
+            commit_count=0,
+            ancestor=False,
+        )
         with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
             git_facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
@@ -503,8 +562,8 @@ class TestBuildResultWithRealResolveGitFacts(unittest.TestCase):
 # exit code drives sha_is_ancestor.
 # ---------------------------------------------------------------------------
 
-class TestResolveGitFactsMergeBase(unittest.TestCase):
 
+class TestResolveGitFactsMergeBase(unittest.TestCase):
     def _tracked(self, **kwargs):
         calls = []
         inner = _fake_git_run(**kwargs)
@@ -512,15 +571,22 @@ class TestResolveGitFactsMergeBase(unittest.TestCase):
         def _run(cmd, *a, **k):
             calls.append(cmd)
             return inner(cmd, *a, **k)
+
         return _run, calls
 
-    def test_is_ancestor_call_made_with_sha_and_head_and_true_exit_sets_field_true(self):
+    def test_is_ancestor_call_made_with_sha_and_head_and_true_exit_sets_field_true(
+        self,
+    ):
         fake_run, calls = self._tracked(resolvable=True, ancestor=True)
         with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
             facts = detect_prior_review.resolve_git_facts(FULL_SHA, HEAD_SHA)
 
         merge_base_calls = [c for c in calls if "merge-base" in c]
-        self.assertEqual(len(merge_base_calls), 1, "merge-base --is-ancestor must be called exactly once")
+        self.assertEqual(
+            len(merge_base_calls),
+            1,
+            "merge-base --is-ancestor must be called exactly once",
+        )
         self.assertIn("--is-ancestor", merge_base_calls[0])
         self.assertIn(FULL_SHA, merge_base_calls[0])
         self.assertIn(HEAD_SHA, merge_base_calls[0])
@@ -545,8 +611,9 @@ class TestResolveGitFactsErrorMessages(unittest.TestCase):
     def test_head_unresolvable_appends_explanation(self):
         def fake_run(cmd, *a, **k):
             if cmd[:2] == ["git", "rev-parse"]:
-                return SimpleNamespace(stdout="", stderr="fatal: not a git repository",
-                                        returncode=128)
+                return SimpleNamespace(
+                    stdout="", stderr="fatal: not a git repository", returncode=128
+                )
             return SimpleNamespace(stdout="", stderr="", returncode=0)
 
         with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
@@ -555,7 +622,8 @@ class TestResolveGitFactsErrorMessages(unittest.TestCase):
 
         self.assertEqual(facts["head_sha"], "unknown")
         self.assertTrue(
-            any("could not resolve the head commit" in e for e in errors), errors)
+            any("could not resolve the head commit" in e for e in errors), errors
+        )
 
     def test_last_reviewed_commit_absent_appends_explanation(self):
         fake_run = _fake_git_run(resolvable=False)
@@ -565,15 +633,18 @@ class TestResolveGitFactsErrorMessages(unittest.TestCase):
 
         self.assertFalse(facts["sha_resolvable"])
         self.assertTrue(
-            any("is not present in this clone" in e for e in errors), errors)
+            any("is not present in this clone" in e for e in errors), errors
+        )
         self.assertTrue(
             any(FULL_SHA[:8] in e for e in errors),
-            "the short sha should be named in the explanation")
+            "the short sha should be named in the explanation",
+        )
 
 
 # ---------------------------------------------------------------------------
 # CLI end-to-end — --bodies-file, git calls patched.
 # ---------------------------------------------------------------------------
+
 
 class _CliTestBase(unittest.TestCase):
     def setUp(self):
@@ -589,24 +660,41 @@ class _CliTestBase(unittest.TestCase):
         return path
 
     def _base_argv(self, bodies_path, platform="github", **extra):
-        argv = ["--platform", platform, "--owner", "o", "--repo", "r",
-                "--number", "5", "--bodies-file", bodies_path]
+        argv = [
+            "--platform",
+            platform,
+            "--owner",
+            "o",
+            "--repo",
+            "r",
+            "--number",
+            "5",
+            "--bodies-file",
+            bodies_path,
+        ]
         for key, value in extra.items():
             argv += [f"--{key.replace('_', '-')}", str(value)]
         return argv
 
 
 class TestCliBodiesFile(_CliTestBase):
-
     def test_found_and_advanced_exits_zero_with_matching_fields(self):
         marker_body = review_marker.build_marker(FULL_SHA, 4)
-        entries = [{"body": marker_body, "timestamp": "2026-01-01T00:00:00Z",
-                    "source": "review", "id": 101}]
+        entries = [
+            {
+                "body": marker_body,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "review",
+                "id": 101,
+            }
+        ]
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run(resolvable=True)):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_git_run(resolvable=True),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -623,14 +711,23 @@ class TestCliBodiesFile(_CliTestBase):
     def test_found_but_head_not_advanced(self):
         # Marker's sha is the same as HEAD — nothing new to review.
         marker_body = review_marker.build_marker(HEAD_SHA, 2)
-        entries = [{"body": marker_body, "timestamp": "2026-01-01T00:00:00Z",
-                    "source": "review", "id": 1}]
+        entries = [
+            {
+                "body": marker_body,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "review",
+                "id": 1,
+            }
+        ]
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run(resolvable=True, full_sha=HEAD_SHA,
-                                              head_sha=HEAD_SHA, commit_count=0)):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_git_run(
+                resolvable=True, full_sha=HEAD_SHA, head_sha=HEAD_SHA, commit_count=0
+            ),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -641,13 +738,21 @@ class TestCliBodiesFile(_CliTestBase):
 
     def test_found_but_sha_unresolvable(self):
         marker_body = review_marker.build_marker(FULL_SHA, 1)
-        entries = [{"body": marker_body, "timestamp": "2026-01-01T00:00:00Z",
-                    "source": "review", "id": 1}]
+        entries = [
+            {
+                "body": marker_body,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "review",
+                "id": 1,
+            }
+        ]
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run(resolvable=False)):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_git_run(resolvable=False),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -657,13 +762,20 @@ class TestCliBodiesFile(_CliTestBase):
         self.assertFalse(result["incremental_safe"])
 
     def test_nothing_found_reports_previously_reviewed_false(self):
-        entries = [{"body": "just a plain unrelated comment", "timestamp": "2026-01-01T00:00:00Z",
-                    "source": "issue_comment", "id": 1}]
+        entries = [
+            {
+                "body": "just a plain unrelated comment",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "issue_comment",
+                "id": 1,
+            }
+        ]
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run()):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run", side_effect=_fake_git_run()
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -679,8 +791,9 @@ class TestCliBodiesFile(_CliTestBase):
         bodies_path = self._bodies_file([])
         argv = self._base_argv(bodies_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run()):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run", side_effect=_fake_git_run()
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -690,16 +803,24 @@ class TestCliBodiesFile(_CliTestBase):
     def test_head_sha_override_is_used_instead_of_git_rev_parse_head(self):
         override_head = "d" * 40
         marker_body = review_marker.build_marker(FULL_SHA, 1)
-        entries = [{"body": marker_body, "timestamp": "2026-01-01T00:00:00Z",
-                    "source": "review", "id": 1}]
+        entries = [
+            {
+                "body": marker_body,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "review",
+                "id": 1,
+            }
+        ]
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path, **{"head_sha": override_head})
 
         # The fake's "git rev-parse HEAD" branch would return HEAD_SHA (== b*40),
         # which differs from override_head — if the result matches override_head,
         # the flag was honored rather than shelling out for HEAD.
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run(resolvable=True)):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_git_run(resolvable=True),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -707,13 +828,20 @@ class TestCliBodiesFile(_CliTestBase):
         self.assertEqual(result["head_sha"], override_head)
 
     def test_stdout_is_exactly_one_json_object(self):
-        entries = [{"body": review_marker.build_marker(FULL_SHA, 1),
-                    "timestamp": "2026-01-01T00:00:00Z", "source": "review", "id": 1}]
+        entries = [
+            {
+                "body": review_marker.build_marker(FULL_SHA, 1),
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "review",
+                "id": 1,
+            }
+        ]
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run()):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run", side_effect=_fake_git_run()
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -736,19 +864,29 @@ class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
     def test_marker_findings_with_non_ascii_prints_parseable_ascii_safe_json(self):
         findings_payload = [{"title": "café bug \U0001f41b"}]
         marker_body = review_marker.build_marker(FULL_SHA, 1, findings=findings_payload)
-        entries = [{"body": marker_body, "timestamp": "2026-01-01T00:00:00Z",
-                    "source": "review", "id": 1}]
+        entries = [
+            {
+                "body": marker_body,
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "review",
+                "id": 1,
+            }
+        ]
         bodies_path = self._bodies_file(entries)
         argv = self._base_argv(bodies_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run(resolvable=True)):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_git_run(resolvable=True),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
         raw = out.strip()
-        self.assertTrue(all(ord(c) < 128 for c in raw),
-                         "stdout must be pure ASCII under ensure_ascii=True")
+        self.assertTrue(
+            all(ord(c) < 128 for c in raw),
+            "stdout must be pure ASCII under ensure_ascii=True",
+        )
         result = json.loads(raw)
         self.assertEqual(result["marker"]["findings"], findings_payload)
 
@@ -756,14 +894,17 @@ class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
         missing_path = os.path.join(self.tmp, "café-missing.json")
         argv = self._base_argv(missing_path)
 
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run()):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run", side_effect=_fake_git_run()
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
         raw = out.strip()
-        self.assertTrue(all(ord(c) < 128 for c in raw),
-                         "stdout must be pure ASCII under ensure_ascii=True")
+        self.assertTrue(
+            all(ord(c) < 128 for c in raw),
+            "stdout must be pure ASCII under ensure_ascii=True",
+        )
         result = json.loads(raw)
         self.assertFalse(result["previously_reviewed"])
         self.assertTrue(result["errors"])
@@ -772,6 +913,7 @@ class TestNonAsciiOutputIsAsciiSafe(_CliTestBase):
 # ---------------------------------------------------------------------------
 # remote_slug() — accepted URL forms.
 # ---------------------------------------------------------------------------
+
 
 class TestRemoteSlug(unittest.TestCase):
     """remote_slug() parses the 'origin' remote URL. Accepted forms: scp-style
@@ -782,6 +924,7 @@ class TestRemoteSlug(unittest.TestCase):
     def _slug_for(self, url):
         def fake_run(cmd, *a, **k):
             return SimpleNamespace(stdout=url + "\n", stderr="", returncode=0)
+
         with patch("scripts.detect_prior_review.subprocess.run", side_effect=fake_run):
             return detect_prior_review.remote_slug()
 
@@ -806,6 +949,7 @@ class TestRemoteSlug(unittest.TestCase):
 # Fetch failures — D8: detection never blocks a review.
 # ---------------------------------------------------------------------------
 
+
 class TestFetchFailureDegradation(_CliTestBase):
     """GitHub and GitLab each scan exactly one surface now (the github
     issues/{n}/comments surface was dropped). 'One surface failing' therefore
@@ -816,9 +960,12 @@ class TestFetchFailureDegradation(_CliTestBase):
 
     def test_github_fetch_failing_yields_exit_zero_with_errors_and_no_signal(self):
         argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_gh_glab_and_git_run(
-                       reviews_rc=1, git_run=_fake_git_run(resolvable=True))):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_gh_glab_and_git_run(
+                reviews_rc=1, git_run=_fake_git_run(resolvable=True)
+            ),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -826,14 +973,21 @@ class TestFetchFailureDegradation(_CliTestBase):
         self.assertFalse(result["previously_reviewed"])
         self.assertIsNone(result["signal"])
         self.assertFalse(result["incremental_safe"])
-        self.assertEqual(len(result["errors"]), 1, "the single github surface's failure must be recorded")
+        self.assertEqual(
+            len(result["errors"]),
+            1,
+            "the single github surface's failure must be recorded",
+        )
         self.assertIn("scanned", result)
 
     def test_gitlab_fetch_failing_yields_exit_zero_with_errors_and_no_signal(self):
         argv = ["--platform", "gitlab", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_gh_glab_and_git_run(
-                       notes_rc=1, git_run=_fake_git_run(resolvable=True))):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_gh_glab_and_git_run(
+                notes_rc=1, git_run=_fake_git_run(resolvable=True)
+            ),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -841,20 +995,26 @@ class TestFetchFailureDegradation(_CliTestBase):
         self.assertFalse(result["previously_reviewed"])
         self.assertIsNone(result["signal"])
         self.assertFalse(result["incremental_safe"])
-        self.assertEqual(len(result["errors"]), 1, "the single gitlab surface's failure must be recorded")
+        self.assertEqual(
+            len(result["errors"]),
+            1,
+            "the single gitlab surface's failure must be recorded",
+        )
         self.assertIn("scanned", result)
 
 
 class TestGitlabFetch(_CliTestBase):
-
     def test_gitlab_notes_are_fetched_and_a_signal_is_recovered(self):
         marker_body = review_marker.build_marker(FULL_SHA, 1)
         notes = [{"id": 5, "body": marker_body, "created_at": "2026-01-01T00:00:00Z"}]
 
         argv = ["--platform", "gitlab", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_gh_glab_and_git_run(
-                       notes=notes, git_run=_fake_git_run(resolvable=True))):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_gh_glab_and_git_run(
+                notes=notes, git_run=_fake_git_run(resolvable=True)
+            ),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -870,12 +1030,17 @@ class TestGithubFetch(_CliTestBase):
     def test_github_reviews_are_fetched_and_a_signal_is_recovered(self):
         review_body = "## Summary\nSome pre-existing narrative text.\n"
         review_body += review_marker.build_footer(3, FULL_SHA, body=review_body)
-        reviews = [{"id": 9, "body": review_body, "submitted_at": "2026-01-01T00:00:00Z"}]
+        reviews = [
+            {"id": 9, "body": review_body, "submitted_at": "2026-01-01T00:00:00Z"}
+        ]
 
         argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_gh_glab_and_git_run(
-                       reviews=reviews, git_run=_fake_git_run(resolvable=True))):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_gh_glab_and_git_run(
+                reviews=reviews, git_run=_fake_git_run(resolvable=True)
+            ),
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -885,7 +1050,9 @@ class TestGithubFetch(_CliTestBase):
         self.assertEqual(result["source"], "review")
         self.assertEqual(result["last_reviewed_sha"], FULL_SHA)
 
-    def test_paginated_concatenated_json_arrays_are_flattened_and_newest_marker_wins(self):
+    def test_paginated_concatenated_json_arrays_are_flattened_and_newest_marker_wins(
+        self,
+    ):
         """``gh api --paginate`` emits one JSON array per page, concatenated back
         to back in the raw stdout — not one merged array (see
         detect_prior_review._parse_json_array's own docstring). Build the fake
@@ -895,15 +1062,27 @@ class TestGithubFetch(_CliTestBase):
         page carried it."""
         older_sha = "c" * 40
         newer_sha = "d" * 40
-        page1 = json.dumps([
-            {"id": 1, "body": review_marker.build_marker(older_sha, 1),
-             "submitted_at": "2026-01-01T00:00:00Z"},
-        ])
-        page2 = json.dumps([
-            {"id": 2, "body": review_marker.build_marker(newer_sha, 2),
-             "submitted_at": "2026-06-01T00:00:00Z"},
-        ])
-        concatenated = page1 + page2  # exactly what --paginate emits: arrays back to back
+        page1 = json.dumps(
+            [
+                {
+                    "id": 1,
+                    "body": review_marker.build_marker(older_sha, 1),
+                    "submitted_at": "2026-01-01T00:00:00Z",
+                },
+            ]
+        )
+        page2 = json.dumps(
+            [
+                {
+                    "id": 2,
+                    "body": review_marker.build_marker(newer_sha, 2),
+                    "submitted_at": "2026-06-01T00:00:00Z",
+                },
+            ]
+        )
+        concatenated = (
+            page1 + page2
+        )  # exactly what --paginate emits: arrays back to back
 
         def fake_run(cmd, *a, **k):
             joined = " ".join(cmd)
@@ -921,7 +1100,9 @@ class TestGithubFetch(_CliTestBase):
         result = json.loads(out.strip())
         self.assertTrue(result["previously_reviewed"])
         self.assertEqual(result["last_reviewed_sha"], newer_sha)
-        self.assertEqual(result["scanned"], {"review": 2}, "both pages' entries must be counted")
+        self.assertEqual(
+            result["scanned"], {"review": 2}, "both pages' entries must be counted"
+        )
 
 
 class TestSanitizeMarker(unittest.TestCase):
@@ -934,14 +1115,18 @@ class TestSanitizeMarker(unittest.TestCase):
 
     def test_normal_payload_round_trips_unchanged(self):
         marker = {
-            "version": "3.0", "findings_count": 2, "sha": FULL_SHA,
-            "_token": "code-gauntlet-findings", "_legacy": False,
+            "version": "3.0",
+            "findings_count": 2,
+            "sha": FULL_SHA,
+            "_token": "code-gauntlet-findings",
+            "_legacy": False,
         }
         self.assertEqual(detect_prior_review.sanitize_marker(marker), marker)
 
     def test_unknown_keys_appear_by_name_only_value_not_echoed(self):
         marker = {
-            "version": "3.0", "sha": FULL_SHA,
+            "version": "3.0",
+            "sha": FULL_SHA,
             "attacker_field": "SECRET_PAYLOAD_VALUE_SHOULD_NOT_APPEAR",
         }
         out = detect_prior_review.sanitize_marker(marker)
@@ -956,7 +1141,12 @@ class TestSanitizeMarker(unittest.TestCase):
         is consulted, so a single huge value never reaches the `truncated`
         fallback. Pinning the branch would fail on that strictly better bound."""
         huge = "X" * 100000
-        marker = {"version": "3.0", "findings_count": 1, "sha": FULL_SHA, "findings": huge}
+        marker = {
+            "version": "3.0",
+            "findings_count": 1,
+            "sha": FULL_SHA,
+            "findings": huge,
+        }
         out = detect_prior_review.sanitize_marker(marker)
         dumped = json.dumps(out)
         self.assertNotIn(huge, dumped)
@@ -969,23 +1159,35 @@ class TestSanitizeMarker(unittest.TestCase):
         """An allow-listed key is still attacker-controlled — `version` passing
         the key filter must not let 60 KB of prose through into the
         orchestrator's context."""
-        marker = {"version": "INJECT " * 9000, "findings_count": 1,
-                  "sha": FULL_SHA, "_token": "code-gauntlet-findings", "_legacy": False}
+        marker = {
+            "version": "INJECT " * 9000,
+            "findings_count": 1,
+            "sha": FULL_SHA,
+            "_token": "code-gauntlet-findings",
+            "_legacy": False,
+        }
         out = detect_prior_review.sanitize_marker(marker)
         self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
+        )
         self.assertLess(len(str(out["version"])), 1000)
         self.assertEqual(out["sha"], FULL_SHA)
 
     def test_whole_payload_cap_still_fires_for_many_bounded_values(self):
         """The `truncated` fallback stays reachable: many individually-bounded
         values can still exceed the total cap."""
-        marker = {"version": "v" * 400, "findings_count": 1, "sha": FULL_SHA,
-                  "findings": ["f" * 400] * 40,
-                  "_token": "code-gauntlet-findings", "_legacy": False}
+        marker = {
+            "version": "v" * 400,
+            "findings_count": 1,
+            "sha": FULL_SHA,
+            "findings": ["f" * 400] * 40,
+            "_token": "code-gauntlet-findings",
+            "_legacy": False,
+        }
         out = detect_prior_review.sanitize_marker(marker)
         self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
+        )
         self.assertEqual(out["sha"], FULL_SHA)
 
     def test_non_dict_marker_returns_none(self):
@@ -1007,14 +1209,18 @@ class TestRunSurvivesNonUtf8Stdout(unittest.TestCase):
     call the end-to-end test makes are both local-only."""
 
     def test_run_wrapper_never_raises_and_replaces_undecodable_bytes(self):
-        cmd = [sys.executable, "-c",
-               r"import sys; sys.stdout.buffer.write(b'garbage \xff\xfe bytes')"]
+        cmd = [
+            sys.executable,
+            "-c",
+            r"import sys; sys.stdout.buffer.write(b'garbage \xff\xfe bytes')",
+        ]
         stdout, stderr, rc = detect_prior_review.run(cmd, timeout=10)
         self.assertEqual(rc, 0)
         self.assertIn("garbage", stdout)
         self.assertIn("bytes", stdout)
-        self.assertIn("�", stdout,
-                       "undecodable bytes must be replaced, not silently dropped")
+        self.assertIn(
+            "�", stdout, "undecodable bytes must be replaced, not silently dropped"
+        )
 
     def test_cli_end_to_end_non_utf8_fetch_still_exits_zero_with_valid_json(self):
         """fetch_entries_github is monkeypatched to route through the REAL
@@ -1024,8 +1230,11 @@ class TestRunSurvivesNonUtf8Stdout(unittest.TestCase):
         subprocess.run call entirely."""
 
         def fake_fetch_entries_github(owner, repo, number):
-            cmd = [sys.executable, "-c",
-                   r"import sys; sys.stdout.buffer.write(b'\xff\xfe' + b'not json')"]
+            cmd = [
+                sys.executable,
+                "-c",
+                r"import sys; sys.stdout.buffer.write(b'\xff\xfe' + b'not json')",
+            ]
             stdout, _, _ = detect_prior_review.run(cmd, timeout=10)
             items = detect_prior_review._parse_json_array(stdout)
             if items is None:
@@ -1033,8 +1242,11 @@ class TestRunSurvivesNonUtf8Stdout(unittest.TestCase):
             return detect_prior_review.collect_entries_github(items), []
 
         argv = ["--platform", "github", "--owner", "o", "--repo", "r", "--number", "5"]
-        with patch.object(detect_prior_review, "fetch_entries_github",
-                           side_effect=fake_fetch_entries_github):
+        with patch.object(
+            detect_prior_review,
+            "fetch_entries_github",
+            side_effect=fake_fetch_entries_github,
+        ):
             out, code = _run_main(argv)
 
         self.assertEqual(code, 0)
@@ -1050,8 +1262,8 @@ class TestRunSurvivesNonUtf8Stdout(unittest.TestCase):
 # Argparse usage errors vs. recoverable outcomes.
 # ---------------------------------------------------------------------------
 
-class TestArgparseUsageErrors(unittest.TestCase):
 
+class TestArgparseUsageErrors(unittest.TestCase):
     def test_missing_required_platform_is_nonzero_exit(self):
         _, code = _run_main(["--owner", "o", "--repo", "r", "--number", "5"])
         self.assertNotEqual(code, 0)
@@ -1061,8 +1273,9 @@ class TestArgparseUsageErrors(unittest.TestCase):
         outcome, not an argparse usage error: exit 0, valid JSON on stdout,
         previously_reviewed false, and a non-empty errors[]. gather_entries no
         longer calls parser.error for this case."""
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run()):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run", side_effect=_fake_git_run()
+        ):
             out, code = _run_main(["--platform", "github"])
 
         self.assertEqual(code, 0)
@@ -1071,8 +1284,9 @@ class TestArgparseUsageErrors(unittest.TestCase):
         self.assertTrue(result["errors"])
 
     def test_invalid_platform_choice_is_nonzero_exit(self):
-        _, code = _run_main(["--platform", "bitbucket", "--owner", "o",
-                              "--repo", "r", "--number", "5"])
+        _, code = _run_main(
+            ["--platform", "bitbucket", "--owner", "o", "--repo", "r", "--number", "5"]
+        )
         self.assertNotEqual(code, 0)
 
     def test_unknown_flag_is_nonzero_exit(self):
@@ -1091,26 +1305,27 @@ class TestRound3And4FixRegressions(unittest.TestCase):
         """R4: unknown_keys capped the COUNT of names but not their LENGTH, so
         kilobytes of attacker text reached the orchestrator through the very
         guard that promises 'names only'."""
-        marker = {"version": "3.0", "sha": FULL_SHA,
-                  "X" * 3000: 1, "Y" * 3000: 2}
+        marker = {"version": "3.0", "sha": FULL_SHA, "X" * 3000: 1, "Y" * 3000: 2}
         out = detect_prior_review.sanitize_marker(marker)
         self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
+        )
         for name in out.get("unknown_keys", []):
             self.assertLessEqual(len(name), 128, "an unknown key name is unbounded")
 
     def test_huge_integer_value_is_bounded(self):
         """R4: _bounded exempted numbers, so a 4200-digit findings_count sailed
         past a cap that only inspected strings."""
-        marker = {"version": "3.0", "findings_count": int("9" * 4200),
-                  "sha": FULL_SHA}
+        marker = {"version": "3.0", "findings_count": int("9" * 4200), "sha": FULL_SHA}
         out = detect_prior_review.sanitize_marker(marker)
         self.assertLessEqual(
-            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS)
+            len(json.dumps(out)), detect_prior_review._MARKER_ECHO_MAX_CHARS
+        )
 
     def test_ordinary_counts_still_pass_through_unchanged(self):
         out = detect_prior_review.sanitize_marker(
-            {"version": "3.0", "findings_count": 12, "sha": FULL_SHA})
+            {"version": "3.0", "findings_count": 12, "sha": FULL_SHA}
+        )
         self.assertEqual(out["findings_count"], 12)
 
     def test_unresolvable_head_sha_is_reported_in_errors(self):
@@ -1118,14 +1333,17 @@ class TestRound3And4FixRegressions(unittest.TestCase):
         empty errors[], so the output fabricated 'history was rewritten' with no
         indication anything had gone wrong."""
         errors = []
-        with patch("scripts.detect_prior_review.subprocess.run",
-                   side_effect=_fake_git_run(resolvable=False)):
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=_fake_git_run(resolvable=False),
+        ):
             # 8 chars: the fake only echoes back a rev that is already full-length,
             # so this exercises the genuine "cannot resolve" path.
             detect_prior_review.resolve_git_facts(FULL_SHA, "deadbeef", errors)
         self.assertTrue(
             any("head-sha" in e for e in errors),
-            f"an unresolvable --head-sha must be explained; got {errors}")
+            f"an unresolvable --head-sha must be explained; got {errors}",
+        )
 
     def test_deeply_nested_bodies_file_exits_zero(self):
         """R3-5: json raises RecursionError (a RuntimeError), which escaped the

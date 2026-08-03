@@ -45,15 +45,24 @@ def fake_make_worktree(mirror, head_sha, base_sha, base_ref, dest, pr_number):
 def drift_on(target_pr_number):
     def _make(mirror, head_sha, base_sha, base_ref, dest, pr_number):
         if pr_number == target_pr_number:
-            raise run.mirrors.DriftError("PR #{}: simulated input drift".format(pr_number))
+            raise run.mirrors.DriftError(
+                "PR #{}: simulated input drift".format(pr_number)
+            )
         Path(dest).mkdir(parents=True, exist_ok=True)
         return Path(dest)
 
     return _make
 
 
-def fake_invoke_ok(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                   child_model="inherit", child_auth="api"):
+def fake_invoke_ok(
+    worktree,
+    pr,
+    run_dir,
+    timeout_s=1800,
+    tool="deep-review-v3",
+    child_model="inherit",
+    child_auth="api",
+):
     outdir = Path(run_dir) / "output"
     outdir.mkdir(parents=True, exist_ok=True)
     payload = outdir / "post-review-payload.json"
@@ -70,8 +79,15 @@ def make_invoke_first_fails():
     """An invoke fake that fails the first PR and oks the rest."""
     state = {"n": 0}
 
-    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-             child_model="inherit", child_auth="api"):
+    def _inv(
+        worktree,
+        pr,
+        run_dir,
+        timeout_s=1800,
+        tool="deep-review-v3",
+        child_model="inherit",
+        child_auth="api",
+    ):
         state["n"] += 1
         if state["n"] == 1:
             return run.invoke.InvokeResult("failed", reason="boom")
@@ -84,8 +100,15 @@ def make_invoke_raises_first(exc):
     """An invoke fake that raises *exc* on the first PR and oks the rest."""
     state = {"n": 0}
 
-    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-             child_model="inherit", child_auth="api"):
+    def _inv(
+        worktree,
+        pr,
+        run_dir,
+        timeout_s=1800,
+        tool="deep-review-v3",
+        child_model="inherit",
+        child_auth="api",
+    ):
         state["n"] += 1
         if state["n"] == 1:
             raise exc
@@ -101,10 +124,18 @@ def make_invoke_expecting_auth(expected):
     forwarding the mode, so at least one fake has to assert on what it was handed --
     an unforwarded mode is a run billed against the wrong credential.
     """
-    def _inv(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-             child_model="inherit", child_auth="api"):
-        assert child_auth == expected, "invoke_review got child_auth={!r}, want {!r}".format(
-            child_auth, expected
+
+    def _inv(
+        worktree,
+        pr,
+        run_dir,
+        timeout_s=1800,
+        tool="deep-review-v3",
+        child_model="inherit",
+        child_auth="api",
+    ):
+        assert child_auth == expected, (
+            "invoke_review got child_auth={!r}, want {!r}".format(child_auth, expected)
         )
         return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -113,11 +144,16 @@ def make_invoke_expecting_auth(expected):
 
 def make_naive_expecting_auth(expected):
     """A _invoke_naive fake that refuses any child_auth other than *expected*."""
-    def _naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s, child_auth="api"):
-        assert child_auth == expected, "_invoke_naive got child_auth={!r}, want {!r}".format(
-            child_auth, expected
+
+    def _naive(
+        worktree, pr, run_dir, diff_text, bench_entry, timeout_s, child_auth="api"
+    ):
+        assert child_auth == expected, (
+            "_invoke_naive got child_auth={!r}, want {!r}".format(child_auth, expected)
         )
-        payload = Path(run_dir) / run.invoke.pr_dir_name(pr) / "post-review-payload.json"
+        payload = (
+            Path(run_dir) / run.invoke.pr_dir_name(pr) / "post-review-payload.json"
+        )
         payload.parent.mkdir(parents=True, exist_ok=True)
         payload.write_text(json.dumps({"payload": {"comments": []}, "skipped": []}))
         return run.invoke.InvokeResult("ok", cost_usd=0.11, payload_path=str(payload))
@@ -147,8 +183,13 @@ class RunTestBase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
 
-    def _install_runner_fakes(self, invoke_fn=fake_invoke_ok, make_worktree_fn=None,
-                              remove_fn=None, ensure_fn=None):
+    def _install_runner_fakes(
+        self,
+        invoke_fn=fake_invoke_ok,
+        make_worktree_fn=None,
+        remove_fn=None,
+        ensure_fn=None,
+    ):
         pairs = [
             (run.mirrors, "ensure_mirror", ensure_fn or fake_ensure_mirror),
             (run.mirrors, "make_worktree", make_worktree_fn or fake_make_worktree),
@@ -215,7 +256,10 @@ class PrereqTest(RunTestBase):
             run_dir = self.tmp / "manifest-{}".format(anchor or "skill")
             run_dir.mkdir(parents=True)
             args = types.SimpleNamespace(
-                anchor=anchor, fidelity="dry-run", tool="deep-review-v3", child_model=None
+                anchor=anchor,
+                fidelity="dry-run",
+                tool="deep-review-v3",
+                child_model=None,
             )
             run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
             manifest = json.loads((run_dir / "run.json").read_text())
@@ -238,7 +282,7 @@ class PrereqTest(RunTestBase):
         env_file.write_text("ANTHROPIC_API_KEY=sk-test\n")
         # An absurd threshold forces the disk check to fail regardless of the partition.
         failures = run.check_prereqs(
-            env_path=env_file, workspace_dir=self.tmp, min_free_gb=10 ** 9
+            env_path=env_file, workspace_dir=self.tmp, min_free_gb=10**9
         )
         self.assertTrue(any("free on the workspace partition" in f for f in failures))
 
@@ -284,7 +328,9 @@ class FixtureWriteTest(RunTestBase):
             run_dir, urls, cp, self.shas, {FIXTURE_URL}, 60, None, self.bench_data
         )
 
-        fixture_key = run.invoke.pr_dir_name({"url": FIXTURE_URL, **self.shas[FIXTURE_URL]})
+        fixture_key = run.invoke.pr_dir_name(
+            {"url": FIXTURE_URL, **self.shas[FIXTURE_URL]}
+        )
         plain_key = run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
         fixture_review = run_dir / fixture_key / "worktree" / "REVIEW.md"
         plain_review = run_dir / plain_key / "worktree" / "REVIEW.md"
@@ -303,9 +349,13 @@ class ArtifactCaptureTest(RunTestBase):
         run_dir = self.runs_root / "collect-run"
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
-        run._run_prs(run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data)
+        run._run_prs(
+            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data
+        )
 
-        pr_dir = run_dir / run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
+        pr_dir = run_dir / run.invoke.pr_dir_name(
+            {"url": PLAIN_URL, **self.shas[PLAIN_URL]}
+        )
         self.assertTrue((pr_dir / "post-review-payload.json").is_file())
         self.assertTrue((pr_dir / "deep-review-report.md").is_file())
         self.assertTrue((pr_dir / "diff.patch").exists())
@@ -324,11 +374,23 @@ class ArtifactCaptureTest(RunTestBase):
         pipeline = str(run.REPO_ROOT / "workflows" / "pipeline.js")
         claude_home = self.tmp / "claude-home"
 
-        def invoke_plants_wf(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                             child_model="inherit", child_auth="api"):
+        def invoke_plants_wf(
+            worktree,
+            pr,
+            run_dir,
+            timeout_s=1800,
+            tool="deep-review-v3",
+            child_model="inherit",
+            child_auth="api",
+        ):
             # Mimic a child Workflow record written under CLAUDE_CONFIG_DIR during the run.
             wf = (
-                claude_home / "config" / "projects" / "slug" / "session" / "workflows"
+                claude_home
+                / "config"
+                / "projects"
+                / "slug"
+                / "session"
+                / "workflows"
                 / "wf_live-0001.json"
             )
             wf.parent.mkdir(parents=True, exist_ok=True)
@@ -337,29 +399,47 @@ class ArtifactCaptureTest(RunTestBase):
                 encoding="utf-8",
             )
             return fake_invoke_ok(
-                worktree, pr, run_dir, timeout_s=timeout_s, tool=tool, child_model=child_model
+                worktree,
+                pr,
+                run_dir,
+                timeout_s=timeout_s,
+                tool=tool,
+                child_model=child_model,
             )
 
         self._install_runner_fakes(invoke_fn=invoke_plants_wf)
         # Pre-existing unchanged record must not be copied (baseline filter).
         stale = (
-            claude_home / "config" / "projects" / "slug" / "session" / "workflows"
+            claude_home
+            / "config"
+            / "projects"
+            / "slug"
+            / "session"
+            / "workflows"
             / "wf_stale.json"
         )
         stale.parent.mkdir(parents=True, exist_ok=True)
         stale.write_text(
-            json.dumps({"runId": "wf_stale", "scriptPath": "/stale/workflows/pipeline.js"}),
+            json.dumps(
+                {"runId": "wf_stale", "scriptPath": "/stale/workflows/pipeline.js"}
+            ),
             encoding="utf-8",
         )
 
         run_dir = self.runs_root / "wf-collect-run"
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
-        run._run_prs(run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data)
+        run._run_prs(
+            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data
+        )
 
-        pr_dir = run_dir / run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
+        pr_dir = run_dir / run.invoke.pr_dir_name(
+            {"url": PLAIN_URL, **self.shas[PLAIN_URL]}
+        )
         collected = pr_dir / "workflows" / "wf_live-0001.json"
-        self.assertTrue(collected.is_file(), "new wf record must land in pr_dir/workflows/")
+        self.assertTrue(
+            collected.is_file(), "new wf record must land in pr_dir/workflows/"
+        )
         self.assertEqual(json.loads(collected.read_text())["scriptPath"], pipeline)
         self.assertFalse(
             (pr_dir / "workflows" / "wf_stale.json").exists(),
@@ -374,7 +454,12 @@ class ArtifactCaptureTest(RunTestBase):
         # Plant a record that would be copied if the skill path ran.
         claude_home = self.tmp / "claude-home"
         wf = (
-            claude_home / "config" / "projects" / "slug" / "session" / "workflows"
+            claude_home
+            / "config"
+            / "projects"
+            / "slug"
+            / "session"
+            / "workflows"
             / "wf_should_not_copy.json"
         )
         wf.parent.mkdir(parents=True, exist_ok=True)
@@ -383,7 +468,9 @@ class ArtifactCaptureTest(RunTestBase):
         run._run_prs(
             run_dir, [PLAIN_URL], cp, self.shas, set(), 60, "naive", self.bench_data
         )
-        pr_dir = run_dir / run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
+        pr_dir = run_dir / run.invoke.pr_dir_name(
+            {"url": PLAIN_URL, **self.shas[PLAIN_URL]}
+        )
         self.assertFalse((pr_dir / "workflows").exists())
 
 
@@ -399,7 +486,9 @@ class CheckpointPayloadPathTest(RunTestBase):
         run_dir = self.runs_root / "payload-path-run"
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
-        run._run_prs(run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data)
+        run._run_prs(
+            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data
+        )
 
         pr_key = run.invoke.pr_dir_name({"url": PLAIN_URL, **self.shas[PLAIN_URL]})
         expected = run_dir / pr_key / "post-review-payload.json"
@@ -444,8 +533,14 @@ class DriftTest(RunTestBase):
 class LoopHardeningTest(RunTestBase):
     def test_missing_sentinel_head_sha_failed_without_mirror(self):
         url = "https://github.com/o/r/pull/1"
-        meta = {"owner": "o", "repo": "r", "head_sha": "missing",
-                "base_sha": "b", "base_ref": "main", "pr_number": 1}
+        meta = {
+            "owner": "o",
+            "repo": "r",
+            "head_sha": "missing",
+            "base_sha": "b",
+            "base_ref": "main",
+            "pr_number": 1,
+        }
         called = []
 
         def boom(clone_url, mirrors_dir, refresh=False):
@@ -465,8 +560,13 @@ class LoopHardeningTest(RunTestBase):
 
     def test_missing_owner_failed_without_mirror(self):
         url = "https://github.com/o/r/pull/2"
-        meta = {"repo": "r", "head_sha": "h", "base_sha": "b",
-                "base_ref": "main", "pr_number": 2}  # no owner
+        meta = {
+            "repo": "r",
+            "head_sha": "h",
+            "base_sha": "b",
+            "base_ref": "main",
+            "pr_number": 2,
+        }  # no owner
 
         def boom(clone_url, mirrors_dir, refresh=False):
             raise AssertionError("ensure_mirror must not run for an incomplete entry")
@@ -484,17 +584,31 @@ class LoopHardeningTest(RunTestBase):
     def test_mirror_error_marks_failed_and_run_continues(self):
         urls = ["https://github.com/o/r/pull/10", "https://github.com/o/r/pull/11"]
         metas = {
-            urls[0]: {"owner": "o", "repo": "r", "head_sha": "h0", "base_sha": "b0",
-                      "base_ref": "main", "pr_number": 10},
-            urls[1]: {"owner": "o", "repo": "r", "head_sha": "h1", "base_sha": "b1",
-                      "base_ref": "main", "pr_number": 11},
+            urls[0]: {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "h0",
+                "base_sha": "b0",
+                "base_ref": "main",
+                "pr_number": 10,
+            },
+            urls[1]: {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "h1",
+                "base_sha": "b1",
+                "base_ref": "main",
+                "pr_number": 11,
+            },
         }
         state = {"n": 0}
 
         def ensure(clone_url, mirrors_dir, refresh=False):
             state["n"] += 1
             if state["n"] == 1:
-                raise run.subprocess.CalledProcessError(128, ["git", "clone", "--mirror"])
+                raise run.subprocess.CalledProcessError(
+                    128, ["git", "clone", "--mirror"]
+                )
             return fake_ensure_mirror(clone_url, mirrors_dir, refresh)
 
         self._install_runner_fakes(ensure_fn=ensure)
@@ -513,10 +627,22 @@ class LoopHardeningTest(RunTestBase):
     def test_oserror_during_mirror_block_marks_failed_and_continues(self):
         urls = ["https://github.com/o/r/pull/20", "https://github.com/o/r/pull/21"]
         metas = {
-            urls[0]: {"owner": "o", "repo": "r", "head_sha": "h0", "base_sha": "b0",
-                      "base_ref": "main", "pr_number": 20},
-            urls[1]: {"owner": "o", "repo": "r", "head_sha": "h1", "base_sha": "b1",
-                      "base_ref": "main", "pr_number": 21},
+            urls[0]: {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "h0",
+                "base_sha": "b0",
+                "base_ref": "main",
+                "pr_number": 20,
+            },
+            urls[1]: {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "h1",
+                "base_sha": "b1",
+                "base_ref": "main",
+                "pr_number": 21,
+            },
         }
         state = {"n": 0}
 
@@ -524,7 +650,9 @@ class LoopHardeningTest(RunTestBase):
             state["n"] += 1
             if state["n"] == 1:
                 raise OSError("rmtree failed on stale worktree")
-            return fake_make_worktree(mirror, head_sha, base_sha, base_ref, dest, pr_number)
+            return fake_make_worktree(
+                mirror, head_sha, base_sha, base_ref, dest, pr_number
+            )
 
         self._install_runner_fakes(make_worktree_fn=worktree_oserror)
         run_dir = self.runs_root / "run-oserror"
@@ -541,17 +669,31 @@ class LoopHardeningTest(RunTestBase):
     def test_cleanup_failure_in_finally_does_not_abort(self):
         urls = ["https://github.com/o/r/pull/30", "https://github.com/o/r/pull/31"]
         metas = {
-            urls[0]: {"owner": "o", "repo": "r", "head_sha": "h0", "base_sha": "b0",
-                      "base_ref": "main", "pr_number": 30},
-            urls[1]: {"owner": "o", "repo": "r", "head_sha": "h1", "base_sha": "b1",
-                      "base_ref": "main", "pr_number": 31},
+            urls[0]: {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "h0",
+                "base_sha": "b0",
+                "base_ref": "main",
+                "pr_number": 30,
+            },
+            urls[1]: {
+                "owner": "o",
+                "repo": "r",
+                "head_sha": "h1",
+                "base_sha": "b1",
+                "base_ref": "main",
+                "pr_number": 31,
+            },
         }
         state = {"n": 0}
 
         def remove_boom(mirror, dest):
             state["n"] += 1
             if state["n"] == 1:
-                raise run.subprocess.CalledProcessError(1, ["git", "worktree", "remove"])
+                raise run.subprocess.CalledProcessError(
+                    1, ["git", "worktree", "remove"]
+                )
 
         self._install_runner_fakes(remove_fn=remove_boom)
         run_dir = self.runs_root / "run-cleanup-fail"
@@ -699,7 +841,9 @@ class ToolWiringTest(RunTestBase):
         return json.loads((run_dir / "run.json").read_text())
 
     def test_default_tool_is_v3_in_manifest(self):
-        self.assertEqual(self._manifest_for(["--tier", "smoke"])["tool"], "deep-review-v3")
+        self.assertEqual(
+            self._manifest_for(["--tier", "smoke"])["tool"], "deep-review-v3"
+        )
 
     def test_v2_label_still_selectable(self):
         manifest = self._manifest_for(["--tier", "smoke", "--tool", "deep-review-v2"])
@@ -714,8 +858,15 @@ class ToolWiringTest(RunTestBase):
     def test_run_prs_forwards_tool_to_invoke_review(self):
         captured = {}
 
-        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit", child_auth="api"):
+        def spy(
+            worktree,
+            pr,
+            run_dir,
+            timeout_s=1800,
+            tool="deep-review-v3",
+            child_model="inherit",
+            child_auth="api",
+        ):
             captured["tool"] = tool
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -724,7 +875,14 @@ class ToolWiringTest(RunTestBase):
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
         run._run_prs(
-            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data,
+            run_dir,
+            [PLAIN_URL],
+            cp,
+            self.shas,
+            set(),
+            60,
+            None,
+            self.bench_data,
             tool="deep-review-v2",
         )
         self.assertEqual(captured["tool"], "deep-review-v2")
@@ -732,7 +890,9 @@ class ToolWiringTest(RunTestBase):
     def test_child_model_default_inherit_for_v3(self):
         # Measured 2026-07-21: sonnet and sonnet[1m] children both burn MORE tokens than
         # the inherited opus[1m] child (context churn), so v3 defaults to inherit too.
-        self.assertEqual(self._manifest_for(["--tier", "smoke"])["child_model"], "inherit")
+        self.assertEqual(
+            self._manifest_for(["--tier", "smoke"])["child_model"], "inherit"
+        )
 
     def test_child_model_default_inherit_for_v2(self):
         # v2 inherits so its historical baseline model behavior is preserved.
@@ -750,8 +910,15 @@ class ToolWiringTest(RunTestBase):
     def test_run_prs_forwards_child_model_to_invoke_review(self):
         captured = {}
 
-        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit", child_auth="api"):
+        def spy(
+            worktree,
+            pr,
+            run_dir,
+            timeout_s=1800,
+            tool="deep-review-v3",
+            child_model="inherit",
+            child_auth="api",
+        ):
             captured["child_model"] = child_model
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -760,8 +927,16 @@ class ToolWiringTest(RunTestBase):
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
         run._run_prs(
-            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data,
-            tool="deep-review-v3", child_model="opus",
+            run_dir,
+            [PLAIN_URL],
+            cp,
+            self.shas,
+            set(),
+            60,
+            None,
+            self.bench_data,
+            tool="deep-review-v3",
+            child_model="opus",
         )
         self.assertEqual(captured["child_model"], "opus")
 
@@ -853,12 +1028,16 @@ class ChildAuthCliTest(RunTestBase):
 
     def test_resume_of_a_pre_child_auth_manifest_preflights_api(self):
         self._write_resumable("smoke-resume-legacy", None)
-        self.assertEqual(self._spy_prereq_mode(["--resume", "smoke-resume-legacy"]), "api")
+        self.assertEqual(
+            self._spy_prereq_mode(["--resume", "smoke-resume-legacy"]), "api"
+        )
 
     def test_resume_of_a_missing_run_still_preflights_the_flag(self):
         # No manifest to consult (--resume of a bogus id) -- the flag is all there is.
         self.assertEqual(
-            self._spy_prereq_mode(["--resume", "no-such-run", "--child-auth", "subscription"]),
+            self._spy_prereq_mode(
+                ["--resume", "no-such-run", "--child-auth", "subscription"]
+            ),
             "subscription",
         )
 
@@ -870,7 +1049,9 @@ class ChildAuthCliTest(RunTestBase):
         self._write_resumable("smoke-legacy-switch", None)
         stderr = io.StringIO()
         with contextlib.redirect_stderr(stderr):
-            rc = run.main(["--resume", "smoke-legacy-switch", "--child-auth", "subscription"])
+            rc = run.main(
+                ["--resume", "smoke-legacy-switch", "--child-auth", "subscription"]
+            )
         self.assertEqual(rc, 2)
         message = stderr.getvalue()
         self.assertIn("contradicts", message)
@@ -879,7 +1060,9 @@ class ChildAuthCliTest(RunTestBase):
     def test_resume_flag_agreeing_with_the_recorded_mode_is_accepted(self):
         self._write_resumable("smoke-agree-sub", "subscription")
         self.assertEqual(
-            self._spy_prereq_mode(["--resume", "smoke-agree-sub", "--child-auth", "subscription"]),
+            self._spy_prereq_mode(
+                ["--resume", "smoke-agree-sub", "--child-auth", "subscription"]
+            ),
             "subscription",
         )
 
@@ -903,7 +1086,9 @@ class ChildAuthCliTest(RunTestBase):
 
     def test_legacy_resume_without_a_flag_stays_on_api(self):
         self._write_resumable("smoke-legacy-noflag", None)
-        self.assertEqual(self._spy_prereq_mode(["--resume", "smoke-legacy-noflag"]), "api")
+        self.assertEqual(
+            self._spy_prereq_mode(["--resume", "smoke-legacy-noflag"]), "api"
+        )
 
     def test_default_child_auth_is_a_valid_mode(self):
         self.assertIn(run.ledger.DEFAULT_AUTH_MODE, run.ledger.AUTH_MODES)
@@ -933,7 +1118,8 @@ class ChildAuthCliTest(RunTestBase):
         run_dir.mkdir(parents=True)
         (run_dir / "run.json").write_text("{not json")
         preflighted, resumed = self._resume_modes(
-            "smoke-corrupt", ["--resume", "smoke-corrupt", "--child-auth", "subscription"]
+            "smoke-corrupt",
+            ["--resume", "smoke-corrupt", "--child-auth", "subscription"],
         )
         self.assertEqual(preflighted, resumed)
 
@@ -961,13 +1147,19 @@ class ChildAuthCliTest(RunTestBase):
         run_dir = self.runs_root / "smoke-fingerprint-only"
         run_dir.mkdir(parents=True)
         (run_dir / "run.json").write_text(
-            json.dumps({
-                "tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None,
-                "env_fingerprint": {"child_auth": "subscription"},
-            })
+            json.dumps(
+                {
+                    "tier": "smoke",
+                    "pr_urls": [PLAIN_URL],
+                    "anchor": None,
+                    "env_fingerprint": {"child_auth": "subscription"},
+                }
+            )
         )
         args = run.parse_args(["--resume", "smoke-fingerprint-only"])
-        self.assertEqual(run._child_auth_for(args, "smoke-fingerprint-only"), "subscription")
+        self.assertEqual(
+            run._child_auth_for(args, "smoke-fingerprint-only"), "subscription"
+        )
 
 
 class ChildAuthPrereqTest(RunTestBase):
@@ -992,7 +1184,9 @@ class ChildAuthPrereqTest(RunTestBase):
             env=env,
         )
 
-    def _write_helper(self, claude_home=None, name="settings.json", value="/bin/echo key"):
+    def _write_helper(
+        self, claude_home=None, name="settings.json", value="/bin/echo key"
+    ):
         config = (claude_home or (self.tmp / "claude-home")) / "config"
         config.mkdir(parents=True, exist_ok=True)
         path = config / name
@@ -1000,7 +1194,9 @@ class ChildAuthPrereqTest(RunTestBase):
         return path
 
     def test_subscription_drops_the_api_key_requirement(self):
-        joined = "\n".join(self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"}))
+        joined = "\n".join(
+            self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"})
+        )
         self.assertNotIn("ANTHROPIC_API_KEY", joined)
 
     def test_subscription_without_a_token_is_one_actionable_failure(self):
@@ -1028,13 +1224,17 @@ class ChildAuthPrereqTest(RunTestBase):
         self.assertNotIn("OAUTH_TOKEN", joined)
 
     def test_subscription_token_in_env_satisfies_the_check(self):
-        joined = "\n".join(self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"}))
+        joined = "\n".join(
+            self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"})
+        )
         self.assertNotIn("OAUTH_TOKEN", joined)
 
     def test_env_defaults_to_os_environ(self):
         with patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"}):
             failures = run.check_prereqs(
-                env_path=self.missing_env, workspace_dir=self.tmp, child_auth="subscription"
+                env_path=self.missing_env,
+                workspace_dir=self.tmp,
+                child_auth="subscription",
             )
         self.assertNotIn("OAUTH_TOKEN", "\n".join(failures))
 
@@ -1046,7 +1246,8 @@ class ChildAuthPrereqTest(RunTestBase):
     def test_api_key_helper_fails_subscription_and_names_the_file(self):
         path = self._write_helper()
         failures = [
-            f for f in self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"})
+            f
+            for f in self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"})
             if "apiKeyHelper" in f
         ]
         self.assertEqual(len(failures), 1)
@@ -1056,7 +1257,9 @@ class ChildAuthPrereqTest(RunTestBase):
     def test_api_key_helper_failure_carries_no_credential(self):
         self._write_helper(value="/bin/echo sk-helper-secret")
         joined = "\n".join(
-            self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat-token-secret"})
+            self._failures(
+                "subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat-token-secret"}
+            )
         )
         self.assertIn("apiKeyHelper", joined)
         self.assertNotIn("sk-helper-secret", joined)
@@ -1070,7 +1273,9 @@ class ChildAuthPrereqTest(RunTestBase):
 
     def test_api_key_helper_in_settings_local_is_also_caught(self):
         path = self._write_helper(name="settings.local.json")
-        joined = "\n".join(self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"}))
+        joined = "\n".join(
+            self._failures("subscription", {"CLAUDE_CODE_OAUTH_TOKEN": "oat"})
+        )
         self.assertIn(str(path), joined)
 
     def test_api_mode_ignores_the_helper_entirely(self):
@@ -1125,7 +1330,9 @@ class ChildAuthJudgeKeyNoteTest(RunTestBase):
                 with patch.dict(os.environ, {}, clear=True):
                     self._patch_global("ENV_PATH", self.missing_env)
                     with contextlib.redirect_stderr(stderr):
-                        rc = run.main(["--tier", "smoke", "--child-auth", "subscription"])
+                        rc = run.main(
+                            ["--tier", "smoke", "--child-auth", "subscription"]
+                        )
         self.assertEqual(rc, 0)
         self.assertIn("judge", stderr.getvalue().lower())
 
@@ -1144,7 +1351,9 @@ class ChildAuthWiringTest(RunTestBase):
         self.assertEqual(self._manifest_for(["--tier", "smoke"])["child_auth"], "api")
 
     def test_manifest_records_explicit_subscription(self):
-        manifest = self._manifest_for(["--tier", "smoke", "--child-auth", "subscription"])
+        manifest = self._manifest_for(
+            ["--tier", "smoke", "--child-auth", "subscription"]
+        )
         self.assertEqual(manifest["child_auth"], "subscription")
 
     def test_naive_anchor_still_records_child_auth(self):
@@ -1159,9 +1368,13 @@ class ChildAuthWiringTest(RunTestBase):
         self.assertIsNone(manifest["child_model"])
 
     def test_env_fingerprint_carries_the_same_value(self):
-        manifest = self._manifest_for(["--tier", "smoke", "--child-auth", "subscription"])
+        manifest = self._manifest_for(
+            ["--tier", "smoke", "--child-auth", "subscription"]
+        )
         self.assertEqual(manifest["env_fingerprint"]["child_auth"], "subscription")
-        self.assertEqual(manifest["env_fingerprint"]["child_auth"], manifest["child_auth"])
+        self.assertEqual(
+            manifest["env_fingerprint"]["child_auth"], manifest["child_auth"]
+        )
 
     def test_run_prs_forwards_the_mode_to_invoke_review(self):
         self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("subscription"))
@@ -1169,22 +1382,42 @@ class ChildAuthWiringTest(RunTestBase):
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
         run._run_prs(
-            run_dir, [PLAIN_URL], cp, self.shas, set(), 60, None, self.bench_data,
+            run_dir,
+            [PLAIN_URL],
+            cp,
+            self.shas,
+            set(),
+            60,
+            None,
+            self.bench_data,
             child_auth="subscription",
         )
-        self.assertEqual(cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason"))
+        self.assertEqual(
+            cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason")
+        )
 
     def test_run_prs_forwards_the_mode_to_the_naive_anchor(self):
         self._install_runner_fakes()
         run_dir = self.runs_root / "auth-forward-naive"
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
-        with patch.object(run, "_invoke_naive", make_naive_expecting_auth("subscription")):
+        with patch.object(
+            run, "_invoke_naive", make_naive_expecting_auth("subscription")
+        ):
             run._run_prs(
-                run_dir, [PLAIN_URL], cp, self.shas, set(), 60, "naive", self.bench_data,
+                run_dir,
+                [PLAIN_URL],
+                cp,
+                self.shas,
+                set(),
+                60,
+                "naive",
+                self.bench_data,
                 child_auth="subscription",
             )
-        self.assertEqual(cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason"))
+        self.assertEqual(
+            cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason")
+        )
 
     def test_invoke_naive_forwards_the_mode_to_build_env(self):
         # build_env owns the whole credential decision, so the only thing to pin here is
@@ -1199,7 +1432,12 @@ class ChildAuthWiringTest(RunTestBase):
 
         with patch.object(run.invoke, "build_env", spy):
             result = run._invoke_naive(
-                self.tmp, NAIVE_PR, self.runs_root / "naive-auth", "diff", {}, 30,
+                self.tmp,
+                NAIVE_PR,
+                self.runs_root / "naive-auth",
+                "diff",
+                {},
+                30,
                 child_auth="subscription",
             )
         self.assertEqual(captured["child_auth"], "subscription")
@@ -1207,16 +1445,22 @@ class ChildAuthWiringTest(RunTestBase):
 
     def test_new_run_threads_the_resolved_mode(self):
         self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("subscription"))
-        rc = run._new_run(run.parse_args(["--tier", "smoke", "--child-auth", "subscription"]))
+        rc = run._new_run(
+            run.parse_args(["--tier", "smoke", "--child-auth", "subscription"])
+        )
         self.assertEqual(rc, 0)
 
     def test_resume_prefers_the_manifest_mode_over_a_conflicting_flag(self):
         # A resumed run must not switch credentials mid-flight: half its PRs would be
         # billed one way and half the other, and the single ledger row could only label
         # one of them. Same precedence as tool/child_model.
-        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        self._install_runner_fakes(
+            invoke_fn=make_invoke_raises_first(KeyboardInterrupt())
+        )
         with self.assertRaises(KeyboardInterrupt):
-            run._new_run(run.parse_args(["--tier", "smoke", "--child-auth", "subscription"]))
+            run._new_run(
+                run.parse_args(["--tier", "smoke", "--child-auth", "subscription"])
+            )
         run_dir = next(p for p in self.runs_root.iterdir() if p.is_dir())
         run_id = run_dir.name
         self.assertEqual(
@@ -1250,7 +1494,9 @@ class ChildAuthWiringTest(RunTestBase):
         self.assertEqual(manifest["child_auth"], "subscription")
         # Recorded means honoured: a later resume reads it back, so main's conflict guard
         # can refuse a flag that disagrees instead of silently switching credentials.
-        self.assertEqual(run._recorded_child_auth("smoke-orphan-record"), "subscription")
+        self.assertEqual(
+            run._recorded_child_auth("smoke-orphan-record"), "subscription"
+        )
         # And the harm this closes: the scorer's own read of that manifest now labels the
         # row subscription, so cost_is_billable keeps the spend out of billable figures.
         self.assertEqual(run.ledger.manifest_auth_mode(manifest), "subscription")
@@ -1260,8 +1506,11 @@ class ChildAuthWiringTest(RunTestBase):
         run_dir = self.runs_root / "smoke-orphan-api"
         run_dir.mkdir(parents=True)
         self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
-        run._resume("smoke-orphan-api", run.parse_args(["--resume", "smoke-orphan-api"]),
-                    retry=False)
+        run._resume(
+            "smoke-orphan-api",
+            run.parse_args(["--resume", "smoke-orphan-api"]),
+            retry=False,
+        )
         manifest = json.loads((run_dir / "run.json").read_text())
         self.assertEqual(manifest["child_auth"], "api")
 
@@ -1275,8 +1524,11 @@ class ChildAuthWiringTest(RunTestBase):
         )
         before = (run_dir / "run.json").read_bytes()
         self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
-        run._resume("smoke-legacy-untouched",
-                    run.parse_args(["--resume", "smoke-legacy-untouched"]), retry=False)
+        run._resume(
+            "smoke-legacy-untouched",
+            run.parse_args(["--resume", "smoke-legacy-untouched"]),
+            retry=False,
+        )
         self.assertEqual((run_dir / "run.json").read_bytes(), before)
 
     def test_resume_of_a_pre_child_auth_manifest_falls_back_to_api(self):
@@ -1287,9 +1539,13 @@ class ChildAuthWiringTest(RunTestBase):
             json.dumps({"tier": "smoke", "pr_urls": [PLAIN_URL], "anchor": None})
         )
         self._install_runner_fakes(invoke_fn=make_invoke_expecting_auth("api"))
-        run._resume(run_dir.name, run.parse_args(["--resume", run_dir.name]), retry=False)
+        run._resume(
+            run_dir.name, run.parse_args(["--resume", run_dir.name]), retry=False
+        )
         cp = run.checkpoint.Checkpoint(run_dir)
-        self.assertEqual(cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason"))
+        self.assertEqual(
+            cp.status(PLAIN_URL), "ok", self._detail(cp, PLAIN_URL).get("reason")
+        )
 
 
 class PrsListTest(RunTestBase):
@@ -1339,7 +1595,9 @@ class PrsListTest(RunTestBase):
         # A --prs run interrupted (all PRs left pending) resumes from the manifest's
         # recorded URLs -- tier is "custom" so there is no subset to re-resolve; resume
         # reads pr_urls exactly like a tier run does.
-        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        self._install_runner_fakes(
+            invoke_fn=make_invoke_raises_first(KeyboardInterrupt())
+        )
         urls = [FIXTURE_URL, PLAIN_URL]
         with self.assertRaises(KeyboardInterrupt):
             run._new_run(run.parse_args(["--prs", ",".join(urls)]))
@@ -1348,8 +1606,15 @@ class PrsListTest(RunTestBase):
 
         seen = []
 
-        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit", child_auth="api"):
+        def spy(
+            worktree,
+            pr,
+            run_dir,
+            timeout_s=1800,
+            tool="deep-review-v3",
+            child_model="inherit",
+            child_auth="api",
+        ):
             seen.append(pr["url"])
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -1381,7 +1646,9 @@ class ResumeTest(RunTestBase):
         # must, on resume with default args (tool defaults to deep-review-v3), re-invoke
         # with the manifest's recorded tool -- the run.py:705 precedence
         # `manifest.get("tool") or args.tool`. The manifest wins over the v3 default.
-        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        self._install_runner_fakes(
+            invoke_fn=make_invoke_raises_first(KeyboardInterrupt())
+        )
         v2_args = run.parse_args(["--tier", "smoke", "--tool", "deep-review-v2"])
         with self.assertRaises(KeyboardInterrupt):
             run._new_run(v2_args)  # writes the v2 manifest, then interrupts on PR 1
@@ -1393,8 +1660,15 @@ class ResumeTest(RunTestBase):
 
         captured = []
 
-        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit", child_auth="api"):
+        def spy(
+            worktree,
+            pr,
+            run_dir,
+            timeout_s=1800,
+            tool="deep-review-v3",
+            child_model="inherit",
+            child_auth="api",
+        ):
             captured.append(tool)
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -1410,7 +1684,9 @@ class ResumeTest(RunTestBase):
         # on resume with default args (child_model resolves to the v3 default sonnet),
         # re-invoke with the manifest's recorded opus -- the same precedence as tool
         # (`manifest.get("child_model") or _resolve_child_model(...)`).
-        self._install_runner_fakes(invoke_fn=make_invoke_raises_first(KeyboardInterrupt()))
+        self._install_runner_fakes(
+            invoke_fn=make_invoke_raises_first(KeyboardInterrupt())
+        )
         opus_args = run.parse_args(["--tier", "smoke", "--child-model", "opus"])
         with self.assertRaises(KeyboardInterrupt):
             run._new_run(opus_args)  # writes the opus manifest, then interrupts on PR 1
@@ -1422,8 +1698,15 @@ class ResumeTest(RunTestBase):
 
         captured = []
 
-        def spy(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                child_model="inherit", child_auth="api"):
+        def spy(
+            worktree,
+            pr,
+            run_dir,
+            timeout_s=1800,
+            tool="deep-review-v3",
+            child_model="inherit",
+            child_auth="api",
+        ):
             captured.append(child_model)
             return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -1488,7 +1771,7 @@ class CliGuardTest(RunTestBase):
 # --------------------------------------------------------------- naive anchor output
 
 
-NAIVE_FAKE_CLAUDE = '''#!/usr/bin/env python3
+NAIVE_FAKE_CLAUDE = """#!/usr/bin/env python3
 import os, sys, json
 try:
     sys.stdin.read()
@@ -1503,7 +1786,7 @@ envelope = {
     "permission_denials": [],
 }
 sys.stdout.write(json.dumps(envelope) + "\\n")
-'''
+"""
 
 NAIVE_PR = {
     "url": "https://github.com/octo/widget/pull/7",
@@ -1552,7 +1835,9 @@ class NaivePayloadParseTest(RunTestBase):
         dest = run._naive_payload_from_result(text, pr_dir)
         self.assertIsNotNone(dest)
         payload = json.loads(Path(dest).read_text())
-        self.assertEqual(payload["payload"]["comments"], [{"path": "a.py", "line": 3, "body": body}])
+        self.assertEqual(
+            payload["payload"]["comments"], [{"path": "a.py", "line": 3, "body": body}]
+        )
 
     def test_last_block_with_comments_wins(self):
         pr_dir = self.tmp / "pr-7"
@@ -1563,12 +1848,14 @@ class NaivePayloadParseTest(RunTestBase):
         )
         dest = run._naive_payload_from_result(text, pr_dir)
         payload = json.loads(Path(dest).read_text())
-        self.assertEqual([c["body"] for c in payload["payload"]["comments"]], ["second"])
+        self.assertEqual(
+            [c["body"] for c in payload["payload"]["comments"]], ["second"]
+        )
 
     def test_empty_comments_list_is_written(self):
         pr_dir = self.tmp / "pr-7"
         pr_dir.mkdir()
-        text = "No issues found.\n```json\n{\"comments\": []}\n```"
+        text = 'No issues found.\n```json\n{"comments": []}\n```'
         dest = run._naive_payload_from_result(text, pr_dir)
         self.assertIsNotNone(dest)
         payload = json.loads(Path(dest).read_text())
@@ -1577,7 +1864,9 @@ class NaivePayloadParseTest(RunTestBase):
     def test_no_parseable_block_returns_none(self):
         pr_dir = self.tmp / "pr-7"
         pr_dir.mkdir()
-        self.assertIsNone(run._naive_payload_from_result("just prose, no json block", pr_dir))
+        self.assertIsNone(
+            run._naive_payload_from_result("just prose, no json block", pr_dir)
+        )
         self.assertFalse((pr_dir / "post-review-payload.json").exists())
 
     def test_prompt_appends_output_contract(self):
@@ -1626,7 +1915,7 @@ class NaiveInvokeTest(RunTestBase):
         self.assertEqual(result.reason, "naive_output_unparseable")
 
     def test_empty_comments_is_ok_with_empty_payload(self):
-        result = self._run_naive("```json\n{\"comments\": []}\n```")
+        result = self._run_naive('```json\n{"comments": []}\n```')
         self.assertEqual(result.status, "ok")
         payload = json.loads(Path(result.payload_path).read_text())
         self.assertEqual(payload["payload"]["comments"], [])
@@ -1643,7 +1932,7 @@ class NaiveInvokeTest(RunTestBase):
             return real(text)
 
         with patch.object(run.invoke, "parse_result_envelope", spy):
-            result = self._run_naive("```json\n{\"comments\": []}\n```")
+            result = self._run_naive('```json\n{"comments": []}\n```')
         self.assertEqual(result.status, "ok")
         self.assertTrue(calls)
 
@@ -1653,7 +1942,7 @@ class NaiveInvokeTest(RunTestBase):
 
 # A parametrizable naive fake: FAKE_NAIVE_IS_ERROR / _SUBTYPE / _EXIT / _RESULT let a
 # test drive the exact failure envelope + exit code the reason logic must classify.
-NAIVE_FAKE_CLAUDE_PARAM = '''#!/usr/bin/env python3
+NAIVE_FAKE_CLAUDE_PARAM = """#!/usr/bin/env python3
 import os, sys, json
 try:
     sys.stdin.read()
@@ -1671,7 +1960,7 @@ envelope = {
 }
 sys.stdout.write(json.dumps(envelope) + "\\n")
 sys.exit(int(os.environ.get("FAKE_NAIVE_EXIT", "0")))
-'''
+"""
 
 
 class NaiveFailureReasonTest(RunTestBase):

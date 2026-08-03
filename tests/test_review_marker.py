@@ -74,8 +74,8 @@ HEAD_SHA_40 = "b" * 40
 # TestRoundTrip — Requirement 6, the headline test.
 # ---------------------------------------------------------------------------
 
-class TestRoundTrip(unittest.TestCase):
 
+class TestRoundTrip(unittest.TestCase):
     def test_build_footer_round_trip_matrix(self):
         for sha in (SHA_40, SHA_8):
             for count in (0, 1, 250):
@@ -117,8 +117,8 @@ class TestRoundTrip(unittest.TestCase):
 # TestTolerance — every marker shape that can exist in the wild.
 # ---------------------------------------------------------------------------
 
-class TestTolerance(unittest.TestCase):
 
+class TestTolerance(unittest.TestCase):
     def test_current_shape(self):
         text = build_marker(SHA_40, 3)
         signal = detect_signal(text)
@@ -149,10 +149,14 @@ class TestTolerance(unittest.TestCase):
         self.assertEqual(signal["sha"], SHA_40)
 
     def test_unknown_future_keys_preserved_in_marker(self):
-        payload = json.dumps({
-            "version": "3.0", "sha": SHA_40,
-            "future_field": "xyz", "nested": {"a": 1},
-        })
+        payload = json.dumps(
+            {
+                "version": "3.0",
+                "sha": SHA_40,
+                "future_field": "xyz",
+                "nested": {"a": 1},
+            }
+        )
         text = f"<!-- {MARKER_TOKEN}: {payload} -->"
         signal = detect_signal(text)
         self.assertIsNotNone(signal)
@@ -173,10 +177,13 @@ class TestTolerance(unittest.TestCase):
                 self.assertEqual(signal["sha"], SHA_40)
 
     def test_findings_array_containing_literal_close_comment_inside_a_string(self):
-        payload = json.dumps({
-            "version": "3.0", "sha": SHA_40,
-            "findings": ["this string literally contains --> inside it"],
-        })
+        payload = json.dumps(
+            {
+                "version": "3.0",
+                "sha": SHA_40,
+                "findings": ["this string literally contains --> inside it"],
+            }
+        )
         text = f"<!-- {MARKER_TOKEN}: {payload} -->"
         signal = detect_signal(text)
         self.assertIsNotNone(signal)
@@ -191,8 +198,8 @@ class TestTolerance(unittest.TestCase):
 # TestVersionIsNeverDispatchedOn
 # ---------------------------------------------------------------------------
 
-class TestVersionIsNeverDispatchedOn(unittest.TestCase):
 
+class TestVersionIsNeverDispatchedOn(unittest.TestCase):
     def test_version_variants_yield_identical_sha_and_signal(self):
         results = []
         for version in ("3.0", 1, "99", None):
@@ -210,7 +217,8 @@ class TestVersionIsNeverDispatchedOn(unittest.TestCase):
         results.append((signal["sha"], signal["signal"]))
 
         self.assertEqual(
-            len(set(results)), 1,
+            len(set(results)),
+            1,
             f"version must never affect the detected sha/signal: {results}",
         )
 
@@ -219,8 +227,8 @@ class TestVersionIsNeverDispatchedOn(unittest.TestCase):
 # TestProseFooter
 # ---------------------------------------------------------------------------
 
-class TestProseFooter(unittest.TestCase):
 
+class TestProseFooter(unittest.TestCase):
     def test_current_product_prose_detected(self):
         text = build_prose_footer(SHA_40)
         self.assertTrue(has_prose_footer(text))
@@ -266,8 +274,8 @@ class TestProseFooter(unittest.TestCase):
 # TestMalformed — never raises.
 # ---------------------------------------------------------------------------
 
-class TestMalformed(unittest.TestCase):
 
+class TestMalformed(unittest.TestCase):
     def test_empty_string(self):
         self.assertIsNone(detect_signal(""))
         self.assertIsNone(find_marker(""))
@@ -310,7 +318,7 @@ class TestMalformed(unittest.TestCase):
         for const in ("NaN", "Infinity", "-Infinity"):
             with self.subTest(const=const):
                 text = (
-                    f'<!-- {MARKER_TOKEN}: '
+                    f"<!-- {MARKER_TOKEN}: "
                     f'{{"version":"3.0","sha":"{SHA_40}","weird":{const}}} -->'
                 )
                 self.assertIsNone(find_marker(text))
@@ -357,8 +365,8 @@ class TestMalformed(unittest.TestCase):
 # marker tokens must not cost O(tokens x length)).
 # ---------------------------------------------------------------------------
 
-class TestMaxMarkerScans(unittest.TestCase):
 
+class TestMaxMarkerScans(unittest.TestCase):
     def test_valid_marker_within_the_scan_window_is_still_found(self):
         """A body noisy with malformed candidates, where the one valid marker
         sits inside the last _MAX_MARKER_SCANS matches, still resolves —
@@ -400,8 +408,8 @@ class TestMaxMarkerScans(unittest.TestCase):
 # TestIdempotence
 # ---------------------------------------------------------------------------
 
-class TestIdempotence(unittest.TestCase):
 
+class TestIdempotence(unittest.TestCase):
     def test_marker_already_present_omits_marker_half(self):
         body = build_marker(SHA_40, 2)
         addition = build_footer(3, SHA_40, body=body)
@@ -433,7 +441,9 @@ class TestIdempotence(unittest.TestCase):
         body += build_footer(2, SHA_40, body=body)
         length_after_first = len(body)
         body += build_footer(2, SHA_40, body=body)
-        self.assertEqual(len(body), length_after_first, "double-append must add nothing")
+        self.assertEqual(
+            len(body), length_after_first, "double-append must add nothing"
+        )
         signal = detect_signal(body)
         self.assertIsNotNone(signal)
         self.assertEqual(signal["sha"], SHA_40)
@@ -451,8 +461,7 @@ class TestIdempotence(unittest.TestCase):
         and the prose half only when a product line AND a parseable sha are
         both present."""
         body = (
-            f'<!-- {MARKER_TOKEN}: {{"version":"3.0"}} -->\n\n'
-            f"Generated by {PRODUCT}\n"
+            f'<!-- {MARKER_TOKEN}: {{"version":"3.0"}} -->\n\nGenerated by {PRODUCT}\n'
         )
         self.assertIsNone(
             detect_signal(body),
@@ -460,7 +469,8 @@ class TestIdempotence(unittest.TestCase):
         )
         addition = build_footer(1, SHA_40, body=body)
         self.assertNotEqual(
-            addition, "",
+            addition,
+            "",
             "build_footer must not go silent just because unusable marker/prose "
             "fragments are already present",
         )
@@ -474,8 +484,8 @@ class TestIdempotence(unittest.TestCase):
 # TestBuildMarkerFindingsSlot — #36 extension point.
 # ---------------------------------------------------------------------------
 
-class TestBuildMarkerFindingsSlot(unittest.TestCase):
 
+class TestBuildMarkerFindingsSlot(unittest.TestCase):
     @staticmethod
     def _payload_from(marker_text):
         m = re.search(r":\s*({.*})\s*-->", marker_text)
@@ -491,7 +501,9 @@ class TestBuildMarkerFindingsSlot(unittest.TestCase):
         findings = [{"id": 1, "title": "x"}, {"id": 2, "title": "y"}]
         marker_text = build_marker(SHA_40, 2, findings=findings)
         payload = self._payload_from(marker_text)
-        self.assertEqual(list(payload.keys()), ["version", "findings_count", "sha", "findings"])
+        self.assertEqual(
+            list(payload.keys()), ["version", "findings_count", "sha", "findings"]
+        )
         self.assertEqual(payload["findings"], findings)
 
         signal = detect_signal(marker_text)
@@ -503,16 +515,28 @@ class TestBuildMarkerFindingsSlot(unittest.TestCase):
 # TestSelectLatest
 # ---------------------------------------------------------------------------
 
-class TestSelectLatest(unittest.TestCase):
 
+class TestSelectLatest(unittest.TestCase):
     def test_newest_timestamp_wins_across_mixed_sources(self):
         entries = [
-            {"body": build_marker("a" * 8, 1), "timestamp": "2026-01-01T00:00:00Z",
-             "source": "review", "id": 1},
-            {"body": build_prose_footer("b" * 8), "timestamp": "2026-06-15T12:00:00Z",
-             "source": "issue_comment", "id": 2},
-            {"body": build_marker("c" * 8, 1), "timestamp": "2026-03-01T00:00:00Z",
-             "source": "note", "id": 3},
+            {
+                "body": build_marker("a" * 8, 1),
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "review",
+                "id": 1,
+            },
+            {
+                "body": build_prose_footer("b" * 8),
+                "timestamp": "2026-06-15T12:00:00Z",
+                "source": "issue_comment",
+                "id": 2,
+            },
+            {
+                "body": build_marker("c" * 8, 1),
+                "timestamp": "2026-03-01T00:00:00Z",
+                "source": "note",
+                "id": 3,
+            },
         ]
         result = select_latest(entries)
         self.assertIsNotNone(result)
@@ -522,10 +546,18 @@ class TestSelectLatest(unittest.TestCase):
 
     def test_none_timestamp_sorts_lowest(self):
         entries = [
-            {"body": build_marker("a" * 8, 1), "timestamp": None,
-             "source": "review", "id": 1},
-            {"body": build_marker("b" * 8, 1), "timestamp": "2020-01-01T00:00:00Z",
-             "source": "review", "id": 2},
+            {
+                "body": build_marker("a" * 8, 1),
+                "timestamp": None,
+                "source": "review",
+                "id": 1,
+            },
+            {
+                "body": build_marker("b" * 8, 1),
+                "timestamp": "2020-01-01T00:00:00Z",
+                "source": "review",
+                "id": 2,
+            },
         ]
         result = select_latest(entries)
         self.assertIsNotNone(result)
@@ -535,10 +567,18 @@ class TestSelectLatest(unittest.TestCase):
         # A naive lexicographic compare would rank "not-a-timestamp" above a real
         # ISO8601 string ('n' > '2' in ASCII) — this pins the required special case.
         entries = [
-            {"body": build_marker("a" * 8, 1), "timestamp": "not-a-timestamp",
-             "source": "review", "id": 1},
-            {"body": build_marker("b" * 8, 1), "timestamp": "2020-01-01T00:00:00Z",
-             "source": "review", "id": 2},
+            {
+                "body": build_marker("a" * 8, 1),
+                "timestamp": "not-a-timestamp",
+                "source": "review",
+                "id": 1,
+            },
+            {
+                "body": build_marker("b" * 8, 1),
+                "timestamp": "2020-01-01T00:00:00Z",
+                "source": "review",
+                "id": 2,
+            },
         ]
         result = select_latest(entries)
         self.assertIsNotNone(result)
@@ -547,21 +587,39 @@ class TestSelectLatest(unittest.TestCase):
     def test_ties_break_to_latest_input_order(self):
         same_ts = "2026-01-01T00:00:00Z"
         entries = [
-            {"body": build_marker("a" * 8, 1), "timestamp": same_ts,
-             "source": "review", "id": 1},
-            {"body": build_marker("b" * 8, 1), "timestamp": same_ts,
-             "source": "note", "id": 2},
+            {
+                "body": build_marker("a" * 8, 1),
+                "timestamp": same_ts,
+                "source": "review",
+                "id": 1,
+            },
+            {
+                "body": build_marker("b" * 8, 1),
+                "timestamp": same_ts,
+                "source": "note",
+                "id": 2,
+            },
         ]
         result = select_latest(entries)
         self.assertIsNotNone(result)
-        self.assertEqual(result["sha"], "b" * 8, "the later entry in input order must win a tie")
+        self.assertEqual(
+            result["sha"], "b" * 8, "the later entry in input order must win a tie"
+        )
 
     def test_no_signal_entries_are_ignored(self):
         entries = [
-            {"body": "nothing detectable in this body", "timestamp": "2026-06-01T00:00:00Z",
-             "source": "x", "id": 1},
-            {"body": build_marker("a" * 8, 1), "timestamp": "2020-01-01T00:00:00Z",
-             "source": "review", "id": 2},
+            {
+                "body": "nothing detectable in this body",
+                "timestamp": "2026-06-01T00:00:00Z",
+                "source": "x",
+                "id": 1,
+            },
+            {
+                "body": build_marker("a" * 8, 1),
+                "timestamp": "2020-01-01T00:00:00Z",
+                "source": "review",
+                "id": 2,
+            },
         ]
         result = select_latest(entries)
         self.assertIsNotNone(result)
@@ -569,8 +627,18 @@ class TestSelectLatest(unittest.TestCase):
 
     def test_all_entries_without_signal_returns_none(self):
         entries = [
-            {"body": "nope", "timestamp": "2026-01-01T00:00:00Z", "source": "x", "id": 1},
-            {"body": "still nope", "timestamp": "2026-02-01T00:00:00Z", "source": "y", "id": 2},
+            {
+                "body": "nope",
+                "timestamp": "2026-01-01T00:00:00Z",
+                "source": "x",
+                "id": 1,
+            },
+            {
+                "body": "still nope",
+                "timestamp": "2026-02-01T00:00:00Z",
+                "source": "y",
+                "id": 2,
+            },
         ]
         self.assertIsNone(select_latest(entries))
 
@@ -590,7 +658,6 @@ def _read(rel_path):
 
 
 class TestDocContract(unittest.TestCase):
-
     PHASE1_REL = "skills/code-gauntlet/references/phase1-preflight.md"
     SKILL_REL = "skills/code-gauntlet/SKILL.md"
     PHASE2_REL = "skills/code-gauntlet/references/phase2-triage.md"
@@ -637,18 +704,23 @@ class TestDocContract(unittest.TestCase):
                 if span in MARKER_TOKENS:
                     is_legacy = span == LEGACY_MARKER_TOKEN
                     payload = json.dumps(
-                        {"version": "3.0", "findings_count": 1, "sha": SHA_40})
+                        {"version": "3.0", "findings_count": 1, "sha": SHA_40}
+                    )
                     text = f"<!-- {span}: {payload} -->"
                     with self.subTest(path=rel, quoted=span):
                         signal = detect_signal(text)
                         self.assertIsNotNone(
-                            signal, f"quoted token {span!r} was not detected")
+                            signal, f"quoted token {span!r} was not detected"
+                        )
                         self.assertEqual(signal["legacy"], is_legacy)
                     checked += 1
-                elif "Generated by" in span and (PRODUCT in span or LEGACY_PRODUCT in span):
+                elif "Generated by" in span and (
+                    PRODUCT in span or LEGACY_PRODUCT in span
+                ):
                     with self.subTest(path=rel, quoted=span):
                         self.assertIn(
-                            "Reviewed up to", span,
+                            "Reviewed up to",
+                            span,
                             f"doc footer quote {span!r} in {rel} no longer carries "
                             "its own 'Reviewed up to' label — this guard synthesizes "
                             "no label of its own, so a doc change that dropped the "
@@ -660,18 +732,21 @@ class TestDocContract(unittest.TestCase):
                         text = re.sub(r"\{\w*sha\w*\}", SHA_40, span)
                         signal = detect_signal(text)
                         self.assertIsNotNone(
-                            signal, f"quoted footer {span!r} was not detected")
+                            signal, f"quoted footer {span!r} was not detected"
+                        )
                         self.assertEqual(signal["sha"], SHA_40)
                     checked += 1
                     checked_footer += 1
         self.assertGreater(
-            checked, 0,
+            checked,
+            0,
             "no doc quotes a raw marker token or 'Generated by <product>' string "
             "any more — this guard has gone vacuous; re-point QUOTE_SCAN_RELS at "
             "whichever file now renders what the code writes.",
         )
         self.assertGreater(
-            checked_footer, 0,
+            checked_footer,
+            0,
             "no doc quotes a 'Generated by <product> | Reviewed up to:' footer "
             "line any more — the footer half of this guard has gone vacuous; "
             "re-point QUOTE_SCAN_RELS at whichever file still renders it.",
@@ -685,17 +760,25 @@ class TestDocContract(unittest.TestCase):
         spec's Output JSON contract and its branch-selection/degradation bullets —
         not from reading the detector script."""
         required_fields = {
-            "previously_reviewed", "incremental_safe", "head_advanced",
-            "new_commit_count", "last_reviewed_sha_short", "last_reviewed_sha",
-            "marker", "errors", "sha_resolvable",
+            "previously_reviewed",
+            "incremental_safe",
+            "head_advanced",
+            "new_commit_count",
+            "last_reviewed_sha_short",
+            "last_reviewed_sha",
+            "marker",
+            "errors",
+            "sha_resolvable",
         }
         text = _read(self.PHASE1_REL)
         missing = {
-            field for field in required_fields
+            field
+            for field in required_fields
             if f"`{field}`" not in text and f'"{field}"' not in text
         }
         self.assertEqual(
-            missing, set(),
+            missing,
+            set(),
             f"phase1-preflight.md does not surface required output field(s): {sorted(missing)}",
         )
 
@@ -711,10 +794,13 @@ class TestDocContract(unittest.TestCase):
         text = _read(self.PHASE2_REL)
         self.assertIn("git diff {last_reviewed_sha}..HEAD --", text)
         # The unbounded form may appear only inside a prohibition.
-        for match in re.finditer(r"git diff (?:--name-only )?\{last_reviewed_sha\}\.\.\.HEAD", text):
-            context = text[max(0, match.start() - 200):match.start()]
+        for match in re.finditer(
+            r"git diff (?:--name-only )?\{last_reviewed_sha\}\.\.\.HEAD", text
+        ):
+            context = text[max(0, match.start() - 200) : match.start()]
             self.assertRegex(
-                context, r"[Dd]o \*\*not\*\* use|never use|do not use",
+                context,
+                r"[Dd]o \*\*not\*\* use|never use|do not use",
                 "the three-dot incremental diff appears without a prohibition "
                 "in the preceding 200 chars — the doc may be prescribing it",
             )
@@ -725,7 +811,9 @@ class TestDocContract(unittest.TestCase):
         text = _read(self.POST_REVIEW_REL)
         self.assertNotRegex(text, r"(?m)^def build_footer\(")
 
-    def test_previously_reviewed_gate_precedes_stale_truncation_in_skill_and_phase2(self):
+    def test_previously_reviewed_gate_precedes_stale_truncation_in_skill_and_phase2(
+        self,
+    ):
         """Pins the ordering that IS the data-loss fix: the previously-reviewed gate
         must run BEFORE stale-artifact truncation. Truncation zeroes every
         `code-gauntlet-*-{sha}.*` file for the current SHA, which are exactly the
@@ -762,10 +850,15 @@ class TestDocContract(unittest.TestCase):
                 text = _read(rel)
                 gate_idx = text.find(gate_marker)
                 truncate_idx = text.find(truncate_marker)
-                self.assertNotEqual(gate_idx, -1, f"gate section marker not found in {rel}")
-                self.assertNotEqual(truncate_idx, -1, f"truncation section marker not found in {rel}")
+                self.assertNotEqual(
+                    gate_idx, -1, f"gate section marker not found in {rel}"
+                )
+                self.assertNotEqual(
+                    truncate_idx, -1, f"truncation section marker not found in {rel}"
+                )
                 self.assertLess(
-                    gate_idx, truncate_idx,
+                    gate_idx,
+                    truncate_idx,
                     f"{rel}: the previously-reviewed gate must appear BEFORE stale-file "
                     "truncation in doc order — truncation zeroes the artifacts a "
                     "'Skip — keep the existing review' answer exists to preserve, so if "
@@ -778,13 +871,17 @@ class TestDocContract(unittest.TestCase):
         # facts, or running both steps in one Bash call would destroy exactly the
         # artifacts the gate exists to protect, before the user is ever asked.
         skill = _read(self.SKILL_REL)
-        truncate_block = skill[skill.find('echo "=== stale_truncate ==="'):]
-        truncate_block = truncate_block[:truncate_block.find("```", 1)]
+        truncate_block = skill[skill.find('echo "=== stale_truncate ==="') :]
+        truncate_block = truncate_block[: truncate_block.find("```", 1)]
         for fact in (
-            "previously_reviewed", "sha_resolvable", "last_reviewed_sha", "head_sha",
+            "previously_reviewed",
+            "sha_resolvable",
+            "last_reviewed_sha",
+            "head_sha",
         ):
             self.assertIn(
-                fact, truncate_block,
+                fact,
+                truncate_block,
                 f"{self.SKILL_REL}: the stale_truncate section must gate on the "
                 f"detector's `{fact}` fact. Running the gate and the truncation in "
                 "one composite Bash call means doc order alone no longer protects "
@@ -807,7 +904,8 @@ class TestDocContract(unittest.TestCase):
         for rel in (self.SKILL_REL, self.HEADLESS_MODE_REL):
             text = _read(rel)
             matching_lines = [
-                line for line in text.splitlines()
+                line
+                for line in text.splitlines()
                 if "REVIEWED_POLICY" in line
                 and re.search(r"\bskip\b", line, re.IGNORECASE)
                 and "stops the run" in line
@@ -822,7 +920,8 @@ class TestDocContract(unittest.TestCase):
                 )
                 for line in matching_lines:
                     self.assertIn(
-                        "sha_is_ancestor", line,
+                        "sha_is_ancestor",
+                        line,
                         f"{rel}: a headless `skip`-stops-the-run statement for the "
                         "previously-reviewed gate does not require `sha_is_ancestor` "
                         f"— this contradicts the other file; sync {self.SKILL_REL} "
@@ -843,7 +942,8 @@ class TestDocContract(unittest.TestCase):
         command would dirty the user's repo."""
         text = _read(self.PHASE2_REL)
         self.assertNotIn(
-            ">> .gitignore", text,
+            ">> .gitignore",
+            text,
             f"{self.PHASE2_REL} appends to the repo's tracked .gitignore — this "
             "dirties the reviewed user's repo with an undisclosed edit; use "
             "`.git/info/exclude` instead (matching SKILL.md's forbidding rule).",
@@ -859,8 +959,8 @@ class TestDocContract(unittest.TestCase):
 # again", so each one is pinned here by the exact behaviour that motivated it.
 # ---------------------------------------------------------------------------
 
-class TestRound3FixRegressions(unittest.TestCase):
 
+class TestRound3FixRegressions(unittest.TestCase):
     def test_numeric_overflow_token_rejects_the_marker(self):
         """R3-2: parse_constant only sees literal NaN/Infinity tokens. `1e999` is
         an ordinary numeric token that overflows to inf, and json.dumps then
@@ -868,7 +968,9 @@ class TestRound3FixRegressions(unittest.TestCase):
         JSON. Reverting _has_non_finite makes this marker parse."""
         for token in ("1e999", "-1e999", "1E999"):
             with self.subTest(token=token):
-                text = f'<!-- {MARKER_TOKEN}: {{"version":{token},"sha":"{SHA_40}"}} -->'
+                text = (
+                    f'<!-- {MARKER_TOKEN}: {{"version":{token},"sha":"{SHA_40}"}} -->'
+                )
                 self.assertIsNone(find_marker(text))
                 self.assertIsNone(detect_signal(text))
 
@@ -907,10 +1009,16 @@ class TestRound3FixRegressions(unittest.TestCase):
         it must lose to 00:30Z. Reverting _sort_key inverts this."""
         older, newer = "a" * 40, "b" * 40
         entries = [
-            {"body": build_footer(1, older), "timestamp": "2026-07-26T01:00:00+02:00",
-             "source": "review"},
-            {"body": build_footer(1, newer), "timestamp": "2026-07-26T00:30:00Z",
-             "source": "review"},
+            {
+                "body": build_footer(1, older),
+                "timestamp": "2026-07-26T01:00:00+02:00",
+                "source": "review",
+            },
+            {
+                "body": build_footer(1, newer),
+                "timestamp": "2026-07-26T00:30:00Z",
+                "source": "review",
+            },
         ]
         self.assertEqual(select_latest(entries)["sha"], newer)
         self.assertEqual(select_latest(list(reversed(entries)))["sha"], newer)
@@ -919,18 +1027,30 @@ class TestRound3FixRegressions(unittest.TestCase):
         """Naive, offset-bearing and Z-suffixed timestamps must yield one key
         shape — mixing an epoch string with an ISO string would sort every naive
         timestamp above every aware one."""
-        keys = [review_marker._sort_key(t) for t in (
-            "2026-07-26T00:30:00Z", "2026-07-26T01:00:00+02:00", "2026-07-26T00:30:00")]
+        keys = [
+            review_marker._sort_key(t)
+            for t in (
+                "2026-07-26T00:30:00Z",
+                "2026-07-26T01:00:00+02:00",
+                "2026-07-26T00:30:00",
+            )
+        ]
         self.assertTrue(all(k and k[0].isdigit() for k in keys), keys)
         self.assertEqual(keys[0], keys[2])  # naive is read as UTC
 
     def test_unparseable_timestamp_sorts_lowest_not_highest(self):
         real = "b" * 40
         entries = [
-            {"body": build_footer(1, real), "timestamp": "2020-01-01T00:00:00Z",
-             "source": "review"},
-            {"body": build_footer(1, "a" * 40), "timestamp": "not-a-date",
-             "source": "review"},
+            {
+                "body": build_footer(1, real),
+                "timestamp": "2020-01-01T00:00:00Z",
+                "source": "review",
+            },
+            {
+                "body": build_footer(1, "a" * 40),
+                "timestamp": "not-a-date",
+                "source": "review",
+            },
         ]
         self.assertEqual(select_latest(entries)["sha"], real)
 

@@ -5,13 +5,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HEADLESS = (
-    REPO_ROOT
-    / "skills"
-    / "code-gauntlet"
-    / "references"
-    / "headless-mode.md"
-)
+HEADLESS = REPO_ROOT / "skills" / "code-gauntlet" / "references" / "headless-mode.md"
 
 
 class HeadlessEchoIdentityContractTest(unittest.TestCase):

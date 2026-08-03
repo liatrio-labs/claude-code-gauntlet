@@ -157,7 +157,8 @@ def _build_ok_run(
     urls = pr_urls
     if urls is None:
         urls = [
-            "https://github.com/example/repo/pull/{}".format(i + 1) for i in range(n_prs)
+            "https://github.com/example/repo/pull/{}".format(i + 1)
+            for i in range(n_prs)
         ]
     done = list(urls if completed_prs is None else completed_prs)
     _write_json(
@@ -186,7 +187,9 @@ def _build_ok_run(
                 [_ok_finding(origin=origin)],
             )
         if include_workflow:
-            _write_json(pr_dir / "workflows" / "wf_test-0001.json", _wf_record(script_path))
+            _write_json(
+                pr_dir / "workflows" / "wf_test-0001.json", _wf_record(script_path)
+            )
         # Result envelope only — no tool_uses / scriptPath (matches production raw.json).
         _write_json(
             pr_dir / "raw.json",
@@ -247,9 +250,7 @@ class CheckRunTest(unittest.TestCase):
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
-        self.assertTrue(
-            any("new_path/new_line" in f for f in result["failures"])
-        )
+        self.assertTrue(any("new_path/new_line" in f for f in result["failures"]))
 
     def test_dict_wrapped_findings_accepted(self):
         _build_ok_run(self.run_dir)
@@ -271,7 +272,9 @@ class CheckRunTest(unittest.TestCase):
         (self.run_dir / "pr-example-repo-1" / "post-review-payload.json").unlink()
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("missing post-review-payload" in f for f in result["failures"]))
+        self.assertTrue(
+            any("missing post-review-payload" in f for f in result["failures"])
+        )
 
     def test_missing_findings_fails_g2(self):
         _build_ok_run(self.run_dir, include_findings=False)
@@ -298,7 +301,9 @@ class CheckRunTest(unittest.TestCase):
     def test_checkpoint_all_degrade_fails_g3(self):
         _build_ok_run(self.run_dir)
         _write_json(
-            self.run_dir / "pr-example-repo-1" / "code-gauntlet-checkpoint-all-deadbeef.json",
+            self.run_dir
+            / "pr-example-repo-1"
+            / "code-gauntlet-checkpoint-all-deadbeef.json",
             {
                 "gaps": [
                     "writeArtifacts: writer echo did not account for all four "
@@ -310,14 +315,15 @@ class CheckRunTest(unittest.TestCase):
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(
-            any("checkpoint-all" in f and "no-write-proof" in f for f in result["failures"])
+            any(
+                "checkpoint-all" in f and "no-write-proof" in f
+                for f in result["failures"]
+            )
         )
 
     def test_report_degrade_fails_g3(self):
         _build_ok_run(self.run_dir)
-        report = (
-            self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
-        )
+        report = self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
         report.write_text(
             "# Report\n\ngaps: writeArtifacts: no write proof — partial-artifacts\n",
             encoding="utf-8",
@@ -331,7 +337,9 @@ class CheckRunTest(unittest.TestCase):
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
         # Clean secondary carriers so only the compact-return path can fire.
-        (pr / "code-gauntlet-report-deadbeef.md").write_text("# Report\n", encoding="utf-8")
+        (pr / "code-gauntlet-report-deadbeef.md").write_text(
+            "# Report\n", encoding="utf-8"
+        )
         _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
         _write_json(
             pr / "workflows" / "wf_test-0001.json",
@@ -359,13 +367,18 @@ class CheckRunTest(unittest.TestCase):
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(
-            any("workflows/wf_" in f and "partial-artifacts" in f for f in result["failures"])
+            any(
+                "workflows/wf_" in f and "partial-artifacts" in f
+                for f in result["failures"]
+            )
         )
 
     def test_raw_json_result_partial_artifacts_gap_fails_g3(self):
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
-        (pr / "code-gauntlet-report-deadbeef.md").write_text("# Report\n", encoding="utf-8")
+        (pr / "code-gauntlet-report-deadbeef.md").write_text(
+            "# Report\n", encoding="utf-8"
+        )
         _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
         # Skill often echoes the compact return into the envelope .result text.
         _write_json(
@@ -383,11 +396,17 @@ class CheckRunTest(unittest.TestCase):
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("raw.json" in f and "partial-artifacts" in f for f in result["failures"]))
+        self.assertTrue(
+            any(
+                "raw.json" in f and "partial-artifacts" in f for f in result["failures"]
+            )
+        )
 
     def _clean_secondary_carriers(self, pr):
         """Blank the report/checkpoint carriers so only the wf record can fire."""
-        (pr / "code-gauntlet-report-deadbeef.md").write_text("# Report\n", encoding="utf-8")
+        (pr / "code-gauntlet-report-deadbeef.md").write_text(
+            "# Report\n", encoding="utf-8"
+        )
         _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
 
     def test_wf_script_field_bundle_literals_do_not_fail_g3(self):
@@ -408,10 +427,10 @@ class CheckRunTest(unittest.TestCase):
                 # Escaped quotes matter: a naive "script"\s*:\s*"[^"]*" stops at
                 # the first \" and leaves the rest of the bundle in the scan.
                 "script": (
-                    'function writeArtifacts() {\n'
+                    "function writeArtifacts() {\n"
                     '  return fail("writer echo did not cover all three primary '
                     'artifact paths (no write proof)");\n'
-                    '}\n'
+                    "}\n"
                     'const note = "he said \\"partial-artifacts\\" and moved on";\n'
                     'gaps.push("artifacts not persisted (partial-artifacts)");\n'
                 ),
@@ -469,7 +488,10 @@ class CheckRunTest(unittest.TestCase):
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(
-            any("workflows/wf_" in f and "partial-artifacts" in f for f in result["failures"])
+            any(
+                "workflows/wf_" in f and "partial-artifacts" in f
+                for f in result["failures"]
+            )
         )
 
     def test_unparseable_wf_record_bundle_literals_only_does_not_fail_g3(self):
@@ -483,9 +505,9 @@ class CheckRunTest(unittest.TestCase):
         wf_path = pr / "workflows" / "wf_test-0001.json"
         wf_path.parent.mkdir(parents=True, exist_ok=True)
         wf_path.write_text(
-            '{\n'
+            "{\n"
             '  "runId": "wf_test-0001",\n'
-            '  "scriptPath": ' + json.dumps(PIPELINE) + ',\n'
+            '  "scriptPath": ' + json.dumps(PIPELINE) + ",\n"
             '  "script": "const note = \\"partial-artifacts\\";\\n'
             'return fail(\\"... (no write proof)\\");\\n',
             encoding="utf-8",
@@ -507,12 +529,12 @@ class CheckRunTest(unittest.TestCase):
         wf_path = pr / "workflows" / "wf_test-0001.json"
         wf_path.parent.mkdir(parents=True, exist_ok=True)
         wf_path.write_text(
-            '{\n'
+            "{\n"
             '  "runId": "wf_test-0001",\n'
             '  "script": "const note = \\"harmless\\";\\n",\n'
             '  "result": {\n'
             '    "gaps": ["writeArtifacts: writer echo did not cover all three '
-            'primary artifact paths (no write proof) — artifacts not persisted '
+            "primary artifact paths (no write proof) — artifacts not persisted "
             '(partial-artifacts)"',
             encoding="utf-8",
         )
@@ -521,7 +543,10 @@ class CheckRunTest(unittest.TestCase):
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
         self.assertTrue(
-            any("workflows/wf_" in f and "partial-artifacts" in f for f in result["failures"])
+            any(
+                "workflows/wf_" in f and "partial-artifacts" in f
+                for f in result["failures"]
+            )
         )
 
     def test_structured_carrier_clean_gaps_ignores_stray_bytes(self):
@@ -599,9 +624,7 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(
             any(
-                "plugin_root" in f
-                or "identity" in f.lower()
-                or "pipeline_version" in f
+                "plugin_root" in f or "identity" in f.lower() or "pipeline_version" in f
                 for f in result["failures"]
             ),
             result["failures"],
@@ -637,9 +660,7 @@ class CheckRunTest(unittest.TestCase):
         identity_failures = [
             f
             for f in result["failures"]
-            if "plugin_root" in f
-            or "pipeline_version" in f
-            or "identity" in f.lower()
+            if "plugin_root" in f or "pipeline_version" in f or "identity" in f.lower()
         ]
         self.assertEqual(identity_failures, [], result["failures"])
 
@@ -695,7 +716,9 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("no workflows/wf_" in f for f in result["failures"]))
         # raw.json must NOT be treated as a scriptPath source.
-        self.assertFalse(any("raw.json" in f and "scriptPath" in f for f in result["failures"]))
+        self.assertFalse(
+            any("raw.json" in f and "scriptPath" in f for f in result["failures"])
+        )
 
     def test_g4_valid_echo_without_wf_records_passes(self):
         """Complete valid echo receipt is sufficient when no wf records were collected."""
@@ -724,9 +747,7 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"], result["failures"])
         self.assertTrue(
             any(
-                "plugin_root" in f
-                or "identity" in f.lower()
-                or "pipeline_version" in f
+                "plugin_root" in f or "identity" in f.lower() or "pipeline_version" in f
                 for f in result["failures"]
             ),
             result["failures"],
@@ -784,7 +805,9 @@ class CheckRunTest(unittest.TestCase):
         )
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertFalse(result["ok"])
-        self.assertTrue(any("missing required field group file" in f for f in result["failures"]))
+        self.assertTrue(
+            any("missing required field group file" in f for f in result["failures"])
+        )
 
     def test_union_schema_missing_origin_fails_g2(self):
         _build_ok_run(self.run_dir)
@@ -890,10 +913,7 @@ class WorkflowRecordCollectionTest(unittest.TestCase):
         dest = self.pr_dir / "workflows"
         self.assertTrue((dest / "wf_same.json").is_file())
         self.assertTrue((dest / "wf_same-2.json").is_file())
-        paths = {
-            json.loads((dest / name).read_text())["scriptPath"]
-            for name in copied
-        }
+        paths = {json.loads((dest / name).read_text())["scriptPath"] for name in copied}
         self.assertEqual(paths, {PIPELINE, "/other/workflows/pipeline.js"})
 
 

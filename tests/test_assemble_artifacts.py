@@ -127,7 +127,9 @@ class _Workspace:
     """A temp output dir with findings.json + report.md already on disk."""
 
     def __init__(self, findings=None, report="# report\n\nbody", findings_json=None):
-        self.findings = findings if findings is not None else [finding("F1"), finding("F2")]
+        self.findings = (
+            findings if findings is not None else [finding("F1"), finding("F2")]
+        )
         self.report = report
         # Override for fixtures whose on-disk bytes are not plain js_pretty output —
         # a lone surrogate, for instance, is ESCAPED on disk (JSON.stringify is
@@ -136,11 +138,19 @@ class _Workspace:
 
     def __enter__(self):
         self.dir = tempfile.mkdtemp(prefix="assemble-")
-        self.findings_path = os.path.join(self.dir, "code-gauntlet-findings-abc1234.json")
+        self.findings_path = os.path.join(
+            self.dir, "code-gauntlet-findings-abc1234.json"
+        )
         self.report_path = os.path.join(self.dir, "code-gauntlet-report-abc1234.md")
-        self.post_path = os.path.join(self.dir, "code-gauntlet-post-review-abc1234.json")
-        self.checkpoint_path = os.path.join(self.dir, "code-gauntlet-checkpoint-all-abc1234.json")
-        self.plan_path = os.path.join(self.dir, "code-gauntlet-persist-plan-abc1234.json")
+        self.post_path = os.path.join(
+            self.dir, "code-gauntlet-post-review-abc1234.json"
+        )
+        self.checkpoint_path = os.path.join(
+            self.dir, "code-gauntlet-checkpoint-all-abc1234.json"
+        )
+        self.plan_path = os.path.join(
+            self.dir, "code-gauntlet-persist-plan-abc1234.json"
+        )
         self.findings_json = (
             self.findings_json_override
             if self.findings_json_override is not None
@@ -238,7 +248,6 @@ def run_script(plan_path):
 
 
 class TestChecksum(unittest.TestCase):
-
     def test_known_vector(self):
         # fnv1a32 of the empty string is the offset basis.
         self.assertEqual(fnv1a32(""), "fnv1a32:0x811c9dc5")
@@ -291,9 +300,7 @@ class TestCrossRuntimeChecksumParity(unittest.TestCase):
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             js_checksum, js_chars = proc.stdout.strip().split(" ")
-            self.assertEqual(
-                js_checksum, fnv1a32(s), "checksum mismatch for %r" % s
-            )
+            self.assertEqual(js_checksum, fnv1a32(s), "checksum mismatch for %r" % s)
             self.assertEqual(
                 int(js_chars), utf16_len(s), "char count mismatch for %r" % s
             )
@@ -342,8 +349,14 @@ class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
     def test_hardened_findings_json_carries_no_backslash_run(self):
         findings = [dict(finding("F1"), description=self.PROSE)]
         hardened = self._hardened(findings)
-        self.assertNotIn("\\\\", hardened, "a run of two backslashes is what the writer collapses")
-        self.assertIn("\\u005c", hardened, "precondition: the fixture actually exercises the transform")
+        self.assertNotIn(
+            "\\\\", hardened, "a run of two backslashes is what the writer collapses"
+        )
+        self.assertIn(
+            "\\u005c",
+            hardened,
+            "precondition: the fixture actually exercises the transform",
+        )
         self.assertEqual(json.loads(hardened)[0]["description"], self.PROSE)
 
     def test_assembler_accepts_it_and_derives_the_same_documents(self):
@@ -362,10 +375,15 @@ class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
             # the parsed value), and carry the finding text byte for byte.
             post = json.loads(ws.read(ws.post_path))
             self.assertEqual(post[0]["description"], self.PROSE)
-            self.assertNotIn("\\u005c", ws.read(ws.post_path), "hardening is a WIRE spelling, not a data change")
+            self.assertNotIn(
+                "\\u005c",
+                ws.read(ws.post_path),
+                "hardening is a WIRE spelling, not a data change",
+            )
             checkpoint = json.loads(ws.read(ws.checkpoint_path))
             self.assertEqual(
-                checkpoint["phases"]["challenge"]["findings"][0]["description"], self.PROSE
+                checkpoint["phases"]["challenge"]["findings"][0]["description"],
+                self.PROSE,
             )
 
     def test_the_unhardened_spelling_of_the_same_document_still_works(self):
@@ -373,7 +391,11 @@ class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
         (or by the legacy by-value path) is still a valid input."""
         findings = [dict(finding("F1"), description=self.PROSE)]
         with _Workspace(findings=findings) as ws:
-            self.assertIn("\\\\", ws.findings_json, "precondition: this fixture is the UNhardened spelling")
+            self.assertIn(
+                "\\\\",
+                ws.findings_json,
+                "precondition: this fixture is the UNhardened spelling",
+            )
             proc = run_script(ws.write_plan(ws.plan()))
             self.assertEqual(proc.returncode, 0, proc.stderr)
             receipt = json.loads(proc.stdout)
@@ -383,7 +405,6 @@ class TestEscapeHardenedPrimaryIsAcceptedUnchanged(unittest.TestCase):
 
 
 class TestRoundTripDerivation(unittest.TestCase):
-
     def test_derives_post_review_and_checkpoint(self):
         with _Workspace() as ws:
             path = ws.write_plan(ws.plan())
@@ -424,13 +445,10 @@ class TestRoundTripDerivation(unittest.TestCase):
     def test_derived_json_is_js_pretty_byte_identical(self):
         with _Workspace() as ws:
             run_script(ws.write_plan(ws.plan()))
-            self.assertEqual(
-                ws.read(ws.post_path), js_pretty(ws.findings)
-            )
+            self.assertEqual(ws.read(ws.post_path), js_pretty(ws.findings))
 
 
 class TestProjection(unittest.TestCase):
-
     def test_id_order_drives_output_order(self):
         with _Workspace(findings=[finding("A"), finding("B"), finding("C")]) as ws:
             plan = ws.plan()
@@ -481,7 +499,14 @@ class TestProjection(unittest.TestCase):
             cp = json.loads(ws.read(ws.checkpoint_path))
             self.assertEqual(
                 list(cp["phases"]["challenge"].keys()),
-                ["findings", "unverified", "eliminated", "gaps", "stats", "generated_at"],
+                [
+                    "findings",
+                    "unverified",
+                    "eliminated",
+                    "gaps",
+                    "stats",
+                    "generated_at",
+                ],
             )
 
     def test_empty_id_lists_derive_empty_artifacts(self):
@@ -704,30 +729,40 @@ class TestPlanSelfProof(unittest.TestCase):
         # The exact issue-38 hard-line violation: two ids become one, the delivered
         # set silently shrinks. Without the proof this ran happily to ok:true.
         with _Workspace(findings=[finding("A"), finding("B"), finding("C")]) as ws:
+
             def drop(plan):
                 plan["postReview"]["ids"] = ["A", "B"]
+
             self.assert_refuses_to_execute(ws, ws.tamper_plan(drop))
 
     def test_a_reordered_delivery_id_list_is_refused(self):
         with _Workspace(findings=[finding("A"), finding("B"), finding("C")]) as ws:
+
             def swap(plan):
                 plan["postReview"]["ids"] = ["C", "B", "A"]
+
             self.assert_refuses_to_execute(ws, ws.tamper_plan(swap))
 
     def test_an_elided_challenge_id_is_refused(self):
         with _Workspace(findings=[finding("A"), finding("B")]) as ws:
+
             def drop(plan):
                 plan["checkpoint"]["challengeFindingIds"] = ["A"]
+
             self.assert_refuses_to_execute(ws, ws.tamper_plan(drop))
 
     def test_an_altered_skeleton_or_path_is_refused(self):
         with _Workspace() as ws:
+
             def repoint(plan):
                 plan["postReview"]["path"] = plan["postReview"]["path"] + ".other"
+
             self.assert_refuses_to_execute(ws, ws.tamper_plan(repoint))
         with _Workspace() as ws:
+
             def restamp(plan):
                 plan["checkpoint"]["skeleton"]["phaseReached"] = "challenge"
+
             self.assert_refuses_to_execute(ws, ws.tamper_plan(restamp))
 
     def test_a_plan_with_no_checksum_is_refused(self):
@@ -769,17 +804,24 @@ class TestPlanChecksumCrossRuntime(unittest.TestCase):
         node_or_skip(self)
         cases = [
             [finding("F1"), finding("F2")],
-            [finding("A", description="日本語 😀 astral 𝕏"), finding("B", title="中文 🎉")],
+            [
+                finding("A", description="日本語 😀 astral 𝕏"),
+                finding("B", title="中文 🎉"),
+            ],
             [],
         ]
         for findings in cases:
             with _Workspace(findings=findings) as ws:
                 path = ws.write_plan(ws.plan())
                 proc = subprocess.run(
-                    ["node", "-e", JS_PLAN_CHECKSUM, path], capture_output=True, text=True
+                    ["node", "-e", JS_PLAN_CHECKSUM, path],
+                    capture_output=True,
+                    text=True,
                 )
                 self.assertEqual(proc.returncode, 0, proc.stderr)
-                self.assertEqual(proc.stdout.strip(), json.loads(ws.read(path))["planChecksum"])
+                self.assertEqual(
+                    proc.stdout.strip(), json.loads(ws.read(path))["planChecksum"]
+                )
 
 
 class TestLoneSurrogatesAreEscapedNotFatal(unittest.TestCase):
@@ -848,7 +890,9 @@ class TestNoTruncatedArtifactAtAPlannedPath(unittest.TestCase):
                 write_text_atomic(dest, "\ud800")
             with open(dest, "r", encoding="utf-8") as fh:
                 self.assertEqual(fh.read(), "PREVIOUS CONTENT")
-            self.assertEqual(os.listdir(directory), ["artifact.json"], "no temp residue")
+            self.assertEqual(
+                os.listdir(directory), ["artifact.json"], "no temp residue"
+            )
         finally:
             shutil.rmtree(directory, ignore_errors=True)
 
@@ -898,7 +942,9 @@ class TestAnyFailureStillReturnsAReceipt(unittest.TestCase):
         with _Workspace() as ws:
             with open(ws.findings_path, "wb") as fh:
                 fh.write(b'[{"id": "F1", "t": "\xff\xfe"}]')
-            self.assert_honest_failure(run_script(ws.write_plan(ws.plan())), "unreadable")
+            self.assert_honest_failure(
+                run_script(ws.write_plan(ws.plan())), "unreadable"
+            )
 
     def test_non_utf8_bytes_in_the_plan(self):
         with _Workspace() as ws:
@@ -932,7 +978,7 @@ class TestNumberSpellingPrecondition(unittest.TestCase):
     legacy by-value writer, so this precondition costs a run nothing."""
 
     def test_integers_are_accepted(self):
-        for value in [0, -1, 90, 2 ** 53 - 1, -(2 ** 53 - 1)]:
+        for value in [0, -1, 90, 2**53 - 1, -(2**53 - 1)]:
             self.assertEqual(js_stringify_pretty(value), json.dumps(value))
 
     def test_non_integer_numbers_are_refused(self):
@@ -941,7 +987,7 @@ class TestNumberSpellingPrecondition(unittest.TestCase):
                 js_stringify_pretty({"confidence": value})
 
     def test_integers_outside_the_js_safe_range_are_refused(self):
-        for value in [2 ** 53, -(2 ** 53), 10 ** 30]:
+        for value in [2**53, -(2**53), 10**30]:
             with self.assertRaises(JsSerializationError):
                 js_stringify_pretty([value])
 
@@ -957,7 +1003,8 @@ class TestNumberSpellingPrecondition(unittest.TestCase):
             receipt = json.loads(proc.stdout)
             self.assertFalse(receipt["ok"])
             self.assertTrue(
-                any("non-integer number" in e for e in receipt["errors"]), receipt["errors"]
+                any("non-integer number" in e for e in receipt["errors"]),
+                receipt["errors"],
             )
             self.assertFalse(os.path.exists(ws.post_path))
 
@@ -980,35 +1027,35 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
 
     # Documents as JSON TEXT so escapes survive the argv hop into node unchanged.
     AGREE = [
-        '[]',
-        '{}',
+        "[]",
+        "{}",
         '[{}, [], "", null, true, false]',
         '{"a": {"b": {"c": []}}}',
         '"plain string"',
-        '["\\ud800"]',                       # lone high surrogate
-        '["\\udfff"]',                       # lone low surrogate
-        '["pre\\ud800post"]',                # lone surrogate mid-string
+        '["\\ud800"]',  # lone high surrogate
+        '["\\udfff"]',  # lone low surrogate
+        '["pre\\ud800post"]',  # lone surrogate mid-string
         '{"\\ud800": "in a KEY"}',
-        '["\\ud83d\\ude00"]',                # a well-formed astral pair
-        '["\\ud83d\\ude00\\ud800"]',         # pair immediately followed by a lone one
-        '["\\u2028\\u2029"]',                # line/paragraph separators: NOT escaped by JS
-        '["\\u0000\\u0001\\u001f"]',         # control characters
+        '["\\ud83d\\ude00"]',  # a well-formed astral pair
+        '["\\ud83d\\ude00\\ud800"]',  # pair immediately followed by a lone one
+        '["\\u2028\\u2029"]',  # line/paragraph separators: NOT escaped by JS
+        '["\\u0000\\u0001\\u001f"]',  # control characters
         '["\\b\\f\\n\\r\\t"]',
         '["quote \\" backslash \\\\ slash /"]',
         '["café — naïve", "日本語", "𝕏 astral", "\\u007f"]',
-        '[0, -0, 1, -1, 9007199254740991, -9007199254740991]',
+        "[0, -0, 1, -1, 9007199254740991, -9007199254740991]",
         '{"line_start": 10, "line_end": 12, "confidence": 90}',
         '[{"id": "F1", "d": "多行\\ntext\\twith escapes"}]',
     ]
 
     # Documents whose naive json.dumps spelling PROVABLY differs from JSON.stringify.
     DIVERGENT = [
-        '[1e-7]',            # 1e-7   vs 1e-07
-        '[0.000001]',        # 0.000001 vs 1e-06
-        '[90.0]',            # 90     vs 90.0
-        '[-0.0]',            # 0      vs -0.0
-        '[9007199254740993]',  # 2**53+1: JS parses it lossily, so the values differ
-        '[1000000000000000000000000000000]',  # JS spells this 1e+30
+        "[1e-7]",  # 1e-7   vs 1e-07
+        "[0.000001]",  # 0.000001 vs 1e-06
+        "[90.0]",  # 90     vs 90.0
+        "[-0.0]",  # 0      vs -0.0
+        "[9007199254740993]",  # 2**53+1: JS parses it lossily, so the values differ
+        "[1000000000000000000000000000000]",  # JS spells this 1e+30
         '{"stats": {"rate": 0.5}}',  # spells the same, but nested — proves path reporting
     ]
 
@@ -1017,7 +1064,13 @@ class TestCrossRuntimeStringifyParity(unittest.TestCase):
     # does; 1e-7 does not) needs exactly the Number#toString port the precondition
     # exists to avoid. NaN/Infinity are here too — json.loads accepts them bare,
     # JSON.parse rejects them, JSON.stringify spells them `null`.
-    REFUSE = DIVERGENT + ['[1.5]', '[1e21]', '[9007199254740992]', '[NaN]', '[Infinity]']
+    REFUSE = DIVERGENT + [
+        "[1.5]",
+        "[1e21]",
+        "[9007199254740992]",
+        "[NaN]",
+        "[Infinity]",
+    ]
 
     def test_python_matches_node_over_the_trap_corpus(self):
         node_or_skip(self)
@@ -1076,7 +1129,11 @@ class TestDerivedDocumentsAgreeWithTheJsSerialization(unittest.TestCase):
             # checkpoint: the skeleton with the alias-stripped findings in place.
             skeleton = ws.plan()["checkpoint"]["skeleton"]
             skeleton["phases"]["challenge"]["findings"] = [
-                dict((k, v) for (k, v) in f.items() if k not in ("line", "end_line", "body"))
+                dict(
+                    (k, v)
+                    for (k, v) in f.items()
+                    if k not in ("line", "end_line", "body")
+                )
                 for f in ws.findings
             ]
             chars, checksum = self.js_expectation(skeleton)

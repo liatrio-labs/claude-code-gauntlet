@@ -94,10 +94,12 @@ GATE_TIERS = ("mini", "subset", "holdout", "custom")
 # from a clean smoke, so the two run_ids are named here explicitly; every NUMBER
 # rendered for them (recall, noise, tokens, the child-model label) is still read
 # from the ledger row. Source: the Gate-2 custom run's change note.
-CONFOUNDED_RUNS = frozenset({
-    "smoke-20260721-160606-83eadfe",   # sonnet child pin
-    "smoke-20260721-172943-0b24d95",   # sonnet[1m] child pin
-})
+CONFOUNDED_RUNS = frozenset(
+    {
+        "smoke-20260721-160606-83eadfe",  # sonnet child pin
+        "smoke-20260721-172943-0b24d95",  # sonnet[1m] child pin
+    }
+)
 
 # Superseded runs, measured but voided post-hoc for reasons unrelated to a
 # child-model confound (see CONFOUNDED_RUNS above) — one environment-contaminated
@@ -157,8 +159,15 @@ RELEASES = (
     {
         "label": "v3.0",
         "legs": (
-            {"name": "gate · 15 PRs", "run_id": "subset-20260721-015119-639e4bc", "n_goldens": 59},
-            {"name": "holdout · 10 fresh PRs", "run_id": "holdout-20260721-085348-eec15be"},
+            {
+                "name": "gate · 15 PRs",
+                "run_id": "subset-20260721-015119-639e4bc",
+                "n_goldens": 59,
+            },
+            {
+                "name": "holdout · 10 fresh PRs",
+                "run_id": "holdout-20260721-085348-eec15be",
+            },
         ),
         "what_changed": (
             "Full workflow-native rewrite: an 8-stage pipeline running in the "
@@ -170,7 +179,11 @@ RELEASES = (
     {
         "label": "v2",
         "legs": (
-            {"name": "baseline · 15 PRs", "run_id": "subset-20260718-031746-27875ca", "n_goldens": 59},
+            {
+                "name": "baseline · 15 PRs",
+                "run_id": "subset-20260718-031746-27875ca",
+                "n_goldens": 59,
+            },
         ),
         "what_changed": "The starting architecture.",
         "bar_check": False,
@@ -311,7 +324,7 @@ def _dominant_model(row):
 
 
 def _short_model(name):
-    """"claude-sonnet-5[1m]" -> "sonnet[1m]"; "claude-opus-4-8[1m]" -> "opus[1m]"."""
+    """ "claude-sonnet-5[1m]" -> "sonnet[1m]"; "claude-opus-4-8[1m]" -> "opus[1m]"."""
     if not name:
         return None
     variant = ""
@@ -319,7 +332,7 @@ def _short_model(name):
     if base.endswith("[1m]"):
         variant = "[1m]"
         base = base[: -len("[1m]")]
-    core = base[len("claude-"):] if base.startswith("claude-") else base
+    core = base[len("claude-") :] if base.startswith("claude-") else base
     for fam in ("sonnet", "opus", "haiku"):
         if core.startswith(fam):
             return fam + variant
@@ -373,7 +386,8 @@ def latest_subset_row(rows):
     subset = [
         r
         for r in rows
-        if str(r.get("tool", "")).startswith("deep-review") and r.get("tier") == "subset"
+        if str(r.get("tool", "")).startswith("deep-review")
+        and r.get("tier") == "subset"
     ]
     if not subset:
         return None
@@ -444,19 +458,28 @@ def classify(row, top_anchor, ceiling):
     if tool.startswith("anchor") or tool == "naive-anchor":
         return ("anchor", "◇", "external anchor — reference only")
     if row.get("run_id") in CONFOUNDED_RUNS:
-        return ("reverted", "✕",
-                "confounded child-model experiment — the subagent-model pin cascaded "
-                "the [1m] variant onto the pipeline agents; reverted")
+        return (
+            "reverted",
+            "✕",
+            "confounded child-model experiment — the subagent-model pin cascaded "
+            "the [1m] variant onto the pipeline agents; reverted",
+        )
     if row.get("run_id") in VOID_RUNS:
         return ("reverted", "✕", VOID_RUNS[row.get("run_id")])
     if "REVERT" in change.upper():
         return ("reverted", "✕", "regressed and was reverted")
     if tier in GATE_TIERS and recall is not None and noise is not None:
         if recall >= top_anchor and noise <= ceiling:
-            return ("gate", "★",
-                    "gate milestone — recall over the top-anchor bar, noise under the ceiling")
-        return ("miss", "○",
-                "below gate — recall under the bar or noise over the ceiling")
+            return (
+                "gate",
+                "★",
+                "gate milestone — recall over the top-anchor bar, noise under the ceiling",
+            )
+        return (
+            "miss",
+            "○",
+            "below gate — recall under the bar or noise over the ceiling",
+        )
     if row.get("hypothesis"):
         return ("hit", "✓", "kept — improvement carried forward")
     return ("base", "·", "baseline / reference run")
@@ -472,14 +495,14 @@ def short_label(pt):
         return "naive"
     if tool == "deep-review-v2":
         return "v2 base" if tier == "subset" else "v2 smoke"
-    if pt.get("child_model"):        # confounded child-model experiment
-        return pt["child_model"]     # e.g. "sonnet" / "sonnet[1m]"
+    if pt.get("child_model"):  # confounded child-model experiment
+        return pt["child_model"]  # e.g. "sonnet" / "sonnet[1m]"
     if tier == "holdout":
         return "Holdout"
     if tier == "mini":
         return "mini"
     if tier == "custom":
-        return "custom"              # no override registered — generic fallback
+        return "custom"  # no override registered — generic fallback
     if tier == "subset":
         return "Gate-1" if pt["kind"] == "gate" else "v3 subset"
     m = re.search(r"iter\s*(\d+)", pt.get("hypothesis") or "")
@@ -538,7 +561,9 @@ def scored_run_points(rows, top_anchor, ceiling):
                 "kind": kind,
                 "headline": kind == "gate",
                 "reverted": kind == "reverted",
-                "child_model": _short_model(_dominant_model(rep)) if confounded else None,
+                "child_model": _short_model(_dominant_model(rep))
+                if confounded
+                else None,
             }
         )
     points.sort(key=lambda p: p["ts"])
@@ -583,16 +608,20 @@ def _run_marker(x, y, tier, var, reverted, headline):
         )
     elif tier == "holdout":
         r = 6.2
-        d = (f"M{x:.1f},{y - r:.1f} L{x + r:.1f},{y:.1f} "
-             f"L{x:.1f},{y + r:.1f} L{x - r:.1f},{y:.1f} Z")
+        d = (
+            f"M{x:.1f},{y - r:.1f} L{x + r:.1f},{y:.1f} "
+            f"L{x:.1f},{y + r:.1f} L{x - r:.1f},{y:.1f} Z"
+        )
         g.append(f'<path class="mk mk-fill" d="{d}" style="fill:var({var})" />')
     elif tier == "mini":
         # Pointy-top hexagon — matches _TIER_GLYPH_SVG["mini"].
         ox = (0.0, 4.6, 4.6, 0.0, -4.6, -4.6)
         oy = (-4.6, -1.8, 1.8, 4.6, 1.8, -1.8)
-        d = "M" + " L".join(
-            f"{x + dx:.1f},{y + dy:.1f}" for dx, dy in zip(ox, oy)
-        ) + " Z"
+        d = (
+            "M"
+            + " L".join(f"{x + dx:.1f},{y + dy:.1f}" for dx, dy in zip(ox, oy))
+            + " Z"
+        )
         g.append(f'<path class="mk mk-fill" d="{d}" style="fill:var({var})" />')
     elif tier == "custom":
         s = 5.0
@@ -621,8 +650,8 @@ def build_runs_svg(points, top_anchor, v2_base, ceiling):
     W = 760
     m_left, m_right = 46, 150
     inner_w = W - m_left - m_right
-    aY, aH = 30, 140            # recall panel: domain 0..1
-    bY, bH = 206, 82            # noise panel: domain 0..0.4
+    aY, aH = 30, 140  # recall panel: domain 0..1
+    bY, bH = 206, 82  # noise panel: domain 0..0.4
     A_DOM, B_DOM = 1.0, 0.40
     H = 364
     n = len(points)
@@ -642,7 +671,7 @@ def build_runs_svg(points, top_anchor, v2_base, ceiling):
         f'<svg class="chart" viewBox="0 0 {W} {H}" width="100%" '
         f'preserveAspectRatio="xMidYMid meet" role="img" '
         f'aria-label="Golden recall and noise rate for every scored deep-review run '
-        f'in time order, v2 and v3, against the v2-baseline, top-anchor and '
+        f"in time order, v2 and v3, against the v2-baseline, top-anchor and "
         f'noise-ceiling bars.">'
     ]
 
@@ -752,7 +781,7 @@ def build_runs_svg(points, top_anchor, v2_base, ceiling):
         parts.append(
             f'<text class="directlabel" x="{x + dx:.1f}" y="{y:.1f}" '
             f'text-anchor="{anchor}">{html.escape(short_label(p))} '
-            f'{fmt_pct(p["recall"])}</text>'
+            f"{fmt_pct(p['recall'])}</text>"
         )
 
     # Rotated x-axis run tags.
@@ -828,17 +857,17 @@ def _anchor_value(src, v2v3_key, anchor_key, bv2, v3_row, v3_holdout_row, anchor
 # ---------------------------------------------------------------------------
 _TIER_GLYPH_SVG = {
     "smoke": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
-             '<circle cx="6" cy="6" r="3.6" fill="none" stroke="currentColor" '
-             'stroke-width="1.6"/></svg>',
+    '<circle cx="6" cy="6" r="3.6" fill="none" stroke="currentColor" '
+    'stroke-width="1.6"/></svg>',
     "subset": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
-              '<circle cx="6" cy="6" r="4" fill="currentColor"/></svg>',
+    '<circle cx="6" cy="6" r="4" fill="currentColor"/></svg>',
     "holdout": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
-               '<path d="M6 1.6 L10.4 6 L6 10.4 L1.6 6 Z" fill="currentColor"/></svg>',
+    '<path d="M6 1.6 L10.4 6 L6 10.4 L1.6 6 Z" fill="currentColor"/></svg>',
     "mini": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
-            '<polygon points="6,1.4 10.6,4.2 10.6,7.8 6,10.6 1.4,7.8 1.4,4.2" '
-            'fill="currentColor"/></svg>',
+    '<polygon points="6,1.4 10.6,4.2 10.6,7.8 6,10.6 1.4,7.8 1.4,4.2" '
+    'fill="currentColor"/></svg>',
     "custom": '<svg class="tier-glyph" viewBox="0 0 12 12" aria-hidden="true">'
-              '<rect x="2" y="2" width="8" height="8" rx="1.4" fill="currentColor"/></svg>',
+    '<rect x="2" y="2" width="8" height="8" rx="1.4" fill="currentColor"/></svg>',
 }
 
 
@@ -848,7 +877,8 @@ def build_runs_legend_html():
         f'<span class="legend-item"><span class="legend-dot" '
         f'style="background:var({var})"></span>{html.escape(name)}</span>'
         for name, var in (
-            TOOL_STYLE["deep-review-v2"], TOOL_STYLE["deep-review-v3"],
+            TOOL_STYLE["deep-review-v2"],
+            TOOL_STYLE["deep-review-v3"],
             TOOL_STYLE["naive-anchor"],
         )
     )
@@ -875,12 +905,17 @@ def build_runs_legend_html():
 def build_explainer_html(top_anchor, v2_base, ceiling):
     """Compact 'how to read this' card for a reader with zero project context."""
     buckets = (
-        ("--ref-goal", "golden-matched",
-         "matched a known-good finding from the hand-labelled golden set"),
-        ("--tool-deepreview", "valid-extra",
-         "a real issue that just isn't in the golden set — never counted against us"),
-        ("--ref-ceiling", "noise",
-         "wrong, or not worth a reviewer's time"),
+        (
+            "--ref-goal",
+            "golden-matched",
+            "matched a known-good finding from the hand-labelled golden set",
+        ),
+        (
+            "--tool-deepreview",
+            "valid-extra",
+            "a real issue that just isn't in the golden set — never counted against us",
+        ),
+        ("--ref-ceiling", "noise", "wrong, or not worth a reviewer's time"),
     )
     chips = "".join(
         f'<li><span class="chip-dot" style="background:var({var})"></span>'
@@ -891,21 +926,39 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
         f"<li><b>{html.escape(term)}</b> {html.escape(desc)}</li>"
         for term, desc in (
             ("Recall", "= goldens caught ÷ all goldens. The headline, gated metric."),
-            ("Noise rate", "= noise ÷ all delivered comments — ‘how often are we wrong’. Gated: must stay under the ceiling."),
-            ("Valid-extra", "= real issues beyond the golden set. Reported, never penalised."),
-            ("Precision †", "counts valid-extras as misses, so it sinks as volume grows. Reported, not gated — read noise rate instead."),
+            (
+                "Noise rate",
+                "= noise ÷ all delivered comments — ‘how often are we wrong’. Gated: must stay under the ceiling.",
+            ),
+            (
+                "Valid-extra",
+                "= real issues beyond the golden set. Reported, never penalised.",
+            ),
+            (
+                "Precision †",
+                "counts valid-extras as misses, so it sinks as volume grows. Reported, not gated — read noise rate instead.",
+            ),
         )
     )
     bars = "".join(
         f'<li><span class="bar-key" style="background:var({var})"></span>'
         f"<b>{html.escape(val)}</b> — {html.escape(desc)}</li>"
         for var, val, desc in (
-            ("--ref-goal", fmt_pct(top_anchor),
-             "top-anchor recall (best external tool) — the bar a run must beat"),
-            ("--tool-deepreview", fmt_pct(v2_base),
-             "deep-review v2 recall — the prior baseline"),
-            ("--ref-ceiling", fmt_pct(ceiling),
-             "noise ceiling — a run above it fails the gate"),
+            (
+                "--ref-goal",
+                fmt_pct(top_anchor),
+                "top-anchor recall (best external tool) — the bar a run must beat",
+            ),
+            (
+                "--tool-deepreview",
+                fmt_pct(v2_base),
+                "deep-review v2 recall — the prior baseline",
+            ),
+            (
+                "--ref-ceiling",
+                fmt_pct(ceiling),
+                "noise ceiling — a run above it fails the gate",
+            ),
         )
     )
     tiers = "".join(
@@ -923,16 +976,16 @@ def build_explainer_html(top_anchor, v2_base, ceiling):
         '<div class="explainer-col"><h3>How much a run is trusted</h3>'
         f'<ul class="def-list">{tiers}</ul>'
         '<p class="explainer-foot">Smoke numbers are directional and never pass or '
-        'fail a gate; a mini run is the 6-PR paired cut; a subset run is gate-grade; '
-        'a holdout run confirms it on fresh PRs; a custom run is an explicit --prs '
-        'list (including pre-mini paired legs such as Gate-2). By owner '
-        'decision v3 delivers ~4× the comments of v2, so its lower precision is a '
-        'bigger denominator, not weaker findings. Gate-2 re-baselined its token target '
-        'to the v2 baseline on 2026-07-21: the original −20%-vs-Gate-1 target was '
-        'self-referential (it measured only −1.8%) and was retired. Two child-model '
-        'smokes render faded because they are confounded experiments — a subagent-model '
-        'pin cascaded the [1m] context variant onto the pipeline agents — and were '
-        'reverted.</p></div>'
+        "fail a gate; a mini run is the 6-PR paired cut; a subset run is gate-grade; "
+        "a holdout run confirms it on fresh PRs; a custom run is an explicit --prs "
+        "list (including pre-mini paired legs such as Gate-2). By owner "
+        "decision v3 delivers ~4× the comments of v2, so its lower precision is a "
+        "bigger denominator, not weaker findings. Gate-2 re-baselined its token target "
+        "to the v2 baseline on 2026-07-21: the original −20%-vs-Gate-1 target was "
+        "self-referential (it measured only −1.8%) and was retired. Two child-model "
+        "smokes render faded because they are confounded experiments — a subagent-model "
+        "pin cascaded the [1m] context variant onto the pipeline agents — and were "
+        "reverted.</p></div>"
         "</div></section>"
     )
 
@@ -988,8 +1041,8 @@ def build_releases_html(rows, top_anchor, v2_base, ceiling):
             if recall is not None and noise is not None and top_anchor is not None:
                 clears = recall >= top_anchor and (ceiling is None or noise <= ceiling)
                 note_bits.append(
-                    ("Clears both hard bars (" if clears else "Misses a hard bar (") +
-                    f"top-anchor {fmt_pct(top_anchor)}"
+                    ("Clears both hard bars (" if clears else "Misses a hard bar (")
+                    + f"top-anchor {fmt_pct(top_anchor)}"
                     + (f", v2 {fmt_pct(v2_base)}" if v2_base is not None else "")
                     + ")."
                 )
@@ -997,14 +1050,15 @@ def build_releases_html(rows, top_anchor, v2_base, ceiling):
             note_bits.append(rel["extra_note"])
         note_html = (
             f'<p class="release-note">{html.escape(" ".join(note_bits))}</p>'
-            if note_bits else ""
+            if note_bits
+            else ""
         )
         cards.append(
             '<article class="release-card">'
             f'<h3 class="release-label">{html.escape(rel["label"])}</h3>'
             f'<div class="release-legs">{"".join(leg_htmls)}</div>'
             f'<p class="release-changed"><b>What changed:</b> '
-            f'{html.escape(rel["what_changed"])}</p>'
+            f"{html.escape(rel['what_changed'])}</p>"
             f"{note_html}"
             "</article>"
         )
@@ -1020,16 +1074,24 @@ def subset_comparison(rows, baselines):
     bv2 = baselines.get("baseline_v2", {})
     n_goldens = bv2.get("n_goldens")
     v2_row = next(
-        (r for r in rows
-         if r.get("tool") == "deep-review-v2" and r.get("run_id") == bv2.get("run_id")),
+        (
+            r
+            for r in rows
+            if r.get("tool") == "deep-review-v2"
+            and r.get("run_id") == bv2.get("run_id")
+        ),
         None,
     )
     v3_candidates = [
-        r for r in rows
-        if r.get("tool") == "deep-review-v3" and r.get("tier") == "subset"
+        r
+        for r in rows
+        if r.get("tool") == "deep-review-v3"
+        and r.get("tier") == "subset"
         and (v2_row is None or r.get("n_prs") == v2_row.get("n_prs"))
     ]
-    v3_row = max(v3_candidates, key=lambda r: r.get("ts", "")) if v3_candidates else None
+    v3_row = (
+        max(v3_candidates, key=lambda r: r.get("ts", "")) if v3_candidates else None
+    )
     return v2_row, v3_row, n_goldens
 
 
@@ -1079,37 +1141,80 @@ def build_verdict_html(rows, baselines, ceiling):
     # (label, v2 text, v3 text, delta text, kind, note) — kind ∈ good/neutral.
     noise_ok = b["noise"] is not None and ceiling is not None and b["noise"] <= ceiling
     metric_rows = [
-        ("Golden recall", fmt_pct(a["recall"]), fmt_pct(b["recall"]),
-         fmt_delta_pp(b["recall"], a["recall"]), arrow(b["recall"], a["recall"]),
-         "good", "of {n} known issues".format(n=n_goldens)),
-        ("Noise rate", fmt_pct(a["noise"]), fmt_pct(b["noise"]),
-         fmt_delta_pp(b["noise"], a["noise"]), arrow(b["noise"], a["noise"]),
-         "neutral", ("under the " + fmt_pct(ceiling, 0) + " ceiling" if noise_ok
-                     else "OVER the " + fmt_pct(ceiling, 0) + " ceiling")),
-        ("Goldens found", str(a["goldens"]), str(b["goldens"]),
-         f"{b['goldens'] - a['goldens']:+d}", arrow(b["goldens"], a["goldens"]),
-         "good", f"of {n_goldens}"),
-        ("Tokens per pass", fmt_millions(a["tokens"]), fmt_millions(b["tokens"]),
-         fmt_delta_pct(b["tokens"], a["tokens"]), arrow(b["tokens"], a["tokens"]),
-         "good", "total review spend, tokens"),
-        ("Tokens per golden found", fmt_millions(a["tok_per_gold"], 2),
-         fmt_millions(b["tok_per_gold"], 2),
-         fmt_delta_pct(b["tok_per_gold"], a["tok_per_gold"]),
-         arrow(b["tok_per_gold"], a["tok_per_gold"]), "good",
-         "the volume-normalised efficiency"),
-        ("Cost per golden found", fmt_money(a["cost_per_gold"]),
-         fmt_money(b["cost_per_gold"]),
-         fmt_delta_pct(b["cost_per_gold"], a["cost_per_gold"]),
-         arrow(b["cost_per_gold"], a["cost_per_gold"]), "good", ""),
-        ("Comments delivered", fmt_int(a["delivered"]), fmt_int(b["delivered"]),
-         (f"{b['delivered'] / a['delivered']:.1f}×" if a["delivered"] else "—"),
-         arrow(b["delivered"], a["delivered"]), "context",
-         "~4× more by design — a bigger denominator, not worse findings"),
+        (
+            "Golden recall",
+            fmt_pct(a["recall"]),
+            fmt_pct(b["recall"]),
+            fmt_delta_pp(b["recall"], a["recall"]),
+            arrow(b["recall"], a["recall"]),
+            "good",
+            "of {n} known issues".format(n=n_goldens),
+        ),
+        (
+            "Noise rate",
+            fmt_pct(a["noise"]),
+            fmt_pct(b["noise"]),
+            fmt_delta_pp(b["noise"], a["noise"]),
+            arrow(b["noise"], a["noise"]),
+            "neutral",
+            (
+                "under the " + fmt_pct(ceiling, 0) + " ceiling"
+                if noise_ok
+                else "OVER the " + fmt_pct(ceiling, 0) + " ceiling"
+            ),
+        ),
+        (
+            "Goldens found",
+            str(a["goldens"]),
+            str(b["goldens"]),
+            f"{b['goldens'] - a['goldens']:+d}",
+            arrow(b["goldens"], a["goldens"]),
+            "good",
+            f"of {n_goldens}",
+        ),
+        (
+            "Tokens per pass",
+            fmt_millions(a["tokens"]),
+            fmt_millions(b["tokens"]),
+            fmt_delta_pct(b["tokens"], a["tokens"]),
+            arrow(b["tokens"], a["tokens"]),
+            "good",
+            "total review spend, tokens",
+        ),
+        (
+            "Tokens per golden found",
+            fmt_millions(a["tok_per_gold"], 2),
+            fmt_millions(b["tok_per_gold"], 2),
+            fmt_delta_pct(b["tok_per_gold"], a["tok_per_gold"]),
+            arrow(b["tok_per_gold"], a["tok_per_gold"]),
+            "good",
+            "the volume-normalised efficiency",
+        ),
+        (
+            "Cost per golden found",
+            fmt_money(a["cost_per_gold"]),
+            fmt_money(b["cost_per_gold"]),
+            fmt_delta_pct(b["cost_per_gold"], a["cost_per_gold"]),
+            arrow(b["cost_per_gold"], a["cost_per_gold"]),
+            "good",
+            "",
+        ),
+        (
+            "Comments delivered",
+            fmt_int(a["delivered"]),
+            fmt_int(b["delivered"]),
+            (f"{b['delivered'] / a['delivered']:.1f}×" if a["delivered"] else "—"),
+            arrow(b["delivered"], a["delivered"]),
+            "context",
+            "~4× more by design — a bigger denominator, not worse findings",
+        ),
     ]
 
     body = []
     for label, v2s, v3s, delta, arr, kind, note in metric_rows:
-        note_html = f'<span class="verdict-note">{html.escape(note)}</span>' if note else ""
+        note_html = (
+            f'<span class="verdict-note">{html.escape(note)}</span>' if note else ""
+        )
         body.append(
             "<tr>"
             f'<th scope="row">{html.escape(label)}{note_html}</th>'
@@ -1143,7 +1248,7 @@ def build_verdict_html(rows, baselines, ceiling):
         '<div class="table-wrap"><table class="verdict-table">'
         '<thead><tr><th scope="col">Metric</th><th scope="col">v2 baseline</th>'
         '<th scope="col">v3 gate (Gate-1)</th><th scope="col">Change</th></tr></thead>'
-        f'<tbody>{"".join(body)}</tbody></table></div>'
+        f"<tbody>{''.join(body)}</tbody></table></div>"
         f'<p class="verdict-foot">Same {html.escape(subset_desc)} subset, judge-pinned. '
         "Efficiency rows divide by <b>goldens found</b> (distinct known issues caught, "
         "the recall numerator) so v3's larger comment volume can't flatter or penalise "
@@ -1155,8 +1260,10 @@ def build_verdict_html(rows, baselines, ceiling):
 def latest_holdout_row(rows):
     """Most recent v3 holdout-tier run — the fresh-PR confirmation of the gate."""
     cands = [
-        r for r in rows
-        if str(r.get("tool", "")).startswith("deep-review") and r.get("tier") == "holdout"
+        r
+        for r in rows
+        if str(r.get("tool", "")).startswith("deep-review")
+        and r.get("tier") == "holdout"
     ]
     return max(cands, key=lambda r: r.get("ts", "")) if cands else None
 
@@ -1174,8 +1281,10 @@ def gate2_row(rows):
     if row is not None:
         return row
     cands = [
-        r for r in rows
-        if str(r.get("tool", "")).startswith("deep-review") and r.get("tier") == "custom"
+        r
+        for r in rows
+        if str(r.get("tool", "")).startswith("deep-review")
+        and r.get("tier") == "custom"
     ]
     return max(cands, key=lambda r: r.get("ts", "")) if cands else None
 
@@ -1198,8 +1307,12 @@ def build_gate2_html(rows, baselines, top_anchor, ceiling):
         return ""
     bv2 = baselines.get("baseline_v2", {})
     v2_row = next(
-        (r for r in rows
-         if r.get("tool") == "deep-review-v2" and r.get("run_id") == bv2.get("run_id")),
+        (
+            r
+            for r in rows
+            if r.get("tool") == "deep-review-v2"
+            and r.get("run_id") == bv2.get("run_id")
+        ),
         None,
     )
     g2_tpp = _tokens_per_pr(g2)
@@ -1209,27 +1322,46 @@ def build_gate2_html(rows, baselines, top_anchor, ceiling):
     n_prs = g2.get("n_prs")
 
     tok_delta = (
-        f"{(g2_tpp - v2_tpp) / v2_tpp * 100:+.1f}%"
-        if (g2_tpp and v2_tpp) else "—"
+        f"{(g2_tpp - v2_tpp) / v2_tpp * 100:+.1f}%" if (g2_tpp and v2_tpp) else "—"
     )
     recall_ok = recall is not None and top_anchor is not None and recall >= top_anchor
     noise_ok = noise is not None and ceiling is not None and noise <= ceiling
 
     # (label, baseline/bar text, gate-2 text, verdict text, arrow, kind, note)
     metric_rows = [
-        ("Tokens per PR", fmt_millions(v2_tpp, 2), fmt_millions(g2_tpp, 2), tok_delta,
-         ("▼" if (g2_tpp and v2_tpp and g2_tpp < v2_tpp) else "▲"), "good",
-         "vs the v2 baseline, PR-normalised"),
-        ("Golden recall", fmt_pct(top_anchor), fmt_pct(recall),
-         "held" if recall_ok else "under", ("✓" if recall_ok else "○"),
-         "good" if recall_ok else "neutral", "over the top-anchor bar"),
-        ("Noise rate", fmt_pct(ceiling), fmt_pct(noise),
-         "under" if noise_ok else "OVER", ("✓" if noise_ok else "○"),
-         "good" if noise_ok else "neutral", "under the noise ceiling"),
+        (
+            "Tokens per PR",
+            fmt_millions(v2_tpp, 2),
+            fmt_millions(g2_tpp, 2),
+            tok_delta,
+            ("▼" if (g2_tpp and v2_tpp and g2_tpp < v2_tpp) else "▲"),
+            "good",
+            "vs the v2 baseline, PR-normalised",
+        ),
+        (
+            "Golden recall",
+            fmt_pct(top_anchor),
+            fmt_pct(recall),
+            "held" if recall_ok else "under",
+            ("✓" if recall_ok else "○"),
+            "good" if recall_ok else "neutral",
+            "over the top-anchor bar",
+        ),
+        (
+            "Noise rate",
+            fmt_pct(ceiling),
+            fmt_pct(noise),
+            "under" if noise_ok else "OVER",
+            ("✓" if noise_ok else "○"),
+            "good" if noise_ok else "neutral",
+            "under the noise ceiling",
+        ),
     ]
     body = []
     for label, base_s, g2_s, verdict, arr, kind, note in metric_rows:
-        note_html = f'<span class="verdict-note">{html.escape(note)}</span>' if note else ""
+        note_html = (
+            f'<span class="verdict-note">{html.escape(note)}</span>' if note else ""
+        )
         body.append(
             "<tr>"
             f'<th scope="row">{html.escape(label)}{note_html}</th>'
@@ -1253,7 +1385,7 @@ def build_gate2_html(rows, baselines, top_anchor, ceiling):
         "two live bars, not v2)."
     )
     if amendment:
-        foot += f' Amendment, quoted from the ledger: <q>{html.escape(amendment)}</q>'
+        foot += f" Amendment, quoted from the ledger: <q>{html.escape(amendment)}</q>"
     return (
         '<section class="verdict-panel card" aria-label="Gate-2 final config efficiency">'
         '<div class="verdict-head">'
@@ -1263,7 +1395,7 @@ def build_gate2_html(rows, baselines, top_anchor, ceiling):
         '<div class="table-wrap"><table class="verdict-table">'
         '<thead><tr><th scope="col">Metric</th><th scope="col">Baseline / bar</th>'
         '<th scope="col">Gate-2 final</th><th scope="col">Verdict</th></tr></thead>'
-        f'<tbody>{"".join(body)}</tbody></table></div>'
+        f"<tbody>{''.join(body)}</tbody></table></div>"
         f'<p class="verdict-foot">{foot}</p>'
         "</section>"
     )
@@ -1284,16 +1416,27 @@ def build_tiles_html(row, n_prs, n_goldens, runs=1):
     g = (row or {}).get
     billable = cost_is_billable(row or {})
     tiles = [
-        (fmt_pct(g("golden_recall")), "Golden recall",
-         f"{n_prs} PRs · {n_goldens} goldens · N={runs}"),
-        (fmt_pct(g("noise_rate")), "Noise rate",
-         f"{total_txt} candidates scored · N={runs}"),
-        (fmt_pct(g("precision_strict")), "Precision (strict) †",
-         "reported, not gated — counts valid-extras as misses"),
-        (fmt_pct(g("f1_strict")), "F1 (strict)",
-         "recall + precision blend"),
-        (fmt_money(g("cost_usd")) if billable else "—", "Run cost",
-         "one review pass · review spend" if billable else NON_BILLABLE_CAPTION),
+        (
+            fmt_pct(g("golden_recall")),
+            "Golden recall",
+            f"{n_prs} PRs · {n_goldens} goldens · N={runs}",
+        ),
+        (
+            fmt_pct(g("noise_rate")),
+            "Noise rate",
+            f"{total_txt} candidates scored · N={runs}",
+        ),
+        (
+            fmt_pct(g("precision_strict")),
+            "Precision (strict) †",
+            "reported, not gated — counts valid-extras as misses",
+        ),
+        (fmt_pct(g("f1_strict")), "F1 (strict)", "recall + precision blend"),
+        (
+            fmt_money(g("cost_usd")) if billable else "—",
+            "Run cost",
+            "one review pass · review spend" if billable else NON_BILLABLE_CAPTION,
+        ),
     ]
     cells = "".join(
         '<div class="tile">'
@@ -1312,9 +1455,14 @@ def build_anchor_section_html(baselines, v3_row, v3_holdout_row):
     figs = []
     for v2v3_key, anchor_key, title in ANCHOR_METRICS:
         bars = [
-            (label, var, emph,
-             _anchor_value(src, v2v3_key, anchor_key, bv2, v3_row, v3_holdout_row,
-                           anchor_rows))
+            (
+                label,
+                var,
+                emph,
+                _anchor_value(
+                    src, v2v3_key, anchor_key, bv2, v3_row, v3_holdout_row, anchor_rows
+                ),
+            )
             for label, var, emph, src in ANCHOR_TOOLS
         ]
         bars = [b for b in bars if b[3] is not None]
@@ -1327,7 +1475,9 @@ def build_anchor_section_html(baselines, v3_row, v3_holdout_row):
     holdout_n = (v3_holdout_row or {}).get("n_prs")
     corroboration = (
         f" The <em>v3 · holdout</em> bar ({holdout_n} fresh PRs) corroborates the lead "
-        "on unseen PRs." if v3_holdout_row else ""
+        "on unseen PRs."
+        if v3_holdout_row
+        else ""
     )
     caption = (
         f"Every tool judged on {gate_desc}. <em>deep-review v3</em> leads on "
@@ -1336,15 +1486,26 @@ def build_anchor_section_html(baselines, v3_row, v3_holdout_row):
         "candidates re-judged under our pinned judge." + corroboration
     )
     return (
-        f'<div class="anchor-row">{"".join(figs)}</div>'
-        f'<p class="caption">{caption}</p>'
+        f'<div class="anchor-row">{"".join(figs)}</div><p class="caption">{caption}</p>'
     )
 
 
 def build_table_html(groups, top_anchor, ceiling):
     heads = [
-        "", "Date", "Run", "Tool", "Tier", "PRs", "Delivered", "Recall",
-        "Valid-extra", "Noise", "Precision †", "F1", "Tokens", "Cost",
+        "",
+        "Date",
+        "Run",
+        "Tool",
+        "Tier",
+        "PRs",
+        "Delivered",
+        "Recall",
+        "Valid-extra",
+        "Noise",
+        "Precision †",
+        "F1",
+        "Tokens",
+        "Cost",
         "What changed",
     ]
     thead = "".join(f"<th>{html.escape(h)}</th>" for h in heads)
@@ -1371,9 +1532,7 @@ def build_table_html(groups, top_anchor, ceiling):
                 "capacity, not metered API spend; excluded from every derived "
                 "cost figure."
             )
-            cost_cell = (
-                f'<td class="num" title="{cost_tip}">{cost_txt} {NON_BILLABLE_MARK}</td>'
-            )
+            cost_cell = f'<td class="num" title="{cost_tip}">{cost_txt} {NON_BILLABLE_MARK}</td>'
         # "What changed" cell: the outcome line, else the hypothesis; full text on hover.
         # Confounded child-model experiments carry no annotation — synthesize one from
         # the reverted verdict and the run's own dominant (child) model.
@@ -1402,10 +1561,10 @@ def build_table_html(groups, top_anchor, ceiling):
         )
         cells = (
             f'<td class="verdict verdict-{kind}" title="{html.escape(desc)}">{glyph}</td>'
-            f'<td>{html.escape(fmt_date(r.get("ts", "")))}</td>'
+            f"<td>{html.escape(fmt_date(r.get('ts', '')))}</td>"
             f'<td class="mono" title="{html.escape(rid)}">{run}{note}</td>'
-            f'<td>{html.escape(str(r.get("tool", "")))}</td>'
-            f'<td>{html.escape(str(r.get("tier", "")))}</td>'
+            f"<td>{html.escape(str(r.get('tool', '')))}</td>"
+            f"<td>{html.escape(str(r.get('tier', '')))}</td>"
             f'<td class="num">{html.escape(str(r.get("n_prs", "—")))}</td>'
             f'<td class="num">{fmt_int(delivered)}</td>'
             f'<td class="num">{fmt_pct(r.get("golden_recall"))}</td>'
@@ -1421,7 +1580,7 @@ def build_table_html(groups, top_anchor, ceiling):
     return (
         '<div class="table-wrap"><table>'
         f"<thead><tr>{thead}</tr></thead>"
-        f'<tbody>{"".join(body)}</tbody></table></div>'
+        f"<tbody>{''.join(body)}</tbody></table></div>"
     )
 
 
@@ -1438,9 +1597,7 @@ def build_footnotes_html(baselines, rows=None):
     pin_line = f'Judge &amp; adjudicator pinned to <span class="mono">{html.escape(judge)}</span>'
     if adj != judge:
         pin_line += f' / <span class="mono">{html.escape(adj)}</span>'
-    pin_line += (
-        " at temperature 0; the k=5 re-scores are byte-identical (judge_sd=0)."
-    )
+    pin_line += " at temperature 0; the k=5 re-scores are byte-identical (judge_sd=0)."
     items = [
         "<b>† Precision (strict)</b> is reported, not gated: it counts valid-extras "
         "— real issues outside the golden answer key — as misses, so it drops as a "
@@ -2074,7 +2231,9 @@ TOOLTIP_JS = """
 def _thresholds(baselines):
     """The three live success bars, read from baselines (never hard-coded)."""
     anchor_rows = baselines.get("anchors", {}).get("rows", {})
-    recalls = [v.get("recall") for v in anchor_rows.values() if v.get("recall") is not None]
+    recalls = [
+        v.get("recall") for v in anchor_rows.values() if v.get("recall") is not None
+    ]
     top_anchor = max(recalls) if recalls else None
     v2_base = baselines.get("baseline_v2", {}).get("golden_recall")
     ceiling = baselines.get("delta_noise")
@@ -2109,7 +2268,7 @@ def render_html(rows, baselines, sha, generated):
     if release_row is not None:
         src_label = (
             '<p class="tiles-source">Headline numbers below are the current release: '
-            f'<b>{html.escape(rel["label"])}</b> · {html.escape(leg["name"])} · run '
+            f"<b>{html.escape(rel['label'])}</b> · {html.escape(leg['name'])} · run "
             f'<span class="mono">{html.escape(truncate_middle(str(leg["run_id"]), 32))}</span>'
             f" · {html.escape(fmt_date(release_row.get('ts', '')))}</p>"
         )

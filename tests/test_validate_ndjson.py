@@ -39,7 +39,6 @@ class _TmpFile:
 
 
 class TestValidateValidInput(unittest.TestCase):
-
     def test_missing_file_is_ok(self):
         """Agent emitted nothing — no findings file is a valid outcome."""
         path = "/nonexistent/path/findings.ndjson"
@@ -81,11 +80,7 @@ class TestValidateValidInput(unittest.TestCase):
         self.assertIn("3 valid finding", err.getvalue())
 
     def test_blank_lines_between_findings_ok(self):
-        content = (
-            b'{"id":"bug-1"}\n'
-            b'\n'
-            b'{"id":"bug-2"}\n'
-        )
+        content = b'{"id":"bug-1"}\n\n{"id":"bug-2"}\n'
         with _TmpFile(content) as path:
             with patch("sys.stderr", new=io.StringIO()):
                 rc = validate(path)
@@ -109,14 +104,10 @@ class TestValidateValidInput(unittest.TestCase):
 
 
 class TestValidateInvalidInput(unittest.TestCase):
-
     def test_literal_newline_in_string_fails(self):
         """The headline bug — agent embeds a raw \\n inside a JSON string,
         producing two physical lines neither of which parses."""
-        content = (
-            b'{"id":"bug-1","description":"First sentence.\n'
-            b'Second sentence."}\n'
-        )
+        content = b'{"id":"bug-1","description":"First sentence.\nSecond sentence."}\n'
         with _TmpFile(content) as path:
             with patch("sys.stderr", new=io.StringIO()) as err:
                 rc = validate(path)
@@ -167,10 +158,7 @@ class TestValidateInvalidInput(unittest.TestCase):
         self.assertIn("2 invalid", out)
 
     def test_invalid_line_diagnostic_includes_line_number(self):
-        content = (
-            b'{"id":"bug-1"}\n'
-            b'this is not json at all\n'
-        )
+        content = b'{"id":"bug-1"}\nthis is not json at all\n'
         with _TmpFile(content) as path:
             with patch("sys.stderr", new=io.StringIO()) as err:
                 rc = validate(path)
@@ -178,7 +166,7 @@ class TestValidateInvalidInput(unittest.TestCase):
         self.assertIn("line 2", err.getvalue())
 
     def test_invalid_line_diagnostic_truncates_long_snippet(self):
-        long_payload = b'x' * 500
+        long_payload = b"x" * 500
         content = b'{"id":"bug-1","description":"' + long_payload + b'\nbroken"}\n'
         with _TmpFile(content) as path:
             with patch("sys.stderr", new=io.StringIO()) as err:
@@ -190,7 +178,6 @@ class TestValidateInvalidInput(unittest.TestCase):
 
 
 class TestMainEntrypoint(unittest.TestCase):
-
     def test_no_args_returns_usage_error(self):
         with patch("sys.stderr", new=io.StringIO()) as err:
             rc = main(["validate_ndjson.py"])

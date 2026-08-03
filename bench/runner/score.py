@@ -373,17 +373,25 @@ def _run_stage(cmd, env, stage):
     ``CalledProcessError`` whose message omits the stage and output.
     """
     result = subprocess.run(
-        cmd, cwd=str(VENDOR_DIR), env=env, capture_output=True, text=True,
+        cmd,
+        cwd=str(VENDOR_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
     )
     if result.returncode != 0:
         tail = (result.stderr or result.stdout or "").strip()[-2000:]
         raise RuntimeError(
-            "scorer stage {!r} failed (exit {}): {}".format(stage, result.returncode, tail)
+            "scorer stage {!r} failed (exit {}): {}".format(
+                stage, result.returncode, tail
+            )
         )
     return result
 
 
-def run_scorer_stages(pin, api_key, model_dir=None, *, tool=TOOL, base_url=None, env=None):
+def run_scorer_stages(
+    pin, api_key, model_dir=None, *, tool=TOOL, base_url=None, env=None
+):
     """Run dedup (step2_5) then judge (step3) via ``uv run`` in the vendor dir.
 
     The single scorer-stage runner, shared by ``score_run`` (``tool="deep-review"``)
@@ -403,11 +411,22 @@ def run_scorer_stages(pin, api_key, model_dir=None, *, tool=TOOL, base_url=None,
     run_env["MARTIAN_MODEL"] = pin
 
     dedup_rel = "results/{}/dedup_groups.json".format(_sanitize_model_name(pin))
-    dedup_cmd = ["uv", "run", "python", "-m",
-                 "code_review_benchmark.step2_5_dedup_candidates"]
-    judge_cmd = ["uv", "run", "python", "-m",
-                 "code_review_benchmark.step3_judge_comments",
-                 "--dedup-groups", dedup_rel]
+    dedup_cmd = [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "code_review_benchmark.step2_5_dedup_candidates",
+    ]
+    judge_cmd = [
+        "uv",
+        "run",
+        "python",
+        "-m",
+        "code_review_benchmark.step3_judge_comments",
+        "--dedup-groups",
+        dedup_rel,
+    ]
     if tool:
         dedup_cmd += ["--tool", tool]
         judge_cmd += ["--tool", tool]
@@ -447,7 +466,9 @@ def bucket_join(candidates, evaluations, tool=TOOL):
             result[url] = {"golden_matched": [], "adjudicator": []}
             continue
 
-        matched_texts = [tp.get("matched_candidate") for tp in ev.get("true_positives", [])]
+        matched_texts = [
+            tp.get("matched_candidate") for tp in ev.get("true_positives", [])
+        ]
         cand_set = set(cand_texts)
         for text in matched_texts:
             if text not in cand_set:
@@ -567,7 +588,9 @@ def compute_metrics(evaluations, candidates, buckets, adjudications, tool=TOOL):
     golden_recall = tp / (tp + fn) if (tp + fn) else 0.0
     precision_strict = tp / (tp + fp) if (tp + fp) else 0.0
     if precision_strict + golden_recall:
-        f1_strict = 2 * precision_strict * golden_recall / (precision_strict + golden_recall)
+        f1_strict = (
+            2 * precision_strict * golden_recall / (precision_strict + golden_recall)
+        )
     else:
         f1_strict = 0.0
 
@@ -623,7 +646,10 @@ def _git_head():
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=5,
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if out.returncode == 0:
             return out.stdout.strip()
@@ -697,10 +723,16 @@ def _read_run_costs(run_dir):
             agg = per_model.setdefault(model, {"tokens": 0, "cost_usd": 0.0})
             agg["tokens"] += usage["tokens"]
             agg["cost_usd"] += usage["cost_usd"]
-    return {"cost_usd": total_cost, "tokens_total": total_tokens, "per_model": per_model}
+    return {
+        "cost_usd": total_cost,
+        "tokens_total": total_tokens,
+        "per_model": per_model,
+    }
 
 
-def _build_ledger_row(run_dir, metrics, costs, manifest, pin, adjudicator_pin, scorer_sha):
+def _build_ledger_row(
+    run_dir, metrics, costs, manifest, pin, adjudicator_pin, scorer_sha
+):
     run_id = manifest.get("run_id") or Path(run_dir).name
     tier = manifest.get("tier") or _infer_tier(run_id)
     envelope = {
@@ -791,7 +823,9 @@ def score_run(
     if not candidates:
         raise RuntimeError(
             "no scorable PRs in {}: no PR completed with status 'ok', so there are no "
-            "candidates to score. Re-run the tier (or --retry-failed) first.".format(run_dir)
+            "candidates to score. Re-run the tier (or --retry-failed) first.".format(
+                run_dir
+            )
         )
 
     # 2) stage scorer inputs (candidates.json + injected benchmark_data.json).
@@ -813,10 +847,14 @@ def score_run(
 
     # 6) adjudicate non-golden-matched comments.
     adjudicator_fn = adjudicator if adjudicator is not None else _adjudicate
-    adjudications = _adjudicate_bucket(buckets, per_pr, adjudicator_pin, api_key, adjudicator_fn)
+    adjudications = _adjudicate_bucket(
+        buckets, per_pr, adjudicator_pin, api_key, adjudicator_fn
+    )
 
     # 7) metrics.
-    metrics = compute_metrics(evaluations, candidates, buckets, adjudications, tool=TOOL)
+    metrics = compute_metrics(
+        evaluations, candidates, buckets, adjudications, tool=TOOL
+    )
 
     # 8) ledger row + scores.json.
     costs = _read_run_costs(run_dir)

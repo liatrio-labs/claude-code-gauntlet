@@ -352,8 +352,9 @@ class _Collector(object):
             if reason is not None:
                 self._skip(os.path.join(containing_dir, raw), reason)
                 continue
-            self.visit(target, "import:" + self._display(real), depth + 1,
-                       chain + (real,))
+            self.visit(
+                target, "import:" + self._display(real), depth + 1, chain + (real,)
+            )
 
 
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
@@ -465,18 +466,27 @@ def _gaps(collector):
     correct dedup (cal.com's symlinked CLAUDE.md reaching the same real file
     twice), not a degradation."""
     gaps = []
-    security = [s for s in collector.skipped
-                if s["reason"] in ("outside_repo", "absolute_path", "not_markdown")]
+    security = [
+        s
+        for s in collector.skipped
+        if s["reason"] in ("outside_repo", "absolute_path", "not_markdown")
+    ]
     for entry in security:
         gaps.append(
             "project_rules_refused: %s (%s) — pointer refused; it is not a "
             "markdown file inside the repository" % (entry["path"], entry["reason"])
         )
     for entry in collector.skipped:
-        if entry["reason"] in ("too_large", "total_cap_reached",
-                               "file_cap_reached", "depth_exceeded"):
-            gaps.append("project_rules_truncated: %s (%s) — its rules are NOT in "
-                        "the review context" % (entry["path"], entry["reason"]))
+        if entry["reason"] in (
+            "too_large",
+            "total_cap_reached",
+            "file_cap_reached",
+            "depth_exceeded",
+        ):
+            gaps.append(
+                "project_rules_truncated: %s (%s) — its rules are NOT in "
+                "the review context" % (entry["path"], entry["reason"])
+            )
     for entry in collector.skipped:
         if entry["reason"] in ("missing", "cycle", "not_regular"):
             gaps.append(
@@ -484,8 +494,10 @@ def _gaps(collector):
                 "to rule content" % (entry["path"], entry["reason"])
             )
     if not collector.sources:
-        gaps.append("project_rules_absent: no CLAUDE.md/AGENTS.md/QODO.md found; "
-                    "agents receive no project rules for this repository")
+        gaps.append(
+            "project_rules_absent: no CLAUDE.md/AGENTS.md/QODO.md found; "
+            "agents receive no project rules for this repository"
+        )
     return gaps
 
 
@@ -525,7 +537,8 @@ def _emit(receipt):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Collect a repository's project-rule text, resolving @imports.")
+        description="Collect a repository's project-rule text, resolving @imports."
+    )
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--out", required=True)
     parser.add_argument("--changed-files")
@@ -550,8 +563,9 @@ def main(argv=None):
             )
             return 1
 
-        collector = _Collector(args.repo_root, args.max_file_bytes,
-                               args.max_total_bytes, args.max_files)
+        collector = _Collector(
+            args.repo_root, args.max_file_bytes, args.max_total_bytes, args.max_files
+        )
         changed = _load_changed_files(args.changed_files)
 
         for directory in _search_dirs(args.repo_root, changed):
@@ -581,8 +595,10 @@ def main(argv=None):
             _receipt(
                 ok=True,
                 out=args.out,
-                sources=[{k: v for k, v in s.items() if k != "text"}
-                         for s in collector.sources],
+                sources=[
+                    {k: v for k, v in s.items() if k != "text"}
+                    for s in collector.sources
+                ],
                 skipped=collector.skipped,
                 total_bytes=collector.total_bytes,
                 truncated=collector.truncated,

@@ -27,6 +27,7 @@ Output shape (per url):
     {"owner", "repo", "pr_number", "head_sha", "base_sha", "base_sha_api",
      "base_ref", "fork"}
 """
+
 import json
 import re
 import subprocess
@@ -61,15 +62,20 @@ def _gh_api_json(endpoint, jq, run=None):
         try:
             proc = runner(
                 ["gh", "api", endpoint, "--jq", jq],
-                capture_output=True, text=True, timeout=GH_TIMEOUT_S, check=False,
+                capture_output=True,
+                text=True,
+                timeout=GH_TIMEOUT_S,
+                check=False,
             )
             if proc.returncode == 0 and proc.stdout.strip():
                 return json.loads(proc.stdout)
-            last_err = (proc.stderr or proc.stdout).strip()[:200] or f"exit {proc.returncode}"
+            last_err = (proc.stderr or proc.stdout).strip()[
+                :200
+            ] or f"exit {proc.returncode}"
         except (subprocess.TimeoutExpired, json.JSONDecodeError) as exc:
             last_err = str(exc)
         if attempt < MAX_RETRIES:
-            time.sleep(2 ** attempt)  # 2s, then 4s
+            time.sleep(2**attempt)  # 2s, then 4s
     raise RuntimeError(last_err or "unknown error")
 
 
@@ -85,7 +91,11 @@ def fetch_one(owner, repo, pr_number, run=None):
         "{head_sha: .head.sha, base_sha: .base.sha, base_ref: .base.ref}",
         run=run,
     )
-    head, base_tip, ref = pull.get("head_sha"), pull.get("base_sha"), pull.get("base_ref")
+    head, base_tip, ref = (
+        pull.get("head_sha"),
+        pull.get("base_sha"),
+        pull.get("base_ref"),
+    )
     if not (head and base_tip and ref):
         raise RuntimeError(f"incomplete pulls response: {json.dumps(pull)[:200]}")
 
@@ -129,7 +139,9 @@ def main():
 
     with open(GOLDEN / "shas.json", "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=2, ensure_ascii=False)
-        fh.write("\n")  # single trailing newline: pre-commit's end-of-file-fixer convention
+        fh.write(
+            "\n"
+        )  # single trailing newline: pre-commit's end-of-file-fixer convention
 
     fetched = len(out) - len(missing)
     print(f"fetched {fetched}/{len(out)} PR SHAs; wrote {GOLDEN / 'shas.json'}")

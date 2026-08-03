@@ -97,8 +97,13 @@ def registry():
             "  })),"
             "})))"
         )
-        out = subprocess.run(["node", "--input-type=module", "-e", node_src],
-                             cwd=REPO, capture_output=True, text=True, check=True)
+        out = subprocess.run(
+            ["node", "--input-type=module", "-e", node_src],
+            cwd=REPO,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
         _REGISTRY_CACHE = json.loads(out.stdout)
     return _REGISTRY_CACHE
 
@@ -160,7 +165,9 @@ def contract_blocks(name):
                 f"Block:\n{raw}"
             ) from exc
         if not isinstance(obj, dict):
-            raise AssertionError(f"agents/{name}.md: a ```json block is not an object: {raw!r}")
+            raise AssertionError(
+                f"agents/{name}.md: a ```json block is not an object: {raw!r}"
+            )
         blocks.append(obj)
     return blocks
 
@@ -176,7 +183,9 @@ def instructed_fields(name):
 def report_format_tables():
     """The Finding Fields Reference section's tables, keyed by their ### heading."""
     text = REPORT_FORMAT.read_text()
-    match = re.search(r"^## Finding Fields Reference\n(.*?)(?=^## )", text, re.DOTALL | re.MULTILINE)
+    match = re.search(
+        r"^## Finding Fields Reference\n(.*?)(?=^## )", text, re.DOTALL | re.MULTILINE
+    )
     if not match:
         raise AssertionError(
             f"{REPORT_FORMAT.relative_to(REPO)} has no '## Finding Fields Reference' section "
@@ -209,7 +218,11 @@ def table_named(tables, keyword):
 
 def claude_md_bullet(anchor):
     """The single agents/AGENTS.md line containing `anchor`."""
-    lines = [l for l in (REPO / "agents" / "AGENTS.md").read_text().splitlines() if anchor in l]
+    lines = [
+        l
+        for l in (REPO / "agents" / "AGENTS.md").read_text().splitlines()
+        if anchor in l
+    ]
     if len(lines) != 1:
         raise AssertionError(
             f"expected exactly one agents/AGENTS.md line containing {anchor!r}, found {len(lines)}"
@@ -226,15 +239,20 @@ class TestDimensionsRegistry(unittest.TestCase):
         # bare string "dimension —" would not match — grab the whole line instead.
         line = claude_md_bullet("short name from agent output")
         listed = set(re.findall(r'`"(\w+)"`', line))
-        self.assertEqual(registry_dims, listed,
-                         f"registry {registry_dims} != agents/AGENTS.md {listed}")
+        self.assertEqual(
+            registry_dims,
+            listed,
+            f"registry {registry_dims} != agents/AGENTS.md {listed}",
+        )
 
     def test_every_dimension_maps_to_an_agent_contract_file(self):
         for row in registry()["dimensions"]:
             path = REPO / "agents" / f"{agent_name(row['agentType'])}.md"
-            self.assertTrue(path.is_file(),
-                            f"dimension {row['dimension']} names {row['agentType']}, "
-                            f"but {path.relative_to(REPO)} does not exist")
+            self.assertTrue(
+                path.is_file(),
+                f"dimension {row['dimension']} names {row['agentType']}, "
+                f"but {path.relative_to(REPO)} does not exist",
+            )
 
 
 class TestContractSchemaLockstep(unittest.TestCase):
@@ -249,11 +267,14 @@ class TestContractSchemaLockstep(unittest.TestCase):
             missing = sorted(instructed_fields(name) - set(declared))
             if missing:
                 offenders[name] = missing
-        self.assertEqual(offenders, {},
-                         "agent contracts instruct fields no schema declares — they will be "
-                         "dropped at the StructuredOutput boundary. Declare them in "
-                         f"workflows/src/registry.js (canonical or the owning dimension's "
-                         f"schemaExtra): {offenders}")
+        self.assertEqual(
+            offenders,
+            {},
+            "agent contracts instruct fields no schema declares — they will be "
+            "dropped at the StructuredOutput boundary. Declare them in "
+            f"workflows/src/registry.js (canonical or the owning dimension's "
+            f"schemaExtra): {offenders}",
+        )
 
     def test_every_declared_field_is_contract_instructed(self):
         # The reverse direction: schema noise. registry.js records having removed a batch of
@@ -265,10 +286,13 @@ class TestContractSchemaLockstep(unittest.TestCase):
             unused = sorted(set(declared) - instructed_fields(name) - PIPELINE_STAMPED)
             if unused:
                 offenders[name] = unused
-        self.assertEqual(offenders, {},
-                         "the schema declares fields the agent contract never instructs — "
-                         "either instruct them or drop the declaration (pipeline-stamped "
-                         f"fields belong in PIPELINE_STAMPED): {offenders}")
+        self.assertEqual(
+            offenders,
+            {},
+            "the schema declares fields the agent contract never instructs — "
+            "either instruct them or drop the declaration (pipeline-stamped "
+            f"fields belong in PIPELINE_STAMPED): {offenders}",
+        )
 
     def test_pipeline_stamped_fields_are_declared_but_never_instructed(self):
         # Keeps PIPELINE_STAMPED honest: a name parked there to silence the test above must
@@ -276,12 +300,18 @@ class TestContractSchemaLockstep(unittest.TestCase):
         for agent_type, declared in declared_by_agent().items():
             name = agent_name(agent_type)
             for field in PIPELINE_STAMPED:
-                self.assertIn(field, declared,
-                              f"{field} is listed as pipeline-stamped but {name}'s schema "
-                              "does not declare it")
-                self.assertNotIn(field, instructed_fields(name),
-                                 f"{name} instructs {field}, which is listed as "
-                                 "pipeline-stamped (emitted by the pipeline, not the agent)")
+                self.assertIn(
+                    field,
+                    declared,
+                    f"{field} is listed as pipeline-stamped but {name}'s schema "
+                    "does not declare it",
+                )
+                self.assertNotIn(
+                    field,
+                    instructed_fields(name),
+                    f"{name} instructs {field}, which is listed as "
+                    "pipeline-stamped (emitted by the pipeline, not the agent)",
+                )
 
     def test_no_worked_example_emits_null_for_a_declared_field(self):
         # The retry-storm trap. Every property is typed to a SINGLE type (the platform allows
@@ -291,15 +321,24 @@ class TestContractSchemaLockstep(unittest.TestCase):
         offenders = {}
         for agent_type in declared_by_agent():
             name = agent_name(agent_type)
-            nulls = sorted({k for block in contract_blocks(name)
-                            for k, v in block.items() if v is None})
+            nulls = sorted(
+                {
+                    k
+                    for block in contract_blocks(name)
+                    for k, v in block.items()
+                    if v is None
+                }
+            )
             if nulls:
                 offenders[name] = nulls
-        self.assertEqual(offenders, {},
-                         "a worked example emits null for a schema-declared field. Every "
-                         "declared property is single-typed, so null is a schema violation "
-                         "that burns retries — delete the key from the example instead: "
-                         f"{offenders}")
+        self.assertEqual(
+            offenders,
+            {},
+            "a worked example emits null for a schema-declared field. Every "
+            "declared property is single-typed, so null is a schema violation "
+            "that burns retries — delete the key from the example instead: "
+            f"{offenders}",
+        )
 
     def test_no_template_placeholder_offers_a_null_branch(self):
         # The prose half, backstopping the structural check above: a placeholder that tells
@@ -312,12 +351,19 @@ class TestContractSchemaLockstep(unittest.TestCase):
             name = agent_name(agent_type)
             for block in contract_blocks(name):
                 for field, value in block.items():
-                    if field in declared and isinstance(value, str) and null_branch.search(value):
+                    if (
+                        field in declared
+                        and isinstance(value, str)
+                        and null_branch.search(value)
+                    ):
                         offenders.setdefault(name, []).append(field)
-        self.assertEqual(offenders, {},
-                         "an output-contract placeholder still offers a null branch for a "
-                         "schema-declared field; say 'OMIT this field entirely — never emit "
-                         f"null' instead: {offenders}")
+        self.assertEqual(
+            offenders,
+            {},
+            "an output-contract placeholder still offers a null branch for a "
+            "schema-declared field; say 'OMIT this field entirely — never emit "
+            f"null' instead: {offenders}",
+        )
 
     def test_a_field_the_example_omits_must_tell_the_model_to_omit_it(self):
         # The positive half of the omit-not-null rule, derived rather than hand-listed: a
@@ -332,8 +378,11 @@ class TestContractSchemaLockstep(unittest.TestCase):
             name = agent_name(agent_type)
             blocks = contract_blocks(name)
             # The template is the block whose values are `<placeholder>` prose.
-            templates = [b for b in blocks
-                         if any(isinstance(v, str) and v.startswith("<") for v in b.values())]
+            templates = [
+                b
+                for b in blocks
+                if any(isinstance(v, str) and v.startswith("<") for v in b.values())
+            ]
             examples = [b for b in blocks if b not in templates]
             if not templates or not examples:
                 continue
@@ -345,10 +394,13 @@ class TestContractSchemaLockstep(unittest.TestCase):
                         continue  # always emitted — no omission branch to get wrong
                     if "OMIT this field" not in value:
                         offenders.setdefault(name, []).append(field)
-        self.assertEqual(offenders, {},
-                         "a schema-declared field is absent from the worked example but its "
-                         "template placeholder never tells the model to OMIT it when it does "
-                         f"not apply — that is how a null gets emitted instead: {offenders}")
+        self.assertEqual(
+            offenders,
+            {},
+            "a schema-declared field is absent from the worked example but its "
+            "template placeholder never tells the model to OMIT it when it does "
+            f"not apply — that is how a null gets emitted instead: {offenders}",
+        )
 
     def test_no_worked_example_over_escapes_an_apostrophe(self):
         # Found by this guard's own parser on first run: three examples escaped apostrophes
@@ -366,10 +418,13 @@ class TestContractSchemaLockstep(unittest.TestCase):
                 for field, value in block.items():
                     if isinstance(value, str) and "\\'" in value:
                         offenders.setdefault(name, []).append(field)
-        self.assertEqual(offenders, {},
-                         "an output-contract example over-escapes an apostrophe — v3 agents "
-                         "return findings by value through StructuredOutput, so there is no "
-                         f"shell quoting to escape for: {offenders}")
+        self.assertEqual(
+            offenders,
+            {},
+            "an output-contract example over-escapes an apostrophe — v3 agents "
+            "return findings by value through StructuredOutput, so there is no "
+            f"shell quoting to escape for: {offenders}",
+        )
 
     def test_criticality_is_declared_as_a_number(self):
         # criticality is a 1-10 IMPACT scale sitting next to confidence's 0-100 CERTAINTY
@@ -377,8 +432,11 @@ class TestContractSchemaLockstep(unittest.TestCase):
         # confidence pin exists to prevent ("85" + 10 -> "8510").
         self.assertEqual(all_extras().get("criticality"), "test_coverage")
         types = declared_by_agent()["code-gauntlet:test-analyzer"]
-        self.assertEqual(types["criticality"], "number",
-                         "criticality must be declared number, not string")
+        self.assertEqual(
+            types["criticality"],
+            "number",
+            "criticality must be declared number, not string",
+        )
 
 
 class TestClaudeMdFieldLists(unittest.TestCase):
@@ -387,16 +445,22 @@ class TestClaudeMdFieldLists(unittest.TestCase):
     def test_canonical_bullet_matches_registry(self):
         line = claude_md_bullet("**Canonical fields**")
         listed = set(_BACKTICKED_FIELD.findall(line))
-        self.assertEqual(set(registry()["propTypes"]), listed,
-                         "agents/AGENTS.md's canonical field bullet has drifted from "
-                         "registry.js FINDING_PROP_TYPES")
+        self.assertEqual(
+            set(registry()["propTypes"]),
+            listed,
+            "agents/AGENTS.md's canonical field bullet has drifted from "
+            "registry.js FINDING_PROP_TYPES",
+        )
 
     def test_per_dimension_bullet_matches_registry(self):
         line = claude_md_bullet("**Per-dimension extras**")
         listed = set(_BACKTICKED_FIELD.findall(line))
-        self.assertEqual(set(all_extras()), listed,
-                         "agents/AGENTS.md's per-dimension extras bullet has drifted from "
-                         "registry.js DIMENSIONS[].schemaExtra")
+        self.assertEqual(
+            set(all_extras()),
+            listed,
+            "agents/AGENTS.md's per-dimension extras bullet has drifted from "
+            "registry.js DIMENSIONS[].schemaExtra",
+        )
 
 
 class TestReportFormatFieldTables(unittest.TestCase):
@@ -415,9 +479,12 @@ class TestReportFormatFieldTables(unittest.TestCase):
         # and accounting for every row below, makes a new table a deliberate edit to this test
         # rather than a quiet addition to the doc.
         tables = report_format_tables()
-        self.assertEqual(3, len(tables),
-                         "the Finding Fields Reference section must hold exactly the canonical, "
-                         f"per-dimension and delivery-side tables — found {list(tables)}")
+        self.assertEqual(
+            3,
+            len(tables),
+            "the Finding Fields Reference section must hold exactly the canonical, "
+            f"per-dimension and delivery-side tables — found {list(tables)}",
+        )
 
     def test_every_field_row_in_the_section_is_a_field_the_code_knows(self):
         # Heading-agnostic backstop for the same hole: whatever the tables are called, the union
@@ -426,50 +493,74 @@ class TestReportFormatFieldTables(unittest.TestCase):
         # `suggestion`-marked-required defect all over again.
         tables = report_format_tables()
         documented = {field for rows in tables.values() for field, _ in rows}
-        expected = set(registry()["propTypes"]) | set(all_extras()) | {"suggested_fix_code"}
-        self.assertEqual(expected, documented,
-                         "report-format.md documents a field set that is not "
-                         "registry ∪ {suggested_fix_code}")
+        expected = (
+            set(registry()["propTypes"]) | set(all_extras()) | {"suggested_fix_code"}
+        )
+        self.assertEqual(
+            expected,
+            documented,
+            "report-format.md documents a field set that is not "
+            "registry ∪ {suggested_fix_code}",
+        )
 
     def test_canonical_table_matches_registry(self):
         rows = table_named(report_format_tables(), "Canonical")
-        self.assertEqual(set(registry()["propTypes"]), {f for f, _ in rows},
-                         "report-format.md's canonical field table has drifted from "
-                         "registry.js FINDING_PROP_TYPES")
+        self.assertEqual(
+            set(registry()["propTypes"]),
+            {f for f, _ in rows},
+            "report-format.md's canonical field table has drifted from "
+            "registry.js FINDING_PROP_TYPES",
+        )
 
     def test_canonical_table_types_match_registry(self):
         types = registry()["propTypes"]
         for field, cells in table_named(report_format_tables(), "Canonical"):
-            self.assertEqual(types[field], cells[0],
-                             f"report-format.md types {field} as {cells[0]!r}, "
-                             f"registry.js declares {types[field]!r}")
+            self.assertEqual(
+                types[field],
+                cells[0],
+                f"report-format.md types {field} as {cells[0]!r}, "
+                f"registry.js declares {types[field]!r}",
+            )
 
     def test_canonical_table_required_column_matches_registry(self):
         required = set(registry()["required"])
         for field, cells in table_named(report_format_tables(), "Canonical"):
             expected = "yes" if field in required else "no"
-            self.assertEqual(expected, cells[1].lower(),
-                             f"report-format.md marks {field} required={cells[1]!r}; "
-                             f"FINDING_REQUIRED says {expected}")
+            self.assertEqual(
+                expected,
+                cells[1].lower(),
+                f"report-format.md marks {field} required={cells[1]!r}; "
+                f"FINDING_REQUIRED says {expected}",
+            )
 
     def test_per_dimension_table_matches_registry(self):
         rows = table_named(report_format_tables(), "Per-dimension")
         owner = all_extras()
-        self.assertEqual(set(owner), {f for f, _ in rows},
-                         "report-format.md's per-dimension table has drifted from "
-                         "registry.js DIMENSIONS[].schemaExtra")
-        declared_type = {f: t for row in registry()["dimensions"]
-                         for f, t in row["extras"].items()}
+        self.assertEqual(
+            set(owner),
+            {f for f, _ in rows},
+            "report-format.md's per-dimension table has drifted from "
+            "registry.js DIMENSIONS[].schemaExtra",
+        )
+        declared_type = {
+            f: t for row in registry()["dimensions"] for f, t in row["extras"].items()
+        }
         for field, cells in rows:
-            self.assertEqual(owner[field], cells[1],
-                             f"report-format.md attributes {field} to {cells[1]!r}, "
-                             f"registry.js scopes it to {owner[field]!r}")
+            self.assertEqual(
+                owner[field],
+                cells[1],
+                f"report-format.md attributes {field} to {cells[1]!r}, "
+                f"registry.js scopes it to {owner[field]!r}",
+            )
             # Same pin as the canonical table's Type column. `criticality` is why it matters
             # here: a 1-10 impact scale documented as `string` invites the quoted emission the
             # registry comment and the test-analyzer contract both warn against.
-            self.assertEqual(declared_type[field], cells[0],
-                             f"report-format.md types {field} as {cells[0]!r}, "
-                             f"registry.js declares {declared_type[field]!r}")
+            self.assertEqual(
+                declared_type[field],
+                cells[0],
+                f"report-format.md types {field} as {cells[0]!r}, "
+                f"registry.js declares {declared_type[field]!r}",
+            )
 
     def test_delivery_side_table_holds_only_undeclared_fields(self):
         # suggested_fix_code is real on the delivery side (post_review.py renders it) but no
@@ -480,10 +571,13 @@ class TestReportFormatFieldTables(unittest.TestCase):
         self.assertEqual({"suggested_fix_code"}, {f for f, _ in rows})
         declared = set(registry()["propTypes"]) | set(all_extras())
         for field, _ in rows:
-            self.assertNotIn(field, declared,
-                             f"{field} is documented as delivery-side-only but the registry "
-                             "now declares it — move it into the canonical or per-dimension "
-                             "table and instruct it in the agent contracts")
+            self.assertNotIn(
+                field,
+                declared,
+                f"{field} is documented as delivery-side-only but the registry "
+                "now declares it — move it into the canonical or per-dimension "
+                "table and instruct it in the agent contracts",
+            )
 
 
 if __name__ == "__main__":

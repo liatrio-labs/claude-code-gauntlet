@@ -95,6 +95,7 @@ _SKIP_WARNINGS = []
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def die(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -112,9 +113,7 @@ def warn_skip(msg):
 
 def check_tool(name):
     """Exit with clear error if CLI tool is not available."""
-    result = subprocess.run(
-        ["which", name], capture_output=True, text=True
-    )
+    result = subprocess.run(["which", name], capture_output=True, text=True)
     if result.returncode != 0:
         die(
             f"'{name}' CLI tool not found. "
@@ -166,6 +165,7 @@ def post_json(cmd_prefix, payload):
 # Platform detection
 # ---------------------------------------------------------------------------
 
+
 def detect_platform():
     """Parse git remote URL to detect github.com vs gitlab.com vs self-hosted."""
     stdout, _, rc = run_api(["git", "remote", "get-url", "origin"])
@@ -199,6 +199,7 @@ def detect_platform():
 # Diff parsing — line validation
 # ---------------------------------------------------------------------------
 
+
 def parse_diff_lines(platform, owner, repo, pr_number):
     """
     Return ``(valid_lines, new_files)``:
@@ -221,11 +222,11 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         )
     elif platform == "gitlab":
         # For GitLab, use glab mr diff
-        stdout, stderr, rc = run_api(
-            ["glab", "mr", "diff", str(pr_number)]
-        )
+        stdout, stderr, rc = run_api(["glab", "mr", "diff", str(pr_number)])
     else:
-        warn("Unknown platform — skipping diff validation. All findings will be posted.")
+        warn(
+            "Unknown platform — skipping diff validation. All findings will be posted."
+        )
         return None, None
 
     if rc != 0:
@@ -307,9 +308,7 @@ def valid_lines_for_file(valid_lines, filepath):
     if valid_lines is None:
         return None
     stripped = re.sub(r"^[ab]/", "", filepath)
-    lines = sorted(
-        {l for fp, l in valid_lines if fp == filepath or fp == stripped}
-    )
+    lines = sorted({l for fp, l in valid_lines if fp == filepath or fp == stripped})
     return lines[:10]
 
 
@@ -331,6 +330,7 @@ def is_new_file(new_files, filepath):
 # ---------------------------------------------------------------------------
 # Comment body rendering
 # ---------------------------------------------------------------------------
+
 
 def _rendered_text(value):
     """Normalize a finding field for optional rendering.
@@ -445,6 +445,7 @@ def resolve_marker_sha(data):
 # GitHub delivery
 # ---------------------------------------------------------------------------
 
+
 def post_github(data, valid_lines):
     owner = data["owner"]
     repo = data["repo"]
@@ -496,9 +497,12 @@ def post_github(data, valid_lines):
     }
 
     cmd_prefix = [
-        "gh", "api",
-        "--method", "POST",
-        "-H", "Accept: application/vnd.github+json",
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        "-H",
+        "Accept: application/vnd.github+json",
         f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
     ]
 
@@ -517,6 +521,7 @@ def post_github(data, valid_lines):
 # ---------------------------------------------------------------------------
 # GitLab delivery
 # ---------------------------------------------------------------------------
+
 
 def gitlab_project_id(owner, repo):
     """Return URL-encoded project path for use in GitLab API."""
@@ -569,13 +574,18 @@ def post_gitlab(data, valid_lines, new_files=None):
     # Post the review summary as a top-level MR note first
     summary_payload = {"body": review_body}
     cmd_prefix = [
-        "glab", "api",
-        "--method", "POST",
-        "--header", "Content-Type: application/json",
+        "glab",
+        "api",
+        "--method",
+        "POST",
+        "--header",
+        "Content-Type: application/json",
         f"projects/{project_id}/merge_requests/{mr_iid}/notes",
     ]
     post_json(cmd_prefix, summary_payload)
-    print("MR summary note captured (dry-run)." if DRY_RUN else "MR summary note posted.")
+    print(
+        "MR summary note captured (dry-run)." if DRY_RUN else "MR summary note posted."
+    )
 
     # Post each finding as an inline discussion
     posted = 0
@@ -622,9 +632,12 @@ def post_gitlab(data, valid_lines, new_files=None):
         }
 
         cmd_prefix = [
-            "glab", "api",
-            "--method", "POST",
-            "--header", "Content-Type: application/json",
+            "glab",
+            "api",
+            "--method",
+            "POST",
+            "--header",
+            "Content-Type: application/json",
             f"projects/{project_id}/merge_requests/{mr_iid}/discussions",
         ]
         resp = post_json(cmd_prefix, payload)
@@ -641,6 +654,7 @@ def post_gitlab(data, valid_lines, new_files=None):
 # ---------------------------------------------------------------------------
 # Dry-run payload assembly
 # ---------------------------------------------------------------------------
+
 
 def _method_from_cmd(cmd_prefix):
     """Return the HTTP method following ``--method`` in *cmd_prefix* (default POST)."""
@@ -693,6 +707,7 @@ def write_dry_run_payload(platform, findings_path):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     global DRY_RUN
 
@@ -707,8 +722,8 @@ def main():
         "--dry-run",
         action="store_true",
         help="Capture the would-be API payloads to post-review-payload.json "
-             "(next to the findings file) instead of posting. Line validation "
-             "and read-only fetches still run.",
+        "(next to the findings file) instead of posting. Line validation "
+        "and read-only fetches still run.",
     )
     args = parser.parse_args()
 

@@ -29,7 +29,7 @@ from bench.adjudicator.adjudicate import _parse_verdict, _recover_verdict  # noq
 FAILING_REPLY = (
     '{"bucket":"valid_extra","failed_check":null,"reason":"The comment correctly '
     'identifies that line 147 uses `\\"." << website_host\\"` which is the mutating '
-    'String#<< operator on a string literal, and the concern about '
+    "String#<< operator on a string literal, and the concern about "
     'readability/unintentional mutation appearance is concrete and actionable."}'
 )
 
@@ -120,13 +120,16 @@ class FileContextTests(unittest.TestCase):
     def test_window_marks_target_line(self):
         out = file_context(self.lines, 10, radius=2)
         rows = out.splitlines()
-        self.assertEqual(rows, [
-            "  8: line8",
-            "  9: line9",
-            "> 10: line10",
-            "  11: line11",
-            "  12: line12",
-        ])
+        self.assertEqual(
+            rows,
+            [
+                "  8: line8",
+                "  9: line9",
+                "> 10: line10",
+                "  11: line11",
+                "  12: line12",
+            ],
+        )
 
     def test_clamps_at_file_start(self):
         out = file_context(self.lines, 2, radius=5)
@@ -154,16 +157,22 @@ class FileContextTests(unittest.TestCase):
 
 class AdjudicateTests(unittest.TestCase):
     def test_valid_first_reply_no_retry(self):
-        transport = FakeTransport(['{"bucket":"noise","failed_check":3,"reason":"vague"}'])
+        transport = FakeTransport(
+            ['{"bucket":"noise","failed_check":3,"reason":"vague"}']
+        )
         verdict = adjudicate("c", "hunk", "ctx", "pin-x", "key-x", transport=transport)
-        self.assertEqual(verdict, {"bucket": "noise", "failed_check": 3, "reason": "vague"})
+        self.assertEqual(
+            verdict, {"bucket": "noise", "failed_check": 3, "reason": "vague"}
+        )
         self.assertEqual(len(transport.calls), 1)
 
     def test_retry_on_garbage_then_valid(self):
-        transport = FakeTransport([
-            "not json at all",
-            '{"bucket":"valid_extra","failed_check":null,"reason":"grounded"}',
-        ])
+        transport = FakeTransport(
+            [
+                "not json at all",
+                '{"bucket":"valid_extra","failed_check":null,"reason":"grounded"}',
+            ]
+        )
         verdict = adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
         self.assertEqual(verdict["bucket"], "valid_extra")
         self.assertIsNone(verdict["failed_check"])
@@ -178,10 +187,12 @@ class AdjudicateTests(unittest.TestCase):
     def test_parseable_non_object_retries_then_valid(self):
         # A JSON array/null/scalar parses but is not a verdict object; it must take
         # the retry path, not crash with AttributeError.
-        transport = FakeTransport([
-            "[]",
-            '{"bucket":"noise","failed_check":2,"reason":"ungrounded"}',
-        ])
+        transport = FakeTransport(
+            [
+                "[]",
+                '{"bucket":"noise","failed_check":2,"reason":"ungrounded"}',
+            ]
+        )
         verdict = adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
         self.assertEqual(verdict["bucket"], "noise")
         self.assertEqual(len(transport.calls), 2)
@@ -194,24 +205,35 @@ class AdjudicateTests(unittest.TestCase):
         self.assertEqual(len(transport.calls), 2)
 
     def test_invalid_bucket_value_triggers_retry(self):
-        transport = FakeTransport([
-            '{"bucket":"maybe","reason":"x"}',
-            '{"bucket":"noise","failed_check":1,"reason":"ok"}',
-        ])
+        transport = FakeTransport(
+            [
+                '{"bucket":"maybe","reason":"x"}',
+                '{"bucket":"noise","failed_check":1,"reason":"ok"}',
+            ]
+        )
         verdict = adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
         self.assertEqual(verdict["bucket"], "noise")
         self.assertEqual(len(transport.calls), 2)
 
     def test_strips_markdown_code_fences(self):
-        transport = FakeTransport([
-            '```json\n{"bucket":"valid_extra","failed_check":null,"reason":"ok"}\n```',
-        ])
+        transport = FakeTransport(
+            [
+                '```json\n{"bucket":"valid_extra","failed_check":null,"reason":"ok"}\n```',
+            ]
+        )
         verdict = adjudicate("c", "h", "x", "pin-x", "key-x", transport=transport)
         self.assertEqual(verdict["bucket"], "valid_extra")
 
     def test_request_shape_pins_model_temp0_and_bearer_auth(self):
         transport = FakeTransport(['{"bucket":"noise","failed_check":4,"reason":"r"}'])
-        adjudicate("the comment", "the hunk", "the ctx", "opus-pin", "secret", transport=transport)
+        adjudicate(
+            "the comment",
+            "the hunk",
+            "the ctx",
+            "opus-pin",
+            "secret",
+            transport=transport,
+        )
         call = transport.calls[0]
         self.assertEqual(call["payload"]["model"], "opus-pin")
         self.assertEqual(call["payload"]["temperature"], 0)
@@ -273,12 +295,18 @@ class VerdictRecoveryTests(unittest.TestCase):
         # The strict json.loads path must be byte-identical for well-formed replies,
         # including one with PROPERLY escaped inner quotes (valid JSON, no recovery).
         cases = [
-            ('{"bucket":"noise","failed_check":3,"reason":"vague"}',
-             {"bucket": "noise", "failed_check": 3, "reason": "vague"}),
-            ('{"bucket":"valid_extra","failed_check":null,"reason":"ok"}',
-             {"bucket": "valid_extra", "failed_check": None, "reason": "ok"}),
-            (r'{"bucket":"noise","failed_check":1,"reason":"uses \"foo\" here"}',
-             {"bucket": "noise", "failed_check": 1, "reason": 'uses "foo" here'}),
+            (
+                '{"bucket":"noise","failed_check":3,"reason":"vague"}',
+                {"bucket": "noise", "failed_check": 3, "reason": "vague"},
+            ),
+            (
+                '{"bucket":"valid_extra","failed_check":null,"reason":"ok"}',
+                {"bucket": "valid_extra", "failed_check": None, "reason": "ok"},
+            ),
+            (
+                r'{"bucket":"noise","failed_check":1,"reason":"uses \"foo\" here"}',
+                {"bucket": "noise", "failed_check": 1, "reason": 'uses "foo" here'},
+            ),
         ]
         for reply, expected in cases:
             self.assertEqual(_parse_verdict(reply), expected)

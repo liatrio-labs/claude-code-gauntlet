@@ -43,6 +43,7 @@ from scripts.verify_findings import (
     _DELTA_FIELDS,
     REPO_ROOT,
 )
+
 # JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
 # imported from the sibling module rather than re-hardcoded so the two never drift.
 from scripts.assemble_artifacts import JS_MAX_SAFE_INTEGER
@@ -60,6 +61,7 @@ SCRIPT = os.path.abspath(
 # ---------------------------------------------------------------------------
 # parse_diff_lines
 # ---------------------------------------------------------------------------
+
 
 class TestParseDiffLines(unittest.TestCase):
     """Test unified diff parsing into (file, line) tuples."""
@@ -86,10 +88,10 @@ class TestParseDiffLines(unittest.TestCase):
         )
         result = parse_diff_lines(diff)
         # Context line1 at new_line=1, added at 2, context line2 at 3, context line3 at 4
-        self.assertIn(("foo.py", 1), result)   # context
-        self.assertIn(("foo.py", 2), result)   # added
-        self.assertIn(("foo.py", 3), result)   # context
-        self.assertIn(("foo.py", 4), result)   # context
+        self.assertIn(("foo.py", 1), result)  # context
+        self.assertIn(("foo.py", 2), result)  # added
+        self.assertIn(("foo.py", 3), result)  # context
+        self.assertIn(("foo.py", 4), result)  # context
 
     def test_removed_lines_do_not_advance_new_line(self):
         diff = (
@@ -127,7 +129,7 @@ class TestParseDiffLines(unittest.TestCase):
             " ctx2\n"
         )
         result = parse_diff_lines(diff)
-        self.assertIn(("a.py", 2), result)   # added in a.py
+        self.assertIn(("a.py", 2), result)  # added in a.py
         self.assertIn(("b.py", 11), result)  # added in b.py at line 11
         self.assertIn(("b.py", 10), result)  # context in b.py
 
@@ -174,16 +176,16 @@ class TestParseDiffLines(unittest.TestCase):
             " f\n"
         )
         result = parse_diff_lines(diff)
-        self.assertIn(("multi.py", 2), result)    # added in first hunk
-        self.assertIn(("multi.py", 52), result)   # added in second hunk
+        self.assertIn(("multi.py", 2), result)  # added in first hunk
+        self.assertIn(("multi.py", 52), result)  # added in second hunk
 
 
 # ---------------------------------------------------------------------------
 # is_line_in_diff
 # ---------------------------------------------------------------------------
 
-class TestIsLineInDiff(unittest.TestCase):
 
+class TestIsLineInDiff(unittest.TestCase):
     def test_none_valid_lines_always_true(self):
         self.assertTrue(is_line_in_diff(None, "any.py", 999))
 
@@ -207,8 +209,8 @@ class TestIsLineInDiff(unittest.TestCase):
 # classify_blame
 # ---------------------------------------------------------------------------
 
-class TestClassifyBlame(unittest.TestCase):
 
+class TestClassifyBlame(unittest.TestCase):
     def test_cross_file_refs_always_surfaced(self):
         finding = {
             "file": "a.py",
@@ -276,7 +278,8 @@ class TestClassifyBlame(unittest.TestCase):
             if cmd[0] == "git" and cmd[1] == "blame":
                 return (
                     "abc1234 (Author 2026-03-30 10:00:00 +0000 1) code\n",
-                    "", 0,
+                    "",
+                    0,
                 )
             return ("", "", 0)
 
@@ -293,14 +296,17 @@ class TestClassifyBlame(unittest.TestCase):
 
     @patch("scripts.verify_findings.os.path.exists", return_value=True)
     @patch("scripts.verify_findings.run")
-    def test_surfaced_classification_when_blame_sha_not_in_pr(self, mock_run, _mock_exists):
+    def test_surfaced_classification_when_blame_sha_not_in_pr(
+        self, mock_run, _mock_exists
+    ):
         def run_side_effect(cmd, check=False):
             if cmd[0] == "git" and cmd[1] == "log":
                 return ("abc1234567890abcdef1234567890abcdef123456\n", "", 0)
             if cmd[0] == "git" and cmd[1] == "blame":
                 return (
                     "fffaaaa (Author 2025-01-01 10:00:00 +0000 1) old_code\n",
-                    "", 0,
+                    "",
+                    0,
                 )
             return ("", "", 0)
 
@@ -358,6 +364,7 @@ class TestClassifyBlame(unittest.TestCase):
 # _extract_symbols (V5-05 tiered extraction)
 # ---------------------------------------------------------------------------
 
+
 class TestExtractSymbols(unittest.TestCase):
     """V5-05: Tiered symbol extraction tests."""
 
@@ -372,12 +379,7 @@ class TestExtractSymbols(unittest.TestCase):
 
     def test_triple_backtick_code_block_extracted(self):
         """Tier 1: identifiers inside triple-backtick code blocks are extracted."""
-        desc = (
-            "The code does:\n"
-            "```python\n"
-            "result = my_function(arg_value)\n"
-            "```\n"
-        )
+        desc = "The code does:\n```python\nresult = my_function(arg_value)\n```\n"
         symbols = _extract_symbols(desc, "")
         self.assertIn("my_function", symbols)
         self.assertIn("arg_value", symbols)
@@ -502,8 +504,8 @@ class TestExtractSymbols(unittest.TestCase):
 # verify_factual
 # ---------------------------------------------------------------------------
 
-class TestVerifyFactual(unittest.TestCase):
 
+class TestVerifyFactual(unittest.TestCase):
     def test_no_line_reference_skips(self):
         finding = {"file": "f.py", "description": "something"}
         result = verify_factual(finding)
@@ -671,6 +673,7 @@ class TestVerifyFactual(unittest.TestCase):
         try:
             # Case: 1 of 2 symbols missing → 50% miss ratio → reduction ~35
             with patch("scripts.verify_findings.run") as mock_run:
+
                 def grep_side_effect(cmd, check=False, timeout=None, cwd=None):
                     # func_a is in the code_at_lines (fast path), so only func_d is grepped
                     # func_d not found
@@ -769,8 +772,8 @@ class TestVerifyFactual(unittest.TestCase):
 # validate_diff_lines
 # ---------------------------------------------------------------------------
 
-class TestValidateDiffLines(unittest.TestCase):
 
+class TestValidateDiffLines(unittest.TestCase):
     def test_none_valid_lines_skips(self):
         finding = {"file": "f.py", "line_start": 10}
         result = validate_diff_lines(finding, None)
@@ -832,8 +835,8 @@ class TestValidateDiffLines(unittest.TestCase):
 # batch_findings
 # ---------------------------------------------------------------------------
 
-class TestBatchFindings(unittest.TestCase):
 
+class TestBatchFindings(unittest.TestCase):
     def test_empty_input(self):
         self.assertEqual(batch_findings([]), [])
 
@@ -857,8 +860,7 @@ class TestBatchFindings(unittest.TestCase):
 
     def test_max_batch_size_respected(self):
         findings = [
-            {"id": f"f{i}", "file": "a.py", "line_start": i}
-            for i in range(1, 8)
+            {"id": f"f{i}", "file": "a.py", "line_start": i} for i in range(1, 8)
         ]
         batches = batch_findings(findings, min_batch=3, max_batch=5)
         for batch in batches:
@@ -892,8 +894,7 @@ class TestBatchFindings(unittest.TestCase):
     def test_tail_too_large_to_merge(self):
         """Small tail batch should stay separate if merging exceeds max_batch."""
         findings = [
-            {"id": f"a{i}", "file": "a.py", "line_start": i}
-            for i in range(1, 6)
+            {"id": f"a{i}", "file": "a.py", "line_start": i} for i in range(1, 6)
         ] + [
             {"id": "b1", "file": "b.py", "line_start": 1},
             {"id": "b2", "file": "b.py", "line_start": 2},
@@ -932,6 +933,7 @@ class TestBatchFindings(unittest.TestCase):
 # RF-01: grep uses REPO_ROOT, not CWD
 # ---------------------------------------------------------------------------
 
+
 class TestRepoRoot(unittest.TestCase):
     """REPO_ROOT is resolved at module load time and must be an absolute path."""
 
@@ -963,12 +965,17 @@ class TestRepoRoot(unittest.TestCase):
                 }
                 verify_factual(finding)
 
-            git_grep_calls = [k for k in captured_kwargs if k["cmd"][:2] == ["git", "grep"]]
+            git_grep_calls = [
+                k for k in captured_kwargs if k["cmd"][:2] == ["git", "grep"]
+            ]
             self.assertTrue(git_grep_calls, "Expected at least one git grep call")
             for call in git_grep_calls:
                 # cwd must be REPO_ROOT (absolute), not None or "."
                 self.assertIsNotNone(call["cwd"], msg="git grep called without cwd")
-                self.assertTrue(os.path.isabs(call["cwd"]), msg=f"git grep cwd is not absolute: {call['cwd']}")
+                self.assertTrue(
+                    os.path.isabs(call["cwd"]),
+                    msg=f"git grep cwd is not absolute: {call['cwd']}",
+                )
         finally:
             os.unlink(tmppath)
 
@@ -977,8 +984,8 @@ class TestRepoRoot(unittest.TestCase):
 # RF-03: grep rc=2 skips symbol check instead of silently zeroing confidence
 # ---------------------------------------------------------------------------
 
-class TestVerifyFactualGrepError(unittest.TestCase):
 
+class TestVerifyFactualGrepError(unittest.TestCase):
     def test_grep_rc2_skips_symbol_not_zeros_confidence(self):
         """RF-03: grep exit code 2 (I/O error) must not add symbol to missing list."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -1036,6 +1043,7 @@ class TestVerifyFactualGrepError(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # git grep symbol verification with timeout
 # ---------------------------------------------------------------------------
+
 
 class TestVerifyFactualGitGrep(unittest.TestCase):
     """Tests for git grep symbol verification with timeout."""
@@ -1118,6 +1126,7 @@ class TestVerifyFactualGitGrep(unittest.TestCase):
 # RF-05: sha_in_pr dead branch removed (tested via classify_blame)
 # ---------------------------------------------------------------------------
 
+
 class TestShaInPrDeadBranch(unittest.TestCase):
     """RF-05: classify_blame must correctly match blamed (short) SHA against PR full SHAs."""
 
@@ -1125,6 +1134,7 @@ class TestShaInPrDeadBranch(unittest.TestCase):
     @patch("scripts.verify_findings.run")
     def test_short_blamed_sha_matches_full_pr_sha(self, mock_run, _mock_exists):
         """A 7-char blamed SHA should match when a full PR SHA starts with it."""
+
         def run_side_effect(cmd, check=False):
             if cmd[1] == "log":
                 return ("abc1234567890abcdef1234567890abcdef123456\n", "", 0)
@@ -1148,6 +1158,7 @@ class TestShaInPrDeadBranch(unittest.TestCase):
         shorter than the blamed SHA.  After the fix, only full_sha.startswith
         (blamed_sha) is checked, so this case must return 'surfaced'.
         """
+
         def run_side_effect(cmd, check=False):
             if cmd[1] == "log":
                 # Simulate a short/truncated PR SHA (would only match via dead branch)
@@ -1155,7 +1166,11 @@ class TestShaInPrDeadBranch(unittest.TestCase):
             if cmd[1] == "blame":
                 # Full-length blamed SHA that starts with abc123 — old dead branch
                 # would match; new code should NOT
-                return ("abc1234567890def (Author 2026-03-30 10:00:00 +0000 1) code\n", "", 0)
+                return (
+                    "abc1234567890def (Author 2026-03-30 10:00:00 +0000 1) code\n",
+                    "",
+                    0,
+                )
             return ("", "", 0)
 
         mock_run.side_effect = run_side_effect
@@ -1168,6 +1183,7 @@ class TestShaInPrDeadBranch(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # BF-11: get_diff fallback chain
 # ---------------------------------------------------------------------------
+
 
 class TestGetDiff(unittest.TestCase):
     """BF-11: Tests for the robust diff fallback chain in get_diff()."""
@@ -1199,6 +1215,7 @@ class TestGetDiff(unittest.TestCase):
     @patch("scripts.verify_findings.run")
     def test_two_dot_fallback_when_three_dot_fails(self, mock_run):
         """R01.2: Two-dot fallback triggered when three-dot diff fails."""
+
         def run_side_effect(cmd, check=False):
             if cmd == ["git", "diff", "main...HEAD"]:
                 return ("", "fatal: no merge base", 128)
@@ -1229,14 +1246,16 @@ class TestGetDiff(unittest.TestCase):
         # Ensure no call was made with just ["git", "diff", "HEAD"]
         for call in mock_run.call_args_list:
             cmd = call[0][0]
-            self.assertNotEqual(cmd, ["git", "diff", "HEAD"],
-                                msg="git diff HEAD must not be called")
+            self.assertNotEqual(
+                cmd, ["git", "diff", "HEAD"], msg="git diff HEAD must not be called"
+            )
 
     @patch("scripts.verify_findings.run")
     def test_diff_source_logging_three_dot(self, mock_run):
         """R01.4: Logs diff source on stderr for three-dot success."""
         mock_run.return_value = ("diff data\n", "", 0)
         import io
+
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             get_diff("main")
             stderr_output = mock_stderr.getvalue()
@@ -1247,6 +1266,7 @@ class TestGetDiff(unittest.TestCase):
     @patch("scripts.verify_findings.run")
     def test_diff_source_logging_two_dot(self, mock_run):
         """R01.4: Logs diff source on stderr for two-dot fallback."""
+
         def run_side_effect(cmd, check=False):
             if cmd == ["git", "diff", "main...HEAD"]:
                 return ("", "fatal: no merge base", 128)
@@ -1256,6 +1276,7 @@ class TestGetDiff(unittest.TestCase):
 
         mock_run.side_effect = run_side_effect
         import io
+
         with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
             get_diff("main")
             stderr_output = mock_stderr.getvalue()
@@ -1270,6 +1291,7 @@ class TestGetDiff(unittest.TestCase):
             tmppath = f.name
         try:
             import io
+
             with patch("sys.stderr", new_callable=io.StringIO) as mock_stderr:
                 get_diff("main", diff_file=tmppath)
                 stderr_output = mock_stderr.getvalue()
@@ -1283,6 +1305,7 @@ class TestGetDiff(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # run() helper — timeout and cwd
 # ---------------------------------------------------------------------------
+
 
 class TestRunTimeout(unittest.TestCase):
     """Tests for run() helper timeout and cwd parameters."""
@@ -1303,11 +1326,11 @@ class TestRunTimeout(unittest.TestCase):
     def test_cwd_changes_directory(self):
         """run() with cwd runs command in specified directory."""
         import tempfile, os
+
         with tempfile.TemporaryDirectory() as d:
             stdout, stderr, rc = run(["pwd"], cwd=d)
             self.assertEqual(rc, 0)
-            self.assertEqual(os.path.realpath(stdout.strip()),
-                             os.path.realpath(d))
+            self.assertEqual(os.path.realpath(stdout.strip()), os.path.realpath(d))
 
     def test_backward_compat_no_new_params(self):
         """run() still works with only (cmd) or (cmd, check) args."""
@@ -1323,6 +1346,7 @@ class TestVerifyOutputFlag(unittest.TestCase):
     def test_output_flag_writes_json_to_file(self):
         """--output writes valid JSON to the specified file."""
         import json
+
         output = {
             "verified": [{"id": "bug-1", "origin": "new"}],
             "eliminated": [],
@@ -1343,6 +1367,7 @@ class TestVerifyOutputFlag(unittest.TestCase):
     def test_output_none_prints_to_stdout(self):
         """When output_path is None, JSON goes to stdout."""
         import io
+
         output = {"verified": [], "eliminated": [], "batches": [], "stats": {}}
         with patch("sys.stdout", new_callable=io.StringIO) as mock_stdout:
             _write_output(output, None)
@@ -1363,24 +1388,44 @@ class TestReceipt(unittest.TestCase):
 
     def _findings(self):
         return [
-            {"id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
-             "file": "nope/does-not-exist-xyz.py", "title": "t", "description": "d",
-             "evidence": "e", "cross_file_refs": []},
-            {"id": "bug-2", "dimension": "bug", "severity": "low", "confidence": 50,
-             "file": "nope/does-not-exist-abc.py", "title": "t2", "description": "d2",
-             "evidence": "e2", "cross_file_refs": []},
+            {
+                "id": "bug-1",
+                "dimension": "bug",
+                "severity": "high",
+                "confidence": 75,
+                "file": "nope/does-not-exist-xyz.py",
+                "title": "t",
+                "description": "d",
+                "evidence": "e",
+                "cross_file_refs": [],
+            },
+            {
+                "id": "bug-2",
+                "dimension": "bug",
+                "severity": "low",
+                "confidence": 50,
+                "file": "nope/does-not-exist-abc.py",
+                "title": "t2",
+                "description": "d2",
+                "evidence": "e2",
+                "cross_file_refs": [],
+            },
         ]
 
     def _run_main(self, argv):
         """Invoke main() with a controlled argv, stderr suppressed."""
         import io
         from scripts.verify_findings import main
-        with patch.object(sys, "argv", argv), \
-                patch("sys.stderr", new_callable=io.StringIO):
+
+        with (
+            patch.object(sys, "argv", argv),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
             main()
 
     def test_receipt_envelope_shape_and_legacy_parity(self):
         import json
+
         findings = self._findings()
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump({"findings": findings, "base_branch": "main"}, f)
@@ -1391,19 +1436,35 @@ class TestReceipt(unittest.TestCase):
         receipt_out = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
         try:
             # Legacy positional path (the baseline the receipt must reproduce).
-            self._run_main([
-                "verify_findings.py", findings_path,
-                "--diff-file", empty_diff, "--output", legacy_out,
-            ])
+            self._run_main(
+                [
+                    "verify_findings.py",
+                    findings_path,
+                    "--diff-file",
+                    empty_diff,
+                    "--output",
+                    legacy_out,
+                ]
+            )
             with open(legacy_out) as fh:
                 legacy = json.load(fh)
 
             # Receipt path: --input replaces the positional, --nonce/--head-sha echoed.
-            self._run_main([
-                "verify_findings.py", "--input", findings_path,
-                "--diff-file", empty_diff, "--output", receipt_out,
-                "--nonce", "NONCE-123", "--head-sha", "deadbeef",
-            ])
+            self._run_main(
+                [
+                    "verify_findings.py",
+                    "--input",
+                    findings_path,
+                    "--diff-file",
+                    empty_diff,
+                    "--output",
+                    receipt_out,
+                    "--nonce",
+                    "NONCE-123",
+                    "--head-sha",
+                    "deadbeef",
+                ]
+            )
             with open(receipt_out) as fh:
                 envelope = json.load(fh)
 
@@ -1411,12 +1472,15 @@ class TestReceipt(unittest.TestCase):
             # content proof (issue #25 PR2) -- it now rides alongside sha/n_in/nonce.
             self.assertEqual(envelope["status"], "ok")
             self.assertEqual(
-                set(envelope["receipt"].keys()), {"sha", "n_in", "nonce", "deltas_checksum"}
+                set(envelope["receipt"].keys()),
+                {"sha", "n_in", "nonce", "deltas_checksum"},
             )
             self.assertEqual(envelope["receipt"]["sha"], "deadbeef")
             self.assertEqual(envelope["receipt"]["n_in"], len(findings))
             self.assertEqual(envelope["receipt"]["nonce"], "NONCE-123")
-            self.assertRegex(envelope["receipt"]["deltas_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$")
+            self.assertRegex(
+                envelope["receipt"]["deltas_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
+            )
 
             # (b) result.verified is exactly what the legacy path produces
             self.assertEqual(envelope["result"]["verified"], legacy["verified"])
@@ -1429,21 +1493,36 @@ class TestReceipt(unittest.TestCase):
         """An uncaught exception mid-verification yields a status=='failed' envelope
         on stdout with exit 0 (honest failure is schema-valid, never fabricated)."""
         import io, json
+
         findings = self._findings()
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump({"findings": findings}, f)
             findings_path = f.name
         try:
             # Force run_verification to blow up after loading, exercising the wrapper.
-            with patch("scripts.verify_findings.run_verification",
-                       side_effect=RuntimeError("boom")), \
-                    patch("sys.stderr", new_callable=io.StringIO), \
-                    patch("sys.stdout", new_callable=io.StringIO) as out, \
-                    patch.object(sys, "argv", [
-                        "verify_findings.py", "--input", findings_path,
-                        "--nonce", "N", "--head-sha", "abc",
-                    ]):
+            with (
+                patch(
+                    "scripts.verify_findings.run_verification",
+                    side_effect=RuntimeError("boom"),
+                ),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "verify_findings.py",
+                        "--input",
+                        findings_path,
+                        "--nonce",
+                        "N",
+                        "--head-sha",
+                        "abc",
+                    ],
+                ),
+            ):
                 from scripts.verify_findings import main
+
                 main()  # must NOT raise; must print the failed envelope
                 printed = out.getvalue()
             envelope = json.loads(printed)
@@ -1467,17 +1546,34 @@ class TestReceipt(unittest.TestCase):
         The fixture is that exact byte: a complete document with one `}` appended.
         """
         import io, json
+
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            f.write(json.dumps({"findings": self._findings(), "base_branch": "main"}) + "}")
+            f.write(
+                json.dumps({"findings": self._findings(), "base_branch": "main"}) + "}"
+            )
             corrupt_path = f.name
         out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
         try:
-            with patch("sys.stderr", new_callable=io.StringIO), \
-                    patch.object(sys, "argv", [
-                        "verify_findings.py", "--input", corrupt_path,
-                        "--output", out_path, "--nonce", "N.0", "--head-sha", "abc1234",
-                    ]):
+            with (
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "verify_findings.py",
+                        "--input",
+                        corrupt_path,
+                        "--output",
+                        out_path,
+                        "--nonce",
+                        "N.0",
+                        "--head-sha",
+                        "abc1234",
+                    ],
+                ),
+            ):
                 from scripts.verify_findings import main
+
                 main()  # must NOT raise SystemExit
             with open(out_path) as fh:
                 envelope = json.load(fh)
@@ -1495,14 +1591,18 @@ class TestReceipt(unittest.TestCase):
         sys.exit must not soften the LEGACY positional path, which has always exited 1
         with the message on stderr and nothing on stdout."""
         import io, json
+
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(json.dumps({"findings": self._findings()}) + "}")
             corrupt_path = f.name
         try:
-            with patch("sys.stderr", new_callable=io.StringIO) as err, \
-                    patch("sys.stdout", new_callable=io.StringIO) as out, \
-                    patch.object(sys, "argv", ["verify_findings.py", corrupt_path]):
+            with (
+                patch("sys.stderr", new_callable=io.StringIO) as err,
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+                patch.object(sys, "argv", ["verify_findings.py", corrupt_path]),
+            ):
                 from scripts.verify_findings import main
+
                 with self.assertRaises(SystemExit) as ctx:
                     main()
             self.assertEqual(ctx.exception.code, 1)
@@ -1558,20 +1658,34 @@ class TestBuildDeltas(unittest.TestCase):
         # a future refactor of the stamping site in run_verification is caught here,
         # not just in a hand-built fixture that could drift from reality.
         eliminated_finding = {
-            "id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
-            "file": "nope/does-not-exist-xyz.py", "line_start": 1, "title": "t",
-            "description": "d", "evidence": "e", "cross_file_refs": [],
+            "id": "bug-1",
+            "dimension": "bug",
+            "severity": "high",
+            "confidence": 75,
+            "file": "nope/does-not-exist-xyz.py",
+            "line_start": 1,
+            "title": "t",
+            "description": "d",
+            "evidence": "e",
+            "cross_file_refs": [],
         }
         verified_finding = {
-            "id": "bug-2", "dimension": "bug", "severity": "low", "confidence": 50,
-            "file": "nope/does-not-exist-abc.py", "title": "t2", "description": "d2",
-            "evidence": "e2", "cross_file_refs": [],
+            "id": "bug-2",
+            "dimension": "bug",
+            "severity": "low",
+            "confidence": 50,
+            "file": "nope/does-not-exist-abc.py",
+            "title": "t2",
+            "description": "d2",
+            "evidence": "e2",
+            "cross_file_refs": [],
         }
         findings = [eliminated_finding, verified_finding]
         with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         try:
             import io
+
             with patch("sys.stderr", new_callable=io.StringIO):
                 result = run_verification(findings, "main", diff_file=empty_diff)
             self.assertEqual(len(result["eliminated"]), 1)
@@ -1594,7 +1708,9 @@ class TestBuildDeltas(unittest.TestCase):
         # comment above _DELTA_FIELDS in verify_findings.py for both rationales.
         finding = {
             "id": "bug-1",
-            "origin": "surfaced", "severity": "low", "confidence": 42,
+            "origin": "surfaced",
+            "severity": "low",
+            "confidence": 42,
             "elimination_reason": "evidence does not match file content",
             "blame_metadata": {"classification": "surfaced"},
             "factual_verification": {"verified": True},
@@ -1606,7 +1722,12 @@ class TestBuildDeltas(unittest.TestCase):
         allowed = {"id", "verified"} | set(_DELTA_FIELDS)
         delta_keys = set(deltas[0].keys())
         self.assertTrue(delta_keys.issubset(allowed), delta_keys - allowed)
-        for excluded in ("blame_metadata", "factual_verification", "diff_validation", "agent"):
+        for excluded in (
+            "blame_metadata",
+            "factual_verification",
+            "diff_validation",
+            "agent",
+        ):
             self.assertNotIn(excluded, deltas[0])
 
     def test_missing_blank_or_non_string_id_is_skipped(self):
@@ -1616,10 +1737,10 @@ class TestBuildDeltas(unittest.TestCase):
         # guard then sees an uncovered dispatched id and degrades that slice honestly,
         # which is the right outcome for input the merge stage should have dropped.
         findings = [
-            {"dimension": "bug"},               # no id key at all
-            {"id": "", "dimension": "bug"},      # blank string
-            {"id": "   ", "dimension": "bug"},   # whitespace-only
-            {"id": 123, "dimension": "bug"},     # non-string id
+            {"dimension": "bug"},  # no id key at all
+            {"id": "", "dimension": "bug"},  # blank string
+            {"id": "   ", "dimension": "bug"},  # whitespace-only
+            {"id": 123, "dimension": "bug"},  # non-string id
             {"id": "bug-ok", "dimension": "bug"},
         ]
         deltas = build_deltas(findings, [])
@@ -1691,7 +1812,9 @@ class TestDeltasChecksum(unittest.TestCase):
         # coarser than delta content (e.g. just the id list, or a fixed schema
         # marker), an executor that echoed a wrong origin/severity/confidence would
         # still pass trustSlice's content-proof check.
-        deltas = [{"id": "bug-1", "verified": True, "origin": "new", "severity": "high"}]
+        deltas = [
+            {"id": "bug-1", "verified": True, "origin": "new", "severity": "high"}
+        ]
         original = deltas_checksum(deltas)
         mutated = [dict(deltas[0], origin="surfaced")]
         self.assertNotEqual(original, deltas_checksum(mutated))
@@ -1722,8 +1845,11 @@ class TestDeltasChecksum(unittest.TestCase):
         # normal string-producing classify_blame / downgrade paths) must still produce a
         # delta list whose checksum is None, not an exception.
         finding = {
-            "id": "bug-1", "verified": True, "origin": "new",
-            "severity": 3.14, "confidence": 75,
+            "id": "bug-1",
+            "verified": True,
+            "origin": "new",
+            "severity": 3.14,
+            "confidence": 75,
         }
         deltas = build_deltas([finding], [finding])
         self.assertEqual(len(deltas), 1)
@@ -1745,16 +1871,33 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         # verify_factual skips (no line reference to check) -- both findings end up
         # verified, deterministically, with no git subprocess involved.
         return [
-            {"id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
-             "file": "nope/does-not-exist-xyz.py", "title": "t", "description": "d",
-             "evidence": "e", "cross_file_refs": []},
-            {"id": "bug-2", "dimension": "bug", "severity": "low", "confidence": 50,
-             "file": "nope/does-not-exist-abc.py", "title": "t2", "description": "d2",
-             "evidence": "e2", "cross_file_refs": []},
+            {
+                "id": "bug-1",
+                "dimension": "bug",
+                "severity": "high",
+                "confidence": 75,
+                "file": "nope/does-not-exist-xyz.py",
+                "title": "t",
+                "description": "d",
+                "evidence": "e",
+                "cross_file_refs": [],
+            },
+            {
+                "id": "bug-2",
+                "dimension": "bug",
+                "severity": "low",
+                "confidence": 50,
+                "file": "nope/does-not-exist-abc.py",
+                "title": "t2",
+                "description": "d2",
+                "evidence": "e2",
+                "cross_file_refs": [],
+            },
         ]
 
     def _write_input(self, findings):
         import json
+
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump({"findings": findings, "base_branch": "main"}, f)
             return f.name
@@ -1770,16 +1913,29 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         # preserves json.load's insertion order, so this is a real structural
         # assertion on the file as written, not a restatement of the docstring.
         import json
+
         findings = self._findings()
         in_path = self._write_input(findings)
         empty_diff = self._empty_diff()
         out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
         try:
             proc = subprocess.run(
-                [sys.executable, SCRIPT, "--input", in_path,
-                 "--diff-file", empty_diff, "--output", out_path,
-                 "--nonce", "N-1", "--head-sha", "deadbeef"],
-                capture_output=True, text=True,
+                [
+                    sys.executable,
+                    SCRIPT,
+                    "--input",
+                    in_path,
+                    "--diff-file",
+                    empty_diff,
+                    "--output",
+                    out_path,
+                    "--nonce",
+                    "N-1",
+                    "--head-sha",
+                    "deadbeef",
+                ],
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             with open(out_path) as fh:
@@ -1788,7 +1944,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
             result_keys = list(envelope["result"])
             self.assertEqual(result_keys[0], "deltas")
             self.assertEqual(
-                set(result_keys), {"deltas", "verified", "eliminated", "batches", "stats"}
+                set(result_keys),
+                {"deltas", "verified", "eliminated", "batches", "stats"},
             )
             # The full v2/bench-consumed arrays are unchanged in shape: two findings
             # in, both verified (no line_start -> verify_factual skips), zero
@@ -1809,20 +1966,31 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         # byte-for-byte what it always was -- bench and v2 consumers read this file
         # directly off disk and have no envelope-unwrapping logic of their own.
         import json
+
         findings = self._findings()
         in_path = self._write_input(findings)
         empty_diff = self._empty_diff()
         out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
         try:
             proc = subprocess.run(
-                [sys.executable, SCRIPT, in_path,
-                 "--diff-file", empty_diff, "--output", out_path],
-                capture_output=True, text=True,
+                [
+                    sys.executable,
+                    SCRIPT,
+                    in_path,
+                    "--diff-file",
+                    empty_diff,
+                    "--output",
+                    out_path,
+                ],
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             with open(out_path) as fh:
                 output = json.load(fh)
-            self.assertEqual(set(output.keys()), {"verified", "eliminated", "batches", "stats"})
+            self.assertEqual(
+                set(output.keys()), {"verified", "eliminated", "batches", "stats"}
+            )
             self.assertNotIn("deltas", output)
             self.assertNotIn("receipt", output)
             self.assertNotIn("status", output)
@@ -1839,6 +2007,7 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         # repo root nor scripts/, with every path passed absolute so this test
         # isolates the import concern from ordinary path-resolution concerns.
         import json
+
         findings = self._findings()
         in_path = self._write_input(findings)
         empty_diff = self._empty_diff()
@@ -1846,10 +2015,23 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         unrelated_cwd = tempfile.mkdtemp()
         try:
             proc = subprocess.run(
-                [sys.executable, SCRIPT, "--input", in_path,
-                 "--diff-file", empty_diff, "--output", out_path,
-                 "--nonce", "N-2", "--head-sha", "cafef00d"],
-                capture_output=True, text=True, cwd=unrelated_cwd,
+                [
+                    sys.executable,
+                    SCRIPT,
+                    "--input",
+                    in_path,
+                    "--diff-file",
+                    empty_diff,
+                    "--output",
+                    out_path,
+                    "--nonce",
+                    "N-2",
+                    "--head-sha",
+                    "cafef00d",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=unrelated_cwd,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertNotIn("ImportError", proc.stderr)
@@ -1873,6 +2055,7 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         # status:'ok' with deltas_checksum:null rather than collapsing to
         # status:'failed' and throwing away the legitimate verified/eliminated arrays.
         import json
+
         findings = self._findings()
         findings[0]["severity"] = 3.14  # JS-unspellable; no downgrade will overwrite it
         in_path = self._write_input(findings)
@@ -1880,10 +2063,22 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
         try:
             proc = subprocess.run(
-                [sys.executable, SCRIPT, "--input", in_path,
-                 "--diff-file", empty_diff, "--output", out_path,
-                 "--nonce", "N-3", "--head-sha", "deadbeef"],
-                capture_output=True, text=True,
+                [
+                    sys.executable,
+                    SCRIPT,
+                    "--input",
+                    in_path,
+                    "--diff-file",
+                    empty_diff,
+                    "--output",
+                    out_path,
+                    "--nonce",
+                    "N-3",
+                    "--head-sha",
+                    "deadbeef",
+                ],
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             with open(out_path) as fh:
@@ -1907,9 +2102,24 @@ class TestCoerceNumericFields(unittest.TestCase):
     script's own range/existence guards still fire."""
 
     def test_string_integers_cast_to_int(self):
-        f = {"line_start": "153", "line_end": "155", "confidence": "80", "line": "1", "end_line": "9"}
+        f = {
+            "line_start": "153",
+            "line_end": "155",
+            "confidence": "80",
+            "line": "1",
+            "end_line": "9",
+        }
         _coerce_numeric_fields(f)
-        self.assertEqual(f, {"line_start": 153, "line_end": 155, "confidence": 80, "line": 1, "end_line": 9})
+        self.assertEqual(
+            f,
+            {
+                "line_start": 153,
+                "line_end": 155,
+                "confidence": 80,
+                "line": 1,
+                "end_line": 9,
+            },
+        )
         for v in f.values():
             self.assertIsInstance(v, int)
 
@@ -1947,18 +2157,29 @@ class TestCoerceNumericFields(unittest.TestCase):
         self.assertEqual(f["line_end"], -3)
 
     def test_non_numeric_and_none_and_real_numbers_untouched(self):
-        f = {"line_start": None, "line_end": 12, "confidence": "high", "title": "t", "line": "1.5"}
+        f = {
+            "line_start": None,
+            "line_end": 12,
+            "confidence": "high",
+            "title": "t",
+            "line": "1.5",
+        }
         _coerce_numeric_fields(f)
         self.assertIsNone(f["line_start"])
         self.assertEqual(f["line_end"], 12)
         self.assertEqual(f["confidence"], "high")  # non-integer string left alone
-        self.assertEqual(f["line"], "1.5")          # float string is not a clean int -> left alone
+        self.assertEqual(
+            f["line"], "1.5"
+        )  # float string is not a clean int -> left alone
         self.assertEqual(f["title"], "t")
 
     def test_load_input_casts_numeric_fields(self):
         import json
+
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            json.dump({"findings": [{"id": "b1", "line_start": "10", "line_end": "12"}]}, f)
+            json.dump(
+                {"findings": [{"id": "b1", "line_start": "10", "line_end": "12"}]}, f
+            )
             path = f.name
         try:
             data = load_input(path)
@@ -1977,12 +2198,16 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
     def _run_main(self, argv):
         import io
         from scripts.verify_findings import main
-        with patch.object(sys, "argv", argv), \
-                patch("sys.stderr", new_callable=io.StringIO):
+
+        with (
+            patch.object(sys, "argv", argv),
+            patch("sys.stderr", new_callable=io.StringIO),
+        ):
             main()
 
     def test_receipt_ok_with_string_typed_line_numbers(self):
         import json
+
         # A real file with enough lines so the (in-range) line reference reaches the
         # arithmetic that crashed on a string line_start; description has no extractable
         # symbols, so no git grep is needed.
@@ -1990,12 +2215,21 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
             srcf.write("\n".join(f"line {i}" for i in range(1, 51)) + "\n")
             src_path = srcf.name
         slice_input = {
-            "findings": [{
-                "id": "bug-1", "dimension": "bug", "severity": "high",
-                "confidence": "80", "file": src_path,
-                "line_start": "5", "line_end": "7",  # quoted numbers — the crash trigger
-                "title": "t", "description": "d", "evidence": "e", "cross_file_refs": [],
-            }],
+            "findings": [
+                {
+                    "id": "bug-1",
+                    "dimension": "bug",
+                    "severity": "high",
+                    "confidence": "80",
+                    "file": src_path,
+                    "line_start": "5",
+                    "line_end": "7",  # quoted numbers — the crash trigger
+                    "title": "t",
+                    "description": "d",
+                    "evidence": "e",
+                    "cross_file_refs": [],
+                }
+            ],
             "base_branch": "main",
         }
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
@@ -2005,18 +2239,30 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
             empty_diff = f.name
         out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
         try:
-            self._run_main([
-                "verify_findings.py", "--input", in_path,
-                "--diff-file", empty_diff, "--output", out_path,
-                "--nonce", "N.0", "--head-sha", "abc1234",
-            ])
+            self._run_main(
+                [
+                    "verify_findings.py",
+                    "--input",
+                    in_path,
+                    "--diff-file",
+                    empty_diff,
+                    "--output",
+                    out_path,
+                    "--nonce",
+                    "N.0",
+                    "--head-sha",
+                    "abc1234",
+                ]
+            )
             with open(out_path) as fh:
                 envelope = json.load(fh)
             self.assertEqual(envelope["status"], "ok", f"expected ok, got {envelope}")
             self.assertEqual(envelope["receipt"]["n_in"], 1)
             verified = envelope["result"]["verified"]
             self.assertEqual(len(verified), 1)
-            self.assertEqual(verified[0]["line_start"], 5)  # cast to int at the boundary
+            self.assertEqual(
+                verified[0]["line_start"], 5
+            )  # cast to int at the boundary
         finally:
             for p in (src_path, in_path, empty_diff, out_path):
                 os.unlink(p)
@@ -2040,14 +2286,22 @@ class TestEliminationReasonStamp(unittest.TestCase):
         # Nonexistent file -> classify_blame short-circuits on os.path.exists and
         # verify_factual eliminates deterministically (no git subprocess dependency).
         finding = {
-            "id": "bug-1", "dimension": "bug", "severity": "high", "confidence": 75,
-            "file": "nope/does-not-exist-xyz.py", "line_start": 1, "title": "t",
-            "description": "d", "evidence": "e", "cross_file_refs": [],
+            "id": "bug-1",
+            "dimension": "bug",
+            "severity": "high",
+            "confidence": 75,
+            "file": "nope/does-not-exist-xyz.py",
+            "line_start": 1,
+            "title": "t",
+            "description": "d",
+            "evidence": "e",
+            "cross_file_refs": [],
         }
         with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
         try:
             import io
+
             with patch("sys.stderr", new_callable=io.StringIO):
                 result = run_verification([finding], "main", diff_file=empty_diff)
             verified, eliminated = result["verified"], result["eliminated"]

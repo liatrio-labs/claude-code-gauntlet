@@ -15,19 +15,26 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 
 DISCOVERY_AGENTS = [
-    "bug-detector", "security-reviewer", "cross-file-impact", "test-analyzer",
-    "conventions-and-intent", "type-design-analyzer", "code-simplifier",
+    "bug-detector",
+    "security-reviewer",
+    "cross-file-impact",
+    "test-analyzer",
+    "conventions-and-intent",
+    "type-design-analyzer",
+    "code-simplifier",
 ]
 
 # Every agent that opens a file, and so is exposed to an unannounced partial Read
 # (issue #48). The 7 discovery agents plus the three other file-readers: validator and
 # change-summarizer are handed the shared context path by the same stage inputs the
 # discovery agents are; challenger is not, but it opens the code under review itself.
-COMPLETE_READ_AGENTS = DISCOVERY_AGENTS + ["validator", "challenger", "change-summarizer"]
+COMPLETE_READ_AGENTS = DISCOVERY_AGENTS + [
+    "validator",
+    "challenger",
+    "change-summarizer",
+]
 
-COMPLETE_READ_CANON = (
-    "skills/code-gauntlet/references/complete-read-contract.md"
-)
+COMPLETE_READ_CANON = "skills/code-gauntlet/references/complete-read-contract.md"
 COMPLETE_READ_MARKER = (
     "<!-- Canonical source: references/complete-read-contract.md"
     " — keep all agent copies in sync -->"
@@ -40,6 +47,7 @@ def _canonical_complete_read_block():
     body = text.split("<!-- BEGIN CANONICAL BLOCK -->")[1]
     return body.split("<!-- END CANONICAL BLOCK -->")[0].strip("\n")
 
+
 # Emission-mechanics markers that must never reappear in any tracked rules file.
 EMISSION_RESIDUE = re.compile(r"printf|ndjson|validate_ndjson", re.IGNORECASE)
 
@@ -48,6 +56,7 @@ EMISSION_RESIDUE = re.compile(r"printf|ndjson|validate_ndjson", re.IGNORECASE)
 # its grant goes with it. Other directory rules may legitimately discuss shells.
 BASH_RESIDUE = re.compile(r"Bash", re.IGNORECASE)
 RESIDUE = re.compile(r"printf|ndjson|validate_ndjson|Bash", re.IGNORECASE)
+
 
 # The agents/ directory rules load alongside every contract in the directory, so emission
 # mechanics living there re-teach exactly what the scrub removed from the 7 bodies. That
@@ -59,9 +68,19 @@ RESIDUE = re.compile(r"printf|ndjson|validate_ndjson|Bash", re.IGNORECASE)
 def tracked_rules_files():
     """Root and one-level AGENTS.md / CLAUDE.md, same shape as sync_agent_rules."""
     out = subprocess.run(
-        ["git", "ls-files", "-z", "--",
-         "AGENTS.md", "CLAUDE.md", "*/AGENTS.md", "*/CLAUDE.md"],
-        cwd=REPO, capture_output=True, check=True,
+        [
+            "git",
+            "ls-files",
+            "-z",
+            "--",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "*/AGENTS.md",
+            "*/CLAUDE.md",
+        ],
+        cwd=REPO,
+        capture_output=True,
+        check=True,
     ).stdout
     return [Path(p) for p in out.decode().split("\0") if p]
 
@@ -74,8 +93,9 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
             hits = sorted(set(RESIDUE.findall(text)))
             if hits:
                 offenders[name] = hits
-        self.assertEqual(offenders, {},
-                         f"v2 NDJSON emission residue returned: {offenders}")
+        self.assertEqual(
+            offenders, {}, f"v2 NDJSON emission residue returned: {offenders}"
+        )
 
     def test_no_emission_residue_in_tracked_rules_files(self):
         offenders = {}
@@ -84,8 +104,9 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
             hits = sorted(set(EMISSION_RESIDUE.findall(text)))
             if hits:
                 offenders[str(rel)] = hits
-        self.assertEqual(offenders, {},
-                         f"v2 emission residue in rules files: {offenders}")
+        self.assertEqual(
+            offenders, {}, f"v2 emission residue in rules files: {offenders}"
+        )
 
     def test_no_bash_residue_in_agents_directory_rules(self):
         offenders = {}
@@ -137,22 +158,33 @@ class TestDiscoveryAgentEmissionScrub(unittest.TestCase):
         # field may be null in any parsed worked example, no placeholder may offer a null
         # branch, and a field the example omits must say OMIT — lives in
         # tests/test_dimensions_registry.py::TestContractSchemaLockstep.
-        for name, field in [("bug-detector", "hidden_errors"),
-                            ("type-design-analyzer", "invalid_state_example"),
-                            ("conventions-and-intent", "claude_md_rule"),
-                            ("conventions-and-intent", "spec_text")]:
+        for name, field in [
+            ("bug-detector", "hidden_errors"),
+            ("type-design-analyzer", "invalid_state_example"),
+            ("conventions-and-intent", "claude_md_rule"),
+            ("conventions-and-intent", "spec_text"),
+        ]:
             text = (REPO / "agents" / f"{name}.md").read_text()
             self.assertIn("OMIT this field", text, name)
-            self.assertNotIn(f'"{field}":null', text,
-                             f"{name} example emits null for schema-declared {field}")
-            self.assertNotIn("otherwise null", text.split(field)[1][:120],
-                             f"{name} contract still offers a null branch for {field}")
+            self.assertNotIn(
+                f'"{field}":null',
+                text,
+                f"{name} example emits null for schema-declared {field}",
+            )
+            self.assertNotIn(
+                "otherwise null",
+                text.split(field)[1][:120],
+                f"{name} contract still offers a null branch for {field}",
+            )
         # claude_md_rule is canonical now, so EVERY discovery contract carries it and every
         # one of them must instruct omission rather than a null.
         for name in DISCOVERY_AGENTS:
             text = (REPO / "agents" / f"{name}.md").read_text()
-            self.assertNotIn('"claude_md_rule":null', text,
-                             f"{name} example emits null for schema-declared claude_md_rule")
+            self.assertNotIn(
+                '"claude_md_rule":null',
+                text,
+                f"{name} example emits null for schema-declared claude_md_rule",
+            )
 
 
 class TestCompleteReadContract(unittest.TestCase):
@@ -173,11 +205,16 @@ class TestCompleteReadContract(unittest.TestCase):
 
     def test_canonical_source_exists_and_lists_every_copy(self):
         canon = REPO / COMPLETE_READ_CANON
-        self.assertTrue(canon.is_file(), f"missing canonical source: {COMPLETE_READ_CANON}")
+        self.assertTrue(
+            canon.is_file(), f"missing canonical source: {COMPLETE_READ_CANON}"
+        )
         text = canon.read_text()
         for name in COMPLETE_READ_AGENTS:
-            self.assertIn(f"`agents/{name}.md`", text,
-                          f"{name} is not listed in the canonical file's duplication contract")
+            self.assertIn(
+                f"`agents/{name}.md`",
+                text,
+                f"{name} is not listed in the canonical file's duplication contract",
+            )
 
     def test_every_file_reading_agent_carries_the_block_byte_identically(self):
         # Byte-identity is the point: a copy that drifts is a copy that stops saying the
@@ -189,13 +226,18 @@ class TestCompleteReadContract(unittest.TestCase):
             text = (REPO / "agents" / f"{name}.md").read_text()
             problems = []
             if text.count(COMPLETE_READ_MARKER) != 1:
-                problems.append(f"canonical-source comment appears {text.count(COMPLETE_READ_MARKER)}x (need 1)")
+                problems.append(
+                    f"canonical-source comment appears {text.count(COMPLETE_READ_MARKER)}x (need 1)"
+                )
             if block not in text:
-                problems.append("block missing or not byte-identical to the canonical source")
+                problems.append(
+                    "block missing or not byte-identical to the canonical source"
+                )
             if problems:
                 offenders[name] = problems
-        self.assertEqual(offenders, {},
-                         f"complete-read contract drifted or is missing: {offenders}")
+        self.assertEqual(
+            offenders, {}, f"complete-read contract drifted or is missing: {offenders}"
+        )
 
     def test_the_block_states_the_three_load_bearing_facts(self):
         # Requirement 2: the fix must not depend on the Read tool emitting a truncation
@@ -214,7 +256,9 @@ class TestCompleteReadContract(unittest.TestCase):
         # The scrub guard above forbids printf/ndjson/validate_ndjson/Bash in a discovery
         # agent contract. A new block that reintroduced any of them would pass its own
         # test and fail the scrub — assert the two contracts are compatible directly.
-        self.assertEqual(sorted(set(RESIDUE.findall(_canonical_complete_read_block()))), [])
+        self.assertEqual(
+            sorted(set(RESIDUE.findall(_canonical_complete_read_block()))), []
+        )
 
     def test_the_skill_documents_measuring_and_stamping_the_context_size(self):
         # The agent-side block is a backstop. The primary mechanism is the measurement
@@ -224,8 +268,16 @@ class TestCompleteReadContract(unittest.TestCase):
         skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text()
         triage = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text()
         for doc, label in [(skill, "SKILL.md"), (triage, "phase2-triage.md")]:
-            self.assertIn("contextLines", doc, f"{label} does not document the contextLines waist field")
-            self.assertIn("contextChars", doc, f"{label} does not document the contextChars waist field")
+            self.assertIn(
+                "contextLines",
+                doc,
+                f"{label} does not document the contextLines waist field",
+            )
+            self.assertIn(
+                "contextChars",
+                doc,
+                f"{label} does not document the contextChars waist field",
+            )
 
     def test_the_workflow_validates_and_consumes_the_stamped_size(self):
         # The Python suite owns no JS behavior, but it can pin that the two halves of the
@@ -233,12 +285,18 @@ class TestCompleteReadContract(unittest.TestCase):
         # still accept and use. A rename on either side fails here.
         args_js = (REPO / "workflows/src/args.js").read_text()
         stages_js = (REPO / "workflows/src/stages.js").read_text()
-        self.assertIn("contextLines", args_js, "args.js no longer validates contextLines")
-        self.assertIn("contextReadPlan", stages_js, "stages.js no longer builds a read plan")
+        self.assertIn(
+            "contextLines", args_js, "args.js no longer validates contextLines"
+        )
+        self.assertIn(
+            "contextReadPlan", stages_js, "stages.js no longer builds a read plan"
+        )
         # The bundle is generated; test_bundle_fresh.py proves it matches src, so a
         # presence check here catches a build that silently dropped the stage.
         bundle = (REPO / "workflows/pipeline.js").read_text()
-        self.assertIn("contextReadPlan", bundle, "the shipped bundle carries no read plan")
+        self.assertIn(
+            "contextReadPlan", bundle, "the shipped bundle carries no read plan"
+        )
 
 
 if __name__ == "__main__":

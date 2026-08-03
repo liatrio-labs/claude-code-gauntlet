@@ -459,7 +459,9 @@ def _claude_auth_env(base_env, child_auth):
         api_key = _load_dotenv_key(ENV_PATH, "ANTHROPIC_API_KEY")
         return ({"ANTHROPIC_API_KEY": api_key} if api_key else {}, ())
     if child_auth == SUBSCRIPTION_AUTH_MODE:
-        token = _load_dotenv_key(ENV_PATH, OAUTH_TOKEN_VAR) or base_env.get(OAUTH_TOKEN_VAR)
+        token = _load_dotenv_key(ENV_PATH, OAUTH_TOKEN_VAR) or base_env.get(
+            OAUTH_TOKEN_VAR
+        )
         if not token:
             # Var name as a literal, not interpolated from the constant: this message
             # reaches stderr and the checkpoint detail, and a credential-named identifier
@@ -607,7 +609,8 @@ def _plugin_mutations(repo_root, baseline_paths=frozenset()):
         return None
     baseline = baseline_paths or frozenset()
     return [
-        (s, p) for (s, p) in _parse_porcelain(out)
+        (s, p)
+        for (s, p) in _parse_porcelain(out)
         if p not in _CONTROLLER_OWNED_PATHS and p not in baseline
     ]
 
@@ -691,7 +694,9 @@ def _echo_in_text(text):
     """True when *text* carries the full receipt: every expected knob line present."""
     text = text or ""
     for key, value in EXPECTED_ECHO.items():
-        pattern = r"(?m)^[ \t]*{}={}(?:[ \t]|\(|$)".format(re.escape(key), re.escape(value))
+        pattern = r"(?m)^[ \t]*{}={}(?:[ \t]|\(|$)".format(
+            re.escape(key), re.escape(value)
+        )
         if not re.search(pattern, text):
             return False
     return True
@@ -738,9 +743,7 @@ def _echo_ok(raw_text, envelope=None, report_dirs=()):
     return _echo_in_reports(report_dirs)
 
 
-_PIPELINE_VERSION_RE = re.compile(
-    r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]"
-)
+_PIPELINE_VERSION_RE = re.compile(r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+)['\"]")
 _IDENTITY_LINE_RE = re.compile(
     r"(?m)^[ \t]*(pipeline_version|plugin_root)=(.+?)\s*\((?:bundle|resolved)\)\s*$"
 )
@@ -882,7 +885,9 @@ def _new_workflow_script_paths(claude_home, baseline):
     return paths
 
 
-def _check_plugin_identity(raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root):
+def _check_plugin_identity(
+    raw_text, envelope, report_dirs, claude_home, wf_baseline, repo_root
+):
     """Return None if identity is clean, else a human reason fragment for stderr."""
     receipt = extract_identity_receipt(raw_text, envelope, report_dirs)
     if not receipt:
@@ -964,7 +969,11 @@ def _v3_preflight(claude_bin):
     required = _fmt_version(V3_MIN_CLAUDE_VERSION)
     version = _claude_version(claude_bin)
     if version is None:
-        return "v3_workflow_unsupported: claude --version unreadable, need >= {}".format(required)
+        return (
+            "v3_workflow_unsupported: claude --version unreadable, need >= {}".format(
+                required
+            )
+        )
     if version < V3_MIN_CLAUDE_VERSION:
         return "v3_workflow_unsupported: claude {} < required {}".format(
             _fmt_version(version), required
@@ -972,8 +981,15 @@ def _v3_preflight(claude_bin):
     return None
 
 
-def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
-                  child_model="inherit", child_auth=API_AUTH_MODE):
+def invoke_review(
+    worktree,
+    pr,
+    run_dir,
+    timeout_s=1800,
+    tool="deep-review-v3",
+    child_model="inherit",
+    child_auth=API_AUTH_MODE,
+):
     """Run the headless review for one PR and classify the outcome.
 
     ``tool`` selects the pipeline label and gates the v3 preflight: a ``deep-review-v3``
@@ -1009,7 +1025,9 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
 
     claude_bin = shutil.which("claude", path=env.get("PATH") or os.environ.get("PATH"))
     if not claude_bin:
-        return InvokeResult("failed", raw_json_path=str(raw_path), reason="claude_not_found")
+        return InvokeResult(
+            "failed", raw_json_path=str(raw_path), reason="claude_not_found"
+        )
 
     # v3 preflight: the pipeline runs through the Workflow tool (Claude Code >= 2.1.154).
     # An older/unreadable CLI cannot honor the v3 skill, so fail the PR invalid (never
@@ -1179,7 +1197,9 @@ def invoke_review(worktree, pr, run_dir, timeout_s=1800, tool="deep-review-v3",
     # 5) Dry-run payload (the scored candidate set).
     payload_path = _find_payload(env["CODE_GAUNTLET_OUTPUT_DIR"])
     delivery = env.get("CODE_GAUNTLET_DELIVERY", "")
-    if payload_path is None and "pr_comments" in [d.strip() for d in delivery.split(",")]:
+    if payload_path is None and "pr_comments" in [
+        d.strip() for d in delivery.split(",")
+    ]:
         return InvokeResult(
             "failed",
             cost_usd=cost_usd,

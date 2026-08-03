@@ -29,38 +29,62 @@ REAL_BASELINES = BENCH_DIR / "baselines.json"
 # plus one anchor row and one naive-anchor row.
 FIXTURE_ROWS = [
     {
-        "run_id": "subset-20260718-aaaaaaa", "ts": "2026-07-18T09:00:00Z",
-        "tier": "subset", "tool": "deep-review-v2", "n_prs": 15,
-        "golden_recall": 0.4915254237288136, "valid_extra_rate": 0.36363636363636365,
-        "noise_rate": 0.16363636363636364, "precision_strict": 0.5272727272727272,
+        "run_id": "subset-20260718-aaaaaaa",
+        "ts": "2026-07-18T09:00:00Z",
+        "tier": "subset",
+        "tool": "deep-review-v2",
+        "n_prs": 15,
+        "golden_recall": 0.4915254237288136,
+        "valid_extra_rate": 0.36363636363636365,
+        "noise_rate": 0.16363636363636364,
+        "precision_strict": 0.5272727272727272,
         "f1_strict": 0.5087719298245613,
         "per_bucket": {"golden_matched": 26, "valid_extra": 20, "noise": 9},
-        "tokens_total": 41060587, "cost_usd": 190.71924090000007,
+        "tokens_total": 41060587,
+        "cost_usd": 190.71924090000007,
     },
     {
-        "run_id": "subset-20260718-aaaaaaa", "ts": "2026-07-18T09:03:00Z",
-        "tier": "subset", "tool": "deep-review-v2", "n_prs": 15,
-        "golden_recall": 0.4915254237288136, "valid_extra_rate": 0.36363636363636365,
-        "noise_rate": 0.16363636363636364, "precision_strict": 0.5272727272727272,
+        "run_id": "subset-20260718-aaaaaaa",
+        "ts": "2026-07-18T09:03:00Z",
+        "tier": "subset",
+        "tool": "deep-review-v2",
+        "n_prs": 15,
+        "golden_recall": 0.4915254237288136,
+        "valid_extra_rate": 0.36363636363636365,
+        "noise_rate": 0.16363636363636364,
+        "precision_strict": 0.5272727272727272,
         "f1_strict": 0.5087719298245613,
         "per_bucket": {"golden_matched": 26, "valid_extra": 20, "noise": 9},
-        "tokens_total": 41060587, "cost_usd": 190.71924090000007,
+        "tokens_total": 41060587,
+        "cost_usd": 190.71924090000007,
     },
     {
-        "run_id": "anchors-gate-bbbbbbb", "ts": "2026-07-17T23:16:34Z",
-        "tier": "subset", "tool": "anchor-claude", "n_prs": 15,
-        "golden_recall": 0.3389830508474576, "valid_extra_rate": 0.14814814814814814,
-        "noise_rate": 0.48148148148148145, "precision_strict": 0.39215686274509803,
-        "tokens_total": 298304, "cost_usd": 1.8055,
+        "run_id": "anchors-gate-bbbbbbb",
+        "ts": "2026-07-17T23:16:34Z",
+        "tier": "subset",
+        "tool": "anchor-claude",
+        "n_prs": 15,
+        "golden_recall": 0.3389830508474576,
+        "valid_extra_rate": 0.14814814814814814,
+        "noise_rate": 0.48148148148148145,
+        "precision_strict": 0.39215686274509803,
+        "tokens_total": 298304,
+        "cost_usd": 1.8055,
     },
     {
-        "run_id": "smoke-20260718-ccccccc", "ts": "2026-07-18T03:17:00Z",
-        "tier": "smoke", "tool": "naive-anchor", "n_prs": 3,
-        "golden_recall": 0.75, "valid_extra_rate": 0.5714285714285714,
-        "noise_rate": 0.0, "precision_strict": 0.42857142857142855,
+        "run_id": "smoke-20260718-ccccccc",
+        "ts": "2026-07-18T03:17:00Z",
+        "tier": "smoke",
+        "tool": "naive-anchor",
+        "n_prs": 3,
+        "golden_recall": 0.75,
+        "valid_extra_rate": 0.5714285714285714,
+        "noise_rate": 0.0,
+        "precision_strict": 0.42857142857142855,
         "f1_strict": 0.5454545454545454,
         "per_bucket": {"golden_matched": 3, "valid_extra": 4, "noise": 0},
-        "tokens_total": 527876, "cost_usd": 1.4069320000000003,
+        "tokens_total": 527876,
+        "cost_usd": 1.4069320000000003,
     },
 ]
 
@@ -70,16 +94,20 @@ FIXTURE_BASELINES = {
     "anchors": {
         "rows": {
             "claude": {
-                "recall": 0.3389830508474576, "noise_rate": 0.48148148148148145,
+                "recall": 0.3389830508474576,
+                "noise_rate": 0.48148148148148145,
                 "valid_extra_rate": 0.14814814814814814,
                 "precision_strict": 0.39215686274509803,
             },
             "claude-code": {
-                "recall": 0.2711864406779661, "noise_rate": 0.5416666666666666,
-                "valid_extra_rate": 0.125, "precision_strict": 0.3333333333333333,
+                "recall": 0.2711864406779661,
+                "noise_rate": 0.5416666666666666,
+                "valid_extra_rate": 0.125,
+                "precision_strict": 0.3333333333333333,
             },
             "coderabbit": {
-                "recall": 0.6271186440677966, "noise_rate": 0.5658914728682171,
+                "recall": 0.6271186440677966,
+                "noise_rate": 0.5658914728682171,
                 "valid_extra_rate": 0.14728682170542637,
                 "precision_strict": 0.29838709677419356,
             },
@@ -87,9 +115,15 @@ FIXTURE_BASELINES = {
     },
     "delta_noise_proposed": {"value": 0.24, "proposed": "2026-07-18"},
     "baseline_v2": {
-        "run_id": "subset-20260718-aaaaaaa", "n_prs": 15, "n_goldens": 59, "runs": 1,
-        "golden_recall": 0.4915, "valid_extra_rate": 0.3636, "noise_rate": 0.1636,
-        "precision_strict": 0.5273, "f1_strict": 0.5088,
+        "run_id": "subset-20260718-aaaaaaa",
+        "n_prs": 15,
+        "n_goldens": 59,
+        "runs": 1,
+        "golden_recall": 0.4915,
+        "valid_extra_rate": 0.3636,
+        "noise_rate": 0.1636,
+        "precision_strict": 0.5273,
+        "f1_strict": 0.5088,
     },
 }
 
@@ -177,10 +211,10 @@ class TestTiles(unittest.TestCase):
     def test_stat_tiles_from_latest_subset_row(self):
         out = _render()
         # Values formatted from the latest deep-review-v2 subset row.
-        self.assertIn("49.2%", out)   # golden_recall
-        self.assertIn("16.4%", out)   # noise_rate
-        self.assertIn("52.7%", out)   # precision_strict
-        self.assertIn("50.9%", out)   # f1_strict
+        self.assertIn("49.2%", out)  # golden_recall
+        self.assertIn("16.4%", out)  # noise_rate
+        self.assertIn("52.7%", out)  # precision_strict
+        self.assertIn("50.9%", out)  # f1_strict
         self.assertIn("$190.72", out)  # cost_usd
         # Context caption pulls goldens/N from baseline_v2.
         self.assertIn("59 goldens", out)
@@ -223,8 +257,14 @@ class TestCli(unittest.TestCase):
             )
             baselines.write_text(json.dumps(FIXTURE_BASELINES), encoding="utf-8")
             rc = report.main(
-                ["--ledger", str(ledger), "--baselines", str(baselines),
-                 "--out", str(out)]
+                [
+                    "--ledger",
+                    str(ledger),
+                    "--baselines",
+                    str(baselines),
+                    "--out",
+                    str(out),
+                ]
             )
             self.assertEqual(rc, 0)
             self.assertTrue(out.exists())
@@ -247,17 +287,28 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "report.html"
             proc = subprocess.run(
-                [sys.executable, str(BENCH_DIR / "report.py"),
-                 "--ledger", str(REAL_LEDGER), "--baselines", str(REAL_BASELINES),
-                 "--out", str(out)],
-                cwd=td, capture_output=True, text=True,
+                [
+                    sys.executable,
+                    str(BENCH_DIR / "report.py"),
+                    "--ledger",
+                    str(REAL_LEDGER),
+                    "--baselines",
+                    str(REAL_BASELINES),
+                    "--out",
+                    str(out),
+                ],
+                cwd=td,
+                capture_output=True,
+                text=True,
                 # A stray PYTHONPATH pointing at the repo would mask the very failure
                 # this test exists to catch.
                 env={k: v for k, v in os.environ.items() if k != "PYTHONPATH"},
             )
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertTrue(out.exists())
-            self.assertTrue(out.read_text(encoding="utf-8").lower().startswith("<!doctype html"))
+            self.assertTrue(
+                out.read_text(encoding="utf-8").lower().startswith("<!doctype html")
+            )
 
 
 class TestRealData(unittest.TestCase):
@@ -272,8 +323,14 @@ class TestRealData(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             out = Path(td) / "report.html"
             rc = report.main(
-                ["--ledger", str(REAL_LEDGER), "--baselines", str(REAL_BASELINES),
-                 "--out", str(out)]
+                [
+                    "--ledger",
+                    str(REAL_LEDGER),
+                    "--baselines",
+                    str(REAL_BASELINES),
+                    "--out",
+                    str(out),
+                ]
             )
             self.assertEqual(rc, 0)
             self.assertTrue(out.exists())
@@ -405,12 +462,20 @@ class TestSubscriptionCostHonesty(unittest.TestCase):
     """
 
     SUB_ROW = {
-        "run_id": "mini-20260724-subauth", "ts": "2026-07-24T10:00:00Z",
-        "tier": "mini", "tool": "deep-review-v3", "n_prs": 6,
-        "golden_recall": 0.5, "valid_extra_rate": 0.2, "noise_rate": 0.1,
-        "precision_strict": 0.5, "f1_strict": 0.5,
+        "run_id": "mini-20260724-subauth",
+        "ts": "2026-07-24T10:00:00Z",
+        "tier": "mini",
+        "tool": "deep-review-v3",
+        "n_prs": 6,
+        "golden_recall": 0.5,
+        "valid_extra_rate": 0.2,
+        "noise_rate": 0.1,
+        "precision_strict": 0.5,
+        "f1_strict": 0.5,
         "per_bucket": {"golden_matched": 10, "valid_extra": 4, "noise": 2},
-        "tokens_total": 1000000, "cost_usd": 27.0, "auth_mode": "subscription",
+        "tokens_total": 1000000,
+        "cost_usd": 27.0,
+        "auth_mode": "subscription",
     }
 
     def _api_row(self):
@@ -538,8 +603,13 @@ class TestVoidRunsAndMilestones(unittest.TestCase):
     def test_milestone_labels_disambiguate_the_three_custom_runs(self):
         labels = {
             run_id: report.short_label(
-                {"run_id": run_id, "tool": "deep-review-v3", "tier": "custom",
-                 "kind": "gate", "hypothesis": None}
+                {
+                    "run_id": run_id,
+                    "tool": "deep-review-v3",
+                    "tier": "custom",
+                    "kind": "gate",
+                    "hypothesis": None,
+                }
             )
             for run_id in report.MILESTONE_LABELS
         }

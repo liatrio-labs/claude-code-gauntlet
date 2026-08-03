@@ -83,7 +83,9 @@ def manifest_auth_mode(manifest):
     fingerprint = manifest.get("env_fingerprint")
     if not isinstance(fingerprint, dict):
         fingerprint = {}
-    return manifest.get("child_auth") or fingerprint.get("child_auth") or DEFAULT_AUTH_MODE
+    return (
+        manifest.get("child_auth") or fingerprint.get("child_auth") or DEFAULT_AUTH_MODE
+    )
 
 
 def cost_is_billable(row):
@@ -107,9 +109,7 @@ def append_row(ledger_path, row):
     """
     missing = [key for key in REQUIRED_KEYS if key not in row]
     if missing:
-        raise ValueError(
-            f"ledger row missing required key(s): {', '.join(missing)}"
-        )
+        raise ValueError(f"ledger row missing required key(s): {', '.join(missing)}")
 
     line = json.dumps(row, ensure_ascii=False)
 

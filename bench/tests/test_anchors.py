@@ -69,7 +69,8 @@ class AnchorCandidatesFileTests(unittest.TestCase):
             self.assertIn(url, self.anchors, "gate URL missing: {}".format(url))
             for tool in ANCHOR_TOOLS:
                 self.assertIn(
-                    tool, self.anchors[url],
+                    tool,
+                    self.anchors[url],
                     "gate URL {} missing anchor tool {}".format(url, tool),
                 )
 
@@ -89,7 +90,8 @@ class AnchorCandidatesFileTests(unittest.TestCase):
             for tool, cands in tools.items():
                 texts = [c["text"] for c in cands]
                 self.assertEqual(
-                    len(texts), len(set(texts)),
+                    len(texts),
+                    len(set(texts)),
                     "duplicate candidate text in {} / {}".format(url, tool),
                 )
 
@@ -106,32 +108,63 @@ class SpotCheckTests(unittest.TestCase):
 
         # anchor candidates fixture: claude (2), coderabbit (3).
         self.anchors_path = self.tmp / "anchors.json"
-        write_json(self.anchors_path, {
-            self.url: {
-                "claude": [
-                    {"text": "c-match", "path": None, "line": None, "source": "extracted"},
-                    {"text": "c-extra", "path": None, "line": None, "source": "extracted"},
-                ],
-                "coderabbit": [
-                    {"text": "r-match", "path": None, "line": None, "source": "extracted"},
-                    {"text": "r-x1", "path": None, "line": None, "source": "extracted"},
-                    {"text": "r-x2", "path": None, "line": None, "source": "extracted"},
-                ],
-            }
-        })
+        write_json(
+            self.anchors_path,
+            {
+                self.url: {
+                    "claude": [
+                        {
+                            "text": "c-match",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                        {
+                            "text": "c-extra",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                    ],
+                    "coderabbit": [
+                        {
+                            "text": "r-match",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                        {
+                            "text": "r-x1",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                        {
+                            "text": "r-x2",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                    ],
+                }
+            },
+        )
         # golden fixture (3 goldens) so n_golden and staging resolve.
         self.golden_path = self.tmp / "golden.json"
-        write_json(self.golden_path, {
-            self.url: {
-                "source_repo": "r",
-                "golden_comments": [
-                    {"comment": "g1", "severity": "High"},
-                    {"comment": "g2", "severity": "Low"},
-                    {"comment": "g3", "severity": "Medium"},
-                ],
-                "reviews": [],
-            }
-        })
+        write_json(
+            self.golden_path,
+            {
+                self.url: {
+                    "source_repo": "r",
+                    "golden_comments": [
+                        {"comment": "g1", "severity": "High"},
+                        {"comment": "g2", "severity": "Low"},
+                        {"comment": "g3", "severity": "Medium"},
+                    ],
+                    "reviews": [],
+                }
+            },
+        )
         self.results_dir = self.tmp / "results"
         self.diff_out = self.tmp / "spot-check-diff.json"
 
@@ -145,11 +178,14 @@ class SpotCheckTests(unittest.TestCase):
             self.assertEqual(model, self.judge)
             model_dir.mkdir(parents=True, exist_ok=True)
             write_json(model_dir / "evaluations.json", our_eval)
+
         return run_scorer
 
     def _ev(self, tp, fp, fn, matched, fps):
         return {
-            "tp": tp, "fp": fp, "fn": fn,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
             "true_positives": [{"matched_candidate": t} for t in matched],
             "false_positives": [{"candidate": t} for t in fps],
         }
@@ -173,14 +209,18 @@ class SpotCheckTests(unittest.TestCase):
             )
 
     def test_exact_and_within_tolerance_passes(self):
-        our = {self.url: {
-            "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
-            "coderabbit": self._ev(2, 2, 1, ["r-match", "r-x1"], ["r-x2"]),
-        }}
-        upstream = {self.url: {
-            "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),   # exact
-            "coderabbit": self._ev(2, 1, 1, ["r-match", "r-x1"], ["r-x2"]),  # fp +1
-        }}
+        our = {
+            self.url: {
+                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
+                "coderabbit": self._ev(2, 2, 1, ["r-match", "r-x1"], ["r-x2"]),
+            }
+        }
+        upstream = {
+            self.url: {
+                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),  # exact
+                "coderabbit": self._ev(2, 1, 1, ["r-match", "r-x1"], ["r-x2"]),  # fp +1
+            }
+        }
         report = self._run(our, upstream)
         self.assertTrue(report["pass"])
         self.assertTrue(report["per_tool"]["claude"]["within_tolerance"])
@@ -191,14 +231,18 @@ class SpotCheckTests(unittest.TestCase):
         self.assertEqual(json.loads(self.diff_out.read_text())["pr_url"], self.url)
 
     def test_drift_beyond_tolerance_fails_and_captures_diff(self):
-        our = {self.url: {
-            "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
-            "coderabbit": self._ev(2, 4, 1, ["r-match", "r-x1"], ["r-x2"]),  # fp +3
-        }}
-        upstream = {self.url: {
-            "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
-            "coderabbit": self._ev(2, 1, 1, ["r-match", "r-x1"], ["r-x2"]),
-        }}
+        our = {
+            self.url: {
+                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
+                "coderabbit": self._ev(2, 4, 1, ["r-match", "r-x1"], ["r-x2"]),  # fp +3
+            }
+        }
+        upstream = {
+            self.url: {
+                "claude": self._ev(1, 1, 2, ["c-match"], ["c-extra"]),
+                "coderabbit": self._ev(2, 1, 1, ["r-match", "r-x1"], ["r-x2"]),
+            }
+        }
         report = self._run(our, upstream)
         self.assertFalse(report["pass"])
         self.assertTrue(report["per_tool"]["claude"]["within_tolerance"])
@@ -219,10 +263,12 @@ class SpotCheckTests(unittest.TestCase):
             )
 
     def test_spend_estimate_counts_calls(self):
-        our = {self.url: {
-            "claude": self._ev(0, 2, 3, [], ["c-match", "c-extra"]),
-            "coderabbit": self._ev(0, 3, 3, [], ["r-match", "r-x1", "r-x2"]),
-        }}
+        our = {
+            self.url: {
+                "claude": self._ev(0, 2, 3, [], ["c-match", "c-extra"]),
+                "coderabbit": self._ev(0, 3, 3, [], ["r-match", "r-x1", "r-x2"]),
+            }
+        }
         report = self._run(our, our)
         # judge calls = golden(3) * (claude 2 + coderabbit 3) = 15; both tools >=2
         # candidates -> 2 dedup calls.
@@ -242,32 +288,63 @@ class RejudgeAnchorsTests(unittest.TestCase):
         self.tools = ["claude", "coderabbit"]
 
         self.anchors_path = self.tmp / "anchors.json"
-        write_json(self.anchors_path, {
-            self.u1: {
-                "claude": [
-                    {"text": "c-match", "path": None, "line": None, "source": "extracted"},
-                    {"text": "c-extra", "path": None, "line": None, "source": "extracted"},
-                ],
-                "coderabbit": [
-                    {"text": "r-match", "path": None, "line": None, "source": "extracted"},
-                    {"text": "r-x1", "path": None, "line": None, "source": "extracted"},
-                    {"text": "r-x2", "path": None, "line": None, "source": "extracted"},
-                ],
-            }
-        })
+        write_json(
+            self.anchors_path,
+            {
+                self.u1: {
+                    "claude": [
+                        {
+                            "text": "c-match",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                        {
+                            "text": "c-extra",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                    ],
+                    "coderabbit": [
+                        {
+                            "text": "r-match",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                        {
+                            "text": "r-x1",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                        {
+                            "text": "r-x2",
+                            "path": None,
+                            "line": None,
+                            "source": "extracted",
+                        },
+                    ],
+                }
+            },
+        )
         self.subsets_path = self.tmp / "subsets.json"
         write_json(self.subsets_path, {"gate": [self.u1], "holdout": [], "smoke": []})
         self.golden_path = self.tmp / "golden.json"
-        write_json(self.golden_path, {
-            self.u1: {
-                "source_repo": "r",
-                "golden_comments": [
-                    {"comment": "g1", "severity": "High"},
-                    {"comment": "g2", "severity": "Low"},
-                ],
-                "reviews": [],
-            }
-        })
+        write_json(
+            self.golden_path,
+            {
+                self.u1: {
+                    "source_repo": "r",
+                    "golden_comments": [
+                        {"comment": "g1", "severity": "High"},
+                        {"comment": "g2", "severity": "Low"},
+                    ],
+                    "reviews": [],
+                }
+            },
+        )
         self.results_dir = self.tmp / "results"
         self.cache_dir = self.tmp / "cache"
 
@@ -277,14 +354,19 @@ class RejudgeAnchorsTests(unittest.TestCase):
     def _evaluations(self):
         def ev(tp, fp, fn, matched, fps):
             return {
-                "tp": tp, "fp": fp, "fn": fn,
+                "tp": tp,
+                "fp": fp,
+                "fn": fn,
                 "true_positives": [{"matched_candidate": t} for t in matched],
                 "false_positives": [{"candidate": t} for t in fps],
             }
-        return {self.u1: {
-            "claude": ev(1, 1, 1, ["c-match"], ["c-extra"]),
-            "coderabbit": ev(1, 2, 1, ["r-match"], ["r-x1", "r-x2"]),
-        }}
+
+        return {
+            self.u1: {
+                "claude": ev(1, 1, 1, ["c-match"], ["c-extra"]),
+                "coderabbit": ev(1, 2, 1, ["r-match"], ["r-x1", "r-x2"]),
+            }
+        }
 
     def _scorer(self, counter, model_pin=None):
         pin = model_pin or self.pin
@@ -294,12 +376,14 @@ class RejudgeAnchorsTests(unittest.TestCase):
             counter.append(model)
             model_dir.mkdir(parents=True, exist_ok=True)
             write_json(model_dir / "evaluations.json", self._evaluations())
+
         return run_scorer
 
     def _adjudicator(self):
         def adj(text, hunk, ctx, pin, api_key):
             bucket = "valid_extra" if text == "c-extra" else "noise"
             return {"bucket": bucket, "failed_check": None, "reason": "test"}
+
         return adj
 
     def _call(self, counter, pin=None):
@@ -325,19 +409,21 @@ class RejudgeAnchorsTests(unittest.TestCase):
         self.assertFalse(result["cache_hit"])
 
         claude = result["per_tool"]["claude"]
-        self.assertAlmostEqual(claude["recall"], 0.5)          # tp1/(tp1+fn1)
+        self.assertAlmostEqual(claude["recall"], 0.5)  # tp1/(tp1+fn1)
         self.assertAlmostEqual(claude["precision_strict"], 0.5)  # tp1/(tp1+fp1)
         self.assertAlmostEqual(claude["valid_extra_rate"], 0.5)  # c-extra valid / 2
         self.assertAlmostEqual(claude["noise_rate"], 0.0)
-        self.assertEqual(claude["per_bucket"],
-                         {"golden_matched": 1, "valid_extra": 1, "noise": 0})
+        self.assertEqual(
+            claude["per_bucket"], {"golden_matched": 1, "valid_extra": 1, "noise": 0}
+        )
 
         rabbit = result["per_tool"]["coderabbit"]
         self.assertAlmostEqual(rabbit["recall"], 0.5)
         self.assertAlmostEqual(rabbit["precision_strict"], 1 / 3)
-        self.assertAlmostEqual(rabbit["noise_rate"], 2 / 3)     # r-x1,r-x2 noise / 3
-        self.assertEqual(rabbit["per_bucket"],
-                         {"golden_matched": 1, "valid_extra": 0, "noise": 2})
+        self.assertAlmostEqual(rabbit["noise_rate"], 2 / 3)  # r-x1,r-x2 noise / 3
+        self.assertEqual(
+            rabbit["per_bucket"], {"golden_matched": 1, "valid_extra": 0, "noise": 2}
+        )
 
     def test_cache_hit_skips_scorer(self):
         counter = []
@@ -380,7 +466,9 @@ class AnchorScorerStageFailureTests(unittest.TestCase):
     CalledProcessError the old duplicated runner raised."""
 
     def test_stage_failure_surfaces_stage_named_runtimeerror(self):
-        fake = SimpleNamespace(returncode=1, stdout="", stderr="Traceback: boom in dedup")
+        fake = SimpleNamespace(
+            returncode=1, stdout="", stderr="Traceback: boom in dedup"
+        )
         with mock.patch.object(score.subprocess, "run", return_value=fake):
             with self.assertRaises(RuntimeError) as ctx:
                 anchors._run_scorer_stages(
@@ -391,7 +479,7 @@ class AnchorScorerStageFailureTests(unittest.TestCase):
                 )
         msg = str(ctx.exception)
         self.assertIn("dedup", msg)  # the failing stage is named
-        self.assertIn("boom", msg)   # stderr tail is surfaced
+        self.assertIn("boom", msg)  # stderr tail is surfaced
 
 
 class AdjudicatorContextTests(unittest.TestCase):
@@ -407,7 +495,9 @@ class AdjudicatorContextTests(unittest.TestCase):
 
     def test_null_path_line_comment_gets_full_diff(self):
         buckets = {"u": {"golden_matched": [], "adjudicator": ["c-extra"]}}
-        candidates = {"u": {"claude": [{"text": "c-extra", "path": None, "line": None}]}}
+        candidates = {
+            "u": {"claude": [{"text": "c-extra", "path": None, "line": None}]}
+        }
         diffs = {"u": "diff --git a/f b/f\n@@ -1 +1 @@\n+code"}
         seen = []
 
@@ -415,7 +505,9 @@ class AdjudicatorContextTests(unittest.TestCase):
             seen.append({"hunk": hunk, "ctx": ctx})
             return {"bucket": "valid_extra", "failed_check": None, "reason": "t"}
 
-        anchors._adjudicate_anchor_bucket(buckets, candidates, "claude", "pin", "k", adj, diffs)
+        anchors._adjudicate_anchor_bucket(
+            buckets, candidates, "claude", "pin", "k", adj, diffs
+        )
         self.assertEqual(len(seen), 1)
         self.assertEqual(seen[0]["hunk"], diffs["u"])  # whole diff, not a slice
         self.assertEqual(seen[0]["ctx"], "")
@@ -423,15 +515,19 @@ class AdjudicatorContextTests(unittest.TestCase):
     def test_located_candidate_gets_sliced_hunk(self):
         buckets = {"u": {"golden_matched": [], "adjudicator": ["c"]}}
         candidates = {"u": {"claude": [{"text": "c", "path": "f.py", "line": 2}]}}
-        diff = ("diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
-                "@@ -1,3 +1,3 @@\n line1\n+line2\n line3\n")
+        diff = (
+            "diff --git a/f.py b/f.py\n--- a/f.py\n+++ b/f.py\n"
+            "@@ -1,3 +1,3 @@\n line1\n+line2\n line3\n"
+        )
         seen = []
 
         def adj(text, hunk, ctx, pin, key):
             seen.append(hunk)
             return {"bucket": "noise", "failed_check": 1, "reason": "t"}
 
-        anchors._adjudicate_anchor_bucket(buckets, candidates, "claude", "pin", "k", adj, {"u": diff})
+        anchors._adjudicate_anchor_bucket(
+            buckets, candidates, "claude", "pin", "k", adj, {"u": diff}
+        )
         self.assertTrue(seen[0].startswith("@@ "))  # sliced hunk, not whole diff
 
     def test_duplicate_text_candidates_get_distinct_contexts(self):
@@ -439,10 +535,14 @@ class AdjudicatorContextTests(unittest.TestCase):
         # adjudicated with their OWN sliced hunk, not collapsed to one context by
         # a text-keyed dict. Mirrors score._adjudicate_bucket's record iteration.
         buckets = {"u": {"golden_matched": [], "adjudicator": ["dup", "dup"]}}
-        candidates = {"u": {"claude": [
-            {"text": "dup", "path": "a.py", "line": 2},
-            {"text": "dup", "path": "b.py", "line": 2},
-        ]}}
+        candidates = {
+            "u": {
+                "claude": [
+                    {"text": "dup", "path": "a.py", "line": 2},
+                    {"text": "dup", "path": "b.py", "line": 2},
+                ]
+            }
+        }
         diff = (
             "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n"
             "@@ -1,3 +1,3 @@\n a1\n+a2\n a3\n"

@@ -33,6 +33,7 @@ from scripts.apply_validations import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_finding(**kwargs):
     defaults = {
         "id": "bug-1",
@@ -50,9 +51,7 @@ def _make_finding(**kwargs):
 
 def _write_json(data):
     """Write data to a temp file, return the path."""
-    f = tempfile.NamedTemporaryFile(
-        mode="w", suffix=".json", delete=False
-    )
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
     json.dump(data, f)
     f.close()
     return f.name
@@ -62,8 +61,8 @@ def _write_json(data):
 # load_findings
 # ---------------------------------------------------------------------------
 
-class TestLoadFindings(unittest.TestCase):
 
+class TestLoadFindings(unittest.TestCase):
     def test_bare_array(self):
         findings = [_make_finding(id="bug-1"), _make_finding(id="bug-2")]
         path = _write_json(findings)
@@ -110,9 +109,7 @@ class TestLoadFindings(unittest.TestCase):
             load_findings("/nonexistent/path/findings.json")
 
     def test_invalid_json_exits(self):
-        f = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         f.write("{not valid json}")
         f.close()
         try:
@@ -142,8 +139,8 @@ class TestLoadFindings(unittest.TestCase):
 # load_validations
 # ---------------------------------------------------------------------------
 
-class TestLoadValidations(unittest.TestCase):
 
+class TestLoadValidations(unittest.TestCase):
     def test_bare_array(self):
         data = [{"id": "bug-1", "confidence": 72}]
         path = _write_json(data)
@@ -168,9 +165,7 @@ class TestLoadValidations(unittest.TestCase):
             load_validations("/nonexistent/validations.json")
 
     def test_invalid_json_exits(self):
-        f = tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        )
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         f.write("not json")
         f.close()
         try:
@@ -200,8 +195,8 @@ class TestLoadValidations(unittest.TestCase):
 # apply_validations — core logic
 # ---------------------------------------------------------------------------
 
-class TestApplyValidations(unittest.TestCase):
 
+class TestApplyValidations(unittest.TestCase):
     def test_confidence_updated(self):
         findings = [_make_finding(id="bug-1", confidence=80)]
         validations = [{"id": "bug-1", "confidence": 55}]
@@ -365,8 +360,8 @@ class TestApplyValidations(unittest.TestCase):
 # CLI integration — main()
 # ---------------------------------------------------------------------------
 
-class TestApplyValidationsMain(unittest.TestCase):
 
+class TestApplyValidationsMain(unittest.TestCase):
     def _run_main(self, findings_data, validations_data, extra_args=None):
         """Helper: write both inputs to temp files, run main(), return stdout."""
         import io

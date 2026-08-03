@@ -75,6 +75,7 @@ from datetime import datetime, timezone
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def die(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
     sys.exit(1)
@@ -208,7 +209,9 @@ def parse_review_md(path):
 
     # Also scan the whole file for bare key: value lines if no block found
     if not block_text:
-        warn(f"REVIEW.md at {path!r}: no code-gauntlet config block found; falling back to whole-file scan.")
+        warn(
+            f"REVIEW.md at {path!r}: no code-gauntlet config block found; falling back to whole-file scan."
+        )
         block_text = text
 
     # confidence_threshold
@@ -223,7 +226,9 @@ def parse_review_md(path):
 
     # severity_threshold
     m = re.search(
-        r"severity_threshold\s*[:=]\s*(critical|high|medium|low)", block_text, re.IGNORECASE
+        r"severity_threshold\s*[:=]\s*(critical|high|medium|low)",
+        block_text,
+        re.IGNORECASE,
     )
     if m:
         config["severity_threshold"] = m.group(1).lower()
@@ -242,6 +247,7 @@ def parse_review_md(path):
 # ---------------------------------------------------------------------------
 # Filter: confidence / severity threshold (with validator contestation)
 # ---------------------------------------------------------------------------
+
 
 def apply_threshold_filter(findings, config):
     """
@@ -279,17 +285,24 @@ def apply_threshold_filter(findings, config):
     for finding in findings:
         confidence = finding.get("confidence", 0)
         severity = finding.get("severity", "low").lower()
-        dimensions = [finding.get("dimension", "").lower()] if finding.get("dimension") else []
+        dimensions = (
+            [finding.get("dimension", "").lower()] if finding.get("dimension") else []
+        )
 
         # Determine effective confidence threshold
         is_security = "security" in dimensions
         if is_security:
-            min_conf = config.get("security_min_confidence", DEFAULT_SECURITY_MIN_CONFIDENCE)
+            min_conf = config.get(
+                "security_min_confidence", DEFAULT_SECURITY_MIN_CONFIDENCE
+            )
             effective_threshold = min(
-                config.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD), min_conf
+                config.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD),
+                min_conf,
             )
         else:
-            effective_threshold = config.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD)
+            effective_threshold = config.get(
+                "confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD
+            )
 
         # -----------------------------------------------------------------
         # Validator contestation check (V5-09C)
@@ -321,7 +334,9 @@ def apply_threshold_filter(findings, config):
         # Check severity (contested findings also bypass severity threshold)
         if not is_contested:
             if severity not in SEVERITY_ORDER:
-                warn(f"Unknown severity {severity!r} on finding {finding.get('id', '?')}; treating as low.")
+                warn(
+                    f"Unknown severity {severity!r} on finding {finding.get('id', '?')}; treating as low."
+                )
                 severity = "low"
             sev_idx = SEVERITY_ORDER.index(severity)
             if sev_idx > sev_threshold_idx:
@@ -460,7 +475,9 @@ def apply_injection_filter(findings):
     url_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_URL_PATTERNS]
     encoded_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_ENCODED_PATTERNS]
     bypass_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_BYPASS_PATTERNS]
-    instruct_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_INSTRUCTIONAL_PATTERNS]
+    instruct_re = [
+        re.compile(p, re.IGNORECASE) for p in _INJECTION_INSTRUCTIONAL_PATTERNS
+    ]
     vuln_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_VULN_INTRO_PATTERNS]
     title_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_TITLE_PATTERNS]
     body_marker_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_BODY_PATTERNS]
@@ -499,11 +516,16 @@ def apply_injection_filter(findings):
         # 3. Bypass / auto-approve instructions in description
         m = _first_match(bypass_re, description)
         if m:
-            reasons.append(f"description contains bypass/auto-approve instruction: {m!r}")
+            reasons.append(
+                f"description contains bypass/auto-approve instruction: {m!r}"
+            )
 
         # 4. Short description with high confidence (suspiciously terse)
         description_word_count = _count_words(description)
-        if description_word_count < _MIN_BODY_WORDS and confidence >= _HIGH_CONFIDENCE_THRESHOLD:
+        if (
+            description_word_count < _MIN_BODY_WORDS
+            and confidence >= _HIGH_CONFIDENCE_THRESHOLD
+        ):
             reasons.append(
                 f"suspiciously short description ({description_word_count} words) with high confidence ({confidence})"
             )
@@ -530,7 +552,9 @@ def apply_injection_filter(findings):
 
         # 9. Empty or template file path
         if not filepath or re.search(r"<.*?>|\{.*?\}", filepath):
-            reasons.append(f"file path is empty or contains template markers: {filepath!r}")
+            reasons.append(
+                f"file path is empty or contains template markers: {filepath!r}"
+            )
 
         # 10. Duplicate signature (title+file+line_start)
         sig = (title.lower().strip(), filepath, finding.get("line_start"))
@@ -614,6 +638,7 @@ def detect_disagreement(findings):
       suppressed_findings list  findings removed by suppression rules
       boosted_count      int    number of findings whose confidence was boosted
     """
+
     # -----------------------------------------------------------------------
     # Phase 1: Group findings by (file, line_bucket) for co-location checks
     # -----------------------------------------------------------------------
@@ -647,8 +672,15 @@ def detect_disagreement(findings):
         # Suppression rule 1: bug-detector + conventions-and-intent -> intentional
         if _AGENT_BUG_DETECTOR in agent_map and _AGENT_CONVENTIONS in agent_map:
             for conv_finding in agent_map[_AGENT_CONVENTIONS]:
-                conv_text = (conv_finding.get("description", "") + " " + conv_finding.get("title", "")).lower()
-                if re.search(r"\bintentional\b|\bby\s+design\b|\bexpected\s+behavior\b|\bdeliberate\b", conv_text):
+                conv_text = (
+                    conv_finding.get("description", "")
+                    + " "
+                    + conv_finding.get("title", "")
+                ).lower()
+                if re.search(
+                    r"\bintentional\b|\bby\s+design\b|\bexpected\s+behavior\b|\bdeliberate\b",
+                    conv_text,
+                ):
                     for bug_finding in agent_map[_AGENT_BUG_DETECTOR]:
                         fid = bug_finding.get("id", id(bug_finding))
                         if fid not in suppressed_ids:
@@ -666,8 +698,15 @@ def detect_disagreement(findings):
         # Suppression rule 2: test-analyzer + conventions-and-intent -> generated/scaffolding
         if _AGENT_TEST_ANALYZER in agent_map and _AGENT_CONVENTIONS in agent_map:
             for conv_finding in agent_map[_AGENT_CONVENTIONS]:
-                conv_text = (conv_finding.get("description", "") + " " + conv_finding.get("title", "")).lower()
-                if re.search(r"\bgenerated\b|\bscaffolding\b|\bauto[-\s]?generated\b|\bboilerplate\b", conv_text):
+                conv_text = (
+                    conv_finding.get("description", "")
+                    + " "
+                    + conv_finding.get("title", "")
+                ).lower()
+                if re.search(
+                    r"\bgenerated\b|\bscaffolding\b|\bauto[-\s]?generated\b|\bboilerplate\b",
+                    conv_text,
+                ):
                     for test_finding in agent_map[_AGENT_TEST_ANALYZER]:
                         fid = test_finding.get("id", id(test_finding))
                         if fid not in suppressed_ids:
@@ -705,7 +744,9 @@ def detect_disagreement(findings):
             # agent or concern, so same-agent siblings boost each other too.
             boosted_count += count
             for finding in group:
-                other_agents = [a for a in agents_in_group if a != finding.get("agent", "")]
+                other_agents = [
+                    a for a in agents_in_group if a != finding.get("agent", "")
+                ]
                 finding["consensus_count"] = count
                 finding["consensus_boost"] = _CONSENSUS_BOOST
                 finding["corroborated_by"] = other_agents
@@ -881,6 +922,7 @@ def _route_by_dimension(finding):
     # Unknown dimension -> fall through to agent-based routing
     return None
 
+
 # Keyword patterns in test-analyzer finding titles/bodies that indicate
 # a functional correctness issue today (-> promote to main report).
 # These describe bugs that EXIST NOW, not tests that should be written.
@@ -895,19 +937,36 @@ _TEST_CORRECTNESS_PATTERNS = [
     re.compile(r"\bdeadlock\b", re.IGNORECASE),
     re.compile(r"\bdata\s+race\b", re.IGNORECASE),
     re.compile(r"\bthread\s+(?:safety|unsafe|race)\b", re.IGNORECASE),
-    re.compile(r"\btest\s+(?:never\s+)?(?:actually\s+)?(?:verif|test|check)(?:s|ies)?\s+nothing\b", re.IGNORECASE),
+    re.compile(
+        r"\btest\s+(?:never\s+)?(?:actually\s+)?(?:verif|test|check)(?:s|ies)?\s+nothing\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\bfalse\s+positive\s+(?:test|assertion)\b", re.IGNORECASE),
     re.compile(r"\bincorrect(?:ly)?\s+(?:assert|verify|test)\b", re.IGNORECASE),
     re.compile(r"\bwrong\s+(?:value|result|output)\b", re.IGNORECASE),
-    re.compile(r"\blocal\s+variable\s+(?:is\s+)?never\s+(?:used|read)\b", re.IGNORECASE),
-    re.compile(r"\bassert(?:s|ion)?\s+(?:on\s+)?(?:a\s+)?(?:local|copy|snapshot)\b", re.IGNORECASE),
-    re.compile(r"\bcompares?\s+(?:wrong|incorrect|different)\s+object\b", re.IGNORECASE),
-    re.compile(r"\btest\s+(?:does\s+not|doesn'?t)\s+(?:wait|join|block)\b", re.IGNORECASE),
+    re.compile(
+        r"\blocal\s+variable\s+(?:is\s+)?never\s+(?:used|read)\b", re.IGNORECASE
+    ),
+    re.compile(
+        r"\bassert(?:s|ion)?\s+(?:on\s+)?(?:a\s+)?(?:local|copy|snapshot)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\bcompares?\s+(?:wrong|incorrect|different)\s+object\b", re.IGNORECASE
+    ),
+    re.compile(
+        r"\btest\s+(?:does\s+not|doesn'?t)\s+(?:wait|join|block)\b", re.IGNORECASE
+    ),
     re.compile(r"\breader\s+thread\s+not\s+waited\b", re.IGNORECASE),
     re.compile(r"\bflaky\s+test\b", re.IGNORECASE),
     re.compile(r"\bassertion\s+always\s+(?:true|passes?|succeed)\b", re.IGNORECASE),
-    re.compile(r"\bassert(?:s|ion)?\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE),
-    re.compile(r"\btest\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE),
+    re.compile(
+        r"\bassert(?:s|ion)?\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\btest\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE
+    ),
     re.compile(r"\blogic\s+error\b", re.IGNORECASE),
     re.compile(r"\bincorrect\s+(?:logic|behavior|behaviour|result)\b", re.IGNORECASE),
 ]
@@ -948,6 +1007,7 @@ def group_by_proximity(findings, line_proximity=5):
     which re-runs that dedup after challenge scoring. (Challenge results are
     matched to findings by id, not by proximity.)
     """
+
     def _bucket(line, proximity):
         try:
             return round(int(line) / proximity) * proximity
@@ -1001,7 +1061,7 @@ def dedup_cross_agent(findings):
 
     groups = group_by_proximity(findings, line_proximity=LINE_PROXIMITY)
 
-    kept_finding_ids = set()   # tracks finding["id"] values, not Python id()
+    kept_finding_ids = set()  # tracks finding["id"] values, not Python id()
     dropped = []
 
     for group in groups.values():
@@ -1052,8 +1112,9 @@ def dedup_cross_agent(findings):
             )
 
     # Findings without an "id" field pass through (they can't be tracked for dedup)
-    kept = [f for f in findings
-            if f.get("id", "") in kept_finding_ids or not f.get("id")]
+    kept = [
+        f for f in findings if f.get("id", "") in kept_finding_ids or not f.get("id")
+    ]
     return kept, dropped
 
 
@@ -1120,7 +1181,11 @@ def tag_findings(findings):
 
     for finding in findings:
         agent = finding.get("agent", "").lower()
-        dimensions = {finding.get("dimension", "").lower()} if finding.get("dimension") else set()
+        dimensions = (
+            {finding.get("dimension", "").lower()}
+            if finding.get("dimension")
+            else set()
+        )
 
         # Step 2: Try dimension-based routing first (BF-15a)
         dim_route = _route_by_dimension(finding)
@@ -1172,6 +1237,7 @@ def tag_findings(findings):
 # ---------------------------------------------------------------------------
 # Exclusions loader
 # ---------------------------------------------------------------------------
+
 
 def load_exclusions(path):
     """
@@ -1240,7 +1306,9 @@ def apply_exclusions(findings, exclusion_patterns):
         if matched_pattern:
             elim = dict(finding)
             elim["eliminated_by"] = "exclusion"
-            elim["elimination_reason"] = f"matched exclusion pattern: {matched_pattern!r}"
+            elim["elimination_reason"] = (
+                f"matched exclusion pattern: {matched_pattern!r}"
+            )
             eliminated.append(elim)
         else:
             passed.append(finding)
@@ -1251,6 +1319,7 @@ def apply_exclusions(findings, exclusion_patterns):
 # ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1356,7 +1425,9 @@ def main():
     all_eliminated.extend(elim_dedup)
 
     # Count promotions (test-analyzer findings promoted to main report)
-    promoted_count = sum(1 for f in findings if f.get("promoted_from") == "test-analyzer")
+    promoted_count = sum(
+        1 for f in findings if f.get("promoted_from") == "test-analyzer"
+    )
 
     # Count dimension-routed and singleton-penalized findings (BF-15)
     dimension_routed = sum(1 for f in findings if f.get("routed_by") == "dimension")

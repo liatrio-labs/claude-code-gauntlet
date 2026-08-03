@@ -25,9 +25,7 @@ class DriftError(Exception):
 
 def _git(args, check=True):
     """Run ``git <args>`` capturing output. Raises CalledProcessError if check."""
-    result = subprocess.run(
-        ["git", *args], capture_output=True, text=True
-    )
+    result = subprocess.run(["git", *args], capture_output=True, text=True)
     if check and result.returncode != 0:
         raise subprocess.CalledProcessError(
             result.returncode, ["git", *args], result.stdout, result.stderr
@@ -62,9 +60,7 @@ def _mirror_is_usable(mirror):
     mirror = Path(mirror)
     if not mirror.is_dir():
         return False
-    bare = _git(
-        ["-C", str(mirror), "rev-parse", "--is-bare-repository"], check=False
-    )
+    bare = _git(["-C", str(mirror), "rev-parse", "--is-bare-repository"], check=False)
     if bare.returncode != 0 or bare.stdout.strip() != "true":
         return False
     refs = _git(["-C", str(mirror), "show-ref"], check=False)

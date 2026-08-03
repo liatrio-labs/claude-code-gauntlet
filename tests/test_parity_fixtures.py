@@ -10,20 +10,29 @@ sys.path.insert(0, str(REPO / "scripts"))
 
 
 def _load(case_dir):
-    return (json.loads((case_dir / "input.json").read_text()),
-            json.loads((case_dir / "expected.json").read_text()))
+    return (
+        json.loads((case_dir / "input.json").read_text()),
+        json.loads((case_dir / "expected.json").read_text()),
+    )
 
 
 class TestFindingDedupParity(unittest.TestCase):
     def test_all_cases(self):
         from finding_dedup import dedup_by_id
+
         for case_dir in sorted((FIXTURES / "finding_dedup").iterdir()):
             if not case_dir.is_dir():
                 continue
             with self.subTest(case=case_dir.name):
                 inp, expected = _load(case_dir)
-                merged, dupes, dropped = dedup_by_id(inp["ndjson_findings"], inp["text_findings"])
-                got = {"merged": merged, "duplicates_resolved": dupes, "dropped_no_id": dropped}
+                merged, dupes, dropped = dedup_by_id(
+                    inp["ndjson_findings"], inp["text_findings"]
+                )
+                got = {
+                    "merged": merged,
+                    "duplicates_resolved": dupes,
+                    "dropped_no_id": dropped,
+                }
                 self.assertEqual(got, expected)
 
 
@@ -31,29 +40,48 @@ class TestMergeFindingsParity(unittest.TestCase):
     def test_all_cases(self):
         import tempfile
         from merge_findings import merge
+
         for case_dir in sorted((FIXTURES / "merge_findings").iterdir()):
             if not case_dir.is_dir():
                 continue
             with self.subTest(case=case_dir.name):
                 inp, expected = _load(case_dir)
                 a = inp["args"]
-                with tempfile.TemporaryDirectory() as fd, tempfile.TemporaryDirectory() as td:
+                with (
+                    tempfile.TemporaryDirectory() as fd,
+                    tempfile.TemporaryDirectory() as td,
+                ):
                     for n, t in inp.get("findings_dir_files", {}).items():
                         (Path(fd) / n).write_text(t)
                     for n, t in inp.get("text_dir_files", {}).items():
                         (Path(td) / n).write_text(t)
-                    got = merge(findings_dir=fd, session_sha=a["session_sha"], agents=a["agents"],
-                                text_dir=td, base_branch=a["base_branch"], head_sha=a["head_sha"],
-                                pr_number=a["pr_number"], owner=a["owner"], repo=a["repo"])
-                self.assertEqual(got["methodology"]["duplicates_resolved"], expected["methodology"]["duplicates_resolved"])
+                    got = merge(
+                        findings_dir=fd,
+                        session_sha=a["session_sha"],
+                        agents=a["agents"],
+                        text_dir=td,
+                        base_branch=a["base_branch"],
+                        head_sha=a["head_sha"],
+                        pr_number=a["pr_number"],
+                        owner=a["owner"],
+                        repo=a["repo"],
+                    )
+                self.assertEqual(
+                    got["methodology"]["duplicates_resolved"],
+                    expected["methodology"]["duplicates_resolved"],
+                )
                 self.assertEqual(len(got["findings"]), len(expected["findings"]))
-                self.assertEqual(got["methodology"]["truncation_warnings"], expected["methodology"]["truncation_warnings"])
+                self.assertEqual(
+                    got["methodology"]["truncation_warnings"],
+                    expected["methodology"]["truncation_warnings"],
+                )
 
 
 class TestFilterFindingsParity(unittest.TestCase):
     def test_all_cases(self):
         import tempfile
         import filter_findings as ff
+
         # rglob, not iterdir: filter_findings fixtures nest one level deeper
         # (filter_findings/<group>/<case>/) than finding_dedup/merge_findings'
         # flat (<script>/<case>/) layout.
@@ -68,38 +96,62 @@ class TestFilterFindingsParity(unittest.TestCase):
                     ff.normalize_field_names(findings)
                     self.assertEqual({"findings": findings}, expected)
                 elif fn == "parse_review_md":
-                    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+                    with tempfile.NamedTemporaryFile(
+                        "w", suffix=".md", delete=False
+                    ) as t:
                         t.write(inp["markdown"])
                         path = t.name
                     self.assertEqual({"config": ff.parse_review_md(path)}, expected)
                 elif fn == "load_exclusions":
-                    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as t:
+                    with tempfile.NamedTemporaryFile(
+                        "w", suffix=".md", delete=False
+                    ) as t:
                         t.write(inp["markdown"])
                         path = t.name
                     self.assertEqual({"patterns": ff.load_exclusions(path)}, expected)
                 elif fn == "apply_threshold_filter":
-                    passed, eliminated, contested = ff.apply_threshold_filter(inp["findings"], inp["config"])
+                    passed, eliminated, contested = ff.apply_threshold_filter(
+                        inp["findings"], inp["config"]
+                    )
                     self.assertEqual(
-                        {"kept": passed, "eliminated": eliminated, "contested_count": contested}, expected
+                        {
+                            "kept": passed,
+                            "eliminated": eliminated,
+                            "contested_count": contested,
+                        },
+                        expected,
                     )
                 elif fn == "apply_injection_filter":
                     kept, eliminated = ff.apply_injection_filter(inp["findings"])
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
                 elif fn == "apply_exclusions":
-                    kept, eliminated = ff.apply_exclusions(inp["findings"], inp["exclusion_patterns"])
+                    kept, eliminated = ff.apply_exclusions(
+                        inp["findings"], inp["exclusion_patterns"]
+                    )
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
                 elif fn == "detect_disagreement":
-                    active, suppressed, boosted_count = ff.detect_disagreement(inp["findings"])
+                    active, suppressed, boosted_count = ff.detect_disagreement(
+                        inp["findings"]
+                    )
                     self.assertEqual(
-                        {"active": active, "suppressed": suppressed, "boosted_count": boosted_count}, expected
+                        {
+                            "active": active,
+                            "suppressed": suppressed,
+                            "boosted_count": boosted_count,
+                        },
+                        expected,
                     )
                 elif fn == "_route_by_dimension":
-                    self.assertEqual({"route": ff._route_by_dimension(inp["finding"])}, expected)
+                    self.assertEqual(
+                        {"route": ff._route_by_dimension(inp["finding"])}, expected
+                    )
                 elif fn == "dedup_cross_agent":
                     kept, dropped = ff.dedup_cross_agent(inp["findings"])
                     self.assertEqual({"kept": kept, "dropped": dropped}, expected)
                 elif fn == "tag_findings":
-                    tagged, dedup_dropped, main_count, suggestion_count = ff.tag_findings(inp["findings"])
+                    tagged, dedup_dropped, main_count, suggestion_count = (
+                        ff.tag_findings(inp["findings"])
+                    )
                     self.assertEqual(
                         {
                             "tagged": tagged,
@@ -117,14 +169,21 @@ class TestApplyValidationsParity(unittest.TestCase):
     def test_all_cases(self):
         import copy
         from apply_validations import apply_validations
+
         for case_dir in sorted((FIXTURES / "apply_validations").iterdir()):
             if not case_dir.is_dir():
                 continue
             with self.subTest(case=case_dir.name):
                 inp, expected = _load(case_dir)
                 findings = copy.deepcopy(inp["findings"])
-                adjusted_count, unmatched_ids = apply_validations(findings, inp["validations"])
-                got = {"findings": findings, "adjusted_count": adjusted_count, "unmatched_ids": unmatched_ids}
+                adjusted_count, unmatched_ids = apply_validations(
+                    findings, inp["validations"]
+                )
+                got = {
+                    "findings": findings,
+                    "adjusted_count": adjusted_count,
+                    "unmatched_ids": unmatched_ids,
+                }
                 self.assertEqual(got, expected)
 
 
@@ -133,6 +192,7 @@ class TestApplyChallengesParity(unittest.TestCase):
         import copy
         from apply_challenges import apply_challenges, rank_findings
         from filter_findings import dedup_cross_agent
+
         for case_dir in sorted((FIXTURES / "apply_challenges").iterdir()):
             if not case_dir.is_dir():
                 continue
@@ -142,10 +202,16 @@ class TestApplyChallengesParity(unittest.TestCase):
                 # deep_copy_no_mutation_of_input additionally asserts the
                 # caller's input findings list is untouched by apply_challenges
                 # (mirrors the JS twin's structuredClone-before-mutation check).
-                snapshot = copy.deepcopy(findings) if case_dir.name == "deep_copy_no_mutation_of_input" else None
+                snapshot = (
+                    copy.deepcopy(findings)
+                    if case_dir.name == "deep_copy_no_mutation_of_input"
+                    else None
+                )
 
                 total_input = len(findings)
-                active, challenge_eliminated, challenge_stats = apply_challenges(findings, inp["challenges"])
+                active, challenge_eliminated, challenge_stats = apply_challenges(
+                    findings, inp["challenges"]
+                )
 
                 if snapshot is not None:
                     self.assertEqual(findings, snapshot)
@@ -182,7 +248,12 @@ class TestApplyChallengesParity(unittest.TestCase):
 # computation independently (e.g. TestApplyChallengesParity re-composes apply_challenges'
 # bridge rather than calling record_parity.py's _apply_challenges) -- a shared import
 # would let a recorder bug and its "parity" test agree with each other by construction.
-_VERIFY_DELTA_DROP = ("blame_metadata", "factual_verification", "diff_validation", "agent")
+_VERIFY_DELTA_DROP = (
+    "blame_metadata",
+    "factual_verification",
+    "diff_validation",
+    "agent",
+)
 
 
 def _project_verify_delta(finding):
@@ -192,6 +263,7 @@ def _project_verify_delta(finding):
 class TestVerifyDeltasParity(unittest.TestCase):
     def test_all_cases(self):
         from verify_findings import build_deltas, deltas_checksum
+
         for case_dir in sorted((FIXTURES / "verify_deltas").iterdir()):
             if not case_dir.is_dir():
                 continue
@@ -220,9 +292,15 @@ class TestVerifyDeltasParity(unittest.TestCase):
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
         before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}
-        subprocess.run([sys.executable, str(REPO / "workflows/test/tools/record_parity.py")], check=True, cwd=REPO)
+        subprocess.run(
+            [sys.executable, str(REPO / "workflows/test/tools/record_parity.py")],
+            check=True,
+            cwd=REPO,
+        )
         for p, b in before.items():
-            self.assertEqual(p.read_bytes(), b, f"stale golden: {p} — rerun record_parity.py")
+            self.assertEqual(
+                p.read_bytes(), b, f"stale golden: {p} — rerun record_parity.py"
+            )
 
 
 if __name__ == "__main__":

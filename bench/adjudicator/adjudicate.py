@@ -86,7 +86,11 @@ def _iter_file_hunks(diff_text, path):
             j = i + 1
             while j < n:
                 nxt = lines[j]
-                if nxt.startswith("@@ ") or nxt.startswith("diff --git ") or nxt.startswith("+++ "):
+                if (
+                    nxt.startswith("@@ ")
+                    or nxt.startswith("diff --git ")
+                    or nxt.startswith("+++ ")
+                ):
                     break
                 body.append(nxt)
                 j += 1
@@ -254,7 +258,9 @@ def _parse_verdict(content):
             text = text[4:]
         text = text.strip()
     try:
-        data = json.loads(text)  # strict path: behavior unchanged for well-formed replies
+        data = json.loads(
+            text
+        )  # strict path: behavior unchanged for well-formed replies
     except json.JSONDecodeError:
         return _recover_verdict(text)
     if not isinstance(data, dict):
@@ -263,7 +269,9 @@ def _parse_verdict(content):
         )
     bucket = data.get("bucket")
     if bucket not in ("valid_extra", "noise"):
-        raise ValueError("verdict bucket must be valid_extra|noise, got {!r}".format(bucket))
+        raise ValueError(
+            "verdict bucket must be valid_extra|noise, got {!r}".format(bucket)
+        )
     return {
         "bucket": bucket,
         "failed_check": data.get("failed_check"),
@@ -289,7 +297,10 @@ def adjudicate(comment_text, diff_hunk, file_context, pin, api_key, transport=No
         "temperature": 0,
         "messages": [
             {"role": "system", "content": FROZEN_PROMPT},
-            {"role": "user", "content": _build_user_message(comment_text, diff_hunk, file_context)},
+            {
+                "role": "user",
+                "content": _build_user_message(comment_text, diff_hunk, file_context),
+            },
         ],
     }
 
@@ -300,4 +311,6 @@ def adjudicate(comment_text, diff_hunk, file_context, pin, api_key, transport=No
             return _parse_verdict(_extract_content(reply))
         except (ValueError, json.JSONDecodeError) as exc:
             last_error = exc
-    raise ValueError("adjudicator returned unparseable JSON twice: {}".format(last_error))
+    raise ValueError(
+        "adjudicator returned unparseable JSON twice: {}".format(last_error)
+    )

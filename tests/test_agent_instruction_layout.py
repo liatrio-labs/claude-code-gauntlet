@@ -208,11 +208,15 @@ class TestCollectorDedup(unittest.TestCase):
                 [
                     sys.executable,
                     str(REPO / "scripts" / "collect_project_rules.py"),
-                    "--repo-root", str(REPO),
-                    "--changed-files", str(listing),
-                    "--out", str(out),
+                    "--repo-root",
+                    str(REPO),
+                    "--changed-files",
+                    str(listing),
+                    "--out",
+                    str(out),
                 ],
-                capture_output=True, text=True,
+                capture_output=True,
+                text=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             return json.loads(result.stdout)
@@ -236,7 +240,9 @@ class TestCollectorDedup(unittest.TestCase):
     def test_the_twins_are_the_pairs_being_collapsed(self):
         """Precondition: without dedup this repo really would double-count."""
         report = self.collect()
-        skipped = {s["path"] for s in report["skipped"] if s["reason"] == "duplicate_of"}
+        skipped = {
+            s["path"] for s in report["skipped"] if s["reason"] == "duplicate_of"
+        }
         for directory in agents_dirs():
             with self.subTest(directory=directory.name):
                 pair = {f"{directory.name}/AGENTS.md", f"{directory.name}/CLAUDE.md"}
@@ -250,8 +256,8 @@ class TestRulesFileQuotations(unittest.TestCase):
     """Quoted spans attributed to AGENTS.md/CLAUDE.md must exist in a rules file."""
 
     QUOTE_NEAR_RULES = re.compile(
-        r'`?(?:[A-Za-z0-9_./-]+/)?(?:CLAUDE|AGENTS)\.md`?'
-        r'\s+(?:says\s+|states\s+|already applies[^\n(]{0,100}\(\s*)?'
+        r"`?(?:[A-Za-z0-9_./-]+/)?(?:CLAUDE|AGENTS)\.md`?"
+        r"\s+(?:says\s+|states\s+|already applies[^\n(]{0,100}\(\s*)?"
         r'["\u201c]([^"\u201d\n]{12,})["\u201d]',
         re.IGNORECASE,
     )
@@ -263,32 +269,40 @@ class TestRulesFileQuotations(unittest.TestCase):
     }
 
     def _rules_corpus(self):
-        files = subprocess.run(
-            [
-                "git",
-                "ls-files",
-                "-z",
-                "--",
-                "AGENTS.md",
-                "CLAUDE.md",
-                "*/AGENTS.md",
-                "*/CLAUDE.md",
-            ],
-            cwd=REPO,
-            capture_output=True,
-            check=True,
-        ).stdout.decode().split("\0")
+        files = (
+            subprocess.run(
+                [
+                    "git",
+                    "ls-files",
+                    "-z",
+                    "--",
+                    "AGENTS.md",
+                    "CLAUDE.md",
+                    "*/AGENTS.md",
+                    "*/CLAUDE.md",
+                ],
+                cwd=REPO,
+                capture_output=True,
+                check=True,
+            )
+            .stdout.decode()
+            .split("\0")
+        )
         return "\n".join(
             (REPO / path).read_text(encoding="utf-8") for path in files if path
         )
 
     def _docs(self):
-        paths = subprocess.run(
-            ["git", "ls-files", "-z", "--", "skills", "agents"],
-            cwd=REPO,
-            capture_output=True,
-            check=True,
-        ).stdout.decode().split("\0")
+        paths = (
+            subprocess.run(
+                ["git", "ls-files", "-z", "--", "skills", "agents"],
+                cwd=REPO,
+                capture_output=True,
+                check=True,
+            )
+            .stdout.decode()
+            .split("\0")
+        )
         return [
             path
             for path in paths
@@ -333,22 +347,47 @@ class TestClaimsResolve(unittest.TestCase):
     """
 
     FILES = [
-        "AGENTS.md", "CLAUDE.md", "REVIEW.md",
-        "workflows/AGENTS.md", "scripts/AGENTS.md", "agents/AGENTS.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "REVIEW.md",
+        "workflows/AGENTS.md",
+        "scripts/AGENTS.md",
+        "agents/AGENTS.md",
     ]
 
     # Backticked prose terms that are English, schema field names, or host globals named
     # precisely because they are ABSENT — none of them are repo symbols.
     NOT_SYMBOLS = {
-        "description", "evidence", "suggestion", "severity", "confidence", "dimension",
-        "origin", "criticality", "findings", "complete", "total_seen", "markdown",
-        "optimized", "realpath", "structuredClone", "setTimeout", "queueMicrotask",
-        "console", "process", "Buffer", "TextEncoder", "TextDecoder", "package.json",
+        "description",
+        "evidence",
+        "suggestion",
+        "severity",
+        "confidence",
+        "dimension",
+        "origin",
+        "criticality",
+        "findings",
+        "complete",
+        "total_seen",
+        "markdown",
+        "optimized",
+        "realpath",
+        "structuredClone",
+        "setTimeout",
+        "queueMicrotask",
+        "console",
+        "process",
+        "Buffer",
+        "TextEncoder",
+        "TextDecoder",
+        "package.json",
         "node_modules",
     }
 
     def repo_files(self):
-        out = subprocess.run(["git", "ls-files"], cwd=REPO, capture_output=True, text=True)
+        out = subprocess.run(
+            ["git", "ls-files"], cwd=REPO, capture_output=True, text=True
+        )
         return set(out.stdout.split())
 
     def test_referenced_paths_exist(self):
@@ -379,13 +418,16 @@ class TestClaimsResolve(unittest.TestCase):
                     continue
                 with self.subTest(doc=doc, symbol=sym):
                     found = subprocess.run(
-                        ["git", "grep", "-l", "--", sym], cwd=REPO,
-                        capture_output=True, text=True,
+                        ["git", "grep", "-l", "--", sym],
+                        cwd=REPO,
+                        capture_output=True,
+                        text=True,
                     ).stdout.split()
                     # Hits in the instruction files themselves prove nothing: the twins
                     # are copies, so a symbol could otherwise vouch for itself.
                     real = [
-                        f for f in found
+                        f
+                        for f in found
                         if f not in docs and not f.endswith("/CLAUDE.md")
                     ]
                     self.assertTrue(

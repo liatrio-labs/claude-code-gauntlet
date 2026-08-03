@@ -19,9 +19,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "docs" / "machine-parsed-strings.md"
 
-_ROW = re.compile(
-    r"^\|\s*`([^`]+)`\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]*)\|\s*$"
-)
+_ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]*)\|\s*$")
 
 
 NO_PARSER = "—"  # em dash: "nothing reads these bytes", explained in notes
@@ -43,12 +41,16 @@ def parse_registry(text: str) -> list[dict]:
         string, producers, parsers, notes = (c.strip() for c in m.groups())
         if string == "string" or set(string) <= {"-", " "}:
             continue
-        rows.append({
-            "string": string,
-            "producers": [_strip_ticks(p) for p in producers.split(",") if p.strip()],
-            "parsers": [_strip_ticks(p) for p in parsers.split(",") if p.strip()],
-            "notes": notes,
-        })
+        rows.append(
+            {
+                "string": string,
+                "producers": [
+                    _strip_ticks(p) for p in producers.split(",") if p.strip()
+                ],
+                "parsers": [_strip_ticks(p) for p in parsers.split(",") if p.strip()],
+                "notes": notes,
+            }
+        )
     return rows
 
 
@@ -57,15 +59,17 @@ class TestMachineParsedStrings(unittest.TestCase):
         # Fixture-based unit test: the live-registry presence checks only exercise
         # today's table shape. A broken _ROW / split / NO_PARSER path must fail
         # here even when the real registry happens to still parse.
-        fixture = "\n".join([
-            "| string | producer path(s) | parser path(s) | notes |",
-            "| --- | --- | --- | --- |",
-            "| `TokA` | `a.py`, `b.py` | `c.py` | multi producers |",
-            "| `TokB` | `only.py` | `—` | honest empty |",
-            "| `TokC` | `p.py` | `—` | |",  # NO_PARSER without a note — still parses
-            "| string | producer path(s) | parser path(s) | notes |",  # header repeat ignored
-            "| --- | --- | --- | --- |",
-        ])
+        fixture = "\n".join(
+            [
+                "| string | producer path(s) | parser path(s) | notes |",
+                "| --- | --- | --- | --- |",
+                "| `TokA` | `a.py`, `b.py` | `c.py` | multi producers |",
+                "| `TokB` | `only.py` | `—` | honest empty |",
+                "| `TokC` | `p.py` | `—` | |",  # NO_PARSER without a note — still parses
+                "| string | producer path(s) | parser path(s) | notes |",  # header repeat ignored
+                "| --- | --- | --- | --- |",
+            ]
+        )
         rows = parse_registry(fixture)
         by_string = {r["string"]: r for r in rows}
         self.assertEqual(set(by_string), {"TokA", "TokB", "TokC"})
@@ -104,9 +108,7 @@ class TestMachineParsedStrings(unittest.TestCase):
         for row in rows:
             s = row["string"]
             listed = [("producer", p) for p in row["producers"]]
-            listed += [
-                ("parser", p) for p in row["parsers"] if p != NO_PARSER
-            ]
+            listed += [("parser", p) for p in row["parsers"] if p != NO_PARSER]
             for role, rel in listed:
                 path = REPO / rel
                 if not path.is_file():
@@ -128,7 +130,9 @@ class TestMachineParsedStrings(unittest.TestCase):
                 if row["parsers"] != [NO_PARSER]:
                     offenders[f"{s} parsers"] = f"{NO_PARSER} mixed with real paths"
                 elif not row["notes"]:
-                    offenders[f"{s} parsers"] = f"{NO_PARSER} without a note explaining it"
+                    offenders[f"{s} parsers"] = (
+                        f"{NO_PARSER} without a note explaining it"
+                    )
         self.assertEqual(offenders, {}, f"registry shape failures: {offenders}")
 
 

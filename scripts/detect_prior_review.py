@@ -93,6 +93,7 @@ PLATFORM_SOURCES = {
 # Subprocess wrappers — the only impure surface in this module
 # ---------------------------------------------------------------------------
 
+
 def run(cmd, timeout=None):
     """Run *cmd*. Returns ``(stdout, stderr, returncode)``. Never raises.
 
@@ -101,12 +102,15 @@ def run(cmd, timeout=None):
     """
     try:
         result = subprocess.run(
-            cmd, capture_output=True, text=True,
+            cmd,
+            capture_output=True,
+            text=True,
             # text=True decodes STRICT utf-8 by default, and UnicodeDecodeError is
             # a ValueError, not an OSError — a single undecodable byte from gh/glab
             # would escape this wrapper and exit 1 with empty stdout, breaking the
             # always-exit-0 contract the caller degrades on.
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
@@ -173,6 +177,7 @@ def git_rev_parse(rev):
 # Fetch — one call per surface; each failure is independent
 # ---------------------------------------------------------------------------
 
+
 def gitlab_project_id(owner, repo):
     """Return the URL-encoded project path (mirrors post_review.gitlab_project_id)."""
     return f"{owner}/{repo}".replace("/", "%2F")
@@ -199,7 +204,9 @@ def remote_slug():
         re.match(r"[^@/]+@[^:/]+:(.+?)(?:\.git)?/?$", url)
         # any scheme, with optional user@ and :port —
         # https://, http://, ssh://, git://, git+ssh://
-        or re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?/?$", url)
+        or re.match(
+            r"[a-zA-Z][a-zA-Z0-9+.-]*://(?:[^@/]+@)?[^/]+/(.+?)(?:\.git)?/?$", url
+        )
     )
     if not match:
         return None, None
@@ -237,8 +244,12 @@ def fetch_entries_gitlab(owner, repo, number):
     """
     project_id = gitlab_project_id(owner, repo)
     notes, err = fetch_json(
-        ["glab", "api", "--paginate",
-         f"projects/{project_id}/merge_requests/{number}/notes"],
+        [
+            "glab",
+            "api",
+            "--paginate",
+            f"projects/{project_id}/merge_requests/{number}/notes",
+        ],
         "gitlab notes",
     )
     return collect_entries_gitlab(notes), ([err] if err else [])
@@ -247,6 +258,7 @@ def fetch_entries_gitlab(owner, repo, number):
 # ---------------------------------------------------------------------------
 # Pure collectors
 # ---------------------------------------------------------------------------
+
 
 def _entries_from(payload, source, timestamp_key):
     """Map an API array into the entry shape review_marker.select_latest consumes."""
@@ -260,12 +272,14 @@ def _entries_from(payload, source, timestamp_key):
         if not isinstance(body, str):
             continue
         timestamp = item.get(timestamp_key)
-        entries.append({
-            "body": body,
-            "timestamp": timestamp if isinstance(timestamp, str) else None,
-            "source": source,
-            "id": item.get("id"),
-        })
+        entries.append(
+            {
+                "body": body,
+                "timestamp": timestamp if isinstance(timestamp, str) else None,
+                "source": source,
+                "id": item.get("id"),
+            }
+        )
     return entries
 
 
@@ -292,12 +306,14 @@ def collect_entries_file(payload):
             continue
         timestamp = item.get("timestamp")
         source = item.get("source")
-        entries.append({
-            "body": body,
-            "timestamp": timestamp if isinstance(timestamp, str) else None,
-            "source": source if isinstance(source, str) else "bodies_file",
-            "id": item.get("id"),
-        })
+        entries.append(
+            {
+                "body": body,
+                "timestamp": timestamp if isinstance(timestamp, str) else None,
+                "source": source if isinstance(source, str) else "bodies_file",
+                "id": item.get("id"),
+            }
+        )
     return entries
 
 
@@ -325,6 +341,7 @@ def load_bodies_file(path):
 # ---------------------------------------------------------------------------
 # Git facts + result assembly
 # ---------------------------------------------------------------------------
+
 
 def resolve_git_facts(sha, head_sha=None, errors=None):
     """Return the git-derived facts about *sha* relative to the head. Never raises.
@@ -412,7 +429,14 @@ def resolve_git_facts(sha, head_sha=None, errors=None):
 #: echo would pipe arbitrary text straight into a model's context. Forward
 #: compatibility is preserved by `unknown_keys` (names only, capped), which lets a
 #: future producer's fields be noticed without their values being replayed.
-_MARKER_ECHO_KEYS = ("version", "findings_count", "sha", "findings", "_token", "_legacy")
+_MARKER_ECHO_KEYS = (
+    "version",
+    "findings_count",
+    "sha",
+    "findings",
+    "_token",
+    "_legacy",
+)
 _MARKER_ECHO_MAX_CHARS = 4096
 
 
@@ -451,7 +475,8 @@ def sanitize_marker(marker):
     # still let kilobytes of free text through the "names only" guarantee.
     extra = sorted(
         (k if isinstance(k, str) and len(k) <= 64 else str(k)[:64] + "...")
-        for k in marker if k not in _MARKER_ECHO_KEYS
+        for k in marker
+        if k not in _MARKER_ECHO_KEYS
     )
     if extra:
         out["unknown_keys"] = extra[:32]
@@ -463,7 +488,8 @@ def sanitize_marker(marker):
         return {
             "version": _bounded(out.get("version"), 64),
             "findings_count": out.get("findings_count")
-            if isinstance(out.get("findings_count"), int) else None,
+            if isinstance(out.get("findings_count"), int)
+            else None,
             "sha": out.get("sha"),
             "_token": out.get("_token"),
             "_legacy": out.get("_legacy"),
@@ -519,26 +545,29 @@ def build_result(signal, git_facts, scanned=None, errors=None):
     head_advanced = bool(
         sha_resolvable and head_known and is_ancestor and last_reviewed_sha != head_sha
     )
-    result.update({
-        "previously_reviewed": True,
-        "signal": signal.get("signal"),
-        "source": signal.get("source"),
-        "legacy": bool(signal.get("legacy")),
-        "last_reviewed_sha": last_reviewed_sha,
-        "last_reviewed_sha_short": git_facts.get("last_reviewed_sha_short"),
-        "sha_resolvable": sha_resolvable,
-        "sha_is_ancestor": is_ancestor,
-        "head_advanced": head_advanced,
-        "new_commit_count": git_facts.get("new_commit_count"),
-        "incremental_safe": bool(sha_resolvable and head_advanced),
-        "marker": sanitize_marker(signal.get("marker")),
-    })
+    result.update(
+        {
+            "previously_reviewed": True,
+            "signal": signal.get("signal"),
+            "source": signal.get("source"),
+            "legacy": bool(signal.get("legacy")),
+            "last_reviewed_sha": last_reviewed_sha,
+            "last_reviewed_sha_short": git_facts.get("last_reviewed_sha_short"),
+            "sha_resolvable": sha_resolvable,
+            "sha_is_ancestor": is_ancestor,
+            "head_advanced": head_advanced,
+            "new_commit_count": git_facts.get("new_commit_count"),
+            "incremental_safe": bool(sha_resolvable and head_advanced),
+            "marker": sanitize_marker(signal.get("marker")),
+        }
+    )
     return result
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def gather_entries(args):
     """Return ``(entries, errors, scanned)`` for the requested source of bodies."""
@@ -559,10 +588,14 @@ def gather_entries(args):
         owner = owner or derived_owner
         repo = repo or derived_repo
     if not owner or not repo:
-        return [], [
-            "could not determine owner/repo: the 'origin' remote is missing or "
-            "its URL is not in a recognized form — pass --owner and --repo"
-        ], {}
+        return (
+            [],
+            [
+                "could not determine owner/repo: the 'origin' remote is missing or "
+                "its URL is not in a recognized form — pass --owner and --repo"
+            ],
+            {},
+        )
 
     if args.platform == "github":
         entries, errors = fetch_entries_github(owner, repo, args.number)
@@ -602,7 +635,7 @@ def main():
         "--bodies-file",
         dest="bodies_file",
         help="JSON array of {body,timestamp,source,id} entries to scan INSTEAD of "
-             "fetching. Offline/test hook.",
+        "fetching. Offline/test hook.",
     )
     args = parser.parse_args()
 

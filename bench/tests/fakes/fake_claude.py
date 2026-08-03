@@ -83,7 +83,9 @@ def echo_lines(plugin_root=None, pipeline_version=None):
     ]
 
 
-def _envelope(permission_denials, result_text="Review complete. 3 findings posted (dry-run)."):
+def _envelope(
+    permission_denials, result_text="Review complete. 3 findings posted (dry-run)."
+):
     return {
         "type": "result",
         "subtype": "success",
@@ -190,7 +192,9 @@ def _write_report(lines):
     if not output_dir:
         return
     os.makedirs(output_dir, exist_ok=True)
-    body = ["# Deep Review Report", "", "## Methodology", "", "```"] + lines + ["```", ""]
+    body = (
+        ["# Deep Review Report", "", "## Methodology", "", "```"] + lines + ["```", ""]
+    )
     with open(os.path.join(output_dir, "deep-review-report.md"), "w") as fh:
         fh.write("\n".join(body) + "\n")
 

@@ -111,8 +111,7 @@ def _pr_dirs(run_dir):
     """Return sorted per-PR artifact directories under ``run_dir``."""
     run_dir = Path(run_dir)
     return sorted(
-        p for p in run_dir.iterdir()
-        if p.is_dir() and p.name.startswith("pr-")
+        p for p in run_dir.iterdir() if p.is_dir() and p.name.startswith("pr-")
     )
 
 
@@ -153,9 +152,7 @@ def _check_union_schema(finding, label):
                 "{}: missing required field group {}".format(label, "/".join(group))
             )
     if not any(finding.get(k) not in (None, "") for k in _LINE_FIELDS):
-        failures.append(
-            "{}: missing line identity (line_start or line)".format(label)
-        )
+        failures.append("{}: missing line identity (line_start or line)".format(label))
     return failures
 
 
@@ -196,7 +193,9 @@ def _validate_payload_fields(payload, label):
             for key in ("body", "path", "line"):
                 if key not in c:
                     failures.append(
-                        "{}: comment[{}] missing required field {!r}".format(label, i, key)
+                        "{}: comment[{}] missing required field {!r}".format(
+                            label, i, key
+                        )
                     )
     else:  # gitlab
         discussions = payload.get("discussions")
@@ -215,7 +214,9 @@ def _validate_payload_fields(payload, label):
             position = d.get("position") or {}
             if "new_path" not in position or "new_line" not in position:
                 failures.append(
-                    "{}: discussion[{}] position missing new_path/new_line".format(label, i)
+                    "{}: discussion[{}] position missing new_path/new_line".format(
+                        label, i
+                    )
                 )
     return failures
 
@@ -296,7 +297,9 @@ def _check_echo_identity(pr_dir, repo_root, label):
         got_root = Path(plugin_root).resolve()
         exp_root = Path(repo_root).resolve()
     except OSError as exc:
-        failures.append("{}: identity plugin_root resolve failed: {}".format(label, exc))
+        failures.append(
+            "{}: identity plugin_root resolve failed: {}".format(label, exc)
+        )
         return failures, False
     if got_root != exp_root:
         failures.append(
@@ -373,7 +376,9 @@ def _scan_degrade_text(pr_dir):
     hits = []
     seen = set()
     for path, pattern in _iter_degrade_scan_paths(pr_dir):
-        label = str(path.relative_to(pr_dir)) if path.is_relative_to(pr_dir) else path.name
+        label = (
+            str(path.relative_to(pr_dir)) if path.is_relative_to(pr_dir) else path.name
+        )
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -462,7 +467,8 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     else:
         repo_root = Path(repo_root)
     expected_pipeline = (
-        Path(plugin_pipeline) if plugin_pipeline is not None
+        Path(plugin_pipeline)
+        if plugin_pipeline is not None
         else repo_root / PIPELINE_REL
     )
 
@@ -490,7 +496,9 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         status = statuses.get(url)
         if status is None:
             failures.append(
-                "precondition: PR {} has no checkpoint (pending / mid-run kill)".format(url)
+                "precondition: PR {} has no checkpoint (pending / mid-run kill)".format(
+                    url
+                )
             )
         elif status != "ok":
             failures.append(

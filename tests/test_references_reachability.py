@@ -38,7 +38,8 @@ def inbound_basenames(refs=None, sources=None) -> set[str]:
     for ref in refs:
         name = ref.name
         pool = (
-            live_sources(exclude=ref) if sources is None
+            live_sources(exclude=ref)
+            if sources is None
             else [p for p in sources if p != ref]
         )
         for src in pool:

@@ -240,7 +240,9 @@ def spot_check(
     overall_pass = True
     n_judge_calls = 0
     n_dedup_calls = 0
-    n_golden = len((_load_json(GOLDEN_DATA).get(pr_url) or {}).get("golden_comments", []))
+    n_golden = len(
+        (_load_json(GOLDEN_DATA).get(pr_url) or {}).get("golden_comments", [])
+    )
     for t in tools:
         ours_ev = (evaluations.get(pr_url) or {}).get(t)
         theirs_ev = (upstream.get(pr_url) or {}).get(t)
@@ -256,7 +258,11 @@ def spot_check(
             "ours": {k: ours[k] for k in _COUNT_KEYS},
             "upstream": {k: theirs[k] for k in _COUNT_KEYS},
             "deltas": {
-                k: (None if ours[k] is None or theirs[k] is None else ours[k] - theirs[k])
+                k: (
+                    None
+                    if ours[k] is None or theirs[k] is None
+                    else ours[k] - theirs[k]
+                )
                 for k in _COUNT_KEYS
             },
             "within_tolerance": within,
@@ -315,7 +321,9 @@ def _capped_diff(diff_text, cap=_MAX_DIFF_CHARS):
     return diff_text[:cap] + "\n... [diff truncated at {} chars]".format(cap)
 
 
-def _adjudicate_anchor_bucket(buckets, candidates, tool, pin, api_key, adjudicator, diffs):
+def _adjudicate_anchor_bucket(
+    buckets, candidates, tool, pin, api_key, adjudicator, diffs
+):
     """Adjudicate every non-golden-matched comment for one anchor tool.
 
     Anchor candidates carry no path/line (upstream extracted them without a
@@ -429,7 +437,9 @@ def rejudge_anchors(
         adjudications = _adjudicate_anchor_bucket(
             buckets, tool_cands, t, judge_pin, key_api, adjudicator_fn, diffs
         )
-        metrics = compute_metrics(evaluations, tool_cands, buckets, adjudications, tool=t)
+        metrics = compute_metrics(
+            evaluations, tool_cands, buckets, adjudications, tool=t
+        )
         per_tool[t] = {
             "recall": metrics["golden_recall"],
             "noise_rate": metrics["noise_rate"],

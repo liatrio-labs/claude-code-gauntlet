@@ -197,13 +197,16 @@ def default_timeout_seconds(environ=None):
         return DEFAULT_TIMEOUT_SECONDS
     if ceiling <= 0:
         return DEFAULT_TIMEOUT_SECONDS
-    return max(MIN_TIMEOUT_SECONDS, min(DEFAULT_TIMEOUT_SECONDS,
-                                        ceiling - TIMEOUT_HEADROOM_SECONDS))
+    return max(
+        MIN_TIMEOUT_SECONDS,
+        min(DEFAULT_TIMEOUT_SECONDS, ceiling - TIMEOUT_HEADROOM_SECONDS),
+    )
 
 
 # ---------------------------------------------------------------------------
 # Target resolution
 # ---------------------------------------------------------------------------
+
 
 def looks_like_path(target):
     """True when *target* should be used verbatim rather than resolved as an id."""
@@ -347,6 +350,7 @@ def file_size(path):
 # Terminal detection — pure
 # ---------------------------------------------------------------------------
 
+
 def is_terminal_return(obj):
     """True when *obj* is the pipeline's compact return.
 
@@ -368,9 +372,11 @@ def _has_bare_ok(obj):
     difference between a diagnosable failure and a wait that silently times out on
     every run forever.
     """
-    return (isinstance(obj, dict)
-            and isinstance(obj.get("ok"), bool)
-            and not any(key in obj for key in COMPACT_RETURN_KEYS))
+    return (
+        isinstance(obj, dict)
+        and isinstance(obj.get("ok"), bool)
+        and not any(key in obj for key in COMPACT_RETURN_KEYS)
+    )
 
 
 def terminal_from(value):
@@ -455,9 +461,13 @@ def _line_starts(text):
         idx = text.find("\n", idx + 1)
 
 
-def _iter_json_objects(text, bounds=None, max_candidates=SCAN_MAX_CANDIDATES,
-                       max_probes=SCAN_MAX_PROBES,
-                       max_deep=SCAN_MAX_DEEP_CANDIDATES):
+def _iter_json_objects(
+    text,
+    bounds=None,
+    max_candidates=SCAN_MAX_CANDIDATES,
+    max_probes=SCAN_MAX_PROBES,
+    max_deep=SCAN_MAX_DEEP_CANDIDATES,
+):
     """Yield each JSON object decodable at a document start in *text*, in order.
 
     Escaped braces inside a JSON string cannot start a valid object (``{\\"``
@@ -594,9 +604,7 @@ def elide_persist_return(terminal, resolved_path):
     slim = dict((k, v) for (k, v) in payload.items() if k != "entries")
     slim["elided"] = True
     slim["resolvedPath"] = resolved_path
-    slim["paths"] = [
-        e.get("path") for e in entries if isinstance(e, dict)
-    ]
+    slim["paths"] = [e.get("path") for e in entries if isinstance(e, dict)]
     out = dict(terminal)
     out["persistReturn"] = slim
     return out
@@ -605,6 +613,7 @@ def elide_persist_return(terminal, resolved_path):
 # ---------------------------------------------------------------------------
 # Secondary signal — the persisted artifacts
 # ---------------------------------------------------------------------------
+
 
 def artifacts_state(artifacts_dir, head_sha, since_epoch):
     """Return the freshness state of the four terminal artifacts. Never raises.
@@ -633,9 +642,11 @@ def artifacts_state(artifacts_dir, head_sha, since_epoch):
             # artifact stats fine and reports a non-zero size, so a size check
             # alone would count it as present and fire the fallback on a run that
             # persisted nothing.
-            fresh = (os.path.isfile(path)
-                     and stat.st_size > 0
-                     and stat.st_mtime >= since_epoch)
+            fresh = (
+                os.path.isfile(path)
+                and stat.st_size > 0
+                and stat.st_mtime >= since_epoch
+            )
         except OSError:
             fresh = False
         name = os.path.basename(path)
@@ -650,6 +661,7 @@ def artifacts_state(artifacts_dir, head_sha, since_epoch):
 # ---------------------------------------------------------------------------
 # Marker assembly and emission
 # ---------------------------------------------------------------------------
+
 
 def build_next_command(args, resolved_path, since_epoch):
     """Return the literal command string for the next attempt.
@@ -675,11 +687,16 @@ def build_next_command(args, resolved_path, since_epoch):
     parts = [
         "python3",
         shlex.quote(os.path.abspath(__file__)),
-        "--attempt", str(args.attempt + 1),
-        "--max-attempts", str(args.max_attempts),
-        "--timeout-seconds", str(args.timeout_seconds),
-        "--poll-interval", str(args.poll_interval),
-        "--since-epoch", repr(float(since_epoch)),
+        "--attempt",
+        str(args.attempt + 1),
+        "--max-attempts",
+        str(args.max_attempts),
+        "--timeout-seconds",
+        str(args.timeout_seconds),
+        "--poll-interval",
+        str(args.poll_interval),
+        "--since-epoch",
+        repr(float(since_epoch)),
     ]
     if args.artifacts_dir:
         parts += ["--artifacts-dir", shlex.quote(args.artifacts_dir)]
@@ -718,11 +735,14 @@ def emit(payload):
     try:
         line = json.dumps(payload, separators=(",", ":"))
     except (TypeError, ValueError) as exc:
-        line = json.dumps({
-            "await": "error",
-            "gap": "workflow-timeout",
-            "message": "result would not serialize: %s" % exc,
-        }, separators=(",", ":"))
+        line = json.dumps(
+            {
+                "await": "error",
+                "gap": "workflow-timeout",
+                "message": "result would not serialize: %s" % exc,
+            },
+            separators=(",", ":"),
+        )
     try:
         print(line)
         sys.stdout.flush()
@@ -778,6 +798,7 @@ def build_marker(kind, args, observed, since_epoch, started_at):
 # ---------------------------------------------------------------------------
 # The wait
 # ---------------------------------------------------------------------------
+
 
 def await_terminal(args, environ=None):
     """Watch the target until terminal, or until this invocation's deadline.
@@ -835,10 +856,12 @@ def await_terminal(args, environ=None):
             # still coming, so bailing at the grace window would DISCARD it. Here
             # the fallback only earns its keep at the very end, where it converts
             # what would have been a bare timeout into a deliverable result.
-            if ((grace_elapsed and observed["resolved_path"] is None)
-                    or (args.attempt >= args.max_attempts and now >= deadline)):
-                marker = build_marker("artifacts_only", args, observed,
-                                      since_epoch, started_at)
+            if (grace_elapsed and observed["resolved_path"] is None) or (
+                args.attempt >= args.max_attempts and now >= deadline
+            ):
+                marker = build_marker(
+                    "artifacts_only", args, observed, since_epoch, started_at
+                )
                 marker["gap"] = "workflow-timeout"
                 marker["detail"] = (
                     "every persisted artifact is present and fresh, but the "
@@ -873,6 +896,7 @@ def await_terminal(args, environ=None):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def build_parser(environ=None):
     parser = argparse.ArgumentParser(
         description="Block until a backgrounded Workflow task has a terminal result."
@@ -881,50 +905,73 @@ def build_parser(environ=None):
         "target",
         metavar="TASK_ID_OR_PATH",
         help="The Task ID printed by the Workflow tool, or the task output file's "
-             "path. Anything containing a path separator or ending in .output is "
-             "used verbatim; anything else is resolved as a task id.",
+        "path. Anything containing a path separator or ending in .output is "
+        "used verbatim; anything else is resolved as a task id.",
     )
     parser.add_argument(
-        "--attempt", type=int, default=1, metavar="N",
+        "--attempt",
+        type=int,
+        default=1,
+        metavar="N",
         help="Which attempt this is (default 1). Carried forward by next_command.",
     )
     parser.add_argument(
-        "--max-attempts", dest="max_attempts", type=int,
-        default=DEFAULT_MAX_ATTEMPTS, metavar="M",
+        "--max-attempts",
+        dest="max_attempts",
+        type=int,
+        default=DEFAULT_MAX_ATTEMPTS,
+        metavar="M",
         help="Total attempts allowed before declaring the workflow-timeout gap "
-             "(default %d)." % DEFAULT_MAX_ATTEMPTS,
+        "(default %d)." % DEFAULT_MAX_ATTEMPTS,
     )
     parser.add_argument(
-        "--timeout-seconds", dest="timeout_seconds", type=float,
-        default=default_timeout_seconds(environ), metavar="S",
+        "--timeout-seconds",
+        dest="timeout_seconds",
+        type=float,
+        default=default_timeout_seconds(environ),
+        metavar="S",
         help="Per-invocation wait. Defaults to %d, lowered automatically when "
-             "BASH_MAX_TIMEOUT_MS is exported." % DEFAULT_TIMEOUT_SECONDS,
+        "BASH_MAX_TIMEOUT_MS is exported." % DEFAULT_TIMEOUT_SECONDS,
     )
     parser.add_argument(
-        "--poll-interval", dest="poll_interval", type=float,
-        default=DEFAULT_POLL_INTERVAL, metavar="P",
+        "--poll-interval",
+        dest="poll_interval",
+        type=float,
+        default=DEFAULT_POLL_INTERVAL,
+        metavar="P",
         help="Seconds between checks (default %d)." % DEFAULT_POLL_INTERVAL,
     )
     parser.add_argument(
-        "--artifacts-dir", dest="artifacts_dir", metavar="DIR",
+        "--artifacts-dir",
+        dest="artifacts_dir",
+        metavar="DIR",
         help="The review's output directory. With --head-sha, enables the "
-             "secondary signal: the four persisted artifacts.",
+        "secondary signal: the four persisted artifacts.",
     )
     parser.add_argument(
-        "--head-sha", dest="head_sha", metavar="SHORT",
+        "--head-sha",
+        dest="head_sha",
+        metavar="SHORT",
         help="head_sha_short, the artifact filename discriminator.",
     )
     parser.add_argument(
-        "--artifacts-grace-seconds", dest="artifacts_grace_seconds", type=float,
-        default=DEFAULT_ARTIFACTS_GRACE_SECONDS, metavar="G",
+        "--artifacts-grace-seconds",
+        dest="artifacts_grace_seconds",
+        type=float,
+        default=DEFAULT_ARTIFACTS_GRACE_SECONDS,
+        metavar="G",
         help="How long to keep waiting for the compact return once every artifact "
-             "is present (default %d)." % DEFAULT_ARTIFACTS_GRACE_SECONDS,
+        "is present (default %d)." % DEFAULT_ARTIFACTS_GRACE_SECONDS,
     )
     parser.add_argument(
-        "--since-epoch", dest="since_epoch", type=float, default=None, metavar="T",
+        "--since-epoch",
+        dest="since_epoch",
+        type=float,
+        default=None,
+        metavar="T",
         help="Artifact freshness floor, as a unix timestamp. Defaults to now; "
-             "next_command carries the ORIGINAL value forward so an artifact "
-             "written during attempt 1 still counts as fresh during attempt 4.",
+        "next_command carries the ORIGINAL value forward so an artifact "
+        "written during attempt 1 still counts as fresh during attempt 4.",
     )
     return parser
 
