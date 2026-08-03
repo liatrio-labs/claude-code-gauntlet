@@ -1,7 +1,8 @@
 # scripts/
 
-Retained Python. **stdlib only** — no pip dependencies — and **language-agnostic**: never assume a
-language in the reviewed codebase.
+Retained Python. **stdlib only** — no pip dependencies in shipped runtime (CI tooling
+pinned in `pyproject.toml` `[dependency-groups]` is exempt) — and **language-agnostic**: never
+assume a language in the reviewed codebase.
 
 - **Repo root for searches.** `verify_findings.py` resolves the root at startup via
   `git rev-parse --show-toplevel`; symbol searches use `git grep -l` with `cwd=REPO_ROOT` and a

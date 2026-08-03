@@ -60,7 +60,12 @@ CODEX_CAP_BYTES = 32_768
 # policy line. Enforcement is structural (tests/test_docs_registry.py), but that test
 # fires only after scratch is written; the line is what steers an agent at write time
 # to the PR/issue thread instead. Not derivable from code, no single owning site.
-AGENTS_SET_BUDGET_BYTES = 15_170
+# Raised 15_170 -> 16_266 (2026-08-03, #102): coverage-gate reproduction commands,
+# threshold policy, and the stdlib carve-out for pinned CI tooling. All three are
+# process/boundary statements no single code site owns (the gate lives in ci.yml;
+# the carve-out is a cross-surface rule about what may import what; the floor policy
+# is a merge convention). Not derivable from code.
+AGENTS_SET_BUDGET_BYTES = 16_266
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

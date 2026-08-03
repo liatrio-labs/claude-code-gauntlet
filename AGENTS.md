@@ -20,7 +20,10 @@ takes coordinated edits across N files, fix the shape rather than documenting th
 
 ## Scripts
 
-- **stdlib-only Python.** No pip dependencies anywhere in `scripts/`.
+- **stdlib-only Python.** No pip dependencies in shipped `scripts/` runtime —
+  nothing under `scripts/` may import a non-stdlib module. Pinned CI tooling in
+  `pyproject.toml` `[dependency-groups]` (pytest, pytest-cov, coverage) is exempt
+  and never runs inside the plugin.
 - **Language-agnostic.** Scripts must not assume a language in the reviewed codebase. Use
   `--exclude-dir` for non-source directories, never `--include=*.py`-style filters.
 
@@ -31,6 +34,24 @@ python -m pytest tests/ -q            # pipeline + boundary parity
 python -m pytest bench/tests/ -q      # benchmark harness self-tests
 node --test workflows/test/*.test.js  # needs Node 24; the bare directory is not a valid target
 ```
+
+Coverage gates (CI 3.12 only). Locally, COVERAGE_FILE must be outside the repo
+tree (an in-tree data file trips the bench plugin-mutation guard):
+
+```bash
+COVDIR="$(mktemp -d)"
+COVERAGE_FILE="$COVDIR/.coverage" python -m pytest tests/ -q \
+  --cov=scripts --cov=.github --cov-fail-under=91
+COVERAGE_FILE="$COVDIR/.coverage" python -m pytest bench/tests/ -q \
+  --cov=bench --cov-fail-under=87
+```
+
+Floors 91 / 87 provisional (measured 92.41 / 88.08 on Python 3.14, 2026-08-03;
+audit 92.13 / 88.08 at ebf399d). Re-pin from the first green 3.12 CI run.
+`workflows/test/tools/record_parity.py` is test infrastructure, outside both
+scopes. Lower a floor only in the PR that causes the drop, reason in the body.
+A sudden multi-point drop means broken subprocess capture — fix capture, do not
+lower.
 
 After editing `workflows/src/*.js`, rebuild and confirm the bundle is unchanged:
 
