@@ -14,7 +14,6 @@ Covers the PR-granular resume semantics (spec H3):
 
 import json
 import os
-import re
 import sys
 import tempfile
 import unittest
@@ -23,7 +22,6 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from runner.checkpoint import Checkpoint
-
 
 GOLDEN_URLS = [
     "https://github.com/keycloak/keycloak/pull/37634",

@@ -218,7 +218,7 @@ ANCHOR_METRICS = (
 def load_ledger(path):
     """Parse the NDJSON ledger into a list of row dicts (blank lines skipped)."""
     rows = []
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if line:
@@ -227,7 +227,7 @@ def load_ledger(path):
 
 
 def load_baselines(path):
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         return json.load(fh)
 
 
@@ -1148,7 +1148,7 @@ def build_verdict_html(rows, baselines, ceiling):
             fmt_delta_pp(b["recall"], a["recall"]),
             arrow(b["recall"], a["recall"]),
             "good",
-            "of {n} known issues".format(n=n_goldens),
+            f"of {n_goldens} known issues",
         ),
         (
             "Noise rate",

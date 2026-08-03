@@ -31,16 +31,15 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import scripts.post_review as post_review
 import scripts.review_marker as review_marker
 from scripts.post_review import (
+    build_footer,
     detect_platform,
+    gitlab_project_id,
     is_line_valid,
     parse_diff_lines,
     render_comment_body,
-    build_footer,
-    gitlab_project_id,
-    valid_lines_for_file,
     resolve_marker_sha,
+    valid_lines_for_file,
 )
-
 
 # ---------------------------------------------------------------------------
 # detect_platform

@@ -20,9 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.adapter import adapt  # noqa: E402
-from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa: E402
 import scripts.post_review as post_review  # noqa: E402
+from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter"
 

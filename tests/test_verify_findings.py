@@ -18,35 +18,34 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 # Add project root to path so we can import scripts as a module
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts.verify_findings import (
-    parse_diff_lines,
-    is_line_in_diff,
-    classify_blame,
-    verify_factual,
-    validate_diff_lines,
-    batch_findings,
-    get_diff,
-    _extract_symbols,
-    _write_output,
-    _coerce_numeric_fields,
-    load_input,
-    run,
-    run_verification,
-    build_deltas,
-    deltas_checksum,
-    _delta_confidence,
-    _DELTA_FIELDS,
-    REPO_ROOT,
-)
-
 # JS_MAX_SAFE_INTEGER is the same constant _delta_confidence refuses to exceed --
 # imported from the sibling module rather than re-hardcoded so the two never drift.
 from scripts.assemble_artifacts import JS_MAX_SAFE_INTEGER
+from scripts.verify_findings import (
+    _DELTA_FIELDS,
+    REPO_ROOT,
+    _coerce_numeric_fields,
+    _delta_confidence,
+    _extract_symbols,
+    _write_output,
+    batch_findings,
+    build_deltas,
+    classify_blame,
+    deltas_checksum,
+    get_diff,
+    is_line_in_diff,
+    load_input,
+    parse_diff_lines,
+    run,
+    run_verification,
+    validate_diff_lines,
+    verify_factual,
+)
 
 # Absolute path to the script file, for the delta-echo tests that must invoke the REAL
 # CLI as a subprocess rather than calling main() in-process with a patched argv: the
@@ -1325,7 +1324,8 @@ class TestRunTimeout(unittest.TestCase):
 
     def test_cwd_changes_directory(self):
         """run() with cwd runs command in specified directory."""
-        import tempfile, os
+        import os
+        import tempfile
 
         with tempfile.TemporaryDirectory() as d:
             stdout, stderr, rc = run(["pwd"], cwd=d)
@@ -1415,6 +1415,7 @@ class TestReceipt(unittest.TestCase):
     def _run_main(self, argv):
         """Invoke main() with a controlled argv, stderr suppressed."""
         import io
+
         from scripts.verify_findings import main
 
         with (
@@ -1492,7 +1493,8 @@ class TestReceipt(unittest.TestCase):
     def test_receipt_failure_envelope_is_schema_valid(self):
         """An uncaught exception mid-verification yields a status=='failed' envelope
         on stdout with exit 0 (honest failure is schema-valid, never fabricated)."""
-        import io, json
+        import io
+        import json
 
         findings = self._findings()
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
@@ -1545,7 +1547,8 @@ class TestReceipt(unittest.TestCase):
 
         The fixture is that exact byte: a complete document with one `}` appended.
         """
-        import io, json
+        import io
+        import json
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(
@@ -1590,7 +1593,8 @@ class TestReceipt(unittest.TestCase):
         """The other half of the same change: die() raising InputError instead of calling
         sys.exit must not soften the LEGACY positional path, which has always exited 1
         with the message on stderr and nothing on stdout."""
-        import io, json
+        import io
+        import json
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(json.dumps({"findings": self._findings()}) + "}")
@@ -2197,6 +2201,7 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
 
     def _run_main(self, argv):
         import io
+
         from scripts.verify_findings import main
 
         with (
@@ -2280,7 +2285,6 @@ class TestEliminationReasonStamp(unittest.TestCase):
     """
 
     def test_every_eliminated_finding_carries_elimination_reason_stamp(self):
-        import json
         from scripts.verify_findings import run_verification
 
         # Nonexistent file -> classify_blame short-circuits on os.path.exists and

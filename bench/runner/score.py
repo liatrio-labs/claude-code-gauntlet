@@ -47,10 +47,10 @@ from bench.runner.costs import parse_costs
 from bench.runner.ledger import append_row, manifest_auth_mode
 
 __all__ = [
-    "resolve_judge_pin",
-    "score_run",
     "bucket_join",
     "compute_metrics",
+    "resolve_judge_pin",
+    "score_run",
 ]
 
 # bench/runner/score.py -> parents[2] is the plugin root.
@@ -218,7 +218,7 @@ def resolve_judge_pin(env=None, force=False, baselines_path=None):
 def _pull_number(url):
     m = _PULL_RE.search(url or "")
     if not m:
-        raise ValueError("cannot parse a GitHub pull number from url: {!r}".format(url))
+        raise ValueError(f"cannot parse a GitHub pull number from url: {url!r}")
     return int(m.group(3))
 
 
@@ -269,7 +269,7 @@ def _resolve_pr_dir(run_dir, url, payload_hint=None):
     current = run_dir / invoke.pr_dir_name({"url": url})
     if current.is_dir():
         return current
-    legacy = run_dir / "pr-{}".format(_pull_number(url))
+    legacy = run_dir / f"pr-{_pull_number(url)}"
     if legacy.is_dir():
         return legacy
     return current
@@ -342,9 +342,7 @@ def _prepare_scorer_inputs(candidates, results_dir, model_dir):
     golden = _load_json(GOLDEN_DATA)
     missing = [url for url in candidates if url not in golden]
     if missing:
-        raise ValueError(
-            "scored URLs absent from benchmark_data.min.json: {}".format(missing)
-        )
+        raise ValueError(f"scored URLs absent from benchmark_data.min.json: {missing}")
     for url, entry in golden.items():
         if url in candidates:
             entry = dict(entry)
@@ -382,9 +380,7 @@ def _run_stage(cmd, env, stage):
     if result.returncode != 0:
         tail = (result.stderr or result.stdout or "").strip()[-2000:]
         raise RuntimeError(
-            "scorer stage {!r} failed (exit {}): {}".format(
-                stage, result.returncode, tail
-            )
+            f"scorer stage {stage!r} failed (exit {result.returncode}): {tail}"
         )
     return result
 
@@ -410,7 +406,7 @@ def run_scorer_stages(
     run_env["MARTIAN_API_KEY"] = api_key
     run_env["MARTIAN_MODEL"] = pin
 
-    dedup_rel = "results/{}/dedup_groups.json".format(_sanitize_model_name(pin))
+    dedup_rel = f"results/{_sanitize_model_name(pin)}/dedup_groups.json"
     dedup_cmd = [
         "uv",
         "run",
@@ -460,8 +456,8 @@ def bucket_join(candidates, evaluations, tool=TOOL):
         if ev is None:
             if cand_texts:
                 raise ValueError(
-                    "bucket join: {} submitted {} candidate(s) but has no "
-                    "evaluation for tool {!r}".format(url, len(cand_texts), tool)
+                    f"bucket join: {url} submitted {len(cand_texts)} candidate(s) but has no "
+                    f"evaluation for tool {tool!r}"
                 )
             result[url] = {"golden_matched": [], "adjudicator": []}
             continue
@@ -473,13 +469,13 @@ def bucket_join(candidates, evaluations, tool=TOOL):
         for text in matched_texts:
             if text not in cand_set:
                 raise ValueError(
-                    "bucket join bijection violation for {}: matched_candidate "
-                    "is not one of the submitted candidates: {!r}".format(url, text)
+                    f"bucket join bijection violation for {url}: matched_candidate "
+                    f"is not one of the submitted candidates: {text!r}"
                 )
             if counts.get(text, 0) != 1:
                 raise ValueError(
-                    "bucket join for {}: candidate text is ambiguous (submitted "
-                    "{} times): {!r}".format(url, counts.get(text, 0), text)
+                    f"bucket join for {url}: candidate text is ambiguous (submitted "
+                    f"{counts.get(text, 0)} times): {text!r}"
                 )
 
         matched_set = set(matched_texts)
@@ -811,8 +807,8 @@ def score_run(
     martian = env.get("MARTIAN_MODEL")
     if martian and martian != pin:
         raise RuntimeError(
-            "MARTIAN_MODEL={!r} disagrees with baselines judge_pin={!r}; "
-            "refusing to score".format(martian, pin)
+            f"MARTIAN_MODEL={martian!r} disagrees with baselines judge_pin={pin!r}; "
+            "refusing to score"
         )
     adjudicator_pin = baselines.get("adjudicator_pin") or pin
     scorer_sha = baselines.get("scorer_sha")
@@ -822,10 +818,8 @@ def score_run(
     candidates, per_pr = _assemble_candidates(run_dir, pr_records)
     if not candidates:
         raise RuntimeError(
-            "no scorable PRs in {}: no PR completed with status 'ok', so there are no "
-            "candidates to score. Re-run the tier (or --retry-failed) first.".format(
-                run_dir
-            )
+            f"no scorable PRs in {run_dir}: no PR completed with status 'ok', so there are no "
+            "candidates to score. Re-run the tier (or --retry-failed) first."
         )
 
     # 2) stage scorer inputs (candidates.json + injected benchmark_data.json).

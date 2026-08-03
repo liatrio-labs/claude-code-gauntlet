@@ -339,7 +339,7 @@ def js_stringify_pretty(obj):
 def read_text(path):
     """Return the normalized file content, or raise (IOError/OSError/ValueError —
     a non-UTF-8 byte on disk raises UnicodeDecodeError, which is a ValueError)."""
-    with open(path, "r", encoding="utf-8", newline="") as fh:
+    with open(path, encoding="utf-8", newline="") as fh:
         return normalize_content(fh.read())
 
 
@@ -489,7 +489,7 @@ def _assemble(plan_path):
     verified = []
 
     try:
-        with open(plan_path, "r", encoding="utf-8", newline="") as fh:
+        with open(plan_path, encoding="utf-8", newline="") as fh:
             plan_raw = fh.read()
     except Exception as exc:
         errors.append("plan not found or unreadable: %s (%s)" % (plan_path, exc))

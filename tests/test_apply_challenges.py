@@ -26,14 +26,12 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.apply_challenges import (
-    load_filtered,
-    load_challenges,
-    apply_challenges,
-    rank_findings,
     _downgrade_severity,
-    SEVERITY_ORDER,
+    apply_challenges,
+    load_challenges,
+    load_filtered,
+    rank_findings,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -569,7 +567,7 @@ class TestCrossAgentDedupIntegration(unittest.TestCase):
 
     def test_dedup_runs_post_challenge(self):
         """Two different agents at same location: core dimension wins."""
-        from scripts.apply_challenges import apply_challenges, rank_findings
+        from scripts.apply_challenges import apply_challenges
         from scripts.filter_findings import dedup_cross_agent
 
         findings = [
@@ -610,8 +608,8 @@ class TestCrossAgentDedupIntegration(unittest.TestCase):
 class TestMainCLI(unittest.TestCase):
     def _run_main(self, findings, challenges, extra_args=None):
         """Helper: write temp files, invoke main(), return parsed output."""
-        import io
         from unittest.mock import patch
+
         from scripts.apply_challenges import main
 
         f_path = _write_json({"filtered": findings, "eliminated": []})
@@ -677,8 +675,8 @@ class TestMainCLI(unittest.TestCase):
 
     def test_prior_eliminated_passed_through(self):
         """Prior Phase 6 eliminated findings appear in output eliminated list."""
-        import io
         from unittest.mock import patch
+
         from scripts.apply_challenges import main
 
         prior_elim = [dict(_make_finding(id="e1"), eliminated_by="threshold")]
@@ -740,6 +738,7 @@ class TestMainCLI(unittest.TestCase):
         """When --output is omitted, JSON is written to stdout."""
         import io
         from unittest.mock import patch
+
         from scripts.apply_challenges import main
 
         findings = [_make_finding(id="f1")]

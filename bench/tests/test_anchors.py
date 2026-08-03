@@ -66,12 +66,12 @@ class AnchorCandidatesFileTests(unittest.TestCase):
         # Upstream committed candidates for all three anchors on every gate PR;
         # the filtered file must preserve that (recall signal per gate PR).
         for url in self.subsets["gate"]:
-            self.assertIn(url, self.anchors, "gate URL missing: {}".format(url))
+            self.assertIn(url, self.anchors, f"gate URL missing: {url}")
             for tool in ANCHOR_TOOLS:
                 self.assertIn(
                     tool,
                     self.anchors[url],
-                    "gate URL {} missing anchor tool {}".format(url, tool),
+                    f"gate URL {url} missing anchor tool {tool}",
                 )
 
     def test_candidate_entries_have_scorer_shape(self):
@@ -92,7 +92,7 @@ class AnchorCandidatesFileTests(unittest.TestCase):
                 self.assertEqual(
                     len(texts),
                     len(set(texts)),
-                    "duplicate candidate text in {} / {}".format(url, tool),
+                    f"duplicate candidate text in {url} / {tool}",
                 )
 
 

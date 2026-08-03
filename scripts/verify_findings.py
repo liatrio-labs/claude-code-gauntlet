@@ -85,7 +85,6 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
 
 # The delta echo's content proof reuses the ONE Python implementation of the
 # cross-runtime checksum pair rather than growing a third copy of it. fnv1a32 and
@@ -101,13 +100,12 @@ from datetime import datetime, timezone
 # shadow a stdlib module.
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from assemble_artifacts import (  # noqa: E402 — sibling script, see above
+from assemble_artifacts import (
     JS_MAX_SAFE_INTEGER,
     JsSerializationError,
     fnv1a32,
     js_stringify_pretty,
 )
-
 
 # ---------------------------------------------------------------------------
 # Repo root — resolved once at startup (RF-01)
@@ -693,7 +691,7 @@ def verify_factual(finding):
 
     # Read file content, handling binary files gracefully
     try:
-        with open(filepath, "r", encoding="utf-8", errors="strict") as fh:
+        with open(filepath, encoding="utf-8", errors="strict") as fh:
             all_lines = fh.readlines()
     except UnicodeDecodeError:
         # Binary file → skip verification, keep as-is

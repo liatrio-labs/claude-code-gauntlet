@@ -30,15 +30,14 @@ if str(REPO_ROOT) not in sys.path:
 from bench.runner.ledger import (  # noqa: E402
     API_AUTH_MODE,
     AUTH_MODES,
+    DEFAULT_AUTH_MODE,
+    REQUIRED_KEYS,
+    SUBSCRIPTION_AUTH_MODE,
     append_row,
     cost_is_billable,
-    DEFAULT_AUTH_MODE,
     manifest_auth_mode,
-    REQUIRED_KEYS,
     row_auth_mode,
-    SUBSCRIPTION_AUTH_MODE,
 )
-
 
 REQUIRED = [
     "run_id",

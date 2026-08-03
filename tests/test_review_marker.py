@@ -45,18 +45,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import scripts.review_marker as review_marker
 from scripts.review_marker import (
-    MARKER_TOKEN,
     LEGACY_MARKER_TOKEN,
+    LEGACY_PRODUCT,
+    MARKER_TOKEN,
     MARKER_TOKENS,
     PRODUCT,
-    LEGACY_PRODUCT,
+    build_footer,
     build_marker,
     build_prose_footer,
-    build_footer,
+    detect_signal,
     find_marker,
     has_prose_footer,
     parse_prose_footer,
-    detect_signal,
     select_latest,
 )
 

@@ -23,11 +23,10 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.apply_validations import (
+    apply_validations,
     load_findings,
     load_validations,
-    apply_validations,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -366,6 +365,7 @@ class TestApplyValidationsMain(unittest.TestCase):
         """Helper: write both inputs to temp files, run main(), return stdout."""
         import io
         from unittest.mock import patch
+
         from scripts.apply_validations import main
 
         findings_path = _write_json(findings_data)
@@ -450,6 +450,7 @@ class TestApplyValidationsMain(unittest.TestCase):
         validations_path = _write_json(validations)
         import io
         from unittest.mock import patch
+
         from scripts.apply_validations import main
 
         try:
@@ -484,6 +485,7 @@ class TestApplyValidationsMain(unittest.TestCase):
         validations_path = _write_json(validations)
         import io
         from unittest.mock import patch
+
         from scripts.apply_validations import main
 
         try:

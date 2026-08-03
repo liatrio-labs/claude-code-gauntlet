@@ -29,20 +29,20 @@ from bench.runner.ledger import API_AUTH_MODE, AUTH_MODES, SUBSCRIPTION_AUTH_MOD
 
 __all__ = [
     "InvokeResult",
+    "_claude_home",
+    "api_key_helper_files",
     "build_env",
+    "collect_workflow_records",
+    "extract_identity_receipt",
     "invoke_review",
+    "parse_identity_echo",
     "parse_result_envelope",
     "pr_dir_name",
-    "resolve_claude_home",
-    "api_key_helper_files",
-    "snapshot_workflow_records",
-    "collect_workflow_records",
-    "scriptpath_from_record",
-    "script_path_matches_repo",
-    "extract_identity_receipt",
     "read_pipeline_version",
-    "parse_identity_echo",
-    "_claude_home",
+    "resolve_claude_home",
+    "script_path_matches_repo",
+    "scriptpath_from_record",
+    "snapshot_workflow_records",
 ]
 
 # Repo root == the code-gauntlet plugin dir. bench/runner/invoke.py -> parents[2].
@@ -187,7 +187,7 @@ def pr_dir_name(pr):
     dict when present, else are parsed from its ``url`` -- the identical resolution
     ``build_env`` uses -- so run.py, invoke.py, and score.py all derive the same key.
     """
-    return "pr-{}-{}-{}".format(_slug(_owner(pr)), _slug(_repo(pr)), _pr_number(pr))
+    return f"pr-{_slug(_owner(pr))}-{_slug(_repo(pr))}-{_pr_number(pr)}"
 
 
 def _load_dotenv_key(path, key):
@@ -337,7 +337,7 @@ def collect_workflow_records(claude_home, pr_dir, baseline=None):
             stem, suffix = path.stem, path.suffix
             n = 2
             while target.exists():
-                target = dest_dir / "{}-{}{}".format(stem, n, suffix)
+                target = dest_dir / f"{stem}-{n}{suffix}"
                 n += 1
         try:
             shutil.copy2(path, target)
@@ -469,9 +469,9 @@ def _claude_auth_env(base_env, child_auth):
             # name travels. A test holds the literal and the constant to one spelling.
             raise RuntimeError(
                 "child_auth=subscription needs CLAUDE_CODE_OAUTH_TOKEN: run "
-                "`claude setup-token` and put the token in {path} as "
+                f"`claude setup-token` and put the token in {ENV_PATH} as "
                 "CLAUDE_CODE_OAUTH_TOKEN=..., or export it. Found none in either "
-                "source.".format(path=ENV_PATH)
+                "source."
             )
         return ({OAUTH_TOKEN_VAR: token}, _OUTRANKING_CREDENTIAL_VARS)
     raise ValueError(
@@ -505,7 +505,7 @@ def build_env(pr, run_dir, base_env, child_auth=API_AUTH_MODE):
         env.pop(name, None)
     env.update(auth_updates)
     env["CODE_GAUNTLET_OUTPUT_DIR"] = str(run_dir / "output")
-    env["GH_REPO"] = "{}/{}".format(_owner(pr), _repo(pr))
+    env["GH_REPO"] = f"{_owner(pr)}/{_repo(pr)}"
     # Uncap the CLI's "background tasks at exit" wait. A ``-p`` run blocks on any background
     # task still running when the main turn ends, but only up to CLAUDE_CODE_PRINT_BG_WAIT_
     # CEILING_MS (default 600000 = 600s since v2.1.182; docs: code.claude.com/docs/en/headless
@@ -694,9 +694,7 @@ def _echo_in_text(text):
     """True when *text* carries the full receipt: every expected knob line present."""
     text = text or ""
     for key, value in EXPECTED_ECHO.items():
-        pattern = r"(?m)^[ \t]*{}={}(?:[ \t]|\(|$)".format(
-            re.escape(key), re.escape(value)
-        )
+        pattern = rf"(?m)^[ \t]*{re.escape(key)}={re.escape(value)}(?:[ \t]|\(|$)"
         if not re.search(pattern, text):
             return False
     return True
@@ -903,12 +901,12 @@ def _check_plugin_identity(
         got_root = Path(receipt["plugin_root"]).resolve()
         exp_root = Path(repo_root).resolve()
     except OSError as exc:
-        return "plugin_root resolve failed: {}".format(exc)
+        return f"plugin_root resolve failed: {exc}"
     if got_root != exp_root:
-        return "plugin_root {!r} != expected {!r}".format(str(got_root), str(exp_root))
+        return f"plugin_root {str(got_root)!r} != expected {str(exp_root)!r}"
     for sp in _new_workflow_script_paths(claude_home, wf_baseline):
         if not script_path_matches_repo(sp, repo_root):
-            return "scriptPath {!r} is not repo workflows/pipeline.js".format(sp)
+            return f"scriptPath {sp!r} is not repo workflows/pipeline.js"
     return None
 
 
@@ -930,7 +928,7 @@ def _fail_reason(returncode, envelope):
         # subtype alone can read "success" on a mid-response API error; keep both.
         return "is_error({})".format(envelope.get("subtype") or "unknown")
     if returncode != 0:
-        return "exit_{}".format(returncode)
+        return f"exit_{returncode}"
     return "failed"
 
 
@@ -970,14 +968,10 @@ def _v3_preflight(claude_bin):
     version = _claude_version(claude_bin)
     if version is None:
         return (
-            "v3_workflow_unsupported: claude --version unreadable, need >= {}".format(
-                required
-            )
+            f"v3_workflow_unsupported: claude --version unreadable, need >= {required}"
         )
     if version < V3_MIN_CLAUDE_VERSION:
-        return "v3_workflow_unsupported: claude {} < required {}".format(
-            _fmt_version(version), required
-        )
+        return f"v3_workflow_unsupported: claude {_fmt_version(version)} < required {required}"
     return None
 
 
@@ -1046,7 +1040,7 @@ def invoke_review(
     cmd = [
         claude_bin,
         "-p",
-        "/{} {}".format(SKILL_COMMAND, number),
+        f"/{SKILL_COMMAND} {number}",
         "--output-format",
         "json",
         "--dangerously-skip-permissions",
@@ -1180,9 +1174,7 @@ def invoke_review(
     )
     if identity_err:
         print(
-            "PLUGIN IDENTITY MISMATCH during PR {} — invalidated: {}".format(
-                number, identity_err
-            ),
+            f"PLUGIN IDENTITY MISMATCH during PR {number} — invalidated: {identity_err}",
             file=sys.stderr,
         )
         return InvokeResult(

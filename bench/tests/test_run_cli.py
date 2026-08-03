@@ -45,9 +45,7 @@ def fake_make_worktree(mirror, head_sha, base_sha, base_ref, dest, pr_number):
 def drift_on(target_pr_number):
     def _make(mirror, head_sha, base_sha, base_ref, dest, pr_number):
         if pr_number == target_pr_number:
-            raise run.mirrors.DriftError(
-                "PR #{}: simulated input drift".format(pr_number)
-            )
+            raise run.mirrors.DriftError(f"PR #{pr_number}: simulated input drift")
         Path(dest).mkdir(parents=True, exist_ok=True)
         return Path(dest)
 
@@ -135,7 +133,7 @@ def make_invoke_expecting_auth(expected):
         child_auth="api",
     ):
         assert child_auth == expected, (
-            "invoke_review got child_auth={!r}, want {!r}".format(child_auth, expected)
+            f"invoke_review got child_auth={child_auth!r}, want {expected!r}"
         )
         return fake_invoke_ok(worktree, pr, run_dir, timeout_s)
 
@@ -149,7 +147,7 @@ def make_naive_expecting_auth(expected):
         worktree, pr, run_dir, diff_text, bench_entry, timeout_s, child_auth="api"
     ):
         assert child_auth == expected, (
-            "_invoke_naive got child_auth={!r}, want {!r}".format(child_auth, expected)
+            f"_invoke_naive got child_auth={child_auth!r}, want {expected!r}"
         )
         payload = (
             Path(run_dir) / run.invoke.pr_dir_name(pr) / "post-review-payload.json"
@@ -250,7 +248,7 @@ class PrereqTest(RunTestBase):
         import types
 
         for anchor, expected in (
-            ("naive", "naive:single-pass max-turns={}".format(run.NAIVE_MAX_TURNS)),
+            ("naive", f"naive:single-pass max-turns={run.NAIVE_MAX_TURNS}"),
             (None, "headless:/code-gauntlet"),
         ):
             run_dir = self.tmp / "manifest-{}".format(anchor or "skill")
@@ -835,7 +833,7 @@ class ToolWiringTest(RunTestBase):
 
     def _manifest_for(self, argv):
         args = run.parse_args(argv)
-        run_dir = self.tmp / "tool-manifest-{}".format(len(list(self.tmp.iterdir())))
+        run_dir = self.tmp / f"tool-manifest-{len(list(self.tmp.iterdir()))}"
         run_dir.mkdir(parents=True)
         run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
         return json.loads((run_dir / "run.json").read_text())
@@ -1342,7 +1340,7 @@ class ChildAuthWiringTest(RunTestBase):
 
     def _manifest_for(self, argv):
         args = run.parse_args(argv)
-        run_dir = self.tmp / "auth-manifest-{}".format(len(list(self.tmp.iterdir())))
+        run_dir = self.tmp / f"auth-manifest-{len(list(self.tmp.iterdir()))}"
         run_dir.mkdir(parents=True)
         run._write_manifest(run_dir, "rid", "smoke", [], 60, args)
         return json.loads((run_dir / "run.json").read_text())
@@ -1552,10 +1550,10 @@ class PrsListTest(RunTestBase):
     """--prs overrides --tier with an explicit, shas.json-validated golden PR list."""
 
     def test_parses_comma_list_and_strips_whitespace(self):
-        args = run.parse_args(["--prs", "{},{}".format(FIXTURE_URL, PLAIN_URL)])
+        args = run.parse_args(["--prs", f"{FIXTURE_URL},{PLAIN_URL}"])
         self.assertEqual(args.prs, [FIXTURE_URL, PLAIN_URL])
         # Surrounding whitespace around each URL is trimmed.
-        spaced = run.parse_args(["--prs", " {} , {} ".format(FIXTURE_URL, PLAIN_URL)])
+        spaced = run.parse_args(["--prs", f" {FIXTURE_URL} , {PLAIN_URL} "])
         self.assertEqual(spaced.prs, [FIXTURE_URL, PLAIN_URL])
 
     def test_prs_mini_alias_expands_to_mini_subset(self):

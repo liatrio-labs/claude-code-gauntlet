@@ -81,7 +81,6 @@ import stat
 import sys
 import tempfile
 
-
 # The one place a convention filename is added. Ordered: this order is also the
 # tie-break precedence when two files at the same directory level state
 # conflicting rules (see "Precedence" in references/phase2-triage.md).
@@ -202,7 +201,7 @@ def _within(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
-class _Collector(object):
+class _Collector:
     def __init__(self, repo_root, max_file_bytes, max_total_bytes, max_files):
         self.repo_root = os.path.realpath(repo_root)
         self.max_file_bytes = max_file_bytes
@@ -293,7 +292,7 @@ class _Collector(object):
         if st.st_size > self.max_file_bytes:
             return None, "too_large"
         try:
-            with open(real, "r", encoding="utf-8", errors="replace") as handle:
+            with open(real, encoding="utf-8", errors="replace") as handle:
                 text = handle.read()
         except OSError:
             return None, "missing"
@@ -400,7 +399,7 @@ def _load_changed_files(path):
     """Read the changed-file list. Accepts strings or objects with a 'path'."""
     if not path:
         return []
-    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+    with open(path, encoding="utf-8", errors="replace") as handle:
         data = json.load(handle)
     if not isinstance(data, list):
         return []

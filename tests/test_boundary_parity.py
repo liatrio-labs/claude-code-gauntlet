@@ -366,9 +366,9 @@ class TestPostReviewBoundary(unittest.TestCase):
                 "scripts.post_review.subprocess.run",
                 side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
             ),
+            self.assertRaises(KeyError),
         ):
-            with self.assertRaises(KeyError):
-                post_review.main()
+            post_review.main()
 
 
 if __name__ == "__main__":

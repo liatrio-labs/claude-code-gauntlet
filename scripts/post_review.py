@@ -66,7 +66,6 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timezone
 
 # The prior-review signal (prose footer + marker) is owned end-to-end by
 # review_marker.py — this script is only its writer. The explicit path insert
@@ -75,8 +74,7 @@ from datetime import datetime, timezone
 # swallowing a real ImportError raised from inside review_marker.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from review_marker import SHA_RE, build_footer  # noqa: E402
-
+from review_marker import SHA_RE, build_footer
 
 # ---------------------------------------------------------------------------
 # Dry-run capture

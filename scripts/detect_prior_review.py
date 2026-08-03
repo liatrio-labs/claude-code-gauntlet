@@ -75,8 +75,7 @@ import sys
 # `scripts.detect_prior_review`, without swallowing real ImportErrors.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from review_marker import select_latest  # noqa: E402
-
+from review_marker import select_latest
 
 FETCH_TIMEOUT_SECONDS = 30
 GIT_TIMEOUT_SECONDS = 10

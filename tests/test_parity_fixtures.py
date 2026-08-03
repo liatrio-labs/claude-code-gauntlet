@@ -39,6 +39,7 @@ class TestFindingDedupParity(unittest.TestCase):
 class TestMergeFindingsParity(unittest.TestCase):
     def test_all_cases(self):
         import tempfile
+
         from merge_findings import merge
 
         for case_dir in sorted((FIXTURES / "merge_findings").iterdir()):
@@ -80,6 +81,7 @@ class TestMergeFindingsParity(unittest.TestCase):
 class TestFilterFindingsParity(unittest.TestCase):
     def test_all_cases(self):
         import tempfile
+
         import filter_findings as ff
 
         # rglob, not iterdir: filter_findings fixtures nest one level deeper
@@ -168,6 +170,7 @@ class TestFilterFindingsParity(unittest.TestCase):
 class TestApplyValidationsParity(unittest.TestCase):
     def test_all_cases(self):
         import copy
+
         from apply_validations import apply_validations
 
         for case_dir in sorted((FIXTURES / "apply_validations").iterdir()):
@@ -190,6 +193,7 @@ class TestApplyValidationsParity(unittest.TestCase):
 class TestApplyChallengesParity(unittest.TestCase):
     def test_all_cases(self):
         import copy
+
         from apply_challenges import apply_challenges, rank_findings
         from filter_findings import dedup_cross_agent
 

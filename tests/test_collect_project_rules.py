@@ -96,7 +96,7 @@ class _RepoCase(unittest.TestCase):
         # those two states is load-bearing and is asserted explicitly, on
         # os.path.exists, by test_repo_with_no_convention_files_*.
         if os.path.exists(self.out):
-            with open(self.out, "r", encoding="utf-8") as handle:
+            with open(self.out, encoding="utf-8") as handle:
                 body = handle.read()
         else:
             body = ""

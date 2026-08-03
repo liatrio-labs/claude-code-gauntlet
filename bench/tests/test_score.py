@@ -19,15 +19,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import score  # noqa: E402
+from bench.runner import (
+    ledger,
+    score,
+)
+from bench.runner.ledger import REQUIRED_KEYS  # noqa: E402
 from bench.runner.score import (  # noqa: E402
     bucket_join,
     compute_metrics,
     resolve_judge_pin,
     score_run,
 )
-from bench.runner import ledger  # noqa: E402
-from bench.runner.ledger import REQUIRED_KEYS  # noqa: E402
 
 
 def write_json(path, data):
@@ -897,10 +899,10 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         for path, lines in paths.items():
             start = min(lines)
             span = max(lines) - start + 1 + 2
-            diff.append("diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n".format(p=path))
-            diff.append("@@ -{s},{c} +{s},{c} @@\n".format(s=start, c=span))
+            diff.append(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n")
+            diff.append(f"@@ -{start},{span} +{start},{span} @@\n")
             for ln in range(start, start + span):
-                diff.append("+code line {}\n".format(ln))
+                diff.append(f"+code line {ln}\n")
         (pr_dir / "diff.patch").write_text("".join(diff), encoding="utf-8")
         # cost/token envelope the runner would have written.
         write_json(

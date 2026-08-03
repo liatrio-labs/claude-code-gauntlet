@@ -37,7 +37,6 @@ import json
 import os
 import sys
 
-
 # How much of an invalid line to echo back. Long enough to identify the
 # finding, short enough to keep stderr readable when many lines fail.
 _SNIPPET_MAX = 160

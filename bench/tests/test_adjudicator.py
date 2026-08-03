@@ -14,13 +14,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.adjudicator.adjudicate import (  # noqa: E402
+from bench.adjudicator.adjudicate import (  # noqa: E402  # noqa: E402
     FROZEN_PROMPT,
+    _parse_verdict,
+    _recover_verdict,
     adjudicate,
     file_context,
     slice_hunk,
 )
-from bench.adjudicator.adjudicate import _parse_verdict, _recover_verdict  # noqa: E402
 
 # The exact reply that sank --score-only smoke-20260721-172943-0b24d95: the adjudicator's
 # "reason" quotes the Ruby snippet `"." << website_host` with an UNescaped inner double-quote
@@ -115,7 +116,7 @@ class SliceHunkTests(unittest.TestCase):
 
 class FileContextTests(unittest.TestCase):
     def setUp(self):
-        self.lines = ["line{}".format(i) for i in range(1, 21)]  # 20 lines
+        self.lines = [f"line{i}" for i in range(1, 21)]  # 20 lines
 
     def test_window_marks_target_line(self):
         out = file_context(self.lines, 10, radius=2)

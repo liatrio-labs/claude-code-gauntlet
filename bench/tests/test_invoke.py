@@ -1249,7 +1249,7 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
         saw = self._child_saw("subscription")
         self.assertTrue(saw["CLAUDE_CODE_OAUTH_TOKEN"])
         for name in self.MUST_NOT_REACH_CHILD:
-            self.assertFalse(saw[name], "{} reached the child".format(name))
+            self.assertFalse(saw[name], f"{name} reached the child")
 
     def test_the_strip_list_covers_every_var_this_test_names(self):
         # Keeps the hardcoded list above honest in the other direction: if the chain grows

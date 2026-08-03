@@ -371,7 +371,7 @@ def _naive_prompt(pr, diff_text, bench_entry):
     # title plus the full diff (the changes are what the anchor is asked to review).
     title = (bench_entry or {}).get("pr_title") or "PR #{}".format(pr["pr_number"])
     return (
-        "You are reviewing a pull request titled: {}\n\n".format(title)
+        f"You are reviewing a pull request titled: {title}\n\n"
         + "Below is the full diff of the change. Review it and report any bugs, "
         "correctness problems, security issues, or notable quality concerns as concise "
         "review comments, each citing the file and line it refers to. Only report real, "
@@ -672,7 +672,7 @@ def _run_prs(
                 "failed",
                 detail={
                     "reason": "mirror_error",
-                    "error": "{}: {}".format(type(exc).__name__, str(exc)[:200]),
+                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
                 },
             )
             counts["failed"] += 1
@@ -725,13 +725,9 @@ def _run_prs(
             # CalledProcessError->mirror_error above. KeyboardInterrupt/SystemExit derive
             # from BaseException (not Exception), so they are never swallowed here and stop
             # the run as intended. The finally below still removes the worktree.
-            reason = "unexpected_error:{}: {}".format(
-                type(exc).__name__, str(exc)[:200]
-            )
+            reason = f"unexpected_error:{type(exc).__name__}: {str(exc)[:200]}"
             print(
-                "!! {} failed unexpectedly ({}) -- continuing to next PR".format(
-                    url, reason
-                ),
+                f"!! {url} failed unexpectedly ({reason}) -- continuing to next PR",
                 file=sys.stderr,
             )
             cp.mark(
@@ -748,9 +744,7 @@ def _run_prs(
                 mirrors.remove_worktree(mirror, worktree)
             except Exception as cleanup_exc:
                 print(
-                    "!! worktree cleanup failed for {} ({}) -- continuing".format(
-                        url, cleanup_exc
-                    ),
+                    f"!! worktree cleanup failed for {url} ({cleanup_exc}) -- continuing",
                     file=sys.stderr,
                 )
 
@@ -854,7 +848,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     child_auth = _resolve_child_auth(getattr(args, "child_auth", None))
     env_fingerprint["child_auth"] = child_auth
     invocation = (
-        "naive:single-pass max-turns={}".format(NAIVE_MAX_TURNS)
+        f"naive:single-pass max-turns={NAIVE_MAX_TURNS}"
         if args.anchor == "naive"
         else "headless:/code-gauntlet"
     )
@@ -910,14 +904,12 @@ def _print_summary(run_id, run_dir, urls, cp, summary):
     final = defaultdict(int)
     for url in urls:
         final[cp.status(url)] += 1
-    print("\nRun {} -> {}".format(run_id, run_dir))
-    print(
-        "  status: " + ", ".join("{}={}".format(k, v) for k, v in sorted(final.items()))
-    )
+    print(f"\nRun {run_id} -> {run_dir}")
+    print("  status: " + ", ".join(f"{k}={v}" for k, v in sorted(final.items())))
     if summary["drifted"]:
         print("  !! DRIFTED (input drift -- never scored):")
         for url, reason in summary["drifted"]:
-            print("     - {}: {}".format(url, reason))
+            print(f"     - {url}: {reason}")
     return final
 
 
@@ -967,9 +959,7 @@ def _resume(run_id, args, retry):
     run_dir = RUNS_ROOT / run_id
     verb = "retry" if retry else "resume"
     if not run_dir.exists():
-        print(
-            "No run dir at {} -- nothing to {}.".format(run_dir, verb), file=sys.stderr
-        )
+        print(f"No run dir at {run_dir} -- nothing to {verb}.", file=sys.stderr)
         return 2
 
     manifest_path = run_dir / "run.json"
@@ -1033,21 +1023,21 @@ def _resume(run_id, args, retry):
 def _score_only(run_id):
     run_dir = RUNS_ROOT / run_id
     try:
-        from bench.runner import score  # noqa: F401  (Task 13)
+        from bench.runner import score
     except ImportError:
         print(
             "--score-only needs bench/runner/score.py, which lands in Task 13 and is not "
-            "present yet -- cannot re-score {}.".format(run_id),
+            f"present yet -- cannot re-score {run_id}.",
             file=sys.stderr,
         )
         return 2
     if not run_dir.exists():
-        print("No run dir at {} to score.".format(run_dir), file=sys.stderr)
+        print(f"No run dir at {run_dir} to score.", file=sys.stderr)
         return 2
     try:
         score.score_run(str(run_dir))
     except (ValueError, RuntimeError) as exc:
-        print("--score-only failed for {}: {}".format(run_id, exc), file=sys.stderr)
+        print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
         return 2
     print("Scored {}: wrote {}".format(run_id, run_dir / "scores.json"))
     return 0
@@ -1057,7 +1047,7 @@ def _check_only(run_id):
     """Run the mechanical functional-smoke checker against ``RUNS_ROOT/run_id``."""
     run_dir = RUNS_ROOT / run_id
     if not run_dir.is_dir():
-        print("--check: run directory not found: {}".format(run_dir), file=sys.stderr)
+        print(f"--check: run directory not found: {run_dir}", file=sys.stderr)
         return 2
     from bench.runner import check as check_mod
 
@@ -1077,7 +1067,7 @@ def _check_only(run_id):
         )
     )
     for failure in result.get("failures") or []:
-        print("  FAIL: {}".format(failure), file=sys.stderr)
+        print(f"  FAIL: {failure}", file=sys.stderr)
     # Naive-anchor refusal is a usage error (exit 2), not a smoke-gate failure.
     if result.get("refused"):
         return 2
@@ -1228,10 +1218,8 @@ def main(argv=None):
     # one (its per-PR envelope costs are summed into a single auth_mode-labelled row).
     if args.child_auth is not None and args.child_auth != child_auth:
         print(
-            "--child-auth {} contradicts the mode run {} recorded ({}) -- a run dir is "
-            "one credential. Resume without the flag, or start a new run.".format(
-                args.child_auth, args.resume or args.retry_failed, child_auth
-            ),
+            f"--child-auth {args.child_auth} contradicts the mode run {args.resume or args.retry_failed} recorded ({child_auth}) -- a run dir is "
+            "one credential. Resume without the flag, or start a new run.",
             file=sys.stderr,
         )
         return 2

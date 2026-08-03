@@ -32,7 +32,7 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import profile_run as pr  # noqa: E402
+import profile_run as pr
 
 
 def iso(ms):

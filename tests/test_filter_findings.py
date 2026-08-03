@@ -25,29 +25,26 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.filter_findings import (
-    parse_review_md,
-    apply_threshold_filter,
-    apply_injection_filter,
-    detect_disagreement,
-    tag_findings,
-    load_exclusions,
-    apply_exclusions,
-    normalize_field_names,
-    _is_test_correctness_finding,
-    _dedup_test_analyzer,
-    dedup_cross_agent,
-    group_by_proximity,
-    _route_by_dimension,
-    _count_words,
-    SEVERITY_ORDER,
+    _CONTESTATION_DROP_THRESHOLD,
+    _SINGLETON_PENALTY,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
     DEFAULT_SEVERITY_THRESHOLD,
-    _SINGLETON_PENALTY,
-    _CORE_DIMENSIONS,
-    _CONTESTATION_DROP_THRESHOLD,
+    _count_words,
+    _dedup_test_analyzer,
+    _is_test_correctness_finding,
+    _route_by_dimension,
+    apply_exclusions,
+    apply_injection_filter,
+    apply_threshold_filter,
+    dedup_cross_agent,
+    detect_disagreement,
+    group_by_proximity,
+    load_exclusions,
+    normalize_field_names,
+    parse_review_md,
+    tag_findings,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1210,15 +1207,18 @@ class TestDedupCrossAgent(unittest.TestCase):
             dimension="test_coverage",
             confidence=90,
         )
-        import tempfile, json
+        import json
+        import tempfile
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump({"findings": [bug, test]}, f)
             tmppath = f.name
         try:
-            from scripts.filter_findings import main as filter_main
-            import io, contextlib
+            import contextlib
+            import io
             from unittest.mock import patch as mock_patch
+
+            from scripts.filter_findings import main as filter_main
 
             buf = io.StringIO()
             with mock_patch("sys.argv", ["filter_findings.py", tmppath]):
@@ -1859,8 +1859,8 @@ class TestNormalizeFieldNames(unittest.TestCase):
 
     def test_warning_logged_to_stderr(self):
         """R02.5: stderr warning is produced when normalization is applied."""
-        import io
         import contextlib
+        import io
 
         findings = [{"id": "n8", "body": "some text"}]
         stderr_capture = io.StringIO()

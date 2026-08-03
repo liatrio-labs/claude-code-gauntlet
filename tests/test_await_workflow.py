@@ -34,13 +34,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts.await_workflow import (  # noqa: E402
-    _newest,
+from scripts.await_workflow import (
     ARTIFACT_BASENAMES,
     COMPACT_RETURN_KEYS,
     DEFAULT_TIMEOUT_SECONDS,
     MIN_TIMEOUT_SECONDS,
     SCAN_MAX_CHARS,
+    _newest,
     artifacts_state,
     build_next_command,
     build_parser,
@@ -1088,11 +1088,13 @@ class TestExitCodeContract(unittest.TestCase):
 
     def test_broken_pipe_during_error_report_exits_four(self):
         """Error-path emit must share the happy-path OSError degrade, not exit 1."""
-        with patch(
-            "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
+        with (
+            patch(
+                "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
+            ),
+            patch("builtins.print", side_effect=BrokenPipeError()),
         ):
-            with patch("builtins.print", side_effect=BrokenPipeError()):
-                code, out, err = run_main(["w1", "--timeout-seconds", "0"])
+            code, out, err = run_main(["w1", "--timeout-seconds", "0"])
         self.assertEqual(code, 4)
         self.assertNotIn("Traceback", err)
 

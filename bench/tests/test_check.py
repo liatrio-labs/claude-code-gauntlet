@@ -31,7 +31,7 @@ def _write_json(path, obj):
 
 def _ok_payload(n_comments=1):
     comments = [
-        {"path": "a.py", "line": 10 + i, "body": "finding {}".format(i)}
+        {"path": "a.py", "line": 10 + i, "body": f"finding {i}"}
         for i in range(n_comments)
     ]
     return {
@@ -51,7 +51,7 @@ def _ok_gitlab_payload(n_discussions=1):
     """Minimal GitLab dry-run payload shape (platform + discussions)."""
     discussions = [
         {
-            "body": "finding {}".format(i),
+            "body": f"finding {i}",
             "position": {
                 "position_type": "text",
                 "new_path": "a.py",
@@ -121,9 +121,9 @@ def _identity_echo_block(*, plugin_root=None, pipeline_version=None):
     return (
         "Review complete.\n\n"
         "Headless config:\n"
-        "  pipeline_version={} (bundle)\n"
-        "  plugin_root={} (resolved)\n"
-    ).format(ver, root)
+        f"  pipeline_version={ver} (bundle)\n"
+        f"  plugin_root={root} (resolved)\n"
+    )
 
 
 def _plant_raw_identity(pr_dir, *, plugin_root=None, pipeline_version=None):
@@ -156,10 +156,7 @@ def _build_ok_run(
     """
     urls = pr_urls
     if urls is None:
-        urls = [
-            "https://github.com/example/repo/pull/{}".format(i + 1)
-            for i in range(n_prs)
-        ]
+        urls = [f"https://github.com/example/repo/pull/{i + 1}" for i in range(n_prs)]
     done = list(urls if completed_prs is None else completed_prs)
     _write_json(
         run_dir / "run.json",
@@ -174,10 +171,10 @@ def _build_ok_run(
     state.mkdir(parents=True, exist_ok=True)
     for i, url in enumerate(done):
         _write_json(
-            state / "pr-{}.json".format(i + 1),
+            state / f"pr-{i + 1}.json",
             {"url": url, "status": "ok", "detail": {}, "ts": "2026-07-23T00:00:00Z"},
         )
-        pr_dir = run_dir / "pr-example-repo-{}".format(i + 1)
+        pr_dir = run_dir / f"pr-example-repo-{i + 1}"
         pr_dir.mkdir(parents=True, exist_ok=True)
         _write_json(pr_dir / "post-review-payload.json", _ok_payload(n_comments))
         if include_findings:

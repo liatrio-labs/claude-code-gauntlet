@@ -24,22 +24,17 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.merge_findings import (
+    KNOWN_DIMENSIONS,
+    _extract_json_blocks,
+    deduplicate,
+    detect_truncation,
+    inject_agent_field,
+    main,
+    merge,
     parse_ndjson_file,
     parse_text_file,
-    inject_agent_field,
-    deduplicate,
     validate_findings,
-    detect_truncation,
-    assemble_output,
-    merge,
-    main,
-    KNOWN_DIMENSIONS,
-    REQUIRED_FIELDS,
-    _ndjson_path,
-    _text_path,
-    _extract_json_blocks,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers

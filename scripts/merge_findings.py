@@ -105,7 +105,7 @@ def parse_ndjson_file(path: str, agent: str) -> tuple[list[dict], list[str]]:
     if not os.path.exists(path):
         return findings, parse_warnings
 
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, 1):
             line = line.strip()
             if not line:
@@ -247,7 +247,7 @@ def parse_text_file(path: str, agent: str) -> tuple[list[dict], list[str], bool,
     if not os.path.exists(path):
         return findings, parse_warnings, has_prose, has_skip_lines
 
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         text = fh.read()
 
     if not text.strip():

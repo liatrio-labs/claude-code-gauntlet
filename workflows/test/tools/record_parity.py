@@ -23,6 +23,7 @@ def _finding_dedup(inp):
 
 def _merge_findings(inp):
     import tempfile
+
     from merge_findings import merge
 
     args = inp["args"]
@@ -47,6 +48,7 @@ def _merge_findings(inp):
 
 def _filter_findings(inp):
     import tempfile
+
     import filter_findings as ff
 
     fn = inp["fn"]
@@ -116,6 +118,7 @@ def _filter_findings(inp):
 
 def _apply_validations(inp):
     import copy
+
     from apply_validations import apply_validations
 
     findings = copy.deepcopy(inp["findings"])
@@ -186,6 +189,7 @@ def _apply_challenges(inp):
     # concatenation, which belong to the skill/stage layer, not this pure
     # transform. Matches the JS twin's applyChallenges() return shape.
     import copy
+
     from apply_challenges import apply_challenges, rank_findings
     from filter_findings import dedup_cross_agent
 

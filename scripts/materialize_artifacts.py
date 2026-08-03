@@ -89,14 +89,14 @@ import sys
 # raised from inside either module.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from assemble_artifacts import (  # noqa: E402
+from assemble_artifacts import (
     assemble,
     escape_lone_surrogates,
     fnv1a32,
     utf16_len,
     write_text_atomic,
 )
-from await_workflow import (  # noqa: E402
+from await_workflow import (
     TASKS_DIR_ENV,
     find_terminal,
     read_text,

@@ -168,7 +168,7 @@ class _Workspace:
             fh.write(text)
 
     def read(self, path):
-        with open(path, "r", encoding="utf-8", newline="") as fh:
+        with open(path, encoding="utf-8", newline="") as fh:
             return fh.read()
 
     def plan(self, **over):
@@ -888,7 +888,7 @@ class TestNoTruncatedArtifactAtAPlannedPath(unittest.TestCase):
             # used to truncate the destination to zero bytes.
             with self.assertRaises(UnicodeEncodeError):
                 write_text_atomic(dest, "\ud800")
-            with open(dest, "r", encoding="utf-8") as fh:
+            with open(dest, encoding="utf-8") as fh:
                 self.assertEqual(fh.read(), "PREVIOUS CONTENT")
             self.assertEqual(
                 os.listdir(directory), ["artifact.json"], "no temp residue"
@@ -901,7 +901,7 @@ class TestNoTruncatedArtifactAtAPlannedPath(unittest.TestCase):
         try:
             dest = os.path.join(directory, "artifact.json")
             write_text_atomic(dest, '{"a": 1}')
-            with open(dest, "r", encoding="utf-8", newline="") as fh:
+            with open(dest, encoding="utf-8", newline="") as fh:
                 self.assertEqual(fh.read(), '{"a": 1}')
             self.assertEqual(os.listdir(directory), ["artifact.json"])
             # The temp file's 0600 must not ride along onto the artifact.

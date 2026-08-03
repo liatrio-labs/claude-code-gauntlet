@@ -66,11 +66,11 @@ def sync(repo_root, check_only=False):
     for directory in directories_with_rules(repo_root):
         source = os.path.join(directory, "AGENTS.md")
         target = os.path.join(directory, "CLAUDE.md")
-        with open(source, "r", encoding="utf-8") as handle:
+        with open(source, encoding="utf-8") as handle:
             expected = twin_text(handle.read())
         current = None
         if os.path.isfile(target):
-            with open(target, "r", encoding="utf-8") as handle:
+            with open(target, encoding="utf-8") as handle:
                 current = handle.read()
         if current == expected:
             continue

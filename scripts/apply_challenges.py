@@ -72,8 +72,7 @@ from datetime import datetime, timezone
 
 # Import shared dedup utility from filter_findings (stdlib only, same package)
 sys.path.insert(0, os.path.dirname(__file__))
-from filter_findings import dedup_cross_agent  # noqa: E402
-
+from filter_findings import dedup_cross_agent
 
 # ---------------------------------------------------------------------------
 # Helpers
