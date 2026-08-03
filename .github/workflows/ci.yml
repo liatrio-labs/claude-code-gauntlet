@@ -56,10 +56,27 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install pytest
-        run: pip install pytest
+        if: matrix.python-version != '3.12'
+        run: pip install pytest==9.1.1
 
       - name: Run pytest
+        if: matrix.python-version != '3.12'
         run: python -m pytest tests/ -q
+
+      - name: Install pytest + coverage (gate leg)
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install "pip>=25.1"
+          pip install --group dev
+
+      - name: Run pytest with coverage gate
+        if: matrix.python-version == '3.12'
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/.coverage
+        run: |
+          python -m pytest tests/ -q \
+            --cov=scripts --cov=.github \
+            --cov-fail-under=91.3
 
   workflow-tests:
     name: Run Workflow JS Tests
@@ -102,7 +119,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
 
       - name: Install pytest
-        run: pip install pytest
+        if: matrix.python-version != '3.12'
+        run: pip install pytest==9.1.1
 
       - name: Run bench self-tests
+        if: matrix.python-version != '3.12'
         run: python -m pytest bench/tests/ -q
+
+      - name: Install pytest + coverage (gate leg)
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install "pip>=25.1"
+          pip install --group dev
+
+      - name: Run bench self-tests with coverage gate
+        if: matrix.python-version == '3.12'
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/.coverage
+        run: |
+          python -m pytest bench/tests/ -q \
+            --cov=bench \
+            --cov-fail-under=87

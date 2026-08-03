@@ -21,6 +21,12 @@ Thumbs.db
 __pycache__/
 *.pyc
 
+# Coverage data + reports (CI/dev only; see pyproject.toml [tool.coverage])
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
 # Claude Code local settings
 .claude/
 
