@@ -35,23 +35,41 @@ python -m pytest bench/tests/ -q      # benchmark harness self-tests
 node --test workflows/test/*.test.js  # needs Node 24; the bare directory is not a valid target
 ```
 
-Coverage gates (CI 3.12 only). Locally, COVERAGE_FILE must be outside the repo
-tree (an in-tree data file trips the bench plugin-mutation guard):
+Coverage gates (CI; JS on Node 24.18.0, Python on 3.12). Each command is
+self-contained and byte-identical to the matching `run:` body in
+`.github/workflows/ci.yml`. Locally, coverage data files must stay out of the
+repo tree (an in-tree data file trips the bench plugin-mutation guard):
 
 ```bash
-COVDIR="$(mktemp -d)"
-COVERAGE_FILE="$COVDIR/.coverage" python -m pytest tests/ -q \
+COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
   --cov=scripts --cov=.github --cov-fail-under=91.3
-COVERAGE_FILE="$COVDIR/.coverage" python -m pytest bench/tests/ -q \
+
+COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
   --cov=bench --cov-fail-under=87
+
+LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
+  --test-coverage-include='workflows/src/*.js' \
+  --test-coverage-include='workflows/build.js' \
+  --test-coverage-lines=98 \
+  --test-coverage-branches=82 \
+  --test-coverage-functions=97 \
+  --test-reporter=spec --test-reporter-destination=stdout \
+  --test-reporter=lcov --test-reporter-destination="$LCOV" \
+  workflows/test/*.test.js \
+  && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors 91.3 / 87, pinned 2026-08-03 from the first green 3.12 CI run (92.27 /
-87.96); policy: a floor sits no more than 1.0 pp below the CI 3.12 measurement.
-`workflows/test/tools/record_parity.py` is test infrastructure, outside both
-scopes. Lower a floor only in the PR that causes the drop, reason in the body.
-A sudden multi-point drop means broken subprocess capture — fix capture, do not
-lower.
+Floors: Python 91.3 / 87 (pinned 2026-08-03 from first green 3.12 CI: 92.27 /
+87.96); JS 98 / 82 / 97 (provisional from local HEAD ~98.56 / 83.00 / 97.99 —
+re-pin from the first green CI run on the #103 PR). Policy: a floor sits no
+more than 1.0 pp below the CI measurement for that gate; lower a floor only in
+the PR that causes the drop, reason in the body; raise when measured headroom
+comfortably exceeds 1.0 pp. A sudden multi-point JS drop usually means a deleted
+fixture group or an unloaded module (presence check); a sudden multi-point
+Python drop means broken subprocess capture — fix capture, do not lower.
+`workflows/test/tools/record_parity.py` is test infrastructure, outside Python
+scopes. JS measures `workflows/build.js` + loaded `workflows/src/*.js` via the
+include allowlist; `pipeline_entry.js` is exempt from presence only.
 
 After editing `workflows/src/*.js`, rebuild and confirm the bundle is unchanged:
 
