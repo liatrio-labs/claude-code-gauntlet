@@ -52,6 +52,14 @@ function matchInclude(pattern, file) {
 
 function expectedSet() {
   const tracked = gitLsFiles();
+  const trackedSet = new Set(tracked);
+  const missingExempt = (scope.exempt || []).filter((file) => !trackedSet.has(file)).sort();
+  if (missingExempt.length) {
+    process.stderr.write(
+      `exempt entries are not git-tracked:\n${missingExempt.map((m) => `  ${m}`).join('\n')}\n`,
+    );
+    process.exit(2);
+  }
   const exempt = new Set(scope.exempt);
   const out = new Set();
   for (const pattern of scope.includes) {

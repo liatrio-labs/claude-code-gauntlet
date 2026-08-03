@@ -102,3 +102,23 @@ test('exits 2 when scope includes expand to no tracked files', () => {
     assert.match(result.stderr, /workflows\/src\/no_such_pattern_zzz\.js/);
   });
 });
+
+test('exits 2 when an exempt entry is not a tracked file', () => {
+  withTempDir((dir) => {
+    const scope = JSON.parse(readFileSync(scopePath, 'utf8'));
+    const expected = expectedFiles(scope);
+    const lcovPath = path.join(dir, 'lcov.info');
+    const staleScopePath = path.join(dir, 'coverage_scope.json');
+    writeFileSync(lcovPath, `${expected.map((file) => `SF:${file}`).join('\n')}\n`);
+    writeFileSync(staleScopePath, JSON.stringify({
+      includes: scope.includes,
+      exempt: ['workflows/src/renamed_away_pipeline_entry.js'],
+    }));
+
+    const result = runTool(lcovPath, staleScopePath);
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /exempt entries are not git-tracked:/);
+    assert.match(result.stderr, /workflows\/src\/renamed_away_pipeline_entry\.js/);
+  });
+});

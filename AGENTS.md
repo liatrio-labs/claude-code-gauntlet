@@ -60,13 +60,13 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
 ```
 
 Floors: Python 91.3 / 87 (pinned 2026-08-03 from first green 3.12 CI: 92.27 /
-87.96); JS 98 / 82.3 / 97 (pinned 2026-08-03 from first green CI Node
-24.18.0 run: 98.61 / 83.27 / 97.99). Policy: a floor sits no more than 1.0 pp
-below the CI measurement for that gate; lower a floor only in the PR that
-causes the drop, reason in the body; raise when measured headroom comfortably
-exceeds 1.0 pp. A sudden multi-point JS drop usually means a deleted fixture
-group or an unloaded module (presence check); a sudden multi-point Python drop
-means broken subprocess capture — fix capture, do not lower.
+87.96); JS 98 / 82.3 / 97 (pinned 2026-08-03 from first green CI: 98.61 /
+83.27 / 97.99). Policy: a floor sits no more than 1.0 pp below the CI
+measurement for that gate; lower a floor only in the PR that causes the drop,
+reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
+multi-point JS drop usually means a deleted fixture group or an unloaded
+module (presence check); a sudden multi-point Python drop means broken
+subprocess capture — fix capture, do not lower.
 `workflows/test/tools/record_parity.py` is test infrastructure, outside Python
 scopes. JS measures `workflows/build.js` + loaded `workflows/src/*.js` via the
 include allowlist; `pipeline_entry.js` is exempt from presence only.

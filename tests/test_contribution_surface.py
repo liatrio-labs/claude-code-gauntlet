@@ -805,10 +805,6 @@ class TestRequiredPrCheckContexts(unittest.TestCase):
 GATE_MARKERS = ("--cov-fail-under=", "--test-coverage-lines=")
 
 
-def _strip_one_trailing_newline(text: str) -> str:
-    return text[:-1] if text.endswith("\n") else text
-
-
 def _agents_coverage_gate_commands(text: str) -> set[str]:
     """Commands inside the Coverage gates fenced bash block, split on blank lines."""
     # Find the section heading, then the first ```bash fence after it.
@@ -821,7 +817,9 @@ def _agents_coverage_gate_commands(text: str) -> set[str]:
         raise AssertionError("AGENTS.md Coverage gates missing ```bash fence")
     body = fence.group(1)
     chunks = re.split(r"\n\s*\n", body.strip("\n"))
-    commands = {_strip_one_trailing_newline(c.strip("\n")) for c in chunks if c.strip()}
+    # rstrip trailing newlines only — cosmetic blank lines after a command must
+    # not create a confusing residual-\n false fail (interior blanks stay).
+    commands = {c.rstrip("\n") for c in chunks if c.strip()}
     if len(commands) < 3:
         raise AssertionError(f"expected ≥3 gate commands in AGENTS.md, found {len(commands)}")
     return commands
@@ -856,12 +854,30 @@ def _ci_run_blocks(text: str) -> list[str]:
                 break
             collected.append(line[content_indent:] if content_indent is not None else line)
             i += 1
-        blocks.append(_strip_one_trailing_newline("\n".join(collected)))
+        blocks.append("\n".join(collected).rstrip("\n"))
     return blocks
 
 
 def _ci_gate_commands(text: str) -> set[str]:
     return {b for b in _ci_run_blocks(text) if any(marker in b for marker in GATE_MARKERS)}
+
+
+def _ci_workflow_tests_node_version(text: str) -> str:
+    """The node-version: value under the workflow-tests job (stdlib; no PyYAML)."""
+    lines = text.splitlines()
+    in_job = False
+    for index, line in enumerate(lines):
+        if re.match(r"^  workflow-tests:\s*$", line):
+            in_job = True
+            continue
+        if in_job and re.match(r"^  \S", line):
+            break
+        if not in_job:
+            continue
+        match = re.match(r'^\s+node-version:\s*["\']?([^"\']+)["\']?\s*$', line)
+        if match:
+            return match.group(1).strip()
+    raise AssertionError("ci.yml workflow-tests job missing node-version:")
 
 
 class TestCoverageGateCommandIdentity(unittest.TestCase):
@@ -877,6 +893,12 @@ class TestCoverageGateCommandIdentity(unittest.TestCase):
         self.assertEqual(len(js_gates), 1, js_gates)
         flags = re.findall(r"--test-coverage-include='([^']+)'", js_gates[0])
         self.assertEqual(set(flags), set(scope["includes"]))
+
+    def test_contributing_documents_the_ci_node_version_pin(self):
+        version = _ci_workflow_tests_node_version(_read(".github/workflows/ci.yml"))
+        contributing = _read("CONTRIBUTING.md")
+        self.assertIn(f"`{version}`", contributing)
+        self.assertIn(f'node-version: "{version}"', _read(".github/workflows/ci.yml"))
 
 
 if __name__ == "__main__":

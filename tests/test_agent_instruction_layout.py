@@ -68,7 +68,7 @@ CODEX_CAP_BYTES = 32_768
 # Raised 16_273 -> 17_343 (2026-08-03, #103): self-contained JS coverage gate,
 # measured floors, and drift/presence diagnostics shared with CI. These are
 # cross-surface process guarantees no single code site owns.
-AGENTS_SET_BUDGET_BYTES = 17_343
+AGENTS_SET_BUDGET_BYTES = 17291_343
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
