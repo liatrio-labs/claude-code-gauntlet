@@ -1,0 +1,26 @@
+# Config + CI pin surface only — this is not a packaged project.
+# No [project] / [build-system] on purpose (see #102 / AGENTS.md).
+#
+# This table pins the CI pytest stack. Lint-tool versions are pinned by the
+# rev: fields in .pre-commit-config.yaml — keep pins in their own home; do not
+# duplicate either set here.
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "pytest-cov==7.1.0",
+  "coverage[toml]==7.15.2",
+]
+
+[tool.coverage.run]
+branch = true
+relative_files = true
+parallel = true
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+omit = [
+  "bench/vendor/*",
+  "bench/tests/*",
+  "bench/workspace/*",
+]
