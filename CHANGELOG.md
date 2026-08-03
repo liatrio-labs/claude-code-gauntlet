@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.3.9 (2026-08-03)
+
+### Bug Fixes
+
+- **bench**: Address PR #128 review nits
+  ([#128](https://github.com/liatrio-labs/claude-code-gauntlet/pull/128),
+  [`1864baf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1864baf336b57d4c27e5c7ab981c0832b66a93c9))
+
+### Chores
+
+- **tooling**: Add ruff and mypy config for #104
+  ([#128](https://github.com/liatrio-labs/claude-code-gauntlet/pull/128),
+  [`1864baf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1864baf336b57d4c27e5c7ab981c0832b66a93c9))
+
+- **tooling**: Apply safe ruff --fix under locked select
+  ([#128](https://github.com/liatrio-labs/claude-code-gauntlet/pull/128),
+  [`1864baf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1864baf336b57d4c27e5c7ab981c0832b66a93c9))
+
+- **tooling**: Ruff config, format, and safe autofix (#104 part A)
+  ([#128](https://github.com/liatrio-labs/claude-code-gauntlet/pull/128),
+  [`1864baf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1864baf336b57d4c27e5c7ab981c0832b66a93c9))
+
+### Code Style
+
+- Apply ruff format across Python tree
+  ([#128](https://github.com/liatrio-labs/claude-code-gauntlet/pull/128),
+  [`1864baf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1864baf336b57d4c27e5c7ab981c0832b66a93c9))
+
+
 ## v3.3.8 (2026-08-03)
 
 ### Bug Fixes
