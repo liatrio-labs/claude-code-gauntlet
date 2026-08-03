@@ -2,6 +2,10 @@ fail_fast: false
 default_install_hook_types: [pre-commit, pre-push, commit-msg]
 default_stages: [pre-commit]
 
+# Pin surface: the rev: fields below pin all lint/format tooling. The CI pytest
+# stack (pytest, pytest-cov, coverage) is pinned separately in pyproject.toml
+# [dependency-groups]. Two homes on purpose — pre-commit revs can't express the
+# pytest stack, and nothing here runs it. Keep each pin in its own place.
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
