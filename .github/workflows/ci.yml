@@ -97,7 +97,7 @@ jobs:
             --test-coverage-include='workflows/src/*.js' \
             --test-coverage-include='workflows/build.js' \
             --test-coverage-lines=98 \
-            --test-coverage-branches=82 \
+            --test-coverage-branches=82.3 \
             --test-coverage-functions=97 \
             --test-reporter=spec --test-reporter-destination=stdout \
             --test-reporter=lcov --test-reporter-destination="$LCOV" \
