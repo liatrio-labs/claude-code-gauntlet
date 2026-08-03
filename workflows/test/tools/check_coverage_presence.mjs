@@ -10,11 +10,12 @@ import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(here, '../../..');
-const scope = JSON.parse(readFileSync(path.join(here, 'coverage_scope.json'), 'utf8'));
+const scopePath = process.argv[3] || path.join(here, 'coverage_scope.json');
+const scope = JSON.parse(readFileSync(scopePath, 'utf8'));
 
 const lcovPath = process.argv[2];
 if (!lcovPath) {
-  process.stderr.write('usage: node check_coverage_presence.mjs <lcov-path>\n');
+  process.stderr.write('usage: node check_coverage_presence.mjs <lcov-path> [scope-path]\n');
   process.exit(2);
 }
 
@@ -80,6 +81,10 @@ function actualSet(lcovText) {
 }
 
 const expected = expectedSet();
+if (expected.size === 0) {
+  process.stderr.write(`${path.basename(scopePath)} includes matched no tracked files: ${scope.includes.join(', ')}\n`);
+  process.exit(2);
+}
 const actual = actualSet(readFileSync(lcovPath, 'utf8'));
 const exempt = new Set(scope.exempt);
 const missing = [...expected].filter((f) => !actual.has(f)).sort();
