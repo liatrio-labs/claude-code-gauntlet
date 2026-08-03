@@ -10,7 +10,6 @@ import unittest
 from pathlib import Path
 
 GOLDEN = Path(__file__).resolve().parent.parent / "golden"
-GC = GOLDEN / "golden_comments"
 GOLDEN_FILES = ["keycloak", "grafana", "discourse", "sentry", "cal_dot_com"]
 
 
@@ -26,7 +25,7 @@ class TestGoldenData(unittest.TestCase):
         cls.subsets = _load("subsets.json")
         cls.labels = _load("pr_labels.json")
         cls.raw = {
-            f: json.load(open(GC / f"{f}.json", encoding="utf-8")) for f in GOLDEN_FILES
+            f: _load(f"golden_comments/{f}.json") for f in GOLDEN_FILES
         }
 
     # --- totals -------------------------------------------------------------
