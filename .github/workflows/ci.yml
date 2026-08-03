@@ -71,12 +71,9 @@ jobs:
 
       - name: Run pytest with coverage gate
         if: matrix.python-version == '3.12'
-        env:
-          COVERAGE_FILE: ${{ runner.temp }}/.coverage
         run: |
-          python -m pytest tests/ -q \
-            --cov=scripts --cov=.github \
-            --cov-fail-under=91.3
+          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
+            --cov=scripts --cov=.github --cov-fail-under=91.3
 
   workflow-tests:
     name: Run Workflow JS Tests
@@ -90,10 +87,22 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "24"
+          # Exact patch: coverage percentages move across Node builds; 24.18.0 is
+          # the sandboxed runtime / reference build this repo develops against.
+          node-version: "24.18.0"
 
       - name: Run node test suite
-        run: node --test workflows/test/*.test.js
+        run: |
+          LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
+            --test-coverage-include='workflows/src/*.js' \
+            --test-coverage-include='workflows/build.js' \
+            --test-coverage-lines=98 \
+            --test-coverage-branches=82 \
+            --test-coverage-functions=97 \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination="$LCOV" \
+            workflows/test/*.test.js \
+            && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 
       - name: Verify committed bundle matches a fresh build
         run: |
@@ -134,9 +143,6 @@ jobs:
 
       - name: Run bench self-tests with coverage gate
         if: matrix.python-version == '3.12'
-        env:
-          COVERAGE_FILE: ${{ runner.temp }}/.coverage
         run: |
-          python -m pytest bench/tests/ -q \
-            --cov=bench \
-            --cov-fail-under=87
+          COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
+            --cov=bench --cov-fail-under=87
