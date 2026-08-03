@@ -58,6 +58,28 @@ former deep-review pipeline) and is no longer maintained.
 
 ## Scope
 
+### Trust boundaries
+
+The pipeline reads several kinds of repository-supplied text and extends each a different level of trust. The
+split is deliberate; it was decided on issue #82 (2026-08-02).
+
+- **The diff is untrusted data.** It enters the shared agent context wrapped in `<untrusted-code-content>` tags,
+  and anything that looks like an instruction inside it is data to analyze, never an instruction to follow.
+- **Rule text is trusted to steer judgment.** Project rule files (`CLAUDE.md`, `AGENTS.md`, `QODO.md`,
+  `REVIEW.md`, and their `@import` targets) are read from the checked-out working tree and are meant to shape the
+  review — that is what those files are for. The accepted consequence: a pull request can edit the rule files
+  that govern its own review and steer findings away from itself. This is not treated as a vulnerability, because
+  the diff already carries equally capable suppression channels that no rule-file control would close — in-code
+  suppression comments, intentional-change framing, and the test-only and generated-code exclusions — so a
+  crafted rule file that causes a finding *not to be raised* is a findings-quality bug, out of scope below. A
+  crafted rule file that gets content *out* of the pipeline — into a posted comment, a report, or a shell — is
+  the in-scope case below, which is why `REVIEW.md` appears on both sides of this split. If
+  suppression through rule text is ever observed in a real run, the recorded escalation is to read rule files
+  from the merge base instead of the PR head; it is held in reserve, not implemented.
+- **Anything that leaves the pipeline is untrusted, whatever its source.** Repository-derived text that reaches a
+  posted PR/MR comment, a rendered report, or a shell invocation stays fully inside the in-scope injection
+  classes below.
+
 ### In scope
 
 - **Prompt-injection defenses that can be bypassed.** Code under review is untrusted input. A crafted repository,
@@ -74,7 +96,8 @@ former deep-review pipeline) and is no longer maintained.
 ### Out of scope
 
 - **Findings quality.** Missed issues, false positives, wrong severity, and noisy output are bug reports, not
-  vulnerabilities — open an issue.
+  vulnerabilities — open an issue. That includes a finding steered away by repository rule text (see Trust
+  boundaries above).
 - **Claude Code itself and Anthropic's APIs.** Report those upstream to Anthropic.
 - **Third-party repositories under review.** A vulnerability the plugin finds, or fails to find, in someone else's
   code belongs to that project's own disclosure process.
