@@ -95,9 +95,11 @@ The review pipeline runs inside Claude Code's workflow runtime, so it carries co
   `setTimeout`/`queueMicrotask`, `process`, and others — are absent from the workflow runtime sandbox, so a
   reference keeps every local test green and then throws on the first live dispatch. `workflows/AGENTS.md` holds the
   normative list; deep-clone with the bundle's `deepClone` helper, never `structuredClone`.
-- **CI pins the Node major, not the patch.** `.github/workflows/ci.yml` runs the workflow tests and the build on
-  `node-version: "24"`; 24.18.0 is the reference build this repo develops against. There is no `package.json` and
-  no `node_modules`; use Node built-ins only.
+- **CI pins Node `24.18.0` exactly.** Coverage floors are sensitive to the V8 build; the patch pin stops an
+  unrelated Node bump from moving percentages. The bare inner-loop command is `node --test workflows/test/*.test.js`;
+  the CI coverage gate (floors + allowlist + presence) is the JS command in the root `AGENTS.md` Coverage gates
+  block and must stay byte-identical to `.github/workflows/ci.yml`. There is no `package.json` and no
+  `node_modules`; use Node built-ins only.
 - **Bundle freshness is enforced.** `tests/test_bundle_fresh.py` and CI both rebuild and compare, so a stale or
   hand-edited bundle fails the build:
 

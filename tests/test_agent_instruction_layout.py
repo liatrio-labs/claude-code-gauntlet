@@ -65,7 +65,11 @@ CODEX_CAP_BYTES = 32_768
 # process/boundary statements no single code site owns (the gate lives in ci.yml;
 # the carve-out is a cross-surface rule about what may import what; the floor policy
 # is a merge convention). Not derivable from code.
-AGENTS_SET_BUDGET_BYTES = 16_273
+# Raised 16_273 -> 17_291 (2026-08-03, #103): self-contained JS coverage gate,
+# measured floors, and drift/presence diagnostics shared with CI. These are
+# cross-surface process guarantees no single code site owns. Re-pinned from
+# 17_343 after the floors-paragraph re-pin shortened the provisional wording.
+AGENTS_SET_BUDGET_BYTES = 17_291
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

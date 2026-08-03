@@ -1,0 +1,8 @@
+{
+  "fn": "_route_by_dimension",
+  "finding": {
+    "dimension": "type_design",
+    "title": "unchecked cast",
+    "description": "this cast can throw a runtime type mismatch under edge input"
+  }
+}

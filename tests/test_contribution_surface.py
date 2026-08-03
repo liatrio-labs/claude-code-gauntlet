@@ -802,5 +802,104 @@ class TestRequiredPrCheckContexts(unittest.TestCase):
         self.assertIn("protect-default-branch", doc)
 
 
+GATE_MARKERS = ("--cov-fail-under=", "--test-coverage-lines=")
+
+
+def _agents_coverage_gate_commands(text: str) -> set[str]:
+    """Commands inside the Coverage gates fenced bash block, split on blank lines."""
+    # Find the section heading, then the first ```bash fence after it.
+    heading = re.search(r"(?m)^Coverage gates\b.*$", text)
+    if not heading:
+        raise AssertionError("AGENTS.md missing 'Coverage gates' section")
+    rest = text[heading.end():]
+    fence = re.search(r"```bash\n(.*?)```", rest, re.DOTALL)
+    if not fence:
+        raise AssertionError("AGENTS.md Coverage gates missing ```bash fence")
+    body = fence.group(1)
+    chunks = re.split(r"\n\s*\n", body.strip("\n"))
+    # rstrip trailing newlines only — cosmetic blank lines after a command must
+    # not create a confusing residual-\n false fail (interior blanks stay).
+    commands = {c.rstrip("\n") for c in chunks if c.strip()}
+    if len(commands) < 3:
+        raise AssertionError(f"expected ≥3 gate commands in AGENTS.md, found {len(commands)}")
+    return commands
+
+
+def _ci_run_blocks(text: str) -> list[str]:
+    """Literal bodies of run: | / run: |- block scalars (stdlib; no PyYAML)."""
+    lines = text.splitlines()
+    blocks = []
+    i = 0
+    while i < len(lines):
+        m = re.match(r"^(\s*)run:\s*\|-?\s*$", lines[i])
+        if not m:
+            i += 1
+            continue
+        base = len(m.group(1))
+        i += 1
+        content_indent = None
+        collected = []
+        while i < len(lines):
+            line = lines[i]
+            if line.strip() == "":
+                collected.append("")
+                i += 1
+                continue
+            indent = len(line) - len(line.lstrip(" "))
+            if content_indent is None:
+                if indent <= base:
+                    break
+                content_indent = indent
+            if indent < content_indent and line.strip():
+                break
+            collected.append(line[content_indent:] if content_indent is not None else line)
+            i += 1
+        blocks.append("\n".join(collected).rstrip("\n"))
+    return blocks
+
+
+def _ci_gate_commands(text: str) -> set[str]:
+    return {b for b in _ci_run_blocks(text) if any(marker in b for marker in GATE_MARKERS)}
+
+
+def _ci_workflow_tests_node_version(text: str) -> str:
+    """The node-version: value under the workflow-tests job (stdlib; no PyYAML)."""
+    lines = text.splitlines()
+    in_job = False
+    for index, line in enumerate(lines):
+        if re.match(r"^  workflow-tests:\s*$", line):
+            in_job = True
+            continue
+        if in_job and re.match(r"^  \S", line):
+            break
+        if not in_job:
+            continue
+        match = re.match(r'^\s+node-version:\s*["\']?([^"\']+)["\']?\s*$', line)
+        if match:
+            return match.group(1).strip()
+    raise AssertionError("ci.yml workflow-tests job missing node-version:")
+
+
+class TestCoverageGateCommandIdentity(unittest.TestCase):
+    def test_agents_and_ci_gate_commands_are_byte_identical_sets(self):
+        agents = _agents_coverage_gate_commands(_read("AGENTS.md"))
+        ci = _ci_gate_commands(_read(".github/workflows/ci.yml"))
+        self.assertEqual(agents, ci)
+
+    def test_js_gate_includes_match_coverage_scope_json(self):
+        scope = json.loads(_read("workflows/test/tools/coverage_scope.json"))
+        agents = _agents_coverage_gate_commands(_read("AGENTS.md"))
+        js_gates = [c for c in agents if "--test-coverage-lines=" in c]
+        self.assertEqual(len(js_gates), 1, js_gates)
+        flags = re.findall(r"--test-coverage-include='([^']+)'", js_gates[0])
+        self.assertEqual(set(flags), set(scope["includes"]))
+
+    def test_contributing_documents_the_ci_node_version_pin(self):
+        version = _ci_workflow_tests_node_version(_read(".github/workflows/ci.yml"))
+        contributing = _read("CONTRIBUTING.md")
+        self.assertIn(f"`{version}`", contributing)
+        self.assertIn(f'node-version: "{version}"', _read(".github/workflows/ci.yml"))
+
+
 if __name__ == "__main__":
     unittest.main()

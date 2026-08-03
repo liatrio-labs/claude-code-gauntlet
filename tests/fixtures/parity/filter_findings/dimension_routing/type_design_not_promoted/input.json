@@ -1,0 +1,8 @@
+{
+  "fn": "_route_by_dimension",
+  "finding": {
+    "dimension": "type_design",
+    "title": "prefer branded types",
+    "description": "variable names should use branded types per style guide"
+  }
+}
