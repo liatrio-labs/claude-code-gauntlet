@@ -2,6 +2,101 @@
 
 <!-- version list -->
 
+## v3.3.8 (2026-08-03)
+
+### Bug Fixes
+
+- **ci**: Address #126 review — pin sync, exempt tripwire, floors wording
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- **test**: Correct AGENTS byte ratchet mangled by underscore replace
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+### Build System
+
+- Add [project]-less pyproject for coverage config and CI pin group
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+- Measure subprocesses via coverage patch=subprocess
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+### Chores
+
+- Gitignore coverage data files
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+### Continuous Integration
+
+- Gate JS coverage with floors, allowlist, and presence (#103)
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- Gate JS coverage with floors, allowlist, and presence check
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- Gate Python coverage on 3.12 legs for scripts/ and bench/ (#102)
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+- Gate python coverage on the 3.12 legs of test and bench-tests
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+- Re-pin JS branch coverage floor to 82.3 from first green CI
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- Re-pin scripts coverage floor to 91.3 from first green 3.12 run
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+### Documentation
+
+- Cross-reference the pytest-stack pin surface in pre-commit config
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+- Point CONTRIBUTING at AGENTS coverage gates; pin Node 24.18.0
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- Record coverage gate, thresholds, and CI-tooling stdlib carve-out
+  ([#125](https://github.com/liatrio-labs/claude-code-gauntlet/pull/125),
+  [`e943478`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e9434782bd176efba8e31d95a535ce1270fd71f4))
+
+- Unify coverage gates block and document JS floors
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- **security**: Record trust-boundaries posture for repo-supplied rule text (#82)
+  ([#121](https://github.com/liatrio-labs/claude-code-gauntlet/pull/121),
+  [`f888108`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f8881082dac500054b397802c406933d4a51a036))
+
+### Testing
+
+- **ci**: Pin coverage gate command identity AGENTS↔ci.yml
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- **coverage**: Reject empty JS coverage scope
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- **parity**: Cover type_design dimension routing both ways
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+- **workflows**: Add coverage presence check against scope allowlist
+  ([#126](https://github.com/liatrio-labs/claude-code-gauntlet/pull/126),
+  [`9a66910`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9a66910e62a93d2f10935a6d6cbd0c42f4ecfa83))
+
+
 ## v3.3.7 (2026-08-01)
 
 ### Bug Fixes
