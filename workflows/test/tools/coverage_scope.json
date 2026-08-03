@@ -1,0 +1,4 @@
+{
+  "includes": ["workflows/src/*.js", "workflows/build.js"],
+  "exempt": ["workflows/src/pipeline_entry.js"]
+}
