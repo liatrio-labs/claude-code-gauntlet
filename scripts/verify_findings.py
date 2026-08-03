@@ -85,7 +85,6 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
 
 # The delta echo's content proof reuses the ONE Python implementation of the
 # cross-runtime checksum pair rather than growing a third copy of it. fnv1a32 and
@@ -101,17 +100,17 @@ from datetime import datetime, timezone
 # shadow a stdlib module.
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from assemble_artifacts import (  # noqa: E402 — sibling script, see above
+from assemble_artifacts import (
     JS_MAX_SAFE_INTEGER,
     JsSerializationError,
     fnv1a32,
     js_stringify_pretty,
 )
 
-
 # ---------------------------------------------------------------------------
 # Repo root — resolved once at startup (RF-01)
 # ---------------------------------------------------------------------------
+
 
 def _resolve_repo_root():
     """
@@ -137,6 +136,7 @@ REPO_ROOT = _resolve_repo_root()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 class InputError(Exception):
     """A fatal condition reported by ``die()`` — malformed input, or a required git
@@ -195,6 +195,7 @@ def run(cmd, check=False, timeout=None, cwd=None):
 # ---------------------------------------------------------------------------
 # Git helpers
 # ---------------------------------------------------------------------------
+
 
 def get_diff(base_branch, diff_file=None):
     """
@@ -315,6 +316,7 @@ def is_line_in_diff(valid_lines, filepath, line):
 # ---------------------------------------------------------------------------
 # Verification stages — blame classification, factual checks, diff validation, batching
 # ---------------------------------------------------------------------------
+
 
 def classify_blame(finding, base_branch):
     """
@@ -529,9 +531,9 @@ def _extract_symbols(description, evidence):
     # These patterns don't appear in normal English prose.
 
     _CODE_PUNCTUATION_RE = re.compile(
-        r"\b([A-Za-z_][A-Za-z0-9_]*"          # identifier start
-        r"(?:[.()\[\]#]|::|->)"                # must contain code punctuation
-        r"[A-Za-z0-9_.()#\[\]:>-]*)"           # rest of token
+        r"\b([A-Za-z_][A-Za-z0-9_]*"  # identifier start
+        r"(?:[.()\[\]#]|::|->)"  # must contain code punctuation
+        r"[A-Za-z0-9_.()#\[\]:>-]*)"  # rest of token
     )
     _SNAKE_CASE_RE = re.compile(
         r"\b([a-z][a-z0-9]*(?:_[a-z0-9]+)+)\b"  # snake_case: at least one underscore
@@ -556,16 +558,75 @@ def _extract_symbols(description, evidence):
 
     # Filter out very common English words, Python builtins, and short tokens
     _SKIP_SYMBOLS = {
-        "the", "this", "that", "with", "from", "import", "class", "def",
-        "for", "not", "and", "its", "but", "are", "was", "were", "can",
-        "should", "would", "could", "also", "will", "has", "have", "been",
-        "when", "then", "else", "elif", "True", "False", "None", "self",
-        "return", "raise", "pass", "break", "continue", "lambda", "yield",
-        "async", "await", "print", "isinstance", "len", "str", "int", "list",
-        "dict", "set", "tuple", "type", "super", "object", "Exception",
-        "ValueError", "TypeError", "KeyError", "AttributeError", "IndexError",
-        "RuntimeError", "StopIteration", "OSError", "IOError", "FileNotFoundError",
-        "NotImplementedError", "AssertionError", "OverflowError", "ZeroDivisionError",
+        "the",
+        "this",
+        "that",
+        "with",
+        "from",
+        "import",
+        "class",
+        "def",
+        "for",
+        "not",
+        "and",
+        "its",
+        "but",
+        "are",
+        "was",
+        "were",
+        "can",
+        "should",
+        "would",
+        "could",
+        "also",
+        "will",
+        "has",
+        "have",
+        "been",
+        "when",
+        "then",
+        "else",
+        "elif",
+        "True",
+        "False",
+        "None",
+        "self",
+        "return",
+        "raise",
+        "pass",
+        "break",
+        "continue",
+        "lambda",
+        "yield",
+        "async",
+        "await",
+        "print",
+        "isinstance",
+        "len",
+        "str",
+        "int",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "type",
+        "super",
+        "object",
+        "Exception",
+        "ValueError",
+        "TypeError",
+        "KeyError",
+        "AttributeError",
+        "IndexError",
+        "RuntimeError",
+        "StopIteration",
+        "OSError",
+        "IOError",
+        "FileNotFoundError",
+        "NotImplementedError",
+        "AssertionError",
+        "OverflowError",
+        "ZeroDivisionError",
     }
 
     return {s for s in raw_symbols if s not in _SKIP_SYMBOLS and len(s) > 2}
@@ -630,7 +691,7 @@ def verify_factual(finding):
 
     # Read file content, handling binary files gracefully
     try:
-        with open(filepath, "r", encoding="utf-8", errors="strict") as fh:
+        with open(filepath, encoding="utf-8", errors="strict") as fh:
             all_lines = fh.readlines()
     except UnicodeDecodeError:
         # Binary file → skip verification, keep as-is
@@ -659,8 +720,7 @@ def verify_factual(finding):
         finding["factual_verification"] = {
             "verified": False,
             "reason": (
-                f"line_start {line_start} out of range "
-                f"(file has {total_lines} line(s))"
+                f"line_start {line_start} out of range (file has {total_lines} line(s))"
             ),
             "code_at_lines": None,
         }
@@ -1177,7 +1237,10 @@ def run_verification(findings, base_branch, diff_file=None, verbose=False):
 
     # Phase 2: Classify (blame)
     if verbose:
-        print(f"Classifying findings against base branch '{base_branch}'...", file=sys.stderr)
+        print(
+            f"Classifying findings against base branch '{base_branch}'...",
+            file=sys.stderr,
+        )
     for f in findings:
         f["origin"] = classify_blame(f, base_branch)
 
@@ -1315,10 +1378,7 @@ def main():
         "--output",
         default=None,
         metavar="PATH",
-        help=(
-            "Write output JSON to this file. "
-            "If omitted, output goes to stdout."
-        ),
+        help=("Write output JSON to this file. If omitted, output goes to stdout."),
     )
     parser.add_argument(
         "--input",

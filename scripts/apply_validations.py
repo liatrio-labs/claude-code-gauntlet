@@ -69,10 +69,10 @@ import json
 import sys
 from datetime import datetime, timezone
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def die(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
@@ -86,6 +86,7 @@ def warn(msg):
 # ---------------------------------------------------------------------------
 # Input loading
 # ---------------------------------------------------------------------------
+
 
 def load_findings(path):
     """
@@ -157,6 +158,7 @@ def load_validations(path):
 # Core logic
 # ---------------------------------------------------------------------------
 
+
 def apply_validations(findings, validations):
     """
     Merge validator confidence adjustments into a list of findings in-place.
@@ -214,9 +216,7 @@ def apply_validations(findings, validations):
         finding = finding_by_id.get(vid)
         if finding is None:
             unmatched_ids.append(vid)
-            warn(
-                f"[apply_validations] No finding found for validation id={vid!r}."
-            )
+            warn(f"[apply_validations] No finding found for validation id={vid!r}.")
             continue
 
         # Save original_confidence before updating (only on first validation)
@@ -237,6 +237,7 @@ def apply_validations(findings, validations):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(

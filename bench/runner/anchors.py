@@ -35,6 +35,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from bench.adjudicator.adjudicate import adjudicate as _adjudicate
+from bench.adjudicator.adjudicate import slice_hunk
 from bench.runner import score
 from bench.runner.score import (
     _judge_api_key,
@@ -44,10 +46,8 @@ from bench.runner.score import (
     bucket_join,
     compute_metrics,
 )
-from bench.adjudicator.adjudicate import adjudicate as _adjudicate
-from bench.adjudicator.adjudicate import file_context, slice_hunk
 
-__all__ = ["spot_check", "rejudge_anchors", "ANCHOR_TOOLS"]
+__all__ = ["ANCHOR_TOOLS", "rejudge_anchors", "spot_check"]
 
 # bench/runner/anchors.py -> parents[2] is the plugin root.
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -103,9 +103,7 @@ def _stage_inputs(candidates_by_url, tools, model, results_dir):
     golden = _load_json(GOLDEN_DATA)
     missing = [url for url in candidates_by_url if url not in golden]
     if missing:
-        raise ValueError(
-            "anchor URLs absent from benchmark_data.min.json: {}".format(missing)
-        )
+        raise ValueError(f"anchor URLs absent from benchmark_data.min.json: {missing}")
     bench = {}
     for url, tools_map in candidates_by_url.items():
         entry = dict(golden[url])
@@ -212,7 +210,7 @@ def spot_check(
     """
     anchors = _load_json(anchors_path or ANCHORS_CANDIDATES)
     if pr_url not in anchors:
-        raise ValueError("pr_url not in anchor candidates: {!r}".format(pr_url))
+        raise ValueError(f"pr_url not in anchor candidates: {pr_url!r}")
     tools_map = anchors[pr_url]
     tools = [t for t in ANCHOR_TOOLS if t in tools_map]
     candidates_by_url = {pr_url: {t: tools_map[t] for t in tools}}
@@ -229,7 +227,7 @@ def spot_check(
     _clear_stale(model_dir)
     _stage_inputs(candidates_by_url, tools, judge_model, results_dir)
 
-    dedup_rel = "results/{}/dedup_groups.json".format(_sanitize_model_name(judge_model))
+    dedup_rel = f"results/{_sanitize_model_name(judge_model)}/dedup_groups.json"
     runner = run_scorer if run_scorer is not None else _run_scorer_stages
     runner(judge_model, key, MARTIAN_BASE_URL, dedup_rel, env=env)
 
@@ -240,7 +238,9 @@ def spot_check(
     overall_pass = True
     n_judge_calls = 0
     n_dedup_calls = 0
-    n_golden = len((_load_json(GOLDEN_DATA).get(pr_url) or {}).get("golden_comments", []))
+    n_golden = len(
+        (_load_json(GOLDEN_DATA).get(pr_url) or {}).get("golden_comments", [])
+    )
     for t in tools:
         ours_ev = (evaluations.get(pr_url) or {}).get(t)
         theirs_ev = (upstream.get(pr_url) or {}).get(t)
@@ -256,7 +256,11 @@ def spot_check(
             "ours": {k: ours[k] for k in _COUNT_KEYS},
             "upstream": {k: theirs[k] for k in _COUNT_KEYS},
             "deltas": {
-                k: (None if ours[k] is None or theirs[k] is None else ours[k] - theirs[k])
+                k: (
+                    None
+                    if ours[k] is None or theirs[k] is None
+                    else ours[k] - theirs[k]
+                )
                 for k in _COUNT_KEYS
             },
             "within_tolerance": within,
@@ -312,10 +316,12 @@ def _capped_diff(diff_text, cap=_MAX_DIFF_CHARS):
     """Return ``diff_text`` truncated to ``cap`` chars, marking any truncation."""
     if len(diff_text) <= cap:
         return diff_text
-    return diff_text[:cap] + "\n... [diff truncated at {} chars]".format(cap)
+    return diff_text[:cap] + f"\n... [diff truncated at {cap} chars]"
 
 
-def _adjudicate_anchor_bucket(buckets, candidates, tool, pin, api_key, adjudicator, diffs):
+def _adjudicate_anchor_bucket(
+    buckets, candidates, tool, pin, api_key, adjudicator, diffs
+):
     """Adjudicate every non-golden-matched comment for one anchor tool.
 
     Anchor candidates carry no path/line (upstream extracted them without a
@@ -394,7 +400,7 @@ def rejudge_anchors(
     anchors = _load_json(anchors_path or ANCHORS_CANDIDATES)
     subs = _load_json(subsets_path or SUBSETS_PATH)
     if subset not in subs:
-        raise ValueError("unknown subset {!r} (have: {})".format(subset, sorted(subs)))
+        raise ValueError(f"unknown subset {subset!r} (have: {sorted(subs)})")
     candidates = _subset_candidates(anchors, subs[subset], tools)
 
     cache_dir = Path(cache_dir) if cache_dir else (WORKSPACE / "anchor-cache")
@@ -411,7 +417,7 @@ def rejudge_anchors(
     _clear_stale(model_dir)
     _stage_inputs(candidates, tools, judge_pin, results_dir)
 
-    dedup_rel = "results/{}/dedup_groups.json".format(_sanitize_model_name(judge_pin))
+    dedup_rel = f"results/{_sanitize_model_name(judge_pin)}/dedup_groups.json"
     runner = run_scorer if run_scorer is not None else _run_scorer_stages
     runner(judge_pin, key_api, base_url, dedup_rel, env=env)
 
@@ -429,7 +435,9 @@ def rejudge_anchors(
         adjudications = _adjudicate_anchor_bucket(
             buckets, tool_cands, t, judge_pin, key_api, adjudicator_fn, diffs
         )
-        metrics = compute_metrics(evaluations, tool_cands, buckets, adjudications, tool=t)
+        metrics = compute_metrics(
+            evaluations, tool_cands, buckets, adjudications, tool=t
+        )
         per_tool[t] = {
             "recall": metrics["golden_recall"],
             "noise_rate": metrics["noise_rate"],

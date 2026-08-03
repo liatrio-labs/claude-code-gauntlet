@@ -31,23 +31,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import scripts.post_review as post_review
 import scripts.review_marker as review_marker
 from scripts.post_review import (
+    build_footer,
     detect_platform,
+    gitlab_project_id,
     is_line_valid,
     parse_diff_lines,
     render_comment_body,
-    build_footer,
-    gitlab_project_id,
-    valid_lines_for_file,
     resolve_marker_sha,
+    valid_lines_for_file,
 )
-
 
 # ---------------------------------------------------------------------------
 # detect_platform
 # ---------------------------------------------------------------------------
 
-class TestDetectPlatform(unittest.TestCase):
 
+class TestDetectPlatform(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_github_ssh(self, mock_run):
         mock_run.return_value = ("git@github.com:myorg/myrepo.git\n", "", 0)
@@ -76,7 +75,11 @@ class TestDetectPlatform(unittest.TestCase):
 
     @patch("scripts.post_review.run_api")
     def test_self_hosted_gitlab(self, mock_run):
-        mock_run.return_value = ("git@gitlab.internal.company.com:team/project.git\n", "", 0)
+        mock_run.return_value = (
+            "git@gitlab.internal.company.com:team/project.git\n",
+            "",
+            0,
+        )
         platform, host = detect_platform()
         self.assertEqual(platform, "gitlab")
         self.assertEqual(host, "gitlab.internal.company.com")
@@ -119,6 +122,7 @@ class TestDetectPlatform(unittest.TestCase):
 # parse_diff_lines (post_review version)
 # ---------------------------------------------------------------------------
 
+
 class TestParseDiffLinesPostReview(unittest.TestCase):
     """Tests for parse_diff_lines in post_review, which dispatches via run_api."""
 
@@ -145,12 +149,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_gitlab_dispatches_to_glab_mr_diff(self, mock_run):
         """platform='gitlab' must call glab mr diff."""
-        diff = (
-            "+++ b/bar.py\n"
-            "@@ -5,1 +5,2 @@\n"
-            " ctx\n"
-            "+new_line\n"
-        )
+        diff = "+++ b/bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
         mock_run.return_value = (diff, "", 0)
         valid_lines, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
         self.assertIsNotNone(valid_lines)
@@ -208,12 +207,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_new_file_detected_with_no_prefix_headers(self, mock_run):
         """New-file detection must work for glab-style (no-prefix) headers too."""
-        diff = (
-            "--- /dev/null\n"
-            "+++ src/added.py\n"
-            "@@ -0,0 +1,1 @@\n"
-            "+content\n"
-        )
+        diff = "--- /dev/null\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
         mock_run.return_value = (diff, "", 0)
         _, new_files = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/added.py"})
@@ -221,13 +215,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_deleted_file_does_not_add_dev_null_to_valid_lines(self, mock_run):
         """``+++ /dev/null`` (deleted file) must not produce phantom entries."""
-        diff = (
-            "--- a/gone.py\n"
-            "+++ /dev/null\n"
-            "@@ -1,2 +0,0 @@\n"
-            "-line1\n"
-            "-line2\n"
-        )
+        diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line1\n-line2\n"
         mock_run.return_value = (diff, "", 0)
         valid_lines, new_files = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(valid_lines, set())
@@ -252,8 +240,8 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
 # is_line_valid
 # ---------------------------------------------------------------------------
 
-class TestIsLineValid(unittest.TestCase):
 
+class TestIsLineValid(unittest.TestCase):
     def test_none_valid_lines_always_true(self):
         self.assertTrue(is_line_valid(None, "any.py", 999))
 
@@ -275,8 +263,8 @@ class TestIsLineValid(unittest.TestCase):
 # render_comment_body
 # ---------------------------------------------------------------------------
 
-class TestRenderCommentBody(unittest.TestCase):
 
+class TestRenderCommentBody(unittest.TestCase):
     def test_critical_severity_emoji(self):
         finding = {
             "severity": "critical",
@@ -288,13 +276,21 @@ class TestRenderCommentBody(unittest.TestCase):
         self.assertIn("\U0001f534", body)  # 🔴
 
     def test_high_severity_emoji(self):
-        finding = {"severity": "high", "title": "Bug", "body": "Description of the bug."}
+        finding = {
+            "severity": "high",
+            "title": "Bug",
+            "body": "Description of the bug.",
+        }
         body = render_comment_body(finding)
         self.assertIn("[HIGH]", body)
         self.assertIn("\U0001f7e0", body)  # 🟠
 
     def test_medium_severity_emoji(self):
-        finding = {"severity": "medium", "title": "Issue", "body": "Description of the issue."}
+        finding = {
+            "severity": "medium",
+            "title": "Issue",
+            "body": "Description of the issue.",
+        }
         body = render_comment_body(finding)
         self.assertIn("[MEDIUM]", body)
         self.assertIn("\U0001f7e1", body)  # 🟡
@@ -392,12 +388,22 @@ class TestRenderCommentBody(unittest.TestCase):
         self.assertNotIn("Suggested fix:", body)
 
     def test_suggestion_none_no_heading(self):
-        finding = {"severity": "high", "title": "Bug", "body": "desc", "suggestion": None}
+        finding = {
+            "severity": "high",
+            "title": "Bug",
+            "body": "desc",
+            "suggestion": None,
+        }
         body = render_comment_body(finding)
         self.assertNotIn("Suggested fix:", body)
 
     def test_suggestion_whitespace_only_no_heading(self):
-        finding = {"severity": "high", "title": "Bug", "body": "desc", "suggestion": "   \n  "}
+        finding = {
+            "severity": "high",
+            "title": "Bug",
+            "body": "desc",
+            "suggestion": "   \n  ",
+        }
         body = render_comment_body(finding)
         self.assertNotIn("Suggested fix:", body)
 
@@ -468,8 +474,11 @@ class TestRenderCommentBody(unittest.TestCase):
         self.assertIn("return None", body)
         prose_idx = body.index("**Suggested fix:**")
         fence_idx = body.index("```suggestion")
-        self.assertLess(prose_idx, fence_idx,
-                         "the prose suggestion block must come before the fence")
+        self.assertLess(
+            prose_idx,
+            fence_idx,
+            "the prose suggestion block must come before the fence",
+        )
         # The fence is still the last thing in the body.
         self.assertTrue(body.rstrip("\n").endswith("```"))
 
@@ -525,7 +534,9 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The endpoint MUST return 422 on a schema violation.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** The endpoint MUST return 422 on a schema violation.", body)
+        self.assertIn(
+            "**Cited rule:** The endpoint MUST return 422 on a schema violation.", body
+        )
 
     def test_non_string_spec_text_does_not_crash(self):
         finding = {"severity": "low", "title": "T", "body": "b", "spec_text": 9}
@@ -555,19 +566,31 @@ class TestRenderCommentBody(unittest.TestCase):
             "claude_md_rule": "Rule text\n",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Suggested fix:**\nLine one\nLine two\n\n**Cited rule:** Rule text", body)
+        self.assertIn(
+            "**Suggested fix:**\nLine one\nLine two\n\n**Cited rule:** Rule text", body
+        )
         self.assertFalse(body.endswith("\n"))
 
     def test_non_string_suggested_fix_code_does_not_crash(self):
         # Pre-#47 this reached .rstrip() and raised AttributeError. The field now goes
         # through the same normalizer as the prose fields.
-        finding = {"severity": "low", "title": "T", "body": "b", "suggested_fix_code": 123}
+        finding = {
+            "severity": "low",
+            "title": "T",
+            "body": "b",
+            "suggested_fix_code": 123,
+        }
         self.assertIn("```suggestion\n123\n```", render_comment_body(finding))
 
     def test_whitespace_only_suggested_fix_code_renders_no_fence(self):
         # A whitespace-only replacement would render a one-click-apply block that BLANKS
         # the cited lines — treat it as absent, like every other optional field.
-        finding = {"severity": "low", "title": "T", "body": "b", "suggested_fix_code": "   \n  "}
+        finding = {
+            "severity": "low",
+            "title": "T",
+            "body": "b",
+            "suggested_fix_code": "   \n  ",
+        }
         self.assertNotIn("```suggestion", render_comment_body(finding))
 
     def test_artifact_only_fields_never_reach_the_comment_body(self):
@@ -588,17 +611,24 @@ class TestRenderCommentBody(unittest.TestCase):
         }
         body = render_comment_body(finding)
         self.assertIn("**Suggested fix:**", body)
-        for sentinel in ("SENTINEL_FAILURE_SCENARIO", "SENTINEL_EVIDENCE",
-                         "criticality", "test_coverage", "90"):
-            self.assertNotIn(sentinel, body, f"{sentinel!r} leaked into the comment body")
+        for sentinel in (
+            "SENTINEL_FAILURE_SCENARIO",
+            "SENTINEL_EVIDENCE",
+            "criticality",
+            "test_coverage",
+            "90",
+        ):
+            self.assertNotIn(
+                sentinel, body, f"{sentinel!r} leaked into the comment body"
+            )
 
 
 # ---------------------------------------------------------------------------
 # build_footer
 # ---------------------------------------------------------------------------
 
-class TestBuildFooter(unittest.TestCase):
 
+class TestBuildFooter(unittest.TestCase):
     def test_footer_contains_metadata(self):
         footer = build_footer(5, "abc1234")
         self.assertIn("code-gauntlet-findings:", footer)
@@ -611,6 +641,7 @@ class TestBuildFooter(unittest.TestCase):
         footer = build_footer(3, "def5678")
         # Extract the JSON from the HTML comment
         import re
+
         m = re.search(r"code-gauntlet-findings:\s*({.*})", footer)
         self.assertIsNotNone(m)
         data = json.loads(m.group(1))
@@ -622,6 +653,7 @@ class TestBuildFooter(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # resolve_marker_sha (Issue #39 D6)
 # ---------------------------------------------------------------------------
+
 
 class TestResolveMarkerSha(unittest.TestCase):
     """The persisted payload's own ``sha`` (the commit the review actually ran
@@ -658,7 +690,9 @@ class TestResolveMarkerSha(unittest.TestCase):
 
     @patch("scripts.post_review.warn")
     @patch("scripts.post_review.get_head_sha", return_value="unknown")
-    def test_degraded_fallback_when_head_sha_itself_unresolvable(self, mock_head, mock_warn):
+    def test_degraded_fallback_when_head_sha_itself_unresolvable(
+        self, mock_head, mock_warn
+    ):
         """git rev-parse HEAD failing makes get_head_sha() return "unknown" —
         not SHA-shaped, so the caller must be warned the posted marker will be
         undetectable rather than have the failure pass silently."""
@@ -670,6 +704,7 @@ class TestResolveMarkerSha(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Review-marker round trip through the REAL poster (Issue #39 Requirement 6)
 # ---------------------------------------------------------------------------
+
 
 class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
     """THE test that discharges issue #39 requirement 6 unambiguously: the
@@ -712,8 +747,14 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
     @patch("scripts.post_review.check_tool")
     def test_github_empty_review_body(self, _tool):
         sha = "a" * 40
-        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
-                "review_body": "", "findings": []}
+        data = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "sha": sha,
+            "review_body": "",
+            "findings": [],
+        }
         post_review.post_github(data, set())
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
@@ -723,9 +764,14 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
     @patch("scripts.post_review.check_tool")
     def test_github_non_empty_review_body(self, _tool):
         sha = "b" * 40
-        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
-                "review_body": "## Summary\nSome pre-existing narrative text.\n",
-                "findings": []}
+        data = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "sha": sha,
+            "review_body": "## Summary\nSome pre-existing narrative text.\n",
+            "findings": [],
+        }
         post_review.post_github(data, set())
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
@@ -733,11 +779,19 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
         self.assertEqual(signal["sha"], sha)
 
     @patch("scripts.post_review.check_tool")
-    @patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start"))
+    @patch(
+        "scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")
+    )
     def test_gitlab_empty_review_body(self, _shas, _tool):
         sha = "c" * 40
-        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
-                "review_body": "", "findings": []}
+        data = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "sha": sha,
+            "review_body": "",
+            "findings": [],
+        }
         post_review.post_gitlab(data, set())
         # The summary note is posted before any per-finding discussion, so
         # with findings=[] it is also the only capture.
@@ -747,12 +801,19 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
         self.assertEqual(signal["sha"], sha)
 
     @patch("scripts.post_review.check_tool")
-    @patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start"))
+    @patch(
+        "scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")
+    )
     def test_gitlab_non_empty_review_body(self, _shas, _tool):
         sha = "d" * 40
-        data = {"owner": "o", "repo": "r", "pr_number": 1, "sha": sha,
-                "review_body": "## MR Review\nContext for the reviewer.\n",
-                "findings": []}
+        data = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "sha": sha,
+            "review_body": "## MR Review\nContext for the reviewer.\n",
+            "findings": [],
+        }
         post_review.post_gitlab(data, set())
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
@@ -764,8 +825,8 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
 # gitlab_project_id
 # ---------------------------------------------------------------------------
 
-class TestGitlabProjectId(unittest.TestCase):
 
+class TestGitlabProjectId(unittest.TestCase):
     def test_simple_path(self):
         result = gitlab_project_id("myorg", "myrepo")
         self.assertEqual(result, "myorg%2Fmyrepo")
@@ -779,13 +840,18 @@ class TestGitlabProjectId(unittest.TestCase):
 # valid_lines_for_file
 # ---------------------------------------------------------------------------
 
-class TestValidLinesForFile(unittest.TestCase):
 
+class TestValidLinesForFile(unittest.TestCase):
     def test_returns_none_when_valid_lines_is_none(self):
         self.assertIsNone(valid_lines_for_file(None, "foo.py"))
 
     def test_returns_sorted_lines_for_exact_file(self):
-        valid = {("src/app.py", 10), ("src/app.py", 3), ("src/app.py", 7), ("other.py", 1)}
+        valid = {
+            ("src/app.py", 10),
+            ("src/app.py", 3),
+            ("src/app.py", 7),
+            ("other.py", 1),
+        }
         result = valid_lines_for_file(valid, "src/app.py")
         self.assertEqual(result, [3, 7, 10])
 
@@ -810,18 +876,27 @@ class TestValidLinesForFile(unittest.TestCase):
 # Diagnostic logging in skip warnings
 # ---------------------------------------------------------------------------
 
+
 class TestSkipWarningDiagnostics(unittest.TestCase):
     """Verify that skip warnings include valid-line diagnostics."""
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
+    @patch(
+        "scripts.post_review.get_head_sha",
+        return_value="abc1234def5678abc1234def5678abc1234def56",
+    )
     @patch("scripts.post_review.check_tool")
-    @patch("scripts.post_review.post_json", return_value={"html_url": "http://example.com"})
+    @patch(
+        "scripts.post_review.post_json", return_value={"html_url": "http://example.com"}
+    )
     @patch("scripts.post_review.warn")
     def test_github_skip_includes_valid_lines(self, mock_warn, _post, _tool, _sha):
         from scripts.post_review import post_github
+
         valid_lines = {("src/app.py", 10), ("src/app.py", 20)}
         data = {
-            "owner": "o", "repo": "r", "pr_number": 1,
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
         post_github(data, valid_lines)
@@ -831,14 +906,24 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         self.assertIn("10", msg)
         self.assertIn("20", msg)
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
+    @patch(
+        "scripts.post_review.get_head_sha",
+        return_value="abc1234def5678abc1234def5678abc1234def56",
+    )
     @patch("scripts.post_review.check_tool")
-    @patch("scripts.post_review.post_json", return_value={"html_url": "http://example.com"})
+    @patch(
+        "scripts.post_review.post_json", return_value={"html_url": "http://example.com"}
+    )
     @patch("scripts.post_review.warn")
-    def test_github_skip_no_diag_when_valid_lines_none(self, mock_warn, _post, _tool, _sha):
+    def test_github_skip_no_diag_when_valid_lines_none(
+        self, mock_warn, _post, _tool, _sha
+    ):
         from scripts.post_review import post_github
+
         data = {
-            "owner": "o", "repo": "r", "pr_number": 1,
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
         # valid_lines=None means validation was skipped, so is_line_valid returns True
@@ -852,16 +937,24 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         # With an empty set, valid lines list is [] not None, so diag is present but empty
         self.assertIn("Valid lines for this file: []", msg)
 
-    @patch("scripts.post_review.get_head_sha", return_value="abc1234def5678abc1234def5678abc1234def56")
+    @patch(
+        "scripts.post_review.get_head_sha",
+        return_value="abc1234def5678abc1234def5678abc1234def56",
+    )
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={})
     @patch("scripts.post_review.fetch_gitlab_shas", return_value=("b", "h", "s"))
     @patch("scripts.post_review.warn")
-    def test_gitlab_skip_includes_valid_lines(self, mock_warn, _shas, _post, _tool, _sha):
+    def test_gitlab_skip_includes_valid_lines(
+        self, mock_warn, _shas, _post, _tool, _sha
+    ):
         from scripts.post_review import post_gitlab
+
         valid_lines = {("src/app.py", 5), ("src/app.py", 15)}
         data = {
-            "owner": "o", "repo": "r", "pr_number": 1,
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
         post_gitlab(data, valid_lines)
@@ -880,33 +973,39 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
 # is_new_file
 # ---------------------------------------------------------------------------
 
-class TestIsNewFile(unittest.TestCase):
 
+class TestIsNewFile(unittest.TestCase):
     def test_none_new_files_returns_false(self):
         from scripts.post_review import is_new_file
+
         self.assertFalse(is_new_file(None, "any.py"))
 
     def test_empty_new_files_returns_false(self):
         from scripts.post_review import is_new_file
+
         self.assertFalse(is_new_file(set(), "any.py"))
 
     def test_exact_match(self):
         from scripts.post_review import is_new_file
+
         self.assertTrue(is_new_file({"src/added.py"}, "src/added.py"))
 
     def test_stripped_prefix_match(self):
         from scripts.post_review import is_new_file
+
         self.assertTrue(is_new_file({"src/added.py"}, "b/src/added.py"))
         self.assertTrue(is_new_file({"src/added.py"}, "a/src/added.py"))
 
     def test_no_match_returns_false(self):
         from scripts.post_review import is_new_file
+
         self.assertFalse(is_new_file({"src/added.py"}, "src/other.py"))
 
 
 # ---------------------------------------------------------------------------
 # GitLab discussion payload — new file vs modified file
 # ---------------------------------------------------------------------------
+
 
 class TestGitlabPositionPayload(unittest.TestCase):
     """Regression tests for GitLab's discussions API payload shape.
@@ -920,6 +1019,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
     def _capture_position(self, data, valid_lines, new_files):
         """Run post_gitlab and return the position dict from the discussion call."""
         from scripts.post_review import post_gitlab
+
         captured = []
 
         def fake_post_json(cmd_prefix, payload):
@@ -931,34 +1031,49 @@ class TestGitlabPositionPayload(unittest.TestCase):
         # own fallback on failure) — never a 6-char string. "abc123" would be
         # the same class of fidelity bug flagged elsewhere in this change (a
         # get_head_sha mock only 6 hex chars long).
-        with patch("scripts.post_review.get_head_sha",
-                   return_value="deadbeef" * 5), \
-             patch("scripts.post_review.check_tool"), \
-             patch("scripts.post_review.fetch_gitlab_shas", return_value=("base", "head", "start")), \
-             patch("scripts.post_review.post_json", side_effect=fake_post_json):
+        with (
+            patch("scripts.post_review.get_head_sha", return_value="deadbeef" * 5),
+            patch("scripts.post_review.check_tool"),
+            patch(
+                "scripts.post_review.fetch_gitlab_shas",
+                return_value=("base", "head", "start"),
+            ),
+            patch("scripts.post_review.post_json", side_effect=fake_post_json),
+        ):
             post_gitlab(data, valid_lines, new_files)
 
         # First post_json call is the summary note; second is the discussion.
-        self.assertGreaterEqual(len(captured), 2, "expected summary + at least one discussion call")
+        self.assertGreaterEqual(
+            len(captured), 2, "expected summary + at least one discussion call"
+        )
         return captured[1][1]["position"]
 
     def test_new_file_position_omits_old_path(self):
         data = {
-            "owner": "o", "repo": "r", "pr_number": 1,
-            "findings": [{"file": "src/added.py", "line": 5, "title": "Bug", "body": "x"}],
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "findings": [
+                {"file": "src/added.py", "line": 5, "title": "Bug", "body": "x"}
+            ],
         }
         valid_lines = {("src/added.py", 5)}
         new_files = {"src/added.py"}
         position = self._capture_position(data, valid_lines, new_files)
-        self.assertNotIn("old_path", position,
-                         "old_path must be omitted for newly-added files")
+        self.assertNotIn(
+            "old_path", position, "old_path must be omitted for newly-added files"
+        )
         self.assertEqual(position["new_path"], "src/added.py")
         self.assertEqual(position["new_line"], 5)
 
     def test_modified_file_position_includes_old_path(self):
         data = {
-            "owner": "o", "repo": "r", "pr_number": 1,
-            "findings": [{"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}],
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "findings": [
+                {"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}
+            ],
         }
         valid_lines = {("src/edited.py", 10)}
         new_files = set()
@@ -974,8 +1089,12 @@ class TestGitlabPositionPayload(unittest.TestCase):
         modified-file findings — and the diff-fetch-failed path is rare.
         """
         data = {
-            "owner": "o", "repo": "r", "pr_number": 1,
-            "findings": [{"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}],
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "findings": [
+                {"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}
+            ],
         }
         position = self._capture_position(data, valid_lines=None, new_files=None)
         self.assertEqual(position["old_path"], "src/edited.py")
@@ -1015,9 +1134,11 @@ def _fake_run(diff="", versions=None, remote="git@github.com:o/r.git\n"):
     (i.e. a POST) returns an empty JSON object — but in dry-run mode ``post_json``
     short-circuits before reaching ``subprocess.run`` for POSTs.
     """
+
     def _run(cmd, *a, **k):
         def res(out="", err="", rc=0):
             return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+
         if cmd[0] == "which":
             return res(out="/usr/bin/" + cmd[1])
         if cmd[:3] == ["git", "remote", "get-url"]:
@@ -1031,6 +1152,7 @@ def _fake_run(diff="", versions=None, remote="git@github.com:o/r.git\n"):
         if cmd[:2] == ["glab", "api"] and cmd[-1].endswith("/versions"):
             return res(out=json.dumps(versions if versions is not None else []))
         return res(out="{}", rc=0)
+
     return _run
 
 
@@ -1055,24 +1177,47 @@ class _DryRunTestBase(unittest.TestCase):
 
 
 class TestDryRunGitHub(_DryRunTestBase):
-
     def test_dry_run_captures_payload_and_makes_no_post(self):
-        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
-                     "title": "Bug A", "body": "Body A"}
-        finding_b = {"file": "foo.py", "line": 99, "severity": "low",
-                     "title": "Bug B", "body": "Body B"}
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary", "findings": [finding_a, finding_b],
-        })
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+        finding_a = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Bug A",
+            "body": "Body A",
+        }
+        finding_b = {
+            "file": "foo.py",
+            "line": 99,
+            "severity": "low",
+            "title": "Bug B",
+            "body": "Body B",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [finding_a, finding_b],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ) as mock_run,
+        ):
             post_review.main()
 
-        post_calls = [c for c in mock_run.call_args_list
-                      if "--method" in c.args[0] and "POST" in c.args[0]]
+        post_calls = [
+            c
+            for c in mock_run.call_args_list
+            if "--method" in c.args[0] and "POST" in c.args[0]
+        ]
         self.assertEqual(post_calls, [], "no POST subprocess call in dry-run")
 
         payload_path = os.path.join(self.tmp, "post-review-payload.json")
@@ -1092,55 +1237,103 @@ class TestDryRunGitHub(_DryRunTestBase):
         self.assertEqual(comment["side"], "RIGHT")
 
     def test_invalid_line_lands_in_skipped_not_comments(self):
-        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
-                     "title": "Bug A", "body": "Body A"}
-        finding_b = {"file": "foo.py", "line": 99, "severity": "low",
-                     "title": "Bug B", "body": "Body B"}
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary", "findings": [finding_a, finding_b],
-        })
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)):
+        finding_a = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Bug A",
+            "body": "Body A",
+        }
+        finding_b = {
+            "file": "foo.py",
+            "line": 99,
+            "severity": "low",
+            "title": "Bug B",
+            "body": "Body B",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [finding_a, finding_b],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
             post_review.main()
 
         cap = self._payload()
-        expected = ("Skipping finding 'Bug B' at foo.py:99 "
-                    "— line not found in diff. Valid lines for this file: [1, 2]")
+        expected = (
+            "Skipping finding 'Bug B' at foo.py:99 "
+            "— line not found in diff. Valid lines for this file: [1, 2]"
+        )
         self.assertIn(expected, cap["skipped"])
         bodies = [c["body"] for c in cap["payload"]["comments"]]
         self.assertNotIn(render_comment_body(finding_b), bodies)
 
 
 class TestDryRunGitLab(_DryRunTestBase):
-
     def test_dry_run_captures_summary_and_discussions(self):
-        finding_x = {"file": "bar.py", "line": 2, "severity": "medium",
-                     "title": "Issue X", "body": "Desc X"}
-        self._write({
-            "platform": "gitlab", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "MR review", "findings": [finding_x],
-        })
-        versions = [{"base_commit_sha": "base1", "head_commit_sha": "head1",
-                     "start_commit_sha": "start1"}]
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GL_DIFF, versions=versions)) as mock_run:
+        finding_x = {
+            "file": "bar.py",
+            "line": 2,
+            "severity": "medium",
+            "title": "Issue X",
+            "body": "Desc X",
+        }
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [finding_x],
+            }
+        )
+        versions = [
+            {
+                "base_commit_sha": "base1",
+                "head_commit_sha": "head1",
+                "start_commit_sha": "start1",
+            }
+        ]
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GL_DIFF, versions=versions),
+            ) as mock_run,
+        ):
             post_review.main()
 
-        post_calls = [c for c in mock_run.call_args_list
-                      if "--method" in c.args[0] and "POST" in c.args[0]]
+        post_calls = [
+            c
+            for c in mock_run.call_args_list
+            if "--method" in c.args[0] and "POST" in c.args[0]
+        ]
         self.assertEqual(post_calls, [], "no POST subprocess call in dry-run")
 
         versions_calls = [
-            c for c in mock_run.call_args_list
+            c
+            for c in mock_run.call_args_list
             if c.args[0][:2] == ["glab", "api"] and c.args[0][-1].endswith("/versions")
         ]
-        self.assertTrue(versions_calls,
-                        "fetch_gitlab_shas versions GET must still run in dry-run")
+        self.assertTrue(
+            versions_calls, "fetch_gitlab_shas versions GET must still run in dry-run"
+        )
 
         cap = self._payload()
         self.assertEqual(cap["platform"], "gitlab")
@@ -1153,28 +1346,46 @@ class TestDryRunGitLab(_DryRunTestBase):
 
 
 class TestLivePathUnchanged(_DryRunTestBase):
-
     def test_without_flag_posts_and_writes_no_payload_file(self):
-        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
-                     "title": "Bug A", "body": "Body A"}
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary", "findings": [finding_a],
-        })
+        finding_a = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Bug A",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [finding_a],
+            }
+        )
         # Pin CODE_GAUNTLET_POST_MODE off so an ambient bench value (the harness pins it
         # to dry-run) cannot flip this live-path assertion.
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
-             patch.dict(os.environ, {}, clear=False), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+        with (
+            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
+            patch.dict(os.environ, {}, clear=False),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ) as mock_run,
+        ):
             os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
             post_review.main()
 
-        post_calls = [c for c in mock_run.call_args_list
-                      if "--method" in c.args[0] and "POST" in c.args[0]]
+        post_calls = [
+            c
+            for c in mock_run.call_args_list
+            if "--method" in c.args[0] and "POST" in c.args[0]
+        ]
         self.assertTrue(post_calls, "live path must issue the reviews POST")
         self.assertFalse(
-            os.path.exists(os.path.join(self.tmp, "post-review-payload.json")))
+            os.path.exists(os.path.join(self.tmp, "post-review-payload.json"))
+        )
 
 
 class TestDryRunStdout(_DryRunTestBase):
@@ -1183,35 +1394,68 @@ class TestDryRunStdout(_DryRunTestBase):
     def _run_main_capturing_stdout(self, data, diff, versions=None):
         self._write(data)
         stdout = io.StringIO()
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=diff, versions=versions)), \
-             contextlib.redirect_stdout(stdout):
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=diff, versions=versions),
+            ),
+            contextlib.redirect_stdout(stdout),
+        ):
             post_review.main()
         return stdout.getvalue()
 
     def test_github_dry_run_stdout_has_no_posted_claim(self):
-        out = self._run_main_capturing_stdout({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary",
-            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
-                          "title": "Bug A", "body": "Body A"}],
-        }, diff=GH_DIFF)
+        out = self._run_main_capturing_stdout(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [
+                    {
+                        "file": "foo.py",
+                        "line": 2,
+                        "severity": "high",
+                        "title": "Bug A",
+                        "body": "Body A",
+                    }
+                ],
+            },
+            diff=GH_DIFF,
+        )
         self.assertNotIn("Review posted:", out)
         self.assertNotIn("comment(s) posted.", out)
         self.assertIn("Review captured (dry-run).", out)
         self.assertIn("inline comment(s) captured.", out)
 
     def test_gitlab_dry_run_stdout_has_no_posted_claim(self):
-        versions = [{"base_commit_sha": "b", "head_commit_sha": "h",
-                     "start_commit_sha": "s"}]
-        out = self._run_main_capturing_stdout({
-            "platform": "gitlab", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "MR review",
-            "findings": [{"file": "bar.py", "line": 2, "severity": "medium",
-                          "title": "Issue X", "body": "Desc X"}],
-        }, diff=GL_DIFF, versions=versions)
+        versions = [
+            {"base_commit_sha": "b", "head_commit_sha": "h", "start_commit_sha": "s"}
+        ]
+        out = self._run_main_capturing_stdout(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [
+                    {
+                        "file": "bar.py",
+                        "line": 2,
+                        "severity": "medium",
+                        "title": "Issue X",
+                        "body": "Desc X",
+                    }
+                ],
+            },
+            diff=GL_DIFF,
+            versions=versions,
+        )
         self.assertNotIn("note posted.", out)
         self.assertNotIn("discussion(s) posted.", out)
         self.assertIn("MR summary note captured (dry-run).", out)
@@ -1222,18 +1466,34 @@ class TestLivePathStdout(_DryRunTestBase):
     """The live path's stdout is unchanged: it still claims posts."""
 
     def test_github_live_path_prints_posted(self):
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary",
-            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
-                          "title": "Bug A", "body": "Body A"}],
-        })
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [
+                    {
+                        "file": "foo.py",
+                        "line": 2,
+                        "severity": "high",
+                        "title": "Bug A",
+                        "body": "Body A",
+                    }
+                ],
+            }
+        )
         stdout = io.StringIO()
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
-             patch.dict(os.environ, {}, clear=False), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)), \
-             contextlib.redirect_stdout(stdout):
+        with (
+            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
+            patch.dict(os.environ, {}, clear=False),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+            contextlib.redirect_stdout(stdout),
+        ):
             os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
             post_review.main()
         out = stdout.getvalue()
@@ -1246,6 +1506,7 @@ class TestLivePathStdout(_DryRunTestBase):
 # CODE_GAUNTLET_POST_MODE env-enforced dry-run
 # ---------------------------------------------------------------------------
 
+
 class TestPostModeEnv(_DryRunTestBase):
     """CODE_GAUNTLET_POST_MODE=dry-run self-enforces dry-run even without --dry-run.
 
@@ -1256,39 +1517,64 @@ class TestPostModeEnv(_DryRunTestBase):
     """
 
     def _write_gh(self):
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary",
-            "findings": [{"file": "foo.py", "line": 2, "severity": "high",
-                          "title": "Bug A", "body": "Body A"}],
-        })
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [
+                    {
+                        "file": "foo.py",
+                        "line": 2,
+                        "severity": "high",
+                        "title": "Bug A",
+                        "body": "Body A",
+                    }
+                ],
+            }
+        )
 
     def _post_calls(self, mock_run):
-        return [c for c in mock_run.call_args_list
-                if "--method" in c.args[0] and "POST" in c.args[0]]
+        return [
+            c
+            for c in mock_run.call_args_list
+            if "--method" in c.args[0] and "POST" in c.args[0]
+        ]
 
     def _payload_exists(self):
         return os.path.exists(os.path.join(self.tmp, "post-review-payload.json"))
 
     def test_env_dry_run_alone_captures_payload_no_posts(self):
         self._write_gh()
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
-             patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "dry-run"}), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+        with (
+            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
+            patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "dry-run"}),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ) as mock_run,
+        ):
             post_review.main()
-        self.assertEqual(self._post_calls(mock_run), [],
-                         "env dry-run must issue no POST")
+        self.assertEqual(
+            self._post_calls(mock_run), [], "env dry-run must issue no POST"
+        )
         self.assertTrue(self._payload_exists())
         self.assertEqual(self._payload()["platform"], "github")
 
     def test_flag_alone_dry_run_when_env_unset(self):
         self._write_gh()
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch.dict(os.environ, {}, clear=False), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch.dict(os.environ, {}, clear=False),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ) as mock_run,
+        ):
             os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
             post_review.main()
         self.assertEqual(self._post_calls(mock_run), [])
@@ -1296,25 +1582,35 @@ class TestPostModeEnv(_DryRunTestBase):
 
     def test_neither_flag_nor_env_posts_live(self):
         self._write_gh()
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
-             patch.dict(os.environ, {}, clear=False), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+        with (
+            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
+            patch.dict(os.environ, {}, clear=False),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ) as mock_run,
+        ):
             os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
             post_review.main()
-        self.assertTrue(self._post_calls(mock_run),
-                        "live path must issue the reviews POST")
+        self.assertTrue(
+            self._post_calls(mock_run), "live path must issue the reviews POST"
+        )
         self.assertFalse(self._payload_exists())
 
     def test_env_live_without_flag_posts_live(self):
         self._write_gh()
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path]), \
-             patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "live"}), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)) as mock_run:
+        with (
+            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
+            patch.dict(os.environ, {"CODE_GAUNTLET_POST_MODE": "live"}),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ) as mock_run,
+        ):
             post_review.main()
-        self.assertTrue(self._post_calls(mock_run),
-                        "env=live with no flag must post live")
+        self.assertTrue(
+            self._post_calls(mock_run), "env=live with no flag must post live"
+        )
         self.assertFalse(self._payload_exists())
 
 
@@ -1333,18 +1629,34 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
     """
 
     FINDINGS = [
-        {"file": "foo.py", "line": 2, "severity": "high",
-         "title": "Bug A", "body": "Body A"},
-        {"file": "foo.py", "line": 1, "end_line": 2, "severity": "low",
-         "title": "Bug B", "body": "Body B"},
+        {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Bug A",
+            "body": "Body A",
+        },
+        {
+            "file": "foo.py",
+            "line": 1,
+            "end_line": 2,
+            "severity": "low",
+            "title": "Bug B",
+            "body": "Body B",
+        },
     ]
 
     def _dry_run_payload_bytes(self, data):
         self._write(data)
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)):
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
             post_review.main()
         payload_path = os.path.join(self.tmp, "post-review-payload.json")
         with open(payload_path, "rb") as f:
@@ -1357,16 +1669,23 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
 
     def test_wrapper_and_manual_wrap_produce_byte_identical_payloads(self):
         manual = {
-            "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary", "findings": self.FINDINGS,
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "Summary",
+            "findings": self.FINDINGS,
         }
         # The writer-emitted wrapper: same fields plus the marker sha the script
         # prefers (see resolve_marker_sha). Key order intentionally matches
         # writerPayload's emission; the fixture's sha matches the mocked HEAD so
         # both payloads stay byte-identical either way.
         wrapper = {
-            "owner": "o", "repo": "r", "pr_number": 5, "sha": "deadbeefcafe",
-            "review_body": "Summary", "findings": self.FINDINGS,
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "sha": "deadbeefcafe",
+            "review_body": "Summary",
+            "findings": self.FINDINGS,
         }
         self.assertEqual(
             self._dry_run_payload_bytes(manual),
@@ -1381,19 +1700,35 @@ class TestWriterWrapperByteParity(_DryRunTestBase):
 # already-prose'd review_body does not get a duplicate.
 # ---------------------------------------------------------------------------
 
-class TestBothFooterHalvesPosted(_DryRunTestBase):
 
+class TestBothFooterHalvesPosted(_DryRunTestBase):
     def test_github_review_body_contains_both_prose_and_marker(self):
-        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
-                     "title": "Bug A", "body": "Body A"}
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "Summary", "findings": [finding_a],
-        })
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)):
+        finding_a = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Bug A",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [finding_a],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
             post_review.main()
 
         body = self._payload()["payload"]["body"]
@@ -1403,18 +1738,39 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
         self.assertIn("Summary", body, "the original review_body must still be present")
 
     def test_gitlab_summary_note_contains_both_prose_and_marker(self):
-        finding_x = {"file": "bar.py", "line": 2, "severity": "medium",
-                     "title": "Issue X", "body": "Desc X"}
-        self._write({
-            "platform": "gitlab", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": "MR review", "findings": [finding_x],
-        })
-        versions = [{"base_commit_sha": "base1", "head_commit_sha": "head1",
-                     "start_commit_sha": "start1"}]
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GL_DIFF, versions=versions)):
+        finding_x = {
+            "file": "bar.py",
+            "line": 2,
+            "severity": "medium",
+            "title": "Issue X",
+            "body": "Desc X",
+        }
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [finding_x],
+            }
+        )
+        versions = [
+            {
+                "base_commit_sha": "base1",
+                "head_commit_sha": "head1",
+                "start_commit_sha": "start1",
+            }
+        ]
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GL_DIFF, versions=versions),
+            ),
+        ):
             post_review.main()
 
         body = self._payload()["summary"]["body"]
@@ -1430,20 +1786,39 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
             "Some notes.\n\n---\n"
             "Generated by code-gauntlet | Reviewed up to: deadbeefcafe\n"
         )
-        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
-                     "title": "Bug A", "body": "Body A"}
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": pre_existing, "findings": [finding_a],
-        })
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)):
+        finding_a = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Bug A",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": pre_existing,
+                "findings": [finding_a],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
             post_review.main()
         body = self._payload()["payload"]["body"]
-        self.assertEqual(body.count("Generated by code-gauntlet"), 1,
-                         f"an exact-sha match must not duplicate: {body!r}")
+        self.assertEqual(
+            body.count("Generated by code-gauntlet"),
+            1,
+            f"an exact-sha match must not duplicate: {body!r}",
+        )
 
     def test_review_body_with_a_stale_prose_sha_still_gets_the_real_one(self):
         """A hand-composed footer naming a DIFFERENT commit must not suppress the
@@ -1451,17 +1826,35 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
         commit the review never examined. Two lines is the honest outcome — the
         reader takes the last — and only an exact-sha match is deduplicated
         (see test_review_body_with_the_same_prose_sha_gets_no_second_copy)."""
-        pre_existing = "Some notes.\n\nGenerated by code-gauntlet | Reviewed up to: abc1234\n"
-        finding_a = {"file": "foo.py", "line": 2, "severity": "high",
-                     "title": "Bug A", "body": "Body A"}
-        self._write({
-            "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-            "review_body": pre_existing, "findings": [finding_a],
-        })
-        with patch.object(sys, "argv",
-                          ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run",
-                   side_effect=_fake_run(diff=GH_DIFF)):
+        pre_existing = (
+            "Some notes.\n\nGenerated by code-gauntlet | Reviewed up to: abc1234\n"
+        )
+        finding_a = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Bug A",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": pre_existing,
+                "findings": [finding_a],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
             post_review.main()
 
         body = self._payload()["payload"]["body"]

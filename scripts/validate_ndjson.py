@@ -37,7 +37,6 @@ import json
 import os
 import sys
 
-
 # How much of an invalid line to echo back. Long enough to identify the
 # finding, short enough to keep stderr readable when many lines fail.
 _SNIPPET_MAX = 160
@@ -96,7 +95,9 @@ def validate(path):
             json.loads(line)
             valid_count += 1
         except json.JSONDecodeError as e:
-            invalid.append((line_no, _truncate(line), f"JSONDecodeError: {e.msg} at col {e.colno}"))
+            invalid.append(
+                (line_no, _truncate(line), f"JSONDecodeError: {e.msg} at col {e.colno}")
+            )
 
     if invalid:
         print(
@@ -111,7 +112,7 @@ def validate(path):
             "Most common cause: a literal newline, tab, or carriage return inside "
             "a JSON string value. Replace each with the two-character escape "
             "sequence \\n / \\t / \\r so the finding stays on one line. "
-            "Also escape: apostrophe -> \\u0027, double-quote -> \\\", backslash "
+            'Also escape: apostrophe -> \\u0027, double-quote -> \\", backslash '
             "-> \\\\. Re-emit the affected finding(s) and re-run this script.",
             file=sys.stderr,
         )

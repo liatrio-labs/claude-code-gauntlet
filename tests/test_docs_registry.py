@@ -39,11 +39,11 @@ ROOT_MD_ALLOW = {
 # maintainer standard. Entries may predate their file landing (an open PR may add
 # one); the guard is subset-only in that direction on purpose.
 DOCS_ALLOW = {
-    "docs/duplication-register.md",       # living register, required by #55
+    "docs/duplication-register.md",  # living register, required by #55
     "docs/engineering-audit-2026-07.md",  # point-in-time audit artifact, required by #55
-    "docs/machine-parsed-strings.md",     # living registry, required by #37 (PR #119)
-    "docs/maintainer-issues.md",          # maintainer work-queue standard
-    "docs/v3-residue-audit-2026-07.md",   # point-in-time audit artifact, required by #37 (PR #119)
+    "docs/machine-parsed-strings.md",  # living registry, required by #37 (PR #119)
+    "docs/maintainer-issues.md",  # maintainer work-queue standard
+    "docs/v3-residue-audit-2026-07.md",  # point-in-time audit artifact, required by #37 (PR #119)
 }
 
 # Subtrees under docs/ with their own curated index; markdown only inside.

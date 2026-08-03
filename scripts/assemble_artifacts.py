@@ -240,7 +240,7 @@ class JsSerializationError(ValueError):
 #
 # Integers outside JS's safe range are rejected for the same reason: JS would have
 # parsed them lossily, so the two runtimes no longer hold the same value.
-JS_MAX_SAFE_INTEGER = 2 ** 53 - 1
+JS_MAX_SAFE_INTEGER = 2**53 - 1
 
 
 def assert_js_reproducible(obj, path="$"):
@@ -339,7 +339,7 @@ def js_stringify_pretty(obj):
 def read_text(path):
     """Return the normalized file content, or raise (IOError/OSError/ValueError —
     a non-UTF-8 byte on disk raises UnicodeDecodeError, which is a ValueError)."""
-    with open(path, "r", encoding="utf-8", newline="") as fh:
+    with open(path, encoding="utf-8", newline="") as fh:
         return normalize_content(fh.read())
 
 
@@ -355,7 +355,9 @@ def write_text_atomic(path, text):
     new content, never a prefix.
     """
     directory = os.path.dirname(os.path.abspath(path))
-    fd, tmp = tempfile.mkstemp(prefix=".code-gauntlet-assemble-", suffix=".tmp", dir=directory)
+    fd, tmp = tempfile.mkstemp(
+        prefix=".code-gauntlet-assemble-", suffix=".tmp", dir=directory
+    )
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
             fh.write(text)
@@ -438,9 +440,7 @@ def _load_source(path, cache, errors):
             return None
         fid = item.get("id")
         if not isinstance(fid, str) or not fid:
-            errors.append(
-                "source entry %d has no usable string id: %s" % (index, path)
-            )
+            errors.append("source entry %d has no usable string id: %s" % (index, path))
             return None
         if fid in by_id:
             errors.append("duplicate id %r in source: %s" % (fid, path))
@@ -468,9 +468,7 @@ def _strip_aliases(finding, alias_fields):
     """Drop the v2 alias fields the persist boundary added, preserving the key
     ORDER of the remaining fields (the aliases were appended last, so removing
     them restores the canonical shape byte-for-byte)."""
-    return dict(
-        (k, v) for (k, v) in finding.items() if k not in alias_fields
-    )
+    return dict((k, v) for (k, v) in finding.items() if k not in alias_fields)
 
 
 def _serialize(document, label, errors):
@@ -491,7 +489,7 @@ def _assemble(plan_path):
     verified = []
 
     try:
-        with open(plan_path, "r", encoding="utf-8", newline="") as fh:
+        with open(plan_path, encoding="utf-8", newline="") as fh:
             plan_raw = fh.read()
     except Exception as exc:
         errors.append("plan not found or unreadable: %s (%s)" % (plan_path, exc))
@@ -565,14 +563,16 @@ def _assemble(plan_path):
         chars = utf16_len(content)
         checksum = fnv1a32(content)
         matched = chars == entry.get("chars") and checksum == entry.get("checksum")
-        verified.append({
-            "path": path,
-            "chars": chars,
-            "expected_chars": entry.get("chars"),
-            "checksum": checksum,
-            "expected_checksum": entry.get("checksum"),
-            "content_proof": "match" if matched else "mismatch",
-        })
+        verified.append(
+            {
+                "path": path,
+                "chars": chars,
+                "expected_chars": entry.get("chars"),
+                "checksum": checksum,
+                "expected_checksum": entry.get("checksum"),
+                "content_proof": "match" if matched else "mismatch",
+            }
+        )
         if not matched:
             sys.stderr.write(
                 "content-proof mismatch: %s (expected %s chars / %s, got %d / %s)\n"
@@ -650,13 +650,17 @@ def _assemble(plan_path):
         try:
             write_text_atomic(path, text)
         except Exception as exc:
-            errors.append("could not write %s (%s: %s)" % (path, type(exc).__name__, exc))
+            errors.append(
+                "could not write %s (%s: %s)" % (path, type(exc).__name__, exc)
+            )
             continue
-        written.append({
-            "path": path,
-            "chars": utf16_len(text),
-            "checksum": fnv1a32(text),
-        })
+        written.append(
+            {
+                "path": path,
+                "chars": utf16_len(text),
+                "checksum": fnv1a32(text),
+            }
+        )
 
     if errors:
         return _receipt(False, plan_version, actual, verified, written, errors)
@@ -676,7 +680,11 @@ def assemble(plan_path):
         return _assemble(plan_path)
     except Exception as exc:
         return _receipt(
-            False, None, None, [], [],
+            False,
+            None,
+            None,
+            [],
+            [],
             ["assembler failed unexpectedly: %s: %s" % (type(exc).__name__, exc)],
         )
 
@@ -697,16 +705,19 @@ def _minimal_receipt_line(exc):
     even that does not hold.
     """
     try:
-        return json.dumps({
-            "ok": False,
-            "planVersion": None,
-            "planChecksum": None,
-            "verified": [],
-            "written": [],
-            "errors": [
-                "receipt could not be serialized: %s: %s" % (type(exc).__name__, exc)
-            ],
-        })
+        return json.dumps(
+            {
+                "ok": False,
+                "planVersion": None,
+                "planChecksum": None,
+                "verified": [],
+                "written": [],
+                "errors": [
+                    "receipt could not be serialized: %s: %s"
+                    % (type(exc).__name__, exc)
+                ],
+            }
+        )
     except Exception:
         return (
             '{"ok": false, "planVersion": null, "planChecksum": null, '

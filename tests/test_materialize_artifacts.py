@@ -54,7 +54,10 @@ def record_task_output(tmp, nonce=NONCE):
     os.makedirs(os.path.dirname(task_path), exist_ok=True)
     proc = subprocess.run(
         ["node", RECORDER, task_path, out_dir, nonce],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     if proc.returncode != 0:
         raise RuntimeError("recorder failed: %s" % proc.stderr)
@@ -81,7 +84,11 @@ def run_cli(args, environ=None):
     env.update(environ or {})
     proc = subprocess.run(
         [sys.executable, SCRIPT] + args,
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60, env=env,
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
     )
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
     assert len(lines) == 1, "expected exactly one stdout line, got %r" % proc.stdout
@@ -95,8 +102,11 @@ class MaterializeTestCase(unittest.TestCase):
         self.task, self.out_dir = record_task_output(self.tmp)
 
     def artifact(self, name):
-        return os.path.join(self.out_dir, "code-gauntlet-%s-abc1234.%s" % (
-            name, "md" if name == "report" else "json"))
+        return os.path.join(
+            self.out_dir,
+            "code-gauntlet-%s-abc1234.%s"
+            % (name, "md" if name == "report" else "json"),
+        )
 
     def read(self, path):
         with open(path, encoding="utf-8", newline="") as fh:
@@ -111,8 +121,10 @@ class TestHappyPath(MaterializeTestCase):
         self.assertEqual(receipt["gaps"], [])
         for entry in payload_of(self.task)["entries"]:
             self.assertEqual(
-                self.read(entry["path"]), entry["text"],
-                "%s is not byte-identical to what the workflow returned" % entry["path"],
+                self.read(entry["path"]),
+                entry["text"],
+                "%s is not byte-identical to what the workflow returned"
+                % entry["path"],
             )
 
     def test_the_bytes_a_transcriber_loses_survive(self):
@@ -152,7 +164,9 @@ class TestHappyPath(MaterializeTestCase):
 
     def test_the_content_proof_is_the_assemblers_own_and_it_matched(self):
         _code, receipt, _ = run_cli(["--output-dir", self.out_dir, "--task", self.task])
-        proofs = {e["path"]: e["content_proof"] for e in receipt["assemble"]["verified"]}
+        proofs = {
+            e["path"]: e["content_proof"] for e in receipt["assemble"]["verified"]
+        }
         self.assertEqual(
             proofs,
             {self.artifact("findings"): "match", self.artifact("report"): "match"},
@@ -160,7 +174,9 @@ class TestHappyPath(MaterializeTestCase):
 
     def test_running_it_twice_is_idempotent(self):
         run_cli(["--output-dir", self.out_dir, "--task", self.task])
-        first = {e["path"]: self.read(e["path"]) for e in payload_of(self.task)["entries"]}
+        first = {
+            e["path"]: self.read(e["path"]) for e in payload_of(self.task)["entries"]
+        }
         code, receipt, _ = run_cli(["--output-dir", self.out_dir, "--task", self.task])
         self.assertEqual(code, 0, receipt)
         for path, text in first.items():
@@ -180,7 +196,14 @@ class TestResolution(MaterializeTestCase):
 
     def test_a_foreign_nonce_is_refused_and_nothing_is_written(self):
         code, receipt, _ = run_cli(
-            ["--output-dir", self.out_dir, "--task", self.task, "--nonce", "some-other-run"],
+            [
+                "--output-dir",
+                self.out_dir,
+                "--task",
+                self.task,
+                "--nonce",
+                "some-other-run",
+            ],
         )
         self.assertEqual(code, 1)
         self.assertFalse(receipt["ok"])
@@ -199,7 +222,10 @@ class TestResolution(MaterializeTestCase):
     def test_neither_target_is_a_usage_error_with_empty_stdout(self):
         proc = subprocess.run(
             [sys.executable, SCRIPT, "--output-dir", self.out_dir],
-            cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         self.assertEqual(proc.returncode, 2)
         self.assertEqual(proc.stdout, "")
@@ -226,15 +252,21 @@ class TestFailureModes(MaterializeTestCase):
         # reports not-ok, and the gap names the path.
         def shorten(payload):
             payload["entries"][0]["text"] = json.dumps([{"id": "F1"}], indent=2)
+
         rewrite_payload(self.task, shorten)
 
         code, receipt, _ = run_cli(["--output-dir", self.out_dir, "--task", self.task])
         self.assertEqual(code, 1)
         self.assertFalse(receipt["ok"])
-        self.assertTrue(os.path.exists(self.artifact("findings")), "what landed is named")
+        self.assertTrue(
+            os.path.exists(self.artifact("findings")), "what landed is named"
+        )
         self.assertEqual(len(receipt["materialized"]), 3)
         self.assertTrue(
-            any("artifact-content-proof" in gap and "findings" in gap for gap in receipt["gaps"]),
+            any(
+                "artifact-content-proof" in gap and "findings" in gap
+                for gap in receipt["gaps"]
+            ),
             receipt["gaps"],
         )
 
@@ -249,12 +281,16 @@ class TestFailureModes(MaterializeTestCase):
             del plan["planChecksum"]
             plan["planChecksum"] = plan_checksum(plan)
             payload["entries"][2]["text"] = json.dumps(plan, indent=2)
+
         rewrite_payload(self.task, tamper)
 
         code, receipt, _ = run_cli(["--output-dir", self.out_dir, "--task", self.task])
         self.assertEqual(code, 1)
         self.assertTrue(
-            any("does not match the pipeline's own derivation" in gap for gap in receipt["gaps"]),
+            any(
+                "does not match the pipeline's own derivation" in gap
+                for gap in receipt["gaps"]
+            ),
             receipt["gaps"],
         )
 
@@ -263,17 +299,21 @@ class TestFailureModes(MaterializeTestCase):
 
         def redirect(payload):
             payload["entries"][0]["path"] = escapee
+
         rewrite_payload(self.task, redirect)
 
         code, receipt, _ = run_cli(["--output-dir", self.out_dir, "--task", self.task])
         self.assertEqual(code, 1)
         self.assertFalse(os.path.exists(escapee))
-        self.assertEqual(receipt["materialized"], [], "a refused payload writes nothing at all")
+        self.assertEqual(
+            receipt["materialized"], [], "a refused payload writes nothing at all"
+        )
         self.assertIn("outside the output directory", receipt["errors"][0])
 
     def test_a_payload_naming_no_plan_writes_nothing(self):
         def drop(payload):
             payload["planPath"] = "%s/not-an-entry.json" % self.out_dir
+
         rewrite_payload(self.task, drop)
 
         code, receipt, _ = run_cli(["--output-dir", self.out_dir, "--task", self.task])
@@ -303,7 +343,9 @@ class TestOtherChannelsUntouched(MaterializeTestCase):
         self.assertFalse(os.path.exists(self.artifact("findings")))
 
     def test_a_foreign_channel_name_is_skipped_rather_than_guessed_at(self):
-        rewrite_payload(self.task, lambda p: p.__setitem__("channel", "some-future-channel"))
+        rewrite_payload(
+            self.task, lambda p: p.__setitem__("channel", "some-future-channel")
+        )
         code, receipt, _ = run_cli(["--output-dir", self.out_dir, "--task", self.task])
         self.assertEqual(code, 1)
         self.assertIsNone(receipt["source"])

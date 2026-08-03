@@ -4,6 +4,7 @@
 Usage: python3 workflows/test/tools/record_parity.py [<script>] [<case>]
 Reads each case's input.json, dispatches to the Python function, writes expected.json.
 """
+
 import json
 import sys
 from pathlib import Path
@@ -15,28 +16,41 @@ FIXTURES = REPO / "tests" / "fixtures" / "parity"
 
 def _finding_dedup(inp):
     from finding_dedup import dedup_by_id
+
     merged, dupes, dropped = dedup_by_id(inp["ndjson_findings"], inp["text_findings"])
     return {"merged": merged, "duplicates_resolved": dupes, "dropped_no_id": dropped}
 
 
 def _merge_findings(inp):
     import tempfile
+
     from merge_findings import merge
+
     args = inp["args"]
     with tempfile.TemporaryDirectory() as fd, tempfile.TemporaryDirectory() as td:
         for name, text in inp.get("findings_dir_files", {}).items():
             (Path(fd) / name).write_text(text)
         for name, text in inp.get("text_dir_files", {}).items():
             (Path(td) / name).write_text(text)
-        env = merge(findings_dir=fd, session_sha=args["session_sha"], agents=args["agents"],
-                    text_dir=td, base_branch=args["base_branch"], head_sha=args["head_sha"],
-                    pr_number=args["pr_number"], owner=args["owner"], repo=args["repo"])
+        env = merge(
+            findings_dir=fd,
+            session_sha=args["session_sha"],
+            agents=args["agents"],
+            text_dir=td,
+            base_branch=args["base_branch"],
+            head_sha=args["head_sha"],
+            pr_number=args["pr_number"],
+            owner=args["owner"],
+            repo=args["repo"],
+        )
     return env
 
 
 def _filter_findings(inp):
     import tempfile
+
     import filter_findings as ff
+
     fn = inp["fn"]
     if fn == "normalize_field_names":
         findings = inp["findings"]
@@ -60,17 +74,29 @@ def _filter_findings(inp):
         # apply_threshold_filter returns a 3-tuple (passed, eliminated, contested_count),
         # not the 2-tuple the brief's Step 1 skeleton unpacks -- corrected per the
         # brief's own instruction to confirm arity against scripts/filter_findings.py.
-        passed, eliminated, contested_count = ff.apply_threshold_filter(inp["findings"], inp["config"])
-        return {"kept": passed, "eliminated": eliminated, "contested_count": contested_count}
+        passed, eliminated, contested_count = ff.apply_threshold_filter(
+            inp["findings"], inp["config"]
+        )
+        return {
+            "kept": passed,
+            "eliminated": eliminated,
+            "contested_count": contested_count,
+        }
     if fn == "apply_injection_filter":
         kept, eliminated = ff.apply_injection_filter(inp["findings"])
         return {"kept": kept, "eliminated": eliminated}
     if fn == "apply_exclusions":
-        kept, eliminated = ff.apply_exclusions(inp["findings"], inp["exclusion_patterns"])
+        kept, eliminated = ff.apply_exclusions(
+            inp["findings"], inp["exclusion_patterns"]
+        )
         return {"kept": kept, "eliminated": eliminated}
     if fn == "detect_disagreement":
         active, suppressed, boosted_count = ff.detect_disagreement(inp["findings"])
-        return {"active": active, "suppressed": suppressed, "boosted_count": boosted_count}
+        return {
+            "active": active,
+            "suppressed": suppressed,
+            "boosted_count": boosted_count,
+        }
     if fn == "_route_by_dimension":
         # Single-finding-in, route-out -- no list plumbing needed.
         return {"route": ff._route_by_dimension(inp["finding"])}
@@ -78,7 +104,9 @@ def _filter_findings(inp):
         kept, dropped = ff.dedup_cross_agent(inp["findings"])
         return {"kept": kept, "dropped": dropped}
     if fn == "tag_findings":
-        tagged, dedup_dropped, main_count, suggestion_count = ff.tag_findings(inp["findings"])
+        tagged, dedup_dropped, main_count, suggestion_count = ff.tag_findings(
+            inp["findings"]
+        )
         return {
             "tagged": tagged,
             "dedup_dropped": dedup_dropped,
@@ -90,10 +118,16 @@ def _filter_findings(inp):
 
 def _apply_validations(inp):
     import copy
+
     from apply_validations import apply_validations
+
     findings = copy.deepcopy(inp["findings"])
     adjusted_count, unmatched_ids = apply_validations(findings, inp["validations"])
-    return {"findings": findings, "adjusted_count": adjusted_count, "unmatched_ids": unmatched_ids}
+    return {
+        "findings": findings,
+        "adjusted_count": adjusted_count,
+        "unmatched_ids": unmatched_ids,
+    }
 
 
 # The script's own audit trail (blame_metadata / factual_verification / diff_validation
@@ -102,7 +136,12 @@ def _apply_validations(inp):
 # No workflow schema declares any of the first three, and joinVerifyDeltas (stages.js)
 # only ever writes DELTA_VALUE_KEYS onto the finding it already holds -- it never carries
 # any of these four across the join either -- so a golden "joined" finding must not either.
-_VERIFY_DELTA_DROP = ("blame_metadata", "factual_verification", "diff_validation", "agent")
+_VERIFY_DELTA_DROP = (
+    "blame_metadata",
+    "factual_verification",
+    "diff_validation",
+    "agent",
+)
 
 
 def _project_verify_delta(finding):
@@ -150,12 +189,16 @@ def _apply_challenges(inp):
     # concatenation, which belong to the skill/stage layer, not this pure
     # transform. Matches the JS twin's applyChallenges() return shape.
     import copy
+
     from apply_challenges import apply_challenges, rank_findings
     from filter_findings import dedup_cross_agent
+
     findings = copy.deepcopy(inp["findings"])
     challenges = inp["challenges"]
     total_input = len(findings)
-    active, challenge_eliminated, challenge_stats = apply_challenges(findings, challenges)
+    active, challenge_eliminated, challenge_stats = apply_challenges(
+        findings, challenges
+    )
     active, dedup_dropped = dedup_cross_agent(active)
     dedup_elim = list(dedup_dropped)
     active = rank_findings(active)
@@ -169,7 +212,11 @@ def _apply_challenges(inp):
         "dedup_dropped": len(dedup_elim),
         "final_count": len(active),
     }
-    return {"findings": active, "eliminated": challenge_eliminated + dedup_elim, "stats": stats}
+    return {
+        "findings": active,
+        "eliminated": challenge_eliminated + dedup_elim,
+        "stats": stats,
+    }
 
 
 # Registered per-script recorders. Later tasks append entries here.
@@ -186,7 +233,9 @@ RECORDERS = {
 def record(script, case_dir):
     inp = json.loads((case_dir / "input.json").read_text())
     out = RECORDERS[script](inp)
-    (case_dir / "expected.json").write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
+    (case_dir / "expected.json").write_text(
+        json.dumps(out, indent=2, sort_keys=True) + "\n"
+    )
 
 
 def main(argv):

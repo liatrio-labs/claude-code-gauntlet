@@ -111,8 +111,7 @@ def _pr_dirs(run_dir):
     """Return sorted per-PR artifact directories under ``run_dir``."""
     run_dir = Path(run_dir)
     return sorted(
-        p for p in run_dir.iterdir()
-        if p.is_dir() and p.name.startswith("pr-")
+        p for p in run_dir.iterdir() if p.is_dir() and p.name.startswith("pr-")
     )
 
 
@@ -146,16 +145,14 @@ def _check_union_schema(finding, label):
     """Return failure strings for one finding's union-schema surface."""
     failures = []
     if not isinstance(finding, dict):
-        return ["{}: finding is not an object".format(label)]
+        return [f"{label}: finding is not an object"]
     for group in _CANONICAL_OR_ALIAS:
         if not any(finding.get(k) not in (None, "") for k in group):
             failures.append(
                 "{}: missing required field group {}".format(label, "/".join(group))
             )
     if not any(finding.get(k) not in (None, "") for k in _LINE_FIELDS):
-        failures.append(
-            "{}: missing line identity (line_start or line)".format(label)
-        )
+        failures.append(f"{label}: missing line identity (line_start or line)")
     return failures
 
 
@@ -176,46 +173,44 @@ def _validate_payload_fields(payload, label):
     platform = payload.get("platform")
     if platform not in ("github", "gitlab"):
         failures.append(
-            "{}: unrecognized payload platform {!r} (expected 'github' or 'gitlab')".format(
-                label, platform
-            )
+            f"{label}: unrecognized payload platform {platform!r} (expected 'github' or 'gitlab')"
         )
         return failures
     if platform == "github":
         comments = (payload.get("payload") or {}).get("comments")
         if comments is None:
-            failures.append("{}: github payload missing payload.comments".format(label))
+            failures.append(f"{label}: github payload missing payload.comments")
             return failures
         if not isinstance(comments, list):
-            failures.append("{}: github payload.comments must be a list".format(label))
+            failures.append(f"{label}: github payload.comments must be a list")
             return failures
         for i, c in enumerate(comments):
             if not isinstance(c, dict):
-                failures.append("{}: comment[{}] is not an object".format(label, i))
+                failures.append(f"{label}: comment[{i}] is not an object")
                 continue
             for key in ("body", "path", "line"):
                 if key not in c:
                     failures.append(
-                        "{}: comment[{}] missing required field {!r}".format(label, i, key)
+                        f"{label}: comment[{i}] missing required field {key!r}"
                     )
     else:  # gitlab
         discussions = payload.get("discussions")
         if discussions is None:
-            failures.append("{}: gitlab payload missing discussions".format(label))
+            failures.append(f"{label}: gitlab payload missing discussions")
             return failures
         if not isinstance(discussions, list):
-            failures.append("{}: gitlab discussions must be a list".format(label))
+            failures.append(f"{label}: gitlab discussions must be a list")
             return failures
         for i, d in enumerate(discussions):
             if not isinstance(d, dict):
-                failures.append("{}: discussion[{}] is not an object".format(label, i))
+                failures.append(f"{label}: discussion[{i}] is not an object")
                 continue
             if "body" not in d:
-                failures.append("{}: discussion[{}] missing body".format(label, i))
+                failures.append(f"{label}: discussion[{i}] missing body")
             position = d.get("position") or {}
             if "new_path" not in position or "new_line" not in position:
                 failures.append(
-                    "{}: discussion[{}] position missing new_path/new_line".format(label, i)
+                    f"{label}: discussion[{i}] position missing new_path/new_line"
                 )
     return failures
 
@@ -277,9 +272,7 @@ def _check_echo_identity(pr_dir, repo_root, label):
     expected_ver = read_pipeline_version(repo_root)
     if not expected_ver:
         failures.append(
-            "{}: cannot read expected PIPELINE_VERSION from workflows/pipeline.js".format(
-                label
-            )
+            f"{label}: cannot read expected PIPELINE_VERSION from workflows/pipeline.js"
         )
         return failures, False
     if receipt.get("pipeline_version") != expected_ver:
@@ -290,19 +283,17 @@ def _check_echo_identity(pr_dir, repo_root, label):
         )
     plugin_root = receipt.get("plugin_root")
     if not plugin_root:
-        failures.append("{}: identity receipt missing plugin_root".format(label))
+        failures.append(f"{label}: identity receipt missing plugin_root")
         return failures, False
     try:
         got_root = Path(plugin_root).resolve()
         exp_root = Path(repo_root).resolve()
     except OSError as exc:
-        failures.append("{}: identity plugin_root resolve failed: {}".format(label, exc))
+        failures.append(f"{label}: identity plugin_root resolve failed: {exc}")
         return failures, False
     if got_root != exp_root:
         failures.append(
-            "{}: identity plugin_root {!r} != expected {!r}".format(
-                label, str(got_root), str(exp_root)
-            )
+            f"{label}: identity plugin_root {str(got_root)!r} != expected {str(exp_root)!r}"
         )
     return failures, (not failures)
 
@@ -373,7 +364,9 @@ def _scan_degrade_text(pr_dir):
     hits = []
     seen = set()
     for path, pattern in _iter_degrade_scan_paths(pr_dir):
-        label = str(path.relative_to(pr_dir)) if path.is_relative_to(pr_dir) else path.name
+        label = (
+            str(path.relative_to(pr_dir)) if path.is_relative_to(pr_dir) else path.name
+        )
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -452,7 +445,7 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     if not run_dir.is_dir():
         return {
             "ok": False,
-            "failures": ["run directory does not exist: {}".format(run_dir)],
+            "failures": [f"run directory does not exist: {run_dir}"],
             "stats": stats,
         }
 
@@ -462,7 +455,8 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
     else:
         repo_root = Path(repo_root)
     expected_pipeline = (
-        Path(plugin_pipeline) if plugin_pipeline is not None
+        Path(plugin_pipeline)
+        if plugin_pipeline is not None
         else repo_root / PIPELINE_REL
     )
 
@@ -490,30 +484,24 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         status = statuses.get(url)
         if status is None:
             failures.append(
-                "precondition: PR {} has no checkpoint (pending / mid-run kill)".format(url)
+                f"precondition: PR {url} has no checkpoint (pending / mid-run kill)"
             )
         elif status != "ok":
-            failures.append(
-                "precondition: PR {} status is {!r} (want 'ok')".format(url, status)
-            )
+            failures.append(f"precondition: PR {url} status is {status!r} (want 'ok')")
     # Also flag leftover non-ok state rows not in pr_urls (defensive).
     for url, status in sorted(statuses.items()):
         if url not in declared and status != "ok":
-            failures.append(
-                "precondition: PR {} status is {!r} (want 'ok')".format(url, status)
-            )
+            failures.append(f"precondition: PR {url} status is {status!r} (want 'ok')")
 
     pr_dirs = _pr_dirs(run_dir)
     stats["pr_dirs"] = len(pr_dirs)
     if not pr_dirs:
-        failures.append("no pr-* artifact directories found under {}".format(run_dir))
+        failures.append(f"no pr-* artifact directories found under {run_dir}")
         return {"ok": False, "failures": failures, "stats": stats}
 
     if declared and len(pr_dirs) < len(declared):
         failures.append(
-            "precondition: run.json declares {} PR(s) but only {} pr-* dir(s) exist".format(
-                len(declared), len(pr_dirs)
-            )
+            f"precondition: run.json declares {len(declared)} PR(s) but only {len(pr_dirs)} pr-* dir(s) exist"
         )
 
     total_comments = 0
@@ -524,14 +512,14 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         # --- G2: payload ---
         payload_path = pr_dir / "post-review-payload.json"
         if not payload_path.is_file():
-            failures.append("{}: missing post-review-payload.json".format(label))
+            failures.append(f"{label}: missing post-review-payload.json")
             payload = None
         else:
             try:
                 payload = _load_json(payload_path)
             except (json.JSONDecodeError, OSError) as exc:
                 failures.append(
-                    "{}: post-review-payload.json not parseable: {}".format(label, exc)
+                    f"{label}: post-review-payload.json not parseable: {exc}"
                 )
                 payload = None
             else:
@@ -542,44 +530,34 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
         findings_files = _iter_findings_files(pr_dir)
         if not findings_files:
             failures.append(
-                "{}: missing code-gauntlet-findings-*.json "
-                "(union-schema / origin gates require a persisted findings artifact)".format(
-                    label
-                )
+                f"{label}: missing code-gauntlet-findings-*.json "
+                "(union-schema / origin gates require a persisted findings artifact)"
             )
         for findings_path in findings_files:
             stats["findings_files"] += 1
             try:
                 data = _load_json(findings_path)
             except (json.JSONDecodeError, OSError) as exc:
-                failures.append(
-                    "{}: {} not parseable: {}".format(label, findings_path.name, exc)
-                )
+                failures.append(f"{label}: {findings_path.name} not parseable: {exc}")
                 continue
             findings = _findings_list(data)
             if findings is None:
                 failures.append(
-                    "{}: {} must be a list or {{findings: [...]}}".format(
-                        label, findings_path.name
-                    )
+                    f"{label}: {findings_path.name} must be a list or {{findings: [...]}}"
                 )
                 continue
             for i, finding in enumerate(findings):
-                flabel = "{}:{}[{}]".format(label, findings_path.name, i)
+                flabel = f"{label}:{findings_path.name}[{i}]"
                 failures.extend(_check_union_schema(finding, flabel))
                 # --- G3: origin=unknown ---
                 if isinstance(finding, dict) and finding.get("origin") == "unknown":
                     stats["unknown_origin"] += 1
-                    failures.append(
-                        "{}: origin=unknown (verify/slice degrade)".format(flabel)
-                    )
+                    failures.append(f"{flabel}: origin=unknown (verify/slice degrade)")
 
         # --- G3: writer no-write-proof / partial-artifacts ---
         for hit in _scan_degrade_text(pr_dir):
             failures.append(
-                "{}: writer degrade signal in {} (no-write-proof / partial-artifacts)".format(
-                    label, hit
-                )
+                f"{label}: writer degrade signal in {hit} (no-write-proof / partial-artifacts)"
             )
 
         # --- G4: plugin identity (echo receipt primary; scriptPath defense-in-depth) ---
@@ -593,9 +571,9 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
             # Without one, collected workflow records remain required.
             if not identity_ok:
                 failures.append(
-                    "{}: no workflows/wf_*.json records collected "
+                    f"{label}: no workflows/wf_*.json records collected "
                     "(cannot verify plugin scriptPath; stale-plugin contamination "
-                    "cannot be ruled out)".format(label)
+                    "cannot be ruled out)"
                 )
         else:
             script_paths = []
@@ -604,16 +582,12 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
             stats["script_paths"] += len(script_paths)
             if not script_paths:
                 failures.append(
-                    "{}: workflows/wf_*.json present but no scriptPath field found".format(
-                        label
-                    )
+                    f"{label}: workflows/wf_*.json present but no scriptPath field found"
                 )
             for sp in script_paths:
                 if not _script_path_ok(sp, expected_pipeline, repo_root=repo_root):
                     failures.append(
-                        "{}: scriptPath {!r} is not under {!r}".format(
-                            label, sp, str(expected_pipeline)
-                        )
+                        f"{label}: scriptPath {sp!r} is not under {str(expected_pipeline)!r}"
                     )
 
     stats["delivered_comments"] = total_comments

@@ -19,15 +19,17 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.runner import score  # noqa: E402
+from bench.runner import (
+    ledger,
+    score,
+)
+from bench.runner.ledger import REQUIRED_KEYS  # noqa: E402
 from bench.runner.score import (  # noqa: E402
     bucket_join,
     compute_metrics,
     resolve_judge_pin,
     score_run,
 )
-from bench.runner import ledger  # noqa: E402
-from bench.runner.ledger import REQUIRED_KEYS  # noqa: E402
 
 
 def write_json(path, data):
@@ -77,14 +79,16 @@ class ResolveJudgePinTests(unittest.TestCase):
             "data": [
                 {"id": "claude-opus-4-8-20260101"},
                 {"id": "claude-opus-4-8-20260315"},  # newest
-                {"id": "claude-opus-4-8"},            # alias, no date -> ignored
-                {"id": "claude-opus-4-8[1m]"},        # variant, no date -> ignored
-                {"id": "claude-sonnet-5-20260101"},   # wrong family -> ignored
+                {"id": "claude-opus-4-8"},  # alias, no date -> ignored
+                {"id": "claude-opus-4-8[1m]"},  # variant, no date -> ignored
+                {"id": "claude-sonnet-5-20260101"},  # wrong family -> ignored
             ]
         }
         with mock.patch.object(score, "_http_get_json", lambda url, headers: models):
             pin = resolve_judge_pin(
-                env={"ANTHROPIC_API_KEY": "k"}, force=True, baselines_path=self.baselines
+                env={"ANTHROPIC_API_KEY": "k"},
+                force=True,
+                baselines_path=self.baselines,
             )
         self.assertEqual(pin, "claude-opus-4-8-20260315")
         # Persisted back into baselines.json.
@@ -103,12 +107,19 @@ class ResolveJudgePinTests(unittest.TestCase):
         models = {"data": [{"id": "claude-opus-4-8"}, {"id": "claude-opus-4-8[1m]"}]}
         with mock.patch.object(score, "_http_get_json", lambda url, headers: models):
             with self.assertRaises(RuntimeError):
-                resolve_judge_pin(env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines)
+                resolve_judge_pin(
+                    env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines
+                )
 
     def test_pick_snapshot_helper_selects_newest(self):
         self.assertEqual(
             score._pick_opus_snapshot(
-                {"data": [{"id": "claude-opus-4-8-20260101"}, {"id": "claude-opus-4-8-20260901"}]}
+                {
+                    "data": [
+                        {"id": "claude-opus-4-8-20260101"},
+                        {"id": "claude-opus-4-8-20260901"},
+                    ]
+                }
             ),
             "claude-opus-4-8-20260901",
         )
@@ -117,11 +128,15 @@ class ResolveJudgePinTests(unittest.TestCase):
     def test_pick_prefers_dated_4_8_over_older_opus(self):
         # A dated 4.8 wins even when an older-family dated Opus is also present.
         self.assertEqual(
-            score._pick_opus_snapshot({"data": [
-                {"id": "claude-opus-4-5-20251101"},
-                {"id": "claude-opus-4-8-20260101"},
-                {"id": "claude-opus-4-1-20250805"},
-            ]}),
+            score._pick_opus_snapshot(
+                {
+                    "data": [
+                        {"id": "claude-opus-4-5-20251101"},
+                        {"id": "claude-opus-4-8-20260101"},
+                        {"id": "claude-opus-4-1-20250805"},
+                    ]
+                }
+            ),
             "claude-opus-4-8-20260101",
         )
 
@@ -129,30 +144,45 @@ class ResolveJudgePinTests(unittest.TestCase):
         # No dated 4.8 (the real-world case): fall back to the newest dated Opus, which
         # is the settled claude-opus-4-5-20251101 that baselines.json already ships.
         self.assertEqual(
-            score._pick_opus_snapshot({"data": [
-                {"id": "claude-opus-4-1-20250805"},
-                {"id": "claude-opus-4-5-20251101"},
-                {"id": "claude-opus-4-8"},          # alias, undated -> ignored
-                {"id": "claude-opus-4-8[1m]"},      # variant, undated -> ignored
-            ]}),
+            score._pick_opus_snapshot(
+                {
+                    "data": [
+                        {"id": "claude-opus-4-1-20250805"},
+                        {"id": "claude-opus-4-5-20251101"},
+                        {"id": "claude-opus-4-8"},  # alias, undated -> ignored
+                        {"id": "claude-opus-4-8[1m]"},  # variant, undated -> ignored
+                    ]
+                }
+            ),
             "claude-opus-4-5-20251101",
         )
 
     def test_pick_none_when_no_dated_opus(self):
-        self.assertIsNone(score._pick_opus_snapshot({"data": [
-            {"id": "claude-opus-4-8"}, {"id": "claude-sonnet-5-20260101"},
-        ]}))
+        self.assertIsNone(
+            score._pick_opus_snapshot(
+                {
+                    "data": [
+                        {"id": "claude-opus-4-8"},
+                        {"id": "claude-sonnet-5-20260101"},
+                    ]
+                }
+            )
+        )
 
     def test_fallback_resolves_and_pins_newest_dated_opus(self):
         # End-to-end resolve with no dated 4.8 available: writes the 4.5 fallback.
         write_json(self.baselines, {"judge_pin": None})
-        models = {"data": [
-            {"id": "claude-opus-4-8"},
-            {"id": "claude-opus-4-5-20251101"},
-            {"id": "claude-opus-4-1-20250805"},
-        ]}
+        models = {
+            "data": [
+                {"id": "claude-opus-4-8"},
+                {"id": "claude-opus-4-5-20251101"},
+                {"id": "claude-opus-4-1-20250805"},
+            ]
+        }
         with mock.patch.object(score, "_http_get_json", lambda url, headers: models):
-            pin = resolve_judge_pin(env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines)
+            pin = resolve_judge_pin(
+                env={"ANTHROPIC_API_KEY": "k"}, baselines_path=self.baselines
+            )
         self.assertEqual(pin, "claude-opus-4-5-20251101")
         self.assertEqual(json.loads(self.baselines.read_text())["judge_pin"], pin)
 
@@ -162,9 +192,15 @@ class ResolveJudgePinTests(unittest.TestCase):
 
 class BucketJoinTests(unittest.TestCase):
     def test_partitions_matched_and_unmatched(self):
-        candidates = {"u": {"deep-review": [
-            {"text": "m1"}, {"text": "m2"}, {"text": "extra"},
-        ]}}
+        candidates = {
+            "u": {
+                "deep-review": [
+                    {"text": "m1"},
+                    {"text": "m2"},
+                    {"text": "extra"},
+                ]
+            }
+        }
         evaluations = {"u": {"deep-review": ev_result(2, 1, 0, ["m1", "m2"])}}
         out = bucket_join(candidates, evaluations)
         self.assertEqual(out["u"]["golden_matched"], ["m1", "m2"])
@@ -203,11 +239,19 @@ class ComputeMetricsTests(unittest.TestCase):
     def test_two_tp_one_valid_extra_one_noise(self):
         # 4 candidates: m1,m2 matched (2 TP), plus 2 extras (fp=2). One golden
         # unmatched (fn=1). Adjudicator splits the extras 1 valid_extra / 1 noise.
-        candidates = {"u": {"deep-review": [
-            {"text": "[HIGH] m1"}, {"text": "[MEDIUM] m2"},
-            {"text": "[LOW] e1"}, {"text": "[HIGH] e2"},
-        ]}}
-        evaluations = {"u": {"deep-review": ev_result(2, 2, 1, ["[HIGH] m1", "[MEDIUM] m2"])}}
+        candidates = {
+            "u": {
+                "deep-review": [
+                    {"text": "[HIGH] m1"},
+                    {"text": "[MEDIUM] m2"},
+                    {"text": "[LOW] e1"},
+                    {"text": "[HIGH] e2"},
+                ]
+            }
+        }
+        evaluations = {
+            "u": {"deep-review": ev_result(2, 2, 1, ["[HIGH] m1", "[MEDIUM] m2"])}
+        }
         buckets = bucket_join(candidates, evaluations)
         adjudications = [
             {"bucket": "valid_extra", "candidate": "[LOW] e1"},
@@ -220,7 +264,9 @@ class ComputeMetricsTests(unittest.TestCase):
         self.assertAlmostEqual(m["valid_extra_rate"], 0.25)
         self.assertAlmostEqual(m["noise_rate"], 0.25)
         self.assertAlmostEqual(m["f1_strict"], 2 * 0.5 * (2 / 3) / (0.5 + 2 / 3))
-        self.assertEqual(m["per_bucket"], {"golden_matched": 2, "valid_extra": 1, "noise": 1})
+        self.assertEqual(
+            m["per_bucket"], {"golden_matched": 2, "valid_extra": 1, "noise": 1}
+        )
         self.assertEqual(m["total_candidates"], 4)
         self.assertEqual(m["n_prs"], 1)
         # Buckets partition the tool's total candidates.
@@ -232,13 +278,21 @@ class ComputeMetricsTests(unittest.TestCase):
         )
 
     def test_severity_dist_and_desc_len(self):
-        candidates = {"u": {"deep-review": [
-            {"text": "[HIGH] aaaa"}, {"text": "[HIGH] bbbb"}, {"text": "no tag"},
-        ]}}
+        candidates = {
+            "u": {
+                "deep-review": [
+                    {"text": "[HIGH] aaaa"},
+                    {"text": "[HIGH] bbbb"},
+                    {"text": "no tag"},
+                ]
+            }
+        }
         evaluations = {"u": {"deep-review": ev_result(0, 3, 0, [])}}
         buckets = bucket_join(candidates, evaluations)
-        adjudications = [{"bucket": "noise", "candidate": c["text"]}
-                         for c in candidates["u"]["deep-review"]]
+        adjudications = [
+            {"bucket": "noise", "candidate": c["text"]}
+            for c in candidates["u"]["deep-review"]
+        ]
         m = compute_metrics(evaluations, candidates, buckets, adjudications)
         self.assertEqual(m["drift"]["severity_dist"], {"HIGH": 2, "UNKNOWN": 1})
         self.assertAlmostEqual(m["drift"]["desc_len_mean"], (11 + 11 + 6) / 3)
@@ -283,7 +337,9 @@ class AdjudicateBucketIdentityTests(unittest.TestCase):
         ]
         per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
         # bucket_join emits the unmatched text once per candidate occurrence.
-        buckets = {url: {"golden_matched": [], "adjudicator": ["same body", "same body"]}}
+        buckets = {
+            url: {"golden_matched": [], "adjudicator": ["same body", "same body"]}
+        }
 
         seen = []
 
@@ -303,43 +359,75 @@ class AdjudicateBucketIdentityTests(unittest.TestCase):
         self.assertTrue(any("BBB" in s["hunk"] for s in seen))
         self.assertNotEqual(seen[0]["hunk"], seen[1]["hunk"])
         # Independent verdicts: the two locations bucket differently.
-        self.assertEqual(sorted(v["bucket"] for v in verdicts), ["noise", "valid_extra"])
+        self.assertEqual(
+            sorted(v["bucket"] for v in verdicts), ["noise", "valid_extra"]
+        )
 
         # Metrics tally per candidate: 2 candidates -> 1 valid_extra + 1 noise.
         candidates_map = {url: {"deep-review": candidates}}
         evaluations = {url: {"deep-review": ev_result(0, 2, 0, [])}}
         m = compute_metrics(evaluations, candidates_map, buckets, verdicts)
         self.assertEqual(m["total_candidates"], 2)
-        self.assertEqual(m["per_bucket"], {"golden_matched": 0, "valid_extra": 1, "noise": 1})
+        self.assertEqual(
+            m["per_bucket"], {"golden_matched": 0, "valid_extra": 1, "noise": 1}
+        )
         self.assertAlmostEqual(m["valid_extra_rate"], 0.5)
         self.assertAlmostEqual(m["noise_rate"], 0.5)
 
     def test_ledger_invocation_labels_naive_and_skill(self):
         metrics = {
-            "n_prs": 1, "golden_recall": 0.0, "valid_extra_rate": 0.0,
-            "noise_rate": 0.0, "precision_strict": 0.0, "f1_strict": 0.0,
-            "per_bucket": {}, "per_dimension": {}, "drift": {},
+            "n_prs": 1,
+            "golden_recall": 0.0,
+            "valid_extra_rate": 0.0,
+            "noise_rate": 0.0,
+            "precision_strict": 0.0,
+            "f1_strict": 0.0,
+            "per_bucket": {},
+            "per_dimension": {},
+            "drift": {},
         }
         costs = {"tokens_total": 0, "cost_usd": 0.0, "per_model": {}}
         # Explicit manifest invocation wins.
         row = score._build_ledger_row(
-            "/tmp/r", metrics, costs,
-            {"run_id": "r", "tier": "smoke", "git_sha": "abc",
-             "invocation": "naive:single-pass max-turns=40", "anchor": "naive"},
-            "pin", "pin", "sha")
-        self.assertEqual(row["envelope"]["invocation"], "naive:single-pass max-turns=40")
+            "/tmp/r",
+            metrics,
+            costs,
+            {
+                "run_id": "r",
+                "tier": "smoke",
+                "git_sha": "abc",
+                "invocation": "naive:single-pass max-turns=40",
+                "anchor": "naive",
+            },
+            "pin",
+            "pin",
+            "sha",
+        )
+        self.assertEqual(
+            row["envelope"]["invocation"], "naive:single-pass max-turns=40"
+        )
         # Legacy naive manifest without invocation falls back by anchor.
         row = score._build_ledger_row(
-            "/tmp/r", metrics, costs,
+            "/tmp/r",
+            metrics,
+            costs,
             {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": "naive"},
-            "pin", "pin", "sha")
+            "pin",
+            "pin",
+            "sha",
+        )
         self.assertEqual(row["envelope"]["invocation"], "naive:single-pass")
         self.assertEqual(row["tool"], "naive-anchor")
         # Skill run keeps the headless label.
         row = score._build_ledger_row(
-            "/tmp/r", metrics, costs,
+            "/tmp/r",
+            metrics,
+            costs,
             {"run_id": "r", "tier": "smoke", "git_sha": "abc", "anchor": None},
-            "pin", "pin", "sha")
+            "pin",
+            "pin",
+            "sha",
+        )
         self.assertEqual(row["envelope"]["invocation"], "headless:/code-gauntlet")
 
     def test_string_line_is_normalized_not_crashing(self):
@@ -354,10 +442,17 @@ class AdjudicateBucketIdentityTests(unittest.TestCase):
         # A rendered comment can carry a string line (copied end_line) or garbage.
         candidates = [
             {"text": "numeric-ish", "path": "a.py", "line": "2", "source": "extracted"},
-            {"text": "garbage-line", "path": "a.py", "line": "n/a", "source": "extracted"},
+            {
+                "text": "garbage-line",
+                "path": "a.py",
+                "line": "n/a",
+                "source": "extracted",
+            },
         ]
         per_pr = {url: {"pr_dir": str(pr_dir), "number": 1, "candidates": candidates}}
-        buckets = {url: {"golden_matched": [], "adjudicator": ["numeric-ish", "garbage-line"]}}
+        buckets = {
+            url: {"golden_matched": [], "adjudicator": ["numeric-ish", "garbage-line"]}
+        }
 
         seen = []
 
@@ -409,8 +504,10 @@ class ScoreRunRefusalTests(unittest.TestCase):
         # evaluations.json (FileNotFoundError downstream). score_run must refuse first.
         state = self.run_dir / "state"
         state.mkdir()
-        write_json(state / "a.json",
-                   {"url": "https://github.com/o/r/pull/1", "status": "failed"})
+        write_json(
+            state / "a.json",
+            {"url": "https://github.com/o/r/pull/1", "status": "failed"},
+        )
         baselines = self.tmp / "baselines.json"
         write_json(baselines, {"judge_pin": "claude-opus-4-8-20260101"})
         with self.assertRaises(RuntimeError) as ctx:
@@ -424,13 +521,15 @@ class ScoreRunRefusalTests(unittest.TestCase):
 class ScorerStageFailureTests(unittest.TestCase):
     def test_stage_nonzero_exit_raises_runtimeerror_naming_stage(self):
         pin = "claude-opus-4-8-20260101"
-        fake = SimpleNamespace(returncode=1, stdout="", stderr="Traceback: boom in dedup")
+        fake = SimpleNamespace(
+            returncode=1, stdout="", stderr="Traceback: boom in dedup"
+        )
         with mock.patch.object(score.subprocess, "run", return_value=fake):
             with self.assertRaises(RuntimeError) as ctx:
                 score.run_scorer_stages(pin, "api-key", Path("/tmp/model-dir"))
         msg = str(ctx.exception)
         self.assertIn("dedup", msg)  # the failing stage is named
-        self.assertIn("boom", msg)   # stderr tail is surfaced
+        self.assertIn("boom", msg)  # stderr tail is surfaced
 
 
 # ------------------------------------------------------------- _read_run_costs
@@ -448,11 +547,14 @@ class ReadRunCostsTests(unittest.TestCase):
         # A naive-anchor PR dir carries only raw-naive.json (never raw.json).
         pr = self.tmp / "run" / "pr-9"
         pr.mkdir(parents=True)
-        write_json(pr / "raw-naive.json", {
-            "type": "result",
-            "total_cost_usd": 0.7,
-            "usage": {"input_tokens": 10, "output_tokens": 5},
-        })
+        write_json(
+            pr / "raw-naive.json",
+            {
+                "type": "result",
+                "total_cost_usd": 0.7,
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+            },
+        )
         costs = score._read_run_costs(self.tmp / "run")
         self.assertAlmostEqual(costs["cost_usd"], 0.7)
         self.assertEqual(costs["tokens_total"], 15)
@@ -463,11 +565,14 @@ class ReadRunCostsTests(unittest.TestCase):
         # routes through it.
         pr = self.tmp / "run" / "pr-3"
         pr.mkdir(parents=True)
-        write_json(pr / "raw.json", {
-            "type": "result",
-            "total_cost_usd": 0.5,
-            "usage": {"input_tokens": 4, "output_tokens": 2},
-        })
+        write_json(
+            pr / "raw.json",
+            {
+                "type": "result",
+                "total_cost_usd": 0.5,
+                "usage": {"input_tokens": 4, "output_tokens": 2},
+            },
+        )
         real = score.invoke.parse_result_envelope
         calls = []
 
@@ -499,11 +604,14 @@ class AssembleCandidatesTests(unittest.TestCase):
         url = "https://github.com/o/r/pull/12"
         nested = run_dir / "pr-12" / "output"
         nested.mkdir(parents=True)
-        write_json(nested / "post-review-payload.json", {
-            "platform": "github",
-            "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
-            "skipped": [],
-        })
+        write_json(
+            nested / "post-review-payload.json",
+            {
+                "platform": "github",
+                "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
+                "skipped": [],
+            },
+        )
         candidates, per_pr = score._assemble_candidates(run_dir, [(url, "ok")])
         self.assertIn(url, candidates)
         self.assertEqual(len(candidates[url]["deep-review"]), 1)
@@ -528,11 +636,14 @@ class ResolvePrDirTests(unittest.TestCase):
 
     def _payload(self, pr_dir):
         pr_dir.mkdir(parents=True, exist_ok=True)
-        write_json(pr_dir / "post-review-payload.json", {
-            "platform": "github",
-            "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
-            "skipped": [],
-        })
+        write_json(
+            pr_dir / "post-review-payload.json",
+            {
+                "platform": "github",
+                "payload": {"comments": [{"body": "c1", "path": "f.py", "line": 3}]},
+                "skipped": [],
+            },
+        )
 
     def test_resolves_new_owner_repo_key(self):
         self._payload(self.new_dir)
@@ -545,8 +656,12 @@ class ResolvePrDirTests(unittest.TestCase):
         # the now-empty shared output dir. Resolution must skip the dead hint and fall
         # through to pr-{n}, keeping that run re-scorable.
         self._payload(self.legacy)
-        stale_hint = str(self.run_dir / "output" / "post-review-payload.json")  # never written
-        cands, per_pr = score._assemble_candidates(self.run_dir, [(self.url, "ok", stale_hint)])
+        stale_hint = str(
+            self.run_dir / "output" / "post-review-payload.json"
+        )  # never written
+        cands, per_pr = score._assemble_candidates(
+            self.run_dir, [(self.url, "ok", stale_hint)]
+        )
         self.assertIn(self.url, cands)
         self.assertEqual(per_pr[self.url]["pr_dir"], str(self.legacy))
 
@@ -603,9 +718,15 @@ class AuthModeTests(unittest.TestCase):
     """
 
     METRICS = {
-        "n_prs": 1, "golden_recall": 0.0, "valid_extra_rate": 0.0,
-        "noise_rate": 0.0, "precision_strict": 0.0, "f1_strict": 0.0,
-        "per_bucket": {}, "per_dimension": {}, "drift": {},
+        "n_prs": 1,
+        "golden_recall": 0.0,
+        "valid_extra_rate": 0.0,
+        "noise_rate": 0.0,
+        "precision_strict": 0.0,
+        "f1_strict": 0.0,
+        "per_bucket": {},
+        "per_dimension": {},
+        "drift": {},
     }
     COSTS = {"tokens_total": 4321, "cost_usd": 27.0, "per_model": {}}
 
@@ -626,7 +747,11 @@ class AuthModeTests(unittest.TestCase):
 
     def test_row_carries_fingerprint_mode(self):
         row = self._row(
-            {"run_id": "r", "tier": "smoke", "env_fingerprint": {"child_auth": "subscription"}}
+            {
+                "run_id": "r",
+                "tier": "smoke",
+                "env_fingerprint": {"child_auth": "subscription"},
+            }
         )
         self.assertEqual(row["auth_mode"], "subscription")
 
@@ -647,7 +772,9 @@ class AuthModeTests(unittest.TestCase):
         self.addCleanup(tmp.cleanup)
         run_dir = Path(tmp.name)
 
-        write_json(run_dir / "run.json", {"run_id": "smoke-x", "child_auth": "subscription"})
+        write_json(
+            run_dir / "run.json", {"run_id": "smoke-x", "child_auth": "subscription"}
+        )
         row = self._row(score._read_run_manifest(run_dir))
         self.assertEqual(row["auth_mode"], "subscription")
 
@@ -680,38 +807,66 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         write_json(state / "c.json", {"url": self.uC, "status": "failed"})
 
         # PR A: 3 comments (2 will match goldens, 1 is an extra).
-        self._pr(self.uA, [
-            ("cA1 body", "src/a.py", 11),
-            ("cA2 body", "src/a.py", 12),
-            ("cA3 body", "src/a.py", 13),
-        ], cost=0.5, tokens={"input_tokens": 100, "output_tokens": 50})
+        self._pr(
+            self.uA,
+            [
+                ("cA1 body", "src/a.py", 11),
+                ("cA2 body", "src/a.py", 12),
+                ("cA3 body", "src/a.py", 13),
+            ],
+            cost=0.5,
+            tokens={"input_tokens": 100, "output_tokens": 50},
+        )
         # PR B: 1 comment, unmatched (an extra to adjudicate).
-        self._pr(self.uB, [
-            ("cB1 body", "src/b.py", 5),
-        ], cost=0.5, tokens={"input_tokens": 60, "output_tokens": 40})
+        self._pr(
+            self.uB,
+            [
+                ("cB1 body", "src/b.py", 5),
+            ],
+            cost=0.5,
+            tokens={"input_tokens": 60, "output_tokens": 40},
+        )
 
         # golden data the scorer would read (2 goldens per PR).
         self.golden = self.tmp / "golden.json"
-        write_json(self.golden, {
-            self.uA: {"source_repo": "keycloak", "golden_comments": [
-                {"comment": "gA1", "severity": "High"},
-                {"comment": "gA2", "severity": "Medium"},
-            ], "reviews": []},
-            self.uB: {"source_repo": "grafana", "golden_comments": [
-                {"comment": "gB1", "severity": "High"},
-                {"comment": "gB2", "severity": "Low"},
-            ], "reviews": []},
-            self.uC: {"source_repo": "discourse", "golden_comments": [
-                {"comment": "gC1", "severity": "Low"},
-            ], "reviews": []},
-        })
+        write_json(
+            self.golden,
+            {
+                self.uA: {
+                    "source_repo": "keycloak",
+                    "golden_comments": [
+                        {"comment": "gA1", "severity": "High"},
+                        {"comment": "gA2", "severity": "Medium"},
+                    ],
+                    "reviews": [],
+                },
+                self.uB: {
+                    "source_repo": "grafana",
+                    "golden_comments": [
+                        {"comment": "gB1", "severity": "High"},
+                        {"comment": "gB2", "severity": "Low"},
+                    ],
+                    "reviews": [],
+                },
+                self.uC: {
+                    "source_repo": "discourse",
+                    "golden_comments": [
+                        {"comment": "gC1", "severity": "Low"},
+                    ],
+                    "reviews": [],
+                },
+            },
+        )
 
         self.baselines = self.tmp / "baselines.json"
-        write_json(self.baselines, {
-            "judge_pin": self.pin,
-            "adjudicator_pin": self.pin,
-            "scorer_sha": "dfc6cb42",
-        })
+        write_json(
+            self.baselines,
+            {
+                "judge_pin": self.pin,
+                "adjudicator_pin": self.pin,
+                "scorer_sha": "dfc6cb42",
+            },
+        )
         self.ledger = self.tmp / "experiments.jsonl"
 
         self.vendor = self.tmp / "vendor"
@@ -727,10 +882,12 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         pr_dir.mkdir()
         payload = {
             "platform": "github",
-            "payload": {"comments": [
-                {"body": body, "path": path, "line": line}
-                for body, path, line in comments
-            ]},
+            "payload": {
+                "comments": [
+                    {"body": body, "path": path, "line": line}
+                    for body, path, line in comments
+                ]
+            },
             "skipped": [],
         }
         write_json(pr_dir / "post-review-payload.json", payload)
@@ -742,20 +899,24 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         for path, lines in paths.items():
             start = min(lines)
             span = max(lines) - start + 1 + 2
-            diff.append("diff --git a/{p} b/{p}\n--- a/{p}\n+++ b/{p}\n".format(p=path))
-            diff.append("@@ -{s},{c} +{s},{c} @@\n".format(s=start, c=span))
+            diff.append(f"diff --git a/{path} b/{path}\n--- a/{path}\n+++ b/{path}\n")
+            diff.append(f"@@ -{start},{span} +{start},{span} @@\n")
             for ln in range(start, start + span):
-                diff.append("+code line {}\n".format(ln))
+                diff.append(f"+code line {ln}\n")
         (pr_dir / "diff.patch").write_text("".join(diff), encoding="utf-8")
         # cost/token envelope the runner would have written.
-        write_json(pr_dir / "raw.json", {
-            "type": "result",
-            "total_cost_usd": cost,
-            "usage": tokens,
-        })
+        write_json(
+            pr_dir / "raw.json",
+            {
+                "type": "result",
+                "total_cost_usd": cost,
+                "usage": tokens,
+            },
+        )
 
     def _fake_scorer(self, model_dir):
         """Return a run_scorer that writes an evaluations.json into model_dir."""
+
         def run_scorer(pin, api_key, md):
             self.assertEqual(pin, self.pin)
             self.assertEqual(str(md), str(model_dir))
@@ -764,6 +925,7 @@ class ScoreRunEndToEndTests(unittest.TestCase):
                 self.uB: {"deep-review": ev_result(0, 1, 2, [])},
             }
             write_json(model_dir / "evaluations.json", evaluations)
+
         return run_scorer
 
     def _fake_adjudicator(self, seen):
@@ -771,6 +933,7 @@ class ScoreRunEndToEndTests(unittest.TestCase):
             seen.append({"text": comment_text, "hunk": diff_hunk, "pin": pin})
             bucket = "valid_extra" if comment_text == "cA3 body" else "noise"
             return {"bucket": bucket, "failed_check": None, "reason": "test"}
+
         return adjudicator
 
     def test_full_pipeline(self):
@@ -778,8 +941,10 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         model_dir = self.vendor / "results" / sanitized
         seen = []
 
-        with mock.patch.object(score, "VENDOR_DIR", self.vendor), \
-             mock.patch.object(score, "GOLDEN_DATA", self.golden):
+        with (
+            mock.patch.object(score, "VENDOR_DIR", self.vendor),
+            mock.patch.object(score, "GOLDEN_DATA", self.golden),
+        ):
             scores = score_run(
                 self.run_dir,
                 env={},
@@ -794,8 +959,10 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         self.assertAlmostEqual(m["golden_recall"], 0.5)
         self.assertAlmostEqual(m["precision_strict"], 0.5)
         self.assertAlmostEqual(m["valid_extra_rate"], 0.25)  # cA3 -> valid_extra, /4
-        self.assertAlmostEqual(m["noise_rate"], 0.25)         # cB1 -> noise, /4
-        self.assertEqual(m["per_bucket"], {"golden_matched": 2, "valid_extra": 1, "noise": 1})
+        self.assertAlmostEqual(m["noise_rate"], 0.25)  # cB1 -> noise, /4
+        self.assertEqual(
+            m["per_bucket"], {"golden_matched": 2, "valid_extra": 1, "noise": 1}
+        )
         self.assertEqual(m["n_prs"], 2)
 
         # Adjudicator saw exactly the two unmatched comments, with real hunks.
@@ -810,7 +977,9 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         self.assertAlmostEqual(row["cost_usd"], 1.0)
         self.assertEqual(row["tokens_total"], 250)  # 150 + 100
         self.assertEqual(row["tier"], "subset")
-        self.assertEqual(row["tool"], "deep-review-v2")  # no anchor manifest -> v2 label
+        self.assertEqual(
+            row["tool"], "deep-review-v2"
+        )  # no anchor manifest -> v2 label
         self.assertEqual(row["auth_mode"], "api")  # no manifest -> API-keyed default
         self.assertEqual(row["judge_pin"], self.pin)
         self.assertEqual(row["scorer_sha"], "dfc6cb42")
@@ -819,7 +988,11 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         # Ledger row carries every required key and was appended.
         for key in REQUIRED_KEYS:
             self.assertIn(key, row)
-        appended = [json.loads(line) for line in self.ledger.read_text().splitlines() if line.strip()]
+        appended = [
+            json.loads(line)
+            for line in self.ledger.read_text().splitlines()
+            if line.strip()
+        ]
         self.assertEqual(len(appended), 1)
         self.assertEqual(appended[0]["run_id"], row["run_id"])
 
@@ -832,10 +1005,10 @@ class ScoreRunEndToEndTests(unittest.TestCase):
         # candidates.json + injected benchmark_data.json staged for the scorer.
         staged = json.loads((model_dir / "candidates.json").read_text())
         self.assertEqual(set(staged), {self.uA, self.uB})
-        bench_data = json.loads((self.vendor / "results" / "benchmark_data.json").read_text())
-        self.assertEqual(
-            bench_data[self.uA]["reviews"][0]["tool"], "deep-review"
+        bench_data = json.loads(
+            (self.vendor / "results" / "benchmark_data.json").read_text()
         )
+        self.assertEqual(bench_data[self.uA]["reviews"][0]["tool"], "deep-review")
         self.assertEqual(bench_data[self.uC]["reviews"], [])  # not scored -> no stub
 
 

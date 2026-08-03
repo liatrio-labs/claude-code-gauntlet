@@ -14,7 +14,6 @@ Covers the PR-granular resume semantics (spec H3):
 
 import json
 import os
-import re
 import sys
 import tempfile
 import unittest
@@ -23,7 +22,6 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from runner.checkpoint import Checkpoint
-
 
 GOLDEN_URLS = [
     "https://github.com/keycloak/keycloak/pull/37634",
@@ -95,9 +93,7 @@ class CheckpointTestCase(unittest.TestCase):
         # Plain resume: only the "pending" URL still needs a run.
         self.assertEqual(self.cp.pending(GOLDEN_URLS), [GOLDEN_URLS[5]])
         # --retry-failed re-runs exactly timeout + failed.
-        self.assertEqual(
-            self.cp.failed(GOLDEN_URLS), [GOLDEN_URLS[3], GOLDEN_URLS[4]]
-        )
+        self.assertEqual(self.cp.failed(GOLDEN_URLS), [GOLDEN_URLS[3], GOLDEN_URLS[4]])
 
     def test_unmarked_urls_are_pending(self):
         # Never-marked URLs count as pending (default state == needs a run).
@@ -121,7 +117,8 @@ class CheckpointTestCase(unittest.TestCase):
     def test_detail_persisted_to_state_file(self):
         self.cp.mark(GOLDEN_URLS[0], "drifted", detail="head SHA mismatch")
         state_files = [
-            f for f in os.listdir(os.path.join(self.run_dir, "state"))
+            f
+            for f in os.listdir(os.path.join(self.run_dir, "state"))
             if f.endswith(".json")
         ]
         self.assertEqual(len(state_files), 1)

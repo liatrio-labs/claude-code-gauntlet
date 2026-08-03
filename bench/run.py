@@ -205,11 +205,16 @@ def _free_gb(path):
     probe = Path(path)
     while not probe.exists() and probe != probe.parent:
         probe = probe.parent
-    return shutil.disk_usage(str(probe)).free / (1024 ** 3)
+    return shutil.disk_usage(str(probe)).free / (1024**3)
 
 
-def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
-                  child_auth=ledger.API_AUTH_MODE, env=None):
+def check_prereqs(
+    env_path=None,
+    workspace_dir=None,
+    min_free_gb=MIN_FREE_GB,
+    child_auth=ledger.API_AUTH_MODE,
+    env=None,
+):
     """Return a list of one-line, actionable failure messages (empty == all prereqs met).
 
     ``child_auth`` swaps the credential prerequisite and nothing else. ``subscription``
@@ -234,7 +239,9 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
             "claude CLI not found on PATH -- install Claude Code so `claude` is runnable."
         )
     else:
-        result = subprocess.run([claude_bin, "--version"], capture_output=True, text=True)
+        result = subprocess.run(
+            [claude_bin, "--version"], capture_output=True, text=True
+        )
         blob = (result.stdout or "") + (result.stderr or "")
         if result.returncode != 0 or not re.search(r"\d+\.\d+", blob):
             failures.append(
@@ -246,9 +253,13 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
             "gh CLI not found on PATH -- install GitHub CLI and run `gh auth login`."
         )
     else:
-        result = subprocess.run(["gh", "auth", "status"], capture_output=True, text=True)
+        result = subprocess.run(
+            ["gh", "auth", "status"], capture_output=True, text=True
+        )
         if result.returncode != 0:
-            failures.append("`gh auth status` failed -- run `gh auth login` to authenticate.")
+            failures.append(
+                "`gh auth status` failed -- run `gh auth login` to authenticate."
+            )
 
     if child_auth == ledger.SUBSCRIPTION_AUTH_MODE:
         # bench/.env before ambient, the precedence _claude_auth_env applies.
@@ -257,8 +268,10 @@ def check_prereqs(env_path=None, workspace_dir=None, min_free_gb=MIN_FREE_GB,
         # constant: a credential-named identifier reaching a print is reported as
         # clear-text logging even when only the NAME travels. Tests hold each literal
         # against the constant its lookup uses, so the two cannot drift.
-        if not (_read_env_key(env_path, invoke.OAUTH_TOKEN_VAR)
-                or env.get(invoke.OAUTH_TOKEN_VAR)):
+        if not (
+            _read_env_key(env_path, invoke.OAUTH_TOKEN_VAR)
+            or env.get(invoke.OAUTH_TOKEN_VAR)
+        ):
             failures.append(
                 f"CLAUDE_CODE_OAUTH_TOKEN missing or empty in {env_path} and in the "
                 "environment -- run `claude setup-token` and add the token to bench/.env."
@@ -334,11 +347,11 @@ _NAIVE_OUTPUT_CONTRACT = (
     "fenced code block tagged `json` and nothing after it. The block must contain "
     "exactly this shape:\n"
     "```json\n"
-    "{\"comments\": [{\"path\": \"<file path>\", \"line\": <integer line number>, "
-    "\"body\": \"<the full review comment>\"}]}\n"
+    '{"comments": [{"path": "<file path>", "line": <integer line number>, '
+    '"body": "<the full review comment>"}]}\n'
     "```\n"
     "Emit one object per distinct issue, in the diff's order; use an empty list "
-    "(\"comments\": []) if you found no issues. Each body must be self-contained and "
+    '("comments": []) if you found no issues. Each body must be self-contained and '
     "stand on its own without referring to your other comments."
 )
 
@@ -358,7 +371,7 @@ def _naive_prompt(pr, diff_text, bench_entry):
     # title plus the full diff (the changes are what the anchor is asked to review).
     title = (bench_entry or {}).get("pr_title") or "PR #{}".format(pr["pr_number"])
     return (
-        "You are reviewing a pull request titled: {}\n\n".format(title)
+        f"You are reviewing a pull request titled: {title}\n\n"
         + "Below is the full diff of the change. Review it and report any bugs, "
         "correctness problems, security issues, or notable quality concerns as concise "
         "review comments, each citing the file and line it refers to. Only report real, "
@@ -427,7 +440,7 @@ def _extract_comments(result_text):
     text = result_text or ""
 
     for match in reversed(list(_FENCE_OPEN_RE.finditer(text))):
-        tail = _TRAILING_FENCE_RE.sub("", text[match.end():])
+        tail = _TRAILING_FENCE_RE.sub("", text[match.end() :])
         if not tail.strip():
             continue  # this fence line was the closing fence -- keep walking back
         block = _parse_comments_block(tail)
@@ -468,8 +481,15 @@ def _naive_payload_from_result(result_text, pr_dir):
     return dest
 
 
-def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
-                  child_auth=ledger.API_AUTH_MODE):
+def _invoke_naive(
+    worktree,
+    pr,
+    run_dir,
+    diff_text,
+    bench_entry,
+    timeout_s,
+    child_auth=ledger.API_AUTH_MODE,
+):
     """Run the bare single-pass anchor review; return an :class:`invoke.InvokeResult`.
 
     Reuses the invoke layer's public building blocks (``build_env`` for the identical
@@ -489,7 +509,9 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
 
     claude_bin = shutil.which("claude", path=env.get("PATH") or os.environ.get("PATH"))
     if not claude_bin:
-        return invoke.InvokeResult("failed", raw_json_path=str(raw_path), reason="claude_not_found")
+        return invoke.InvokeResult(
+            "failed", raw_json_path=str(raw_path), reason="claude_not_found"
+        )
 
     cmd = [
         claude_bin,
@@ -524,11 +546,15 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
         except (subprocess.TimeoutExpired, ValueError, OSError):
             out = ""
         raw_path.write_text(out or "")
-        return invoke.InvokeResult("timeout", raw_json_path=str(raw_path), reason="watchdog_timeout")
+        return invoke.InvokeResult(
+            "timeout", raw_json_path=str(raw_path), reason="watchdog_timeout"
+        )
 
     raw_path.write_text(out or "")
     if _ASK_RE.search(out or ""):
-        return invoke.InvokeResult("invalid", raw_json_path=str(raw_path), reason="askuserquestion_detected")
+        return invoke.InvokeResult(
+            "invalid", raw_json_path=str(raw_path), reason="askuserquestion_detected"
+        )
 
     envelope = invoke.parse_result_envelope(out)
     costs = parse_costs(envelope or {})
@@ -566,9 +592,19 @@ def _invoke_naive(worktree, pr, run_dir, diff_text, bench_entry, timeout_s,
 # ------------------------------------------------------------------------- per-PR flow
 
 
-def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-             tool="deep-review-v3", child_model="inherit",
-             child_auth=ledger.API_AUTH_MODE):
+def _run_prs(
+    run_dir,
+    urls,
+    cp,
+    shas,
+    fixture_urls,
+    timeout_s,
+    anchor,
+    bench_data,
+    tool="deep-review-v3",
+    child_model="inherit",
+    child_auth=ledger.API_AUTH_MODE,
+):
     """Execute the per-PR flow for ``urls`` (already filtered to the todo set).
 
     ``tool`` selects the skill pipeline (deep-review-v2|v3) and is forwarded to
@@ -593,7 +629,9 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
 
     for url in urls:
         meta = shas.get(url)
-        if not meta or not all(meta.get(k) and meta.get(k) != "missing" for k in required):
+        if not meta or not all(
+            meta.get(k) and meta.get(k) != "missing" for k in required
+        ):
             cp.mark(url, "failed", detail={"reason": "incomplete_sha_entry"})
             counts["failed"] += 1
             continue
@@ -614,7 +652,12 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
         try:
             mirror = mirrors.ensure_mirror(clone_url, MIRRORS_DIR)
             mirrors.make_worktree(
-                mirror, meta["head_sha"], meta["base_sha"], meta["base_ref"], worktree, pr_number=number
+                mirror,
+                meta["head_sha"],
+                meta["base_sha"],
+                meta["base_ref"],
+                worktree,
+                pr_number=number,
             )
         except mirrors.DriftError as exc:
             cp.mark(url, "drifted", detail={"reason": str(exc)})
@@ -629,7 +672,7 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                 "failed",
                 detail={
                     "reason": "mirror_error",
-                    "error": "{}: {}".format(type(exc).__name__, str(exc)[:200]),
+                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
                 },
             )
             counts["failed"] += 1
@@ -654,13 +697,23 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             )
             if is_naive:
                 result = _invoke_naive(
-                    worktree, pr, run_dir, diff_text, bench_data.get(url, {}), timeout_s,
+                    worktree,
+                    pr,
+                    run_dir,
+                    diff_text,
+                    bench_data.get(url, {}),
+                    timeout_s,
                     child_auth=child_auth,
                 )
             else:
                 result = invoke.invoke_review(
-                    worktree, pr, run_dir, timeout_s=timeout_s, tool=tool,
-                    child_model=child_model, child_auth=child_auth,
+                    worktree,
+                    pr,
+                    run_dir,
+                    timeout_s=timeout_s,
+                    tool=tool,
+                    child_model=child_model,
+                    child_auth=child_auth,
                 )
             _collect_artifacts(output_dir, pr_dir)
             if not is_naive:
@@ -672,12 +725,16 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
             # CalledProcessError->mirror_error above. KeyboardInterrupt/SystemExit derive
             # from BaseException (not Exception), so they are never swallowed here and stop
             # the run as intended. The finally below still removes the worktree.
-            reason = "unexpected_error:{}: {}".format(type(exc).__name__, str(exc)[:200])
+            reason = f"unexpected_error:{type(exc).__name__}: {str(exc)[:200]}"
             print(
-                "!! {} failed unexpectedly ({}) -- continuing to next PR".format(url, reason),
+                f"!! {url} failed unexpectedly ({reason}) -- continuing to next PR",
                 file=sys.stderr,
             )
-            cp.mark(url, "failed", detail={"reason": reason, "traceback": traceback.format_exc()})
+            cp.mark(
+                url,
+                "failed",
+                detail={"reason": reason, "traceback": traceback.format_exc()},
+            )
             counts["failed"] += 1
             continue
         finally:
@@ -687,9 +744,7 @@ def _run_prs(run_dir, urls, cp, shas, fixture_urls, timeout_s, anchor, bench_dat
                 mirrors.remove_worktree(mirror, worktree)
             except Exception as cleanup_exc:
                 print(
-                    "!! worktree cleanup failed for {} ({}) -- continuing".format(
-                        url, cleanup_exc
-                    ),
+                    f"!! worktree cleanup failed for {url} ({cleanup_exc}) -- continuing",
                     file=sys.stderr,
                 )
 
@@ -793,7 +848,7 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
     child_auth = _resolve_child_auth(getattr(args, "child_auth", None))
     env_fingerprint["child_auth"] = child_auth
     invocation = (
-        "naive:single-pass max-turns={}".format(NAIVE_MAX_TURNS)
+        f"naive:single-pass max-turns={NAIVE_MAX_TURNS}"
         if args.anchor == "naive"
         else "headless:/code-gauntlet"
     )
@@ -811,7 +866,8 @@ def _write_manifest(run_dir, run_id, tier, urls, timeout_s, args):
         # The child-session model pin, resolved per-tool. Naive anchor runs record None
         # (they run _invoke_naive, not the skill) -- mirrors the tool field above.
         "child_model": (
-            None if args.anchor == "naive"
+            None
+            if args.anchor == "naive"
             else _resolve_child_model(args.tool, args.child_model)
         ),
         # Recorded for EVERY run, deliberately breaking the two fields above: a naive
@@ -848,12 +904,12 @@ def _print_summary(run_id, run_dir, urls, cp, summary):
     final = defaultdict(int)
     for url in urls:
         final[cp.status(url)] += 1
-    print("\nRun {} -> {}".format(run_id, run_dir))
-    print("  status: " + ", ".join("{}={}".format(k, v) for k, v in sorted(final.items())))
+    print(f"\nRun {run_id} -> {run_dir}")
+    print("  status: " + ", ".join(f"{k}={v}" for k, v in sorted(final.items())))
     if summary["drifted"]:
         print("  !! DRIFTED (input drift -- never scored):")
         for url, reason in summary["drifted"]:
-            print("     - {}: {}".format(url, reason))
+            print(f"     - {url}: {reason}")
     return final
 
 
@@ -883,8 +939,16 @@ def _new_run(args):
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.pending(urls)  # a fresh run -> all pending
     summary = _run_prs(
-        run_dir, todo, cp, shas, fixture_urls, timeout_s, args.anchor, bench_data,
-        tool=args.tool, child_model=_resolve_child_model(args.tool, args.child_model),
+        run_dir,
+        todo,
+        cp,
+        shas,
+        fixture_urls,
+        timeout_s,
+        args.anchor,
+        bench_data,
+        tool=args.tool,
+        child_model=_resolve_child_model(args.tool, args.child_model),
         child_auth=_resolve_child_auth(args.child_auth),
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
@@ -895,7 +959,7 @@ def _resume(run_id, args, retry):
     run_dir = RUNS_ROOT / run_id
     verb = "retry" if retry else "resume"
     if not run_dir.exists():
-        print("No run dir at {} -- nothing to {}.".format(run_dir, verb), file=sys.stderr)
+        print(f"No run dir at {run_dir} -- nothing to {verb}.", file=sys.stderr)
         return 2
 
     manifest_path = run_dir / "run.json"
@@ -908,7 +972,9 @@ def _resume(run_id, args, retry):
     fixture_urls = set(subsets.get("review_md_fixtures", []))
     fingerprint = manifest.get("env_fingerprint") or {}
     timeout_s = fingerprint.get("timeout_s") or args.timeout_mins * 60
-    anchor = manifest.get("anchor") if manifest.get("anchor") is not None else args.anchor
+    anchor = (
+        manifest.get("anchor") if manifest.get("anchor") is not None else args.anchor
+    )
     # Prefer the manifest's recorded pipeline so a resume re-runs the same tool it began
     # with; fall back to the CLI default for pre-tool run.json files (or a naive run, whose
     # None tool is unused because the anchor path skips the skill).
@@ -916,7 +982,9 @@ def _resume(run_id, args, retry):
     # Same precedence for the child-model pin: the manifest value wins so a resume re-runs
     # the same model it began with; fall back to the per-tool default for pre-child_model
     # run.json files (or a naive run, whose None value is unused by the anchor path).
-    child_model = manifest.get("child_model") or _resolve_child_model(args.tool, args.child_model)
+    child_model = manifest.get("child_model") or _resolve_child_model(
+        args.tool, args.child_model
+    )
     # And again for the credential mode, where the stakes are higher than a label: letting
     # a flag override the recorded mode would bill half a run's PRs one way and half the
     # other, under a single ledger row that can only carry one auth_mode. Resolved from
@@ -936,8 +1004,17 @@ def _resume(run_id, args, retry):
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
     summary = _run_prs(
-        run_dir, todo, cp, shas, fixture_urls, timeout_s, anchor, bench_data,
-        tool=tool, child_model=child_model, child_auth=child_auth,
+        run_dir,
+        todo,
+        cp,
+        shas,
+        fixture_urls,
+        timeout_s,
+        anchor,
+        bench_data,
+        tool=tool,
+        child_model=child_model,
+        child_auth=child_auth,
     )
     final = _print_summary(run_id, run_dir, urls, cp, summary)
     return _exit_code(final, urls)
@@ -946,21 +1023,21 @@ def _resume(run_id, args, retry):
 def _score_only(run_id):
     run_dir = RUNS_ROOT / run_id
     try:
-        from bench.runner import score  # noqa: F401  (Task 13)
+        from bench.runner import score
     except ImportError:
         print(
             "--score-only needs bench/runner/score.py, which lands in Task 13 and is not "
-            "present yet -- cannot re-score {}.".format(run_id),
+            f"present yet -- cannot re-score {run_id}.",
             file=sys.stderr,
         )
         return 2
     if not run_dir.exists():
-        print("No run dir at {} to score.".format(run_dir), file=sys.stderr)
+        print(f"No run dir at {run_dir} to score.", file=sys.stderr)
         return 2
     try:
         score.score_run(str(run_dir))
     except (ValueError, RuntimeError) as exc:
-        print("--score-only failed for {}: {}".format(run_id, exc), file=sys.stderr)
+        print(f"--score-only failed for {run_id}: {exc}", file=sys.stderr)
         return 2
     print("Scored {}: wrote {}".format(run_id, run_dir / "scores.json"))
     return 0
@@ -970,7 +1047,7 @@ def _check_only(run_id):
     """Run the mechanical functional-smoke checker against ``RUNS_ROOT/run_id``."""
     run_dir = RUNS_ROOT / run_id
     if not run_dir.is_dir():
-        print("--check: run directory not found: {}".format(run_dir), file=sys.stderr)
+        print(f"--check: run directory not found: {run_dir}", file=sys.stderr)
         return 2
     from bench.runner import check as check_mod
 
@@ -990,7 +1067,7 @@ def _check_only(run_id):
         )
     )
     for failure in result.get("failures") or []:
-        print("  FAIL: {}".format(failure), file=sys.stderr)
+        print(f"  FAIL: {failure}", file=sys.stderr)
     # Naive-anchor refusal is a usage error (exit 2), not a smoke-gate failure.
     if result.get("refused"):
         return 2
@@ -1011,26 +1088,38 @@ def parse_args(argv=None):
         help="which PR set to run (smoke=3, mini=6 paired cut, subset=15 gate, "
         "holdout=10, full=50)",
     )
-    parser.add_argument("--runs", type=int, default=1, help="number of sequential runs (own dir each)")
-    parser.add_argument("--fidelity", choices=["dry-run", "live"], default="dry-run")
-    parser.add_argument("--resume", metavar="RUN_ID", help="re-run only pending PRs of RUN_ID")
     parser.add_argument(
-        "--retry-failed", metavar="RUN_ID", dest="retry_failed",
+        "--runs", type=int, default=1, help="number of sequential runs (own dir each)"
+    )
+    parser.add_argument("--fidelity", choices=["dry-run", "live"], default="dry-run")
+    parser.add_argument(
+        "--resume", metavar="RUN_ID", help="re-run only pending PRs of RUN_ID"
+    )
+    parser.add_argument(
+        "--retry-failed",
+        metavar="RUN_ID",
+        dest="retry_failed",
         help="re-run the timeout+failed PRs of RUN_ID",
     )
     # Default calibrated from the Task 16 smoke shakedown: full-skill reviews ran
     # 971-1345s, peaking at 75% of the original 30-min budget (plan threshold: >50%).
     parser.add_argument("--timeout-mins", type=int, default=45, dest="timeout_mins")
-    parser.add_argument("--anchor", choices=["naive"], help="bare single-pass anchor review")
     parser.add_argument(
-        "--tool", choices=["deep-review-v2", "deep-review-v3"], default="deep-review-v3",
+        "--anchor", choices=["naive"], help="bare single-pass anchor review"
+    )
+    parser.add_argument(
+        "--tool",
+        choices=["deep-review-v2", "deep-review-v3"],
+        default="deep-review-v3",
         help="which deep-review pipeline to invoke/label (default: deep-review-v3)",
     )
     # Default is `inherit` for every tool (see _resolve_child_model); the flag remains
     # for experiments. None is the "not specified" sentinel so an explicit flag can be
     # told apart from the default and the manifest value can win on resume.
     parser.add_argument(
-        "--child-model", choices=["sonnet", "sonnet[1m]", "opus", "opus[1m]", "inherit"], default=None,
+        "--child-model",
+        choices=["sonnet", "sonnet[1m]", "opus", "opus[1m]", "inherit"],
+        default=None,
         dest="child_model",
         help="model for the child orchestrator session "
         "(default: inherit for every tool)",
@@ -1040,19 +1129,24 @@ def parse_args(argv=None):
     # own prerequisites -- an OAuth token and no apiKeyHelper, see check_prereqs -- and
     # its runs are not cost-comparable with API-keyed ones; bench/README.md has the detail.
     parser.add_argument(
-        "--child-auth", choices=list(ledger.AUTH_MODES), default=None,
+        "--child-auth",
+        choices=list(ledger.AUTH_MODES),
+        default=None,
         dest="child_auth",
         help="credential for the review children: the metered bench/.env key (default) "
         "or the operator's Claude subscription via CLAUDE_CODE_OAUTH_TOKEN",
     )
     parser.add_argument("--score-only", metavar="RUN_ID", dest="score_only")
     parser.add_argument(
-        "--check", metavar="RUN_ID", dest="check",
+        "--check",
+        metavar="RUN_ID",
+        dest="check",
         help="run the mechanical functional-smoke checker against an existing run "
         "(never invokes the judge; exit 0 = pass)",
     )
     parser.add_argument(
-        "--prs", metavar="URL[,URL...]|mini",
+        "--prs",
+        metavar="URL[,URL...]|mini",
         help="explicit comma-separated golden PR list; overrides --tier's subset "
         "resolution and labels the run 'custom'. Every URL must exist in shas.json. "
         "The alias 'mini' expands to the pre-registered 6-PR mini subset.",
@@ -1124,17 +1218,18 @@ def main(argv=None):
     # one (its per-PR envelope costs are summed into a single auth_mode-labelled row).
     if args.child_auth is not None and args.child_auth != child_auth:
         print(
-            "--child-auth {} contradicts the mode run {} recorded ({}) -- a run dir is "
-            "one credential. Resume without the flag, or start a new run.".format(
-                args.child_auth, args.resume or args.retry_failed, child_auth
-            ),
+            f"--child-auth {args.child_auth} contradicts the mode run {args.resume or args.retry_failed} recorded ({child_auth}) -- a run dir is "
+            "one credential. Resume without the flag, or start a new run.",
             file=sys.stderr,
         )
         return 2
 
     failures = check_prereqs(child_auth=child_auth)
     if failures:
-        print("bench/run.py: prerequisite checks failed (fix each and re-run):", file=sys.stderr)
+        print(
+            "bench/run.py: prerequisite checks failed (fix each and re-run):",
+            file=sys.stderr,
+        )
         for failure in failures:
             print("  - " + failure, file=sys.stderr)
         return 2

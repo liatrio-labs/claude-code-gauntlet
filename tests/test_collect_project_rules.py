@@ -86,7 +86,8 @@ class _RepoCase(unittest.TestCase):
             sys.stdout = saved
         lines = [line for line in captured.split("\n") if line]
         self.assertEqual(
-            len(lines), 1,
+            len(lines),
+            1,
             "stdout must be EXACTLY one line of JSON; got %d line(s): %r"
             % (len(lines), captured),
         )
@@ -95,7 +96,7 @@ class _RepoCase(unittest.TestCase):
         # those two states is load-bearing and is asserted explicitly, on
         # os.path.exists, by test_repo_with_no_convention_files_*.
         if os.path.exists(self.out):
-            with open(self.out, "r", encoding="utf-8") as handle:
+            with open(self.out, encoding="utf-8") as handle:
                 body = handle.read()
         else:
             body = ""
@@ -216,8 +217,9 @@ class TestSecurityBoundary(_RepoCase):
 
     def test_symlink_escaping_the_repo_is_refused(self):
         self._canary_outside()
-        os.symlink(os.path.join(self.base, "outside.md"),
-                   os.path.join(self.repo, "escape.md"))
+        os.symlink(
+            os.path.join(self.base, "outside.md"), os.path.join(self.repo, "escape.md")
+        )
         self.write("CLAUDE.md", "@escape.md\n")
         _, receipt, body = self.run_script()
         self.assertNotIn("OUTSIDE-CANARY", body)
@@ -228,8 +230,9 @@ class TestSecurityBoundary(_RepoCase):
         # proves a symlinked CLAUDE.md is a real-world shape, so it is also the
         # shape an attacker would reach for.
         self._canary_outside()
-        os.symlink(os.path.join(self.base, "outside.md"),
-                   os.path.join(self.repo, "CLAUDE.md"))
+        os.symlink(
+            os.path.join(self.base, "outside.md"), os.path.join(self.repo, "CLAUDE.md")
+        )
         _, receipt, body = self.run_script()
         self.assertNotIn("OUTSIDE-CANARY", body)
         self.assertIn("outside_repo", self.reasons(receipt))
@@ -283,15 +286,18 @@ class TestSecurityBoundary(_RepoCase):
         # discourse's real AI-AGENTS.md contains "Specify the @type." Refusing
         # such tokens is safe but noisy, and a refusal line on every run is a
         # disclosure channel people learn to ignore.
-        self.write("CLAUDE.md",
-                   "Specify the @type. Use @param and @Override and @media.\n")
+        self.write(
+            "CLAUDE.md", "Specify the @type. Use @param and @Override and @media.\n"
+        )
         _, receipt, _ = self.run_script()
         self.assertEqual(
-            [], [s for s in receipt["skipped"] if s["reason"] != "duplicate_of"],
+            [],
+            [s for s in receipt["skipped"] if s["reason"] != "duplicate_of"],
             "prose at-signs must not produce skip entries: %r" % receipt["skipped"],
         )
         self.assertEqual(
-            [], [g for g in receipt["gaps"] if "refused" in g],
+            [],
+            [g for g in receipt["gaps"] if "refused" in g],
             "prose at-signs must not produce refusal gaps: %r" % receipt["gaps"],
         )
 
@@ -366,8 +372,9 @@ class TestBounds(_RepoCase):
         # exists because the constant was once deleted as apparent dead code —
         # nothing referenced it and nothing failed.
         cap = 10
-        self.write("CLAUDE.md",
-                   "\n".join("@f%d.md" % i for i in range(cap + 20)) + "\n")
+        self.write(
+            "CLAUDE.md", "\n".join("@f%d.md" % i for i in range(cap + 20)) + "\n"
+        )
         for i in range(cap + 20):
             self.write("f%d.md" % i, "")
         _, receipt, _ = self.run_script("--max-files", str(cap))
@@ -411,7 +418,8 @@ class TestBounds(_RepoCase):
         # cycle" is one of the reasons explicitly named as belonging in gaps[].
         self.assertTrue(
             any("cycle" in g for g in receipt["gaps"]),
-            "an import cycle must reach the human-readable gaps list: %r" % receipt["gaps"],
+            "an import cycle must reach the human-readable gaps list: %r"
+            % receipt["gaps"],
         )
 
 
@@ -419,8 +427,7 @@ class TestDiscovery(_RepoCase):
     def test_changed_files_pull_in_directory_level_rules(self):
         self.write("CLAUDE.md", "ROOT-RULE\n")
         self.write("pkg/storage/AGENTS.md", "DIR-RULE\n")
-        changed = self.write("../changed.json",
-                             json.dumps(["pkg/storage/impl.go"]))
+        changed = self.write("../changed.json", json.dumps(["pkg/storage/impl.go"]))
         _, _, body = self.run_script("--changed-files", changed)
         self.assertIn("ROOT-RULE", body)
         self.assertIn("DIR-RULE", body)
@@ -471,7 +478,10 @@ class TestFirstClassFileTypes(_RepoCase):
         self.assertEqual(body, "")
         self.assertIn("not_regular", self.reasons(receipt))
         self.assertTrue(
-            any("project_rules_unresolved" in g and "not_regular" in g for g in receipt["gaps"]),
+            any(
+                "project_rules_unresolved" in g and "not_regular" in g
+                for g in receipt["gaps"]
+            ),
             "non-regular first-class rule sources must be disclosed via gaps[]",
         )
 
@@ -517,7 +527,8 @@ class TestDisclosureContract(_RepoCase):
         self.write("AGENTS.md", "RULE\n")
         proc = subprocess.run(
             [sys.executable, SCRIPT, "--repo-root", self.repo, "--out", self.out],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(len(proc.stdout.strip().split("\n")), 1)
@@ -543,14 +554,7 @@ class TestPureHelpers(unittest.TestCase):
         self.assertIn("@z.md", stripped)
 
     def test_strip_code_nested_different_length_fences_dont_close_early(self):
-        text = (
-            "````\n"
-            "@OUTER1.md\n"
-            "```\n"
-            "@MISPARSED.md\n"
-            "````\n"
-            "@AFTER.md\n"
-        )
+        text = "````\n@OUTER1.md\n```\n@MISPARSED.md\n````\n@AFTER.md\n"
         self.assertEqual(_find_imports(text), ["AFTER.md"])
 
     def test_find_imports_handles_inline_and_trailing_punctuation(self):

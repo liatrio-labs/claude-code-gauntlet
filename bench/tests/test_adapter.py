@@ -20,9 +20,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from bench.adapter import adapt  # noqa: E402
-from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa: E402
 import scripts.post_review as post_review  # noqa: E402
+from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter"
 
@@ -48,19 +47,30 @@ _GL_START = "57a27000000000000000000000000000000057a2"
 # so the emitted comment carries start_line and its ``line`` is the *end* line.
 GH_COMMENT_FINDINGS = [
     {
-        "file": "src/auth/session.py", "line": 42, "severity": "high",
+        "file": "src/auth/session.py",
+        "line": 42,
+        "severity": "high",
         "title": "Missing null check on token",
-        "body": ("load_token() returns None when the cookie is absent; the next "
-                 "line dereferences it and raises AttributeError."),
+        "body": (
+            "load_token() returns None when the cookie is absent; the next "
+            "line dereferences it and raises AttributeError."
+        ),
     },
     {
-        "file": "src/auth/session.py", "line": 88, "end_line": 92,
-        "severity": "medium", "title": "Password hashed twice",
-        "body": ("hash_password() runs here and again in save(); the double hash "
-                 "makes the stored value fail verification."),
+        "file": "src/auth/session.py",
+        "line": 88,
+        "end_line": 92,
+        "severity": "medium",
+        "title": "Password hashed twice",
+        "body": (
+            "hash_password() runs here and again in save(); the double hash "
+            "makes the stored value fail verification."
+        ),
     },
     {
-        "file": "src/api/routes.py", "line": 15, "severity": "critical",
+        "file": "src/api/routes.py",
+        "line": 15,
+        "severity": "critical",
         "title": "SQL injection via f-string",
         "body": "The user-supplied uid is interpolated straight into the SQL string.",
         "suggested_fix_code": (
@@ -69,19 +79,25 @@ GH_COMMENT_FINDINGS = [
     },
 ]
 GH_SKIP_WARNINGS = [
-    ("Skipping finding 'Docs typo' at README.md:999 — line not found in diff. "
-     "Valid lines for this file: [3, 4, 5]"),
+    (
+        "Skipping finding 'Docs typo' at README.md:999 — line not found in diff. "
+        "Valid lines for this file: [3, 4, 5]"
+    ),
 ]
 
 GL_FINDINGS = [
     {
-        "file": "app/models/user.rb", "line": 27, "severity": "high",
+        "file": "app/models/user.rb",
+        "line": 27,
+        "severity": "high",
         "title": "N+1 query in loop",
         "body": "user.posts is queried inside the each loop; preload before iterating.",
     },
     {
-        "file": "app/controllers/sessions_controller.rb", "line": 5,
-        "severity": "low", "title": "Unused parameter",
+        "file": "app/controllers/sessions_controller.rb",
+        "line": 5,
+        "severity": "low",
+        "title": "Unused parameter",
         "body": "The redirect_to param is never read.",
     },
 ]
@@ -109,9 +125,14 @@ def _github_comment(f):
     return comment
 
 
-def build_reference_github_payload(comment_findings, skip_warnings,
-                                   owner="withastro", repo="astro", pr_number=1234,
-                                   review_body="Automated review summary."):
+def build_reference_github_payload(
+    comment_findings,
+    skip_warnings,
+    owner="withastro",
+    repo="astro",
+    pr_number=1234,
+    review_body="Automated review summary.",
+):
     """Build a GitHub dry-run payload via post_review's real capture path."""
     _reset_post_review()
     post_review.DRY_RUN = True
@@ -120,8 +141,12 @@ def build_reference_github_payload(comment_findings, skip_warnings,
     body = review_body + post_review.build_footer(total, _GH_SHA)
     payload = {"body": body, "event": "COMMENT", "comments": comments}
     cmd_prefix = [
-        "gh", "api", "--method", "POST",
-        "-H", "Accept: application/vnd.github+json",
+        "gh",
+        "api",
+        "--method",
+        "POST",
+        "-H",
+        "Accept: application/vnd.github+json",
         f"repos/{owner}/{repo}/pulls/{pr_number}/reviews",
     ]
     post_review.post_json(cmd_prefix, payload)
@@ -147,18 +172,32 @@ def _gitlab_discussion(f, new_file=False):
     return {"body": post_review.render_comment_body(f), "position": position}
 
 
-def build_reference_gitlab_payload(findings, skip_warnings=(),
-                                   project="gitlab-org/gitlab", mr_iid=999,
-                                   review_body="Automated review summary."):
+def build_reference_gitlab_payload(
+    findings,
+    skip_warnings=(),
+    project="gitlab-org/gitlab",
+    mr_iid=999,
+    review_body="Automated review summary.",
+):
     """Build a GitLab dry-run payload via post_review's real capture path."""
     _reset_post_review()
     post_review.DRY_RUN = True
     body = review_body + post_review.build_footer(len(findings), _GH_SHA)
-    notes_cmd = ["glab", "api", "--method", "POST",
-                 f"projects/{project}/merge_requests/{mr_iid}/notes"]
+    notes_cmd = [
+        "glab",
+        "api",
+        "--method",
+        "POST",
+        f"projects/{project}/merge_requests/{mr_iid}/notes",
+    ]
     post_review.post_json(notes_cmd, {"body": body})
-    disc_cmd = ["glab", "api", "--method", "POST",
-                f"projects/{project}/merge_requests/{mr_iid}/discussions"]
+    disc_cmd = [
+        "glab",
+        "api",
+        "--method",
+        "POST",
+        f"projects/{project}/merge_requests/{mr_iid}/discussions",
+    ]
     for f in findings:
         post_review.post_json(disc_cmd, _gitlab_discussion(f))
     for w in skip_warnings:
@@ -177,8 +216,8 @@ def _load_fixture(path):
 # payload_to_candidates — GitHub
 # ---------------------------------------------------------------------------
 
-class TestPayloadToCandidatesGitHub(unittest.TestCase):
 
+class TestPayloadToCandidatesGitHub(unittest.TestCase):
     def test_three_comments_one_skipped(self):
         cands, stats = payload_to_candidates(str(GITHUB_FIXTURE), GOLDEN_A)
         self.assertEqual(stats, {"n_candidates": 3, "n_skipped": 1})
@@ -197,8 +236,11 @@ class TestPayloadToCandidatesGitHub(unittest.TestCase):
         entries = cands[GOLDEN_A]["deep-review"]
         # index i candidate corresponds to index i posted comment
         for i, (entry, comment) in enumerate(zip(entries, posted)):
-            self.assertEqual(entry["text"], comment["body"],
-                             f"candidate {i} text must be the body verbatim")
+            self.assertEqual(
+                entry["text"],
+                comment["body"],
+                f"candidate {i} text must be the body verbatim",
+            )
             self.assertEqual(entry["path"], comment["path"])
             self.assertEqual(entry["line"], comment["line"])
 
@@ -215,8 +257,9 @@ class TestPayloadToCandidatesGitHub(unittest.TestCase):
         self.assertEqual(list(cands[GOLDEN_A]), ["deep-review"])
 
     def test_custom_tool_key(self):
-        cands, _ = payload_to_candidates(str(GITHUB_FIXTURE), GOLDEN_A,
-                                         tool="deep-review-v2")
+        cands, _ = payload_to_candidates(
+            str(GITHUB_FIXTURE), GOLDEN_A, tool="deep-review-v2"
+        )
         self.assertIn("deep-review-v2", cands[GOLDEN_A])
 
     def test_accepts_path_object(self):
@@ -235,8 +278,8 @@ class TestPayloadToCandidatesGitHub(unittest.TestCase):
 # payload_to_candidates — GitLab
 # ---------------------------------------------------------------------------
 
-class TestPayloadToCandidatesGitLab(unittest.TestCase):
 
+class TestPayloadToCandidatesGitLab(unittest.TestCase):
     def test_discussions_mapped_in_order(self):
         payload = _load_fixture(GITLAB_FIXTURE)
         discussions = payload["discussions"]
@@ -255,8 +298,8 @@ class TestPayloadToCandidatesGitLab(unittest.TestCase):
 # payload_to_candidates — error handling
 # ---------------------------------------------------------------------------
 
-class TestPayloadToCandidatesErrors(unittest.TestCase):
 
+class TestPayloadToCandidatesErrors(unittest.TestCase):
     def test_unknown_platform_raises(self):
         with self.assertRaises(ValueError):
             payload_to_candidates({"platform": "bitbucket"}, GOLDEN_A)
@@ -270,13 +313,14 @@ class TestPayloadToCandidatesErrors(unittest.TestCase):
 # merge_candidates
 # ---------------------------------------------------------------------------
 
-class TestMergeCandidates(unittest.TestCase):
 
+class TestMergeCandidates(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
 
     def tearDown(self):
         import shutil
+
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _write_candidates(self, name, obj):
@@ -331,6 +375,7 @@ class TestMergeCandidates(unittest.TestCase):
 # Fixture fidelity — the committed fixtures byte-match post_review.py output
 # ---------------------------------------------------------------------------
 
+
 class TestFixtureFidelity(unittest.TestCase):
     """Guard: committed fixtures == build_dry_run_payload() output."""
 
@@ -338,8 +383,7 @@ class TestFixtureFidelity(unittest.TestCase):
         _reset_post_review()
 
     def test_github_fixture_matches_post_review(self):
-        expected = build_reference_github_payload(GH_COMMENT_FINDINGS,
-                                                  GH_SKIP_WARNINGS)
+        expected = build_reference_github_payload(GH_COMMENT_FINDINGS, GH_SKIP_WARNINGS)
         self.assertEqual(_load_fixture(GITHUB_FIXTURE), expected)
 
     def test_github_empty_fixture_matches_post_review(self):
@@ -352,11 +396,11 @@ class TestFixtureFidelity(unittest.TestCase):
 
     def test_fixture_top_level_keys_are_the_dry_run_shape(self):
         gh = _load_fixture(GITHUB_FIXTURE)
-        self.assertEqual(set(gh), {"platform", "endpoint", "method", "payload",
-                                   "skipped"})
+        self.assertEqual(
+            set(gh), {"platform", "endpoint", "method", "payload", "skipped"}
+        )
         gl = _load_fixture(GITLAB_FIXTURE)
-        self.assertEqual(set(gl), {"platform", "summary", "discussions",
-                                   "skipped"})
+        self.assertEqual(set(gl), {"platform", "summary", "discussions", "skipped"})
 
 
 if __name__ == "__main__":

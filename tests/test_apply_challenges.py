@@ -26,18 +26,17 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.apply_challenges import (
-    load_filtered,
-    load_challenges,
-    apply_challenges,
-    rank_findings,
     _downgrade_severity,
-    SEVERITY_ORDER,
+    apply_challenges,
+    load_challenges,
+    load_filtered,
+    rank_findings,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_finding(**kwargs):
     defaults = {
@@ -78,8 +77,8 @@ def _write_json(data):
 # _downgrade_severity
 # ---------------------------------------------------------------------------
 
-class TestDowngradeSeverity(unittest.TestCase):
 
+class TestDowngradeSeverity(unittest.TestCase):
     def test_critical_to_high(self):
         self.assertEqual(_downgrade_severity("critical"), "high")
 
@@ -103,8 +102,8 @@ class TestDowngradeSeverity(unittest.TestCase):
 # load_filtered
 # ---------------------------------------------------------------------------
 
-class TestLoadFiltered(unittest.TestCase):
 
+class TestLoadFiltered(unittest.TestCase):
     def test_filtered_envelope(self):
         """filter_findings.py output shape"""
         data = {
@@ -170,8 +169,8 @@ class TestLoadFiltered(unittest.TestCase):
 # load_challenges
 # ---------------------------------------------------------------------------
 
-class TestLoadChallenges(unittest.TestCase):
 
+class TestLoadChallenges(unittest.TestCase):
     def test_bare_array(self):
         data = [{"id": "f1", "score": 80}, {"id": "f2", "score": 30}]
         path = _write_json(data)
@@ -218,8 +217,8 @@ class TestLoadChallenges(unittest.TestCase):
 # apply_challenges — threshold rules
 # ---------------------------------------------------------------------------
 
-class TestApplyChallenges(unittest.TestCase):
 
+class TestApplyChallenges(unittest.TestCase):
     def test_score_below_25_removes(self):
         findings = [_make_finding(id="f1", severity="high")]
         challenges = [_make_challenge("f1", 20)]
@@ -373,18 +372,20 @@ class TestApplyChallenges(unittest.TestCase):
 
     def test_surfaced_finding_score_below_50_rerouted_to_suggestion(self):
         """Surfaced findings with score < 50 → suggestion, even if score >= 25."""
-        findings = [_make_finding(
-            id="f1", origin="surfaced", report_destination="main", severity="high"
-        )]
+        findings = [
+            _make_finding(
+                id="f1", origin="surfaced", report_destination="main", severity="high"
+            )
+        ]
         challenges = [_make_challenge("f1", 30)]  # 25-49 → downgrade
         active, _, _ = apply_challenges(findings, challenges)
         # Downgrade keeps it but moves to suggestion
         self.assertEqual(active[0]["report_destination"], "suggestion")
 
     def test_surfaced_finding_score_50_74_rerouted_to_suggestion(self):
-        findings = [_make_finding(
-            id="f1", origin="surfaced", report_destination="main"
-        )]
+        findings = [
+            _make_finding(id="f1", origin="surfaced", report_destination="main")
+        ]
         challenges = [_make_challenge("f1", 60)]
         active, _, _ = apply_challenges(findings, challenges)
         self.assertEqual(active[0]["report_destination"], "suggestion")
@@ -392,9 +393,9 @@ class TestApplyChallenges(unittest.TestCase):
 
     def test_surfaced_finding_score_75_not_rerouted(self):
         """Surfaced findings that survive (score >= 75) keep their destination."""
-        findings = [_make_finding(
-            id="f1", origin="surfaced", report_destination="main"
-        )]
+        findings = [
+            _make_finding(id="f1", origin="surfaced", report_destination="main")
+        ]
         challenges = [_make_challenge("f1", 80)]
         active, _, _ = apply_challenges(findings, challenges)
         self.assertEqual(active[0]["report_destination"], "main")
@@ -420,10 +421,10 @@ class TestApplyChallenges(unittest.TestCase):
     def test_multiple_findings_mixed_scores(self):
         findings = [
             _make_finding(id="f1", severity="critical"),  # removed
-            _make_finding(id="f2", severity="high"),      # downgraded
-            _make_finding(id="f3"),                       # contested
-            _make_finding(id="f4"),                       # survived
-            _make_finding(id="f5"),                       # unchallenged
+            _make_finding(id="f2", severity="high"),  # downgraded
+            _make_finding(id="f3"),  # contested
+            _make_finding(id="f4"),  # survived
+            _make_finding(id="f5"),  # unchallenged
         ]
         challenges = [
             _make_challenge("f1", 10),
@@ -451,8 +452,8 @@ class TestApplyChallenges(unittest.TestCase):
 # rank_findings
 # ---------------------------------------------------------------------------
 
-class TestRankFindings(unittest.TestCase):
 
+class TestRankFindings(unittest.TestCase):
     def test_severity_order(self):
         findings = [
             _make_finding(id="low", severity="low", confidence=90),
@@ -474,9 +475,15 @@ class TestRankFindings(unittest.TestCase):
 
     def test_description_length_tiebreak(self):
         findings = [
-            _make_finding(id="short", severity="high", confidence=80, description="Short."),
-            _make_finding(id="long", severity="high", confidence=80,
-                          description="A much longer description with more detail."),
+            _make_finding(
+                id="short", severity="high", confidence=80, description="Short."
+            ),
+            _make_finding(
+                id="long",
+                severity="high",
+                confidence=80,
+                description="A much longer description with more detail.",
+            ),
         ]
         ranked = rank_findings(findings)
         self.assertEqual(ranked[0]["id"], "long")
@@ -486,10 +493,20 @@ class TestRankFindings(unittest.TestCase):
     def test_risk_level_tiebreak_higher_first(self):
         """risk_level used as tertiary key; higher value ranks first."""
         findings = [
-            _make_finding(id="low-risk", severity="high", confidence=80,
-                          description="Same", risk_level=2),
-            _make_finding(id="high-risk", severity="high", confidence=80,
-                          description="Same", risk_level=8),
+            _make_finding(
+                id="low-risk",
+                severity="high",
+                confidence=80,
+                description="Same",
+                risk_level=2,
+            ),
+            _make_finding(
+                id="high-risk",
+                severity="high",
+                confidence=80,
+                description="Same",
+                risk_level=8,
+            ),
         ]
         ranked = rank_findings(findings)
         self.assertEqual(ranked[0]["id"], "high-risk")
@@ -497,10 +514,15 @@ class TestRankFindings(unittest.TestCase):
     def test_risk_level_fallback_to_description_when_absent(self):
         """When risk_level absent, falls back to description length."""
         findings = [
-            _make_finding(id="short", severity="high", confidence=80,
-                          description="Short."),
-            _make_finding(id="long", severity="high", confidence=80,
-                          description="A much longer description with more detail."),
+            _make_finding(
+                id="short", severity="high", confidence=80, description="Short."
+            ),
+            _make_finding(
+                id="long",
+                severity="high",
+                confidence=80,
+                description="A much longer description with more detail.",
+            ),
         ]
         # Neither has risk_level
         ranked = rank_findings(findings)
@@ -509,11 +531,20 @@ class TestRankFindings(unittest.TestCase):
     def test_risk_level_beats_description_length(self):
         """risk_level takes priority over description length when present."""
         findings = [
-            _make_finding(id="low-risk-long", severity="high", confidence=80,
-                          description="A very long description indeed for this finding.",
-                          risk_level=1),
-            _make_finding(id="high-risk-short", severity="high", confidence=80,
-                          description="Short.", risk_level=9),
+            _make_finding(
+                id="low-risk-long",
+                severity="high",
+                confidence=80,
+                description="A very long description indeed for this finding.",
+                risk_level=1,
+            ),
+            _make_finding(
+                id="high-risk-short",
+                severity="high",
+                confidence=80,
+                description="Short.",
+                risk_level=9,
+            ),
         ]
         ranked = rank_findings(findings)
         self.assertEqual(ranked[0]["id"], "high-risk-short")
@@ -530,22 +561,31 @@ class TestRankFindings(unittest.TestCase):
 # Cross-agent dedup integration (via apply_challenges module)
 # ---------------------------------------------------------------------------
 
+
 class TestCrossAgentDedupIntegration(unittest.TestCase):
     """Verify that dedup_cross_agent is applied after challenge processing."""
 
     def test_dedup_runs_post_challenge(self):
         """Two different agents at same location: core dimension wins."""
-        from scripts.apply_challenges import apply_challenges, rank_findings
+        from scripts.apply_challenges import apply_challenges
         from scripts.filter_findings import dedup_cross_agent
 
         findings = [
             _make_finding(
-                id="bug-1", file="a.py", line_start=10,
-                agent="bug-detector", dimension="bug", confidence=80,
+                id="bug-1",
+                file="a.py",
+                line_start=10,
+                agent="bug-detector",
+                dimension="bug",
+                confidence=80,
             ),
             _make_finding(
-                id="test-1", file="a.py", line_start=12,
-                agent="test-analyzer", dimension="test_coverage", confidence=90,
+                id="test-1",
+                file="a.py",
+                line_start=12,
+                agent="test-analyzer",
+                dimension="test_coverage",
+                confidence=90,
             ),
         ]
         # Both survive challenge
@@ -560,17 +600,16 @@ class TestCrossAgentDedupIntegration(unittest.TestCase):
         self.assertEqual(len(dropped), 1)
 
 
-
 # ---------------------------------------------------------------------------
 # main() CLI integration
 # ---------------------------------------------------------------------------
 
-class TestMainCLI(unittest.TestCase):
 
+class TestMainCLI(unittest.TestCase):
     def _run_main(self, findings, challenges, extra_args=None):
         """Helper: write temp files, invoke main(), return parsed output."""
-        import io
         from unittest.mock import patch
+
         from scripts.apply_challenges import main
 
         f_path = _write_json({"filtered": findings, "eliminated": []})
@@ -623,16 +662,21 @@ class TestMainCLI(unittest.TestCase):
         result = self._run_main(findings, challenges)
         stats = result["stats"]
         for field in [
-            "total_input", "challenge_removed", "challenge_downgraded",
-            "challenge_contested", "challenge_survived", "unchallenged",
-            "dedup_dropped", "final_count",
+            "total_input",
+            "challenge_removed",
+            "challenge_downgraded",
+            "challenge_contested",
+            "challenge_survived",
+            "unchallenged",
+            "dedup_dropped",
+            "final_count",
         ]:
             self.assertIn(field, stats, f"Missing stats field: {field}")
 
     def test_prior_eliminated_passed_through(self):
         """Prior Phase 6 eliminated findings appear in output eliminated list."""
-        import io
         from unittest.mock import patch
+
         from scripts.apply_challenges import main
 
         prior_elim = [dict(_make_finding(id="e1"), eliminated_by="threshold")]
@@ -644,7 +688,10 @@ class TestMainCLI(unittest.TestCase):
         c_path = _write_json([_make_challenge("f1", 80)])
         out_path = tempfile.mktemp(suffix=".json")
         try:
-            with patch("sys.argv", ["apply_challenges.py", f_path, c_path, "--output", out_path]):
+            with patch(
+                "sys.argv",
+                ["apply_challenges.py", f_path, c_path, "--output", out_path],
+            ):
                 main()
             with open(out_path) as fh:
                 result = json.load(fh)
@@ -659,10 +706,22 @@ class TestMainCLI(unittest.TestCase):
     def test_dedup_through_main_cli(self):
         """CLI integration: cross-agent dedup runs within main() pipeline."""
         findings = [
-            _make_finding(id="bug-1", agent="bug-detector", dimension="bug",
-                          file="src/auth.py", line_start=41, confidence=90),
-            _make_finding(id="conv-1", agent="conventions-and-intent", dimension="convention",
-                          file="src/auth.py", line_start=42, confidence=80),
+            _make_finding(
+                id="bug-1",
+                agent="bug-detector",
+                dimension="bug",
+                file="src/auth.py",
+                line_start=41,
+                confidence=90,
+            ),
+            _make_finding(
+                id="conv-1",
+                agent="conventions-and-intent",
+                dimension="convention",
+                file="src/auth.py",
+                line_start=42,
+                confidence=80,
+            ),
         ]
         challenges = [
             _make_challenge("bug-1", 85),
@@ -679,6 +738,7 @@ class TestMainCLI(unittest.TestCase):
         """When --output is omitted, JSON is written to stdout."""
         import io
         from unittest.mock import patch
+
         from scripts.apply_challenges import main
 
         findings = [_make_finding(id="f1")]

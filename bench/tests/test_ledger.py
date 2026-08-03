@@ -30,20 +30,30 @@ if str(REPO_ROOT) not in sys.path:
 from bench.runner.ledger import (  # noqa: E402
     API_AUTH_MODE,
     AUTH_MODES,
+    DEFAULT_AUTH_MODE,
+    REQUIRED_KEYS,
+    SUBSCRIPTION_AUTH_MODE,
     append_row,
     cost_is_billable,
-    DEFAULT_AUTH_MODE,
     manifest_auth_mode,
-    REQUIRED_KEYS,
     row_auth_mode,
-    SUBSCRIPTION_AUTH_MODE,
 )
 
-
 REQUIRED = [
-    "run_id", "ts", "git_sha", "tier", "tool",
-    "golden_recall", "valid_extra_rate", "noise_rate", "precision_strict",
-    "tokens_total", "cost_usd", "judge_pin", "scorer_sha", "envelope",
+    "run_id",
+    "ts",
+    "git_sha",
+    "tier",
+    "tool",
+    "golden_recall",
+    "valid_extra_rate",
+    "noise_rate",
+    "precision_strict",
+    "tokens_total",
+    "cost_usd",
+    "judge_pin",
+    "scorer_sha",
+    "envelope",
 ]
 
 
@@ -202,7 +212,6 @@ class AuthModeTestCase(unittest.TestCase):
         self.assertIs(score.manifest_auth_mode, manifest_auth_mode)
         self.assertFalse(hasattr(run, "DEFAULT_CHILD_AUTH"))
         self.assertFalse(hasattr(invoke, "CHILD_AUTH_MODES"))
-
 
     def test_auth_mode_is_not_a_required_key(self):
         # The ledger is append-only: requiring auth_mode would invalidate every

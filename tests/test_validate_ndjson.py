@@ -39,7 +39,6 @@ class _TmpFile:
 
 
 class TestValidateValidInput(unittest.TestCase):
-
     def test_missing_file_is_ok(self):
         """Agent emitted nothing — no findings file is a valid outcome."""
         path = "/nonexistent/path/findings.ndjson"
@@ -49,9 +48,8 @@ class TestValidateValidInput(unittest.TestCase):
         self.assertIn("file not found", err.getvalue())
 
     def test_empty_file_is_ok(self):
-        with _TmpFile(b"") as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        with _TmpFile(b"") as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 0)
 
     def test_whitespace_only_file_is_ok(self):
@@ -81,42 +79,31 @@ class TestValidateValidInput(unittest.TestCase):
         self.assertIn("3 valid finding", err.getvalue())
 
     def test_blank_lines_between_findings_ok(self):
-        content = (
-            b'{"id":"bug-1"}\n'
-            b'\n'
-            b'{"id":"bug-2"}\n'
-        )
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        content = b'{"id":"bug-1"}\n\n{"id":"bug-2"}\n'
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 0)
 
     def test_escaped_newline_in_string_is_valid(self):
         """`\\n` (two characters) inside a string is valid JSON — the real
         newline byte is what breaks NDJSON, not the escape."""
         line = b'{"id":"bug-1","description":"Line one.\\nLine two."}\n'
-        with _TmpFile(line) as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        with _TmpFile(line) as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 0)
 
     def test_unicode_apostrophe_escape_is_valid(self):
         line = b'{"id":"bug-1","description":"doesn\\u0027t check"}\n'
-        with _TmpFile(line) as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        with _TmpFile(line) as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 0)
 
 
 class TestValidateInvalidInput(unittest.TestCase):
-
     def test_literal_newline_in_string_fails(self):
         """The headline bug — agent embeds a raw \\n inside a JSON string,
         producing two physical lines neither of which parses."""
-        content = (
-            b'{"id":"bug-1","description":"First sentence.\n'
-            b'Second sentence."}\n'
-        )
+        content = b'{"id":"bug-1","description":"First sentence.\nSecond sentence."}\n'
         with _TmpFile(content) as path:
             with patch("sys.stderr", new=io.StringIO()) as err:
                 rc = validate(path)
@@ -129,25 +116,22 @@ class TestValidateInvalidInput(unittest.TestCase):
     def test_literal_tab_in_string_fails(self):
         # A real tab byte inside a JSON string is invalid JSON.
         content = b'{"id":"bug-1","description":"col1\tcol2"}\n'
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 1)
 
     def test_literal_cr_in_string_fails(self):
         # \r inside a JSON string is also invalid JSON, and split() on b"\n"
         # leaves it embedded so json.loads reliably rejects it.
         content = b'{"id":"bug-1","description":"line1\rline2"}\n'
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 1)
 
     def test_unterminated_string_fails(self):
         content = b'{"id":"bug-1","description":"never closes\n'
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 1)
 
     def test_one_invalid_among_valid_reports_count(self):
@@ -167,10 +151,7 @@ class TestValidateInvalidInput(unittest.TestCase):
         self.assertIn("2 invalid", out)
 
     def test_invalid_line_diagnostic_includes_line_number(self):
-        content = (
-            b'{"id":"bug-1"}\n'
-            b'this is not json at all\n'
-        )
+        content = b'{"id":"bug-1"}\nthis is not json at all\n'
         with _TmpFile(content) as path:
             with patch("sys.stderr", new=io.StringIO()) as err:
                 rc = validate(path)
@@ -178,7 +159,7 @@ class TestValidateInvalidInput(unittest.TestCase):
         self.assertIn("line 2", err.getvalue())
 
     def test_invalid_line_diagnostic_truncates_long_snippet(self):
-        long_payload = b'x' * 500
+        long_payload = b"x" * 500
         content = b'{"id":"bug-1","description":"' + long_payload + b'\nbroken"}\n'
         with _TmpFile(content) as path:
             with patch("sys.stderr", new=io.StringIO()) as err:
@@ -190,7 +171,6 @@ class TestValidateInvalidInput(unittest.TestCase):
 
 
 class TestMainEntrypoint(unittest.TestCase):
-
     def test_no_args_returns_usage_error(self):
         with patch("sys.stderr", new=io.StringIO()) as err:
             rc = main(["validate_ndjson.py"])

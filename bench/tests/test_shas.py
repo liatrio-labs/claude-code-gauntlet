@@ -6,6 +6,7 @@ drives ``fetch_shas.fetch_one`` through an injected ``gh`` runner (no network) t
 prove ``base_sha`` is pinned to the compare-API merge-base and the moving tip is
 kept as ``base_sha_api``.
 """
+
 import json
 import re
 import unittest
@@ -41,10 +42,20 @@ class TestShas(unittest.TestCase):
         for url in sorted(self.subset_urls):
             self.assertIn(url, self.shas, f"no shas.json entry for {url}")
             entry = self.shas[url]
-            for field in ("owner", "repo", "pr_number", "head_sha", "base_sha", "base_ref", "fork"):
+            for field in (
+                "owner",
+                "repo",
+                "pr_number",
+                "head_sha",
+                "base_sha",
+                "base_ref",
+                "fork",
+            ):
                 self.assertIn(field, entry, f"{url} missing {field}")
             for field in ("head_sha", "base_sha", "base_ref"):
-                self.assertNotEqual(entry[field], "missing", f"{url} has missing {field}")
+                self.assertNotEqual(
+                    entry[field], "missing", f"{url} has missing {field}"
+                )
 
     def test_subset_shas_are_40_hex(self):
         for url in sorted(self.subset_urls):
@@ -60,7 +71,9 @@ class TestShas(unittest.TestCase):
         for url, entry in self.shas.items():
             self.assertIn("base_sha_api", entry, f"{url} missing base_sha_api")
             if entry["base_sha"] == "missing":
-                self.assertEqual(entry["base_sha_api"], "missing", f"{url} half-missing")
+                self.assertEqual(
+                    entry["base_sha_api"], "missing", f"{url} half-missing"
+                )
                 continue
             self.assertRegex(entry["base_sha"], SHA_RE, f"{url} bad base_sha")
             self.assertRegex(entry["base_sha_api"], SHA_RE, f"{url} bad base_sha_api")
@@ -76,7 +89,9 @@ class TestShas(unittest.TestCase):
     def test_owner_repo_pr_match_url(self):
         for url, entry in self.shas.items():
             expected = f"https://github.com/{entry['owner']}/{entry['repo']}/pull/{entry['pr_number']}"
-            self.assertEqual(url, expected, f"{url} owner/repo/pr fields disagree with key")
+            self.assertEqual(
+                url, expected, f"{url} owner/repo/pr fields disagree with key"
+            )
 
 
 class TestFetchOne(unittest.TestCase):
@@ -99,6 +114,7 @@ class TestFetchOne(unittest.TestCase):
             else:
                 raise AssertionError(f"unexpected endpoint {endpoint}")
             return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
         return run
 
     def test_records_merge_base_as_base_sha_and_tip_as_api(self):
@@ -107,8 +123,8 @@ class TestFetchOne(unittest.TestCase):
             "o", "r", 1, run=self._runner(calls)
         )
         self.assertEqual(head, self.HEAD)
-        self.assertEqual(base_sha, self.MERGE_BASE)     # merge-base is the pinned base
-        self.assertEqual(base_sha_api, self.TIP)        # moving tip kept for provenance
+        self.assertEqual(base_sha, self.MERGE_BASE)  # merge-base is the pinned base
+        self.assertEqual(base_sha_api, self.TIP)  # moving tip kept for provenance
         self.assertEqual(ref, "main")
 
     def test_compare_uses_base_ref_and_head(self):
@@ -127,6 +143,7 @@ class TestFetchOne(unittest.TestCase):
                 )
                 return SimpleNamespace(returncode=0, stdout=out, stderr="")
             return SimpleNamespace(returncode=1, stdout="", stderr="compare boom")
+
         with mock.patch.object(fetch_shas.time, "sleep", lambda *_: None):
             with self.assertRaises(RuntimeError):
                 fetch_shas.fetch_one("o", "r", 1, run=run)

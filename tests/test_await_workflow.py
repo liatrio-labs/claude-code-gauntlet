@@ -34,13 +34,13 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from scripts.await_workflow import (  # noqa: E402
-    _newest,
+from scripts.await_workflow import (
     ARTIFACT_BASENAMES,
     COMPACT_RETURN_KEYS,
     DEFAULT_TIMEOUT_SECONDS,
     MIN_TIMEOUT_SECONDS,
     SCAN_MAX_CHARS,
+    _newest,
     artifacts_state,
     build_next_command,
     build_parser,
@@ -117,8 +117,13 @@ def envelope(result):
         "logs": [],
         "result": result,
         "workflowProgress": [
-            {"type": "workflow_agent", "index": 1, "label": "summarize",
-             "state": "done", "lastToolSummary": "ok"},
+            {
+                "type": "workflow_agent",
+                "index": 1,
+                "label": "summarize",
+                "state": "done",
+                "lastToolSummary": "ok",
+            },
         ],
         "totalTokens": 669337,
         "totalToolCalls": 118,
@@ -177,6 +182,7 @@ def sole_json_line(stdout):
 # ---------------------------------------------------------------------------
 # Terminal detection
 # ---------------------------------------------------------------------------
+
 
 class TestIsTerminalReturn(unittest.TestCase):
     """A boolean `ok` plus at least one field only the compact return carries."""
@@ -293,7 +299,9 @@ class TestPartialAndUnreadable(unittest.TestCase):
         self.assertEqual(find_terminal("   \n\t \n"), (None, False, None))
 
     def test_truncated_mid_object(self):
-        text = json.dumps(envelope(SUCCESS_RETURN))[: len(json.dumps(envelope(SUCCESS_RETURN))) // 2]
+        text = json.dumps(envelope(SUCCESS_RETURN))[
+            : len(json.dumps(envelope(SUCCESS_RETURN))) // 2
+        ]
         found, _, _ = find_terminal(text)
         self.assertIsNone(found)
 
@@ -323,7 +331,9 @@ class TestFindTerminalEmbedded(unittest.TestCase):
     """Issue #26 R2: the object may be embedded in, or appended after, other output."""
 
     def test_prefixed_by_log_lines(self):
-        text = "starting run\nagent-done: result\n" + json.dumps(envelope(SUCCESS_RETURN))
+        text = "starting run\nagent-done: result\n" + json.dumps(
+            envelope(SUCCESS_RETURN)
+        )
         found, _, _ = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
 
@@ -338,11 +348,15 @@ class TestFindTerminalEmbedded(unittest.TestCase):
         self.assertEqual(found, SUCCESS_RETURN)
 
     def test_ndjson_one_object_per_line(self):
-        text = "\n".join([
-            json.dumps({"type": "started", "agentId": "a1"}),
-            json.dumps({"type": "result", "agentId": "a1", "result": ASSEMBLE_RECEIPT}),
-            json.dumps(SUCCESS_RETURN),
-        ])
+        text = "\n".join(
+            [
+                json.dumps({"type": "started", "agentId": "a1"}),
+                json.dumps(
+                    {"type": "result", "agentId": "a1", "result": ASSEMBLE_RECEIPT}
+                ),
+                json.dumps(SUCCESS_RETURN),
+            ]
+        )
         found, _, _ = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
 
@@ -458,9 +472,11 @@ class TestScanDoesNotDropLaterDocuments(unittest.TestCase):
     def test_a_failed_decode_does_not_skip_past_a_later_document(self):
         """The decoder's error `pos` is where it GAVE UP, which can be far past a
         later document start. Using it as a floor refused to probe that offset."""
-        text = ('{"a": [\n'
-                + json.dumps(SUCCESS_RETURN)
-                + "\nBROKEN NON JSON GARBAGE THAT MAKES THE OUTER FAIL\n")
+        text = (
+            '{"a": [\n'
+            + json.dumps(SUCCESS_RETURN)
+            + "\nBROKEN NON JSON GARBAGE THAT MAKES THE OUTER FAIL\n"
+        )
         found, _, _ = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
 
@@ -491,8 +507,12 @@ class TestEveryBoundIsDisclosed(unittest.TestCase):
         self.assertEqual(stopped, "max_deep_candidates")
 
     def test_under_the_deep_bound_a_later_terminal_is_still_found(self):
-        text = ("\n".join(self._deep_line() for _ in range(7)) + "\n"
-                + json.dumps(SUCCESS_RETURN) + "\n")
+        text = (
+            "\n".join(self._deep_line() for _ in range(7))
+            + "\n"
+            + json.dumps(SUCCESS_RETURN)
+            + "\n"
+        )
         found, _, stopped = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
         self.assertIsNone(stopped)
@@ -505,8 +525,12 @@ class TestEveryBoundIsDisclosed(unittest.TestCase):
 
     def test_a_bound_tripping_after_the_terminal_is_not_reported(self):
         """It cost nothing, so it is not a truncated search."""
-        text = (json.dumps(SUCCESS_RETURN) + "\n"
-                + "\n".join('{"n":%d}' % i for i in range(2000)) + "\n")
+        text = (
+            json.dumps(SUCCESS_RETURN)
+            + "\n"
+            + "\n".join('{"n":%d}' % i for i in range(2000))
+            + "\n"
+        )
         found, _, stopped = find_terminal(text)
         self.assertEqual(found, SUCCESS_RETURN)
         self.assertIsNone(stopped)
@@ -534,11 +558,14 @@ class TestBrokenPipeDegradesToADocumentedCode(unittest.TestCase):
             script = os.path.join(REPO_ROOT, "scripts", "await_workflow.py")
             reader = subprocess.Popen(
                 ["head", "-c", "20"],
-                stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
             )
             writer = subprocess.Popen(
                 ["python3", script, "--timeout-seconds", "0", "--", path],
-                stdout=reader.stdin, stderr=subprocess.PIPE, text=True,
+                stdout=reader.stdin,
+                stderr=subprocess.PIPE,
+                text=True,
             )
             assert reader.stdin is not None
             reader.stdin.close()
@@ -602,9 +629,17 @@ class TestTerminalPathIsSilentOnStderr(unittest.TestCase):
         with _Workspace() as ws:
             path = ws.write("w1.output", json.dumps(envelope(SUCCESS_RETURN)))
             proc = subprocess.run(
-                ["python3", os.path.join(REPO_ROOT, "scripts", "await_workflow.py"),
-                 "--timeout-seconds", "0", "--", path],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                [
+                    "python3",
+                    os.path.join(REPO_ROOT, "scripts", "await_workflow.py"),
+                    "--timeout-seconds",
+                    "0",
+                    "--",
+                    path,
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
             )
         self.assertEqual(proc.returncode, 0)
         self.assertEqual(len([x for x in proc.stdout.split("\n") if x]), 1)
@@ -638,28 +673,39 @@ class TestPersistReturnIsElided(unittest.TestCase):
 
     def test_the_entries_never_reach_stdout(self):
         with _Workspace() as ws:
-            path = ws.write("w1.output", json.dumps(envelope(self._return_with_payload())))
+            path = ws.write(
+                "w1.output", json.dumps(envelope(self._return_with_payload()))
+            )
             code, out, _err = run_main([path, "--timeout-seconds", "0"])
         self.assertEqual(code, 0)
         self.assertNotIn("x" * 5000, out)
         self.assertLess(len(out), 2000, "the bulk is still crossing the boundary")
         printed = sole_json_line(out)["persistReturn"]
-        self.assertNotIn("entries", printed, "an entry list without its text invites empty writes")
+        self.assertNotIn(
+            "entries", printed, "an entry list without its text invites empty writes"
+        )
         self.assertTrue(printed["elided"])
-        self.assertEqual(printed["paths"], [
-            "/out/code-gauntlet-findings-da09bc08.json",
-            "/out/code-gauntlet-report-da09bc08.md",
-        ])
+        self.assertEqual(
+            printed["paths"],
+            [
+                "/out/code-gauntlet-findings-da09bc08.json",
+                "/out/code-gauntlet-report-da09bc08.md",
+            ],
+        )
 
     def test_the_resolved_path_rides_back_so_the_caller_need_not_re_resolve(self):
         with _Workspace() as ws:
-            path = ws.write("w1.output", json.dumps(envelope(self._return_with_payload())))
+            path = ws.write(
+                "w1.output", json.dumps(envelope(self._return_with_payload()))
+            )
             _code, out, _err = run_main([path, "--timeout-seconds", "0"])
         self.assertEqual(sole_json_line(out)["persistReturn"]["resolvedPath"], path)
 
     def test_every_other_key_is_untouched(self):
         with _Workspace() as ws:
-            path = ws.write("w1.output", json.dumps(envelope(self._return_with_payload())))
+            path = ws.write(
+                "w1.output", json.dumps(envelope(self._return_with_payload()))
+            )
             _code, out, _err = run_main([path, "--timeout-seconds", "0"])
         printed = sole_json_line(out)
         del printed["persistReturn"]
@@ -682,9 +728,11 @@ class TestTruncatedFragmentIsNotPromoted(unittest.TestCase):
     """
 
     def test_nested_receipt_in_a_truncated_envelope_is_rejected(self):
-        fragment = ('{"summary":"x","result":null,"workflowProgress":'
-                    '[{"type":"workflow_agent","lastToolSummary":'
-                    '{"ok":true,"stats":{"found":4}}')
+        fragment = (
+            '{"summary":"x","result":null,"workflowProgress":'
+            '[{"type":"workflow_agent","lastToolSummary":'
+            '{"ok":true,"stats":{"found":4}}'
+        )
         found, _, _ = find_terminal(fragment)
         self.assertIsNone(found)
 
@@ -780,8 +828,8 @@ class TestSawOkWithoutCorroborator(unittest.TestCase):
 # Target resolution
 # ---------------------------------------------------------------------------
 
-class TestResolveTarget(unittest.TestCase):
 
+class TestResolveTarget(unittest.TestCase):
     def test_absolute_path_used_verbatim(self):
         path, searched = resolve_target("/tmp/x/tasks/w1.output", {})
         self.assertEqual(path, "/tmp/x/tasks/w1.output")
@@ -827,8 +875,8 @@ class TestResolveTarget(unittest.TestCase):
 # The artifacts secondary signal
 # ---------------------------------------------------------------------------
 
-class TestArtifactsState(unittest.TestCase):
 
+class TestArtifactsState(unittest.TestCase):
     def _write_all(self, ws, sha, mtime=None):
         for template in ARTIFACT_BASENAMES:
             ws.write(template.format(sha=sha), "content", mtime=mtime)
@@ -890,13 +938,15 @@ class TestArtifactsState(unittest.TestCase):
 # Timeout default
 # ---------------------------------------------------------------------------
 
-class TestDefaultTimeoutSeconds(unittest.TestCase):
 
+class TestDefaultTimeoutSeconds(unittest.TestCase):
     def test_unset_uses_the_constant(self):
         self.assertEqual(default_timeout_seconds({}), DEFAULT_TIMEOUT_SECONDS)
 
     def test_bash_ceiling_lowers_it_with_headroom(self):
-        self.assertEqual(default_timeout_seconds({"BASH_MAX_TIMEOUT_MS": "300000"}), 240)
+        self.assertEqual(
+            default_timeout_seconds({"BASH_MAX_TIMEOUT_MS": "300000"}), 240
+        )
 
     def test_generous_ceiling_does_not_raise_it(self):
         self.assertEqual(
@@ -923,6 +973,7 @@ class TestDefaultTimeoutSeconds(unittest.TestCase):
 # Exit codes and the one-line stdout contract
 # ---------------------------------------------------------------------------
 
+
 class TestExitCodeContract(unittest.TestCase):
     """Every outcome: one JSON line on stdout, and the documented exit code."""
 
@@ -946,8 +997,15 @@ class TestExitCodeContract(unittest.TestCase):
         with _Workspace() as ws:
             path = ws.write("w1.output", "")
             code, out, _ = run_main(
-                [path, "--timeout-seconds", "0", "--attempt", "1",
-                 "--max-attempts", "4"]
+                [
+                    path,
+                    "--timeout-seconds",
+                    "0",
+                    "--attempt",
+                    "1",
+                    "--max-attempts",
+                    "4",
+                ]
             )
         marker = sole_json_line(out)
         self.assertEqual(code, 3)
@@ -959,8 +1017,15 @@ class TestExitCodeContract(unittest.TestCase):
         with _Workspace() as ws:
             path = ws.write("w1.output", "")
             code, out, _ = run_main(
-                [path, "--timeout-seconds", "0", "--attempt", "4",
-                 "--max-attempts", "4"]
+                [
+                    path,
+                    "--timeout-seconds",
+                    "0",
+                    "--attempt",
+                    "4",
+                    "--max-attempts",
+                    "4",
+                ]
             )
         marker = sole_json_line(out)
         self.assertEqual(code, 4)
@@ -999,8 +1064,9 @@ class TestExitCodeContract(unittest.TestCase):
         self.assertEqual(sole_json_line(out)["await"], "pending")
 
     def test_unexpected_failure_still_prints_one_line_and_degrades(self):
-        with patch("scripts.await_workflow.await_terminal",
-                   side_effect=RuntimeError("boom")):
+        with patch(
+            "scripts.await_workflow.await_terminal", side_effect=RuntimeError("boom")
+        ):
             code, out, _ = run_main(["w1", "--timeout-seconds", "0"])
         marker = sole_json_line(out)
         self.assertEqual(code, 4)
@@ -1010,8 +1076,9 @@ class TestExitCodeContract(unittest.TestCase):
 
     def test_keyboard_interrupt_prints_interrupted_marker(self):
         """KeyboardInterrupt is not an Exception subclass — its branch is distinct."""
-        with patch("scripts.await_workflow.await_terminal",
-                   side_effect=KeyboardInterrupt()):
+        with patch(
+            "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
+        ):
             code, out, _ = run_main(["w1", "--timeout-seconds", "0"])
         marker = sole_json_line(out)
         self.assertEqual(code, 4)
@@ -1021,10 +1088,13 @@ class TestExitCodeContract(unittest.TestCase):
 
     def test_broken_pipe_during_error_report_exits_four(self):
         """Error-path emit must share the happy-path OSError degrade, not exit 1."""
-        with patch("scripts.await_workflow.await_terminal",
-                   side_effect=KeyboardInterrupt()):
-            with patch("builtins.print", side_effect=BrokenPipeError()):
-                code, out, err = run_main(["w1", "--timeout-seconds", "0"])
+        with (
+            patch(
+                "scripts.await_workflow.await_terminal", side_effect=KeyboardInterrupt()
+            ),
+            patch("builtins.print", side_effect=BrokenPipeError()),
+        ):
+            code, out, err = run_main(["w1", "--timeout-seconds", "0"])
         self.assertEqual(code, 4)
         self.assertNotIn("Traceback", err)
 
@@ -1042,15 +1112,24 @@ class TestExitCodeContract(unittest.TestCase):
             path = ws.write("w1.output", "")
             _, out, _ = run_main([path, "--timeout-seconds", "0"])
         marker = sole_json_line(out)
-        for key in ("await", "attempt", "max_attempts", "waited_seconds", "target",
-                    "resolved_path", "file_bytes", "since_epoch", "artifacts",
-                    "saw_ok_without_corroborator", "scan_skipped",
-                    "scan_stop_reason"):
+        for key in (
+            "await",
+            "attempt",
+            "max_attempts",
+            "waited_seconds",
+            "target",
+            "resolved_path",
+            "file_bytes",
+            "since_epoch",
+            "artifacts",
+            "saw_ok_without_corroborator",
+            "scan_skipped",
+            "scan_stop_reason",
+        ):
             self.assertIn(key, marker)
 
 
 class TestArtifactsOnlyOutcome(unittest.TestCase):
-
     def _write_all(self, ws, sha):
         for template in ARTIFACT_BASENAMES:
             ws.write(template.format(sha=sha), "content")
@@ -1060,12 +1139,21 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
         stop as soon as the grace window closes instead of spending the budget."""
         with _Workspace() as ws:
             self._write_all(ws, "abc12345")
-            code, out, _ = run_main([
-                "wnosuchtask000", "--timeout-seconds", "0",
-                "--artifacts-grace-seconds", "0",
-                "--artifacts-dir", ws.path, "--head-sha", "abc12345",
-                "--since-epoch", str(time.time() - 60),
-            ])
+            code, out, _ = run_main(
+                [
+                    "wnosuchtask000",
+                    "--timeout-seconds",
+                    "0",
+                    "--artifacts-grace-seconds",
+                    "0",
+                    "--artifacts-dir",
+                    ws.path,
+                    "--head-sha",
+                    "abc12345",
+                    "--since-epoch",
+                    str(time.time() - 60),
+                ]
+            )
         marker = sole_json_line(out)
         self.assertEqual(code, 5)
         self.assertEqual(marker["await"], "artifacts_only")
@@ -1076,11 +1164,19 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
         with _Workspace() as ws:
             self._write_all(ws, "abc12345")
             path = ws.write("w1.output", json.dumps(envelope(SUCCESS_RETURN)))
-            code, out, _ = run_main([
-                path, "--timeout-seconds", "0",
-                "--artifacts-dir", ws.path, "--head-sha", "abc12345",
-                "--since-epoch", str(time.time() - 60),
-            ])
+            code, out, _ = run_main(
+                [
+                    path,
+                    "--timeout-seconds",
+                    "0",
+                    "--artifacts-dir",
+                    ws.path,
+                    "--head-sha",
+                    "abc12345",
+                    "--since-epoch",
+                    str(time.time() - 60),
+                ]
+            )
         self.assertEqual(code, 0)
         self.assertEqual(sole_json_line(out), SUCCESS_RETURN)
 
@@ -1091,12 +1187,25 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
         with _Workspace() as ws:
             self._write_all(ws, "abc12345")
             path = ws.write("w1.output", "")
-            code, out, _ = run_main([
-                path, "--timeout-seconds", "0", "--attempt", "1",
-                "--max-attempts", "4", "--artifacts-grace-seconds", "0",
-                "--artifacts-dir", ws.path, "--head-sha", "abc12345",
-                "--since-epoch", str(time.time() - 60),
-            ])
+            code, out, _ = run_main(
+                [
+                    path,
+                    "--timeout-seconds",
+                    "0",
+                    "--attempt",
+                    "1",
+                    "--max-attempts",
+                    "4",
+                    "--artifacts-grace-seconds",
+                    "0",
+                    "--artifacts-dir",
+                    ws.path,
+                    "--head-sha",
+                    "abc12345",
+                    "--since-epoch",
+                    str(time.time() - 60),
+                ]
+            )
         marker = sole_json_line(out)
         self.assertEqual(code, 3)
         self.assertEqual(marker["await"], "pending")
@@ -1106,25 +1215,47 @@ class TestArtifactsOnlyOutcome(unittest.TestCase):
         with _Workspace() as ws:
             self._write_all(ws, "abc12345")
             path = ws.write("w1.output", "")
-            code, out, _ = run_main([
-                path, "--timeout-seconds", "0", "--attempt", "4",
-                "--max-attempts", "4",
-                "--artifacts-dir", ws.path, "--head-sha", "abc12345",
-                "--since-epoch", str(time.time() - 60),
-            ])
+            code, out, _ = run_main(
+                [
+                    path,
+                    "--timeout-seconds",
+                    "0",
+                    "--attempt",
+                    "4",
+                    "--max-attempts",
+                    "4",
+                    "--artifacts-dir",
+                    ws.path,
+                    "--head-sha",
+                    "abc12345",
+                    "--since-epoch",
+                    str(time.time() - 60),
+                ]
+            )
         self.assertEqual(code, 5)
         self.assertEqual(sole_json_line(out)["await"], "artifacts_only")
 
     def test_stale_artifacts_do_not_trigger_the_fallback(self):
         with _Workspace() as ws:
             for template in ARTIFACT_BASENAMES:
-                ws.write(template.format(sha="abc12345"), "content",
-                         mtime=time.time() - 3600)
-            code, out, _ = run_main([
-                "wnosuchtask000", "--timeout-seconds", "0",
-                "--artifacts-dir", ws.path, "--head-sha", "abc12345",
-                "--attempt", "4", "--max-attempts", "4",
-            ])
+                ws.write(
+                    template.format(sha="abc12345"), "content", mtime=time.time() - 3600
+                )
+            code, out, _ = run_main(
+                [
+                    "wnosuchtask000",
+                    "--timeout-seconds",
+                    "0",
+                    "--artifacts-dir",
+                    ws.path,
+                    "--head-sha",
+                    "abc12345",
+                    "--attempt",
+                    "4",
+                    "--max-attempts",
+                    "4",
+                ]
+            )
         self.assertEqual(code, 4)
         self.assertEqual(sole_json_line(out)["await"], "timeout")
 
@@ -1191,8 +1322,9 @@ class TestNextCommand(unittest.TestCase):
             self.assertIn("-- -dashy.output", cmd)
             # Run it exactly as emitted, from the workspace, so the target really
             # is the bare relative token `-dashy.output`.
-            proc = subprocess.run(cmd, shell=True, capture_output=True,
-                                  text=True, cwd=ws.path)
+            proc = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, cwd=ws.path
+            )
         self.assertEqual(proc.returncode, 3, proc.stderr)
         marker = json.loads(proc.stdout.strip())
         self.assertEqual(marker["attempt"], 2)
@@ -1202,8 +1334,9 @@ class TestNextCommand(unittest.TestCase):
         """Round-trip it: the printed command must run and behave identically."""
         with _Workspace() as ws:
             path = ws.write("weird name'quote.output", "")
-            _, out, _ = run_main([path, "--timeout-seconds", "0",
-                                  "--poll-interval", "0"])
+            _, out, _ = run_main(
+                [path, "--timeout-seconds", "0", "--poll-interval", "0"]
+            )
             cmd = sole_json_line(out)["next_command"]
             # shell=True is the property under test, not an oversight: the script
             # emits a command STRING that the orchestrator pastes into a Bash tool
@@ -1212,33 +1345,69 @@ class TestNextCommand(unittest.TestCase):
             # Run it exactly as emitted — nothing may be appended, because the
             # target rides behind a trailing `--` and a later flag would be
             # swallowed as a positional.
-            proc = subprocess.run(cmd, shell=True,
-                                  capture_output=True, text=True, cwd=REPO_ROOT)
+            proc = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, cwd=REPO_ROOT
+            )
         self.assertEqual(proc.returncode, 3)
         marker = json.loads(proc.stdout.strip())
         self.assertEqual(marker["attempt"], 2)
 
 
 class TestAttemptBounds(unittest.TestCase):
-
     def test_attempt_below_max_is_pending(self):
-        code, _, _ = run_main(["wnosuchtask000", "--timeout-seconds", "0",
-                               "--attempt", "3", "--max-attempts", "4"])
+        code, _, _ = run_main(
+            [
+                "wnosuchtask000",
+                "--timeout-seconds",
+                "0",
+                "--attempt",
+                "3",
+                "--max-attempts",
+                "4",
+            ]
+        )
         self.assertEqual(code, 3)
 
     def test_attempt_at_max_is_exhausted(self):
-        code, _, _ = run_main(["wnosuchtask000", "--timeout-seconds", "0",
-                               "--attempt", "4", "--max-attempts", "4"])
+        code, _, _ = run_main(
+            [
+                "wnosuchtask000",
+                "--timeout-seconds",
+                "0",
+                "--attempt",
+                "4",
+                "--max-attempts",
+                "4",
+            ]
+        )
         self.assertEqual(code, 4)
 
     def test_attempt_past_max_is_exhausted(self):
-        code, _, _ = run_main(["wnosuchtask000", "--timeout-seconds", "0",
-                               "--attempt", "9", "--max-attempts", "4"])
+        code, _, _ = run_main(
+            [
+                "wnosuchtask000",
+                "--timeout-seconds",
+                "0",
+                "--attempt",
+                "9",
+                "--max-attempts",
+                "4",
+            ]
+        )
         self.assertEqual(code, 4)
 
     def test_zero_max_attempts_is_exhausted_immediately(self):
-        code, out, _ = run_main(["wnosuchtask000", "--timeout-seconds", "0",
-                                 "--attempt", "1", "--max-attempts", "0"])
+        code, out, _ = run_main(
+            [
+                "wnosuchtask000",
+                "--timeout-seconds",
+                "0",
+                "--attempt",
+                "1",
+                "--max-attempts",
+                "0",
+            ]
+        )
         self.assertEqual(code, 4)
         self.assertEqual(sole_json_line(out)["await"], "timeout")
 
@@ -1260,8 +1429,9 @@ class TestWaitLoop(unittest.TestCase):
                 real_sleep(0)
 
             with patch("scripts.await_workflow.time.sleep", side_effect=fake_sleep):
-                code, out, _ = run_main([path, "--timeout-seconds", "5",
-                                         "--poll-interval", "1"])
+                code, out, _ = run_main(
+                    [path, "--timeout-seconds", "5", "--poll-interval", "1"]
+                )
         self.assertEqual(code, 0)
         self.assertEqual(sole_json_line(out), SUCCESS_RETURN)
         self.assertGreaterEqual(state["ticks"], 2)
@@ -1270,8 +1440,9 @@ class TestWaitLoop(unittest.TestCase):
         with _Workspace() as ws:
             path = ws.write("w1.output", "")
             started = time.time()
-            code, _, _ = run_main([path, "--timeout-seconds", "0.3",
-                                   "--poll-interval", "0.1"])
+            code, _, _ = run_main(
+                [path, "--timeout-seconds", "0.3", "--poll-interval", "0.1"]
+            )
             elapsed = time.time() - started
         self.assertEqual(code, 3)
         self.assertLess(elapsed, 5)
@@ -1280,6 +1451,7 @@ class TestWaitLoop(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Lockstep and acceptance guards
 # ---------------------------------------------------------------------------
+
 
 class TestArtifactNamingLockstep(unittest.TestCase):
     """ARTIFACT_BASENAMES must track workflows/src/stages.js.
@@ -1291,8 +1463,9 @@ class TestArtifactNamingLockstep(unittest.TestCase):
 
     @staticmethod
     def _stages_js():
-        with open(os.path.join(REPO_ROOT, "workflows", "src", "stages.js"),
-                  encoding="utf-8") as fh:
+        with open(
+            os.path.join(REPO_ROOT, "workflows", "src", "stages.js"), encoding="utf-8"
+        ) as fh:
             return fh.read()
 
     def test_directly_built_basenames_appear_in_stages_js(self):
@@ -1302,13 +1475,14 @@ class TestArtifactNamingLockstep(unittest.TestCase):
             if "checkpoint" in template:
                 continue  # composed via checkpointPath(); asserted below
             literal = template.replace("{sha}", "${sha}")
-            self.assertIn(literal, source,
-                          "%s is not produced by stages.js" % template)
+            self.assertIn(literal, source, "%s is not produced by stages.js" % template)
 
     def test_checkpoint_all_is_still_how_the_combined_checkpoint_is_named(self):
         """The checkpoint name is composed, so assert both halves of it."""
         source = self._stages_js()
-        self.assertRegex(source, r"code-gauntlet-checkpoint-\$\{phase\}-\$\{sha\}\.json")
+        self.assertRegex(
+            source, r"code-gauntlet-checkpoint-\$\{phase\}-\$\{sha\}\.json"
+        )
         self.assertRegex(source, r"checkpointPath\(\s*'all'")
         self.assertIn("code-gauntlet-checkpoint-all-{sha}.json", ARTIFACT_BASENAMES)
 
@@ -1334,14 +1508,17 @@ class TestWaitProtocolAcceptance(unittest.TestCase):
         self.assertEqual(offenders, [], "sleep-based poll loop still present")
 
     def test_both_wait_protocol_copies_reference_the_awaiter(self):
-        for rel in ("skills/code-gauntlet/SKILL.md",
-                    "skills/code-gauntlet/references/phase3-dispatch.md"):
+        for rel in (
+            "skills/code-gauntlet/SKILL.md",
+            "skills/code-gauntlet/references/phase3-dispatch.md",
+        ):
             with open(os.path.join(REPO_ROOT, rel), encoding="utf-8") as fh:
                 self.assertIn("await_workflow.py", fh.read(), rel)
 
     def test_headless_reference_points_at_the_protocol(self):
-        path = os.path.join(REPO_ROOT, "skills", "code-gauntlet", "references",
-                            "headless-mode.md")
+        path = os.path.join(
+            REPO_ROOT, "skills", "code-gauntlet", "references", "headless-mode.md"
+        )
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
         self.assertIn("await_workflow.py", text)

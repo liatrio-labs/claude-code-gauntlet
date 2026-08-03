@@ -89,14 +89,14 @@ import sys
 # raised from inside either module.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from assemble_artifacts import (  # noqa: E402
+from assemble_artifacts import (
     assemble,
     escape_lone_surrogates,
     fnv1a32,
     utf16_len,
     write_text_atomic,
 )
-from await_workflow import (  # noqa: E402
+from await_workflow import (
     TASKS_DIR_ENV,
     find_terminal,
     read_text,
@@ -344,7 +344,9 @@ def proof_gaps(receipt, plan_text):
                 "expectation for %s (no content proof)" % entry.get("path")
             )
             continue
-        if entry.get("chars") == want.get("chars") and entry.get("checksum") == want.get("checksum"):
+        if entry.get("chars") == want.get("chars") and entry.get(
+            "checksum"
+        ) == want.get("checksum"):
             continue
         gaps.append(
             "artifact-content-proof: derived document %s does not match the "
@@ -408,7 +410,9 @@ def materialize(task, nonce, output_dir, environ=None):
     plan_text = dict(entries).get(plan_path, "")
     gaps.extend(proof_gaps(receipt, plan_text))
     if not receipt.get("ok"):
-        errors.extend(receipt.get("errors") or ["the assembler refused without a reason"])
+        errors.extend(
+            receipt.get("errors") or ["the assembler refused without a reason"]
+        )
         return _receipt(False, source, scanned, materialized, receipt, gaps, errors)
     return _receipt(not gaps, source, scanned, materialized, receipt, gaps, errors)
 
@@ -423,7 +427,12 @@ def _minimal_receipt_line(exc):
     try:
         return json.dumps(
             _receipt(
-                False, None, 0, [], None, [],
+                False,
+                None,
+                0,
+                [],
+                None,
+                [],
                 ["receipt could not be serialized: %s: %s" % (type(exc).__name__, exc)],
             )
         )
@@ -440,18 +449,23 @@ def build_parser():
         description="Write the review's artifacts from the workflow's own return value."
     )
     parser.add_argument(
-        "--output-dir", dest="output_dir", required=True, metavar="DIR",
+        "--output-dir",
+        dest="output_dir",
+        required=True,
+        metavar="DIR",
         help="The review's output directory. Every entry must resolve inside it.",
     )
     parser.add_argument(
-        "--task", metavar="TASK_ID_OR_PATH",
+        "--task",
+        metavar="TASK_ID_OR_PATH",
         help="The Task ID printed by the Workflow tool, or the task output file's "
-             "path (resolved exactly as await_workflow.py resolves it).",
+        "path (resolved exactly as await_workflow.py resolves it).",
     )
     parser.add_argument(
-        "--nonce", metavar="NONCE",
+        "--nonce",
+        metavar="NONCE",
         help="args.nonce for this run. Finds the file by content when no task id "
-             "is in hand, and is REQUIRED to match when both are given.",
+        "is in hand, and is REQUIRED to match when both are given.",
     )
     return parser
 
@@ -465,7 +479,12 @@ def main(argv=None, environ=None):
         receipt = materialize(args.task, args.nonce, args.output_dir, environ)
     except Exception as exc:  # noqa: BLE001 - the one-line-receipt contract
         receipt = _receipt(
-            False, None, 0, [], None, [],
+            False,
+            None,
+            0,
+            [],
+            None,
+            [],
             ["materializer failed unexpectedly: %s: %s" % (type(exc).__name__, exc)],
         )
     try:

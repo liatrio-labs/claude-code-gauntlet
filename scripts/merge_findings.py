@@ -44,6 +44,7 @@ Output JSON schema:
         }
     }
 """
+
 import argparse
 import json
 import os
@@ -69,12 +70,21 @@ KNOWN_DIMENSIONS = {
     "simplification",
 }
 
-REQUIRED_FIELDS = {"id", "file", "line_start", "title", "description", "severity", "confidence"}
+REQUIRED_FIELDS = {
+    "id",
+    "file",
+    "line_start",
+    "title",
+    "description",
+    "severity",
+    "confidence",
+}
 
 
 # ---------------------------------------------------------------------------
 # Channel 1: NDJSON file parsing
 # ---------------------------------------------------------------------------
+
 
 def _ndjson_path(findings_dir: str, agent: str, session_sha: str) -> str:
     # Prefer the current filename; fall back to the pre-rename deep-review filename
@@ -95,7 +105,7 @@ def parse_ndjson_file(path: str, agent: str) -> tuple[list[dict], list[str]]:
     if not os.path.exists(path):
         return findings, parse_warnings
 
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         for lineno, line in enumerate(fh, 1):
             line = line.strip()
             if not line:
@@ -121,6 +131,7 @@ def parse_ndjson_file(path: str, agent: str) -> tuple[list[dict], list[str]]:
 # Channel 2: Text file fallback parsing
 # ---------------------------------------------------------------------------
 
+
 def _text_path(text_dir: str, agent: str, session_sha: str) -> str:
     # Same current-then-legacy resolution as _ndjson_path.
     path = os.path.join(text_dir, f"code-gauntlet-text-{agent}-{session_sha}.txt")
@@ -136,7 +147,7 @@ def _extract_json_blocks(text: str) -> list[dict]:
     # Walk the text looking for '{' and try progressively larger slices
     i = 0
     while i < len(text):
-        if text[i] != '{':
+        if text[i] != "{":
             i += 1
             continue
         # Try to parse from this position with increasing depth
@@ -162,7 +173,7 @@ def _try_parse_json_at(text: str, start: int) -> dict | None:
             escape_next = False
             i += 1
             continue
-        if ch == '\\' and in_string:
+        if ch == "\\" and in_string:
             escape_next = True
             i += 1
             continue
@@ -173,12 +184,12 @@ def _try_parse_json_at(text: str, start: int) -> dict | None:
         if in_string:
             i += 1
             continue
-        if ch == '{':
+        if ch == "{":
             depth += 1
-        elif ch == '}':
+        elif ch == "}":
             depth -= 1
             if depth == 0:
-                candidate = text[start:i + 1]
+                candidate = text[start : i + 1]
                 try:
                     return json.loads(candidate)
                 except json.JSONDecodeError:
@@ -199,7 +210,7 @@ def _find_end_of_json(text: str, start: int) -> int:
             escape_next = False
             i += 1
             continue
-        if ch == '\\' and in_string:
+        if ch == "\\" and in_string:
             escape_next = True
             i += 1
             continue
@@ -210,9 +221,9 @@ def _find_end_of_json(text: str, start: int) -> int:
         if in_string:
             i += 1
             continue
-        if ch == '{':
+        if ch == "{":
             depth += 1
-        elif ch == '}':
+        elif ch == "}":
             depth -= 1
             if depth == 0:
                 return i + 1
@@ -236,14 +247,14 @@ def parse_text_file(path: str, agent: str) -> tuple[list[dict], list[str], bool,
     if not os.path.exists(path):
         return findings, parse_warnings, has_prose, has_skip_lines
 
-    with open(path, "r", encoding="utf-8") as fh:
+    with open(path, encoding="utf-8") as fh:
         text = fh.read()
 
     if not text.strip():
         return findings, parse_warnings, has_prose, has_skip_lines
 
     # Check for SKIP: lines
-    if re.search(r'^\s*SKIP\s*:', text, re.MULTILINE | re.IGNORECASE):
+    if re.search(r"^\s*SKIP\s*:", text, re.MULTILINE | re.IGNORECASE):
         has_skip_lines = True
 
     # Extract JSON objects
@@ -254,11 +265,13 @@ def parse_text_file(path: str, agent: str) -> tuple[list[dict], list[str], bool,
 
     # Check for prose (non-trivial text content beyond JSON blocks)
     # Strip out all JSON blocks and see if meaningful content remains
-    stripped = re.sub(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', '', text, flags=re.DOTALL)
-    stripped = re.sub(r'^\s*SKIP\s*:.*$', '', stripped, flags=re.MULTILINE | re.IGNORECASE)
+    stripped = re.sub(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", "", text, flags=re.DOTALL)
+    stripped = re.sub(
+        r"^\s*SKIP\s*:.*$", "", stripped, flags=re.MULTILINE | re.IGNORECASE
+    )
     stripped = stripped.strip()
     # Prose means at least 20 chars of non-whitespace text remains
-    if len(re.sub(r'\s+', '', stripped)) > 20:
+    if len(re.sub(r"\s+", "", stripped)) > 20:
         has_prose = True
 
     return findings, parse_warnings, has_prose, has_skip_lines
@@ -267,6 +280,7 @@ def parse_text_file(path: str, agent: str) -> tuple[list[dict], list[str], bool,
 # ---------------------------------------------------------------------------
 # Deduplication
 # ---------------------------------------------------------------------------
+
 
 def deduplicate(
     ndjson_findings: dict[str, list[dict]],
@@ -292,6 +306,7 @@ def deduplicate(
 # Agent field injection
 # ---------------------------------------------------------------------------
 
+
 def inject_agent_field(
     ndjson_findings: dict[str, list[dict]],
     text_findings: dict[str, list[dict]],
@@ -314,6 +329,7 @@ def inject_agent_field(
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
+
 
 def validate_findings(findings: list[dict]) -> tuple[list[dict], list[str]]:
     """Validate dimension and required fields. Return (valid_findings, warnings)."""
@@ -356,6 +372,7 @@ def validate_findings(findings: list[dict]) -> tuple[list[dict], list[str]]:
 # Truncation detection
 # ---------------------------------------------------------------------------
 
+
 def detect_truncation(
     agents: list[str],
     ndjson_raw_counts: dict[str, int],
@@ -396,6 +413,7 @@ def detect_truncation(
 # ---------------------------------------------------------------------------
 # Output assembly
 # ---------------------------------------------------------------------------
+
 
 def assemble_output(
     findings: list[dict],
@@ -438,6 +456,7 @@ def assemble_output(
 # Main merge pipeline
 # ---------------------------------------------------------------------------
 
+
 def merge(
     findings_dir: str,
     session_sha: str,
@@ -475,15 +494,23 @@ def merge(
         all_warnings.extend(warns)
 
     # --- Pre-validation raw counts (for truncation detection only) ---
-    ndjson_raw_counts = {agent: len(findings) for agent, findings in ndjson_findings.items()}
+    ndjson_raw_counts = {
+        agent: len(findings) for agent, findings in ndjson_findings.items()
+    }
 
     # --- Inject agent fields ---
     inject_agent_field(ndjson_findings, text_findings)
 
     # --- Validate each channel (before dedup so warnings cover all raw findings) ---
-    all_ndjson_findings_flat = [f for findings in ndjson_findings.values() for f in findings]
-    all_text_findings_flat = [f for findings in text_findings.values() for f in findings]
-    _, pre_val_warnings = validate_findings(all_ndjson_findings_flat + all_text_findings_flat)
+    all_ndjson_findings_flat = [
+        f for findings in ndjson_findings.values() for f in findings
+    ]
+    all_text_findings_flat = [
+        f for findings in text_findings.values() for f in findings
+    ]
+    _, pre_val_warnings = validate_findings(
+        all_ndjson_findings_flat + all_text_findings_flat
+    )
 
     # --- Real dropped_no_id (production signal) ---
     # id-less findings are stripped by _filter_valid() below and never reach
@@ -492,7 +519,8 @@ def merge(
     # Findings duplicated across both channels are counted per occurrence (they
     # cannot be correlated without an id), which matches "findings dropped".
     dropped_no_id = sum(
-        1 for f in all_ndjson_findings_flat + all_text_findings_flat
+        1
+        for f in all_ndjson_findings_flat + all_text_findings_flat
         if f.get("id") in (None, "")
     )
 
@@ -506,24 +534,23 @@ def merge(
 
     ndjson_findings = _filter_valid(ndjson_findings)
     # Preserve pre-validation text findings for truncation detection before filtering
-    text_findings_pre_validation = {agent: list(findings) for agent, findings in text_findings.items()}
+    text_findings_pre_validation = {
+        agent: list(findings) for agent, findings in text_findings.items()
+    }
     text_findings = _filter_valid(text_findings)
 
     # --- Deduplicate ---
     # Third return (dedup's own dropped_no_id) is always 0 here because
     # _filter_valid() already removed id-less findings; the real count is
     # computed above from the pre-validation findings.
-    merged_raw, duplicates_resolved, _ = deduplicate(
-        ndjson_findings, text_findings
-    )
+    merged_raw, duplicates_resolved, _ = deduplicate(ndjson_findings, text_findings)
 
     # Channel counts (both post-validation, post-dedup for consistent measurement)
-    ndjson_ids = {f["id"] for findings in ndjson_findings.values() for f in findings if "id" in f}
+    ndjson_ids = {
+        f["id"] for findings in ndjson_findings.values() for f in findings if "id" in f
+    }
     ndjson_count = sum(1 for f in merged_raw if f.get("id") in ndjson_ids)
-    text_fallback_count = sum(
-        1 for f in merged_raw
-        if f.get("id") not in ndjson_ids
-    )
+    text_fallback_count = sum(1 for f in merged_raw if f.get("id") not in ndjson_ids)
 
     # After dedup, no additional validation needed (already validated above)
     valid_findings = merged_raw
@@ -534,8 +561,11 @@ def merge(
     # M4: findings that fail validation shouldn't make NDJSON appear empty
     # M5: text fallback with valid JSON blocks shouldn't trigger truncation warning
     truncation_warnings = detect_truncation(
-        agents, ndjson_raw_counts, text_findings_pre_validation,
-        text_has_prose, text_has_skip
+        agents,
+        ndjson_raw_counts,
+        text_findings_pre_validation,
+        text_has_prose,
+        text_has_skip,
     )
 
     # Aggregate all warnings into categories
@@ -563,30 +593,45 @@ def merge(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Deterministic merge of Phase 3 agent findings into Phase 4 input JSON."
     )
-    p.add_argument("--findings-dir", required=True,
-                   help="Directory containing NDJSON finding files")
-    p.add_argument("--session-sha", required=True,
-                   help="Short SHA used as suffix in finding filenames")
-    p.add_argument("--agents", nargs="+", required=True,
-                   help="List of agent names (e.g. bug-detector security-reviewer)")
-    p.add_argument("--text-dir", required=True,
-                   help="Directory containing agent text return files")
-    p.add_argument("--base-branch", required=True,
-                   help="Base branch name (e.g. main)")
-    p.add_argument("--head-sha", required=True,
-                   help="Full or short head commit SHA")
-    p.add_argument("--pr-number", type=int, default=0,
-                   help="Pull request number (0 for local reviews)")
-    p.add_argument("--owner", default="",
-                   help="Repository owner (empty for local reviews)")
-    p.add_argument("--repo", default="",
-                   help="Repository name (empty for local reviews)")
-    p.add_argument("--output", required=True,
-                   help="Output JSON file path")
+    p.add_argument(
+        "--findings-dir",
+        required=True,
+        help="Directory containing NDJSON finding files",
+    )
+    p.add_argument(
+        "--session-sha",
+        required=True,
+        help="Short SHA used as suffix in finding filenames",
+    )
+    p.add_argument(
+        "--agents",
+        nargs="+",
+        required=True,
+        help="List of agent names (e.g. bug-detector security-reviewer)",
+    )
+    p.add_argument(
+        "--text-dir", required=True, help="Directory containing agent text return files"
+    )
+    p.add_argument("--base-branch", required=True, help="Base branch name (e.g. main)")
+    p.add_argument("--head-sha", required=True, help="Full or short head commit SHA")
+    p.add_argument(
+        "--pr-number",
+        type=int,
+        default=0,
+        help="Pull request number (0 for local reviews)",
+    )
+    p.add_argument(
+        "--owner", default="", help="Repository owner (empty for local reviews)"
+    )
+    p.add_argument(
+        "--repo", default="", help="Repository name (empty for local reviews)"
+    )
+    p.add_argument("--output", required=True, help="Output JSON file path")
     return p
 
 

@@ -36,8 +36,19 @@ EXPORT_ALLOWLIST = {
 # otherwise open a double-quoted string that swallows the rest of the file.
 _REGEX_PRECEDERS = set("(,=:[!&|?{};+-*%~^<>")
 _REGEX_KEYWORDS = {
-    "return", "typeof", "case", "in", "of", "new", "delete", "void", "do",
-    "else", "yield", "await", "instanceof",
+    "return",
+    "typeof",
+    "case",
+    "in",
+    "of",
+    "new",
+    "delete",
+    "void",
+    "do",
+    "else",
+    "yield",
+    "await",
+    "instanceof",
 }
 _TRAILING_WORD = re.compile(r"(\w+)$")
 
@@ -192,32 +203,36 @@ class TestWorkflowsDeadExports(unittest.TestCase):
 
     def test_allowlist_entries_cite_an_inventory_id(self):
         uncited = sorted(
-            key for key, why in EXPORT_ALLOWLIST.items()
+            key
+            for key, why in EXPORT_ALLOWLIST.items()
             if not re.match(r"R-\d{3}\b", why)
         )
         self.assertEqual(uncited, [], f"allowlist entries without an R-id: {uncited}")
 
     def test_scrubber_blanks_comments_and_literals_but_keeps_code(self):
-        source = "\n".join([
-            "// ghostName in a line comment",
-            "/* ghostName in a block",
-            "   comment */",
-            "const s = 'ghostName in a string';",
-            'const d = "ghostName again";',
-            "const t = `prefix ${liveName} suffix ghostName`;",
-            'if (!/["\\\\]/.test(x)) callName();',
-            # Keyword-preceded regex branch of _opens_regex (return/case/typeof…):
-            # without it, `/ghostName/` is misread as division and the token survives.
-            "return /ghostName/.test(x);",
-            "case /ghostName/:",
-            "typeof /ghostName/;",
-        ])
+        source = "\n".join(
+            [
+                "// ghostName in a line comment",
+                "/* ghostName in a block",
+                "   comment */",
+                "const s = 'ghostName in a string';",
+                'const d = "ghostName again";',
+                "const t = `prefix ${liveName} suffix ghostName`;",
+                'if (!/["\\\\]/.test(x)) callName();',
+                # Keyword-preceded regex branch of _opens_regex (return/case/typeof…):
+                # without it, `/ghostName/` is misread as division and the token survives.
+                "return /ghostName/.test(x);",
+                "case /ghostName/:",
+                "typeof /ghostName/;",
+            ]
+        )
         scrubbed = strip_comments_and_strings(source)
         self.assertNotIn("ghostName", scrubbed)
         self.assertIn("liveName", scrubbed)
         self.assertIn("callName", scrubbed)
         self.assertEqual(
-            len(scrubbed.splitlines()), len(source.splitlines()),
+            len(scrubbed.splitlines()),
+            len(source.splitlines()),
             "blanking must preserve line structure",
         )
 

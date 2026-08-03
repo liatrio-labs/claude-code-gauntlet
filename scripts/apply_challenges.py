@@ -72,12 +72,12 @@ from datetime import datetime, timezone
 
 # Import shared dedup utility from filter_findings (stdlib only, same package)
 sys.path.insert(0, os.path.dirname(__file__))
-from filter_findings import dedup_cross_agent  # noqa: E402
-
+from filter_findings import dedup_cross_agent
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def die(msg):
     print(f"ERROR: {msg}", file=sys.stderr)
@@ -138,6 +138,7 @@ def _rank_key(finding):
 # ---------------------------------------------------------------------------
 # Input loading
 # ---------------------------------------------------------------------------
+
 
 def load_filtered(path):
     """
@@ -206,8 +207,7 @@ def load_challenges(path):
         if "challenges" in raw:
             return raw["challenges"]
         die(
-            "challenges_json must be a JSON array or an object with a "
-            "'challenges' key."
+            "challenges_json must be a JSON array or an object with a 'challenges' key."
         )
 
     die("challenges_json must be a JSON array or object.")
@@ -216,6 +216,7 @@ def load_challenges(path):
 # ---------------------------------------------------------------------------
 # Core: apply challenge thresholds
 # ---------------------------------------------------------------------------
+
 
 def apply_challenges(findings, challenges):
     """
@@ -287,7 +288,9 @@ def apply_challenges(findings, challenges):
         justification = entry.get("justification")
 
         # Annotate challenge metadata on the finding
-        finding = copy.deepcopy(finding)  # deep copy so nested structures are independent
+        finding = copy.deepcopy(
+            finding
+        )  # deep copy so nested structures are independent
         finding["challenge_score"] = score
         if justification:
             finding["challenge_justification"] = justification
@@ -336,9 +339,7 @@ def apply_challenges(findings, challenges):
                 )
                 eliminated.append(elim)
                 stats["challenge_removed"] += 1
-                warn(
-                    f"[challenge] Removed finding {fid!r} (score={score})"
-                )
+                warn(f"[challenge] Removed finding {fid!r} (score={score})")
 
         elif score < 50:
             # Downgrade severity one step; re-route to suggestion
@@ -396,6 +397,7 @@ def apply_challenges(findings, challenges):
 # Post-challenge processing
 # ---------------------------------------------------------------------------
 
+
 def rank_findings(findings):
     """
     Return findings sorted by severity → confidence → description length.
@@ -410,6 +412,7 @@ def rank_findings(findings):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -447,13 +450,17 @@ def main():
     # ------------------------------------------------------------------
     # Apply challenge thresholds
     # ------------------------------------------------------------------
-    active, challenge_eliminated, challenge_stats = apply_challenges(findings, challenges)
+    active, challenge_eliminated, challenge_stats = apply_challenges(
+        findings, challenges
+    )
 
     # ------------------------------------------------------------------
     # Cross-agent dedup (re-run after challenge processing)
     # ------------------------------------------------------------------
     active, dedup_dropped = dedup_cross_agent(active)
-    dedup_elim = list(dedup_dropped)  # dedup already sets eliminated_by="dedup:cross-agent"
+    dedup_elim = list(
+        dedup_dropped
+    )  # dedup already sets eliminated_by="dedup:cross-agent"
 
     # ------------------------------------------------------------------
     # Rank
@@ -463,11 +470,7 @@ def main():
     # ------------------------------------------------------------------
     # Compose output
     # ------------------------------------------------------------------
-    all_eliminated = (
-        list(prior_eliminated)
-        + challenge_eliminated
-        + dedup_elim
-    )
+    all_eliminated = list(prior_eliminated) + challenge_eliminated + dedup_elim
 
     stats = {
         "total_input": total_input,

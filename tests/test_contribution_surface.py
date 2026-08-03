@@ -35,17 +35,31 @@ REPO = Path(__file__).resolve().parents[1]
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
 LABELS_DIFF = REPO / ".github" / "labels_diff.py"
 
-ADVISORY_URL = "https://github.com/liatrio-labs/claude-code-gauntlet/security/advisories/new"
+ADVISORY_URL = (
+    "https://github.com/liatrio-labs/claude-code-gauntlet/security/advisories/new"
+)
 
 # Requirement 1 of Issue #30: the taxonomy the work-queue and the issue forms depend on.
 REQUIRED_TRIAGE_LABELS = {"needs-triage", "work-queue"}
 REQUIRED_TOPIC_LABELS = {
-    "determinism", "benchmarking", "reliability",
-    "bench", "latency", "policy", "tooling", "process", "verify-boundary",
+    "determinism",
+    "benchmarking",
+    "reliability",
+    "bench",
+    "latency",
+    "policy",
+    "tooling",
+    "process",
+    "verify-boundary",
 }
 REQUIRED_AREA_LABELS = {
-    "area:workflows", "area:agents", "area:scripts", "area:skills",
-    "area:bench", "area:docs", "area:ci",
+    "area:workflows",
+    "area:agents",
+    "area:scripts",
+    "area:skills",
+    "area:bench",
+    "area:docs",
+    "area:ci",
 }
 LABEL_CATEGORIES = {"type", "state", "resolution", "outreach", "topic", "area"}
 
@@ -53,7 +67,16 @@ LABEL_CATEGORIES = {"type", "state", "resolution", "outreach", "topic", "area"}
 SINGULAR_AREA_DRIFT = re.compile(r"area:(workflow|skill|script|doc|agent)(?![a-z])")
 
 # GitHub's issue-form schema (docs.github.com "Syntax for issue forms").
-FORM_TOP_LEVEL_KEYS = {"name", "description", "title", "labels", "assignees", "projects", "type", "body"}
+FORM_TOP_LEVEL_KEYS = {
+    "name",
+    "description",
+    "title",
+    "labels",
+    "assignees",
+    "projects",
+    "type",
+    "body",
+}
 FORM_FIELD_TYPES = {"markdown", "input", "textarea", "dropdown", "checkboxes"}
 FORM_ITEM_KEYS = {"type", "id", "attributes", "validations"}
 FORM_TOP_LEVEL_REQUIRED = {"name", "description", "body"}
@@ -89,8 +112,11 @@ def _unquote(value):
 
 def _form_files():
     """Every issue form, excluding the config. Both YAML extensions GitHub accepts."""
-    return sorted(p for p in list(FORMS.glob("*.yml")) + list(FORMS.glob("*.yaml"))
-                  if p.name not in {"config.yml", "config.yaml"})
+    return sorted(
+        p
+        for p in list(FORMS.glob("*.yml")) + list(FORMS.glob("*.yaml"))
+        if p.name not in {"config.yml", "config.yaml"}
+    )
 
 
 def _indent(line):
@@ -127,7 +153,7 @@ def _form_labels(text):
     for index, line in enumerate(lines):
         if not line.startswith("labels:"):
             continue
-        inline = line[len("labels:"):].strip()
+        inline = line[len("labels:") :].strip()
         if inline.startswith("[") and inline.endswith("]"):
             return [_unquote(part) for part in inline[1:-1].split(",") if part.strip()]
         if inline:
@@ -191,17 +217,19 @@ def _form_fields(text):
             # Carrying that prefix into the option value makes every emptiness and
             # reserved-word assertion unfalsifiable, so the label text is extracted here.
             options = [re.sub(r"^label:\s*", "", option) for option in options]
-        fields.append({
-            "type": field_type,
-            "id": _single_key(block, "id"),
-            "keys": item_keys,
-            "attributes": attributes,
-            "options": options,
-            # `required` counts only inside a `validations:` block that is a sibling of
-            # `attributes:`. GitHub rejects a nested one, and prose in a `description:`
-            # must never read as a requirement.
-            "required": validations.get("required") == "true",
-        })
+        fields.append(
+            {
+                "type": field_type,
+                "id": _single_key(block, "id"),
+                "keys": item_keys,
+                "attributes": attributes,
+                "options": options,
+                # `required` counts only inside a `validations:` block that is a sibling of
+                # `attributes:`. GitHub rejects a nested one, and prose in a `description:`
+                # must never read as a requirement.
+                "required": validations.get("required") == "true",
+            }
+        )
     return fields
 
 
@@ -231,13 +259,19 @@ def _contact_links(text):
 
 def _readme_phases():
     """`Phase N — Name` for every phase in README's Architecture list (source of truth)."""
-    architecture = _read("README.md").split("\n## Architecture", 1)[1].split("\n## ", 1)[0]
+    architecture = (
+        _read("README.md").split("\n## Architecture", 1)[1].split("\n## ", 1)[0]
+    )
     phases = [
         f"Phase {number} \u2014 {name}"
-        for number, name in re.findall(r"^(\d+)\. \*\*(.+?)\*\* \u2014", architecture, re.M)
+        for number, name in re.findall(
+            r"^(\d+)\. \*\*(.+?)\*\* \u2014", architecture, re.M
+        )
     ]
     if not phases:
-        raise ValueError("README Architecture section no longer lists phases as `N. **Name** —`")
+        raise ValueError(
+            "README Architecture section no longer lists phases as `N. **Name** —`"
+        )
     return phases
 
 
@@ -248,26 +282,41 @@ def _labels():
 class TestLabelTaxonomy(unittest.TestCase):
     def test_taxonomy_covers_the_required_label_set(self):
         names = {label["name"] for label in _labels()}
-        missing = (REQUIRED_TRIAGE_LABELS | REQUIRED_TOPIC_LABELS | REQUIRED_AREA_LABELS) - names
+        missing = (
+            REQUIRED_TRIAGE_LABELS | REQUIRED_TOPIC_LABELS | REQUIRED_AREA_LABELS
+        ) - names
         self.assertEqual(missing, set(), f"labels.json is missing {sorted(missing)}")
 
     def test_taxonomy_entries_are_well_formed_and_sorted(self):
         labels = _labels()
         names = [label["name"] for label in labels]
-        self.assertEqual(names, sorted(names), "labels.json entries must be name-sorted")
-        self.assertEqual(len(names), len(set(names)), "duplicate label names in labels.json")
+        self.assertEqual(
+            names, sorted(names), "labels.json entries must be name-sorted"
+        )
+        self.assertEqual(
+            len(names), len(set(names)), "duplicate label names in labels.json"
+        )
         for label in labels:
             with self.subTest(label=label.get("name")):
-                self.assertEqual(set(label), {"name", "color", "description", "category"})
-                self.assertRegex(label["color"], r"^[0-9a-f]{6}$",
-                                 "color must be 6-digit lowercase hex, no leading '#'")
-                self.assertTrue(label["description"].strip(), "description must not be empty")
+                self.assertEqual(
+                    set(label), {"name", "color", "description", "category"}
+                )
+                self.assertRegex(
+                    label["color"],
+                    r"^[0-9a-f]{6}$",
+                    "color must be 6-digit lowercase hex, no leading '#'",
+                )
+                self.assertTrue(
+                    label["description"].strip(), "description must not be empty"
+                )
                 # The labels API rejects a description over 100 characters (422); it does
                 # not truncate, so `gh label create` fails outright.
                 self.assertLessEqual(len(label["description"]), 100)
                 self.assertIn(label["category"], LABEL_CATEGORIES)
                 # A leading dash would be parsed as a flag by the documented sync recipe.
-                self.assertFalse(label["name"].startswith("-"), "label name must not start with '-'")
+                self.assertFalse(
+                    label["name"].startswith("-"), "label name must not start with '-'"
+                )
                 self.assertFalse(label["description"].startswith("-"))
 
     def test_area_labels_are_plural_canonical(self):
@@ -277,12 +326,24 @@ class TestLabelTaxonomy(unittest.TestCase):
     def test_no_singular_area_label_drift_in_contribution_surface(self):
         offenders = {}
         candidates = [
-            path for path in list((REPO / ".github").rglob("*")) + list((REPO / "docs").rglob("*"))
+            path
+            for path in list((REPO / ".github").rglob("*"))
+            + list((REPO / "docs").rglob("*"))
             if path.is_file() and path.suffix in {".md", ".yml", ".yaml", ".json"}
-        ] + [REPO / name for name in ("CONTRIBUTING.md", "README.md", "SECURITY.md",
-                                      "CLAUDE.md", "AGENTS.md")]
+        ] + [
+            REPO / name
+            for name in (
+                "CONTRIBUTING.md",
+                "README.md",
+                "SECURITY.md",
+                "CLAUDE.md",
+                "AGENTS.md",
+            )
+        ]
         for path in candidates:
-            hits = sorted(set(SINGULAR_AREA_DRIFT.findall(path.read_text(encoding="utf-8"))))
+            hits = sorted(
+                set(SINGULAR_AREA_DRIFT.findall(path.read_text(encoding="utf-8")))
+            )
             if hits:
                 offenders[str(path.relative_to(REPO))] = hits
         self.assertEqual(offenders, {}, f"singular area-label drift: {offenders}")
@@ -303,8 +364,14 @@ class TestLabelsDiffHelper(unittest.TestCase):
 
     @staticmethod
     def _as_live(labels):
-        return [{"name": label["name"], "color": label["color"].upper(),
-                 "description": label["description"]} for label in labels]
+        return [
+            {
+                "name": label["name"],
+                "color": label["color"].upper(),
+                "description": label["description"],
+            }
+            for label in labels
+        ]
 
     def test_commands_cover_every_manifest_label_and_survive_the_shell(self):
         result = self._run("--commands")
@@ -333,7 +400,9 @@ class TestLabelsDiffHelper(unittest.TestCase):
         dropped = live.pop(0)["name"]
         live[0]["description"] = "stale description"
         changed = live[0]["name"]
-        live.append({"name": "hand-made", "color": "ffffff", "description": "not managed here"})
+        live.append(
+            {"name": "hand-made", "color": "ffffff", "description": "not managed here"}
+        )
 
         result = self._run(live=live)
         self.assertEqual(result.returncode, 1, result.stdout)
@@ -344,13 +413,17 @@ class TestLabelsDiffHelper(unittest.TestCase):
         self.assertIn("hand-made", result.stdout)
 
         narrowed = self._run("--commands", live=live).stdout.strip().splitlines()
-        self.assertEqual({shlex.split(line)[3] for line in narrowed}, {dropped, changed})
+        self.assertEqual(
+            {shlex.split(line)[3] for line in narrowed}, {dropped, changed}
+        )
 
     def test_a_label_the_manifest_does_not_manage_is_reported_but_not_drift(self):
         # An extra label in the repo is informational: the sync never deletes, so it is
         # not something the manifest can or should close. Exit stays 0.
         live = self._as_live(_labels())
-        live.append({"name": "hand-made", "color": "ffffff", "description": "not managed here"})
+        live.append(
+            {"name": "hand-made", "color": "ffffff", "description": "not managed here"}
+        )
         result = self._run(live=live)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("unmanaged", result.stdout)
@@ -368,7 +441,11 @@ class TestLabelsDiffHelper(unittest.TestCase):
             with self.subTest(gh_form=name):
                 result = subprocess.run(
                     [sys.executable, str(LABELS_DIFF), "--live", "-"],
-                    cwd=REPO, input=payload, capture_output=True, text=True)
+                    cwd=REPO,
+                    input=payload,
+                    capture_output=True,
+                    text=True,
+                )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("in sync", result.stdout)
 
@@ -380,7 +457,9 @@ class TestLabelsDiffHelper(unittest.TestCase):
         # which is how a taxonomy ends up synced into the wrong repository.
         plain = self._run("--commands").stdout.splitlines()[0]
         self.assertNotIn("--repo", plain)
-        targeted = self._run("--commands", "--repo", "acme/widgets").stdout.splitlines()[0]
+        targeted = self._run(
+            "--commands", "--repo", "acme/widgets"
+        ).stdout.splitlines()[0]
         self.assertIn("--repo acme/widgets", targeted)
 
     def test_unusable_gh_output_is_refused_by_name_not_by_traceback(self):
@@ -395,10 +474,16 @@ class TestLabelsDiffHelper(unittest.TestCase):
             with self.subTest(payload=name):
                 result = subprocess.run(
                     [sys.executable, str(LABELS_DIFF), "--live", "-"],
-                    cwd=REPO, input=payload, capture_output=True, text=True)
+                    cwd=REPO,
+                    input=payload,
+                    capture_output=True,
+                    text=True,
+                )
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertNotIn("Traceback", result.stderr)
-                self.assertTrue(result.stderr.strip(), "the refusal must say what was wrong")
+                self.assertTrue(
+                    result.stderr.strip(), "the refusal must say what was wrong"
+                )
 
     def test_an_unusable_manifest_is_refused_rather_than_read_as_drift(self):
         # Exit 1 means drift and the workflow treats it that way, so a corrupt manifest
@@ -417,17 +502,32 @@ class TestLabelsDiffHelper(unittest.TestCase):
                 path.write_text(payload, encoding="utf-8")
                 for mode in (["--commands"], ["--live", str(path)]):
                     result = subprocess.run(
-                        [sys.executable, str(LABELS_DIFF), "--manifest", str(path), *mode],
-                        cwd=REPO, capture_output=True, text=True)
+                        [
+                            sys.executable,
+                            str(LABELS_DIFF),
+                            "--manifest",
+                            str(path),
+                            *mode,
+                        ],
+                        cwd=REPO,
+                        capture_output=True,
+                        text=True,
+                    )
                     self.assertEqual(result.returncode, 2, f"{mode}: {result.stdout}")
                     self.assertNotIn("Traceback", result.stderr)
 
     def test_a_missing_file_is_refused_rather_than_read_as_drift(self):
-        for args in (["--manifest", "/nonexistent/labels.json", "--commands"],
-                     ["--live", "/nonexistent/live.json"]):
+        for args in (
+            ["--manifest", "/nonexistent/labels.json", "--commands"],
+            ["--live", "/nonexistent/live.json"],
+        ):
             with self.subTest(args=args):
-                result = subprocess.run([sys.executable, str(LABELS_DIFF), *args],
-                                        cwd=REPO, capture_output=True, text=True)
+                result = subprocess.run(
+                    [sys.executable, str(LABELS_DIFF), *args],
+                    cwd=REPO,
+                    capture_output=True,
+                    text=True,
+                )
                 self.assertEqual(result.returncode, 2, result.stdout)
                 self.assertNotIn("Traceback", result.stderr)
 
@@ -436,7 +536,11 @@ class TestLabelsDiffHelper(unittest.TestCase):
         # not survive a command line must stop the run rather than be emitted.
         unusable = [
             {"name": "-wip", "color": "ffffff", "description": "leading dash in name"},
-            {"name": "ok", "color": "ffffff", "description": "-leading dash in description"},
+            {
+                "name": "ok",
+                "color": "ffffff",
+                "description": "-leading dash in description",
+            },
             {"name": "ok", "color": "fff; echo pwned", "description": "not hex"},
         ]
         for entry in unusable:
@@ -445,8 +549,17 @@ class TestLabelsDiffHelper(unittest.TestCase):
                     path = Path(tmp) / "labels.json"
                     path.write_text(json.dumps({"labels": [entry]}), encoding="utf-8")
                     result = subprocess.run(
-                        [sys.executable, str(LABELS_DIFF), "--manifest", str(path), "--commands"],
-                        cwd=REPO, capture_output=True, text=True)
+                        [
+                            sys.executable,
+                            str(LABELS_DIFF),
+                            "--manifest",
+                            str(path),
+                            "--commands",
+                        ],
+                        cwd=REPO,
+                        capture_output=True,
+                        text=True,
+                    )
                     self.assertEqual(result.returncode, 2, result.stdout)
                     self.assertEqual(result.stdout, "", "nothing may be emitted")
 
@@ -457,8 +570,11 @@ class TestIssueFormSchema(unittest.TestCase):
     def test_top_level_keys_are_permitted_and_complete(self):
         for form in _form_files():
             with self.subTest(form=form.name):
-                keys = {line.split(":", 1)[0] for line in form.read_text(encoding="utf-8").splitlines()
-                        if re.match(r"^\w+:", line)}
+                keys = {
+                    line.split(":", 1)[0]
+                    for line in form.read_text(encoding="utf-8").splitlines()
+                    if re.match(r"^\w+:", line)
+                }
                 self.assertLessEqual(keys, FORM_TOP_LEVEL_KEYS)
                 # GitHub requires all three; a form missing one does not render.
                 self.assertLessEqual(FORM_TOP_LEVEL_REQUIRED, keys)
@@ -468,20 +584,32 @@ class TestIssueFormSchema(unittest.TestCase):
             fields = _form_fields(form.read_text(encoding="utf-8"))
             self.assertTrue(fields, f"{form.name} has no body items")
             ids = [field["id"] for field in fields if field["id"]]
-            self.assertEqual(len(ids), len(set(ids)), f"duplicate field ids in {form.name}")
-            labels = [field["attributes"].get("label") for field in fields
-                      if field["type"] != "markdown"]
-            self.assertEqual(len(labels), len(set(labels)),
-                             f"duplicate field labels in {form.name}")
+            self.assertEqual(
+                len(ids), len(set(ids)), f"duplicate field ids in {form.name}"
+            )
+            labels = [
+                field["attributes"].get("label")
+                for field in fields
+                if field["type"] != "markdown"
+            ]
+            self.assertEqual(
+                len(labels), len(set(labels)), f"duplicate field labels in {form.name}"
+            )
             for field in fields:
                 with self.subTest(form=form.name, field=field["id"] or field["type"]):
                     self.assertIn(field["type"], FORM_FIELD_TYPES)
                     self.assertLessEqual(set(field["keys"]), FORM_ITEM_KEYS)
-                    self.assertLessEqual(set(field["attributes"]), FORM_ATTRIBUTES[field["type"]],
-                                         "unknown attribute for this field type")
+                    self.assertLessEqual(
+                        set(field["attributes"]),
+                        FORM_ATTRIBUTES[field["type"]],
+                        "unknown attribute for this field type",
+                    )
                     if field["type"] in FORM_TYPES_WITHOUT_VALIDATIONS:
-                        self.assertNotIn("validations", field["keys"],
-                                         "a markdown block cannot be required")
+                        self.assertNotIn(
+                            "validations",
+                            field["keys"],
+                            "a markdown block cannot be required",
+                        )
                         self.assertIsNone(field["id"], "a markdown block takes no id")
                         self.assertIn("value", field["attributes"])
                     else:
@@ -496,7 +624,7 @@ class TestIssueFormSchema(unittest.TestCase):
         for index, line in enumerate(lines):
             if line.rstrip() != "      options:":
                 continue
-            for candidate in lines[index + 1:]:
+            for candidate in lines[index + 1 :]:
                 if not candidate.strip() or candidate.lstrip().startswith("#"):
                     continue
                 if _indent(candidate) > 8:
@@ -516,8 +644,11 @@ class TestIssueFormSchema(unittest.TestCase):
         for form in _form_files():
             text = form.read_text(encoding="utf-8")
             declared = self._declared_options(text)
-            parsed = sum(len(field["options"] or []) for field in _form_fields(text)
-                         if field["type"] in FORM_TYPES_WITH_OPTIONS)
+            parsed = sum(
+                len(field["options"] or [])
+                for field in _form_fields(text)
+                if field["type"] in FORM_TYPES_WITH_OPTIONS
+            )
             with self.subTest(form=form.name):
                 self.assertEqual(parsed, declared)
 
@@ -551,11 +682,15 @@ class TestIssueForms(unittest.TestCase):
     def test_every_form_requests_triage(self):
         for form in _form_files():
             with self.subTest(form=form.name):
-                self.assertIn("needs-triage", _form_labels(form.read_text(encoding="utf-8")))
+                self.assertIn(
+                    "needs-triage", _form_labels(form.read_text(encoding="utf-8"))
+                )
 
     def test_bug_form_phase_options_match_readme_architecture(self):
         options = _field("bug_report.yml", "phase")["options"]
-        self.assertEqual([o for o in options if o.startswith("Phase ")], _readme_phases())
+        self.assertEqual(
+            [o for o in options if o.startswith("Phase ")], _readme_phases()
+        )
 
     def test_bug_form_components_include_workflows_and_bench(self):
         joined = "\n".join(_field("bug_report.yml", "phase")["options"])
@@ -564,10 +699,15 @@ class TestIssueForms(unittest.TestCase):
 
     def test_bug_form_requires_install_method(self):
         field = _field("bug_report.yml", "install_method")
-        self.assertIsNotNone(field, "bug_report.yml must ask how the plugin was installed")
+        self.assertIsNotNone(
+            field, "bug_report.yml must ask how the plugin was installed"
+        )
         self.assertEqual(field["type"], "dropdown")
-        self.assertIn("validations", field["keys"],
-                      "`validations` must be a sibling of `attributes`, not nested inside it")
+        self.assertIn(
+            "validations",
+            field["keys"],
+            "`validations` must be a sibling of `attributes`, not nested inside it",
+        )
         self.assertTrue(field["required"], "install method is a first-order diagnostic")
         options = " ".join(field["options"]).lower()
         for expected in ("marketplace", "--plugin-dir", "clone"):
@@ -575,7 +715,9 @@ class TestIssueForms(unittest.TestCase):
                 self.assertIn(expected, options)
 
     def test_bug_form_plugin_version_placeholder_is_3x(self):
-        placeholder = _field("bug_report.yml", "plugin_version")["attributes"]["placeholder"]
+        placeholder = _field("bug_report.yml", "plugin_version")["attributes"][
+            "placeholder"
+        ]
         self.assertIsNotNone(placeholder)
         # Either a pinned example or the 3.x line; a pinned patch goes stale on every
         # release, since python-semantic-release never touches the form.
@@ -598,15 +740,20 @@ class TestIssueForms(unittest.TestCase):
 
     def test_config_links_the_security_advisory_form(self):
         links = _contact_links(_read(".github/ISSUE_TEMPLATE/config.yml"))
-        matching = [name for name, url in links
-                    if url == ADVISORY_URL and re.search(r"(?i)security", name)]
+        matching = [
+            name
+            for name, url in links
+            if url == ADVISORY_URL and re.search(r"(?i)security", name)
+        ]
         self.assertTrue(matching, f"no security contact link among {links}")
 
 
 class TestSecurityPolicy(unittest.TestCase):
     def test_security_md_exists_with_scope_and_supported_versions(self):
         text = _read("SECURITY.md")
-        self.assertIn(ADVISORY_URL, text, "must point at the enabled private advisory form")
+        self.assertIn(
+            ADVISORY_URL, text, "must point at the enabled private advisory form"
+        )
         for heading in ("reporting", "supported versions", "scope"):
             with self.subTest(heading=heading):
                 self.assertRegex(text, rf"(?im)^#{{2,3}} .*{heading}")
@@ -614,7 +761,9 @@ class TestSecurityPolicy(unittest.TestCase):
     def test_supported_versions_track_the_shipped_major(self):
         text = _read("SECURITY.md")
         major = json.loads(_read(".claude-plugin/plugin.json"))["version"].split(".")[0]
-        self.assertIn(f"{major}.x", text, "supported versions must name the shipped major line")
+        self.assertIn(
+            f"{major}.x", text, "supported versions must name the shipped major line"
+        )
         # The retired architecture must not be advertised as supported.
         self.assertRegex(text, r"(?im)^\|\s*2\.x[^|]*\|\s*No")
 
@@ -622,13 +771,17 @@ class TestSecurityPolicy(unittest.TestCase):
 class TestContributingDocs(unittest.TestCase):
     def test_contributing_lists_the_ci_enforced_commands_verbatim(self):
         text = _read("CONTRIBUTING.md")
-        for command in ("python -m pytest tests/ -q",
-                        "node --test workflows/test/*.test.js",
-                        "pre-commit run --all-files",
-                        "node workflows/build.js"):
+        for command in (
+            "python -m pytest tests/ -q",
+            "node --test workflows/test/*.test.js",
+            "pre-commit run --all-files",
+            "node workflows/build.js",
+        ):
             with self.subTest(command=command):
                 self.assertIn(command, text)
-        self.assertIn("bare directory form is not a valid `node --test` target on node 24", text)
+        self.assertIn(
+            "bare directory form is not a valid `node --test` target on node 24", text
+        )
         self.assertIn("workflows/test/tools/record_parity.py", text)
 
     def test_contributing_describes_the_v3_js_pipeline_areas(self):
@@ -639,16 +792,24 @@ class TestContributingDocs(unittest.TestCase):
 
     def test_pr_template_covers_the_js_gates(self):
         text = _read(".github/pull_request_template.md")
-        for gate in ("node --test workflows/test/*.test.js",
-                     "node workflows/build.js",
-                     "workflows/test/tools/record_parity.py"):
+        for gate in (
+            "node --test workflows/test/*.test.js",
+            "node workflows/build.js",
+            "workflows/test/tools/record_parity.py",
+        ):
             with self.subTest(gate=gate):
                 self.assertIn(gate, text)
 
     def test_maintainer_issue_standard_has_the_required_sections(self):
         text = _read("docs/maintainer-issues.md")
-        for section in ("Problem / Goal", "Requirements", "Evidence", "Candidate directions",
-                        "Out of scope", "Verification"):
+        for section in (
+            "Problem / Goal",
+            "Requirements",
+            "Evidence",
+            "Candidate directions",
+            "Out of scope",
+            "Verification",
+        ):
             with self.subTest(section=section):
                 self.assertRegex(text, rf"(?m)^#{{2,4}} {re.escape(section)}")
 
@@ -660,15 +821,27 @@ class TestContributingDocs(unittest.TestCase):
         # Requirement 8: reference the canonical home, do not restate the ladder. Costs
         # and `--tier` invocations are the tell that the ladder was copied in — but a
         # copy can be laundered into prose, so the ladder's own shape is rejected too.
-        self.assertNotRegex(text, r"\$\d", "tier costs belong only in bench/MEASUREMENT.md")
-        self.assertNotIn("--tier", text, "tier invocations belong only in bench/MEASUREMENT.md")
-        ladder_rows = [line for line in text.splitlines()
-                       if line.lstrip().startswith("|")
-                       and re.search(r"(?i)\b(tier|trigger|smoke|mini-subset|holdout)\b", line)]
-        self.assertEqual(ladder_rows, [],
-                         "a tier table here is the ladder restated; link the runbook instead")
+        self.assertNotRegex(
+            text, r"\$\d", "tier costs belong only in bench/MEASUREMENT.md"
+        )
+        self.assertNotIn(
+            "--tier", text, "tier invocations belong only in bench/MEASUREMENT.md"
+        )
+        ladder_rows = [
+            line
+            for line in text.splitlines()
+            if line.lstrip().startswith("|")
+            and re.search(r"(?i)\b(tier|trigger|smoke|mini-subset|holdout)\b", line)
+        ]
+        self.assertEqual(
+            ladder_rows,
+            [],
+            "a tier table here is the ladder restated; link the runbook instead",
+        )
         link = re.search(r"\[`bench/MEASUREMENT\.md`\]\((\.\./[^)]+)\)", text)
-        self.assertIsNotNone(link, "the canonical runbook must be linked, not just named")
+        self.assertIsNotNone(
+            link, "the canonical runbook must be linked, not just named"
+        )
         self.assertTrue((REPO / "docs" / link.group(1)).resolve().is_file())
 
     def test_every_tier_slug_the_standard_mandates_resolves_in_the_runbook(self):
@@ -676,28 +849,47 @@ class TestContributingDocs(unittest.TestCase):
         # cannot quietly become normative without existing in the canonical home a
         # reader is sent to. That drift shipped once already.
         standard = _read("docs/maintainer-issues.md")
-        vocabulary = standard.split("names exactly one measurement tier", 1)[1].split("\n\n", 2)[1]
+        vocabulary = standard.split("names exactly one measurement tier", 1)[1].split(
+            "\n\n", 2
+        )[1]
         slugs = re.findall(r"^- `([a-z-]+)`", vocabulary, re.M)
         self.assertTrue(slugs, "the standard must list the tier slugs as a bullet list")
-        runbook_slugs = set(re.findall(r"^\| [^|]+ \| `([a-z-]+)` \|",
-                                       _read("bench/MEASUREMENT.md"), re.M))
+        runbook_slugs = set(
+            re.findall(
+                r"^\| [^|]+ \| `([a-z-]+)` \|", _read("bench/MEASUREMENT.md"), re.M
+            )
+        )
         for slug in slugs:
             with self.subTest(slug=slug):
-                self.assertIn(slug, runbook_slugs,
-                              "a slug the standard mandates must appear in the runbook's "
-                              f"Slug column, which holds {sorted(runbook_slugs)}")
+                self.assertIn(
+                    slug,
+                    runbook_slugs,
+                    "a slug the standard mandates must appear in the runbook's "
+                    f"Slug column, which holds {sorted(runbook_slugs)}",
+                )
 
     def test_cspell_scope_includes_the_new_public_docs(self):
         hooks = _read(".pre-commit-config.yaml")
         cspell_block = hooks.split("- id: cspell", 1)
-        self.assertEqual(len(cspell_block), 2, "cspell hook missing from .pre-commit-config.yaml")
+        self.assertEqual(
+            len(cspell_block), 2, "cspell hook missing from .pre-commit-config.yaml"
+        )
         block = cspell_block[1].split("\n  - repo:", 1)[0]
         files_pattern = re.search(r"^        files: \^\((.*)\)\$", block, re.M)
-        self.assertIsNotNone(files_pattern, "the cspell hook must keep an explicit files: scope")
+        self.assertIsNotNone(
+            files_pattern, "the cspell hook must keep an explicit files: scope"
+        )
         scope = re.compile(rf"^({files_pattern.group(1)})$")
-        for path in ("README.md", "CONTRIBUTING.md", "SECURITY.md", "docs/maintainer-issues.md"):
+        for path in (
+            "README.md",
+            "CONTRIBUTING.md",
+            "SECURITY.md",
+            "docs/maintainer-issues.md",
+        ):
             with self.subTest(path=path):
-                self.assertTrue(scope.match(path), f"cspell scope does not cover {path}")
+                self.assertTrue(
+                    scope.match(path), f"cspell scope does not cover {path}"
+                )
 
 
 # Required PR check-run names for ruleset 16049246 (protect-default-branch).
@@ -732,10 +924,8 @@ def _derive_required_pr_check_contexts():
     """
     contexts = []
     job_header = re.compile(r"^  ([A-Za-z0-9_-]+):\s*$")
-    job_name = re.compile(r'^    name:\s*(.+?)\s*$')
-    matrix_versions = re.compile(
-        r'^        python-version:\s*\[(.*)\]\s*$'
-    )
+    job_name = re.compile(r"^    name:\s*(.+?)\s*$")
+    matrix_versions = re.compile(r"^        python-version:\s*\[(.*)\]\s*$")
     for rel in REQUIRED_PR_CHECK_WORKFLOWS:
         text = _read(rel)
         lines = text.splitlines()
@@ -772,9 +962,7 @@ def _derive_required_pr_check_contexts():
                 vm = matrix_versions.match(nxt)
                 if vm:
                     versions = [
-                        _unquote(p.strip())
-                        for p in vm.group(1).split(",")
-                        if p.strip()
+                        _unquote(p.strip()) for p in vm.group(1).split(",") if p.strip()
                     ]
                 i += 1
             label = display if display is not None else job_id

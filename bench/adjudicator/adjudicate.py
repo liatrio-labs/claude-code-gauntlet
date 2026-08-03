@@ -28,7 +28,7 @@ import re
 import urllib.request
 from pathlib import Path
 
-__all__ = ["adjudicate", "slice_hunk", "file_context", "FROZEN_PROMPT"]
+__all__ = ["FROZEN_PROMPT", "adjudicate", "file_context", "slice_hunk"]
 
 CHAT_COMPLETIONS_URL = "https://api.anthropic.com/v1/chat/completions"
 
@@ -86,7 +86,11 @@ def _iter_file_hunks(diff_text, path):
             j = i + 1
             while j < n:
                 nxt = lines[j]
-                if nxt.startswith("@@ ") or nxt.startswith("diff --git ") or nxt.startswith("+++ "):
+                if (
+                    nxt.startswith("@@ ")
+                    or nxt.startswith("diff --git ")
+                    or nxt.startswith("+++ ")
+                ):
                     break
                 body.append(nxt)
                 j += 1
@@ -109,7 +113,7 @@ def slice_hunk(diff_text, path, line):
     hunks = list(_iter_file_hunks(diff_text, path))
     if not hunks:
         raise ValueError(
-            "path {!r} not found in diff (no +++ header / hunks for it)".format(path)
+            f"path {path!r} not found in diff (no +++ header / hunks for it)"
         )
 
     for new_start, new_count, text in hunks:
@@ -155,7 +159,7 @@ def file_context(file_lines, line, radius=_CONTEXT_RADIUS):
     for num in range(start, end + 1):
         content = file_lines[num - 1].rstrip("\n")
         marker = ">" if num == line else " "
-        out.append("{} {}: {}".format(marker, num, content))
+        out.append(f"{marker} {num}: {content}")
     return "\n".join(out)
 
 
@@ -254,16 +258,16 @@ def _parse_verdict(content):
             text = text[4:]
         text = text.strip()
     try:
-        data = json.loads(text)  # strict path: behavior unchanged for well-formed replies
+        data = json.loads(
+            text
+        )  # strict path: behavior unchanged for well-formed replies
     except json.JSONDecodeError:
         return _recover_verdict(text)
     if not isinstance(data, dict):
-        raise ValueError(
-            "verdict must be a JSON object, got {}".format(type(data).__name__)
-        )
+        raise ValueError(f"verdict must be a JSON object, got {type(data).__name__}")
     bucket = data.get("bucket")
     if bucket not in ("valid_extra", "noise"):
-        raise ValueError("verdict bucket must be valid_extra|noise, got {!r}".format(bucket))
+        raise ValueError(f"verdict bucket must be valid_extra|noise, got {bucket!r}")
     return {
         "bucket": bucket,
         "failed_check": data.get("failed_check"),
@@ -281,7 +285,7 @@ def adjudicate(comment_text, diff_hunk, file_context, pin, api_key, transport=No
     """
     post = transport or _transport
     headers = {
-        "Authorization": "Bearer {}".format(api_key),
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     payload = {
@@ -289,7 +293,10 @@ def adjudicate(comment_text, diff_hunk, file_context, pin, api_key, transport=No
         "temperature": 0,
         "messages": [
             {"role": "system", "content": FROZEN_PROMPT},
-            {"role": "user", "content": _build_user_message(comment_text, diff_hunk, file_context)},
+            {
+                "role": "user",
+                "content": _build_user_message(comment_text, diff_hunk, file_context),
+            },
         ],
     }
 
@@ -300,4 +307,4 @@ def adjudicate(comment_text, diff_hunk, file_context, pin, api_key, transport=No
             return _parse_verdict(_extract_content(reply))
         except (ValueError, json.JSONDecodeError) as exc:
             last_error = exc
-    raise ValueError("adjudicator returned unparseable JSON twice: {}".format(last_error))
+    raise ValueError(f"adjudicator returned unparseable JSON twice: {last_error}")

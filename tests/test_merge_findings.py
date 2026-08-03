@@ -24,26 +24,22 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from scripts.merge_findings import (
+    KNOWN_DIMENSIONS,
+    _extract_json_blocks,
+    deduplicate,
+    detect_truncation,
+    inject_agent_field,
+    main,
+    merge,
     parse_ndjson_file,
     parse_text_file,
-    inject_agent_field,
-    deduplicate,
     validate_findings,
-    detect_truncation,
-    assemble_output,
-    merge,
-    main,
-    KNOWN_DIMENSIONS,
-    REQUIRED_FIELDS,
-    _ndjson_path,
-    _text_path,
-    _extract_json_blocks,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_finding(**kwargs) -> dict:
     """Build a minimal valid finding dict with sensible defaults."""
@@ -76,11 +72,13 @@ def _write_text(path: str, content: str) -> None:
 # NDJSON parsing
 # ---------------------------------------------------------------------------
 
-class TestParseNdjsonFile(unittest.TestCase):
 
+class TestParseNdjsonFile(unittest.TestCase):
     def test_valid_single_finding(self):
         f = _make_finding()
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ndjson", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ndjson", delete=False
+        ) as fh:
             fh.write(json.dumps(f) + "\n")
             path = fh.name
         try:
@@ -93,7 +91,9 @@ class TestParseNdjsonFile(unittest.TestCase):
 
     def test_multiple_findings(self):
         items = [_make_finding(id=f"bug-{i}") for i in range(3)]
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ndjson", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ndjson", delete=False
+        ) as fh:
             for item in items:
                 fh.write(json.dumps(item) + "\n")
             path = fh.name
@@ -105,7 +105,9 @@ class TestParseNdjsonFile(unittest.TestCase):
             os.unlink(path)
 
     def test_invalid_json_line_skipped_with_warning(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ndjson", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ndjson", delete=False
+        ) as fh:
             fh.write(json.dumps(_make_finding()) + "\n")
             fh.write("{not valid json}\n")
             fh.write(json.dumps(_make_finding(id="bug-2")) + "\n")
@@ -119,7 +121,9 @@ class TestParseNdjsonFile(unittest.TestCase):
             os.unlink(path)
 
     def test_non_object_line_skipped_with_warning(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ndjson", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ndjson", delete=False
+        ) as fh:
             fh.write('"just a string"\n')
             path = fh.name
         try:
@@ -131,7 +135,9 @@ class TestParseNdjsonFile(unittest.TestCase):
             os.unlink(path)
 
     def test_empty_file_returns_no_findings(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ndjson", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ndjson", delete=False
+        ) as fh:
             path = fh.name
         try:
             findings, warns = parse_ndjson_file(path, "bug-detector")
@@ -141,7 +147,9 @@ class TestParseNdjsonFile(unittest.TestCase):
             os.unlink(path)
 
     def test_blank_lines_ignored(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".ndjson", delete=False) as fh:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".ndjson", delete=False
+        ) as fh:
             fh.write("\n")
             fh.write(json.dumps(_make_finding()) + "\n")
             fh.write("\n")
@@ -153,7 +161,9 @@ class TestParseNdjsonFile(unittest.TestCase):
             os.unlink(path)
 
     def test_missing_file_returns_empty(self):
-        findings, warns = parse_ndjson_file("/tmp/does-not-exist-abc123.ndjson", "bug-detector")
+        findings, warns = parse_ndjson_file(
+            "/tmp/does-not-exist-abc123.ndjson", "bug-detector"
+        )
         self.assertEqual(findings, [])
         self.assertEqual(warns, [])
 
@@ -162,8 +172,8 @@ class TestParseNdjsonFile(unittest.TestCase):
 # Text file fallback parsing
 # ---------------------------------------------------------------------------
 
-class TestParseTextFile(unittest.TestCase):
 
+class TestParseTextFile(unittest.TestCase):
     def test_json_block_extracted_from_prose(self):
         f = _make_finding()
         content = (
@@ -264,8 +274,8 @@ class TestParseTextFile(unittest.TestCase):
 # _extract_json_blocks
 # ---------------------------------------------------------------------------
 
-class TestExtractJsonBlocks(unittest.TestCase):
 
+class TestExtractJsonBlocks(unittest.TestCase):
     def test_extracts_valid_objects_with_id(self):
         f = _make_finding()
         text = f"some text {json.dumps(f)} more text"
@@ -295,8 +305,8 @@ class TestExtractJsonBlocks(unittest.TestCase):
 # Agent field injection
 # ---------------------------------------------------------------------------
 
-class TestInjectAgentField(unittest.TestCase):
 
+class TestInjectAgentField(unittest.TestCase):
     def test_agent_injected_from_ndjson(self):
         ndjson = {"bug-detector": [_make_finding()]}
         text = {}
@@ -331,8 +341,8 @@ class TestInjectAgentField(unittest.TestCase):
 # Deduplication
 # ---------------------------------------------------------------------------
 
-class TestDeduplicate(unittest.TestCase):
 
+class TestDeduplicate(unittest.TestCase):
     def test_ndjson_preferred_over_text_on_id_collision(self):
         ndjson_finding = _make_finding(title="NDJSON version", severity="high")
         text_finding = _make_finding(title="Text version", severity="low")
@@ -386,8 +396,8 @@ class TestDeduplicate(unittest.TestCase):
 # Dimension and field validation
 # ---------------------------------------------------------------------------
 
-class TestValidateFindings(unittest.TestCase):
 
+class TestValidateFindings(unittest.TestCase):
     def test_all_known_dimensions_accepted(self):
         for dim in KNOWN_DIMENSIONS:
             findings = [_make_finding(id=f"f-{dim}", dimension=dim)]
@@ -458,7 +468,13 @@ class TestValidateFindings(unittest.TestCase):
         """evidence, suggestion, suggested_fix_code, cross_file_refs are optional."""
         f = _make_finding()
         # Ensure none of the optional fields are present
-        for field in ("evidence", "suggestion", "suggested_fix_code", "cross_file_refs", "line_end"):
+        for field in (
+            "evidence",
+            "suggestion",
+            "suggested_fix_code",
+            "cross_file_refs",
+            "line_end",
+        ):
             f.pop(field, None)
         valid, warns = validate_findings([f])
         self.assertEqual(len(valid), 1)
@@ -473,13 +489,10 @@ class TestValidateFindings(unittest.TestCase):
 # Truncation detection
 # ---------------------------------------------------------------------------
 
-class TestDetectTruncation(unittest.TestCase):
 
+class TestDetectTruncation(unittest.TestCase):
     def _run(self, ndjson_raw_counts, text_findings, text_has_prose, text_has_skip):
-        agents = (
-            list(ndjson_raw_counts.keys())
-            or list(text_has_prose.keys())
-        )
+        agents = list(ndjson_raw_counts.keys()) or list(text_has_prose.keys())
         return detect_truncation(
             agents=agents,
             ndjson_raw_counts=ndjson_raw_counts,
@@ -571,8 +584,8 @@ class TestDetectTruncation(unittest.TestCase):
 # Integration: merge()
 # ---------------------------------------------------------------------------
 
-class TestMerge(unittest.TestCase):
 
+class TestMerge(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.session_sha = "abc12345"
@@ -582,10 +595,14 @@ class TestMerge(unittest.TestCase):
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _ndjson_path(self, agent):
-        return os.path.join(self.tmpdir, f"code-gauntlet-{agent}-{self.session_sha}.ndjson")
+        return os.path.join(
+            self.tmpdir, f"code-gauntlet-{agent}-{self.session_sha}.ndjson"
+        )
 
     def _text_path(self, agent):
-        return os.path.join(self.tmpdir, f"code-gauntlet-text-{agent}-{self.session_sha}.txt")
+        return os.path.join(
+            self.tmpdir, f"code-gauntlet-text-{agent}-{self.session_sha}.txt"
+        )
 
     def _run_merge(self):
         return merge(
@@ -602,7 +619,15 @@ class TestMerge(unittest.TestCase):
 
     def test_output_has_required_top_level_keys(self):
         result = self._run_merge()
-        for key in ("findings", "base_branch", "head_sha", "pr_number", "owner", "repo", "methodology"):
+        for key in (
+            "findings",
+            "base_branch",
+            "head_sha",
+            "pr_number",
+            "owner",
+            "repo",
+            "methodology",
+        ):
             self.assertIn(key, result)
 
     def test_output_metadata_correct(self):
@@ -637,7 +662,9 @@ class TestMerge(unittest.TestCase):
         result = self._run_merge()
         self.assertEqual(len(result["findings"]), 1)
         self.assertEqual(result["findings"][0]["id"], "sec-1")
-        self.assertEqual(result["methodology"]["findings_per_channel"]["text_fallback"], 1)
+        self.assertEqual(
+            result["methodology"]["findings_per_channel"]["text_fallback"], 1
+        )
 
     def test_ndjson_preferred_over_text_fallback(self):
         f_ndjson = _make_finding(id="bug-1", title="From NDJSON")
@@ -658,7 +685,10 @@ class TestMerge(unittest.TestCase):
 
     def test_invalid_findings_excluded(self):
         """Findings missing required fields should be excluded."""
-        bad = {"dimension": "bug", "severity": "high"}  # missing id, file, line_start, title, description, confidence
+        bad = {
+            "dimension": "bug",
+            "severity": "high",
+        }  # missing id, file, line_start, title, description, confidence
         _write_ndjson(self._ndjson_path("bug-detector"), [bad])
         result = self._run_merge()
         self.assertEqual(len(result["findings"]), 0)
@@ -666,8 +696,10 @@ class TestMerge(unittest.TestCase):
 
     def test_truncation_warning_in_output(self):
         # bug-detector has no NDJSON and has prose text
-        _write_text(self._text_path("bug-detector"),
-                    "I found a potential null dereference in the auth handler.")
+        _write_text(
+            self._text_path("bug-detector"),
+            "I found a potential null dereference in the auth handler.",
+        )
         result = self._run_merge()
         self.assertTrue(len(result["methodology"]["truncation_warnings"]) > 0)
 
@@ -695,8 +727,10 @@ class TestMerge(unittest.TestCase):
         bad_finding = {"dimension": "bug", "severity": "high"}
         _write_ndjson(self._ndjson_path("bug-detector"), [bad_finding])
         # Also write prose text so the old code would have flagged truncation
-        _write_text(self._text_path("bug-detector"),
-                    "I investigated the handler and found a potential issue.")
+        _write_text(
+            self._text_path("bug-detector"),
+            "I investigated the handler and found a potential issue.",
+        )
         result = self._run_merge()
         self.assertEqual(result["methodology"]["truncation_warnings"], [])
 
@@ -717,10 +751,13 @@ class TestMerge(unittest.TestCase):
         self.assertEqual(result["methodology"]["truncation_warnings"], [])
 
     def test_ndjson_count_in_methodology(self):
-        _write_ndjson(self._ndjson_path("bug-detector"), [
-            _make_finding(id="bug-1"),
-            _make_finding(id="bug-2"),
-        ])
+        _write_ndjson(
+            self._ndjson_path("bug-detector"),
+            [
+                _make_finding(id="bug-1"),
+                _make_finding(id="bug-2"),
+            ],
+        )
         result = self._run_merge()
         self.assertEqual(result["methodology"]["findings_per_channel"]["ndjson"], 2)
 
@@ -728,14 +765,21 @@ class TestMerge(unittest.TestCase):
         result = self._run_merge()
         self.assertEqual(result["findings"], [])
         self.assertEqual(result["methodology"]["findings_per_channel"]["ndjson"], 0)
-        self.assertEqual(result["methodology"]["findings_per_channel"]["text_fallback"], 0)
+        self.assertEqual(
+            result["methodology"]["findings_per_channel"]["text_fallback"], 0
+        )
         self.assertEqual(result["methodology"]["duplicates_resolved"], 0)
 
     def test_dropped_no_id_counts_idless_findings(self):
         """methodology.dropped_no_id reflects findings dropped for a missing/empty id."""
         missing = {
-            "dimension": "bug", "severity": "high", "file": "x.py",
-            "line_start": 1, "title": "t", "description": "d", "confidence": 80,
+            "dimension": "bug",
+            "severity": "high",
+            "file": "x.py",
+            "line_start": 1,
+            "title": "t",
+            "description": "d",
+            "confidence": 80,
         }  # every required field EXCEPT id
         empty = dict(missing, id="")  # id present but empty — also dropped
         valid = _make_finding(id="bug-1")
@@ -749,8 +793,8 @@ class TestMerge(unittest.TestCase):
 # CLI: main()
 # ---------------------------------------------------------------------------
 
-class TestMain(unittest.TestCase):
 
+class TestMain(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.mkdtemp()
         self.session_sha = "deadbeef"
@@ -820,8 +864,6 @@ class TestMain(unittest.TestCase):
         with open(self.output_path) as fh:
             data = json.load(fh)
         self.assertEqual(len(data["findings"]), 2)
-
-
 
 
 class TestDeduplicateImportPath(unittest.TestCase):

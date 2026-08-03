@@ -9,10 +9,10 @@ import unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scripts.finding_dedup import dedup_by_id
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _f(
     fid="F001",
@@ -43,6 +43,7 @@ def _f(
 # ---------------------------------------------------------------------------
 # dedup_by_id
 # ---------------------------------------------------------------------------
+
 
 class TestDedupById(unittest.TestCase):
     def test_no_collision(self):

@@ -66,8 +66,15 @@ class InvokeTestBase(unittest.TestCase):
         dst.chmod(dst.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
         return bindir
 
-    def _run(self, mode, timeout_s=30, extra_env=None, tool="deep-review-v3",
-             child_model="inherit", child_auth="api"):
+    def _run(
+        self,
+        mode,
+        timeout_s=30,
+        extra_env=None,
+        tool="deep-review-v3",
+        child_model="inherit",
+        child_auth="api",
+    ):
         bindir = self.install_fake()
         overrides = {
             "PATH": str(bindir) + os.pathsep + os.environ.get("PATH", ""),
@@ -77,8 +84,13 @@ class InvokeTestBase(unittest.TestCase):
             overrides.update(extra_env)
         with patched_environ(**overrides):
             return invoke_review(
-                self.worktree, PR, self.run_dir, timeout_s=timeout_s, tool=tool,
-                child_model=child_model, child_auth=child_auth,
+                self.worktree,
+                PR,
+                self.run_dir,
+                timeout_s=timeout_s,
+                tool=tool,
+                child_model=child_model,
+                child_auth=child_auth,
             )
 
 
@@ -87,8 +99,12 @@ class InvokeTestBase(unittest.TestCase):
 
 class PrDirNameTest(unittest.TestCase):
     def test_owner_repo_number_key(self):
-        pr = {"owner": "octo", "repo": "widget", "pr_number": 5,
-              "url": "https://github.com/octo/widget/pull/5"}
+        pr = {
+            "owner": "octo",
+            "repo": "widget",
+            "pr_number": 5,
+            "url": "https://github.com/octo/widget/pull/5",
+        }
         self.assertEqual(invoke.pr_dir_name(pr), "pr-octo-widget-5")
 
     def test_derives_from_url_when_owner_repo_absent(self):
@@ -97,8 +113,12 @@ class PrDirNameTest(unittest.TestCase):
 
     def test_same_number_different_repo_yields_distinct_keys(self):
         # The collision FIX 1 targets: /pull/1 in two forks must not share a dir.
-        a = {"url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1"}
-        b = {"url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/1"}
+        a = {
+            "url": "https://github.com/ai-code-review-evaluation/sentry-greptile/pull/1"
+        }
+        b = {
+            "url": "https://github.com/ai-code-review-evaluation/discourse-graphite/pull/1"
+        }
         self.assertNotEqual(invoke.pr_dir_name(a), invoke.pr_dir_name(b))
         self.assertEqual(
             invoke.pr_dir_name(a), "pr-ai-code-review-evaluation-sentry-greptile-1"
@@ -341,7 +361,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
         # their own shell must still get exactly today's child env.
         self._use_env_file("ANTHROPIC_API_KEY=sk-from-dotenv\n")
         env = build_env(
-            PR, self.run_dir, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
+            PR,
+            self.run_dir,
+            {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
             child_auth="api",
         )
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oat-ambient")
@@ -357,7 +379,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
     def test_subscription_strips_ambient_anthropic_api_key(self):
         self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
         env = build_env(
-            PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"},
+            PR,
+            self.run_dir,
+            {"ANTHROPIC_API_KEY": "sk-ambient"},
             child_auth="subscription",
         )
         self.assertNotIn("ANTHROPIC_API_KEY", env)
@@ -365,7 +389,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
     def test_subscription_strips_ambient_anthropic_auth_token(self):
         self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
         env = build_env(
-            PR, self.run_dir, {"ANTHROPIC_AUTH_TOKEN": "at-ambient"},
+            PR,
+            self.run_dir,
+            {"ANTHROPIC_AUTH_TOKEN": "at-ambient"},
             child_auth="subscription",
         )
         self.assertNotIn("ANTHROPIC_AUTH_TOKEN", env)
@@ -373,7 +399,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
     def test_subscription_strips_bedrock_switch(self):
         self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
         env = build_env(
-            PR, self.run_dir, {"CLAUDE_CODE_USE_BEDROCK": "1"},
+            PR,
+            self.run_dir,
+            {"CLAUDE_CODE_USE_BEDROCK": "1"},
             child_auth="subscription",
         )
         self.assertNotIn("CLAUDE_CODE_USE_BEDROCK", env)
@@ -381,7 +409,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
     def test_subscription_strips_vertex_switch(self):
         self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
         env = build_env(
-            PR, self.run_dir, {"CLAUDE_CODE_USE_VERTEX": "1"},
+            PR,
+            self.run_dir,
+            {"CLAUDE_CODE_USE_VERTEX": "1"},
             child_auth="subscription",
         )
         self.assertNotIn("CLAUDE_CODE_USE_VERTEX", env)
@@ -394,7 +424,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
     def test_subscription_token_from_ambient_when_dotenv_has_none(self):
         self._use_missing_env()
         env = build_env(
-            PR, self.run_dir, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
+            PR,
+            self.run_dir,
+            {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
             child_auth="subscription",
         )
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oat-ambient")
@@ -403,7 +435,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
         # One rule for bench/.env, mirroring ANTHROPIC_API_KEY: the file is authoritative.
         self._use_env_file("CLAUDE_CODE_OAUTH_TOKEN=oat-dotenv\n")
         env = build_env(
-            PR, self.run_dir, {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
+            PR,
+            self.run_dir,
+            {"CLAUDE_CODE_OAUTH_TOKEN": "oat-ambient"},
             child_auth="subscription",
         )
         self.assertEqual(env["CLAUDE_CODE_OAUTH_TOKEN"], "oat-dotenv")
@@ -425,7 +459,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
         self._use_env_file("ANTHROPIC_API_KEY=sk-from-dotenv\n")
         with self.assertRaises(ValueError) as ctx:
             build_env(
-                PR, self.run_dir, {"ANTHROPIC_API_KEY": "sk-ambient"},
+                PR,
+                self.run_dir,
+                {"ANTHROPIC_API_KEY": "sk-ambient"},
                 child_auth="oauth",
             )
         message = str(ctx.exception)
@@ -445,7 +481,9 @@ class BuildEnvChildAuthTest(InvokeTestBase):
         home = Path(self.tmp) / "realhome"
         (home / ".config" / "gh").mkdir(parents=True)
         env = build_env(
-            PR, self.run_dir, {"HOME": str(home), "GH_TOKEN": "ght"},
+            PR,
+            self.run_dir,
+            {"HOME": str(home), "GH_TOKEN": "ght"},
             child_auth="subscription",
         )
         workspace = self.run_dir.resolve().parent.parent
@@ -535,7 +573,9 @@ class ApiKeyHelperSourcesTest(InvokeTestBase):
 
     def test_unreadable_file_is_empty(self):
         cfg = self._config_dir()
-        (cfg / "settings.json").mkdir()  # a dir where a file is expected: OSError on read
+        (
+            cfg / "settings.json"
+        ).mkdir()  # a dir where a file is expected: OSError on read
         self.assertEqual(invoke.api_key_helper_files(cfg.parent), [])
 
     def test_finds_helper_in_settings_json(self):
@@ -588,7 +628,8 @@ class ApiKeyHelperSourcesTest(InvokeTestBase):
         config_path.write_text(json.dumps({"apiKeyHelper": "a"}))
         home_path.write_text(json.dumps({"apiKeyHelper": "b"}))
         self.assertEqual(
-            invoke.api_key_helper_files(home), sorted([str(config_path), str(home_path)])
+            invoke.api_key_helper_files(home),
+            sorted([str(config_path), str(home_path)]),
         )
 
 
@@ -713,7 +754,10 @@ class ParseCostsTest(unittest.TestCase):
             "input_tokens": 10,
             "output_tokens": 4,
             "cache_creation_input_tokens": 6,
-            "cache_creation": {"ephemeral_5m_input_tokens": 6, "ephemeral_1h_input_tokens": 0},
+            "cache_creation": {
+                "ephemeral_5m_input_tokens": 6,
+                "ephemeral_1h_input_tokens": 0,
+            },
         }
         out = parse_costs({"usage": usage})
         self.assertEqual(out["tokens_total"], 20)  # 10+4+6, nested dict skipped
@@ -747,13 +791,17 @@ class InvokeReviewTest(InvokeTestBase):
         argv = argv_file.read_text().splitlines()
         self.assertIn("-p", argv)
         prompt = argv[argv.index("-p") + 1]
-        self.assertEqual(prompt, "/code-gauntlet:code-gauntlet {}".format(PR["pr_number"]))
+        self.assertEqual(
+            prompt, "/code-gauntlet:code-gauntlet {}".format(PR["pr_number"])
+        )
         # Guard the exact regression: the bare/flat command must not reappear.
         self.assertNotEqual(prompt, "/code-gauntlet {}".format(PR["pr_number"]))
 
     def test_hang_times_out_and_kills_group(self):
         pidfile = Path(self.tmp) / "pgid.txt"
-        res = self._run("hang", timeout_s=2, extra_env={"FAKE_CLAUDE_PIDFILE": str(pidfile)})
+        res = self._run(
+            "hang", timeout_s=2, extra_env={"FAKE_CLAUDE_PIDFILE": str(pidfile)}
+        )
         self.assertEqual(res.status, "timeout")
         self.assertEqual(res.reason, "watchdog_timeout")
         # The fake recorded its process-group id at startup; after invoke returns the
@@ -944,7 +992,9 @@ class ClaudeVersionParseTest(InvokeTestBase):
         self.assertIsNone(invoke._claude_version(self._bin("no-version-here")))
 
     def test_missing_binary_returns_none(self):
-        self.assertIsNone(invoke._claude_version(str(Path(self.tmp) / "nope" / "claude")))
+        self.assertIsNone(
+            invoke._claude_version(str(Path(self.tmp) / "nope" / "claude"))
+        )
 
 
 class PluginMutationGuardTest(InvokeTestBase):
@@ -957,6 +1007,7 @@ class PluginMutationGuardTest(InvokeTestBase):
 
     def _init_repo(self, files):
         import subprocess
+
         root = Path(self.tmp) / "plugin"
         root.mkdir()
         files = {
@@ -969,22 +1020,34 @@ class PluginMutationGuardTest(InvokeTestBase):
             p.write_text(content)
         env = {
             **os.environ,
-            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
-            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
+            "GIT_AUTHOR_NAME": "t",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "t",
+            "GIT_COMMITTER_EMAIL": "t@t",
         }
-        for cmd in (["git", "init", "-q"], ["git", "add", "-A"], ["git", "commit", "-q", "-m", "baseline"]):
+        for cmd in (
+            ["git", "init", "-q"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-q", "-m", "baseline"],
+        ):
             subprocess.run(cmd, cwd=str(root), check=True, capture_output=True, env=env)
         return root
 
     def _porcelain(self, root):
         import subprocess
+
         return subprocess.run(
-            ["git", "status", "--porcelain"], cwd=str(root), capture_output=True, text=True
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
         ).stdout.strip()
 
     def _run_mutating(self, root, mutate_path):
         with patch.object(invoke, "REPO_ROOT", root):
-            return self._run("mutate_repo", extra_env={"FAKE_CLAUDE_MUTATE_PATH": str(mutate_path)})
+            return self._run(
+                "mutate_repo", extra_env={"FAKE_CLAUDE_MUTATE_PATH": str(mutate_path)}
+            )
 
     def test_untracked_file_mutation_marks_invalid_and_removes_file(self):
         root = self._init_repo({"README.md": "base\n"})
@@ -1001,15 +1064,23 @@ class PluginMutationGuardTest(InvokeTestBase):
         res = self._run_mutating(root, target)
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "plugin_mutated_by_child")
-        self.assertEqual(target.read_text(), "ORIGINAL\n", "tracked edit reverted on reset")
+        self.assertEqual(
+            target.read_text(), "ORIGINAL\n", "tracked edit reverted on reset"
+        )
         self.assertEqual(self._porcelain(root), "")
 
     def test_controller_owned_experiments_jsonl_is_not_flagged(self):
         root = self._init_repo({"bench/experiments.jsonl": "{}\n"})
         target = root / "bench" / "experiments.jsonl"
         res = self._run_mutating(root, target)
-        self.assertEqual(res.status, "ok", "a controller-owned change is not child contamination")
-        self.assertNotEqual(self._porcelain(root), "", "experiments.jsonl left modified (controller owns it)")
+        self.assertEqual(
+            res.status, "ok", "a controller-owned change is not child contamination"
+        )
+        self.assertNotEqual(
+            self._porcelain(root),
+            "",
+            "experiments.jsonl left modified (controller owns it)",
+        )
 
     def test_controller_owned_report_html_is_not_flagged(self):
         # The live dashboard (regenerated from the ledger by bench/report.py, typically run
@@ -1019,8 +1090,14 @@ class PluginMutationGuardTest(InvokeTestBase):
         root = self._init_repo({"bench/report.html": "<html>old</html>\n"})
         target = root / "bench" / "report.html"
         res = self._run_mutating(root, target)
-        self.assertEqual(res.status, "ok", "a controller-owned dashboard regeneration is not child contamination")
-        self.assertNotEqual(self._porcelain(root), "", "report.html left modified (operator owns it)")
+        self.assertEqual(
+            res.status,
+            "ok",
+            "a controller-owned dashboard regeneration is not child contamination",
+        )
+        self.assertNotEqual(
+            self._porcelain(root), "", "report.html left modified (operator owns it)"
+        )
 
     def test_preexisting_local_edit_is_not_flagged_or_reset(self):
         # A dirty file that predates the child (the run's baseline) must survive untouched
@@ -1034,7 +1111,9 @@ class PluginMutationGuardTest(InvokeTestBase):
         self.assertEqual(res.status, "invalid")
         self.assertEqual(res.reason, "plugin_mutated_by_child")
         self.assertFalse(injected.exists())
-        self.assertEqual(preexisting.read_text(), "LOCAL WIP\n", "pre-existing local edit untouched")
+        self.assertEqual(
+            preexisting.read_text(), "LOCAL WIP\n", "pre-existing local edit untouched"
+        )
 
     def test_clean_run_is_not_flagged(self):
         root = self._init_repo({"README.md": "base\n"})
@@ -1057,7 +1136,9 @@ class ChildModelCommandTest(InvokeTestBase):
     def test_v3_command_carries_model_sonnet(self):
         env = {}
         argv_file = self._argv(env)
-        res = self._run("ok", tool="deep-review-v3", child_model="sonnet", extra_env=env)
+        res = self._run(
+            "ok", tool="deep-review-v3", child_model="sonnet", extra_env=env
+        )
         self.assertEqual(res.status, "ok")
         argv = argv_file.read_text().splitlines()
         self.assertIn("--model", argv)
@@ -1168,13 +1249,14 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
         saw = self._child_saw("subscription")
         self.assertTrue(saw["CLAUDE_CODE_OAUTH_TOKEN"])
         for name in self.MUST_NOT_REACH_CHILD:
-            self.assertFalse(saw[name], "{} reached the child".format(name))
+            self.assertFalse(saw[name], f"{name} reached the child")
 
     def test_the_strip_list_covers_every_var_this_test_names(self):
         # Keeps the hardcoded list above honest in the other direction: if the chain grows
         # a source, the production constant and this test must both learn about it.
         self.assertEqual(
-            sorted(invoke._OUTRANKING_CREDENTIAL_VARS), sorted(self.MUST_NOT_REACH_CHILD)
+            sorted(invoke._OUTRANKING_CREDENTIAL_VARS),
+            sorted(self.MUST_NOT_REACH_CHILD),
         )
 
     def test_api_child_receives_the_ambient_key(self):
@@ -1234,7 +1316,9 @@ class ScriptPathMatchesRepoTest(unittest.TestCase):
                     invoke.script_path_matches_repo("workflows/pipeline.js", REPO_ROOT)
                 )
                 self.assertTrue(
-                    invoke.script_path_matches_repo("./workflows/pipeline.js", REPO_ROOT)
+                    invoke.script_path_matches_repo(
+                        "./workflows/pipeline.js", REPO_ROOT
+                    )
                 )
             finally:
                 os.chdir(old_cwd)
@@ -1282,7 +1366,10 @@ class WorkflowScriptPathScanTest(unittest.TestCase):
     def test_nested_wrapper_script_path_extracted(self):
         self._write(
             "wf_wrap.json",
-            {"runId": "wf_wrap", "input": {"scriptPath": "/stale/wrap/workflows/pipeline.js"}},
+            {
+                "runId": "wf_wrap",
+                "input": {"scriptPath": "/stale/wrap/workflows/pipeline.js"},
+            },
         )
         paths = invoke._new_workflow_script_paths(self.home, {})
         self.assertEqual(paths, ["/stale/wrap/workflows/pipeline.js"])

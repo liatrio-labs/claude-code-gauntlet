@@ -39,8 +39,18 @@ RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 
 # The canonical fields the brief pins as the pipeline schema surface (Task 13 Step 4).
 CANONICAL_FIELDS = [
-    "id", "title", "description", "dimension", "severity", "confidence",
-    "file", "line_start", "line_end", "origin", "cross_file_refs", "report_destination",
+    "id",
+    "title",
+    "description",
+    "dimension",
+    "severity",
+    "confidence",
+    "file",
+    "line_start",
+    "line_end",
+    "origin",
+    "cross_file_refs",
+    "report_destination",
 ]
 # The v2 aliases the retained post_review poster indexes/reads.
 V2_ALIAS_FIELDS = ["file", "line", "body", "end_line"]
@@ -52,7 +62,13 @@ V2_ALIAS_FIELDS = ["file", "line", "body", "end_line"]
 # pipeline, which makes the assertions below an end-to-end carriage proof rather than a
 # restatement of the registry: if any stage between discovery and persist starts
 # reconstructing findings field-by-field, they vanish here.
-ISSUE_47_FIELDS = ["suggestion", "claude_md_rule", "spec_text", "criticality", "failure_scenario"]
+ISSUE_47_FIELDS = [
+    "suggestion",
+    "claude_md_rule",
+    "spec_text",
+    "criticality",
+    "failure_scenario",
+]
 
 
 def load_pipeline_findings():
@@ -63,7 +79,10 @@ def load_pipeline_findings():
         out = os.path.join(tmp, "persisted.json")
         proc = subprocess.run(
             ["node", str(RECORDER), out],
-            cwd=str(REPO), capture_output=True, text=True, timeout=60,
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
         if proc.returncode != 0:
             raise RuntimeError(f"recorder failed: {proc.stderr}")
@@ -101,9 +120,11 @@ def _fake_run(diff="", remote="git@github.com:o/r.git\n"):
     """subprocess.run side_effect mocking post_review's read-only CLI calls
     (which / git remote / git rev-parse / gh pr diff). Any other command returns an
     empty JSON object; in dry-run, post_json short-circuits before a POST subprocess."""
+
     def _run(cmd, *_a, **_k):
         def res(out="", err="", rc=0):
             return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
+
         if cmd[0] == "which":
             return res(out="/usr/bin/" + cmd[1])
         if cmd[:3] == ["git", "remote", "get-url"]:
@@ -113,6 +134,7 @@ def _fake_run(diff="", remote="git@github.com:o/r.git\n"):
         if cmd[:3] == ["gh", "pr", "diff"]:
             return res(out=diff)
         return res(out="{}", rc=0)
+
     return _run
 
 
@@ -122,12 +144,20 @@ class TestSchemaCarriesBoundaryFields(unittest.TestCase):
     def test_canonical_fields_all_present(self):
         f = PERSISTED_FINDINGS[0]
         for field in CANONICAL_FIELDS:
-            self.assertIn(field, f, f"persisted pipeline finding must carry canonical field '{field}'")
+            self.assertIn(
+                field,
+                f,
+                f"persisted pipeline finding must carry canonical field '{field}'",
+            )
 
     def test_v2_aliases_present_for_retained_poster(self):
         f = PERSISTED_FINDINGS[0]
         for field in V2_ALIAS_FIELDS:
-            self.assertIn(field, f, f"persisted schema must carry v2 alias '{field}' for post_review.py")
+            self.assertIn(
+                field,
+                f,
+                f"persisted schema must carry v2 alias '{field}' for post_review.py",
+            )
 
     def test_aliases_mirror_canonical_values(self):
         f = PERSISTED_FINDINGS[0]
@@ -141,8 +171,11 @@ class TestSchemaCarriesBoundaryFields(unittest.TestCase):
         # echo) are the ones that used to drop them.
         seen = {field for f in PERSISTED_FINDINGS for field in f}
         missing = [field for field in ISSUE_47_FIELDS if field not in seen]
-        self.assertEqual(missing, [],
-                         f"fields lost somewhere between discovery and persist: {missing}")
+        self.assertEqual(
+            missing,
+            [],
+            f"fields lost somewhere between discovery and persist: {missing}",
+        )
 
     def test_issue_47_field_values_are_not_hollowed_out(self):
         # Present-but-empty is the failure mode a presence check alone would pass: a stage
@@ -154,8 +187,10 @@ class TestSchemaCarriesBoundaryFields(unittest.TestCase):
                 if field in f:
                     values.setdefault(field, []).append(f[field])
         for field, vals in values.items():
-            self.assertTrue(any(v not in (None, "", []) for v in vals),
-                            f"'{field}' survived to persist but every value is empty")
+            self.assertTrue(
+                any(v not in (None, "", []) for v in vals),
+                f"'{field}' survived to persist but every value is empty",
+            )
 
 
 class TestVerifyFindingsBoundary(unittest.TestCase):
@@ -178,12 +213,24 @@ class TestVerifyFindingsBoundary(unittest.TestCase):
 
         proc = subprocess.run(
             [
-                sys.executable, str(REPO / "scripts" / "verify_findings.py"),
-                findings_path, "--diff-file", diff_path, "--output", out_path,
+                sys.executable,
+                str(REPO / "scripts" / "verify_findings.py"),
+                findings_path,
+                "--diff-file",
+                diff_path,
+                "--output",
+                out_path,
             ],
-            cwd=str(REPO), capture_output=True, text=True, timeout=60,
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=60,
         )
-        self.assertEqual(proc.returncode, 0, f"verify_findings.py errored on the persisted schema: {proc.stderr}")
+        self.assertEqual(
+            proc.returncode,
+            0,
+            f"verify_findings.py errored on the persisted schema: {proc.stderr}",
+        )
 
         with open(out_path) as fh:
             envelope = json.load(fh)
@@ -206,20 +253,35 @@ class TestPostReviewBoundary(unittest.TestCase):
 
     def _write(self, findings):
         with open(self.findings_path, "w") as fh:
-            json.dump({
-                "platform": "github", "owner": "o", "repo": "r", "pr_number": 5,
-                "review_body": "Code gauntlet summary", "findings": findings,
-            }, fh)
+            json.dump(
+                {
+                    "platform": "github",
+                    "owner": "o",
+                    "repo": "r",
+                    "pr_number": 5,
+                    "review_body": "Code gauntlet summary",
+                    "findings": findings,
+                },
+                fh,
+            )
 
     def test_post_review_consumes_pipeline_findings_without_error(self):
         diff = build_gh_diff(PERSISTED_FINDINGS)
         self._write(PERSISTED_FINDINGS)
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)):
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)
+            ),
+        ):
             post_review.main()  # must not raise: every field it reads is present
 
         payload_path = os.path.join(self.tmp, "post-review-payload.json")
-        self.assertTrue(os.path.exists(payload_path), "dry-run payload was not captured")
+        self.assertTrue(
+            os.path.exists(payload_path), "dry-run payload was not captured"
+        )
         with open(payload_path) as fh:
             cap = json.load(fh)
         self.assertEqual(cap["platform"], "github")
@@ -233,18 +295,28 @@ class TestPostReviewBoundary(unittest.TestCase):
         # rule — the promise report-format.md's inline-comment template makes.
         diff = build_gh_diff(PERSISTED_FINDINGS)
         self._write(PERSISTED_FINDINGS)
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)):
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)
+            ),
+        ):
             post_review.main()
 
         with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
             comments = json.load(fh)["payload"]["comments"]
         bodies = "\n".join(c["body"] for c in comments)
 
-        self.assertIn("**Suggested fix:**", bodies,
-                      "the prose suggestion never reached the posted comment")
-        self.assertIn("**Cited rule:**", bodies,
-                      "the cited rule never reached the posted comment")
+        self.assertIn(
+            "**Suggested fix:**",
+            bodies,
+            "the prose suggestion never reached the posted comment",
+        )
+        self.assertIn(
+            "**Cited rule:**", bodies, "the cited rule never reached the posted comment"
+        )
         # The actual VALUES, not just the headings — a heading with an empty body would
         # satisfy the assertions above while telling the reviewer nothing.
         for finding in PERSISTED_FINDINGS:
@@ -260,8 +332,14 @@ class TestPostReviewBoundary(unittest.TestCase):
         # the scoping decision is pinned where it actually takes effect.
         diff = build_gh_diff(PERSISTED_FINDINGS)
         self._write(PERSISTED_FINDINGS)
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)):
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run", side_effect=_fake_run(diff=diff)
+            ),
+        ):
             post_review.main()
 
         with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
@@ -280,10 +358,17 @@ class TestPostReviewBoundary(unittest.TestCase):
             for f in PERSISTED_FINDINGS
         ]
         self._write(stripped)
-        with patch.object(sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]), \
-             patch("scripts.post_review.subprocess.run", side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS))):
-            with self.assertRaises(KeyError):
-                post_review.main()
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
+            ),
+            self.assertRaises(KeyError),
+        ):
+            post_review.main()
 
 
 if __name__ == "__main__":

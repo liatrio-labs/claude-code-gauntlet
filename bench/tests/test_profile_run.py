@@ -32,11 +32,16 @@ from tempfile import TemporaryDirectory
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import profile_run as pr  # noqa: E402
+import profile_run as pr
 
 
 def iso(ms):
-    return datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
+    return (
+        datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%S.%fZ"
+        )[:-4]
+        + "Z"
+    )
 
 
 class SyntheticRunBuilder:
@@ -73,15 +78,39 @@ class SyntheticRunBuilder:
 
         self.agents_spec = [
             ("summarize", "code-gauntlet:change-summarizer", 100, 1000, "a-summarize"),
-            ("code-gauntlet:bug-detector", "code-gauntlet:bug-detector", 1200, 3000, "a-discover-a"),
-            ("code-gauntlet:security-reviewer", "code-gauntlet:security-reviewer", 1200, 1000, "a-discover-b"),
-            ("verify-input-writer-0", "code-gauntlet:artifact-writer", 4300, 500, "a-viw"),
+            (
+                "code-gauntlet:bug-detector",
+                "code-gauntlet:bug-detector",
+                1200,
+                3000,
+                "a-discover-a",
+            ),
+            (
+                "code-gauntlet:security-reviewer",
+                "code-gauntlet:security-reviewer",
+                1200,
+                1000,
+                "a-discover-b",
+            ),
+            (
+                "verify-input-writer-0",
+                "code-gauntlet:artifact-writer",
+                4300,
+                500,
+                "a-viw",
+            ),
             ("verify-slice-0", "code-gauntlet:executor", 4900, 400, "a-vslice"),
             ("validate-batch-0", "code-gauntlet:validator", 5400, 600, "a-vbatch"),
             ("challenge-0", "code-gauntlet:challenger", 6100, 800, "a-chal0"),
             ("challenge-1", "code-gauntlet:challenger", 6100, 300, "a-chal1"),
             ("report-writer", "code-gauntlet:report-writer", 7000, 400, "a-report"),
-            ("artifact-writer", "code-gauntlet:artifact-writer", 7500, 700, "a-artifact"),
+            (
+                "artifact-writer",
+                "code-gauntlet:artifact-writer",
+                7500,
+                700,
+                "a-artifact",
+            ),
         ]
         self.workflow_duration_ms = 8300
 
@@ -97,7 +126,9 @@ class SyntheticRunBuilder:
         workflow_progress = []
         total_tokens = 0
         total_tool_calls = 0
-        for idx, (label, atype, start_off, dur, agent_id) in enumerate(self.agents_spec, 1):
+        for idx, (label, atype, start_off, dur, agent_id) in enumerate(
+            self.agents_spec, 1
+        ):
             started_at = self.T0 + start_off
             queued_at = started_at - 50  # fixed 50ms dispatch latency
             tokens = 100 * idx
@@ -156,21 +187,44 @@ class SyntheticRunBuilder:
         """
         rows = []
         prompt_ts = started_at
-        rows.append({"type": "user", "message": {"role": "user", "content": "go"}, "timestamp": iso(prompt_ts)})
+        rows.append(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "go"},
+                "timestamp": iso(prompt_ts),
+            }
+        )
 
         tool1_use_ts = started_at + int(dur * 0.2)
         tool1_result_ts = started_at + int(dur * 0.4)
         rows.append(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "tool_use", "id": f"{agent_id}-t1", "name": "Read", "input": {"file_path": "/x"}}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"{agent_id}-t1",
+                            "name": "Read",
+                            "input": {"file_path": "/x"},
+                        }
+                    ]
+                },
                 "timestamp": iso(tool1_use_ts),
             }
         )
         rows.append(
             {
                 "type": "user",
-                "message": {"content": [{"type": "tool_result", "tool_use_id": f"{agent_id}-t1", "content": "ok"}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": f"{agent_id}-t1",
+                            "content": "ok",
+                        }
+                    ]
+                },
                 "timestamp": iso(tool1_result_ts),
             }
         )
@@ -188,7 +242,10 @@ class SyntheticRunBuilder:
                                 "type": "tool_use",
                                 "id": f"{agent_id}-write",
                                 "name": "Write",
-                                "input": {"file_path": f"/fake/{label}.json", "content": write_content},
+                                "input": {
+                                    "file_path": f"/fake/{label}.json",
+                                    "content": write_content,
+                                },
                             }
                         ]
                     },
@@ -198,7 +255,15 @@ class SyntheticRunBuilder:
             rows.append(
                 {
                     "type": "user",
-                    "message": {"content": [{"type": "tool_result", "tool_use_id": f"{agent_id}-write", "content": "wrote"}]},
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": f"{agent_id}-write",
+                                "content": "wrote",
+                            }
+                        ]
+                    },
                     "timestamp": iso(write_result_ts),
                 }
             )
@@ -208,32 +273,66 @@ class SyntheticRunBuilder:
         rows.append(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "tool_use", "id": f"{agent_id}-t2", "name": "StructuredOutput", "input": {}}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"{agent_id}-t2",
+                            "name": "StructuredOutput",
+                            "input": {},
+                        }
+                    ]
+                },
                 "timestamp": iso(tool2_use_ts),
             }
         )
         rows.append(
             {
                 "type": "user",
-                "message": {"content": [{"type": "tool_result", "tool_use_id": f"{agent_id}-t2", "content": "done"}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": f"{agent_id}-t2",
+                            "content": "done",
+                        }
+                    ]
+                },
                 "timestamp": iso(tool2_result_ts),
             }
         )
         # Final event exactly at started_at + dur to pin the transcript span to `dur`.
-        rows.append({"type": "assistant", "message": {"content": [{"type": "text", "text": "bye"}]}, "timestamp": iso(started_at + dur)})
+        rows.append(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "bye"}]},
+                "timestamp": iso(started_at + dur),
+            }
+        )
 
         self._write_jsonl(self.subagents_dir / f"agent-{agent_id}.jsonl", rows)
         (self.subagents_dir / f"agent-{agent_id}.meta.json").write_text(
-            json.dumps({"agentType": label, "spawnDepth": 1, "model": "claude-sonnet-5"}), encoding="utf-8"
+            json.dumps(
+                {"agentType": label, "spawnDepth": 1, "model": "claude-sonnet-5"}
+            ),
+            encoding="utf-8",
         )
 
     def _write_session_transcript(self):
         """Orchestrator session: Phase1 -> AskUserQuestion -> human wait -> Phase2 Bash calls
         -> Workflow launch (matching this run's taskId) -> Phase3 wait -> resume event."""
         rows = []
-        session_start = self.T0 - 60_000  # session started 60s before the workflow itself
+        session_start = (
+            self.T0 - 60_000
+        )  # session started 60s before the workflow itself
 
-        rows.append({"type": "user", "message": {"role": "user", "content": "/code-gauntlet run"}, "timestamp": iso(session_start)})
+        rows.append(
+            {
+                "type": "user",
+                "message": {"role": "user", "content": "/code-gauntlet run"},
+                "timestamp": iso(session_start),
+            }
+        )
 
         # First *tool* activity (a plain-text user message, like the slash-command
         # invocation above, carries no tool_use/tool_result and so is invisible to the
@@ -243,14 +342,31 @@ class SyntheticRunBuilder:
         rows.append(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "tool_use", "id": "read-1", "name": "Read", "input": {"file_path": "/fake/SKILL.md"}}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "read-1",
+                            "name": "Read",
+                            "input": {"file_path": "/fake/SKILL.md"},
+                        }
+                    ]
+                },
                 "timestamp": iso(preflight_read_ts),
             }
         )
         rows.append(
             {
                 "type": "user",
-                "message": {"content": [{"type": "tool_result", "tool_use_id": "read-1", "content": "skill body"}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "read-1",
+                            "content": "skill body",
+                        }
+                    ]
+                },
                 "timestamp": iso(preflight_result_ts),
             }
         )
@@ -260,14 +376,31 @@ class SyntheticRunBuilder:
         rows.append(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "tool_use", "id": "ask-1", "name": "AskUserQuestion", "input": {}}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "ask-1",
+                            "name": "AskUserQuestion",
+                            "input": {},
+                        }
+                    ]
+                },
                 "timestamp": iso(ask_use_ts),
             }
         )
         rows.append(
             {
                 "type": "user",
-                "message": {"content": [{"type": "tool_result", "tool_use_id": "ask-1", "content": "answered"}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "ask-1",
+                            "content": "answered",
+                        }
+                    ]
+                },
                 "timestamp": iso(ask_result_ts),
             }
         )
@@ -281,14 +414,31 @@ class SyntheticRunBuilder:
             rows.append(
                 {
                     "type": "assistant",
-                    "message": {"content": [{"type": "tool_use", "id": f"bash-{i}", "name": "Bash", "input": {"description": desc}}]},
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": f"bash-{i}",
+                                "name": "Bash",
+                                "input": {"description": desc},
+                            }
+                        ]
+                    },
                     "timestamp": iso(use_ts),
                 }
             )
             rows.append(
                 {
                     "type": "user",
-                    "message": {"content": [{"type": "tool_result", "tool_use_id": f"bash-{i}", "content": "ok"}]},
+                    "message": {
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": f"bash-{i}",
+                                "content": "ok",
+                            }
+                        ]
+                    },
                     "timestamp": iso(result_ts),
                 }
             )
@@ -298,7 +448,16 @@ class SyntheticRunBuilder:
         rows.append(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "tool_use", "id": "wf-1", "name": "Workflow", "input": {"scriptPath": "/fake/pipeline.js"}}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "wf-1",
+                            "name": "Workflow",
+                            "input": {"scriptPath": "/fake/pipeline.js"},
+                        }
+                    ]
+                },
                 "timestamp": iso(workflow_launch_ts),
             }
         )
@@ -328,14 +487,31 @@ class SyntheticRunBuilder:
         rows.append(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "tool_use", "id": "read-2", "name": "Read", "input": {"file_path": "/fake/report.md"}}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "read-2",
+                            "name": "Read",
+                            "input": {"file_path": "/fake/report.md"},
+                        }
+                    ]
+                },
                 "timestamp": iso(resume_ts),
             }
         )
         rows.append(
             {
                 "type": "user",
-                "message": {"content": [{"type": "tool_result", "tool_use_id": "read-2", "content": "report body"}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "read-2",
+                            "content": "report body",
+                        }
+                    ]
+                },
                 "timestamp": iso(resume_ts + 50),
             }
         )
@@ -344,14 +520,31 @@ class SyntheticRunBuilder:
         rows.append(
             {
                 "type": "assistant",
-                "message": {"content": [{"type": "tool_use", "id": "bash-post", "name": "Bash", "input": {"description": "post review"}}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "bash-post",
+                            "name": "Bash",
+                            "input": {"description": "post review"},
+                        }
+                    ]
+                },
                 "timestamp": iso(session_end_ts),
             }
         )
         rows.append(
             {
                 "type": "user",
-                "message": {"content": [{"type": "tool_result", "tool_use_id": "bash-post", "content": "posted"}]},
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "bash-post",
+                            "content": "posted",
+                        }
+                    ]
+                },
                 "timestamp": iso(session_end_ts + 50),
             }
         )
@@ -372,13 +565,17 @@ class ProfileRunTestCase(unittest.TestCase):
     # -- discovery -----------------------------------------------------------
 
     def test_find_run_record_explicit_id(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
         self.assertEqual(record["runId"], self.builder.run_id)
         self.assertEqual(session_dir, self.builder.session_dir)
 
     def test_find_run_record_defaults_to_most_recent_completed(self):
         # Add a second, earlier-timestamped run; the default pick must still be ours.
-        older = SyntheticRunBuilder(self.root, run_id="wf_older0001-1", task_id="told0001")
+        older = SyntheticRunBuilder(
+            self.root, run_id="wf_older0001-1", task_id="told0001"
+        )
         older.T0 = self.builder.T0 - 1_000_000
         older.build()
         record, record_path, _ = pr.find_run_record(self.root, None)
@@ -391,8 +588,12 @@ class ProfileRunTestCase(unittest.TestCase):
     # -- stage grouping / concurrency -----------------------------------------
 
     def test_stage_grouping_covers_all_agents_and_transforms(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         stage_names = [s["stage"] for s in profile["stage_profile"]]
         for expected in (
             "summarize",
@@ -409,8 +610,12 @@ class ProfileRunTestCase(unittest.TestCase):
             self.assertIn(expected, stage_names)
 
     def test_discover_stage_concurrency(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         discover = next(s for s in profile["stage_profile"] if s["stage"] == "discover")
         self.assertEqual(discover["agent_count"], 2)
         # discover-a: [1200,4200), discover-b: [1200,2200) -> full overlap for 1000ms, so max concurrency 2.
@@ -420,9 +625,17 @@ class ProfileRunTestCase(unittest.TestCase):
         self.assertAlmostEqual(discover["span_wall_s"], 3.0, places=6)
 
     def test_merge_transform_gap_span(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
-        merge = next(s for s in profile["stage_profile"] if s["stage"] == "merge (transform, no agent)")
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
+        merge = next(
+            s
+            for s in profile["stage_profile"]
+            if s["stage"] == "merge (transform, no agent)"
+        )
         # discover ends at T0+4200 (offset 4.2s), verify-input-writer starts at T0+4300 (offset 4.3s).
         self.assertAlmostEqual(merge["span_start_offset_s"], 4.2, places=6)
         self.assertAlmostEqual(merge["span_end_offset_s"], 4.3, places=6)
@@ -431,12 +644,20 @@ class ProfileRunTestCase(unittest.TestCase):
     # -- capacity accounting ---------------------------------------------------
 
     def test_capacity_accounting_discover(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
-        cap = next(c for c in profile["capacity_accounting"] if c["stage"] == "discover")
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
+        cap = next(
+            c for c in profile["capacity_accounting"] if c["stage"] == "discover"
+        )
         self.assertEqual(cap["slots"], 2)
         self.assertEqual(cap["slowest_agent_ms"], 3000)
-        self.assertAlmostEqual(cap["capacity_agent_seconds"], 6.0, places=6)  # 3000ms * 2 slots
+        self.assertAlmostEqual(
+            cap["capacity_agent_seconds"], 6.0, places=6
+        )  # 3000ms * 2 slots
         self.assertAlmostEqual(cap["agent_seconds_used"], 4.0, places=6)  # 3000+1000 ms
         self.assertAlmostEqual(cap["idle_agent_seconds"], 2.0, places=6)
         self.assertAlmostEqual(cap["idle_pct"], (2.0 / 6.0) * 100, places=6)
@@ -444,10 +665,16 @@ class ProfileRunTestCase(unittest.TestCase):
     # -- critical path ---------------------------------------------------------
 
     def test_critical_path_picks_slowest_member_per_stage(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         hops = {h["stage"]: h for h in profile["critical_path"]["hops"]}
-        self.assertEqual(hops["discover"]["critical_agent_label"], "code-gauntlet:bug-detector")
+        self.assertEqual(
+            hops["discover"]["critical_agent_label"], "code-gauntlet:bug-detector"
+        )
         self.assertEqual(hops["challenge"]["critical_agent_label"], "challenge-0")
         # Every agent-bearing stage should appear as a hop.
         self.assertEqual(
@@ -467,9 +694,15 @@ class ProfileRunTestCase(unittest.TestCase):
     # -- generation vs tool time -------------------------------------------------
 
     def test_generation_vs_tool_time_split(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
-        summarize_agent = next(a for a in profile["agents"] if a["label"] == "summarize")
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
+        summarize_agent = next(
+            a for a in profile["agents"] if a["label"] == "summarize"
+        )
         t = summarize_agent["transcript"]
         # dur=1000ms; tool1 at [0.2,0.4]*dur = 200ms; tool2 at [0.8,0.9]*dur = 100ms -> tool_time=300ms.
         self.assertAlmostEqual(t["tool_time_ms"], 300, delta=1)
@@ -481,9 +714,15 @@ class ProfileRunTestCase(unittest.TestCase):
     # -- output-byte accounting ---------------------------------------------------
 
     def test_output_byte_accounting_for_write_agents(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
-        artifact_writer = next(a for a in profile["agents"] if a["label"] == "artifact-writer")
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
+        artifact_writer = next(
+            a for a in profile["agents"] if a["label"] == "artifact-writer"
+        )
         writes = artifact_writer["transcript"]["writes"]
         self.assertEqual(len(writes), 1)
         self.assertEqual(writes[0]["content_bytes"], 250)
@@ -492,8 +731,12 @@ class ProfileRunTestCase(unittest.TestCase):
     # -- orchestrator phases -----------------------------------------------------
 
     def test_orchestrator_phase_spans(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         op = profile["orchestrator_phases"]
         # Phase 1 is measured from the first tool_use/tool_result event onward (a plain-text
         # message carries no tool activity and is invisible to this heuristic) through the
@@ -501,15 +744,23 @@ class ProfileRunTestCase(unittest.TestCase):
         self.assertAlmostEqual(op["phase1_preflight_s"], 3.0, places=3)
         self.assertAlmostEqual(op["human_wait_after_phase1_s"], 15.0, places=3)
         self.assertEqual(op["phase2_bash_call_count"], 2)
-        self.assertAlmostEqual(op["phase2_total_model_latency_s"], 3.0, places=3)  # 2s + 1s
-        self.assertAlmostEqual(op["phase2_total_shell_time_s"], 3.5, places=3)  # 0.5s + 3.0s
+        self.assertAlmostEqual(
+            op["phase2_total_model_latency_s"], 3.0, places=3
+        )  # 2s + 1s
+        self.assertAlmostEqual(
+            op["phase2_total_shell_time_s"], 3.5, places=3
+        )  # 0.5s + 3.0s
         self.assertAlmostEqual(op["phase3_dispatch_to_resume_latency_s"], 2.0, places=3)
 
     # -- reconciliation ------------------------------------------------------------
 
     def test_reconciliation_matches_record_totals(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         r = profile["reconciliation"]
         self.assertTrue(r["agent_count"]["match"])
         self.assertTrue(r["total_tokens"]["match"])
@@ -521,8 +772,12 @@ class ProfileRunTestCase(unittest.TestCase):
         import shutil
 
         shutil.rmtree(self.builder.subagents_dir)
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         self.assertTrue(any(pr.UNAVAILABLE in n for n in profile["notes"]))
         for a in profile["agents"]:
             self.assertIsNone(a["transcript"])
@@ -533,17 +788,27 @@ class ProfileRunTestCase(unittest.TestCase):
     def test_missing_duration_ms_reports_unavailable_not_zero(self):
         # If the workflow record is missing durationMs, the header line must show the
         # UNAVAILABLE marker, never a fabricated "0.0s" (regression for a guessed-value bug).
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         profile["duration_ms"] = None
         md = pr.render_markdown(profile)
-        duration_line = next(line for line in md.splitlines() if line.startswith("- start:"))
+        duration_line = next(
+            line for line in md.splitlines() if line.startswith("- start:")
+        )
         self.assertIn(f"duration: {pr.UNAVAILABLE}", duration_line)
         self.assertNotIn("0.0s", duration_line)
 
     def test_render_markdown_smoke(self):
-        record, record_path, session_dir = pr.find_run_record(self.root, self.builder.run_id)
-        profile = pr.build_profile(record, record_path, session_dir, self.builder.run_id, self.root)
+        record, record_path, session_dir = pr.find_run_record(
+            self.root, self.builder.run_id
+        )
+        profile = pr.build_profile(
+            record, record_path, session_dir, self.builder.run_id, self.root
+        )
         md = pr.render_markdown(profile)
         self.assertIn("# Workflow profile", md)
         self.assertIn("## Critical path", md)

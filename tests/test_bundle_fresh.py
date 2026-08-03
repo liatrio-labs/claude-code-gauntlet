@@ -14,35 +14,52 @@ class TestBundleFresh(unittest.TestCase):
         before = BUNDLE.read_bytes()
         subprocess.run(["node", str(BUILD)], check=True, cwd=REPO)
         after = BUNDLE.read_bytes()
-        self.assertEqual(before, after, "workflows/pipeline.js is stale — run `node workflows/build.js`")
+        self.assertEqual(
+            before,
+            after,
+            "workflows/pipeline.js is stale — run `node workflows/build.js`",
+        )
 
     def test_bundle_has_no_module_imports(self):
         text = BUNDLE.read_text()
         for line in text.splitlines():
-            self.assertFalse(line.strip().startswith("import "), f"bundle contains an import: {line!r}")
+            self.assertFalse(
+                line.strip().startswith("import "),
+                f"bundle contains an import: {line!r}",
+            )
             self.assertNotIn("require(", line)
 
     def test_bundle_begins_with_meta_and_exposes_version(self):
         text = BUNDLE.read_text()
         first = next(line for line in text.splitlines() if line.strip())
-        self.assertTrue(first.startswith("export const meta"), f"bundle must begin with meta, got {first!r}")
+        self.assertTrue(
+            first.startswith("export const meta"),
+            f"bundle must begin with meta, got {first!r}",
+        )
         self.assertIn("PIPELINE_VERSION", text)
 
     def test_bundle_meta_has_nonempty_description(self):
         text = BUNDLE.read_text()
         first = next(line for line in text.splitlines() if line.strip())
         match = re.search(r"description:\s*'([^']*)'", first)
-        self.assertIsNotNone(match, f"meta literal must include a description field, got {first!r}")
-        self.assertTrue(match.group(1).strip(), "meta.description must be a non-empty string")
+        self.assertIsNotNone(
+            match, f"meta literal must include a description field, got {first!r}"
+        )
+        self.assertTrue(
+            match.group(1).strip(), "meta.description must be a non-empty string"
+        )
 
     def test_bundle_has_no_export_besides_meta(self):
         # The workflow runtime rejects any `export` keyword other than the meta
         # literal (e.g. `export default` is a runtime SyntaxError), so exactly one
         # line may start with `export` — everything else must be stripped by build.js.
         text = BUNDLE.read_text()
-        export_stmt_lines = [line for line in text.splitlines() if re.match(r"^\s*export\b", line)]
+        export_stmt_lines = [
+            line for line in text.splitlines() if re.match(r"^\s*export\b", line)
+        ]
         self.assertEqual(
-            len(export_stmt_lines), 1,
+            len(export_stmt_lines),
+            1,
             f"bundle must contain exactly one `export` statement (the meta literal), found: {export_stmt_lines!r}",
         )
         self.assertTrue(export_stmt_lines[0].strip().startswith("export const meta"))

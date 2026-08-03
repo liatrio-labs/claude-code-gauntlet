@@ -78,12 +78,14 @@ def echo_lines(plugin_root=None, pipeline_version=None):
         "  reviewed_policy=full (env)",
         "  pr_not_found_policy=error (env)",
         "  trivial_scope=full (env)",
-        "  pipeline_version={} (bundle)".format(ver),
-        "  plugin_root={} (resolved)".format(root),
+        f"  pipeline_version={ver} (bundle)",
+        f"  plugin_root={root} (resolved)",
     ]
 
 
-def _envelope(permission_denials, result_text="Review complete. 3 findings posted (dry-run)."):
+def _envelope(
+    permission_denials, result_text="Review complete. 3 findings posted (dry-run)."
+):
     return {
         "type": "result",
         "subtype": "success",
@@ -190,7 +192,9 @@ def _write_report(lines):
     if not output_dir:
         return
     os.makedirs(output_dir, exist_ok=True)
-    body = ["# Deep Review Report", "", "## Methodology", "", "```"] + lines + ["```", ""]
+    body = (
+        ["# Deep Review Report", "", "## Methodology", "", "```"] + lines + ["```", ""]
+    )
     with open(os.path.join(output_dir, "deep-review-report.md"), "w") as fh:
         fh.write("\n".join(body) + "\n")
 
@@ -224,7 +228,7 @@ def main():
     # default clears V3_MIN_CLAUDE_VERSION; FAKE_CLAUDE_VERSION can drive an older CLI.
     if "--version" in sys.argv:
         version = os.environ.get("FAKE_CLAUDE_VERSION", "2.1.154")
-        sys.stdout.write("{} (Claude Code)\n".format(version))
+        sys.stdout.write(f"{version} (Claude Code)\n")
         return
 
     _record_pgid()

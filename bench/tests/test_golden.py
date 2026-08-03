@@ -4,12 +4,12 @@ stdlib only, no network. Validates that bench/golden/ was built from the pinned
 upstream at the counts spec H4 requires and that subsets.json is internally
 consistent with the golden data.
 """
+
 import json
 import unittest
 from pathlib import Path
 
 GOLDEN = Path(__file__).resolve().parent.parent / "golden"
-GC = GOLDEN / "golden_comments"
 GOLDEN_FILES = ["keycloak", "grafana", "discourse", "sentry", "cal_dot_com"]
 
 
@@ -25,8 +25,7 @@ class TestGoldenData(unittest.TestCase):
         cls.subsets = _load("subsets.json")
         cls.labels = _load("pr_labels.json")
         cls.raw = {
-            f: json.load(open(GC / f"{f}.json", encoding="utf-8"))
-            for f in GOLDEN_FILES
+            f: _load(f"golden_comments/{f}.json") for f in GOLDEN_FILES
         }
 
     # --- totals -------------------------------------------------------------
@@ -45,9 +44,7 @@ class TestGoldenData(unittest.TestCase):
         # Documents the upstream inconsistency: the raw golden_comments/*.json
         # files omit one sentry-greptile#1 comment present in benchmark_data.json.
         total = sum(
-            len(pr.get("comments", []))
-            for prs in self.raw.values()
-            for pr in prs
+            len(pr.get("comments", [])) for prs in self.raw.values() for pr in prs
         )
         self.assertEqual(total, 136)
 
@@ -83,10 +80,14 @@ class TestGoldenData(unittest.TestCase):
             self.assertEqual(len(urls), len(set(urls)), f"{name} has duplicates")
 
     def test_gate_holdout_disjoint(self):
-        self.assertEqual(set(self.subsets["gate"]) & set(self.subsets["holdout"]), set())
+        self.assertEqual(
+            set(self.subsets["gate"]) & set(self.subsets["holdout"]), set()
+        )
 
     def test_holdout_smoke_disjoint(self):
-        self.assertEqual(set(self.subsets["holdout"]) & set(self.subsets["smoke"]), set())
+        self.assertEqual(
+            set(self.subsets["holdout"]) & set(self.subsets["smoke"]), set()
+        )
 
     def test_gate_smoke_disjoint(self):
         self.assertEqual(set(self.subsets["gate"]) & set(self.subsets["smoke"]), set())
