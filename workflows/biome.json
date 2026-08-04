@@ -1,0 +1,67 @@
+{
+  "root": true,
+  "formatter": {
+    "enabled": false
+  },
+  "assist": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": false,
+      "correctness": {
+        "noUnusedVariables": "error",
+        "noUndeclaredVariables": "error"
+      },
+      "complexity": {
+        "noUselessCatch": "error"
+      },
+      "suspicious": {
+        "noPrototypeBuiltins": "error"
+      },
+      "style": {
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "structuredClone": "Sandbox-absent; use deepClone. See workflows/AGENTS.md.",
+              "Buffer": "Sandbox-absent. See workflows/AGENTS.md.",
+              "TextEncoder": "Sandbox-absent. See workflows/AGENTS.md.",
+              "TextDecoder": "Sandbox-absent. See workflows/AGENTS.md.",
+              "URL": "Sandbox-absent. See workflows/AGENTS.md.",
+              "setTimeout": "Sandbox-absent. See workflows/AGENTS.md.",
+              "setInterval": "Sandbox-absent. See workflows/AGENTS.md.",
+              "clearTimeout": "Sandbox-absent. See workflows/AGENTS.md.",
+              "queueMicrotask": "Sandbox-absent. See workflows/AGENTS.md.",
+              "process": "Sandbox-absent. See workflows/AGENTS.md.",
+              "console": "Sandbox-absent. See workflows/AGENTS.md."
+            }
+          }
+        }
+      }
+    }
+  },
+  "javascript": {
+    "globals": ["args", "agent", "parallel", "pipeline"]
+  },
+  "files": {
+    "includes": [
+      "**/*.js",
+      "!pipeline.js",
+      "!src/pipeline_entry.js"
+    ]
+  },
+  "overrides": [
+    {
+      "includes": ["test/**", "build.js"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": "off"
+          }
+        }
+      }
+    }
+  ]
+}

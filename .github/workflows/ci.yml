@@ -75,6 +75,40 @@ jobs:
           COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
             --cov=scripts --cov=.github --cov-fail-under=91.7
 
+  js-lint:
+    name: Run Workflow JS Lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and verify Biome
+        env:
+          # Biome pin is manual — Dependabot cannot see a raw binary URL.
+          # To bump: identify the new release asset id, then:
+          #   gh api repos/biomejs/biome/releases/assets/<id> --jq .digest
+          # Update BIOME_VERSION, URL, and BIOME_SHA256 together. Do not add
+          # package.json / lockfile to get auto-bumps; that reopens #105.
+          BIOME_VERSION: "2.5.6"
+          BIOME_SHA256: "3cc9a0c3fa26ac26a89e8a3b203c010c9ae88e36f69a2679e79981f267ce9d57"
+        run: |
+          set -euo pipefail
+          url="https://github.com/biomejs/biome/releases/download/@biomejs/biome@${BIOME_VERSION}/biome-linux-x64"
+          out="${RUNNER_TEMP}/biome"
+          curl -fsSL "$url" -o "$out"
+          echo "${BIOME_SHA256}  ${out}" | sha256sum -c -
+          chmod +x "$out"
+          echo "BIOME=${out}" >> "$GITHUB_ENV"
+
+      # cwd is workflows/ because --config-path from the repo root trips Biome 2.5.6's nested-root-configuration detection.
+      - name: Lint workflows JS
+        working-directory: workflows
+        run: |
+          set -euo pipefail
+          "${BIOME}" check --error-on-warnings .
+
   workflow-tests:
     name: Run Workflow JS Tests
     runs-on: ubuntu-latest

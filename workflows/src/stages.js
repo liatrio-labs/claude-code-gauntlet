@@ -228,7 +228,7 @@ export async function summarize(ctx, input) {
     });
     if (!result) return { summary: '', gaps: ['summarize failed'] };
     return { summary: result.summary || '', gaps: [] };
-  } catch (e) {
+  } catch {
     return { summary: '', gaps: ['summarize failed'] };
   }
 }
@@ -1673,7 +1673,7 @@ function unwrapWrappedReport(s) {
   let parsed;
   try {
     parsed = JSON.parse(trimmed);
-  } catch (e) {
+  } catch {
     return s; // not JSON at all — ordinary markdown that happens to start with a brace
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return s;

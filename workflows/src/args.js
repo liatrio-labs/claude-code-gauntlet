@@ -235,7 +235,7 @@ function unwrapWaist(raw) {
     if (isPlainObject(value)) return { waist: value, terminal: value };
     if (typeof value !== 'string' || depth === MAX_JSON_UNWRAP) break;
     let next;
-    try { next = JSON.parse(value); } catch (e) { break; }
+    try { next = JSON.parse(value); } catch { break; }
     value = next;
   }
   return { waist: null, terminal: value };

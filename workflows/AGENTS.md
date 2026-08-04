@@ -17,6 +17,26 @@ The v3 review pipeline. `pipeline.js` is invoked by the skill through the `Workf
 - **No wall-clock.** Timestamps arrive through the args waist (`generatedAt`); environment values
   are read by the skill and passed in `policy`.
 
+## JS lint (CI)
+
+CI job `js-lint` runs Biome 2.5.6 against this directory via `workflows/biome.json`
+(lint-only). Formatter is **off**: default `lineWidth: 80` would wrap long
+`import … from` lines and break `build.js`'s single-line import `strip()` regex,
+failing `tests/test_bundle_fresh.py`. `noRestrictedGlobals` applies to `src/`
+only; `test/**` and `build.js` override it (they legitimately use `process` /
+`console`).
+
+Deferred rules (measured 2026-07-30, HEAD `ebf399d`) — hit counts are why they
+stay off so a later re-evaluation need not re-derive them:
+
+| Rule | Hits | Why deferred |
+| --- | --- | --- |
+| `useOptionalChain` | 51 | Style churn; no reliability delta |
+| `noUnusedFunctionParameters` | 55 | Dominated by positional mock callback params in tests |
+| `noAssignInExpressions` | 7 | Six are intentional `args.js` pattern |
+| `noControlCharactersInRegex` | 2 | Intentional U+0000/U+001F sanitization in `args.js` |
+| `organizeImports` | 24 | Assist/format-adjacent; out of scope with formatter off |
+
 ## The bundle
 
 - `pipeline.js` is **generated** — never hand-edit it. Source is `src/*.js`, which may use ESM

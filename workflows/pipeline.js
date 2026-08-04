@@ -1129,7 +1129,7 @@ function tryParseJsonAt(text, start) {
         const candidate = text.slice(start, i + 1);
         try {
           return JSON.parse(candidate);
-        } catch (e) {
+        } catch {
           return null;
         }
       }
@@ -2124,7 +2124,7 @@ function unwrapWaist(raw) {
     if (isPlainObject(value)) return { waist: value, terminal: value };
     if (typeof value !== 'string' || depth === MAX_JSON_UNWRAP) break;
     let next;
-    try { next = JSON.parse(value); } catch (e) { break; }
+    try { next = JSON.parse(value); } catch { break; }
     value = next;
   }
   return { waist: null, terminal: value };
@@ -2703,7 +2703,7 @@ async function summarize(ctx, input) {
     });
     if (!result) return { summary: '', gaps: ['summarize failed'] };
     return { summary: result.summary || '', gaps: [] };
-  } catch (e) {
+  } catch {
     return { summary: '', gaps: ['summarize failed'] };
   }
 }
@@ -4148,7 +4148,7 @@ function unwrapWrappedReport(s) {
   let parsed;
   try {
     parsed = JSON.parse(trimmed);
-  } catch (e) {
+  } catch {
     return s; // not JSON at all — ordinary markdown that happens to start with a brace
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return s;

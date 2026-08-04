@@ -18,6 +18,19 @@ wrong — change the shape.
 **Extending should cost one edit.** A new dimension, field, or agent belongs in one place. If it
 takes coordinated edits across N files, fix the shape rather than documenting the ritual.
 
+## Tooling boundary (no npm in the tree)
+
+- No `package.json`, lockfile, or `node_modules` is tracked in the repository.
+- The shipped pipeline runtime (`workflows/src`, `workflows/pipeline.js`) has zero
+  dependencies — language globals plus the host-injected `agent`/`parallel`/
+  `pipeline`/`args` only. No import survives into the bundle (`build.js` strips
+  import lines); see `workflows/AGENTS.md` for the sandbox surface.
+- Pinned static binaries in CI are permitted (e.g. Biome for the `js-lint` job).
+  Bumps are manual and deliberate; do not add a package manifest to get Dependabot
+  coverage for those pins.
+- This does not forbid npm on the CI runner (`validate.yml` already installs the
+  Claude Code CLI globally).
+
 ## Scripts
 
 - **stdlib-only Python.** No pip dependencies in shipped `scripts/` runtime —

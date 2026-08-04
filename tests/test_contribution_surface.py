@@ -925,6 +925,7 @@ REQUIRED_PR_CHECK_CONTEXTS = (
     "Run Tests (3.10)",
     "Run Tests (3.11)",
     "Run Tests (3.12)",
+    "Run Workflow JS Lint",
     "Run Workflow JS Tests",
     "Run Bench Self-Tests (3.11)",
     "Run Bench Self-Tests (3.12)",
