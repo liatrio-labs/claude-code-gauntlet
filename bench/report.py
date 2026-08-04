@@ -245,6 +245,7 @@ def git_short_sha(cwd=None):
         if out.returncode == 0 and sha:
             return sha
     except (OSError, subprocess.SubprocessError):
+        # git missing, not a repo, or timeout — degrade to a stable label
         pass
     return "uncommitted"
 

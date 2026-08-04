@@ -893,6 +893,28 @@ class TestContributingDocs(unittest.TestCase):
                     scope.match(path), f"cspell scope does not cover {path}"
                 )
 
+    def test_contributing_python_lint_hook_ids_match_pre_commit_config(self):
+        """Documented `pre-commit run <id>` commands stay tied to real hook ids."""
+        expected = {"ruff-check", "ruff-format", "mypy"}
+        contributing = _read("CONTRIBUTING.md")
+        hooks = _read(".pre-commit-config.yaml")
+        declared = set(re.findall(r"^\s+- id: ([^\s#]+)", hooks, re.M))
+        documented = set(
+            re.findall(
+                r"pre-commit run (ruff-check|ruff-format|mypy) --all-files",
+                contributing,
+            )
+        )
+        self.assertEqual(
+            documented,
+            expected,
+            "CONTRIBUTING.md must document exactly the Python lint/format/type hooks",
+        )
+        self.assertTrue(
+            expected.issubset(declared),
+            f"hooks {sorted(expected - declared)} missing from .pre-commit-config.yaml",
+        )
+
 
 # Required PR check-run names for ruleset 16049246 (protect-default-branch).
 # Any new always-on PR gate must update THIS tuple and the live ruleset in the

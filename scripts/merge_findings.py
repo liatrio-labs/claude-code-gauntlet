@@ -192,11 +192,9 @@ def _try_parse_json_at(text: str, start: int) -> dict | None:
                 candidate = text[start : i + 1]
                 try:
                     parsed = json.loads(candidate)
-                    if isinstance(parsed, dict):
-                        return parsed
-                    return None
                 except json.JSONDecodeError:
                     return None
+                return parsed if isinstance(parsed, dict) else None
         i += 1
     return None
 
