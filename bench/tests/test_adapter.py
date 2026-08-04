@@ -158,8 +158,8 @@ def build_reference_github_payload(
 
 
 def _gitlab_discussion(f, new_file=False):
-    """Mirror post_gitlab's per-finding discussion payload (sans ``old_line`` — the
-    adapter reads neither)."""
+    """Mirror post_gitlab's per-finding discussion payload (sans ``old_line`` and
+    rename-aware ``old_path`` — the adapter reads neither)."""
     position = {
         "position_type": "text",
         "base_sha": _GL_BASE,

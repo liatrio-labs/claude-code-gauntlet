@@ -151,7 +151,8 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_gitlab_dispatches_to_glab_mr_diff(self, mock_run):
         """platform='gitlab' must call glab mr diff."""
-        diff = "+++ b/bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
+        # glab-faithful: `glab mr diff` writes paths verbatim, with no `a/` / `b/`.
+        diff = "+++ bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
         mock_run.return_value = (diff, "", 0)
         valid_lines, _, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
         self.assertIsNotNone(valid_lines)
@@ -181,6 +182,29 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIn(("src/app.py", 1), valid_lines)
         self.assertIn(("src/app.py", 2), valid_lines)
         self.assertEqual(new_files, set())
+
+    @patch("scripts.post_review.run_api")
+    def test_github_diff_prefixes_are_still_stripped(self, mock_run):
+        """`gh pr diff` writes git's synthetic `a/` / `b/`: those ARE diff syntax.
+
+        The platform split that stopped stripping them on GitLab must not stop
+        stripping them here — the keys GitHub findings are matched against, and the
+        `path` shipped to its API, are prefix-free.
+        """
+        diff = (
+            "diff --git a/src/app.py b/src/app.py\n"
+            "--- a/src/app.py\n"
+            "+++ b/src/app.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " ctx\n"
+            "-x\n"
+            "+y\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, _, old_paths = parse_diff_lines("github", "o", "r", 1)
+        self.assertIn(("src/app.py", 1), valid_lines)
+        self.assertEqual(old_paths, {"src/app.py": "src/app.py"})
+        self.assertEqual({fp for fp, _ in valid_lines}, {"src/app.py"})
 
     @patch("scripts.post_review.run_api")
     def test_new_file_detected_via_dev_null_old_header(self, mock_run):
@@ -1463,6 +1487,23 @@ class TestGitlabPositionPayload(unittest.TestCase):
         # today's shape rather than crashing on a direct `valid_lines[...]` index.
         self.assertNotIn("old_line", position)
 
+    def test_skipped_validation_ships_the_findings_raw_path(self):
+        """With no diff to consult, the finding's own spelling travels untouched.
+
+        Pre-branch main shipped the raw path here and delivery worked; an
+        unconditional `^[ab]/` strip would rewrite a real `b/`-rooted path into one the
+        forge does not have, and there is no parsed key left to catch the mistake.
+        """
+        data = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "findings": [{"file": "b/x.py", "line": 3, "title": "Bug", "body": "x"}],
+        }
+        position = self._capture_position(data, valid_lines=None, new_files=None)
+        self.assertEqual(position["new_path"], "b/x.py")
+        self.assertEqual(position["old_path"], "b/x.py")
+
 
 # ---------------------------------------------------------------------------
 # --dry-run payload capture
@@ -1479,11 +1520,13 @@ GH_DIFF = (
     "+added\n"
 )
 
-# A GitLab diff (glab mr diff) that makes bar.py lines 1 and 2 valid.
+# A GitLab diff (glab mr diff) that makes bar.py lines 1 and 2 valid. The `---`/`+++`
+# headers are UNPREFIXED because that is what glab emits; the `diff --git` line keeps
+# git's a//b/ spelling, which glab prints verbatim and the parser ignores.
 GL_DIFF = (
     "diff --git a/bar.py b/bar.py\n"
-    "--- a/bar.py\n"
-    "+++ b/bar.py\n"
+    "--- bar.py\n"
+    "+++ bar.py\n"
     "@@ -1,1 +1,2 @@\n"
     " ctx\n"
     "+newline\n"
@@ -1527,6 +1570,19 @@ GL_DIFF_RENAME = (
     "-x\n"
     "+y\n"
     " ctx2\n"
+)
+
+# A glab diff for a repo with a REAL top-level `a/` directory. `glab mr diff` prints
+# paths verbatim, so `a/foo.py` here is a directory named `a` — not git's synthetic
+# old-side prefix. new 1 = old 1 (context), new 2 = added.
+GL_DIFF_REAL_A_DIR = (
+    "diff --git a/a/foo.py b/a/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ a/foo.py\n"
+    "@@ -1,2 +1,2 @@\n"
+    " ctx\n"
+    "-x\n"
+    "+y\n"
 )
 
 # One finding on each position kind GL_DIFF_RENAME produces: a context line and an
@@ -2500,13 +2556,74 @@ class TestGitlabRenamedFilePositionContract(_DryRunTestBase):
         self.assertEqual(position["new_line"], 4)
 
 
+class TestGitlabRealADirectoryPath(_DryRunTestBase):
+    """A GitLab repo may contain a REAL top-level `a/` or `b/` directory.
+
+    `glab mr diff` never writes git's synthetic prefixes, so stripping `^[ab]/` on the
+    GitLab side — in the parser's header regexes AND unconditionally at the top of
+    post_gitlab's loop — truncated `a/foo.py` to `foo.py`. Pre-branch main shipped the
+    raw finding path and delivery worked; under the strip those findings 400 and get
+    warn-skipped. Parser key and shipped position are asserted together, so reverting
+    either half is red.
+    """
+
+    def test_gitlab_real_a_directory_path_is_preserved(self):
+        with patch(
+            "scripts.post_review.run_api", return_value=(GL_DIFF_REAL_A_DIR, "", 0)
+        ):
+            valid_lines, new_files, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertIn(("a/foo.py", 1), valid_lines)
+        self.assertEqual(new_files, set())
+        self.assertEqual(old_paths, {"a/foo.py": "a/foo.py"})
+
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [
+                    {
+                        "file": "a/foo.py",
+                        "line": 1,
+                        "severity": "high",
+                        "title": "Finding in a real a/ directory",
+                        "body": "Body",
+                    }
+                ],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF_REAL_A_DIR, versions=GL_CONTRACT_VERSIONS
+                ),
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            post_review.main()
+        discussions = self._payload()["discussions"]
+        self.assertEqual(len(discussions), 1, "the finding must not be warn-skipped")
+        position = discussions[0]["position"]
+        self.assertEqual(position["new_path"], "a/foo.py")
+        self.assertEqual(position["old_path"], "a/foo.py")
+        self.assertEqual(position["old_line"], 1)
+
+
 class TestGitlabFindingPathNormalization(_DryRunTestBase):
     """A `b/`-prefixed finding path must ship UNPREFIXED in the position.
 
     `is_line_valid`/`old_line_for` strip the prefix for their lookups, so such a finding
     passed validation and got a correct `old_line` — but the position then shipped the
-    raw `b/src/edited.py`, a path GitLab does not know. Normalize once, at the top of the
-    loop, and use it for the lookup, the position and the warnings alike.
+    raw `b/src/edited.py`, a path GitLab does not know. This now exercises the STRIPPED
+    FALLBACK arm of `diff_path_spelling`: the raw spelling is not a diff key, the
+    stripped one is, so the stripped one is what travels to the position, the lookup and
+    the warnings alike.
     """
 
     def test_prefixed_finding_path_ships_normalized_position(self):

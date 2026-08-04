@@ -247,8 +247,9 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     Returns ``(None, None, None)`` when validation should be skipped (unknown platform
     or CLI failure). Callers must handle the ``None`` case.
 
-    Accepts both ``a/`` / ``b/`` prefixed headers (``gh pr diff``) and unprefixed
-    headers (``glab mr diff``).
+    Header syntax is read PER PLATFORM (see the compiled pair below): ``gh pr diff``
+    writes git's synthetic ``a/`` / ``b/`` prefixes, ``glab mr diff`` writes paths
+    verbatim. Every key returned therefore carries the platform's true spelling.
 
     The parser tracks each hunk's DECLARED old/new line budgets (a unified diff hunk
     header states exactly how many lines of each side the hunk body contains) and only
@@ -282,6 +283,20 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         )
         return None, None, None
 
+    # File-header regexes, chosen ONCE by platform — the platform cannot change inside
+    # the loop. `gh pr diff` emits git's synthetic prefixes (`a/` on the old side, `b/`
+    # on the new side): those are diff syntax and must come off. `glab mr diff` emits
+    # paths VERBATIM and never writes a synthetic prefix, so a leading `a/` there is a
+    # REAL top-level directory; stripping it truncated `a/`-rooted paths (`a/foo.py` ->
+    # `foo.py`) into keys and positions GitLab does not know, and every finding in such
+    # a repo was rejected. The catch-all group carries `/dev/null` on both platforms.
+    if platform == "github":
+        old_header_re = re.compile(r"^--- (?:a/)?(.+)$")
+        new_header_re = re.compile(r"^\+\+\+ (?:b/)?(.+)$")
+    else:
+        old_header_re = re.compile(r"^--- (.+)$")
+        new_header_re = re.compile(r"^\+\+\+ (.+)$")
+
     valid_lines = {}
     new_files = set()
     old_paths = {}
@@ -304,9 +319,8 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     for raw_line in stdout.split("\n"):
         if old_rem <= 0 and new_rem <= 0:
             # -- header zone -------------------------------------------------
-            # Old-side header: `--- a/path`, `--- path`, or `--- /dev/null`.
-            # `glab mr diff` may omit the `a/` prefix that `gh pr diff` emits.
-            old_match = re.match(r"^--- (?:[ab]/)?(.+)$", raw_line)
+            # Old-side header: `--- a/path` (gh), `--- path` (glab), or `--- /dev/null`.
+            old_match = old_header_re.match(raw_line)
             if old_match:
                 old_side = old_match.group(1)
                 current_file_is_new = old_side == "/dev/null"
@@ -315,8 +329,8 @@ def parse_diff_lines(platform, owner, repo, pr_number):
                 pending_old_path = None if current_file_is_new else old_side
                 continue
 
-            # New-side header: `+++ b/path`, `+++ path`, or `+++ /dev/null`.
-            file_match = re.match(r"^\+\+\+ (?:[ab]/)?(.+)$", raw_line)
+            # New-side header: `+++ b/path` (gh), `+++ path` (glab), or `+++ /dev/null`.
+            file_match = new_header_re.match(raw_line)
             if file_match:
                 path = file_match.group(1)
                 if path == "/dev/null":
@@ -330,9 +344,6 @@ def parse_diff_lines(platform, owner, repo, pr_number):
                 new_line = 0
                 old_line = 0
                 current_file_is_new = False
-                # Reset on BOTH arms so a held old-side path never leaks onto the file
-                # whose header comes next.
-                pending_old_path = None
                 continue
 
             # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
@@ -401,6 +412,25 @@ def is_line_valid(valid_lines, filepath, line):
     # Strip leading "a/" or "b/" if present
     stripped = re.sub(r"^[ab]/", "", filepath)
     return (stripped, line) in valid_lines
+
+
+def diff_path_spelling(valid_lines, filepath, line):
+    """Return the spelling of *filepath* recorded in the diff, or *filepath* unchanged.
+
+    A finding may spell its path with a synthetic diff prefix (``b/src/app.py``) while
+    the parsed keys are unprefixed — or, on GitLab, the repo may contain a REAL top-level
+    ``a/``/``b/`` directory that must not be stripped. Trust the diff: prefer the exact
+    key, fall back to the stripped one, and when validation was skipped (*valid_lines*
+    is None) pass the finding's own spelling through untouched.
+    """
+    if not isinstance(valid_lines, dict):
+        return filepath
+    if (filepath, line) in valid_lines:
+        return filepath
+    stripped = re.sub(r"^[ab]/", "", filepath)
+    if (stripped, line) in valid_lines:
+        return stripped
+    return filepath
 
 
 def old_line_for(valid_lines, filepath, line):
@@ -744,16 +774,18 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     skipped = 0
     failed = 0
     for f in findings:
-        # valid_lines keys are always UNPREFIXED (the header regexes strip `a/` / `b/`),
-        # and the position must ship the same spelling GitLab knows — a `b/`-prefixed
-        # finding path would otherwise pass the stripped-form lookup but ship an
-        # unusable `new_path`/`old_path`. Normalize once, here, and use it everywhere.
-        filepath = re.sub(r"^[ab]/", "", f["file"])
         line = f.get("line")
         if line is None:
             warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
             skipped += 1
             continue
+
+        # The position must ship the spelling GitLab knows, which is the spelling the
+        # diff recorded: a `b/`-prefixed finding path against unprefixed keys resolves
+        # to the stripped form, while a real `a/`-rooted path that IS a diff key stays
+        # whole. Resolve once, here, and use it everywhere below. When validation was
+        # skipped there is no diff to consult and the finding's raw path travels as-is.
+        filepath = diff_path_spelling(valid_lines, f["file"], line)
 
         if not is_line_valid(valid_lines, filepath, line):
             diag = ""
@@ -791,11 +823,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         # position stays anchored to the diff.
         if not is_new_file(new_files, filepath):
             # A RENAMED file must anchor `old_path` to its PRE-RENAME path (#130) — the
-            # new path does not exist on the old side. `filepath` is already
-            # a/b-normalized above and `old_paths` keys are unprefixed (the header
-            # regexes strip the prefix), so they are the same spelling. The fallback to
-            # the new path covers skipped validation (`old_paths` is None) and unrenamed
-            # files, where the two paths coincide anyway.
+            # new path does not exist on the old side. `filepath` was resolved against
+            # the parsed keys above and `old_paths` is keyed by those same keys, so the
+            # two are the same spelling. The fallback to the new path covers skipped
+            # validation (`old_paths` is None) and unrenamed files, where the two paths
+            # coincide anyway.
             position["old_path"] = (old_paths or {}).get(filepath, filepath)
 
         payload = {
