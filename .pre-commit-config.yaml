@@ -83,6 +83,15 @@ repos:
         files: ^(CLAUDE\.md|AGENTS\.md|[^/]+/(AGENTS|CLAUDE)\.md|scripts/sync_agent_rules\.py)$
         pass_filenames: false
 
+      - id: zizmor
+        name: audit GitHub Actions workflows with zizmor
+        entry: zizmor
+        language: python
+        additional_dependencies: ["zizmor==1.28.0"]
+        files: ^\.github/workflows/.*\.ya?ml$
+        pass_filenames: false
+        args: [".github/workflows"]
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.1
     hooks:
