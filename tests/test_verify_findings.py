@@ -570,14 +570,18 @@ class TestVerifyFactual(unittest.TestCase):
             os.unlink(tmppath)
 
     def test_symbol_in_code_at_lines_fast_path(self):
-        """A symbol present at the cited lines verifies cleanly."""
+        """Symbol present at cited lines must skip git grep for that symbol."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def calculate_total():\n    return 42\n")
             tmppath = f.name
         try:
-            with patch("scripts.verify_findings.run") as mock_run:
-                # grep returns a match for any symbol queried
-                mock_run.return_value = ("match.py:1:found\n", "", 0)
+            captured = []
+
+            def mock_run(cmd, check=False, timeout=None, cwd=None):
+                captured.append({"cmd": cmd, "cwd": cwd})
+                return ("match.py:1:found\n", "", 0)
+
+            with patch("scripts.verify_findings.run", side_effect=mock_run):
                 finding = {
                     "file": tmppath,
                     "line_start": 1,
@@ -588,6 +592,16 @@ class TestVerifyFactual(unittest.TestCase):
                 result = verify_factual(finding)
                 self.assertTrue(result)
                 self.assertTrue(finding["factual_verification"]["verified"])
+
+            git_grep_calls = [
+                c for c in captured if c["cmd"][:2] == ["git", "grep"]
+            ]
+            self.assertEqual(
+                git_grep_calls,
+                [],
+                "fast path must not invoke git grep when the symbol is already "
+                f"in the cited lines; got {git_grep_calls!r}",
+            )
         finally:
             os.unlink(tmppath)
 
