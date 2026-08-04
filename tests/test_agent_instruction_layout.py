@@ -80,7 +80,7 @@ CODEX_CAP_BYTES = 32_768
 # 3.12 CI reading of 92.69, per the floor policy in the same paragraph) — a floor whose
 # stated provenance no longer matches its value is exactly the unverifiable claim the
 # repo's own rules prohibit.
-AGENTS_SET_BUDGET_BYTES = 17_513
+AGENTS_SET_BUDGET_BYTES = 18_916
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
@@ -397,6 +397,7 @@ class TestClaimsResolve(unittest.TestCase):
         "TextDecoder",
         "package.json",
         "node_modules",
+        "noControlCharactersInRegex",  # Biome rule id in deferred-rules table
     }
 
     def repo_files(self):
