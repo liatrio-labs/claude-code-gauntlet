@@ -202,14 +202,16 @@ class TestMainUnexpectedFailure(unittest.TestCase):
         out_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
         buf = io.StringIO()
-        with patch(
-            "scripts.materialize_artifacts.select_source",
-            side_effect=RuntimeError("injected"),
+        with (
+            patch(
+                "scripts.materialize_artifacts.select_source",
+                side_effect=RuntimeError("injected"),
+            ),
+            patch("sys.stdout", buf),
         ):
-            with patch("sys.stdout", buf):
-                code = main(
-                    ["--output-dir", out_dir, "--task", "/nonexistent"],
-                )
+            code = main(
+                ["--output-dir", out_dir, "--task", "/nonexistent"],
+            )
         lines = [line for line in buf.getvalue().splitlines() if line.strip()]
         self.assertEqual(len(lines), 1, buf.getvalue())
         receipt = json.loads(lines[0])

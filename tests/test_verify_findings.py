@@ -593,9 +593,7 @@ class TestVerifyFactual(unittest.TestCase):
                 self.assertTrue(result)
                 self.assertTrue(finding["factual_verification"]["verified"])
 
-            git_grep_calls = [
-                c for c in captured if c["cmd"][:2] == ["git", "grep"]
-            ]
+            git_grep_calls = [c for c in captured if c["cmd"][:2] == ["git", "grep"]]
             self.assertEqual(
                 git_grep_calls,
                 [],
