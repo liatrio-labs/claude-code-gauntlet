@@ -27,6 +27,7 @@ Contract under test:
     delivered under another's name.
 """
 
+import io
 import json
 import os
 import shutil
@@ -34,12 +35,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
 from scripts.assemble_artifacts import plan_checksum  # noqa: E402
-from scripts.materialize_artifacts import materialize  # noqa: E402
+from scripts.materialize_artifacts import main, materialize  # noqa: E402
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "materialize_artifacts.py")
 RECORDER = os.path.join(REPO_ROOT, "workflows", "test", "tools", "emit_task_output.mjs")
@@ -180,6 +182,47 @@ class TestHappyPath(MaterializeTestCase):
         for path, text in first.items():
             self.assertEqual(self.read(path), text)
 
+    def test_materialize_happy_path_returns_a_success_receipt(self):
+        # Direct materialize() on a pristine recorder task takes the success path.
+        # The one-line-receipt guarantee for *unexpected* exceptions lives in main()
+        # (see test_main_unexpected_exception_still_prints_one_line_receipt) — not
+        # here. materialize()'s "Never raises" docstring is false; that scripts/
+        # defect is filed separately under #109's req 8 (do not fix in this PR).
+        receipt = materialize(self.task, None, self.out_dir, environ={})
+        self.assertTrue(receipt["ok"], receipt)
+        self.assertEqual(receipt["channel"], "return")
+
+
+class TestMainUnexpectedFailure(unittest.TestCase):
+    def test_main_unexpected_exception_still_prints_one_line_receipt(self):
+        # main():469 converts an escape from materialize() into a serializable
+        # ok:false receipt. Patch select_source so materialize raises before any
+        # fixture work; do not use run_cli (cannot inject across a process boundary
+        # without touching scripts/).
+        out_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
+        buf = io.StringIO()
+        with patch(
+            "scripts.materialize_artifacts.select_source",
+            side_effect=RuntimeError("injected"),
+        ):
+            with patch("sys.stdout", buf):
+                code = main(
+                    ["--output-dir", out_dir, "--task", "/nonexistent"],
+                )
+        lines = [line for line in buf.getvalue().splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1, buf.getvalue())
+        receipt = json.loads(lines[0])
+        self.assertFalse(receipt["ok"], receipt)
+        self.assertEqual(code, 1)
+        self.assertTrue(
+            any(
+                "materializer failed unexpectedly: RuntimeError: injected" in err
+                for err in receipt["errors"]
+            ),
+            receipt["errors"],
+        )
+
 
 class TestResolution(MaterializeTestCase):
     def test_the_nonce_alone_finds_the_run_when_no_task_id_is_in_hand(self):
@@ -318,13 +361,6 @@ class TestFailureModes(MaterializeTestCase):
         self.assertEqual(code, 1)
         self.assertEqual(receipt["materialized"], [])
         self.assertFalse(os.path.exists(self.artifact("findings")))
-
-    def test_an_unexpected_internal_failure_still_returns_a_receipt(self):
-        # materialize() is the one-line-receipt contract's inner half: main() catches,
-        # but the function itself must never raise into it with the job half done.
-        receipt = materialize(self.task, None, self.out_dir, environ={})
-        self.assertTrue(receipt["ok"], receipt)
-        self.assertEqual(receipt["channel"], "return")
 
 
 class TestOtherChannelsUntouched(MaterializeTestCase):
