@@ -34,6 +34,10 @@ name: Bench Smoke (live)
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   smoke:
     name: Run Smoke-Tier Benchmark
@@ -45,15 +49,17 @@ jobs:
       actions: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.3.2
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
 
       - name: Install Claude Code CLI
         run: |
@@ -68,7 +74,7 @@ jobs:
 
       - name: Restore bare mirrors
         id: mirrors-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: bench/workspace/mirrors
           # v2: invalidate any v1 entries that may have been saved mid-failure.
@@ -101,14 +107,14 @@ jobs:
           always()
           && steps.mirrors-cache.outputs.cache-hit != 'true'
           && steps.smoke-run.outcome == 'success'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: bench/workspace/mirrors
           key: bench-mirrors-${{ runner.os }}-${{ hashFiles('bench/golden/shas.json') }}-v2
 
       - name: Upload run artifacts
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bench-smoke-runs
           path: bench/workspace/runs/**
