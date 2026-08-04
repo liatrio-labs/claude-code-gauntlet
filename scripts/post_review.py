@@ -244,6 +244,18 @@ def parse_diff_lines(platform, owner, repo, pr_number):
 
     Accepts both ``a/`` / ``b/`` prefixed headers (``gh pr diff``) and unprefixed
     headers (``glab mr diff``).
+
+    The parser tracks each hunk's DECLARED old/new line budgets (a unified diff hunk
+    header states exactly how many lines of each side the hunk body contains) and only
+    matches file/hunk headers BETWEEN hunks. Well-formed git/gh/glab diffs always declare
+    correct counts, so the counts are trusted. Header matching is suspended inside a hunk
+    body because diff body lines collide with the header syntax: removing the SQL comment
+    ``-- deprecated: drop me`` renders as ``--- deprecated: drop me``, which the old-side
+    header regex swallows — silently desyncing ``old_line`` for every later line of the
+    hunk. Symmetrically an added ``++ x`` renders ``+++ x`` and would reset
+    ``current_file``. Suspending header matching also means non-header noise between
+    hunks (``diff --git …``, ``index …``, ``Binary files … differ``) is ignored instead of
+    being admitted as a fake context line.
     """
     if platform == "github":
         stdout, stderr, rc = run_api(
@@ -270,56 +282,87 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     current_file = None
     new_line = 0
     old_line = 0
+    # Lines of each side still owed by the hunk currently being read. Both at 0 means
+    # "between hunks" — the only zone where a line may be read as a header.
+    old_rem = 0
+    new_rem = 0
     current_file_is_new = False
 
     for raw_line in stdout.splitlines():
-        # Old-side header: `--- a/path`, `--- path`, or `--- /dev/null`.
-        # `glab mr diff` may omit the `a/` prefix that `gh pr diff` emits.
-        old_match = re.match(r"^--- (?:[ab]/)?(.+)$", raw_line)
-        if old_match:
-            current_file_is_new = old_match.group(1) == "/dev/null"
-            continue
+        if old_rem <= 0 and new_rem <= 0:
+            # -- header zone -------------------------------------------------
+            # Old-side header: `--- a/path`, `--- path`, or `--- /dev/null`.
+            # `glab mr diff` may omit the `a/` prefix that `gh pr diff` emits.
+            old_match = re.match(r"^--- (?:[ab]/)?(.+)$", raw_line)
+            if old_match:
+                current_file_is_new = old_match.group(1) == "/dev/null"
+                continue
 
-        # New-side header: `+++ b/path`, `+++ path`, or `+++ /dev/null`.
-        file_match = re.match(r"^\+\+\+ (?:[ab]/)?(.+)$", raw_line)
-        if file_match:
-            path = file_match.group(1)
-            if path == "/dev/null":
-                current_file = None  # deleted file — no new path to track
-            else:
-                current_file = path
-                if current_file_is_new:
+            # New-side header: `+++ b/path`, `+++ path`, or `+++ /dev/null`.
+            file_match = re.match(r"^\+\+\+ (?:[ab]/)?(.+)$", raw_line)
+            if file_match:
+                path = file_match.group(1)
+                if path == "/dev/null":
+                    current_file = None  # deleted file — no new path to track
+                else:
+                    current_file = path
+                    if current_file_is_new:
+                        new_files.add(current_file)
+                new_line = 0
+                old_line = 0
+                current_file_is_new = False
+                continue
+
+            # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
+            # A count is omitted only for a one-line side, so it defaults to 1.
+            hunk_match = re.match(
+                r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", raw_line
+            )
+            if hunk_match:
+                old_start, old_count, new_start, new_count = hunk_match.groups()
+                old_line = int(old_start)
+                new_line = int(new_start)
+                old_rem = 1 if old_count is None else int(old_count)
+                new_rem = 1 if new_count is None else int(new_count)
+                # `@@ -0,0` means the old side of this file is empty: either the file is
+                # ADDED, or it pre-existed and was empty. Plain `glab mr diff` offers no
+                # discriminator between the two (it repeats the path on both
+                # `---`/`+++` lines and never writes /dev/null, so this is its ONLY
+                # added-file signal). We prefer the added-file reading: sending
+                # `old_path` into a genuinely new file is the documented HTTP 500,
+                # whereas omitting it for a pre-existing empty file is not.
+                if old_line == 0 and old_rem == 0 and current_file is not None:
                     new_files.add(current_file)
-            new_line = 0
-            old_line = 0
-            current_file_is_new = False
+                continue
+
+            # Anything else between hunks (`diff --git …`, `index …`,
+            # `Binary files … differ`, mode lines) is noise — never a commentable line.
             continue
 
-        # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
-        hunk_match = re.match(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", raw_line)
-        if hunk_match:
-            old_line = int(hunk_match.group(1))
-            new_line = int(hunk_match.group(2))
-            # An old-side start of 0 means the old side of this file is empty: the file
-            # is added. This is the ONLY added-file signal `glab mr diff` emits (it
-            # repeats the path on both `---`/`+++` lines and never writes /dev/null).
-            if old_line == 0 and current_file is not None:
-                new_files.add(current_file)
+        # -- hunk-body zone --------------------------------------------------
+        # Headers are NOT matched here: `--- <text>` / `+++ <text>` are body content.
+        # Budgets are consumed even when `current_file` is None (a deleted file's body
+        # must still drain, or its lines would be read as the next file's headers).
+        if raw_line.startswith("\\"):
+            # `\ No newline at end of file` belongs to neither side.
             continue
 
-        if current_file is None:
-            continue
-
-        if raw_line.startswith("+") and not raw_line.startswith("+++"):
+        if raw_line.startswith("+"):
             # Added line — new side only, so there is no old_line to record.
-            valid_lines[(current_file, new_line)] = None
+            new_rem -= 1
+            if current_file is not None:
+                valid_lines[(current_file, new_line)] = None
             new_line += 1
-        elif raw_line.startswith("-") and not raw_line.startswith("---"):
+        elif raw_line.startswith("-"):
             # Removed line — advances the OLD side only; not addressable by new_line.
+            old_rem -= 1
             old_line += 1
-        elif not raw_line.startswith("\\"):
+        else:
             # Context line (space- or zero-prefixed) — present on BOTH sides.
-            valid_lines[(current_file, new_line)] = old_line
+            old_rem -= 1
+            new_rem -= 1
+            if current_file is not None:
+                valid_lines[(current_file, new_line)] = old_line
             new_line += 1
             old_line += 1
 
@@ -619,9 +662,11 @@ def summary_already_posted(owner, repo, mr_iid, sha):
     lives in detect_prior_review.py — the only reader of the signal — so this module
     stays write-only.
 
-    Never blocks the post. Dry-run does not fetch AT ALL: dry-run reaches no network by
-    contract, and skipping the note there would also break build_dry_run_payload's "the
-    first capture is the summary" shape. A marker sha that is not SHA-shaped
+    Never blocks the post. Dry-run does not fetch AT ALL: dry-run's invariant is that it
+    issues no WRITE calls (reads do happen under dry-run — `glab mr diff` and the
+    versions fetch both run), and the DRY_RUN guard here exists so dry-run adds no READ
+    either and `_CAPTURED[0]` stays the summary, which build_dry_run_payload's "the
+    first capture is the summary" shape depends on. A marker sha that is not SHA-shaped
     (get_head_sha's "unknown" fallback) is not a usable dedup key. A failed fetch warns
     and posts — a possible duplicate note beats a silently dropped review.
     """
@@ -677,7 +722,11 @@ def post_gitlab(data, valid_lines, new_files=None):
     skipped = 0
     failed = 0
     for f in findings:
-        filepath = f["file"]
+        # valid_lines keys are always UNPREFIXED (the header regexes strip `a/` / `b/`),
+        # and the position must ship the same spelling GitLab knows — a `b/`-prefixed
+        # finding path would otherwise pass the stripped-form lookup but ship an
+        # unusable `new_path`/`old_path`. Normalize once, here, and use it everywhere.
+        filepath = re.sub(r"^[ab]/", "", f["file"])
         line = f.get("line")
         if line is None:
             warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")

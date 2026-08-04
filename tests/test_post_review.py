@@ -184,27 +184,23 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
 
     @patch("scripts.post_review.run_api")
     def test_new_file_detected_via_dev_null_old_header(self, mock_run):
-        """Files added in the diff (``--- /dev/null``) must populate new_files."""
+        """An EMPTY added file is the one added-file shape only /dev/null catches.
+
+        The previous fixture also carried ``@@ -0,0``, so the hunk-header signal alone
+        satisfied it and the ``/dev/null`` branch was untestable (mutating it to
+        ``current_file_is_new = False`` left the suite green). An added file with no
+        content has headers and NO hunk, so ``-0,0`` never fires.
+        """
         diff = (
-            "diff --git a/newfile.py b/newfile.py\n"
+            "diff --git a/empty_new.py b/empty_new.py\n"
             "new file mode 100644\n"
+            "index 0000000..e69de29\n"
             "--- /dev/null\n"
-            "+++ b/newfile.py\n"
-            "@@ -0,0 +1,2 @@\n"
-            "+line1\n"
-            "+line2\n"
-            "diff --git a/existing.py b/existing.py\n"
-            "--- a/existing.py\n"
-            "+++ b/existing.py\n"
-            "@@ -1,1 +1,2 @@\n"
-            " ctx\n"
-            "+added\n"
+            "+++ b/empty_new.py\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual(new_files, {"newfile.py"})
-        self.assertIn(("newfile.py", 1), valid_lines)
-        self.assertIn(("existing.py", 2), valid_lines)
+        _, new_files = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual(new_files, {"empty_new.py"})
 
     @patch("scripts.post_review.run_api")
     def test_new_file_detected_from_hunk_header_glab_style(self, mock_run):
@@ -242,6 +238,110 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(valid_lines, {})
         self.assertEqual(new_files, set())
 
+    @patch("scripts.post_review.run_api")
+    def test_empty_file_gaining_content_is_treated_as_added_a_known_limitation(
+        self, mock_run
+    ):
+        """A pre-existing EMPTY file gaining content emits `@@ -0,0 +1,N @@` with no
+        /dev/null — byte-identical to a real added file in plain `glab mr diff` output.
+
+        DOCUMENTED LIMITATION, pinned here deliberately: we read it as added, because
+        sending `old_path` into a genuinely new file is the documented HTTP 500 and real
+        added files are the common case (and the #127 defect).
+        """
+        diff = "--- a/empty.py\n+++ b/empty.py\n@@ -0,0 +1,2 @@\n+first\n+second\n"
+        mock_run.return_value = (diff, "", 0)
+        _, new_files = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual(new_files, {"empty.py"})
+
+    # -- hunk-body budget tracking (headers are body content too) -----------
+
+    @patch("scripts.post_review.run_api")
+    def test_removed_line_content_starting_with_dashes_is_not_a_file_header(
+        self, mock_run
+    ):
+        """Removing `-- deprecated: drop me` renders `--- deprecated: drop me`.
+
+        Matched as an old-side file header it consumed no OLD number, desyncing
+        `old_line` for every later line of the hunk — a WRONG old_line on the wire,
+        worse than the 400 it replaces.
+        """
+        diff = (
+            "diff --git a/db/schema.sql b/db/schema.sql\n"
+            "--- db/schema.sql\n"
+            "+++ db/schema.sql\n"
+            "@@ -10,4 +10,3 @@\n"
+            " CREATE TABLE t (\n"
+            # A removed line whose CONTENT is `-- deprecated: drop me`.
+            "--- deprecated: drop me\n"
+            "   id INT,\n"
+            " );\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        # new 10 = old 10 (context), then the removal eats old 11 with no new number,
+        # so new 11 must map to old 12 — not to 11.
+        self.assertEqual(valid_lines[("db/schema.sql", 10)], 10)
+        self.assertEqual(valid_lines[("db/schema.sql", 11)], 12)
+        self.assertEqual(valid_lines[("db/schema.sql", 12)], 13)
+
+    @patch("scripts.post_review.run_api")
+    def test_added_line_content_starting_with_pluses_is_not_a_file_header(
+        self, mock_run
+    ):
+        """Adding `++ x` renders `+++ x`. Matched as a new-side file header it
+        retargeted `current_file` at the literal text and reset both counters."""
+        diff = (
+            "diff --git a/src/app.c b/src/app.c\n"
+            "--- src/app.c\n"
+            "+++ src/app.c\n"
+            "@@ -20,2 +20,3 @@\n"
+            " int i = 0;\n"
+            "+++ x\n"
+            " use(i);\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(valid_lines[("src/app.c", 20)], 20)
+        self.assertIsNone(valid_lines[("src/app.c", 21)])
+        # The context line after it still records under the original file, with the
+        # numbers the added line advanced.
+        self.assertEqual(valid_lines[("src/app.c", 22)], 21)
+        self.assertEqual({fp for fp, _ in valid_lines}, {"src/app.c"})
+
+    @patch("scripts.post_review.run_api")
+    def test_binary_file_prose_is_not_admitted_as_a_valid_line(self, mock_run):
+        """`Binary files … differ` carries no hunk; it must not become a context line."""
+        diff = (
+            "diff --git a/img.png b/img.png\n"
+            "--- a/img.png\n"
+            "+++ b/img.png\n"
+            "Binary files a/img.png and b/img.png differ\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, _ = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual([k for k in valid_lines if k[0] == "img.png"], [])
+
+    @patch("scripts.post_review.run_api")
+    def test_pre_hunk_lines_are_not_admitted(self, mock_run):
+        """`diff --git` / `index` lines between files are not commentable lines.
+
+        They used to fall through to the context branch and be admitted under the
+        PREVIOUS file at its next new-side number.
+        """
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(
+            sorted(valid_lines),
+            [
+                ("src/added.py", 1),
+                ("src/added.py", 2),
+                ("src/edited.py", 61),
+                ("src/edited.py", 62),
+                ("src/edited.py", 63),
+            ],
+        )
+
     # -- old-side tracking (issue #127 D1) ---------------------------------
 
     @patch("scripts.post_review.run_api")
@@ -276,6 +376,9 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIsNone(valid_lines[("src/added.py", 1)])
+        # The `diff --git` line introducing src/added.py sits between hunks; it used to
+        # be read as a context line and admitted as a phantom target on the file before.
+        self.assertNotIn(("src/edited.py", 64), valid_lines)
         self.assertEqual(
             {v for (fp, _), v in valid_lines.items() if fp == "src/added.py"},
             {None},
@@ -1047,14 +1150,14 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
         # valid_lines=None means validation was skipped, so is_line_valid returns True
-        # and the skip branch is never entered. We need a set that doesn't contain
-        # the line to trigger the skip, but None means no validation so no skip.
-        # Instead, use an empty set so the line is not found.
-        post_github(data, set())
+        # and the skip branch is never entered. An EMPTY mapping is the shape that
+        # reaches the skip branch: validation ran and found nothing for this line.
+        post_github(data, {})
         mock_warn.assert_called_once()
         msg = mock_warn.call_args[0][0]
         self.assertIn("line not found in diff.", msg)
-        # With an empty set, valid lines list is [] not None, so diag is present but empty
+        # With an empty mapping the valid-lines list is [] not None, so the diagnostic
+        # is present but empty.
         self.assertIn("Valid lines for this file: []", msg)
 
     @patch(
@@ -2191,6 +2294,53 @@ class TestGitlabPositionContract(_DryRunTestBase):
     def test_new_line_is_always_sent(self):
         for position in self._positions():
             self.assertIsInstance(position["new_line"], int)
+
+
+class TestGitlabFindingPathNormalization(_DryRunTestBase):
+    """A `b/`-prefixed finding path must ship UNPREFIXED in the position.
+
+    `is_line_valid`/`old_line_for` strip the prefix for their lookups, so such a finding
+    passed validation and got a correct `old_line` — but the position then shipped the
+    raw `b/src/edited.py`, a path GitLab does not know. Normalize once, at the top of the
+    loop, and use it for the lookup, the position and the warnings alike.
+    """
+
+    def test_prefixed_finding_path_ships_normalized_position(self):
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [
+                    {
+                        "file": "b/src/edited.py",
+                        "line": 61,
+                        "severity": "high",
+                        "title": "Prefixed-path finding",
+                        "body": "Body",
+                    }
+                ],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
+                ),
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            post_review.main()
+        position = self._payload()["discussions"][0]["position"]
+        self.assertEqual(position["new_path"], "src/edited.py")
+        self.assertEqual(position["old_path"], "src/edited.py")
+        self.assertEqual(position["old_line"], 50)
 
 
 # ---------------------------------------------------------------------------
