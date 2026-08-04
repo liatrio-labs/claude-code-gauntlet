@@ -1357,16 +1357,31 @@ class TestIsNewFile(unittest.TestCase):
 
         self.assertTrue(is_new_file({"src/added.py"}, "src/added.py"))
 
-    def test_stripped_prefix_match(self):
+    def test_unresolved_prefix_no_longer_falls_back(self):
+        """The sole caller pre-resolves via diff_path_spelling before calling here;
+        is_new_file itself does exact-match only. A raw synthetic-prefixed path that
+        was never resolved is correctly NOT treated as a match.
+        """
         from scripts.post_review import is_new_file
 
-        self.assertTrue(is_new_file({"src/added.py"}, "b/src/added.py"))
-        self.assertTrue(is_new_file({"src/added.py"}, "a/src/added.py"))
+        self.assertFalse(is_new_file({"src/added.py"}, "b/src/added.py"))
+        self.assertFalse(is_new_file({"src/added.py"}, "a/src/added.py"))
 
     def test_no_match_returns_false(self):
         from scripts.post_review import is_new_file
 
         self.assertFalse(is_new_file({"src/added.py"}, "src/other.py"))
+
+    def test_real_a_prefix_does_not_collide_with_stripped_new_file(self):
+        """A modified file under a real top-level `a/` directory must not be mistaken
+        for an unrelated new file that happens to share its stripped basename.
+        """
+        from scripts.post_review import is_new_file
+
+        # "a/foo.py" (modified, real a/ directory) is itself absent from new_files;
+        # only the unrelated new top-level "foo.py" is present. A stripped-prefix
+        # fallback would wrongly report the modified file as new.
+        self.assertFalse(is_new_file({"foo.py"}, "a/foo.py"))
 
 
 # ---------------------------------------------------------------------------
@@ -1486,6 +1501,28 @@ class TestGitlabPositionPayload(unittest.TestCase):
         # A skipped validation has no old-side data to send, so the position degrades to
         # today's shape rather than crashing on a direct `valid_lines[...]` index.
         self.assertNotIn("old_line", position)
+
+    def test_real_a_dir_modified_file_keeps_old_path_despite_stripped_collision(self):
+        """A modified file under a real top-level `a/` directory must keep old_path
+        even when an unrelated new file shares its stripped basename.
+
+        Regression for the is_new_file stripped-prefix fallback: "a/foo.py" is
+        modified (real a/ directory, GitLab verbatim spelling) while "foo.py" is a
+        DIFFERENT, newly-added top-level file in the same diff. Before the fix,
+        is_new_file's independent `^[ab]/` strip matched "foo.py" against new_files
+        and wrongly reported the modified file as new, dropping old_path.
+        """
+        data = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "findings": [{"file": "a/foo.py", "line": 10, "title": "Bug", "body": "x"}],
+        }
+        valid_lines = {("a/foo.py", 10): 7}
+        new_files = {"foo.py"}
+        position = self._capture_position(data, valid_lines, new_files)
+        self.assertEqual(position["old_path"], "a/foo.py")
+        self.assertEqual(position["new_path"], "a/foo.py")
 
     def test_skipped_validation_ships_the_findings_raw_path(self):
         """With no diff to consult, the finding's own spelling travels untouched.

@@ -19,8 +19,6 @@ assume a language in the reviewed codebase.
   `post_review.py` writes and parses what `detect_prior_review.py` reads back. Readers never branch
   on the payload's `version` field — both token generations carry `"version":"3.0"` despite being
   different wire shapes. `tests/test_review_marker.py::TestRoundTrip` guards the agreement.
-  `post_review.py` never parses the signal it writes — its GitLab summary-note idempotency check
-  calls `detect_prior_review.gitlab_note_exists_for_sha`, so the reader stays the only reader.
 - **Twins must stay at parity.** `merge_findings.py`, `finding_dedup.py`, `filter_findings.py`,
   `apply_validations.py` and `apply_challenges.py` each have a JS twin proven against frozen golden
   fixtures in `tests/fixtures/parity/`. Change one, change both, re-record the fixture.

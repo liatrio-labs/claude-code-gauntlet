@@ -465,16 +465,19 @@ def valid_lines_for_file(valid_lines, filepath):
 def is_new_file(new_files, filepath):
     """Return True when *filepath* was newly added in the diff.
 
-    Strips any leading ``a/`` / ``b/`` prefix on *filepath* before lookup so
-    finding paths match diff-captured paths regardless of which side emitted
-    the prefix. Returns False when *new_files* is None or empty.
+    *filepath* must already be resolved to the diff's own key spelling (see
+    :func:`diff_path_spelling`) — its sole caller resolves before calling. `new_files`
+    and the resolved keys come from the SAME parse of the SAME headers, so an exact
+    match is authoritative. A second, independent ``a/``/``b/``-stripped lookup here
+    would let a real `a/`-rooted MODIFIED file collide with an unrelated NEW file that
+    happens to share its stripped basename (e.g. modified ``a/foo.py`` vs. added
+    ``foo.py``) whenever GitLab preserves a genuine top-level ``a/`` directory, wrongly
+    reporting the modified file as new and dropping ``old_path`` from its position.
+    Returns False when *new_files* is None or empty.
     """
     if not new_files:
         return False
-    if filepath in new_files:
-        return True
-    stripped = re.sub(r"^[ab]/", "", filepath)
-    return stripped in new_files
+    return filepath in new_files
 
 
 # ---------------------------------------------------------------------------
