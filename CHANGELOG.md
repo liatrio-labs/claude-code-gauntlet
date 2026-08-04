@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.3.10 (2026-08-04)
+
+### Bug Fixes
+
+- Address PR #129 review comments
+  ([#129](https://github.com/liatrio-labs/claude-code-gauntlet/pull/129),
+  [`93a7d6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/93a7d6c7af4a571cfd20c7a511e918ca5f1d15c4))
+
+### Chores
+
+- **tooling**: Gate ruff and mypy via pre-commit (#104 part B)
+  ([#129](https://github.com/liatrio-labs/claude-code-gauntlet/pull/129),
+  [`93a7d6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/93a7d6c7af4a571cfd20c7a511e918ca5f1d15c4))
+
+
 ## v3.3.9 (2026-08-03)
 
 ### Bug Fixes
