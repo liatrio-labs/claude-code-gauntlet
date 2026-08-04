@@ -73,7 +73,7 @@ jobs:
       - name: Install pytest + coverage (gate leg)
         if: matrix.python-version == '3.12'
         run: |
-          pip install "pip>=25.1"
+          pip install pip==26.2
           pip install --group dev
 
       - name: Run pytest with coverage gate
@@ -185,7 +185,7 @@ jobs:
       - name: Install pytest + coverage (gate leg)
         if: matrix.python-version == '3.12'
         run: |
-          pip install "pip>=25.1"
+          pip install pip==26.2
           pip install --group dev
 
       - name: Run bench self-tests with coverage gate
