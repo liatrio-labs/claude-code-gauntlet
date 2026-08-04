@@ -142,6 +142,13 @@ but an interrupted/partial populate cannot freeze a broken set under that key.
 Several GB per upstream; a cache hit avoids cold clones; a miss remains
 correct but slower. GitHub evicts caches after 7 days of no access.
 
+Claude Code CLI is installed in that workflow via a pinned
+`npm install -g @anthropic-ai/claude-code@<version>` (same pin as
+`validate.yml`). Revisit the pin when preparing each smoke checkpoint
+(Smoke A / Smoke B / later) and record the CLI version alongside the
+smoke result in the ledger — Dependabot does not see `run:` package
+installs.
+
 ## Named mini subset
 
 Registered as `"mini"` in [`golden/subsets.json`](golden/subsets.json) — the

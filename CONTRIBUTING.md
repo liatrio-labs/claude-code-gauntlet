@@ -78,6 +78,9 @@ pre-commit run ruff-check --all-files
 pre-commit run ruff-format --all-files
 pre-commit run mypy --all-files
 
+# Audit GitHub Actions workflows
+pre-commit run zizmor --all-files
+
 # Optional: ignore mass mechanical reflows in git blame
 git config blame.ignoreRevsFile .git-blame-ignore-revs
 
@@ -164,6 +167,7 @@ This will:
 - Fix Markdown formatting issues
 - Spell-check public-facing documentation
 - Scan for committed secrets
+- Audit GitHub Actions workflows for unsafe configuration, including non-hash-pinned actions
 - Validate the commit message format (on commit)
 
 Live bench smoke and paired measurements are **not** contributor gates — see

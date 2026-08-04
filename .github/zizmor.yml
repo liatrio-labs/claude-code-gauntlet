@@ -1,0 +1,15 @@
+# Require hash pins for every uses: (explicit; also zizmor 1.28 default).
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+  # adhoc-packages: intentional CI-runner installs pinned to exact versions
+  # in workflow YAML (no package.json/lockfile by design — see AGENTS.md
+  # tooling boundary). Ignore only these exact package installation lines.
+  adhoc-packages:
+    ignore:
+      # The benchmark smoke job installs the exactly pinned Claude Code CLI.
+      - bench-smoke.yml:66
+      # The validation job installs the exactly pinned Claude Code CLI.
+      - validate.yml:21
