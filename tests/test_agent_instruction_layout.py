@@ -82,7 +82,9 @@ CODEX_CAP_BYTES = 32_768
 # repo's own rules prohibit.
 # Raised 17_513 -> 18_916 (2026-08-04, #105): workflows/AGENTS.md JS lint
 # section (Biome pin, formatter-off rationale) and deferred-rules table.
-AGENTS_SET_BUDGET_BYTES = 18_916
+# Raised 18_916 -> 19_079 (2026-08-04, #105): reword tooling-boundary bullet —
+# shipped runtime is language globals + host-injected args only, not Node builtins.
+AGENTS_SET_BUDGET_BYTES = 19_079
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
