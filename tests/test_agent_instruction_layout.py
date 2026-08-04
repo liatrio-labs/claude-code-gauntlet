@@ -80,6 +80,8 @@ CODEX_CAP_BYTES = 32_768
 # 3.12 CI reading of 92.69, per the floor policy in the same paragraph) — a floor whose
 # stated provenance no longer matches its value is exactly the unverifiable claim the
 # repo's own rules prohibit.
+# Raised 17_513 -> 18_916 (2026-08-04, #105): workflows/AGENTS.md JS lint
+# section (Biome pin, formatter-off rationale) and deferred-rules table.
 AGENTS_SET_BUDGET_BYTES = 18_916
 CLAUDE_MD_MAX_BYTES = 856
 
