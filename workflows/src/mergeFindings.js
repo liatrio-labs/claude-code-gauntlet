@@ -128,7 +128,7 @@ function tryParseJsonAt(text, start) {
         const candidate = text.slice(start, i + 1);
         try {
           return JSON.parse(candidate);
-        } catch (e) {
+        } catch {
           return null;
         }
       }

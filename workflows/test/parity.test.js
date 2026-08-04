@@ -238,6 +238,6 @@ for (const c of loadCases('verify_deltas')) {
     // (3) The #25 requirement-1 withholding constraint, pinned on the golden path: no
     // finding joinVerifyDeltas emits may carry `agent`, even though the script's own
     // output (and the dispatched finding, in the extras-survive fixture) may have one.
-    for (const f of joined) assert.ok(!Object.prototype.hasOwnProperty.call(f, 'agent'));
+    for (const f of joined) assert.ok(!Object.hasOwn(f, 'agent'));
   });
 }
