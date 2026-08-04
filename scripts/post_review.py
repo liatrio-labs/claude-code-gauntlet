@@ -50,7 +50,10 @@ GitHub path:
 
 GitLab path:
     Fetches MR version SHAs (GET /projects/{id}/merge_requests/{iid}/versions).
-    Posts per-finding discussion with position object, via glab api --input.
+    Skips the summary note when this SHA's review marker is already on the MR (asked of
+    detect_prior_review.py, the only reader), so a rerun after a partial delivery does not
+    duplicate it. Posts per-finding discussions with a position object, via glab api --input;
+    a rejected position warns and skips that finding rather than aborting the batch.
 
 Line validation:
     Parses diff to validate each finding line is in the diff.
@@ -74,7 +77,11 @@ import tempfile
 # swallowing a real ImportError raised from inside review_marker.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from review_marker import SHA_RE, build_footer
+# The summary-note idempotency check READS the marker, and detect_prior_review.py is the
+# only reader (review_marker.py's contract). Importing its one yes/no helper keeps this
+# module write-only: it must never grow a second parse of the signal it writes.
+from detect_prior_review import gitlab_note_exists_for_sha
+from review_marker import SHA_RE, build_footer, is_sha_shaped
 
 # ---------------------------------------------------------------------------
 # Dry-run capture
@@ -125,16 +132,20 @@ def run_api(cmd):
     return result.stdout, result.stderr, result.returncode
 
 
-def post_json(cmd_prefix, payload):
-    """Write payload to a temp file and pass via --input. Returns parsed response.
+def try_post_json(cmd_prefix, payload):
+    """Post *payload* and return ``(response, error)`` — exactly one is meaningful.
 
-    In dry-run mode the call is captured instead of sent: the intended command
-    prefix and payload are appended to ``_CAPTURED`` and an empty dict is
-    returned so callers proceed exactly as they would after a successful post.
+    The non-fatal core of :func:`post_json`, for the one caller that must survive a
+    single rejected item: post_gitlab's per-finding loop posts the summary note FIRST,
+    so exiting on the first rejected position stranded every finding behind it behind
+    non-idempotent state (issue #127 D3).
+
+    In dry-run the call is captured into ``_CAPTURED`` and ``({}, None)`` is returned,
+    so callers proceed exactly as after a successful post.
     """
     if DRY_RUN:
         _CAPTURED.append({"cmd_prefix": cmd_prefix, "payload": payload})
-        return {}
+        return {}, None
     fd, tmppath = tempfile.mkstemp(suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
@@ -142,21 +153,34 @@ def post_json(cmd_prefix, payload):
         cmd = [*cmd_prefix, "--input", tmppath]
         stdout, stderr, rc = run_api(cmd)
         if rc != 0:
-            die(
+            return None, (
                 f"API call failed (exit {rc}).\n"
                 f"Command: {' '.join(cmd)}\n"
                 f"stderr: {stderr.strip()}"
             )
         if not stdout.strip():
-            return {}
+            return {}, None
         try:
-            return json.loads(stdout)
+            return json.loads(stdout), None
         except json.JSONDecodeError:
             warn(f"Could not parse API response as JSON: {stdout[:200]}")
-            return {"raw": stdout}
+            return {"raw": stdout}, None
     finally:
         if os.path.exists(tmppath):
             os.unlink(tmppath)
+
+
+def post_json(cmd_prefix, payload):
+    """Post *payload*; die on failure. Returns the parsed response.
+
+    Unchanged contract for every caller whose failure is total — the GitHub review
+    (one POST delivers everything) and the GitLab summary note (a failure there means
+    auth/MR is wrong and the discussion posts behind it are doomed too).
+    """
+    response, error = try_post_json(cmd_prefix, payload)
+    if error is not None:
+        die(error)
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -198,19 +222,46 @@ def detect_platform():
 
 def parse_diff_lines(platform, owner, repo, pr_number):
     """
-    Return ``(valid_lines, new_files)``:
+    Return ``(valid_lines, new_files, old_paths)``:
 
-    * ``valid_lines`` — set of ``(filepath, line_number)`` tuples for lines present
-      in the diff. Line numbers are relative to the new (head) version of each file.
-    * ``new_files`` — set of filepaths that are *newly added* in this diff (the
-      old-side header is ``--- /dev/null``). GitLab's discussions API rejects
-      ``old_path`` for these, so the GitLab poster needs to know.
+    * ``valid_lines`` — mapping of ``(filepath, new_line)`` -> the SAME line's number on
+      the OLD side, or ``None`` when the line exists only on the new side (an added
+      line). Membership is unchanged (a key is present exactly when the line can carry
+      an inline comment); the value is what GitLab needs. GitLab addresses an
+      UNCHANGED/context line only when the position carries BOTH ``old_line`` and
+      ``new_line`` — with new_line alone it answers 400 ``line_code can't be blank``
+      (issue #127) — so the old-side number has to survive parsing. GitHub never needs
+      it (``path``/``line``/``side`` address the new side).
+    * ``new_files`` — set of filepaths newly ADDED in this diff. TWO signals, both
+      required: ``gh pr diff`` writes ``--- /dev/null``; ``glab mr diff`` writes the
+      SAME path on both sides and betrays the addition ONLY through an
+      ``@@ -0,0 +N,M @@`` hunk header. Matching /dev/null alone made this set
+      permanently empty on GitLab, so ``old_path`` was always sent and the HTTP 500 the
+      GitLab poster documents was never actually avoided (#127 D2).
+    * ``old_paths`` — mapping of new-side path -> the path its ``---`` header named. For
+      a RENAMED file that is the pre-rename path, which is what GitLab requires in
+      ``position.old_path`` (#130); for an unrenamed modified file the two coincide
+      (harmless — the poster's fallback is the new path anyway). Absent for added files,
+      whose old side is ``/dev/null``.
 
-    Returns ``(None, None)`` when validation should be skipped (unknown platform
+    Returns ``(None, None, None)`` when validation should be skipped (unknown platform
     or CLI failure). Callers must handle the ``None`` case.
 
-    Accepts both ``a/`` / ``b/`` prefixed headers (``gh pr diff``) and unprefixed
-    headers (``glab mr diff``).
+    Header syntax is read PER PLATFORM (see the compiled pair below): ``gh pr diff``
+    writes git's synthetic ``a/`` / ``b/`` prefixes, ``glab mr diff`` writes paths
+    verbatim. Every key returned therefore carries the platform's true spelling.
+
+    The parser tracks each hunk's DECLARED old/new line budgets (a unified diff hunk
+    header states exactly how many lines of each side the hunk body contains) and only
+    matches file/hunk headers BETWEEN hunks. Well-formed git/gh/glab diffs always declare
+    correct counts, so the counts are trusted. Header matching is suspended inside a hunk
+    body because diff body lines collide with the header syntax: removing the SQL comment
+    ``-- deprecated: drop me`` renders as ``--- deprecated: drop me``, which the old-side
+    header regex swallows — silently desyncing ``old_line`` for every later line of the
+    hunk. Symmetrically an added ``++ x`` renders ``+++ x`` and would reset
+    ``current_file``. Suspending header matching also means non-header noise between
+    hunks (``diff --git …``, ``index …``, ``Binary files … differ``) is ignored instead of
+    being admitted as a fake context line.
     """
     if platform == "github":
         stdout, stderr, rc = run_api(
@@ -223,65 +274,132 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         warn(
             "Unknown platform — skipping diff validation. All findings will be posted."
         )
-        return None, None
+        return None, None, None
 
     if rc != 0:
         warn(
             f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
             "Skipping line validation — all findings will be posted."
         )
-        return None, None
+        return None, None, None
 
-    valid_lines = set()
+    # File-header regexes, chosen ONCE by platform — the platform cannot change inside
+    # the loop. `gh pr diff` emits git's synthetic prefixes (`a/` on the old side, `b/`
+    # on the new side): those are diff syntax and must come off. `glab mr diff` emits
+    # paths VERBATIM and never writes a synthetic prefix, so a leading `a/` there is a
+    # REAL top-level directory; stripping it truncated `a/`-rooted paths (`a/foo.py` ->
+    # `foo.py`) into keys and positions GitLab does not know, and every finding in such
+    # a repo was rejected. The catch-all group carries `/dev/null` on both platforms.
+    if platform == "github":
+        old_header_re = re.compile(r"^--- (?:a/)?(.+)$")
+        new_header_re = re.compile(r"^\+\+\+ (?:b/)?(.+)$")
+    else:
+        old_header_re = re.compile(r"^--- (.+)$")
+        new_header_re = re.compile(r"^\+\+\+ (.+)$")
+
+    valid_lines = {}
     new_files = set()
+    old_paths = {}
+    pending_old_path = None
     current_file = None
     new_line = 0
+    old_line = 0
+    # Lines of each side still owed by the hunk currently being read. Both at 0 means
+    # "between hunks" — the only zone where a line may be read as a header.
+    old_rem = 0
+    new_rem = 0
     current_file_is_new = False
 
-    for raw_line in stdout.splitlines():
-        # Old-side header: `--- a/path`, `--- path`, or `--- /dev/null`.
-        # `glab mr diff` may omit the `a/` prefix that `gh pr diff` emits.
-        old_match = re.match(r"^--- (?:[ab]/)?(.+)$", raw_line)
-        if old_match:
-            current_file_is_new = old_match.group(1) == "/dev/null"
-            continue
+    # Split on "\n" ONLY, never str.splitlines(): that also breaks on \x0c, \x0b, \x85 and
+    # U+2028/U+2029, which git treats as ordinary line CONTENT. A form feed inside a hunk
+    # body would become two parsed lines, draining the declared budgets one line early —
+    # flipping the header/body zone boundary and shipping a wrong old_line thereafter. The
+    # trailing "" a newline-terminated stream yields lands in the header zone and matches
+    # nothing.
+    for raw_line in stdout.split("\n"):
+        if old_rem <= 0 and new_rem <= 0:
+            # -- header zone -------------------------------------------------
+            # Old-side header: `--- a/path` (gh), `--- path` (glab), or `--- /dev/null`.
+            old_match = old_header_re.match(raw_line)
+            if old_match:
+                old_side = old_match.group(1)
+                current_file_is_new = old_side == "/dev/null"
+                # Held until the `+++` header names the new-side path this belongs to;
+                # for a rename the two differ and only this one is GitLab's `old_path`.
+                pending_old_path = None if current_file_is_new else old_side
+                continue
 
-        # New-side header: `+++ b/path`, `+++ path`, or `+++ /dev/null`.
-        file_match = re.match(r"^\+\+\+ (?:[ab]/)?(.+)$", raw_line)
-        if file_match:
-            path = file_match.group(1)
-            if path == "/dev/null":
-                current_file = None  # deleted file — no new path to track
-            else:
-                current_file = path
-                if current_file_is_new:
+            # New-side header: `+++ b/path` (gh), `+++ path` (glab), or `+++ /dev/null`.
+            file_match = new_header_re.match(raw_line)
+            if file_match:
+                path = file_match.group(1)
+                if path == "/dev/null":
+                    current_file = None  # deleted file — no new path to track
+                else:
+                    current_file = path
+                    if current_file_is_new:
+                        new_files.add(current_file)
+                    if pending_old_path is not None:
+                        old_paths[current_file] = pending_old_path
+                new_line = 0
+                old_line = 0
+                current_file_is_new = False
+                continue
+
+            # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
+            # A count is omitted only for a one-line side, so it defaults to 1.
+            hunk_match = re.match(
+                r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", raw_line
+            )
+            if hunk_match:
+                old_start, old_count, new_start, new_count = hunk_match.groups()
+                old_line = int(old_start)
+                new_line = int(new_start)
+                old_rem = 1 if old_count is None else int(old_count)
+                new_rem = 1 if new_count is None else int(new_count)
+                # `@@ -0,0` means the old side of this file is empty: either the file is
+                # ADDED, or it pre-existed and was empty. Plain `glab mr diff` offers no
+                # discriminator between the two (it repeats the path on both
+                # `---`/`+++` lines and never writes /dev/null, so this is its ONLY
+                # added-file signal). We prefer the added-file reading: sending
+                # `old_path` into a genuinely new file is the documented HTTP 500,
+                # whereas omitting it for a pre-existing empty file is not.
+                if old_line == 0 and old_rem == 0 and current_file is not None:
                     new_files.add(current_file)
-            new_line = 0
-            current_file_is_new = False
+                continue
+
+            # Anything else between hunks (`diff --git …`, `index …`,
+            # `Binary files … differ`, mode lines) is noise — never a commentable line.
             continue
 
-        # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
-        hunk_match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", raw_line)
-        if hunk_match:
-            new_line = int(hunk_match.group(1))
+        # -- hunk-body zone --------------------------------------------------
+        # Headers are NOT matched here: `--- <text>` / `+++ <text>` are body content.
+        # Budgets are consumed even when `current_file` is None (a deleted file's body
+        # must still drain, or its lines would be read as the next file's headers).
+        if raw_line.startswith("\\"):
+            # `\ No newline at end of file` belongs to neither side.
             continue
 
-        if current_file is None:
-            continue
-
-        if raw_line.startswith("+") and not raw_line.startswith("+++"):
-            # Added line — valid for inline comment
-            valid_lines.add((current_file, new_line))
+        if raw_line.startswith("+"):
+            # Added line — new side only, so there is no old_line to record.
+            new_rem -= 1
+            if current_file is not None:
+                valid_lines[(current_file, new_line)] = None
             new_line += 1
-        elif raw_line.startswith("-") and not raw_line.startswith("---"):
-            # Removed line — does not advance new_line
-            pass
-        elif not raw_line.startswith("\\"):
-            # Context line (no prefix or space prefix)
-            valid_lines.add((current_file, new_line))
+        elif raw_line.startswith("-"):
+            # Removed line — advances the OLD side only; not addressable by new_line.
+            old_rem -= 1
+            old_line += 1
+        else:
+            # Context line (space- or zero-prefixed) — present on BOTH sides.
+            old_rem -= 1
+            new_rem -= 1
+            if current_file is not None:
+                valid_lines[(current_file, new_line)] = old_line
             new_line += 1
+            old_line += 1
 
-    return valid_lines, new_files
+    return valid_lines, new_files, old_paths
 
 
 def is_line_valid(valid_lines, filepath, line):
@@ -294,6 +412,42 @@ def is_line_valid(valid_lines, filepath, line):
     # Strip leading "a/" or "b/" if present
     stripped = re.sub(r"^[ab]/", "", filepath)
     return (stripped, line) in valid_lines
+
+
+def diff_path_spelling(valid_lines, filepath, line):
+    """Return the spelling of *filepath* recorded in the diff, or *filepath* unchanged.
+
+    A finding may spell its path with a synthetic diff prefix (``b/src/app.py``) while
+    the parsed keys are unprefixed — or, on GitLab, the repo may contain a REAL top-level
+    ``a/``/``b/`` directory that must not be stripped. Trust the diff: prefer the exact
+    key, fall back to the stripped one, and when validation was skipped (*valid_lines*
+    is None) pass the finding's own spelling through untouched.
+    """
+    if not isinstance(valid_lines, dict):
+        return filepath
+    if (filepath, line) in valid_lines:
+        return filepath
+    stripped = re.sub(r"^[ab]/", "", filepath)
+    if (stripped, line) in valid_lines:
+        return stripped
+    return filepath
+
+
+def old_line_for(valid_lines, filepath, line):
+    """Return the OLD-side line number for ``(filepath, line)``, or None.
+
+    None means "send no old_line": validation was skipped (``valid_lines`` is None or
+    not a mapping), the line is add-only, or the path is unknown. Applies the SAME
+    ``a/``/``b/`` normalization as :func:`is_line_valid` — a raw-key-only lookup would
+    return None for every finding that passed validation only through the stripped form,
+    silently re-arming the 400 this function exists to prevent.
+    """
+    if not isinstance(valid_lines, dict):
+        return None
+    if (filepath, line) in valid_lines:
+        return valid_lines[(filepath, line)]
+    stripped = re.sub(r"^[ab]/", "", filepath)
+    return valid_lines.get((stripped, line))
 
 
 def valid_lines_for_file(valid_lines, filepath):
@@ -311,16 +465,19 @@ def valid_lines_for_file(valid_lines, filepath):
 def is_new_file(new_files, filepath):
     """Return True when *filepath* was newly added in the diff.
 
-    Strips any leading ``a/`` / ``b/`` prefix on *filepath* before lookup so
-    finding paths match diff-captured paths regardless of which side emitted
-    the prefix. Returns False when *new_files* is None or empty.
+    *filepath* must already be resolved to the diff's own key spelling (see
+    :func:`diff_path_spelling`) — its sole caller resolves before calling. `new_files`
+    and the resolved keys come from the SAME parse of the SAME headers, so an exact
+    match is authoritative. A second, independent ``a/``/``b/``-stripped lookup here
+    would let a real `a/`-rooted MODIFIED file collide with an unrelated NEW file that
+    happens to share its stripped basename (e.g. modified ``a/foo.py`` vs. added
+    ``foo.py``) whenever GitLab preserves a genuine top-level ``a/`` directory, wrongly
+    reporting the modified file as new and dropping ``old_path`` from its position.
+    Returns False when *new_files* is None or empty.
     """
     if not new_files:
         return False
-    if filepath in new_files:
-        return True
-    stripped = re.sub(r"^[ab]/", "", filepath)
-    return stripped in new_files
+    return filepath in new_files
 
 
 # ---------------------------------------------------------------------------
@@ -552,7 +709,34 @@ def fetch_gitlab_shas(project_id, mr_iid):
     )
 
 
-def post_gitlab(data, valid_lines, new_files=None):
+def summary_already_posted(owner, repo, mr_iid, sha):
+    """True when a note on this MR already carries THIS sha's review marker.
+
+    Makes a rerun after a partial delivery retry-safe: the per-finding loop can be
+    re-attempted without stacking a second summary note (issue #127 D4). The read itself
+    lives in detect_prior_review.py — the only reader of the signal — so this module
+    stays write-only.
+
+    Never blocks the post. Dry-run does not fetch AT ALL: dry-run's invariant is that it
+    issues no WRITE calls (reads do happen under dry-run — `glab mr diff` and the
+    versions fetch both run), and the DRY_RUN guard here exists so dry-run adds no READ
+    either and `_CAPTURED[0]` stays the summary, which build_dry_run_payload's "the
+    first capture is the summary" shape depends on. A marker sha that is not SHA-shaped
+    (get_head_sha's "unknown" fallback) is not a usable dedup key. A failed fetch warns
+    and posts — a possible duplicate note beats a silently dropped review.
+    """
+    if DRY_RUN:
+        return False
+    if not is_sha_shaped(sha):
+        return False
+    exists, error = gitlab_note_exists_for_sha(owner, repo, mr_iid, sha)
+    if error:
+        warn(f"could not check for an existing summary note ({error}); posting it.")
+        return False
+    return exists
+
+
+def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
@@ -578,21 +762,33 @@ def post_gitlab(data, valid_lines, new_files=None):
         "Content-Type: application/json",
         f"projects/{project_id}/merge_requests/{mr_iid}/notes",
     ]
-    post_json(cmd_prefix, summary_payload)
-    print(
-        "MR summary note captured (dry-run)." if DRY_RUN else "MR summary note posted."
-    )
+    if summary_already_posted(owner, repo, mr_iid, sha):
+        print(f"MR summary note for {sha} already on the MR — skipping.")
+    else:
+        post_json(cmd_prefix, summary_payload)
+        print(
+            "MR summary note captured (dry-run)."
+            if DRY_RUN
+            else "MR summary note posted."
+        )
 
     # Post each finding as an inline discussion
     posted = 0
     skipped = 0
+    failed = 0
     for f in findings:
-        filepath = f["file"]
         line = f.get("line")
         if line is None:
             warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
             skipped += 1
             continue
+
+        # The position must ship the spelling GitLab knows, which is the spelling the
+        # diff recorded: a `b/`-prefixed finding path against unprefixed keys resolves
+        # to the stripped form, while a real `a/`-rooted path that IS a diff key stays
+        # whole. Resolve once, here, and use it everywhere below. When validation was
+        # skipped there is no diff to consult and the finding's raw path travels as-is.
+        filepath = diff_path_spelling(valid_lines, f["file"], line)
 
         if not is_line_valid(valid_lines, filepath, line):
             diag = ""
@@ -614,13 +810,28 @@ def post_gitlab(data, valid_lines, new_files=None):
             "new_path": filepath,
             "new_line": line,
         }
+        # An UNCHANGED (context) line is addressable only when the position carries
+        # both sides; new_line alone is rejected with 400 `line_code can't be blank`
+        # (issue #127). An added line has no old side — omit the key rather than
+        # sending null. NEVER synthesize `line_code`: it is derived server-side, and
+        # both documented attempts to compute it client-side (position sibling, and
+        # inside line_range) reproduced the identical 400.
+        old_line = old_line_for(valid_lines, filepath, line)
+        if old_line is not None:
+            position["old_line"] = old_line
         # Newly-added files have no old version. GitLab's discussions API
         # returns HTTP 500 (after silently creating the discussion) when
         # ``old_path`` is set on a position pointing into a new file. Omit
         # ``old_path`` for added files; include it for modified files so the
         # position stays anchored to the diff.
         if not is_new_file(new_files, filepath):
-            position["old_path"] = filepath
+            # A RENAMED file must anchor `old_path` to its PRE-RENAME path (#130) — the
+            # new path does not exist on the old side. `filepath` was resolved against
+            # the parsed keys above and `old_paths` is keyed by those same keys, so the
+            # two are the same spelling. The fallback to the new path covers skipped
+            # validation (`old_paths` is None) and unrenamed files, where the two paths
+            # coincide anyway.
+            position["old_path"] = (old_paths or {}).get(filepath, filepath)
 
         payload = {
             "body": render_comment_body(f),
@@ -636,7 +847,17 @@ def post_gitlab(data, valid_lines, new_files=None):
             "Content-Type: application/json",
             f"projects/{project_id}/merge_requests/{mr_iid}/discussions",
         ]
-        post_json(cmd_prefix, payload)
+        _response, error = try_post_json(cmd_prefix, payload)
+        if error is not None:
+            # One rejected position must not strand the findings behind it: the summary
+            # note is already on the MR, so exiting here leaves partial, non-retryable
+            # state.
+            warn_skip(
+                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+                f"— GitLab rejected the inline discussion.\n{error}"
+            )
+            failed += 1
+            continue
         posted += 1
 
     if DRY_RUN:
@@ -645,6 +866,18 @@ def post_gitlab(data, valid_lines, new_files=None):
         print(f"  {posted} inline discussion(s) posted.")
     if skipped:
         print(f"  {skipped} finding(s) skipped.")
+    if failed:
+        print(
+            f"  {failed} inline discussion(s) rejected by GitLab (see warnings above)."
+        )
+        if posted == 0:
+            # Every attempt was made first — this exit reports the outcome, it does not
+            # abandon the batch. A partial delivery is a success with warnings.
+            die(
+                f"all {failed} inline discussion(s) were rejected by GitLab — nothing "
+                f"was posted inline. The MR summary note is on the MR; rerunning retries "
+                f"the inline comments without duplicating it."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -763,7 +996,7 @@ def main():
         die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
 
     # Validate diff lines
-    valid_lines, new_files = parse_diff_lines(
+    valid_lines, new_files, old_paths = parse_diff_lines(
         platform, data["owner"], data["repo"], data["pr_number"]
     )
 
@@ -771,7 +1004,7 @@ def main():
     if platform == "github":
         post_github(data, valid_lines)
     else:
-        post_gitlab(data, valid_lines, new_files)
+        post_gitlab(data, valid_lines, new_files, old_paths)
 
     if DRY_RUN:
         out_path = write_dry_run_payload(platform, args.findings_json)

@@ -75,7 +75,7 @@ import sys
 # `scripts.detect_prior_review`, without swallowing real ImportErrors.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from review_marker import select_latest
+from review_marker import detect_signal, select_latest
 
 FETCH_TIMEOUT_SECONDS = 30
 GIT_TIMEOUT_SECONDS = 10
@@ -254,6 +254,26 @@ def fetch_entries_gitlab(owner, repo, number):
     return collect_entries_gitlab(notes), ([err] if err else [])
 
 
+def gitlab_note_exists_for_sha(owner, repo, number, sha):
+    """Return ``(exists, error)`` — is *sha*'s review marker already on this MR?
+
+    ``post_review.post_gitlab`` calls this before posting its summary note so a rerun
+    after a partially-failed delivery does not stack a second summary (issue #127). The
+    read lives here because this module is the only reader; post_review.py writes the
+    signal and never parses it. Goes through :func:`fetch_entries_gitlab`, so the
+    ``--paginate`` requirement documented there applies unchanged — an unpaginated fetch
+    would miss the summary on any MR with more than 20 notes and duplicate it on every
+    retry.
+
+    ``error`` is a string when the fetch failed; the caller degrades (posts) rather than
+    reading a fetch failure as "already posted".
+    """
+    entries, errors = fetch_entries_gitlab(owner, repo, number)
+    if errors:
+        return False, errors[0]
+    return entries_carry_sha(entries, sha), None
+
+
 # ---------------------------------------------------------------------------
 # Pure collectors
 # ---------------------------------------------------------------------------
@@ -314,6 +334,22 @@ def collect_entries_file(payload):
             }
         )
     return entries
+
+
+def entries_carry_sha(entries, sha):
+    """True when any entry's body carries a prior-review signal recording *sha*.
+
+    EXACT sha equality — a prefix match would let a review of a DIFFERENT commit
+    suppress this one. A non-SHA-shaped *sha* simply never matches: detect_signal only
+    ever returns SHA-shaped values, so no separate guard is needed here.
+    """
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        signal = detect_signal(entry.get("body"))
+        if signal and signal.get("sha") == sha:
+            return True
+    return False
 
 
 def count_by_source(entries):

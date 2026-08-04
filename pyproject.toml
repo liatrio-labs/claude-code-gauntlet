@@ -59,6 +59,7 @@ module = [
   "apply_validations",
   "assemble_artifacts",
   "await_workflow",
+  "detect_prior_review",
   "filter_findings",
   "finding_dedup",
   "merge_findings",

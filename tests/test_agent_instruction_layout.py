@@ -70,7 +70,17 @@ CODEX_CAP_BYTES = 32_768
 # measured floors, and drift/presence diagnostics shared with CI. These are
 # cross-surface process guarantees no single code site owns. Re-pinned from
 # 17_343 after the floors-paragraph re-pin shortened the provisional wording.
-AGENTS_SET_BUDGET_BYTES = 17_291
+# Raised 17_291 -> 17_485 (2026-08-03, #127): post_review.py must never grow a second
+# parse of the marker it writes — its GitLab summary-note idempotency check delegates to
+# detect_prior_review, the signal's only reader. The rule is a direction of dependency
+# between two modules; neither file's code states it, and the import alone reads as a
+# convenience rather than a boundary.
+# Raised 17_485 -> 17_513 (2026-08-04, #135): the Python coverage floor's provenance
+# note must name the measurement its value came from (raised to 91.7 against PR #135's
+# 3.12 CI reading of 92.69, per the floor policy in the same paragraph) — a floor whose
+# stated provenance no longer matches its value is exactly the unverifiable claim the
+# repo's own rules prohibit.
+AGENTS_SET_BUDGET_BYTES = 17_513
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

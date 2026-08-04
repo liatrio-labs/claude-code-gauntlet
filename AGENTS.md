@@ -42,7 +42,7 @@ repo tree (an in-tree data file trips the bench plugin-mutation guard):
 
 ```bash
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-  --cov=scripts --cov=.github --cov-fail-under=91.3
+  --cov=scripts --cov=.github --cov-fail-under=91.7
 
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
   --cov=bench --cov-fail-under=87
@@ -59,9 +59,9 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 91.3 / 87 (pinned 2026-08-03 from first green 3.12 CI: 92.27 /
-87.96); JS 98 / 82.3 / 97 (pinned 2026-08-03 from first green CI: 98.61 /
-83.27 / 97.99). Policy: a floor sits no more than 1.0 pp below the CI
+Floors: Python 91.7 / 87 (scripts raised 2026-08-04 from PR #135 3.12 CI:
+92.69; bench pinned 2026-08-03: 87.96); JS 98 / 82.3 / 97 (pinned 2026-08-03
+from first green CI: 98.61 / 83.27 / 97.99). Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop,
 reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
 multi-point JS drop usually means a deleted fixture group or an unloaded
