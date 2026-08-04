@@ -15,6 +15,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 # Import via the intended package path regardless of how pytest is invoked.
@@ -195,7 +196,7 @@ class BuildEnvTest(InvokeTestBase):
         }
         (cfg_dir / ".claude.json").write_text(json.dumps(existing))
 
-        env = build_env(PR, self.run_dir, {})
+        build_env(PR, self.run_dir, {})
         data = json.loads((cfg_dir / ".claude.json").read_text())
         # existing content preserved
         self.assertEqual(data["numStartups"], 4)
@@ -1209,7 +1210,7 @@ class ChildProcessCredentialEnvTest(InvokeTestBase):
     credential vars (presence only -- never values) and the assertions read that.
     """
 
-    POLLUTED = {
+    POLLUTED: ClassVar[dict[str, str]] = {
         "ANTHROPIC_API_KEY": "sk-ambient-should-not-arrive",
         "ANTHROPIC_AUTH_TOKEN": "at-ambient-should-not-arrive",
         "CLAUDE_CODE_USE_BEDROCK": "1",

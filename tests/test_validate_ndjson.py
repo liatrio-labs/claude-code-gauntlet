@@ -53,16 +53,14 @@ class TestValidateValidInput(unittest.TestCase):
         self.assertEqual(rc, 0)
 
     def test_whitespace_only_file_is_ok(self):
-        with _TmpFile(b"\n\n  \n") as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = validate(path)
+        with _TmpFile(b"\n\n  \n") as path, patch("sys.stderr", new=io.StringIO()):
+            rc = validate(path)
         self.assertEqual(rc, 0)
 
     def test_single_valid_finding(self):
         line = b'{"id":"bug-1","title":"X","description":"Y"}\n'
-        with _TmpFile(line) as path:
-            with patch("sys.stderr", new=io.StringIO()) as err:
-                rc = validate(path)
+        with _TmpFile(line) as path, patch("sys.stderr", new=io.StringIO()) as err:
+            rc = validate(path)
         self.assertEqual(rc, 0)
         self.assertIn("1 valid finding", err.getvalue())
 
@@ -72,9 +70,8 @@ class TestValidateValidInput(unittest.TestCase):
             b'{"id":"bug-2","title":"b"}\n'
             b'{"id":"bug-3","title":"c"}\n'
         )
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()) as err:
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()) as err:
+            rc = validate(path)
         self.assertEqual(rc, 0)
         self.assertIn("3 valid finding", err.getvalue())
 
@@ -104,9 +101,8 @@ class TestValidateInvalidInput(unittest.TestCase):
         """The headline bug — agent embeds a raw \\n inside a JSON string,
         producing two physical lines neither of which parses."""
         content = b'{"id":"bug-1","description":"First sentence.\nSecond sentence."}\n'
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()) as err:
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()) as err:
+            rc = validate(path)
         self.assertEqual(rc, 1)
         out = err.getvalue()
         self.assertIn("invalid line", out)
@@ -141,9 +137,8 @@ class TestValidateInvalidInput(unittest.TestCase):
             b'across lines"}\n'
             b'{"id":"bug-3"}\n'
         )
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()) as err:
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()) as err:
+            rc = validate(path)
         self.assertEqual(rc, 1)
         out = err.getvalue()
         # 2 valid findings (lines 1 + 4); 2 invalid lines (the split halves on 2 + 3).
@@ -152,18 +147,16 @@ class TestValidateInvalidInput(unittest.TestCase):
 
     def test_invalid_line_diagnostic_includes_line_number(self):
         content = b'{"id":"bug-1"}\nthis is not json at all\n'
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()) as err:
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()) as err:
+            rc = validate(path)
         self.assertEqual(rc, 1)
         self.assertIn("line 2", err.getvalue())
 
     def test_invalid_line_diagnostic_truncates_long_snippet(self):
         long_payload = b"x" * 500
         content = b'{"id":"bug-1","description":"' + long_payload + b'\nbroken"}\n'
-        with _TmpFile(content) as path:
-            with patch("sys.stderr", new=io.StringIO()) as err:
-                rc = validate(path)
+        with _TmpFile(content) as path, patch("sys.stderr", new=io.StringIO()) as err:
+            rc = validate(path)
         self.assertEqual(rc, 1)
         # Snippet truncation prevents stderr from being flooded by a single
         # giant invalid line.
@@ -183,9 +176,8 @@ class TestMainEntrypoint(unittest.TestCase):
         self.assertEqual(rc, 2)
 
     def test_main_dispatches_to_validate(self):
-        with _TmpFile(b'{"ok":true}\n') as path:
-            with patch("sys.stderr", new=io.StringIO()):
-                rc = main(["validate_ndjson.py", path])
+        with _TmpFile(b'{"ok":true}\n') as path, patch("sys.stderr", new=io.StringIO()):
+            rc = main(["validate_ndjson.py", path])
         self.assertEqual(rc, 0)
 
 

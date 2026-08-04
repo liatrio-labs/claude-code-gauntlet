@@ -1221,9 +1221,11 @@ class TestDedupCrossAgent(unittest.TestCase):
             from scripts.filter_findings import main as filter_main
 
             buf = io.StringIO()
-            with mock_patch("sys.argv", ["filter_findings.py", tmppath]):
-                with contextlib.redirect_stdout(buf):
-                    filter_main()
+            with (
+                mock_patch("sys.argv", ["filter_findings.py", tmppath]),
+                contextlib.redirect_stdout(buf),
+            ):
+                filter_main()
             result = json.loads(buf.getvalue())
             stats = result["stats"]
             self.assertIn("cross_agent_deduped", stats)

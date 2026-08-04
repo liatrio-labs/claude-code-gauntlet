@@ -237,7 +237,7 @@ def task_roots(environ=None):
         bases.append(tmpdir.rstrip(os.sep) or os.sep)
     roots, seen = [], set()
     for base in bases:
-        candidate = os.path.join(base, "claude-%d" % os.getuid())
+        candidate = os.path.join(base, f"claude-{os.getuid()}")
         real = os.path.realpath(candidate)
         if real in seen:
             continue
@@ -738,7 +738,7 @@ def emit(payload):
             {
                 "await": "error",
                 "gap": "workflow-timeout",
-                "message": "result would not serialize: %s" % exc,
+                "message": f"result would not serialize: {exc}",
             },
             separators=(",", ":"),
         )
@@ -885,8 +885,8 @@ def await_terminal(args, environ=None):
     marker = build_marker("timeout", args, observed, since_epoch, started_at)
     marker["gap"] = "workflow-timeout"
     marker["detail"] = (
-        "no terminal workflow result after %d attempts; declare the gap and "
-        "deliver whatever partial artifacts exist" % args.max_attempts
+        f"no terminal workflow result after {args.max_attempts} attempts; declare "
+        "the gap and deliver whatever partial artifacts exist"
     )
     return marker, 4
 
@@ -921,7 +921,7 @@ def build_parser(environ=None):
         default=DEFAULT_MAX_ATTEMPTS,
         metavar="M",
         help="Total attempts allowed before declaring the workflow-timeout gap "
-        "(default %d)." % DEFAULT_MAX_ATTEMPTS,
+        f"(default {DEFAULT_MAX_ATTEMPTS}).",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -929,8 +929,8 @@ def build_parser(environ=None):
         type=float,
         default=default_timeout_seconds(environ),
         metavar="S",
-        help="Per-invocation wait. Defaults to %d, lowered automatically when "
-        "BASH_MAX_TIMEOUT_MS is exported." % DEFAULT_TIMEOUT_SECONDS,
+        help=f"Per-invocation wait. Defaults to {DEFAULT_TIMEOUT_SECONDS}, lowered "
+        "automatically when BASH_MAX_TIMEOUT_MS is exported.",
     )
     parser.add_argument(
         "--poll-interval",
@@ -938,7 +938,7 @@ def build_parser(environ=None):
         type=float,
         default=DEFAULT_POLL_INTERVAL,
         metavar="P",
-        help="Seconds between checks (default %d)." % DEFAULT_POLL_INTERVAL,
+        help=f"Seconds between checks (default {DEFAULT_POLL_INTERVAL}).",
     )
     parser.add_argument(
         "--artifacts-dir",
@@ -960,7 +960,7 @@ def build_parser(environ=None):
         default=DEFAULT_ARTIFACTS_GRACE_SECONDS,
         metavar="G",
         help="How long to keep waiting for the compact return once every artifact "
-        "is present (default %d)." % DEFAULT_ARTIFACTS_GRACE_SECONDS,
+        f"is present (default {DEFAULT_ARTIFACTS_GRACE_SECONDS}).",
     )
     parser.add_argument(
         "--since-epoch",
@@ -993,7 +993,7 @@ def main(argv=None, environ=None):
         payload, code = _wait_error_payload(args, "interrupted"), 4
     except Exception as exc:  # noqa: BLE001 - the never-print-nothing contract
         payload, code = (
-            _wait_error_payload(args, "%s: %s" % (type(exc).__name__, exc)),
+            _wait_error_payload(args, f"{type(exc).__name__}: {exc}"),
             4,
         )
     # One emit site for every outcome — including the error markers above — so a

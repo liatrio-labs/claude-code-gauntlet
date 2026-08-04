@@ -67,10 +67,9 @@ def _make_challenge(id_, score, justification=None):
 
 def _write_json(data):
     """Write data to a temp file and return the path."""
-    f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-    json.dump(data, f)
-    f.close()
-    return f.name
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+        json.dump(data, f)
+        return f.name
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +146,8 @@ class TestLoadFiltered(unittest.TestCase):
             load_filtered("/nonexistent/path.json")
 
     def test_invalid_json_exits(self):
-        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-        f.write("not json {{{")
-        f.close()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write("not json {{{")
         try:
             with self.assertRaises(SystemExit):
                 load_filtered(f.name)
@@ -195,9 +193,8 @@ class TestLoadChallenges(unittest.TestCase):
             load_challenges("/nonexistent/challenges.json")
 
     def test_invalid_json_exits(self):
-        f = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
-        f.write("[bad json")
-        f.close()
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            f.write("[bad json")
         try:
             with self.assertRaises(SystemExit):
                 load_challenges(f.name)
@@ -747,9 +744,11 @@ class TestMainCLI(unittest.TestCase):
         c_path = _write_json(challenges)
         try:
             captured = io.StringIO()
-            with patch("sys.argv", ["apply_challenges.py", f_path, c_path]):
-                with patch("sys.stdout", captured):
-                    main()
+            with (
+                patch("sys.argv", ["apply_challenges.py", f_path, c_path]),
+                patch("sys.stdout", captured),
+            ):
+                main()
             output = json.loads(captured.getvalue())
             self.assertIn("findings", output)
             self.assertNotIn("filtered", output)

@@ -544,24 +544,26 @@ class TestLabelsDiffHelper(unittest.TestCase):
             {"name": "ok", "color": "fff; echo pwned", "description": "not hex"},
         ]
         for entry in unusable:
-            with self.subTest(entry=entry["description"]):
-                with tempfile.TemporaryDirectory() as tmp:
-                    path = Path(tmp) / "labels.json"
-                    path.write_text(json.dumps({"labels": [entry]}), encoding="utf-8")
-                    result = subprocess.run(
-                        [
-                            sys.executable,
-                            str(LABELS_DIFF),
-                            "--manifest",
-                            str(path),
-                            "--commands",
-                        ],
-                        cwd=REPO,
-                        capture_output=True,
-                        text=True,
-                    )
-                    self.assertEqual(result.returncode, 2, result.stdout)
-                    self.assertEqual(result.stdout, "", "nothing may be emitted")
+            with (
+                self.subTest(entry=entry["description"]),
+                tempfile.TemporaryDirectory() as tmp,
+            ):
+                path = Path(tmp) / "labels.json"
+                path.write_text(json.dumps({"labels": [entry]}), encoding="utf-8")
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(LABELS_DIFF),
+                        "--manifest",
+                        str(path),
+                        "--commands",
+                    ],
+                    cwd=REPO,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(result.returncode, 2, result.stdout)
+                self.assertEqual(result.stdout, "", "nothing may be emitted")
 
 
 class TestIssueFormSchema(unittest.TestCase):
@@ -891,6 +893,28 @@ class TestContributingDocs(unittest.TestCase):
                     scope.match(path), f"cspell scope does not cover {path}"
                 )
 
+    def test_contributing_python_lint_hook_ids_match_pre_commit_config(self):
+        """Documented `pre-commit run <id>` commands stay tied to real hook ids."""
+        expected = {"ruff-check", "ruff-format", "mypy"}
+        contributing = _read("CONTRIBUTING.md")
+        hooks = _read(".pre-commit-config.yaml")
+        declared = set(re.findall(r"^\s+- id: ([^\s#]+)", hooks, re.M))
+        documented = set(
+            re.findall(
+                r"pre-commit run (ruff-check|ruff-format|mypy) --all-files",
+                contributing,
+            )
+        )
+        self.assertEqual(
+            documented,
+            expected,
+            "CONTRIBUTING.md must document exactly the Python lint/format/type hooks",
+        )
+        self.assertTrue(
+            expected.issubset(declared),
+            f"hooks {sorted(expected - declared)} missing from .pre-commit-config.yaml",
+        )
+
 
 # Required PR check-run names for ruleset 16049246 (protect-default-branch).
 # Any new always-on PR gate must update THIS tuple and the live ruleset in the
@@ -999,7 +1023,7 @@ def _agents_coverage_gate_commands(text: str) -> set[str]:
     heading = re.search(r"(?m)^Coverage gates\b.*$", text)
     if not heading:
         raise AssertionError("AGENTS.md missing 'Coverage gates' section")
-    rest = text[heading.end():]
+    rest = text[heading.end() :]
     fence = re.search(r"```bash\n(.*?)```", rest, re.DOTALL)
     if not fence:
         raise AssertionError("AGENTS.md Coverage gates missing ```bash fence")
@@ -1009,7 +1033,9 @@ def _agents_coverage_gate_commands(text: str) -> set[str]:
     # not create a confusing residual-\n false fail (interior blanks stay).
     commands = {c.rstrip("\n") for c in chunks if c.strip()}
     if len(commands) < 3:
-        raise AssertionError(f"expected ≥3 gate commands in AGENTS.md, found {len(commands)}")
+        raise AssertionError(
+            f"expected ≥3 gate commands in AGENTS.md, found {len(commands)}"
+        )
     return commands
 
 
@@ -1040,21 +1066,25 @@ def _ci_run_blocks(text: str) -> list[str]:
                 content_indent = indent
             if indent < content_indent and line.strip():
                 break
-            collected.append(line[content_indent:] if content_indent is not None else line)
+            collected.append(
+                line[content_indent:] if content_indent is not None else line
+            )
             i += 1
         blocks.append("\n".join(collected).rstrip("\n"))
     return blocks
 
 
 def _ci_gate_commands(text: str) -> set[str]:
-    return {b for b in _ci_run_blocks(text) if any(marker in b for marker in GATE_MARKERS)}
+    return {
+        b for b in _ci_run_blocks(text) if any(marker in b for marker in GATE_MARKERS)
+    }
 
 
 def _ci_workflow_tests_node_version(text: str) -> str:
     """The node-version: value under the workflow-tests job (stdlib; no PyYAML)."""
     lines = text.splitlines()
     in_job = False
-    for index, line in enumerate(lines):
+    for line in lines:
         if re.match(r"^  workflow-tests:\s*$", line):
             in_job = True
             continue

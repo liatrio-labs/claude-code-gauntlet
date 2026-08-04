@@ -60,7 +60,7 @@ def record_task_output(tmp, nonce=NONCE):
         timeout=60,
     )
     if proc.returncode != 0:
-        raise RuntimeError("recorder failed: %s" % proc.stderr)
+        raise RuntimeError(f"recorder failed: {proc.stderr}")
     return task_path, out_dir
 
 
@@ -83,7 +83,7 @@ def run_cli(args, environ=None):
     env = dict(os.environ)
     env.update(environ or {})
     proc = subprocess.run(
-        [sys.executable, SCRIPT] + args,
+        [sys.executable, SCRIPT, *args],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -91,7 +91,7 @@ def run_cli(args, environ=None):
         env=env,
     )
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    assert len(lines) == 1, "expected exactly one stdout line, got %r" % proc.stdout
+    assert len(lines) == 1, f"expected exactly one stdout line, got {proc.stdout!r}"
     return proc.returncode, json.loads(lines[0]), proc.stdout
 
 
@@ -104,8 +104,7 @@ class MaterializeTestCase(unittest.TestCase):
     def artifact(self, name):
         return os.path.join(
             self.out_dir,
-            "code-gauntlet-%s-abc1234.%s"
-            % (name, "md" if name == "report" else "json"),
+            f"code-gauntlet-{name}-abc1234.{'md' if name == 'report' else 'json'}",
         )
 
     def read(self, path):
@@ -123,8 +122,7 @@ class TestHappyPath(MaterializeTestCase):
             self.assertEqual(
                 self.read(entry["path"]),
                 entry["text"],
-                "%s is not byte-identical to what the workflow returned"
-                % entry["path"],
+                f"{entry['path']} is not byte-identical to what the workflow returned",
             )
 
     def test_the_bytes_a_transcriber_loses_survive(self):
@@ -138,7 +136,7 @@ class TestHappyPath(MaterializeTestCase):
         self.assertIn('\\"receipt\\"', description)
         self.assertIn("C:\\tmp\\out", description)
         self.assertIn("😀", description)
-        self.assertIn("𝕏", description)
+        self.assertIn("\U0001d54f", description)
         self.assertGreater(len(description), 1000, "long prose was not shortened")
         self.assertEqual(findings[0]["body"], description, "the v2 alias too")
 
@@ -312,7 +310,7 @@ class TestFailureModes(MaterializeTestCase):
 
     def test_a_payload_naming_no_plan_writes_nothing(self):
         def drop(payload):
-            payload["planPath"] = "%s/not-an-entry.json" % self.out_dir
+            payload["planPath"] = f"{self.out_dir}/not-an-entry.json"
 
         rewrite_payload(self.task, drop)
 

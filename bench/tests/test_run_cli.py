@@ -656,7 +656,7 @@ class LoopHardeningTest(RunTestBase):
         run_dir = self.runs_root / "run-oserror"
         run_dir.mkdir(parents=True)
         cp = run.checkpoint.Checkpoint(run_dir)
-        summary = run._run_prs(run_dir, urls, cp, metas, set(), 60, None, {})
+        run._run_prs(run_dir, urls, cp, metas, set(), 60, None, {})
 
         self.assertEqual(cp.status(urls[0]), "failed")
         detail = self._detail(cp, urls[0])
@@ -967,9 +967,11 @@ class ChildAuthCliTest(RunTestBase):
         self.assertEqual(args.child_auth, "api")
 
     def test_bogus_mode_is_an_argparse_error(self):
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            with self.assertRaises(SystemExit) as cm:
-                run.parse_args(["--tier", "smoke", "--child-auth", "oauth"])
+        with (
+            contextlib.redirect_stderr(io.StringIO()) as err,
+            self.assertRaises(SystemExit) as cm,
+        ):
+            run.parse_args(["--tier", "smoke", "--child-auth", "oauth"])
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("--child-auth", err.getvalue())
 
@@ -980,9 +982,11 @@ class ChildAuthCliTest(RunTestBase):
             captured.update(kwargs)
             return ["stop before the run starts"]
 
-        with patch.object(run, "check_prereqs", spy):
-            with contextlib.redirect_stderr(io.StringIO()):
-                rc = run.main(["--tier", "smoke", "--child-auth", "subscription"])
+        with (
+            patch.object(run, "check_prereqs", spy),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            rc = run.main(["--tier", "smoke", "--child-auth", "subscription"])
         self.assertEqual(rc, 2)
         self.assertEqual(captured.get("child_auth"), "subscription")
 
@@ -994,9 +998,11 @@ class ChildAuthCliTest(RunTestBase):
             captured.update(kwargs)
             return ["stop before the run starts"]
 
-        with patch.object(run, "check_prereqs", spy):
-            with contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(run.main(argv), 2)
+        with (
+            patch.object(run, "check_prereqs", spy),
+            contextlib.redirect_stderr(io.StringIO()),
+        ):
+            self.assertEqual(run.main(argv), 2)
         return captured.get("child_auth")
 
     def _write_resumable(self, run_id, child_auth):
@@ -1323,14 +1329,14 @@ class ChildAuthJudgeKeyNoteTest(RunTestBase):
 
     def test_main_prints_the_note_once_prereqs_pass(self):
         stderr = io.StringIO()
-        with patch.object(run, "check_prereqs", lambda **kwargs: []):
-            with patch.object(run, "_new_run", lambda args: 0):
-                with patch.dict(os.environ, {}, clear=True):
-                    self._patch_global("ENV_PATH", self.missing_env)
-                    with contextlib.redirect_stderr(stderr):
-                        rc = run.main(
-                            ["--tier", "smoke", "--child-auth", "subscription"]
-                        )
+        with (
+            patch.object(run, "check_prereqs", lambda **kwargs: []),
+            patch.object(run, "_new_run", lambda args: 0),
+            patch.dict(os.environ, {}, clear=True),
+            contextlib.redirect_stderr(stderr),
+        ):
+            self._patch_global("ENV_PATH", self.missing_env)
+            rc = run.main(["--tier", "smoke", "--child-auth", "subscription"])
         self.assertEqual(rc, 0)
         self.assertIn("judge", stderr.getvalue().lower())
 
@@ -1561,9 +1567,11 @@ class PrsListTest(RunTestBase):
         self.assertEqual(args.prs, self.subsets["mini"])
 
     def test_unknown_url_is_argparse_error(self):
-        with contextlib.redirect_stderr(io.StringIO()) as err:
-            with self.assertRaises(SystemExit) as cm:
-                run.parse_args(["--prs", "https://github.com/nope/nope/pull/999999"])
+        with (
+            contextlib.redirect_stderr(io.StringIO()) as err,
+            self.assertRaises(SystemExit) as cm,
+        ):
+            run.parse_args(["--prs", "https://github.com/nope/nope/pull/999999"])
         self.assertEqual(cm.exception.code, 2)
         self.assertIn("not in shas.json", err.getvalue())
 

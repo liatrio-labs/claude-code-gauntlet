@@ -260,7 +260,7 @@ def find_marker(text):
                 found["_legacy"] = match.group(1) == LEGACY_MARKER_TOKEN
                 return found
         return None
-    except Exception:  # pragma: no cover — defensive: a reader never raises
+    except Exception:  # noqa: BLE001  # pragma: no cover - a reader never raises
         return None
 
 
@@ -290,7 +290,7 @@ def parse_prose_footer(text):
             if sha_match:
                 found = sha_match.group(1)
         return found
-    except Exception:  # pragma: no cover — defensive: a reader never raises
+    except Exception:  # noqa: BLE001  # pragma: no cover - a reader never raises
         return None
 
 

@@ -192,9 +192,7 @@ def _write_report(lines):
     if not output_dir:
         return
     os.makedirs(output_dir, exist_ok=True)
-    body = (
-        ["# Deep Review Report", "", "## Methodology", "", "```"] + lines + ["```", ""]
-    )
+    body = ["# Deep Review Report", "", "## Methodology", "", "```", *lines, "```", ""]
     with open(os.path.join(output_dir, "deep-review-report.md"), "w") as fh:
         fh.write("\n".join(body) + "\n")
 

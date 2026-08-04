@@ -80,6 +80,7 @@ import re
 import stat
 import sys
 import tempfile
+from contextlib import suppress
 
 # The one place a convention filename is added. Ordered: this order is also the
 # tie-break precedence when two files at the same directory level state
@@ -352,7 +353,7 @@ class _Collector:
                 self._skip(os.path.join(containing_dir, raw), reason)
                 continue
             self.visit(
-                target, "import:" + self._display(real), depth + 1, chain + (real,)
+                target, "import:" + self._display(real), depth + 1, (*chain, real)
             )
 
 
@@ -420,7 +421,7 @@ def render(sources):
         return ""
     parts = []
     for entry in sources:
-        parts.append("### %s\n" % entry["path"])
+        parts.append(f"### {entry['path']}\n")
         text = entry["text"]
         parts.append(text if text.endswith("\n") else text + "\n")
         parts.append("\n")
@@ -449,12 +450,8 @@ def write_text_atomic(path, text):
         os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except BaseException:
-        try:
+        with suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            # Best-effort cleanup: unlink can fail (already removed, perms,
-            # races). Never mask the original write/replace error.
-            pass
         raise
 
 
@@ -472,8 +469,8 @@ def _gaps(collector):
     ]
     for entry in security:
         gaps.append(
-            "project_rules_refused: %s (%s) — pointer refused; it is not a "
-            "markdown file inside the repository" % (entry["path"], entry["reason"])
+            f"project_rules_refused: {entry['path']} ({entry['reason']}) — pointer "
+            "refused; it is not a markdown file inside the repository"
         )
     for entry in collector.skipped:
         if entry["reason"] in (
@@ -483,14 +480,14 @@ def _gaps(collector):
             "depth_exceeded",
         ):
             gaps.append(
-                "project_rules_truncated: %s (%s) — its rules are NOT in "
-                "the review context" % (entry["path"], entry["reason"])
+                f"project_rules_truncated: {entry['path']} ({entry['reason']}) — its "
+                "rules are NOT in the review context"
             )
     for entry in collector.skipped:
         if entry["reason"] in ("missing", "cycle", "not_regular"):
             gaps.append(
-                "project_rules_unresolved: %s (%s) — this pointer did not resolve "
-                "to rule content" % (entry["path"], entry["reason"])
+                f"project_rules_unresolved: {entry['path']} ({entry['reason']}) — "
+                "this pointer did not resolve to rule content"
             )
     if not collector.sources:
         gaps.append(
@@ -606,11 +603,9 @@ def main(argv=None):
         )
         return 0
     except Exception as exc:  # noqa: BLE001 — a receipt on every path
-        sys.stderr.write("collect_project_rules: %s\n" % exc)
-        try:
+        sys.stderr.write(f"collect_project_rules: {exc}\n")
+        with suppress(Exception):
             write_text_atomic(args.out, render(collector.sources) if collector else "")
-        except Exception:  # noqa: BLE001
-            pass
         _emit(
             _receipt(
                 ok=False,
@@ -619,7 +614,7 @@ def main(argv=None):
                 skipped=collector.skipped if collector else [],
                 total_bytes=0,
                 truncated=False,
-                gaps=["project_rules_failed: %s" % exc],
+                gaps=[f"project_rules_failed: {exc}"],
             )
         )
         return 1

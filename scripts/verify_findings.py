@@ -457,18 +457,12 @@ def classify_blame(finding, base_branch):
     # RF-05: removed unreachable branch ``blamed_sha.startswith(full_sha)`` —
     # blamed_sha is always the shorter side, so only check full_sha.startswith(blamed_sha).
     def sha_in_pr(blamed_sha, pr_set):
-        for full_sha in pr_set:
-            if full_sha.startswith(blamed_sha):
-                return True
-        return False
+        return any(full_sha.startswith(blamed_sha) for full_sha in pr_set)
 
     has_pr_commit = any(sha_in_pr(s, pr_commits) for s in blamed_shas)
 
     # "new" if any blamed commit is in the PR branch; otherwise "surfaced"
-    if has_pr_commit:
-        classification = "new"
-    else:
-        classification = "surfaced"
+    classification = "new" if has_pr_commit else "surfaced"
 
     finding["blame_metadata"] = {
         "classification": classification,
@@ -786,7 +780,7 @@ def verify_factual(finding):
         # Proportional penalty: scale reduction by fraction of symbols missing
         # e.g., 1 of 4 found → miss_ratio=0.75 → reduction of ~52
         # e.g., 3 of 4 found → miss_ratio=0.25 → reduction of ~18
-        reduction = int(round(miss_ratio * 70))
+        reduction = round(miss_ratio * 70)
         new_confidence = max(30, original_confidence - reduction)
         finding["confidence"] = new_confidence
         finding["factual_verification"] = {
@@ -986,7 +980,7 @@ def _half_up_int(value):
         return None
     # Explicit half-up, not round(): Python's round() is half-to-even, and the
     # spelling of this decision should not depend on which runtime reads the code.
-    return int(math.floor(value + 0.5))
+    return math.floor(value + 0.5)
 
 
 def _coerce_numeric_fields(finding):

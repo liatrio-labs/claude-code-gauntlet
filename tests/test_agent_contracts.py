@@ -28,7 +28,8 @@ DISCOVERY_AGENTS = [
 # (issue #48). The 7 discovery agents plus the three other file-readers: validator and
 # change-summarizer are handed the shared context path by the same stage inputs the
 # discovery agents are; challenger is not, but it opens the code under review itself.
-COMPLETE_READ_AGENTS = DISCOVERY_AGENTS + [
+COMPLETE_READ_AGENTS = [
+    *DISCOVERY_AGENTS,
     "validator",
     "challenger",
     "change-summarizer",

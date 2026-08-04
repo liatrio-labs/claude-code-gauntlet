@@ -85,8 +85,8 @@ from review_marker import SHA_RE, build_footer
 # be written into the payload file. main() resets all three at startup.
 
 DRY_RUN = False
-_CAPTURED = []
-_SKIP_WARNINGS = []
+_CAPTURED: list[dict] = []
+_SKIP_WARNINGS: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ def post_json(cmd_prefix, payload):
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(payload, f, ensure_ascii=False)
-        cmd = cmd_prefix + ["--input", tmppath]
+        cmd = [*cmd_prefix, "--input", tmppath]
         stdout, stderr, rc = run_api(cmd)
         if rc != 0:
             die(
@@ -176,14 +176,12 @@ def detect_platform():
     ssh_match = re.match(r"git@([^:]+):(.+?)(?:\.git)?$", url)
     if ssh_match:
         host = ssh_match.group(1)
-        path = ssh_match.group(2)
     else:
         # https://host/path or http://host/path
         https_match = re.match(r"https?://([^/]+)/(.+?)(?:\.git)?$", url)
         if not https_match:
             return None, None
         host = https_match.group(1)
-        path = https_match.group(2)
 
     if "github.com" in host:
         return "github", host
@@ -306,7 +304,7 @@ def valid_lines_for_file(valid_lines, filepath):
     if valid_lines is None:
         return None
     stripped = re.sub(r"^[ab]/", "", filepath)
-    lines = sorted({l for fp, l in valid_lines if fp == filepath or fp == stripped})
+    lines = sorted({line for fp, line in valid_lines if fp in (filepath, stripped)})
     return lines[:10]
 
 
@@ -638,7 +636,7 @@ def post_gitlab(data, valid_lines, new_files=None):
             "Content-Type: application/json",
             f"projects/{project_id}/merge_requests/{mr_iid}/discussions",
         ]
-        resp = post_json(cmd_prefix, payload)
+        post_json(cmd_prefix, payload)
         posted += 1
 
     if DRY_RUN:

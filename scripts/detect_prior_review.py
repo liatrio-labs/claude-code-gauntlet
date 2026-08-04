@@ -642,9 +642,9 @@ def main():
 
     try:
         signal = select_latest(entries)
-    except Exception as exc:  # pragma: no cover — defensive: detection never blocks
+    except Exception as exc:  # noqa: BLE001  # pragma: no cover - detection never blocks
         signal = None
-        errors = errors + [f"detection failed: {exc}"]
+        errors = [*errors, f"detection failed: {exc}"]
 
     git_facts = resolve_git_facts(
         signal.get("sha") if signal else None, args.head_sha, errors

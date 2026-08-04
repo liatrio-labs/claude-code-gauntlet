@@ -74,7 +74,7 @@ class _RepoCase(unittest.TestCase):
     def run_script(self, *extra, **kwargs):
         """Run in-process (fast, importable) and return (exit_code, receipt, body)."""
         repo = kwargs.pop("repo", self.repo)
-        argv = ["--repo-root", repo, "--out", self.out] + list(extra)
+        argv = ["--repo-root", repo, "--out", self.out, *list(extra)]
         from io import StringIO
 
         saved = sys.stdout
@@ -88,8 +88,8 @@ class _RepoCase(unittest.TestCase):
         self.assertEqual(
             len(lines),
             1,
-            "stdout must be EXACTLY one line of JSON; got %d line(s): %r"
-            % (len(lines), captured),
+            f"stdout must be EXACTLY one line of JSON; got {len(lines)} line(s): "
+            f"{captured!r}",
         )
         receipt = json.loads(lines[0])
         # "" for a missing file as well as an empty one; the distinction between
@@ -195,7 +195,7 @@ class TestSecurityBoundary(_RepoCase):
         # The payload ends in .md so it is a real candidate and actually reaches
         # the join logic under test, rather than being dropped earlier.
         outside = self.write("secret.md", "ABS-CANARY\n", root=self.base)
-        self.write("CLAUDE.md", "@%s\n" % outside)
+        self.write("CLAUDE.md", f"@{outside}\n")
         _, receipt, body = self.run_script()
         self.assertNotIn("ABS-CANARY", body)
         self.assertIn("absolute_path", self.reasons(receipt))
@@ -293,12 +293,12 @@ class TestSecurityBoundary(_RepoCase):
         self.assertEqual(
             [],
             [s for s in receipt["skipped"] if s["reason"] != "duplicate_of"],
-            "prose at-signs must not produce skip entries: %r" % receipt["skipped"],
+            f"prose at-signs must not produce skip entries: {receipt['skipped']!r}",
         )
         self.assertEqual(
             [],
             [g for g in receipt["gaps"] if "refused" in g],
-            "prose at-signs must not produce refusal gaps: %r" % receipt["gaps"],
+            f"prose at-signs must not produce refusal gaps: {receipt['gaps']!r}",
         )
 
 
@@ -372,11 +372,9 @@ class TestBounds(_RepoCase):
         # exists because the constant was once deleted as apparent dead code —
         # nothing referenced it and nothing failed.
         cap = 10
-        self.write(
-            "CLAUDE.md", "\n".join("@f%d.md" % i for i in range(cap + 20)) + "\n"
-        )
+        self.write("CLAUDE.md", "\n".join(f"@f{i}.md" for i in range(cap + 20)) + "\n")
         for i in range(cap + 20):
-            self.write("f%d.md" % i, "")
+            self.write(f"f{i}.md", "")
         _, receipt, _ = self.run_script("--max-files", str(cap))
         # Only the pointer list itself contributes bytes; every target is empty,
         # so the byte caps are nowhere near tripping and cannot be what stopped
@@ -398,10 +396,10 @@ class TestBounds(_RepoCase):
         # script's view of a repo identical to the harness's.
         self.write("CLAUDE.md", "@d1.md\n")
         for i in range(1, MAX_IMPORT_DEPTH + 1):
-            self.write("d%d.md" % i, "RULE-D%d\n@d%d.md\n" % (i, i + 1))
-        self.write("d%d.md" % (MAX_IMPORT_DEPTH + 1), "RULE-TOO-DEEP\n")
+            self.write(f"d{i}.md", f"RULE-D{i}\n@d{i + 1}.md\n")
+        self.write(f"d{MAX_IMPORT_DEPTH + 1}.md", "RULE-TOO-DEEP\n")
         _, receipt, body = self.run_script()
-        self.assertIn("RULE-D%d" % MAX_IMPORT_DEPTH, body)
+        self.assertIn(f"RULE-D{MAX_IMPORT_DEPTH}", body)
         self.assertNotIn("RULE-TOO-DEEP", body)
         self.assertIn("depth_exceeded", self.reasons(receipt))
 
@@ -418,8 +416,8 @@ class TestBounds(_RepoCase):
         # cycle" is one of the reasons explicitly named as belonging in gaps[].
         self.assertTrue(
             any("cycle" in g for g in receipt["gaps"]),
-            "an import cycle must reach the human-readable gaps list: %r"
-            % receipt["gaps"],
+            f"an import cycle must reach the human-readable gaps list: "
+            f"{receipt['gaps']!r}",
         )
 
 
@@ -441,10 +439,10 @@ class TestDiscovery(_RepoCase):
 
     def test_all_declared_source_filenames_are_collected(self):
         for name in PROJECT_RULE_FILENAMES:
-            self.write(name, "RULE-FROM-%s\n" % name.replace(".md", ""))
+            self.write(name, f"RULE-FROM-{name.replace('.md', '')}\n")
         _, _, body = self.run_script()
         for name in PROJECT_RULE_FILENAMES:
-            self.assertIn("RULE-FROM-%s" % name.replace(".md", ""), body)
+            self.assertIn(f"RULE-FROM-{name.replace('.md', '')}", body)
 
     def test_changed_files_accepts_dict_shaped_entries(self):
         self.write("CLAUDE.md", "ROOT-RULE\n")
@@ -518,7 +516,7 @@ class TestDisclosureContract(_RepoCase):
         _, receipt, _ = self.run_script()
         self.assertTrue(receipt["skipped"])
         for entry in receipt["skipped"]:
-            self.assertTrue(entry.get("reason"), "silent skip: %r" % entry)
+            self.assertTrue(entry.get("reason"), f"silent skip: {entry!r}")
 
     def test_subprocess_invocation_keeps_stdout_to_one_json_line(self):
         # The in-process helper asserts this too, but Phase 2 invokes the script
@@ -541,7 +539,7 @@ class TestDisclosureContract(_RepoCase):
         for entry in receipt["skipped"]:
             self.assertFalse(
                 entry["path"].startswith("/"),
-                "receipt leaked an absolute host path: %r" % entry["path"],
+                f"receipt leaked an absolute host path: {entry['path']!r}",
             )
 
 

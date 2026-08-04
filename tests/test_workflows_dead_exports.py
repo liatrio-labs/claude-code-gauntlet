@@ -60,7 +60,9 @@ def _opens_regex(code_tail: str) -> bool:
     if code_tail[-1] in _REGEX_PRECEDERS:
         return True
     word = _TRAILING_WORD.search(code_tail)
-    return bool(word) and word.group(1) in _REGEX_KEYWORDS
+    if word is None:
+        return False
+    return word.group(1) in _REGEX_KEYWORDS
 
 
 def strip_comments_and_strings(text: str) -> str:

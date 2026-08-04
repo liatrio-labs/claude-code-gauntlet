@@ -55,9 +55,14 @@ def load_manifest(path=MANIFEST):
         _die(f"{path} must be an object with a non-empty `labels` array")
     for entry in labels:
         if not isinstance(entry, dict):
-            _die(f"{path}: every label must be an object, got {json.dumps(entry)[:200]}")
-        missing = [key for key in ("name", "color", "description")
-                   if not isinstance(entry.get(key), str)]
+            _die(
+                f"{path}: every label must be an object, got {json.dumps(entry)[:200]}"
+            )
+        missing = [
+            key
+            for key in ("name", "color", "description")
+            if not isinstance(entry.get(key), str)
+        ]
         if missing:
             _die(f"{path}: label {json.dumps(entry)[:120]} is missing string {missing}")
     return labels
@@ -74,12 +79,18 @@ def load_live(source):
     because a failed API read is what a maintainer will actually hit.
     """
     try:
-        text = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+        text = (
+            sys.stdin.read()
+            if source == "-"
+            else Path(source).read_text(encoding="utf-8")
+        )
     except OSError as error:
         _die(f"cannot read the label response: {error}")
     if not text.strip():
-        _die(f"no JSON in {'stdin' if source == '-' else source}: "
-             "the `gh api` read produced nothing")
+        _die(
+            f"no JSON in {'stdin' if source == '-' else source}: "
+            "the `gh api` read produced nothing"
+        )
 
     decoder = json.JSONDecoder()
     entries, offset = [], 0
@@ -92,8 +103,10 @@ def load_live(source):
         except json.JSONDecodeError as error:
             _die(f"could not parse the label response as JSON: {error}")
         if not isinstance(page, list):
-            _die("expected a JSON array of labels from `gh api`, got "
-                 f"{json.dumps(page)[:200]}")
+            _die(
+                "expected a JSON array of labels from `gh api`, got "
+                f"{json.dumps(page)[:200]}"
+            )
         entries.extend(page)
 
     while entries and all(isinstance(entry, list) for entry in entries):
@@ -103,11 +116,13 @@ def load_live(source):
     for entry in entries:
         if not isinstance(entry, dict) or "name" not in entry:
             _die(f"expected label objects with a name, got {json.dumps(entry)[:200]}")
-        labels.append({
-            "name": entry["name"],
-            "color": (entry.get("color") or "").lower(),
-            "description": entry.get("description") or "",
-        })
+        labels.append(
+            {
+                "name": entry["name"],
+                "color": (entry.get("color") or "").lower(),
+                "description": entry.get("description") or "",
+            }
+        )
     return labels
 
 
@@ -119,8 +134,10 @@ def diff(manifest, live):
         (label, by_name[label["name"]])
         for label in manifest
         if label["name"] in by_name
-        and (by_name[label["name"]]["color"] != label["color"]
-             or by_name[label["name"]]["description"] != label["description"])
+        and (
+            by_name[label["name"]]["color"] != label["color"]
+            or by_name[label["name"]]["description"] != label["description"]
+        )
     ]
     managed = {label["name"] for label in manifest}
     unmanaged = sorted(label["name"] for label in live if label["name"] not in managed)
@@ -130,13 +147,20 @@ def diff(manifest, live):
 def command(label, repo=None):
     # `--force` updates an existing label in place instead of failing on conflict. It
     # never deletes, so a label absent from the manifest is left alone.
-    argv = ["gh", "label", "create", shlex.quote(label["name"]),
-            "--color", shlex.quote(label["color"]),
-            "--description", shlex.quote(label["description"])]
+    argv = [
+        "gh",
+        "label",
+        "create",
+        shlex.quote(label["name"]),
+        "--color",
+        shlex.quote(label["color"]),
+        "--description",
+        shlex.quote(label["description"]),
+    ]
     if repo:
         # Without this, `gh` infers the target from the working directory's git remote.
         argv += ["--repo", shlex.quote(repo)]
-    return " ".join(argv + ["--force"])
+    return " ".join([*argv, "--force"])
 
 
 def check_emittable(manifest):
@@ -144,10 +168,14 @@ def check_emittable(manifest):
     for label in manifest:
         for field in ("name", "description"):
             if label[field].startswith("-"):
-                _die(f"{label['name']!r}: {field} starts with '-', which `gh` would read "
-                     "as a flag")
+                _die(
+                    f"{label['name']!r}: {field} starts with '-', which `gh` would read "
+                    "as a flag"
+                )
         if not HEX_COLOR.match(label["color"]):
-            _die(f"{label['name']!r}: color {label['color']!r} is not 6-digit lowercase hex")
+            _die(
+                f"{label['name']!r}: color {label['color']!r} is not 6-digit lowercase hex"
+            )
 
 
 def emit(labels, manifest, repo):
@@ -160,15 +188,27 @@ def emit(labels, manifest, repo):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Compare .github/labels.json against a repository's live labels.")
-    parser.add_argument("--live", metavar="PATH",
-                        help="JSON array of the repository's labels, or - for stdin")
-    parser.add_argument("--commands", action="store_true",
-                        help="print gh label create commands instead of a drift report")
-    parser.add_argument("--repo", metavar="OWNER/REPO",
-                        help="pass --repo to the emitted gh commands")
-    parser.add_argument("--manifest", metavar="PATH", default=MANIFEST,
-                        help="taxonomy manifest to read (default: .github/labels.json)")
+        description="Compare .github/labels.json against a repository's live labels."
+    )
+    parser.add_argument(
+        "--live",
+        metavar="PATH",
+        help="JSON array of the repository's labels, or - for stdin",
+    )
+    parser.add_argument(
+        "--commands",
+        action="store_true",
+        help="print gh label create commands instead of a drift report",
+    )
+    parser.add_argument(
+        "--repo", metavar="OWNER/REPO", help="pass --repo to the emitted gh commands"
+    )
+    parser.add_argument(
+        "--manifest",
+        metavar="PATH",
+        default=MANIFEST,
+        help="taxonomy manifest to read (default: .github/labels.json)",
+    )
     args = parser.parse_args(argv)
 
     manifest = load_manifest(args.manifest)
@@ -187,16 +227,25 @@ def main(argv=None):
         print(f"missing: {label['name']}")
     for label, live in diverging:
         print(f"diverging: {label['name']}")
-        print(f"    live:     color={live['color']} description={live['description']!r}")
-        print(f"    manifest: color={label['color']} description={label['description']!r}")
+        print(
+            f"    live:     color={live['color']} description={live['description']!r}"
+        )
+        print(
+            f"    manifest: color={label['color']} description={label['description']!r}"
+        )
     for name in unmanaged:
-        print(f"unmanaged (in the repo, absent from the manifest, left untouched): {name}")
+        print(
+            f"unmanaged (in the repo, absent from the manifest, left untouched): {name}"
+        )
 
     if missing or diverging:
         sys.stdout.flush()
-        print(f"\n{len(missing)} missing, {len(diverging)} diverging — run "
-              "`python3 .github/labels_diff.py --commands --live <file> --repo <owner>/<repo>` "
-              "from the repo root", file=sys.stderr)
+        print(
+            f"\n{len(missing)} missing, {len(diverging)} diverging — run "
+            "`python3 .github/labels_diff.py --commands --live <file> --repo <owner>/<repo>` "
+            "from the repo root",
+            file=sys.stderr,
+        )
         return 1
     print(f"in sync: {len(manifest)} labels match the manifest")
     return 0

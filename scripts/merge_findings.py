@@ -99,8 +99,8 @@ def _ndjson_path(findings_dir: str, agent: str, session_sha: str) -> str:
 
 def parse_ndjson_file(path: str, agent: str) -> tuple[list[dict], list[str]]:
     """Parse a single NDJSON file. Returns (findings, warnings)."""
-    findings = []
-    parse_warnings = []
+    findings: list[dict] = []
+    parse_warnings: list[str] = []
 
     if not os.path.exists(path):
         return findings, parse_warnings
@@ -191,9 +191,10 @@ def _try_parse_json_at(text: str, start: int) -> dict | None:
             if depth == 0:
                 candidate = text[start : i + 1]
                 try:
-                    return json.loads(candidate)
+                    parsed = json.loads(candidate)
                 except json.JSONDecodeError:
                     return None
+                return parsed if isinstance(parsed, dict) else None
         i += 1
     return None
 
@@ -239,8 +240,8 @@ def parse_text_file(path: str, agent: str) -> tuple[list[dict], list[str], bool,
         has_prose: True if text has meaningful non-JSON, non-SKIP content
         has_skip_lines: True if text contains SKIP: lines
     """
-    findings = []
-    parse_warnings = []
+    findings: list[dict] = []
+    parse_warnings: list[str] = []
     has_prose = False
     has_skip_lines = False
 
@@ -299,7 +300,8 @@ def deduplicate(
     """
     from finding_dedup import dedup_by_id
 
-    return dedup_by_id(ndjson_findings, text_findings)
+    result: tuple[list[dict], int, int] = dedup_by_id(ndjson_findings, text_findings)
+    return result
 
 
 # ---------------------------------------------------------------------------

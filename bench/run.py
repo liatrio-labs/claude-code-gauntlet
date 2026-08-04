@@ -34,6 +34,7 @@ import sys
 import time
 import traceback
 from collections import defaultdict
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -400,9 +401,7 @@ def _valid_naive_comment(item):
     if path is not None and not isinstance(path, str):
         return False
     line = item.get("line")
-    if line is not None and (not isinstance(line, int) or isinstance(line, bool)):
-        return False
-    return True
+    return line is None or (isinstance(line, int) and not isinstance(line, bool))
 
 
 def _parse_comments_block(body):
@@ -537,10 +536,8 @@ def _invoke_naive(
     try:
         out, _ = proc.communicate(input=prompt, timeout=timeout_s)
     except subprocess.TimeoutExpired:
-        try:
+        with suppress(ProcessLookupError, PermissionError, OSError):
             os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            pass
         try:
             out, _ = proc.communicate(timeout=10)
         except (subprocess.TimeoutExpired, ValueError, OSError):
@@ -718,7 +715,7 @@ def _run_prs(
             _collect_artifacts(output_dir, pr_dir)
             if not is_naive:
                 invoke.collect_workflow_records(claude_home, pr_dir, wf_baseline)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - fail only this PR and continue
             # PR-granular progress: an unexpected error (bad JSON, an OSError during
             # collection, a plain bug) must fail only this PR and let the tier continue --
             # distinct from the mirror block's DriftError->drifted and
@@ -742,7 +739,7 @@ def _run_prs(
             # self-healed by the next make_worktree anyway); warn and move on.
             try:
                 mirrors.remove_worktree(mirror, worktree)
-            except Exception as cleanup_exc:
+            except Exception as cleanup_exc:  # noqa: BLE001 - best-effort cleanup
                 print(
                     f"!! worktree cleanup failed for {url} ({cleanup_exc}) -- continuing",
                     file=sys.stderr,

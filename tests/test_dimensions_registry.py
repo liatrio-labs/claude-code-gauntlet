@@ -219,9 +219,9 @@ def table_named(tables, keyword):
 def claude_md_bullet(anchor):
     """The single agents/AGENTS.md line containing `anchor`."""
     lines = [
-        l
-        for l in (REPO / "agents" / "AGENTS.md").read_text().splitlines()
-        if anchor in l
+        line
+        for line in (REPO / "agents" / "AGENTS.md").read_text().splitlines()
+        if anchor in line
     ]
     if len(lines) != 1:
         raise AssertionError(
@@ -500,7 +500,7 @@ class TestReportFormatFieldTables(unittest.TestCase):
             expected,
             documented,
             "report-format.md documents a field set that is not "
-            "registry ∪ {suggested_fix_code}",
+            "registry \u222a {suggested_fix_code}",
         )
 
     def test_canonical_table_matches_registry(self):

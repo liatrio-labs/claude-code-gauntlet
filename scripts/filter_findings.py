@@ -659,7 +659,7 @@ def detect_disagreement(findings):
     suppressed_ids = set()
     suppressed = []
 
-    for key, group in location_groups.items():
+    for group in location_groups.values():
         if len(group) < 2:
             continue
 
@@ -734,7 +734,7 @@ def detect_disagreement(findings):
         consensus_groups.setdefault(group_key, []).append(finding)
 
     boosted_count = 0
-    for group_key, group in consensus_groups.items():
+    for group in consensus_groups.values():
         count = len(group)
         agents_in_group = [f.get("agent", "") for f in group if f.get("agent")]
 
@@ -772,7 +772,7 @@ def detect_disagreement(findings):
         key = (finding.get("file", ""), finding.get("line_start", 0))
         location_groups_active.setdefault(key, []).append(finding)
 
-    for key, group in location_groups_active.items():
+    for group in location_groups_active.values():
         if len(group) < 2:
             group[0].setdefault("contradiction", False)
             group[0].setdefault("security_escalation", False)
@@ -984,10 +984,7 @@ def _is_test_correctness_finding(finding):
     description = finding.get("description", "")
     combined = f"{title}\n{description}"
 
-    for pattern in _TEST_CORRECTNESS_PATTERNS:
-        if pattern.search(combined):
-            return True
-    return False
+    return any(pattern.search(combined) for pattern in _TEST_CORRECTNESS_PATTERNS)
 
 
 def group_by_proximity(findings, line_proximity=5):

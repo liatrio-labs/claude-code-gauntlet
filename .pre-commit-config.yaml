@@ -82,3 +82,18 @@ repos:
         # not of whichever file happens to be edited.
         files: ^(CLAUDE\.md|AGENTS\.md|[^/]+/(AGENTS|CLAUDE)\.md|scripts/sync_agent_rules\.py)$
         pass_filenames: false
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff-check
+        # Report-only: a rewriting linter can change semantics; format is the only auto-writer.
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.3.0
+    hooks:
+      - id: mypy
+        pass_filenames: false
+        args: ["--config-file", "pyproject.toml"]
+        additional_dependencies: []

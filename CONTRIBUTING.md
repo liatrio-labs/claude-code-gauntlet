@@ -73,6 +73,14 @@ node workflows/build.js
 # Run full pre-commit checks across the repo
 pre-commit run --all-files
 
+# Run the pinned Python lint, format, and type checks
+pre-commit run ruff-check --all-files
+pre-commit run ruff-format --all-files
+pre-commit run mypy --all-files
+
+# Optional: ignore mass mechanical reflows in git blame
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+
 # Run markdown linting only
 pre-commit run markdownlint-fix --all-files
 

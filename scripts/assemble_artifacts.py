@@ -137,6 +137,7 @@ import os
 import struct
 import sys
 import tempfile
+from contextlib import suppress
 
 PLAN_VERSION = 2
 PLAN_CHECKSUM_KEY = "planChecksum"
@@ -167,7 +168,7 @@ FNV_PRIME = 0x01000193
 def utf16_code_units(s):
     """The UTF-16 code units of `s`, exactly what JS charCodeAt() walks."""
     raw = s.encode("utf-16-le", "surrogatepass")
-    return struct.unpack("<%dH" % (len(raw) // 2), raw)
+    return struct.unpack(f"<{len(raw) // 2}H", raw)
 
 
 def utf16_len(s):
@@ -181,7 +182,7 @@ def fnv1a32(s):
     for unit in utf16_code_units(s):
         h ^= unit
         h = (h * FNV_PRIME) & 0xFFFFFFFF
-    return "fnv1a32:0x%08x" % h
+    return f"fnv1a32:0x{h:08x}"
 
 
 def normalize_content(s):
@@ -250,34 +251,33 @@ def assert_js_reproducible(obj, path="$"):
     stack = [(obj, path)]
     while stack:
         node, where = stack.pop()
-        if node is None or isinstance(node, bool) or isinstance(node, str):
+        if node is None or isinstance(node, (bool, str)):
             continue
         if isinstance(node, int):
             if not (-JS_MAX_SAFE_INTEGER <= node <= JS_MAX_SAFE_INTEGER):
                 raise JsSerializationError(
-                    "integer at %s is outside JS's safe integer range (%r)"
-                    % (where, node)
+                    f"integer at {where} is outside JS's safe integer range ({node!r})"
                 )
             continue
         if isinstance(node, float):
             raise JsSerializationError(
-                "non-integer number at %s (%r): JS and Python spell such numbers "
-                "differently, so the derived artifact would diverge" % (where, node)
+                f"non-integer number at {where} ({node!r}): JS and Python spell "
+                "such numbers differently, so the derived artifact would diverge"
             )
         if isinstance(node, list):
             for i, item in enumerate(node):
-                stack.append((item, "%s[%d]" % (where, i)))
+                stack.append((item, f"{where}[{i}]"))
             continue
         if isinstance(node, dict):
             for key, value in node.items():
                 if not isinstance(key, str):
                     raise JsSerializationError(
-                        "non-string object key at %s (%r)" % (where, key)
+                        f"non-string object key at {where} ({key!r})"
                     )
-                stack.append((value, "%s.%s" % (where, key)))
+                stack.append((value, f"{where}.{key}"))
             continue
         raise JsSerializationError(
-            "value at %s has no JSON representation (%s)" % (where, type(node).__name__)
+            f"value at {where} has no JSON representation ({type(node).__name__})"
         )
 
 
@@ -308,7 +308,7 @@ def escape_lone_surrogates(s):
             i += 2
             continue
         if 0xD800 <= cp <= 0xDFFF:
-            out.append("\\u%04x" % cp)
+            out.append(f"\\u{cp:04x}")
             i += 1
             continue
         out.append(s[i])
@@ -368,18 +368,14 @@ def write_text_atomic(path, text):
         os.umask(umask)
         os.chmod(tmp, 0o666 & ~umask)
     except BaseException:
-        try:
+        with suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass  # best-effort cleanup; the original exception below is what must propagate
         raise
     try:
         os.replace(tmp, path)
     except BaseException:
-        try:
+        with suppress(OSError):
             os.unlink(tmp)
-        except OSError:
-            pass  # best-effort cleanup; the original exception below is what must propagate
         raise
 
 
@@ -422,28 +418,28 @@ def _load_source(path, cache, errors):
     cache[path] = None
     try:
         raw = read_text(path)
-    except Exception as exc:  # includes UnicodeDecodeError (a ValueError)
-        errors.append("source not found or unreadable: %s (%s)" % (path, exc))
+    except Exception as exc:  # noqa: BLE001 - includes UnicodeDecodeError (a ValueError)
+        errors.append(f"source not found or unreadable: {path} ({exc})")
         return None
     try:
         data = json.loads(raw)
     except ValueError as exc:
-        errors.append("source is not valid JSON: %s (%s)" % (path, exc))
+        errors.append(f"source is not valid JSON: {path} ({exc})")
         return None
     if not isinstance(data, list):
-        errors.append("source must be a JSON array of findings: %s" % path)
+        errors.append(f"source must be a JSON array of findings: {path}")
         return None
     by_id = {}
     for index, item in enumerate(data):
         if not isinstance(item, dict):
-            errors.append("source entry %d is not an object: %s" % (index, path))
+            errors.append(f"source entry {index} is not an object: {path}")
             return None
         fid = item.get("id")
         if not isinstance(fid, str) or not fid:
-            errors.append("source entry %d has no usable string id: %s" % (index, path))
+            errors.append(f"source entry {index} has no usable string id: {path}")
             return None
         if fid in by_id:
-            errors.append("duplicate id %r in source: %s" % (fid, path))
+            errors.append(f"duplicate id {fid!r} in source: {path}")
             return None
         by_id[fid] = item
     cache[path] = by_id
@@ -456,9 +452,7 @@ def _project(by_id, ids, source_path, label, errors):
     out = []
     for fid in ids:
         if fid not in by_id:
-            errors.append(
-                "%s id %r not present in source %s" % (label, fid, source_path)
-            )
+            errors.append(f"{label} id {fid!r} not present in source {source_path}")
             continue
         out.append(by_id[fid])
     return out
@@ -475,10 +469,9 @@ def _serialize(document, label, errors):
     """js_stringify_pretty with every failure turned into a structural error."""
     try:
         return js_stringify_pretty(document)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - converted to a structural error
         errors.append(
-            "could not serialize the %s artifact: %s: %s"
-            % (label, type(exc).__name__, exc)
+            f"could not serialize the {label} artifact: {type(exc).__name__}: {exc}"
         )
         return None
 
@@ -491,22 +484,22 @@ def _assemble(plan_path):
     try:
         with open(plan_path, encoding="utf-8", newline="") as fh:
             plan_raw = fh.read()
-    except Exception as exc:
-        errors.append("plan not found or unreadable: %s (%s)" % (plan_path, exc))
+    except Exception as exc:  # noqa: BLE001 - converted to a structural error
+        errors.append(f"plan not found or unreadable: {plan_path} ({exc})")
         return _receipt(False, None, None, verified, [], errors)
     try:
         plan = json.loads(normalize_content(plan_raw))
     except ValueError as exc:
-        errors.append("plan is not valid JSON: %s (%s)" % (plan_path, exc))
+        errors.append(f"plan is not valid JSON: {plan_path} ({exc})")
         return _receipt(False, None, None, verified, [], errors)
     if not isinstance(plan, dict):
-        errors.append("plan must be a JSON object: %s" % plan_path)
+        errors.append(f"plan must be a JSON object: {plan_path}")
         return _receipt(False, None, None, verified, [], errors)
 
     plan_version = plan.get("planVersion")
     if plan_version != PLAN_VERSION:
         errors.append(
-            "unsupported planVersion %r (expected %d)" % (plan_version, PLAN_VERSION)
+            f"unsupported planVersion {plan_version!r} (expected {PLAN_VERSION})"
         )
         return _receipt(False, plan_version, None, verified, [], errors)
 
@@ -518,25 +511,26 @@ def _assemble(plan_path):
     declared = plan.get(PLAN_CHECKSUM_KEY)
     if not isinstance(declared, str) or not declared:
         errors.append(
-            "plan carries no %s — an unproven instruction set is not executed: %s"
-            % (PLAN_CHECKSUM_KEY, plan_path)
+            f"plan carries no {PLAN_CHECKSUM_KEY} — an unproven instruction set is "
+            f"not executed: {plan_path}"
         )
         return _receipt(False, plan_version, None, verified, [], errors)
     try:
         actual = plan_checksum(plan)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - converted to a structural error
         errors.append(
-            "plan checksum could not be recomputed: %s: %s" % (type(exc).__name__, exc)
+            f"plan checksum could not be recomputed: {type(exc).__name__}: {exc}"
         )
         return _receipt(False, plan_version, None, verified, [], errors)
     if actual != declared:
         errors.append(
-            "plan checksum mismatch: declared %s, recomputed %s — the persist plan "
+            f"plan checksum mismatch: declared {declared}, recomputed {actual} — "
+            "the persist plan "
             "changed in transit; it is the instruction set for which findings reach "
-            "the post-review artifact, so it is NOT executed" % (declared, actual)
+            "the post-review artifact, so it is NOT executed"
         )
         sys.stderr.write(
-            "plan checksum mismatch: declared %s, recomputed %s\n" % (declared, actual)
+            f"plan checksum mismatch: declared {declared}, recomputed {actual}\n"
         )
         return _receipt(False, plan_version, actual, verified, [], errors)
 
@@ -547,18 +541,14 @@ def _assemble(plan_path):
         path = entry.get("path")
         try:
             content = read_text(path)
-        except Exception as exc:
-            errors.append(
-                "expected artifact not found or unreadable: %s (%s)" % (path, exc)
-            )
+        except Exception as exc:  # noqa: BLE001 - converted to a structural error
+            errors.append(f"expected artifact not found or unreadable: {path} ({exc})")
             continue
         if isinstance(path, str) and path.endswith(".json"):
             try:
                 json.loads(content)
             except ValueError as exc:
-                errors.append(
-                    "expected artifact is not valid JSON: %s (%s)" % (path, exc)
-                )
+                errors.append(f"expected artifact is not valid JSON: {path} ({exc})")
                 continue
         chars = utf16_len(content)
         checksum = fnv1a32(content)
@@ -575,8 +565,8 @@ def _assemble(plan_path):
         )
         if not matched:
             sys.stderr.write(
-                "content-proof mismatch: %s (expected %s chars / %s, got %d / %s)\n"
-                % (path, entry.get("chars"), entry.get("checksum"), chars, checksum)
+                f"content-proof mismatch: {path} (expected {entry.get('chars')} chars "
+                f"/ {entry.get('checksum')}, got {chars} / {checksum})\n"
             )
 
     if errors:
@@ -633,7 +623,7 @@ def _assemble(plan_path):
         elif cp_ids:
             errors.append(
                 "checkpoint skeleton has no phases.challenge.findings array to receive "
-                "%d challenge finding(s)" % len(cp_ids)
+                f"{len(cp_ids)} challenge finding(s)"
             )
         text = _serialize(skeleton, "checkpoint", errors)
         if text is not None:
@@ -649,10 +639,8 @@ def _assemble(plan_path):
     for path, text in pending:
         try:
             write_text_atomic(path, text)
-        except Exception as exc:
-            errors.append(
-                "could not write %s (%s: %s)" % (path, type(exc).__name__, exc)
-            )
+        except Exception as exc:  # noqa: BLE001 - converted to a structural error
+            errors.append(f"could not write {path} ({type(exc).__name__}: {exc})")
             continue
         written.append(
             {
@@ -678,14 +666,14 @@ def assemble(plan_path):
     """
     try:
         return _assemble(plan_path)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - the one-line-receipt contract
         return _receipt(
             False,
             None,
             None,
             [],
             [],
-            ["assembler failed unexpectedly: %s: %s" % (type(exc).__name__, exc)],
+            [f"assembler failed unexpectedly: {type(exc).__name__}: {exc}"],
         )
 
 
@@ -713,12 +701,11 @@ def _minimal_receipt_line(exc):
                 "verified": [],
                 "written": [],
                 "errors": [
-                    "receipt could not be serialized: %s: %s"
-                    % (type(exc).__name__, exc)
+                    f"receipt could not be serialized: {type(exc).__name__}: {exc}"
                 ],
             }
         )
-    except Exception:
+    except Exception:  # noqa: BLE001 - the one-line-receipt contract
         return (
             '{"ok": false, "planVersion": null, "planChecksum": null, '
             '"verified": [], "written": [], '
@@ -743,7 +730,7 @@ def main(argv=None):
             json.dumps(receipt, ensure_ascii=False, allow_nan=False)
         )
         ok = bool(receipt["ok"])
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - stdout is never empty
         line = _minimal_receipt_line(exc)
         ok = False
     sys.stdout.write(line + "\n")

@@ -76,8 +76,8 @@ class AnchorCandidatesFileTests(unittest.TestCase):
 
     def test_candidate_entries_have_scorer_shape(self):
         # step3's get_candidates reads c["text"]; provenance is source="extracted".
-        for url, tools in self.anchors.items():
-            for tool, cands in tools.items():
+        for tools in self.anchors.values():
+            for cands in tools.values():
                 self.assertIsInstance(cands, list)
                 for c in cands:
                     self.assertIn("text", c)
@@ -469,14 +469,16 @@ class AnchorScorerStageFailureTests(unittest.TestCase):
         fake = SimpleNamespace(
             returncode=1, stdout="", stderr="Traceback: boom in dedup"
         )
-        with mock.patch.object(score.subprocess, "run", return_value=fake):
-            with self.assertRaises(RuntimeError) as ctx:
-                anchors._run_scorer_stages(
-                    "claude-opus-4-8-20260101",
-                    "api-key",
-                    anchors.MARTIAN_BASE_URL,
-                    "results/claude-opus-4-8-20260101/dedup_groups.json",
-                )
+        with (
+            mock.patch.object(score.subprocess, "run", return_value=fake),
+            self.assertRaises(RuntimeError) as ctx,
+        ):
+            anchors._run_scorer_stages(
+                "claude-opus-4-8-20260101",
+                "api-key",
+                anchors.MARTIAN_BASE_URL,
+                "results/claude-opus-4-8-20260101/dedup_groups.json",
+            )
         msg = str(ctx.exception)
         self.assertIn("dedup", msg)  # the failing stage is named
         self.assertIn("boom", msg)  # stderr tail is surfaced

@@ -26,6 +26,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -259,13 +260,13 @@ class TestCollectorDedup(unittest.TestCase):
 class TestRulesFileQuotations(unittest.TestCase):
     """Quoted spans attributed to AGENTS.md/CLAUDE.md must exist in a rules file."""
 
-    QUOTE_NEAR_RULES = re.compile(
+    QUOTE_NEAR_RULES: ClassVar[re.Pattern[str]] = re.compile(
         r"`?(?:[A-Za-z0-9_./-]+/)?(?:CLAUDE|AGENTS)\.md`?"
         r"\s+(?:says\s+|states\s+|already applies[^\n(]{0,100}\(\s*)?"
         r'["\u201c]([^"\u201d\n]{12,})["\u201d]',
         re.IGNORECASE,
     )
-    QUOTE_EXEMPTIONS = {
+    QUOTE_EXEMPTIONS: ClassVar[set[tuple[str, str]]] = {
         (
             "skills/code-gauntlet/references/false-positive-exclusions.md",
             "all functions must have JSDoc",
@@ -350,7 +351,7 @@ class TestClaimsResolve(unittest.TestCase):
     it vouch for itself, so this docstring describes those defects without spelling them.
     """
 
-    FILES = [
+    FILES: ClassVar[list[str]] = [
         "AGENTS.md",
         "CLAUDE.md",
         "REVIEW.md",
@@ -361,7 +362,7 @@ class TestClaimsResolve(unittest.TestCase):
 
     # Backticked prose terms that are English, schema field names, or host globals named
     # precisely because they are ABSENT — none of them are repo symbols.
-    NOT_SYMBOLS = {
+    NOT_SYMBOLS: ClassVar[set[str]] = {
         "description",
         "evidence",
         "suggestion",

@@ -1433,8 +1433,12 @@ class TestReceipt(unittest.TestCase):
             findings_path = f.name
         with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
             empty_diff = f.name  # empty diff -> parse_diff_lines returns set()
-        legacy_out = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
-        receipt_out = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        with (
+            tempfile.NamedTemporaryFile(suffix=".json", delete=False) as legacy_file,
+            tempfile.NamedTemporaryFile(suffix=".json", delete=False) as receipt_file,
+        ):
+            legacy_out = legacy_file.name
+            receipt_out = receipt_file.name
         try:
             # Legacy positional path (the baseline the receipt must reproduce).
             self._run_main(
@@ -1555,7 +1559,8 @@ class TestReceipt(unittest.TestCase):
                 json.dumps({"findings": self._findings(), "base_branch": "main"}) + "}"
             )
             corrupt_path = f.name
-        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
         try:
             with (
                 patch("sys.stderr", new_callable=io.StringIO),
@@ -1921,7 +1926,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         findings = self._findings()
         in_path = self._write_input(findings)
         empty_diff = self._empty_diff()
-        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
         try:
             proc = subprocess.run(
                 [
@@ -1974,7 +1980,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         findings = self._findings()
         in_path = self._write_input(findings)
         empty_diff = self._empty_diff()
-        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
         try:
             proc = subprocess.run(
                 [
@@ -2015,7 +2022,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         findings = self._findings()
         in_path = self._write_input(findings)
         empty_diff = self._empty_diff()
-        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
         unrelated_cwd = tempfile.mkdtemp()
         try:
             proc = subprocess.run(
@@ -2064,7 +2072,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
         findings[0]["severity"] = 3.14  # JS-unspellable; no downgrade will overwrite it
         in_path = self._write_input(findings)
         empty_diff = self._empty_diff()
-        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
         try:
             proc = subprocess.run(
                 [
@@ -2242,7 +2251,8 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
             in_path = f.name
         with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
             empty_diff = f.name
-        out_path = tempfile.NamedTemporaryFile(suffix=".json", delete=False).name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
         try:
             self._run_main(
                 [
