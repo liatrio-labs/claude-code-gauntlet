@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v3.3.12 (2026-08-04)
+
+### Bug Fixes
+
+- **workflows**: Drop unused bindings so Biome noUnusedVariables is green
+  ([#136](https://github.com/liatrio-labs/claude-code-gauntlet/pull/136),
+  [`68e1f3d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/68e1f3d038b541373770aafe2d59f47f0525bbc3))
+
+### Continuous Integration
+
+- Add checksum-pinned Biome js-lint job and required-check freeze
+  ([#136](https://github.com/liatrio-labs/claude-code-gauntlet/pull/136),
+  [`68e1f3d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/68e1f3d038b541373770aafe2d59f47f0525bbc3))
+
+- Gate workflows JS on checksum-pinned Biome lint (#105)
+  ([#136](https://github.com/liatrio-labs/claude-code-gauntlet/pull/136),
+  [`68e1f3d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/68e1f3d038b541373770aafe2d59f47f0525bbc3))
+
+### Documentation
+
+- Correct shipped-runtime tooling boundary (no Node builtins)
+  ([#136](https://github.com/liatrio-labs/claude-code-gauntlet/pull/136),
+  [`68e1f3d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/68e1f3d038b541373770aafe2d59f47f0525bbc3))
+
+- **tooling**: Adopt Biome config and restate no-npm CI-binary boundary
+  ([#136](https://github.com/liatrio-labs/claude-code-gauntlet/pull/136),
+  [`68e1f3d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/68e1f3d038b541373770aafe2d59f47f0525bbc3))
+
+### Testing
+
+- Document AGENTS budget ratchet for #105 Biome docs
+  ([#136](https://github.com/liatrio-labs/claude-code-gauntlet/pull/136),
+  [`68e1f3d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/68e1f3d038b541373770aafe2d59f47f0525bbc3))
+
+- Ratchet AGENTS budget and exempt Biome rule id
+  ([#136](https://github.com/liatrio-labs/claude-code-gauntlet/pull/136),
+  [`68e1f3d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/68e1f3d038b541373770aafe2d59f47f0525bbc3))
+
+
 ## v3.3.11 (2026-08-04)
 
 ### Bug Fixes
