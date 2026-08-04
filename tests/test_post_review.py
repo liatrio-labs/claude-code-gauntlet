@@ -140,7 +140,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+added\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files = parse_diff_lines("github", "myorg", "myrepo", 42)
+        valid_lines, new_files, _ = parse_diff_lines("github", "myorg", "myrepo", 42)
         self.assertIsNotNone(valid_lines)
         self.assertEqual(new_files, set())
         call_args = mock_run.call_args[0][0]
@@ -153,7 +153,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """platform='gitlab' must call glab mr diff."""
         diff = "+++ b/bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
         self.assertIsNotNone(valid_lines)
         call_args = mock_run.call_args[0][0]
         self.assertEqual(call_args[0], "glab")
@@ -177,7 +177,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+added\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("src/app.py", 1), valid_lines)
         self.assertIn(("src/app.py", 2), valid_lines)
         self.assertEqual(new_files, set())
@@ -203,7 +203,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+++ b/empty_new.py\n"
         )
         mock_run.return_value = (diff, "", 0)
-        _, new_files = parse_diff_lines("github", "o", "r", 1)
+        _, new_files, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"empty_new.py"})
 
     @patch("scripts.post_review.run_api")
@@ -217,7 +217,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- src/added.py\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
         mock_run.return_value = (diff, "", 0)
-        _, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        _, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/added.py"})
 
     @patch("scripts.post_review.run_api")
@@ -225,7 +225,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """The added file is the SECOND file in the diff, and the modified one that
         precedes it must not be swept into new_files with it."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        _, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        _, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/added.py"})
 
     @patch("scripts.post_review.run_api")
@@ -237,7 +237,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line1\n-line2\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, new_files, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertIsInstance(valid_lines, dict)
         self.assertEqual(valid_lines, {})
         self.assertEqual(new_files, set())
@@ -255,7 +255,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- a/empty.py\n+++ b/empty.py\n@@ -0,0 +1,2 @@\n+first\n+second\n"
         mock_run.return_value = (diff, "", 0)
-        _, new_files = parse_diff_lines("github", "o", "r", 1)
+        _, new_files, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"empty.py"})
 
     @patch("scripts.post_review.run_api")
@@ -270,7 +270,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- oneline.txt\n+++ oneline.txt\n@@ -0,0 +1 @@\n+only\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("oneline.txt", 1), valid_lines)
         self.assertIsNone(valid_lines[("oneline.txt", 1)])
         self.assertIn("oneline.txt", new_files)
@@ -301,7 +301,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+y\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _ = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(valid_lines[("next.py", 5)], 5)
         self.assertIsNone(valid_lines[("next.py", 6)])
         self.assertEqual([k for k in valid_lines if k[0] == "gone.py"], [])
@@ -322,7 +322,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         # form feed (built in Python so the control character is explicit).
         diff = "--- ff.py\n+++ ff.py\n@@ -1,3 +1,3 @@\n p1\n \x0c\n-p2\n+p2X\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("ff.py", 3), valid_lines)
         self.assertIsNone(valid_lines[("ff.py", 3)])
         self.assertEqual(valid_lines[("ff.py", 2)], 2)
@@ -349,7 +349,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             " );\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         # new 10 = old 10 (context), then the removal eats old 11 with no new number,
         # so new 11 must map to old 12 — not to 11.
         self.assertEqual(valid_lines[("db/schema.sql", 10)], 10)
@@ -372,7 +372,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             " use(i);\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/app.c", 20)], 20)
         self.assertIsNone(valid_lines[("src/app.c", 21)])
         # The context line after it still records under the original file, with the
@@ -390,7 +390,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "Binary files a/img.png and b/img.png differ\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _ = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual([k for k in valid_lines if k[0] == "img.png"], [])
 
     @patch("scripts.post_review.run_api")
@@ -401,7 +401,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         PREVIOUS file at its next new-side number.
         """
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(
             sorted(valid_lines),
             [
@@ -418,20 +418,20 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_valid_lines_is_a_mapping_of_new_line_to_old_line(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIsInstance(valid_lines, dict)
 
     @patch("scripts.post_review.run_api")
     def test_context_line_maps_to_its_old_side_number(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
 
     @patch("scripts.post_review.run_api")
     def test_added_line_maps_to_none(self, mock_run):
         """An added line exists only on the new side — present as a key, valued None."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("src/edited.py", 62), valid_lines)
         self.assertIsNone(valid_lines[("src/edited.py", 62)])
 
@@ -439,13 +439,13 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     def test_removed_line_advances_the_old_side_only(self, mock_run):
         """52, not 51: the ``-removed`` line consumed an OLD number and no new one."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/edited.py", 63)], 52)
 
     @patch("scripts.post_review.run_api")
     def test_old_side_counter_resets_between_files(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIsNone(valid_lines[("src/added.py", 1)])
         # The `diff --git` line introducing src/added.py sits between hunks; it used to
         # be read as a context line and admitted as a phantom target on the file before.
@@ -467,22 +467,67 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             " b\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _ = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(valid_lines[("f.py", 2)], 2)
 
     @patch("scripts.post_review.run_api")
+    def test_renamed_file_old_side_path_is_captured(self, mock_run):
+        """A rename's `---` path must survive parsing keyed by the NEW path.
+
+        The parser previously read the old-side header only to compare it to
+        ``/dev/null`` and threw the path away, so a renamed file's position shipped the
+        post-rename path as ``old_path`` — a path that does not exist on the old side
+        (#130). The `rename from`/`rename to`/`similarity index` lines sit in the header
+        zone and must stay no-ops.
+        """
+        mock_run.return_value = (GL_DIFF_RENAME, "", 0)
+        valid_lines, _, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(old_paths, {"new_name.py": "old_name.py"})
+        self.assertEqual(valid_lines[("new_name.py", 3)], 3)
+
+    @patch("scripts.post_review.run_api")
+    def test_added_file_absent_from_old_paths(self, mock_run):
+        """`--- /dev/null` means there is no old side — record no mapping at all."""
+        diff = (
+            "diff --git a/added.py b/added.py\n"
+            "new file mode 100644\n"
+            "--- /dev/null\n"
+            "+++ b/added.py\n"
+            "@@ -0,0 +1,1 @@\n"
+            "+content\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        _, new_files, old_paths = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual(new_files, {"added.py"})
+        self.assertNotIn("added.py", old_paths)
+
+    @patch("scripts.post_review.run_api")
+    def test_unrenamed_file_old_path_maps_to_itself(self, mock_run):
+        """For a plain modified file both sides name the same path — pin the coincide
+        case, so the mapping is provably a no-op there rather than accidentally right."""
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        _, _, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(old_paths["src/edited.py"], "src/edited.py")
+
+    @patch("scripts.post_review.run_api")
     def test_nonzero_rc_returns_none(self, mock_run):
-        """A non-zero exit code from the CLI tool must return (None, None)."""
+        """A non-zero exit code from the CLI tool must return (None, None, None)."""
         mock_run.return_value = ("", "fatal: not a git repository", 128)
-        valid_lines, new_files = parse_diff_lines("github", "myorg", "myrepo", 1)
+        valid_lines, new_files, old_paths = parse_diff_lines(
+            "github", "myorg", "myrepo", 1
+        )
         self.assertIsNone(valid_lines)
         self.assertIsNone(new_files)
+        self.assertIsNone(old_paths)
 
     def test_unknown_platform_returns_none(self):
-        """An unknown platform must return (None, None) without calling run_api."""
-        valid_lines, new_files = parse_diff_lines("bitbucket", "myorg", "myrepo", 1)
+        """An unknown platform must return (None, None, None) without calling run_api."""
+        valid_lines, new_files, old_paths = parse_diff_lines(
+            "bitbucket", "myorg", "myrepo", 1
+        )
         self.assertIsNone(valid_lines)
         self.assertIsNone(new_files)
+        self.assertIsNone(old_paths)
 
 
 # ---------------------------------------------------------------------------
@@ -1466,6 +1511,43 @@ GL_DIFF_CONTRACT = (
     "+second\n"
 )
 
+# A RENAMED file, glab-flavoured (unprefixed headers): the `---` header names the
+# PRE-rename path and the `+++` header the post-rename one. That old-side path is what
+# GitLab needs in `position.old_path` (#130).
+# new 3 = old 3 (context), new 4 = added, new 5 = old 5 (context).
+GL_DIFF_RENAME = (
+    "diff --git a/old_name.py b/new_name.py\n"
+    "similarity index 87%\n"
+    "rename from old_name.py\n"
+    "rename to new_name.py\n"
+    "--- old_name.py\n"
+    "+++ new_name.py\n"
+    "@@ -3,3 +3,3 @@\n"
+    " ctx\n"
+    "-x\n"
+    "+y\n"
+    " ctx2\n"
+)
+
+# One finding on each position kind GL_DIFF_RENAME produces: a context line and an
+# added line, both inside the renamed file.
+GL_RENAME_FINDINGS = [
+    {
+        "file": "new_name.py",
+        "line": 3,
+        "severity": "high",
+        "title": "Context-line finding in a renamed file",
+        "body": "Body one",
+    },
+    {
+        "file": "new_name.py",
+        "line": 4,
+        "severity": "medium",
+        "title": "Added-line finding in a renamed file",
+        "body": "Body two",
+    },
+]
+
 GL_CONTRACT_VERSIONS = [
     {
         "base_commit_sha": "base1",
@@ -2365,6 +2447,57 @@ class TestGitlabPositionContract(_DryRunTestBase):
     def test_new_line_is_always_sent(self):
         for position in self._positions():
             self.assertIsInstance(position["new_line"], int)
+
+
+class TestGitlabRenamedFilePositionContract(_DryRunTestBase):
+    """A renamed file's position, end-to-end through the real parser (issue #130).
+
+    ``old_path`` was hard-wired to the finding's (post-rename) path, which the old side
+    of the diff does not contain. Driving ``main()`` in dry-run against
+    ``GL_DIFF_RENAME`` proves the pre-rename path travels parser -> poster -> payload.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": GL_RENAME_FINDINGS,
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF_RENAME, versions=GL_CONTRACT_VERSIONS
+                ),
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            post_review.main()
+
+    def _positions(self):
+        return [d["position"] for d in self._payload()["discussions"]]
+
+    def test_renamed_file_position_anchors_old_path_to_the_pre_rename_path(self):
+        position = self._positions()[0]
+        self.assertEqual(position["old_path"], "old_name.py")
+        self.assertEqual(position["new_path"], "new_name.py")
+        self.assertEqual(position["old_line"], 3)
+        self.assertEqual(position["new_line"], 3)
+
+    def test_added_line_in_a_renamed_file_keeps_the_pre_rename_old_path(self):
+        position = self._positions()[1]
+        self.assertEqual(position["old_path"], "old_name.py")
+        self.assertNotIn("old_line", position)
+        self.assertEqual(position["new_line"], 4)
 
 
 class TestGitlabFindingPathNormalization(_DryRunTestBase):

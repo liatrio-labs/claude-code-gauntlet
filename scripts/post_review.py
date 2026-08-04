@@ -222,7 +222,7 @@ def detect_platform():
 
 def parse_diff_lines(platform, owner, repo, pr_number):
     """
-    Return ``(valid_lines, new_files)``:
+    Return ``(valid_lines, new_files, old_paths)``:
 
     * ``valid_lines`` — mapping of ``(filepath, new_line)`` -> the SAME line's number on
       the OLD side, or ``None`` when the line exists only on the new side (an added
@@ -238,8 +238,13 @@ def parse_diff_lines(platform, owner, repo, pr_number):
       ``@@ -0,0 +N,M @@`` hunk header. Matching /dev/null alone made this set
       permanently empty on GitLab, so ``old_path`` was always sent and the HTTP 500 the
       GitLab poster documents was never actually avoided (#127 D2).
+    * ``old_paths`` — mapping of new-side path -> the path its ``---`` header named. For
+      a RENAMED file that is the pre-rename path, which is what GitLab requires in
+      ``position.old_path`` (#130); for an unrenamed modified file the two coincide
+      (harmless — the poster's fallback is the new path anyway). Absent for added files,
+      whose old side is ``/dev/null``.
 
-    Returns ``(None, None)`` when validation should be skipped (unknown platform
+    Returns ``(None, None, None)`` when validation should be skipped (unknown platform
     or CLI failure). Callers must handle the ``None`` case.
 
     Accepts both ``a/`` / ``b/`` prefixed headers (``gh pr diff``) and unprefixed
@@ -268,17 +273,19 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         warn(
             "Unknown platform — skipping diff validation. All findings will be posted."
         )
-        return None, None
+        return None, None, None
 
     if rc != 0:
         warn(
             f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
             "Skipping line validation — all findings will be posted."
         )
-        return None, None
+        return None, None, None
 
     valid_lines = {}
     new_files = set()
+    old_paths = {}
+    pending_old_path = None
     current_file = None
     new_line = 0
     old_line = 0
@@ -301,7 +308,11 @@ def parse_diff_lines(platform, owner, repo, pr_number):
             # `glab mr diff` may omit the `a/` prefix that `gh pr diff` emits.
             old_match = re.match(r"^--- (?:[ab]/)?(.+)$", raw_line)
             if old_match:
-                current_file_is_new = old_match.group(1) == "/dev/null"
+                old_side = old_match.group(1)
+                current_file_is_new = old_side == "/dev/null"
+                # Held until the `+++` header names the new-side path this belongs to;
+                # for a rename the two differ and only this one is GitLab's `old_path`.
+                pending_old_path = None if current_file_is_new else old_side
                 continue
 
             # New-side header: `+++ b/path`, `+++ path`, or `+++ /dev/null`.
@@ -314,9 +325,14 @@ def parse_diff_lines(platform, owner, repo, pr_number):
                     current_file = path
                     if current_file_is_new:
                         new_files.add(current_file)
+                    if pending_old_path is not None:
+                        old_paths[current_file] = pending_old_path
                 new_line = 0
                 old_line = 0
                 current_file_is_new = False
+                # Reset on BOTH arms so a held old-side path never leaks onto the file
+                # whose header comes next.
+                pending_old_path = None
                 continue
 
             # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
@@ -372,7 +388,7 @@ def parse_diff_lines(platform, owner, repo, pr_number):
             new_line += 1
             old_line += 1
 
-    return valid_lines, new_files
+    return valid_lines, new_files, old_paths
 
 
 def is_line_valid(valid_lines, filepath, line):
@@ -687,7 +703,7 @@ def summary_already_posted(owner, repo, mr_iid, sha):
     return exists
 
 
-def post_gitlab(data, valid_lines, new_files=None):
+def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
@@ -774,7 +790,13 @@ def post_gitlab(data, valid_lines, new_files=None):
         # ``old_path`` for added files; include it for modified files so the
         # position stays anchored to the diff.
         if not is_new_file(new_files, filepath):
-            position["old_path"] = filepath
+            # A RENAMED file must anchor `old_path` to its PRE-RENAME path (#130) — the
+            # new path does not exist on the old side. `filepath` is already
+            # a/b-normalized above and `old_paths` keys are unprefixed (the header
+            # regexes strip the prefix), so they are the same spelling. The fallback to
+            # the new path covers skipped validation (`old_paths` is None) and unrenamed
+            # files, where the two paths coincide anyway.
+            position["old_path"] = (old_paths or {}).get(filepath, filepath)
 
         payload = {
             "body": render_comment_body(f),
@@ -939,7 +961,7 @@ def main():
         die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
 
     # Validate diff lines
-    valid_lines, new_files = parse_diff_lines(
+    valid_lines, new_files, old_paths = parse_diff_lines(
         platform, data["owner"], data["repo"], data["pr_number"]
     )
 
@@ -947,7 +969,7 @@ def main():
     if platform == "github":
         post_github(data, valid_lines)
     else:
-        post_gitlab(data, valid_lines, new_files)
+        post_gitlab(data, valid_lines, new_files, old_paths)
 
     if DRY_RUN:
         out_path = write_dry_run_payload(platform, args.findings_json)
