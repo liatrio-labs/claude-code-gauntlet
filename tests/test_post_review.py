@@ -184,12 +184,16 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
 
     @patch("scripts.post_review.run_api")
     def test_new_file_detected_via_dev_null_old_header(self, mock_run):
-        """An EMPTY added file is the one added-file shape only /dev/null catches.
+        """The ``/dev/null`` branch, exercised by header-shaped input with no hunk.
 
-        The previous fixture also carried ``@@ -0,0``, so the hunk-header signal alone
-        satisfied it and the ``/dev/null`` branch was untestable (mutating it to
-        ``current_file_is_new = False`` left the suite green). An added file with no
-        content has headers and NO hunk, so ``-0,0`` never fires.
+        SYNTHETIC FIXTURE, stated honestly: real ``git`` emits NO ``---``/``+++`` lines at
+        all for an empty added file — just ``diff --git``, ``new file mode`` and ``index``
+        (verified against real git). So the shape below is not one gh is known to emit
+        today; the ``/dev/null`` branch is defence-in-depth for header-shaped input, and
+        it is the ``@@ -0,0`` hunk signal that real added-file diffs actually trigger.
+        The branch is still worth pinning: with a hunk present the ``-0,0`` signal alone
+        satisfies the assertion, so mutating ``current_file_is_new`` would otherwise leave
+        the suite green.
         """
         diff = (
             "diff --git a/empty_new.py b/empty_new.py\n"
@@ -254,7 +258,74 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         _, new_files = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"empty.py"})
 
+    @patch("scripts.post_review.run_api")
+    def test_omitted_hunk_counts_default_to_one(self, mock_run):
+        """``@@ -0,0 +1 @@`` — a one-line added file, as real git writes it.
+
+        A unified-diff count is omitted exactly when that side holds ONE line, so the
+        parser's ``1 if count is None else int(count)`` default carries real traffic.
+        Both defaults previously had zero coverage: mutating them to 0 left the whole
+        suite green, and under that mutation a one-line added file's only commentable
+        line vanishes from ``valid_lines`` — every finding on it silently dropped.
+        """
+        diff = "--- oneline.txt\n+++ oneline.txt\n@@ -0,0 +1 @@\n+only\n"
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertIn(("oneline.txt", 1), valid_lines)
+        self.assertIsNone(valid_lines[("oneline.txt", 1)])
+        self.assertIn("oneline.txt", new_files)
+
+    @patch("scripts.post_review.run_api")
+    def test_deleted_file_body_drains_budgets_so_the_next_file_parses(self, mock_run):
+        """A deleted file's body must consume its budgets even though it records nothing.
+
+        ``+++ /dev/null`` leaves ``current_file`` None, but skipping the body outright
+        (``if current_file is None: continue``) leaves the old-side budget undrained, so
+        the NEXT file's headers arrive while the parser is still in the hunk-body zone —
+        where headers are not matched — and every comment target in that file is eaten.
+        """
+        diff = (
+            "diff --git a/gone.py b/gone.py\n"
+            "--- a/gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,3 +0,0 @@\n"
+            "-a\n"
+            "-b\n"
+            "-c\n"
+            "diff --git a/next.py b/next.py\n"
+            "--- a/next.py\n"
+            "+++ b/next.py\n"
+            "@@ -5,2 +5,2 @@\n"
+            " keep\n"
+            "-x\n"
+            "+y\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, _ = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual(valid_lines[("next.py", 5)], 5)
+        self.assertIsNone(valid_lines[("next.py", 6)])
+        self.assertEqual([k for k in valid_lines if k[0] == "gone.py"], [])
+
     # -- hunk-body budget tracking (headers are body content too) -----------
+
+    @patch("scripts.post_review.run_api")
+    def test_form_feed_line_content_does_not_split_the_hunk(self, mock_run):
+        """A form feed is diff CONTENT; it must not invent a line boundary.
+
+        ``str.splitlines()`` breaks on \\x0c (and \\x0b, \\x85, U+2028/U+2029) — git never
+        emitted a boundary there. The extra line drains the declared budgets one line
+        early, flips the header/body zone boundary, and ships a WRONG old_line for
+        everything after it: here the ADDED last line would be reported as context on
+        old line 3.
+        """
+        # Real `git diff` shape for changing p2 -> p2X in a file whose middle line is a
+        # form feed (built in Python so the control character is explicit).
+        diff = "--- ff.py\n+++ ff.py\n@@ -1,3 +1,3 @@\n p1\n \x0c\n-p2\n+p2X\n"
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertIn(("ff.py", 3), valid_lines)
+        self.assertIsNone(valid_lines[("ff.py", 3)])
+        self.assertEqual(valid_lines[("ff.py", 2)], 2)
 
     @patch("scripts.post_review.run_api")
     def test_removed_line_content_starting_with_dashes_is_not_a_file_header(

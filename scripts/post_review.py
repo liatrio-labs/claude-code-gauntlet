@@ -288,7 +288,13 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     new_rem = 0
     current_file_is_new = False
 
-    for raw_line in stdout.splitlines():
+    # Split on "\n" ONLY, never str.splitlines(): that also breaks on \x0c, \x0b, \x85 and
+    # U+2028/U+2029, which git treats as ordinary line CONTENT. A form feed inside a hunk
+    # body would become two parsed lines, draining the declared budgets one line early —
+    # flipping the header/body zone boundary and shipping a wrong old_line thereafter. The
+    # trailing "" a newline-terminated stream yields lands in the header zone and matches
+    # nothing.
+    for raw_line in stdout.split("\n"):
         if old_rem <= 0 and new_rem <= 0:
             # -- header zone -------------------------------------------------
             # Old-side header: `--- a/path`, `--- path`, or `--- /dev/null`.
