@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v3.3.11 (2026-08-04)
+
+### Bug Fixes
+
+- **scripts**: Anchor renamed-file positions to the pre-rename old_path
+  ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+- **scripts**: GitLab inline delivery — send old_line, real glab added-file detection,
+  fault-tolerant posting ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+- **scripts**: Keep real a/ and b/ directories in GitLab paths
+  ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+- **scripts**: Repair GitLab inline MR discussion delivery (#127, #130)
+  ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+- **scripts**: Split diffs on newlines only; pin budget edge cases
+  ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+- **scripts**: Stop is_new_file's stripped fallback from misreporting real a/-rooted files as new
+  ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+- **scripts**: Suspend diff header matching inside hunk bodies; normalize finding paths
+  ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+### Chores
+
+- **ci**: Raise scripts coverage floor to 91.7 from PR #135 CI headroom
+  ([#135](https://github.com/liatrio-labs/claude-code-gauntlet/pull/135),
+  [`02ac1c5`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/02ac1c51c1545c516b336000c84048f01884dfde))
+
+
 ## v3.3.10 (2026-08-04)
 
 ### Bug Fixes
