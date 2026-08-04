@@ -2,8 +2,14 @@
 
 [![CI](https://github.com/liatrio-labs/claude-code-gauntlet/actions/workflows/ci.yml/badge.svg)](https://github.com/liatrio-labs/claude-code-gauntlet/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/liatrio-labs/claude-code-gauntlet/badge)](https://securityscorecards.dev/viewer/?uri=github.com/liatrio-labs/claude-code-gauntlet)
 
 Adversarial multi-agent code review for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Your PR runs a gauntlet: parallel concern-specialized reviewers find issues, then every finding must survive deterministic verification, skeptical validation, and a blind challenge before it reaches you. *Formerly published as **deep-review**.*
+
+> **Scorecard note:** Branch-Protection and Code-Review score low by design.
+> Required approving reviews stay at 0 because a single maintainer cannot
+> self-approve, and an always-bypass Integration actor (Octo STS) lets
+> semantic-release push from CI. Raising either into a “fix” deadlocks merges.
 
 ## How it reviews
 
