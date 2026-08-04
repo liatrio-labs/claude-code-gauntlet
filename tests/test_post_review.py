@@ -36,6 +36,7 @@ from scripts.post_review import (
     detect_platform,
     gitlab_project_id,
     is_line_valid,
+    old_line_for,
     parse_diff_lines,
     render_comment_body,
     resolve_marker_sha,
@@ -206,21 +207,94 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIn(("existing.py", 2), valid_lines)
 
     @patch("scripts.post_review.run_api")
-    def test_new_file_detected_with_no_prefix_headers(self, mock_run):
-        """New-file detection must work for glab-style (no-prefix) headers too."""
-        diff = "--- /dev/null\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
+    def test_new_file_detected_from_hunk_header_glab_style(self, mock_run):
+        """`glab mr diff` never writes `--- /dev/null` — it repeats the path on both
+        sides, so `@@ -0,0` is the only added-file signal.
+
+        The previous fixture paired a GitHub-only `/dev/null` header with glab-only
+        unprefixed paths, a combination neither CLI emits, which is why the suite passed
+        while `new_files` was permanently empty on GitLab (#127 D2).
+        """
+        diff = "--- src/added.py\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
         mock_run.return_value = (diff, "", 0)
         _, new_files = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/added.py"})
 
     @patch("scripts.post_review.run_api")
+    def test_added_file_detected_end_of_multi_file_glab_diff(self, mock_run):
+        """The added file is the SECOND file in the diff, and the modified one that
+        precedes it must not be swept into new_files with it."""
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        _, new_files = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(new_files, {"src/added.py"})
+
+    @patch("scripts.post_review.run_api")
     def test_deleted_file_does_not_add_dev_null_to_valid_lines(self, mock_run):
-        """``+++ /dev/null`` (deleted file) must not produce phantom entries."""
+        """``+++ /dev/null`` (deleted file) must not produce phantom entries.
+
+        The ``@@ -1,2 +0,0 @@`` header must not read as an added file either: it is the
+        NEW side that is 0 here, and only an old-side start of 0 means "added".
+        """
         diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line1\n-line2\n"
         mock_run.return_value = (diff, "", 0)
         valid_lines, new_files = parse_diff_lines("github", "o", "r", 1)
-        self.assertEqual(valid_lines, set())
+        self.assertIsInstance(valid_lines, dict)
+        self.assertEqual(valid_lines, {})
         self.assertEqual(new_files, set())
+
+    # -- old-side tracking (issue #127 D1) ---------------------------------
+
+    @patch("scripts.post_review.run_api")
+    def test_valid_lines_is_a_mapping_of_new_line_to_old_line(self, mock_run):
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertIsInstance(valid_lines, dict)
+
+    @patch("scripts.post_review.run_api")
+    def test_context_line_maps_to_its_old_side_number(self, mock_run):
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
+
+    @patch("scripts.post_review.run_api")
+    def test_added_line_maps_to_none(self, mock_run):
+        """An added line exists only on the new side — present as a key, valued None."""
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertIn(("src/edited.py", 62), valid_lines)
+        self.assertIsNone(valid_lines[("src/edited.py", 62)])
+
+    @patch("scripts.post_review.run_api")
+    def test_removed_line_advances_the_old_side_only(self, mock_run):
+        """52, not 51: the ``-removed`` line consumed an OLD number and no new one."""
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual(valid_lines[("src/edited.py", 63)], 52)
+
+    @patch("scripts.post_review.run_api")
+    def test_old_side_counter_resets_between_files(self, mock_run):
+        mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
+        valid_lines, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertIsNone(valid_lines[("src/added.py", 1)])
+        self.assertEqual(
+            {v for (fp, _), v in valid_lines.items() if fp == "src/added.py"},
+            {None},
+            "an added file's lines must carry no old-side leftovers from the file before",
+        )
+
+    @patch("scripts.post_review.run_api")
+    def test_no_newline_marker_advances_neither_counter(self, mock_run):
+        diff = (
+            "--- a/f.py\n"
+            "+++ b/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " a\n"
+            "\\ No newline at end of file\n"
+            " b\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        valid_lines, _ = parse_diff_lines("github", "o", "r", 1)
+        self.assertEqual(valid_lines[("f.py", 2)], 2)
 
     @patch("scripts.post_review.run_api")
     def test_nonzero_rc_returns_none(self, mock_run):
@@ -247,17 +321,59 @@ class TestIsLineValid(unittest.TestCase):
         self.assertTrue(is_line_valid(None, "any.py", 999))
 
     def test_exact_match(self):
-        valid = {("src/app.py", 42)}
+        valid = {("src/app.py", 42): 30}
         self.assertTrue(is_line_valid(valid, "src/app.py", 42))
 
     def test_no_match(self):
-        valid = {("src/app.py", 42)}
+        valid = {("src/app.py", 42): 30}
         self.assertFalse(is_line_valid(valid, "src/app.py", 43))
 
     def test_stripped_path(self):
-        valid = {("src/app.py", 10)}
+        valid = {("src/app.py", 10): 4}
         self.assertTrue(is_line_valid(valid, "a/src/app.py", 10))
         self.assertTrue(is_line_valid(valid, "b/src/app.py", 10))
+
+    def test_context_key_membership_is_unaffected_by_the_value(self):
+        """``valid_lines`` is a mapping now (issue #127): an added line's ``None``
+        value must still read as "this line can carry a comment"."""
+        self.assertTrue(is_line_valid({("src/app.py", 7): None}, "src/app.py", 7))
+        self.assertTrue(is_line_valid({("src/app.py", 7): 5}, "src/app.py", 7))
+
+
+# ---------------------------------------------------------------------------
+# old_line_for (issue #127 D1)
+# ---------------------------------------------------------------------------
+
+
+class TestOldLineFor(unittest.TestCase):
+    """GitLab addresses a context line only when the position carries BOTH sides.
+
+    ``old_line_for`` is the lookup that supplies the old-side number; returning None
+    means "send no ``old_line``".
+    """
+
+    def test_returns_old_line_for_exact_key(self):
+        self.assertEqual(old_line_for({("src/app.py", 61): 50}, "src/app.py", 61), 50)
+
+    def test_returns_none_for_added_line(self):
+        self.assertIsNone(old_line_for({("src/app.py", 61): None}, "src/app.py", 61))
+
+    def test_strips_leading_ab_prefix(self):
+        # A finding path carrying the diff prefix passes is_line_valid through the
+        # stripped form; a raw-key-only lookup here would answer None and re-arm the 400.
+        self.assertEqual(old_line_for({("src/app.py", 61): 50}, "b/src/app.py", 61), 50)
+        self.assertEqual(old_line_for({("src/app.py", 61): 50}, "a/src/app.py", 61), 50)
+
+    def test_returns_none_when_validation_skipped(self):
+        self.assertIsNone(old_line_for(None, "f.py", 1))
+
+    def test_returns_none_for_a_legacy_set_container(self):
+        """A set has no old-side data — degrade like ``new_files=None`` rather than
+        raising AttributeError on a caller that never migrated."""
+        self.assertIsNone(old_line_for({("f.py", 1)}, "f.py", 1))
+
+    def test_returns_none_for_unknown_path(self):
+        self.assertIsNone(old_line_for({("f.py", 1): 1}, "other.py", 1))
 
 
 # ---------------------------------------------------------------------------
@@ -756,7 +872,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "",
             "findings": [],
         }
-        post_review.post_github(data, set())
+        post_review.post_github(data, {})
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
@@ -773,7 +889,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "## Summary\nSome pre-existing narrative text.\n",
             "findings": [],
         }
-        post_review.post_github(data, set())
+        post_review.post_github(data, {})
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
@@ -793,7 +909,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "",
             "findings": [],
         }
-        post_review.post_gitlab(data, set())
+        post_review.post_gitlab(data, {})
         # The summary note is posted before any per-finding discussion, so
         # with findings=[] it is also the only capture.
         body = post_review._CAPTURED[0]["payload"]["body"]
@@ -815,7 +931,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "## MR Review\nContext for the reviewer.\n",
             "findings": [],
         }
-        post_review.post_gitlab(data, set())
+        post_review.post_gitlab(data, {})
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
@@ -847,28 +963,31 @@ class TestValidLinesForFile(unittest.TestCase):
         self.assertIsNone(valid_lines_for_file(None, "foo.py"))
 
     def test_returns_sorted_lines_for_exact_file(self):
+        # Production shape since #127: (path, new_line) -> old_line, None for added
+        # lines. The diagnostic still lists bare NEW-side numbers, which is what the
+        # "Valid lines for this file: [...]" warning promises the reader.
         valid = {
-            ("src/app.py", 10),
-            ("src/app.py", 3),
-            ("src/app.py", 7),
-            ("other.py", 1),
+            ("src/app.py", 10): None,
+            ("src/app.py", 3): 3,
+            ("src/app.py", 7): None,
+            ("other.py", 1): 1,
         }
         result = valid_lines_for_file(valid, "src/app.py")
         self.assertEqual(result, [3, 7, 10])
 
     def test_returns_at_most_10(self):
-        valid = {("f.py", i) for i in range(1, 21)}
+        valid = {("f.py", i): i for i in range(1, 21)}
         result = valid_lines_for_file(valid, "f.py")
         self.assertEqual(len(result), 10)
         self.assertEqual(result, list(range(1, 11)))
 
     def test_strips_leading_ab_prefix(self):
-        valid = {("src/app.py", 5)}
+        valid = {("src/app.py", 5): 2}
         result = valid_lines_for_file(valid, "a/src/app.py")
         self.assertEqual(result, [5])
 
     def test_empty_when_no_match(self):
-        valid = {("other.py", 1)}
+        valid = {("other.py", 1): None}
         result = valid_lines_for_file(valid, "missing.py")
         self.assertEqual(result, [])
 
@@ -893,7 +1012,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
     def test_github_skip_includes_valid_lines(self, mock_warn, _post, _tool, _sha):
         from scripts.post_review import post_github
 
-        valid_lines = {("src/app.py", 10), ("src/app.py", 20)}
+        valid_lines = {("src/app.py", 10): 10, ("src/app.py", 20): None}
         data = {
             "owner": "o",
             "repo": "r",
@@ -945,13 +1064,17 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={})
     @patch("scripts.post_review.fetch_gitlab_shas", return_value=("b", "h", "s"))
+    # The live path now asks detect_prior_review whether the summary note is already on
+    # the MR; that read shells out to `glab`, so it is stubbed here rather than left to
+    # reach a real forge from a unit test.
+    @patch("scripts.post_review.gitlab_note_exists_for_sha", return_value=(False, None))
     @patch("scripts.post_review.warn")
     def test_gitlab_skip_includes_valid_lines(
-        self, mock_warn, _shas, _post, _tool, _sha
+        self, mock_warn, _exists, _shas, _post, _tool, _sha
     ):
         from scripts.post_review import post_gitlab
 
-        valid_lines = {("src/app.py", 5), ("src/app.py", 15)}
+        valid_lines = {("src/app.py", 5): 5, ("src/app.py", 15): None}
         data = {
             "owner": "o",
             "repo": "r",
@@ -1015,6 +1138,11 @@ class TestGitlabPositionPayload(unittest.TestCase):
     which then dangles as a hung thread) when a position object includes
     ``old_path`` for a file that's newly added in the MR. ``post_gitlab``
     must omit ``old_path`` for new files and include it for modified files.
+
+    Unit level — ``valid_lines``/``new_files`` are injected. End-to-end detection from
+    a real ``glab mr diff`` is pinned by ``TestGitlabPositionContract``; injecting
+    ``new_files`` here is exactly why #127 D2 shipped, so this class must never be the
+    only cover.
     """
 
     def _capture_position(self, data, valid_lines, new_files):
@@ -1023,9 +1151,12 @@ class TestGitlabPositionPayload(unittest.TestCase):
 
         captured = []
 
-        def fake_post_json(cmd_prefix, payload):
+        # Patching the non-fatal core covers BOTH callers: the summary note still goes
+        # through the real post_json wrapper, and the per-finding loop calls this
+        # directly, so the capture order (summary, then discussions) is unchanged.
+        def fake_try_post_json(cmd_prefix, payload):
             captured.append((cmd_prefix, payload))
-            return {}
+            return {}, None
 
         # Faithful to real git: `git rev-parse HEAD` always yields either a
         # full 40-hex-char object id or the literal "unknown" (get_head_sha's
@@ -1039,7 +1170,14 @@ class TestGitlabPositionPayload(unittest.TestCase):
                 "scripts.post_review.fetch_gitlab_shas",
                 return_value=("base", "head", "start"),
             ),
-            patch("scripts.post_review.post_json", side_effect=fake_post_json),
+            patch("scripts.post_review.try_post_json", side_effect=fake_try_post_json),
+            # The live path asks detect_prior_review whether the summary note is
+            # already on the MR; that read shells out to `glab`, so it is stubbed
+            # rather than left to reach a real forge from a unit test.
+            patch(
+                "scripts.post_review.gitlab_note_exists_for_sha",
+                return_value=(False, None),
+            ),
         ):
             post_gitlab(data, valid_lines, new_files)
 
@@ -1058,12 +1196,13 @@ class TestGitlabPositionPayload(unittest.TestCase):
                 {"file": "src/added.py", "line": 5, "title": "Bug", "body": "x"}
             ],
         }
-        valid_lines = {("src/added.py", 5)}
+        valid_lines = {("src/added.py", 5): None}
         new_files = {"src/added.py"}
         position = self._capture_position(data, valid_lines, new_files)
         self.assertNotIn(
             "old_path", position, "old_path must be omitted for newly-added files"
         )
+        self.assertNotIn("old_line", position, "an added file's lines have no old side")
         self.assertEqual(position["new_path"], "src/added.py")
         self.assertEqual(position["new_line"], 5)
 
@@ -1076,12 +1215,14 @@ class TestGitlabPositionPayload(unittest.TestCase):
                 {"file": "src/edited.py", "line": 10, "title": "Bug", "body": "x"}
             ],
         }
-        valid_lines = {("src/edited.py", 10)}
+        valid_lines = {("src/edited.py", 10): 7}
         new_files = set()
         position = self._capture_position(data, valid_lines, new_files)
         self.assertEqual(position["old_path"], "src/edited.py")
         self.assertEqual(position["new_path"], "src/edited.py")
         self.assertEqual(position["new_line"], 10)
+        # Both sides, or GitLab answers 400 `line_code can't be blank` (#127 D1).
+        self.assertEqual(position["old_line"], 7)
 
     def test_new_files_none_falls_back_to_modified_behavior(self):
         """If new_files is None (e.g., diff fetch failed), retain old_path.
@@ -1099,6 +1240,9 @@ class TestGitlabPositionPayload(unittest.TestCase):
         }
         position = self._capture_position(data, valid_lines=None, new_files=None)
         self.assertEqual(position["old_path"], "src/edited.py")
+        # A skipped validation has no old-side data to send, so the position degrades to
+        # today's shape rather than crashing on a direct `valid_lines[...]` index.
+        self.assertNotIn("old_line", position)
 
 
 # ---------------------------------------------------------------------------
@@ -1127,34 +1271,138 @@ GL_DIFF = (
 )
 
 
-def _fake_run(diff="", versions=None, remote="git@github.com:o/r.git\n"):
+# Real `glab mr diff` shape, captured from the issue #127 report: NO a/ b/ prefixes, the
+# SAME path on both sides for an added file, and `@@ -0,0` as the only added-file signal.
+# src/edited.py: new 61 = old 50 (context), new 62 = added, new 63 = old 52 (context).
+# src/added.py:  new 1, 2 — added file.
+GL_DIFF_CONTRACT = (
+    "diff --git a/src/edited.py b/src/edited.py\n"
+    "--- src/edited.py\n"
+    "+++ src/edited.py\n"
+    "@@ -50,3 +61,3 @@\n"
+    " unchanged_ctx\n"
+    "-removed\n"
+    "+added\n"
+    " tail_ctx\n"
+    "diff --git a/src/added.py b/src/added.py\n"
+    "--- src/added.py\n"
+    "+++ src/added.py\n"
+    "@@ -0,0 +1,2 @@\n"
+    "+first\n"
+    "+second\n"
+)
+
+GL_CONTRACT_VERSIONS = [
+    {
+        "base_commit_sha": "base1",
+        "head_commit_sha": "head1",
+        "start_commit_sha": "start1",
+    }
+]
+
+# One finding on each of the three position kinds GL_DIFF_CONTRACT produces: a context
+# line, an added line in a modified file, and a line in an added file.
+GL_CONTRACT_FINDINGS = [
+    {
+        "file": "src/edited.py",
+        "line": 61,
+        "severity": "high",
+        "title": "Context-line finding",
+        "body": "Body one",
+    },
+    {
+        "file": "src/edited.py",
+        "line": 62,
+        "severity": "medium",
+        "title": "Added-line finding",
+        "body": "Body two",
+    },
+    {
+        "file": "src/added.py",
+        "line": 1,
+        "severity": "low",
+        "title": "New-file finding",
+        "body": "Body three",
+    },
+]
+
+# Verbatim from the issue #127 report — the warning-content test asserts against what an
+# operator really sees, not a paraphrase.
+GLAB_400_STDERR = (
+    "glab: 400 Bad request - Note "
+    '{:line_code=>["can\'t be blank", "must be a valid line code"]} (HTTP 400)'
+)
+
+
+def _fake_run(
+    diff="",
+    versions=None,
+    remote="git@github.com:o/r.git\n",
+    head_sha="deadbeefcafe\n",
+    note_rc=0,
+    discussion_rcs=None,
+    calls=None,
+):
     """Build a ``subprocess.run`` side_effect that mocks the read-only CLI calls.
 
     Handles ``which``, ``git remote get-url``, ``git rev-parse``, ``gh pr diff``,
     ``glab mr diff``, and the GitLab ``.../versions`` GET. Any other command
     (i.e. a POST) returns an empty JSON object — but in dry-run mode ``post_json``
     short-circuits before reaching ``subprocess.run`` for POSTs.
+
+    The live GitLab POSTs are steerable so the fault-tolerance path is exercisable:
+    *note_rc* is the summary note's exit code, and *discussion_rcs* is consumed one per
+    inline-discussion POST (default 0 once exhausted). A non-zero discussion rc comes
+    back with the verbatim glab 400. *calls* collects every argv when given.
     """
+    rcs = iter(discussion_rcs or [])
 
     def _run(cmd, *a, **k):
         def res(out="", err="", rc=0):
             return SimpleNamespace(stdout=out, stderr=err, returncode=rc)
 
+        if calls is not None:
+            calls.append(cmd)
         if cmd[0] == "which":
             return res(out="/usr/bin/" + cmd[1])
         if cmd[:3] == ["git", "remote", "get-url"]:
             return res(out=remote)
         if cmd[:2] == ["git", "rev-parse"]:
-            return res(out="deadbeefcafe\n")
+            return res(out=head_sha)
         if cmd[:3] == ["gh", "pr", "diff"]:
             return res(out=diff)
         if cmd[:3] == ["glab", "mr", "diff"]:
             return res(out=diff)
+        if cmd[:2] == ["glab", "api"] and "--method" in cmd:
+            if any(tok.endswith("/discussions") for tok in cmd):
+                rc = next(rcs, 0)
+                return res(out="{}") if rc == 0 else res(err=GLAB_400_STDERR, rc=rc)
+            if any(tok.endswith("/notes") for tok in cmd):
+                if note_rc:
+                    return res(err="glab: 401 Unauthorized (HTTP 401)", rc=note_rc)
+                return res(out="{}")
         if cmd[:2] == ["glab", "api"] and cmd[-1].endswith("/versions"):
             return res(out=json.dumps(versions if versions is not None else []))
         return res(out="{}", rc=0)
 
     return _run
+
+
+def _gitlab_posts(mock_run, suffix):
+    """Calls on *mock_run* that POST to a GitLab endpoint whose path ends in *suffix*."""
+    return [
+        c
+        for c in mock_run.call_args_list
+        if "--method" in c.args[0] and any(t.endswith(suffix) for t in c.args[0])
+    ]
+
+
+def _discussion_posts(mock_run):
+    return _gitlab_posts(mock_run, "/discussions")
+
+
+def _note_posts(mock_run):
+    return _gitlab_posts(mock_run, "/notes")
 
 
 class _DryRunTestBase(unittest.TestCase):
@@ -1867,6 +2115,309 @@ class TestBothFooterHalvesPosted(_DryRunTestBase):
         self.assertEqual(signal["sha"], "deadbeefcafe")
         # The mechanical marker is still appended (the guards are independent).
         self.assertIn("code-gauntlet-findings:", body)
+
+
+# ---------------------------------------------------------------------------
+# GitLab position contract, end-to-end from a real `glab mr diff` (issue #127)
+# ---------------------------------------------------------------------------
+
+
+class TestGitlabPositionContract(_DryRunTestBase):
+    """The position payload as the REAL parser produces it.
+
+    ``TestGitlabPositionPayload`` injects ``valid_lines``/``new_files`` and so could
+    never have caught #127 D2 (glab-style added-file detection) — the fixture supplied
+    the answer the parser was failing to compute. This class drives ``main()`` in
+    dry-run against ``GL_DIFF_CONTRACT``, so ``parse_diff_lines`` feeds ``post_gitlab``
+    and every asserted key is one the production chain actually emitted.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": GL_CONTRACT_FINDINGS,
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF_CONTRACT, versions=GL_CONTRACT_VERSIONS
+                ),
+            ),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            post_review.main()
+
+    def _positions(self):
+        return [d["position"] for d in self._payload()["discussions"]]
+
+    def test_context_line_position_carries_the_correct_old_line(self):
+        position = self._positions()[0]
+        self.assertEqual(position["new_line"], 61)
+        self.assertEqual(position["old_line"], 50)
+        self.assertEqual(position["old_path"], "src/edited.py")
+
+    def test_added_line_position_omits_old_line(self):
+        position = self._positions()[1]
+        self.assertEqual(position["new_line"], 62)
+        self.assertNotIn("old_line", position)
+        # The FILE is still modified, so old_path stays.
+        self.assertEqual(position["old_path"], "src/edited.py")
+
+    def test_added_file_position_omits_old_path_and_old_line(self):
+        """The test the old suite could not provide: ``new_files`` comes from the
+        parser here, not from a fixture that asserted the conclusion."""
+        position = self._positions()[2]
+        self.assertEqual(position["new_path"], "src/added.py")
+        self.assertNotIn("old_path", position)
+        self.assertNotIn("old_line", position)
+
+    def test_line_code_never_appears_anywhere_in_the_gitlab_payload(self):
+        """``line_code`` is derived server-side. Both documented attempts to compute it
+        client-side (a position sibling, and inside ``line_range``) reproduced the
+        identical 400 — one scan covers positions, bodies and the summary note."""
+        self.assertNotIn("line_code", json.dumps(self._payload()))
+
+    def test_new_line_is_always_sent(self):
+        for position in self._positions():
+            self.assertIsInstance(position["new_line"], int)
+
+
+# ---------------------------------------------------------------------------
+# GitLab per-finding fault tolerance (issue #127 D3)
+# ---------------------------------------------------------------------------
+
+
+class TestGitlabFaultTolerance(_DryRunTestBase):
+    """A single rejected position must not strand the findings behind it.
+
+    The summary note is posted FIRST, so aborting mid-loop left partial,
+    non-retryable state on the MR. The loop now warns, counts and continues; the run
+    only exits non-zero when EVERY attempted post was rejected.
+    """
+
+    def _run_main(self, dry_run=False, findings=None, **fake_run_kwargs):
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "sha": "a" * 40,
+                "review_body": "MR review",
+                "findings": GL_CONTRACT_FINDINGS if findings is None else findings,
+            }
+        )
+        argv = ["post_review.py", self.findings_path]
+        if dry_run:
+            argv.append("--dry-run")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        exit_code = None
+        with (
+            patch.object(sys, "argv", argv),
+            patch.dict(os.environ, {}, clear=False),
+            # The idempotency fetch is not the subject here; pin it to "not posted yet"
+            # so every run reaches the per-finding loop.
+            patch(
+                "scripts.post_review.gitlab_note_exists_for_sha",
+                return_value=(False, None),
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF_CONTRACT,
+                    versions=GL_CONTRACT_VERSIONS,
+                    **fake_run_kwargs,
+                ),
+            ) as mock_run,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
+            try:
+                post_review.main()
+            except SystemExit as exc:
+                exit_code = exc.code
+        return SimpleNamespace(
+            mock_run=mock_run,
+            out=stdout.getvalue(),
+            err=stderr.getvalue(),
+            exit_code=exit_code,
+        )
+
+    def test_one_rejection_does_not_abort_the_remaining_findings(self):
+        run = self._run_main(discussion_rcs=[1, 0, 0])
+        self.assertIsNone(
+            run.exit_code, "a partial delivery is a success with warnings"
+        )
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+
+    def test_rejection_warning_names_the_finding_and_the_api_error(self):
+        run = self._run_main(discussion_rcs=[1, 0, 0])
+        self.assertIn("Context-line finding", run.err)
+        self.assertIn("src/edited.py:61", run.err)
+        self.assertIn("line_code", run.err)
+
+    def test_all_rejected_exits_non_zero_after_attempting_every_finding(self):
+        run = self._run_main(discussion_rcs=[1, 1, 1])
+        self.assertEqual(run.exit_code, 1)
+        # The exit is a REPORT, not an abort: every finding was attempted first.
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("  3 inline discussion(s) rejected", run.out)
+
+    def test_zero_posted_with_no_rejections_exits_zero(self):
+        off_diff = [dict(f, line=999) for f in GL_CONTRACT_FINDINGS]
+        run = self._run_main(findings=off_diff)
+        self.assertIsNone(run.exit_code)
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("  3 finding(s) skipped.", run.out)
+        self.assertNotIn("rejected", run.out)
+
+    def test_summary_note_failure_is_still_fatal(self):
+        run = self._run_main(note_rc=1)
+        self.assertEqual(run.exit_code, 1)
+        self.assertEqual(
+            _discussion_posts(run.mock_run),
+            [],
+            "auth/MR failure dooms every inline post behind it — do not attempt them",
+        )
+
+    def test_dry_run_never_reports_rejections(self):
+        run = self._run_main(dry_run=True, discussion_rcs=[1, 1, 1])
+        self.assertIsNone(run.exit_code)
+        self.assertIn("  3 inline discussion(s) captured.", run.out)
+        self.assertNotIn("rejected", run.out)
+        self.assertEqual(len(self._payload()["discussions"]), 3)
+
+
+# ---------------------------------------------------------------------------
+# GitLab summary-note idempotency (issue #127 D4)
+# ---------------------------------------------------------------------------
+
+
+class TestGitlabSummaryIdempotency(_DryRunTestBase):
+    """A rerun after a partial delivery must not stack a second summary note.
+
+    ``scripts.post_review.gitlab_note_exists_for_sha`` — the name bound INTO this
+    module — is what these tests patch. ``post_review`` imports the bare
+    ``detect_prior_review`` while ``tests/test_detect_prior_review.py`` imports
+    ``scripts.detect_prior_review``: two distinct module objects in one pytest process,
+    so patching the other one would not be seen here.
+    """
+
+    def _run_main(self, exists, data=None, dry_run=False, head_sha="deadbeefcafe\n"):
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "sha": "a" * 40,
+                "review_body": "MR review",
+                "findings": GL_CONTRACT_FINDINGS,
+            }
+            if data is None
+            else data
+        )
+        argv = ["post_review.py", self.findings_path]
+        if dry_run:
+            argv.append("--dry-run")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with (
+            patch.object(sys, "argv", argv),
+            patch.dict(os.environ, {}, clear=False),
+            patch(
+                "scripts.post_review.gitlab_note_exists_for_sha", return_value=exists
+            ) as mock_exists,
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF_CONTRACT,
+                    versions=GL_CONTRACT_VERSIONS,
+                    head_sha=head_sha,
+                ),
+            ) as mock_run,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
+            post_review.main()
+        return SimpleNamespace(
+            mock_exists=mock_exists,
+            mock_run=mock_run,
+            out=stdout.getvalue(),
+            err=stderr.getvalue(),
+        )
+
+    def test_summary_skipped_when_this_shas_marker_is_already_on_the_mr(self):
+        run = self._run_main(exists=(True, None))
+        self.assertEqual(_note_posts(run.mock_run), [])
+        # The retry still delivers the inline comments — that is the whole point.
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
+        self.assertIn("already on the MR", run.out)
+        self.assertNotIn("MR summary note posted.", run.out)
+        run.mock_exists.assert_called_once_with("o", "r", 5, "a" * 40)
+
+    def test_summary_posted_when_the_marker_records_a_different_sha(self):
+        run = self._run_main(exists=(False, None))
+        self.assertEqual(len(_note_posts(run.mock_run)), 1)
+        self.assertIn("MR summary note posted.", run.out)
+
+    def test_notes_fetch_failure_degrades_to_posting(self):
+        run = self._run_main(
+            exists=(False, "gitlab notes: fetch failed (exit 1): boom")
+        )
+        self.assertEqual(len(_note_posts(run.mock_run)), 1)
+        self.assertIn("could not check for an existing summary note", run.err)
+        self.assertIn("boom", run.err)
+
+    def test_dry_run_makes_no_idempotency_call_and_always_captures_the_summary(self):
+        """The hard "no network in dry-run" pin: the check would say "skip" if it were
+        consulted, and build_dry_run_payload's "first capture is the summary" shape
+        depends on the note being captured regardless."""
+        run = self._run_main(exists=(True, None), dry_run=True)
+        run.mock_exists.assert_not_called()
+        self.assertIn("code-gauntlet-findings:", self._payload()["summary"]["body"])
+        self.assertEqual(
+            post_review._CAPTURED[0]["payload"]["body"],
+            self._payload()["summary"]["body"],
+        )
+
+    def test_unresolvable_sha_skips_the_check_and_posts(self):
+        """get_head_sha's "unknown" fallback is not a usable dedup key."""
+        run = self._run_main(
+            exists=(True, None),
+            data={
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": GL_CONTRACT_FINDINGS,
+            },
+            head_sha="unknown\n",
+        )
+        run.mock_exists.assert_not_called()
+        self.assertEqual(len(_note_posts(run.mock_run)), 1)
+
+    def test_summary_check_delegates_to_the_reader_module(self):
+        """post_review must not grow its own parse of the signal it writes."""
+        self.assertEqual(
+            post_review.gitlab_note_exists_for_sha.__module__, "detect_prior_review"
+        )
 
 
 if __name__ == "__main__":
