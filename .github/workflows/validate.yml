@@ -18,7 +18,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Claude Code
-        run: npm install -g @anthropic-ai/claude-code
+        run: npm install -g @anthropic-ai/claude-code@2.1.221
 
       - name: Validate plugin manifest
         run: claude plugin validate .

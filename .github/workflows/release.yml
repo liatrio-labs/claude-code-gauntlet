@@ -58,7 +58,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install python-semantic-release
-        run: pip install "python-semantic-release>=10.0.0,<11.0.0"
+        run: pip install python-semantic-release==10.6.1
 
       - name: Semantic Release
         id: release

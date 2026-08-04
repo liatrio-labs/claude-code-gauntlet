@@ -12,7 +12,7 @@
 #
 # Runner prerequisites (bench/run.py's prereq check fails fast with a fix
 # message if any of these are missing):
-#   - `claude` CLI on PATH — installed below via the official install script.
+#   - `claude` CLI on PATH — installed below via pinned npm.
 #   - `gh` CLI authenticated — satisfied via GH_TOKEN using the default
 #     GITHUB_TOKEN (no extra secret needed).
 #   - `uv` on PATH — installed below via astral-sh/setup-uv, used to run the
@@ -63,8 +63,9 @@ jobs:
 
       - name: Install Claude Code CLI
         run: |
-          curl -fsSL https://claude.ai/install.sh | bash
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          npm install -g @anthropic-ai/claude-code@2.1.221
+          echo "$(npm prefix -g)/bin" >> "$GITHUB_PATH"
+          claude --version
 
       - name: Write bench/.env
         env:
