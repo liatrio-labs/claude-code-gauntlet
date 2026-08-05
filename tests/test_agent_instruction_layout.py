@@ -84,7 +84,9 @@ CODEX_CAP_BYTES = 32_768
 # section (Biome pin, formatter-off rationale) and deferred-rules table.
 # Raised 18_916 -> 19_079 (2026-08-04, #105): reword tooling-boundary bullet —
 # shipped runtime is language globals + host-injected args only, not Node builtins.
-# Raised 19_079 -> 19_282 (2026-08-04, #110): scripts/AGENTS.md stdout/stderr CLI contract bullet.
+# Raised 19_079 -> 19_282 (2026-08-04, #110): restore await_workflow stdout-payload
+# rationale (Bash caller / model-context / distinct keys) wrongly compressed earlier in
+# #110; add scripts CLI stdout/stderr contract pointing at script_io.write_result.
 AGENTS_SET_BUDGET_BYTES = 19_282
 CLAUDE_MD_MAX_BYTES = 856
 
