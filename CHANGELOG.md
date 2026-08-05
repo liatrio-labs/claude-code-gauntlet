@@ -2,6 +2,139 @@
 
 <!-- version list -->
 
+## v3.3.13 (2026-08-05)
+
+### Bug Fixes
+
+- Restore await_workflow AGENTS rationale and raise byte ratchet
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+### Chores
+
+- Allow Octo in README cspell override
+  ([#140](https://github.com/liatrio-labs/claude-code-gauntlet/pull/140),
+  [`b884c43`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b884c430dbbcebb75aa021cc52550bb9129373b9))
+
+- **deps**: Bump the actions group with 8 updates
+  ([#139](https://github.com/liatrio-labs/claude-code-gauntlet/pull/139),
+  [`a451c58`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/a451c5817ecad1bb024fee0d6d51bc69e85637bb))
+
+### Code Style
+
+- **bench**: Ruff-format dark CSS string concat in report.py
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- **tests**: Satisfy full verification gates
+  ([#142](https://github.com/liatrio-labs/claude-code-gauntlet/pull/142),
+  [`3a56dfc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a56dfc8453fefcc13a21e54cfdbeed991615dd6))
+
+### Continuous Integration
+
+- Add Dependabot for Actions and gate workflows with zizmor
+  ([#138](https://github.com/liatrio-labs/claude-code-gauntlet/pull/138),
+  [`0d64292`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0d64292b2366593c0853c9b91c801befc299e150))
+
+- Add OpenSSF Scorecard workflow with SARIF publish
+  ([#140](https://github.com/liatrio-labs/claude-code-gauntlet/pull/140),
+  [`b884c43`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b884c430dbbcebb75aa021cc52550bb9129373b9))
+
+- Clarify upload-sarif pin comment as v3.37.6
+  ([#140](https://github.com/liatrio-labs/claude-code-gauntlet/pull/140),
+  [`b884c43`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b884c430dbbcebb75aa021cc52550bb9129373b9))
+
+- Exact-pin pip in coverage gate legs
+  ([#138](https://github.com/liatrio-labs/claude-code-gauntlet/pull/138),
+  [`0d64292`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0d64292b2366593c0853c9b91c801befc299e150))
+
+- Harden Actions supply chain (SHA pins, Dependabot, zizmor)
+  ([#138](https://github.com/liatrio-labs/claude-code-gauntlet/pull/138),
+  [`0d64292`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0d64292b2366593c0853c9b91c801befc299e150))
+
+- Pin in-workflow package installs and smoke CLI via npm
+  ([#138](https://github.com/liatrio-labs/claude-code-gauntlet/pull/138),
+  [`0d64292`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0d64292b2366593c0853c9b91c801befc299e150))
+
+- Publish OpenSSF Scorecard after supply-chain hardening
+  ([#140](https://github.com/liatrio-labs/claude-code-gauntlet/pull/140),
+  [`b884c43`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b884c430dbbcebb75aa021cc52550bb9129373b9))
+
+- SHA-pin Actions uses, persist-credentials, top-level permissions
+  ([#138](https://github.com/liatrio-labs/claude-code-gauntlet/pull/138),
+  [`0d64292`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0d64292b2366593c0853c9b91c801befc299e150))
+
+### Documentation
+
+- Add OpenSSF Scorecard badge with solo-maintainer honesty note
+  ([#140](https://github.com/liatrio-labs/claude-code-gauntlet/pull/140),
+  [`b884c43`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b884c430dbbcebb75aa021cc52550bb9129373b9))
+
+- Record #110 consolidations and stages preamble decline
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- **bench**: Record smoke CLI npm pin and checkpoint bump policy
+  ([#138](https://github.com/liatrio-labs/claude-code-gauntlet/pull/138),
+  [`0d64292`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0d64292b2366593c0853c9b91c801befc299e150))
+
+- **tests**: Justify #110 AGENTS.md byte ratchet raise
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+### Refactoring
+
+- Consolidate accidental duplications (#110)
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- Share CLI result writes and pin stderr summaries
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- Unify merge-findings brace scanners in both runtimes
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- **bench**: Emit dark-mode CSS variables from one map
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- **bench**: Share transcript content-block walk in profile_run
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- **bench**: Share wf_*.json baseline filter between copier and parser
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- **tests**: Share assemble_artifacts hard-failure assertion helper
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+### Testing
+
+- Strengthen overstated claim tests (#109)
+  ([#142](https://github.com/liatrio-labs/claude-code-gauntlet/pull/142),
+  [`3a56dfc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a56dfc8453fefcc13a21e54cfdbeed991615dd6))
+
+- Use mkdtemp for the new --output stdout pins
+  ([#143](https://github.com/liatrio-labs/claude-code-gauntlet/pull/143),
+  [`e7b42b4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e7b42b47bf2d6b135d88cb229a91252836aa24f7))
+
+- **materialize**: Pin main() unexpected-exception receipt; reword happy-path
+  ([#142](https://github.com/liatrio-labs/claude-code-gauntlet/pull/142),
+  [`3a56dfc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a56dfc8453fefcc13a21e54cfdbeed991615dd6))
+
+- **post_review**: Pin valid_lines=None skip-diag branch; rename empty-map case
+  ([#142](https://github.com/liatrio-labs/claude-code-gauntlet/pull/142),
+  [`3a56dfc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a56dfc8453fefcc13a21e54cfdbeed991615dd6))
+
+- **verify_findings**: Assert grep fast path skips git grep
+  ([#142](https://github.com/liatrio-labs/claude-code-gauntlet/pull/142),
+  [`3a56dfc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3a56dfc8453fefcc13a21e54cfdbeed991615dd6))
+
+
 ## v3.3.12 (2026-08-04)
 
 ### Bug Fixes
