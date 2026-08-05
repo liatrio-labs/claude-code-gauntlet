@@ -202,7 +202,7 @@ Each finding is a JSON object with this shape:
 Found real impact — billing module caller at src/billing/invoice.py:103 still expects the old return type.
 
 ```json
-{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 doesn\u0027t check for None before dereferencing, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"cross_file_refs":["src/billing/invoice.py"]}
+{"id":"cross-file-1","dimension":"cross_file_impact","severity":"high","confidence":88,"file":"src/users/repository.py","line_start":45,"line_end":47,"title":"getUserById return type change breaks billing caller","description":"getUserById now returns Optional[User] but billing/invoice.py:103 doesn't check for None before dereferencing, causing AttributeError when user not found.","evidence":"invoice.py:103: user.billing_address — no None guard","suggestion":"Add None check in invoice.py:103 before accessing user attributes.","affected_consumers":["src/billing/invoice.py"],"cross_file_refs":["src/billing/invoice.py"]}
 ```
 
 [investigation of renamed config key DATABASE_URL — no issue found]

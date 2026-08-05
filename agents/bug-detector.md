@@ -271,7 +271,7 @@ Each finding is a JSON object with this shape:
 I found a real issue — the auth context can be null on API key paths.
 
 ```json
-{"id":"bug-1","dimension":"bug","severity":"high","confidence":85,"file":"src/auth.py","line_start":42,"line_end":45,"title":"Auth context null on API key path","description":"When authenticating via API key, organization_context.member is None but line 42 doesn\u0027t check before dereferencing.","evidence":"Line 42: member.role == Role.ADMIN","suggestion":"Add a None check before accessing member attributes.","cross_file_refs":["src/middleware/auth.py"]}
+{"id":"bug-1","dimension":"bug","severity":"high","confidence":85,"file":"src/auth.py","line_start":42,"line_end":45,"title":"Auth context null on API key path","description":"When authenticating via API key, organization_context.member is None but line 42 doesn't check before dereferencing.","evidence":"Line 42: member.role == Role.ADMIN","suggestion":"Add a None check before accessing member attributes.","cross_file_refs":["src/middleware/auth.py"]}
 ```
 
 [investigation of off-by-one in pagination — no issue found]
