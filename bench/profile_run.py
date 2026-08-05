@@ -198,6 +198,22 @@ def find_subagent_dir(session_dir: Path, run_id: str):
 # --------------------------------------------------------------------------- per-agent transcript analysis
 
 
+def _iter_content_blocks(rows):
+    """Yield ``(ts_ms, block)`` for dict content blocks in transcript rows."""
+    for row in rows:
+        ts = row.get("timestamp")
+        ts_ms = iso_to_ms(ts) if ts else None
+        msg = row.get("message")
+        if not isinstance(msg, dict):
+            continue
+        content = msg.get("content")
+        if not isinstance(content, list):
+            continue
+        for c in content:
+            if isinstance(c, dict):
+                yield ts_ms, c
+
+
 def analyze_agent_transcript(path: Path):
     """Return per-agent generation/tool split + output-byte accounting from one .jsonl file.
 
@@ -233,26 +249,19 @@ def analyze_agent_transcript(path: Path):
         ts_ms = iso_to_ms(ts) if ts else None
         if ts_ms is not None:
             all_ts.append(ts_ms)
-        msg = row.get("message")
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        for c in content:
-            if not isinstance(c, dict):
-                continue
-            ctype = c.get("type")
-            if ctype == "tool_use" and ts_ms is not None:
-                tool_uses[c.get("id")] = {
-                    "name": c.get("name"),
-                    "ts_ms": ts_ms,
-                    "input": c.get("input") or {},
-                }
-            elif ctype == "tool_result" and ts_ms is not None:
-                tid = c.get("tool_use_id")
-                if tid is not None:
-                    tool_result_ts[tid] = ts_ms
+
+    for ts_ms, c in _iter_content_blocks(rows):
+        ctype = c.get("type")
+        if ctype == "tool_use" and ts_ms is not None:
+            tool_uses[c.get("id")] = {
+                "name": c.get("name"),
+                "ts_ms": ts_ms,
+                "input": c.get("input") or {},
+            }
+        elif ctype == "tool_result" and ts_ms is not None:
+            tid = c.get("tool_use_id")
+            if tid is not None:
+                tool_result_ts[tid] = ts_ms
 
     if all_ts:
         result["first_ts"] = ms_to_iso(min(all_ts))
@@ -561,46 +570,35 @@ def analyze_orchestrator_phases(
 
     rows = read_jsonl(session_path)
     events = []  # {ts_ms, kind: 'tool_use'|'tool_result', name, id/tool_use_id, text}
-    for row in rows:
-        ts = row.get("timestamp")
-        ts_ms = iso_to_ms(ts) if ts else None
-        msg = row.get("message")
-        if not isinstance(msg, dict):
-            continue
-        content = msg.get("content")
-        if not isinstance(content, list):
-            continue
-        for c in content:
-            if not isinstance(c, dict):
-                continue
-            ctype = c.get("type")
-            if ctype == "tool_use" and ts_ms is not None:
-                events.append(
-                    {
-                        "ts_ms": ts_ms,
-                        "kind": "tool_use",
-                        "name": c.get("name"),
-                        "id": c.get("id"),
-                        "input": c.get("input") or {},
-                    }
-                )
-            elif ctype == "tool_result" and ts_ms is not None:
-                cont = c.get("content")
-                text = (
-                    cont
-                    if isinstance(cont, str)
-                    else json.dumps(cont)
-                    if cont is not None
-                    else ""
-                )
-                events.append(
-                    {
-                        "ts_ms": ts_ms,
-                        "kind": "tool_result",
-                        "tool_use_id": c.get("tool_use_id"),
-                        "text": text,
-                    }
-                )
+    for ts_ms, c in _iter_content_blocks(rows):
+        ctype = c.get("type")
+        if ctype == "tool_use" and ts_ms is not None:
+            events.append(
+                {
+                    "ts_ms": ts_ms,
+                    "kind": "tool_use",
+                    "name": c.get("name"),
+                    "id": c.get("id"),
+                    "input": c.get("input") or {},
+                }
+            )
+        elif ctype == "tool_result" and ts_ms is not None:
+            cont = c.get("content")
+            text = (
+                cont
+                if isinstance(cont, str)
+                else json.dumps(cont)
+                if cont is not None
+                else ""
+            )
+            events.append(
+                {
+                    "ts_ms": ts_ms,
+                    "kind": "tool_result",
+                    "tool_use_id": c.get("tool_use_id"),
+                    "text": text,
+                }
+            )
 
     events.sort(key=lambda e: e["ts_ms"])
     if not events:
