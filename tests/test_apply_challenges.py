@@ -19,6 +19,7 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -764,7 +765,8 @@ class TestMainCLI(unittest.TestCase):
 
         f_path = _write_json({"filtered": [_make_finding(id="f1")], "eliminated": []})
         c_path = _write_json([_make_challenge("f1", 80)])
-        out_path = tempfile.mktemp(suffix=".json")
+        out_dir = tempfile.mkdtemp()
+        out_path = os.path.join(out_dir, "out.json")
         captured_out = io.StringIO()
         captured_err = io.StringIO()
         try:
@@ -781,8 +783,7 @@ class TestMainCLI(unittest.TestCase):
         finally:
             os.unlink(f_path)
             os.unlink(c_path)
-            if os.path.exists(out_path):
-                os.unlink(out_path)
+            shutil.rmtree(out_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

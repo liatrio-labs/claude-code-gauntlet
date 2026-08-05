@@ -16,6 +16,7 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -442,7 +443,8 @@ class TestApplyValidationsMain(unittest.TestCase):
 
         findings_path = _write_json([_make_finding(id="bug-1", confidence=80)])
         validations_path = _write_json([{"id": "bug-1", "confidence": 65}])
-        out_path = tempfile.mktemp(suffix=".json")
+        out_dir = tempfile.mkdtemp()
+        out_path = os.path.join(out_dir, "out.json")
         captured_out = io.StringIO()
         captured_err = io.StringIO()
         try:
@@ -465,8 +467,7 @@ class TestApplyValidationsMain(unittest.TestCase):
         finally:
             os.unlink(findings_path)
             os.unlink(validations_path)
-            if os.path.exists(out_path):
-                os.unlink(out_path)
+            shutil.rmtree(out_dir, ignore_errors=True)
 
     def test_envelope_keys_preserved_in_output(self):
         """eliminated and batches from verify_findings.py are preserved."""
