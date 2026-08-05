@@ -16,6 +16,7 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -433,6 +434,40 @@ class TestApplyValidationsMain(unittest.TestCase):
             self.assertEqual(result["findings"][0]["confidence"], 65)
         finally:
             os.unlink(out_path)
+
+    def test_output_flag_leaves_stdout_empty(self):
+        import io
+        from unittest.mock import patch
+
+        from scripts.apply_validations import main
+
+        findings_path = _write_json([_make_finding(id="bug-1", confidence=80)])
+        validations_path = _write_json([{"id": "bug-1", "confidence": 65}])
+        out_dir = tempfile.mkdtemp()
+        out_path = os.path.join(out_dir, "out.json")
+        captured_out = io.StringIO()
+        captured_err = io.StringIO()
+        try:
+            argv = [
+                "apply_validations.py",
+                findings_path,
+                validations_path,
+                "--output",
+                out_path,
+            ]
+            with (
+                patch("sys.argv", argv),
+                patch("sys.stdout", captured_out),
+                patch("sys.stderr", captured_err),
+            ):
+                main()
+            self.assertEqual(captured_out.getvalue(), "")
+            self.assertIn("Output written", captured_err.getvalue())
+            self.assertTrue(os.path.exists(out_path))
+        finally:
+            os.unlink(findings_path)
+            os.unlink(validations_path)
+            shutil.rmtree(out_dir, ignore_errors=True)
 
     def test_envelope_keys_preserved_in_output(self):
         """eliminated and batches from verify_findings.py are preserved."""

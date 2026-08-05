@@ -11,9 +11,9 @@ nothing covers it, add a row: the pair, the classification, a one-sentence reaso
 intentional one — the doc reference that justifies it. A duplication with no row is an unclassified
 duplication, which is the state this register exists to prevent.
 
-Classifications are `intentional-and-documented` (a rules file or in-code comment already justifies
-it — cite it), `intentional-but-undocumented` (a real reason exists; from now on this register is
-the documentation), and `accidental` (no reason; queued for removal in #110).
+Classifications are `intentional-and-documented` (a rules file, in-code comment, or completed
+consolidation already justifies it — cite it), `intentional-but-undocumented` (a real reason exists;
+from now on this register is the documentation), and `accidental` (no reason; queue it for removal).
 
 **Scan basis.** Measured 2026-07-30 at HEAD `ebf399d` (tag v3.3.4) with:
 
@@ -40,7 +40,7 @@ reconcile to 116 pairs plus the eight tool-invisible relationships.
 
 ## Individually classified rows
 
-Thirty-six rows: 19 `intentional-and-documented`, 8 `intentional-but-undocumented`, 9 `accidental`.
+Thirty-six rows: 27 `intentional-and-documented`, 9 `intentional-but-undocumented`, 0 `accidental`.
 
 | Pair | Classification | Reason | Doc ref |
 | --- | --- | --- | --- |
@@ -71,15 +71,15 @@ Thirty-six rows: 19 `intentional-and-documented`, 8 `intentional-but-undocumente
 | `bench/tests/test_check.py:341-365` ↔ `:451-475` | intentional-but-undocumented | Two upstream triggers for one G3 failure; the second copy's extra `script` key is the variable under test and is legible only because the surrounding literal is present. | — |
 | `tests/test_parity_fixtures.py:151-165` ↔ `workflows/test/tools/record_parity.py:158-171` | intentional-but-undocumented | Load-bearing and must not be consolidated: `record_parity.py` generates `expected.json`, so importing it into the test would compare the recorder to its own output. | — |
 | `tests/test_boundary_parity.py:104-114,197-207` ↔ `tests/test_post_review.py:1018-1028,1038-1048` | intentional-but-undocumented | Trimmed local `_fake_run` plus setUp/tearDown. The alternative is test modules importing each other, which lets an unrelated suite's refactor break this one. | — |
-| `workflows/src/mergeFindings.js:97-127` ↔ `:141-171` (`tryParseJsonAt` vs `findEndOfJson`) | accidental | `findEndOfJson` is `tryParseJsonAt` with the parse removed: identical depth/inString/escape walk, differing only in the return. Nothing justifies the split, and this file comments its *deliberate* duplication elsewhere. | — |
-| `scripts/merge_findings.py:154-180` ↔ `:191-217` | accidental | Python side of the same defect, line-for-line. One scanner, two return conventions, no stated reason. A correctness invariant held by copy-paste across two runtimes. | — |
-| `scripts/apply_challenges.py:485-496` ↔ `scripts/filter_findings.py:1379-1390` ↔ `scripts/apply_validations.py:302-311` | accidental | Copy-pasted `main()` result-write tails, not twin transforms (the JS twins have no CLI). Already drifted: two print the receipt to stderr, one to stdout. | — |
-| `bench/runner/invoke.py:325-333` ↔ `:866-874` | accidental | Byte-identical `wf_*.json` baseline filter in the copier and the parser. The two must agree or a run reports records it did not copy; today they agree only because someone pasted carefully. | — |
-| `bench/profile_run.py:213-223` ↔ `:494-504` | accidental | Identical defensive descent through the transcript content blocks, differing only in what each branch accumulates. Plain DRY violation. | — |
-| `bench/report.py:1501-1521` ↔ `:1523-1543` | accidental | The same 18 dark-mode custom-property values written twice in one template string. Two dark entry points is a correct requirement; hand-emitting the values twice is not. | — |
-| `bench/report.html:32-52` ↔ `:54-74` | accidental | Not an independent defect — the committed output of the row above, after generation. Recorded because both files are git-tracked and jscpd counts both. | — |
-| `workflows/src/stages.js:608-614` ↔ `:1275-1281` ↔ `:1439-1445` | accidental | The stage-entry preamble (ctx default plus input parse plus destructuring) at 8 stage entry points. A uniform contract, but a helper would preserve it exactly. | — |
-| `tests/test_assemble_artifacts.py:503-513` ↔ `:1158-1168` | accidental | `assert_hard_failure` and `assert_hard_failure_for`: same body, different classes, one extra assertion. The near-identical names are the tell — copy-paste with a rename. | — |
+| `workflows/src/mergeFindings.js:97-127` ↔ `:141-171` (`tryParseJsonAt` vs `findEndOfJson`) | intentional-and-documented | Consolidated behind `scanJsonObject` in #110; the thin wrappers retain their distinct parse and end-index contracts. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `scripts/merge_findings.py:154-180` ↔ `:191-217` | intentional-and-documented | Consolidated behind `_scan_json_object` in #110; the thin wrappers retain their distinct parse and end-index contracts. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `scripts/apply_challenges.py:485-496` ↔ `scripts/filter_findings.py:1379-1390` ↔ `scripts/apply_validations.py:302-311` | intentional-and-documented | Consolidated behind `script_io.write_result` in #110. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `bench/runner/invoke.py:325-333` ↔ `:866-874` | intentional-and-documented | Consolidated behind `_iter_new_wf_paths` in #110. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `bench/profile_run.py:213-223` ↔ `:494-504` | intentional-and-documented | Consolidated behind `_iter_content_blocks` in #110. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `bench/report.py:1501-1521` ↔ `:1523-1543` | intentional-and-documented | Consolidated behind `_DARK_VIZ_VARS` in #110; both dark-mode entry points render from the shared map. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `bench/report.html:32-52` ↔ `:54-74` | intentional-and-documented | Regenerated from `bench/report.py` in #110; its two dark-mode blocks now derive from `_DARK_VIZ_VARS`. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `workflows/src/stages.js:608-614` ↔ `:1275-1281` ↔ `:1439-1445` | intentional-but-undocumented | Declined in #110: only 2 of the ~6 lines are identical across the 8 sites; the remainder is per-stage extraction and defaults, and each parse is independently tested. Revisit only if a ninth stage or a change to the shared 2-line parse itself lands. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `tests/test_assemble_artifacts.py:503-513` ↔ `:1158-1168` | intentional-and-documented | Consolidated behind `assert_assemble_hard_failure` in #110. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
 
 ## Grouped patterns
 
@@ -100,10 +100,9 @@ Eighty-four of the 116 pairs, grouped after reading one exemplar per group at bo
 - Rows classified `intentional-but-undocumented` are documented **by this register** from now on. A
   future reader who finds one of them needs no further justification; a future *editor* who wants to
   consolidate one should update the row rather than delete it silently.
-- Rows classified `accidental` are queued in #110. Two of the nine are worth doing
-  because a correctness invariant is currently held by copy-paste rather than by code — the
-  `tryParseJsonAt`/`findEndOfJson` brace scanners in both runtimes, and the `invoke.py` baseline
-  walk. The rest are hygiene.
+- The accidental rows queued in #110 have been resolved: eight were consolidated behind shared
+  symbols and the `stages.js` preamble was explicitly declined with a reopen condition. New
+  accidental rows need a new tracked removal issue rather than being added to the closed #110 queue.
 - `tests/test_parity_fixtures.py` ↔ `record_parity.py` is the one duplication that must **not** be
   consolidated. It reads like the worst violation in the register and is the highest-risk row for a
   future cleanup pass.

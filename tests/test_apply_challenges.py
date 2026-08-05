@@ -19,6 +19,7 @@ Covers:
 
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -755,6 +756,34 @@ class TestMainCLI(unittest.TestCase):
         finally:
             os.unlink(f_path)
             os.unlink(c_path)
+
+    def test_output_flag_leaves_stdout_empty(self):
+        import io
+        from unittest.mock import patch
+
+        from scripts.apply_challenges import main
+
+        f_path = _write_json({"filtered": [_make_finding(id="f1")], "eliminated": []})
+        c_path = _write_json([_make_challenge("f1", 80)])
+        out_dir = tempfile.mkdtemp()
+        out_path = os.path.join(out_dir, "out.json")
+        captured_out = io.StringIO()
+        captured_err = io.StringIO()
+        try:
+            argv = ["apply_challenges.py", f_path, c_path, "--output", out_path]
+            with (
+                patch("sys.argv", argv),
+                patch("sys.stdout", captured_out),
+                patch("sys.stderr", captured_err),
+            ):
+                main()
+            self.assertEqual(captured_out.getvalue(), "")
+            self.assertIn("Output written", captured_err.getvalue())
+            self.assertTrue(os.path.exists(out_path))
+        finally:
+            os.unlink(f_path)
+            os.unlink(c_path)
+            shutil.rmtree(out_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

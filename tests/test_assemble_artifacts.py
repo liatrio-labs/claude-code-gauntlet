@@ -248,6 +248,21 @@ def run_script(plan_path):
     return proc
 
 
+def assert_assemble_hard_failure(tc, ws, plan, needle, also_absent=()):
+    proc = run_script(ws.write_plan(plan))
+    tc.assertNotEqual(proc.returncode, 0, proc.stdout)
+    receipt = json.loads(proc.stdout)
+    tc.assertFalse(receipt["ok"])
+    tc.assertEqual(receipt["written"], [])
+    tc.assertTrue(
+        any(needle in e for e in receipt["errors"]),
+        f"expected {needle!r} in {receipt['errors']!r}",
+    )
+    tc.assertFalse(os.path.exists(ws.checkpoint_path))
+    for path in also_absent:
+        tc.assertFalse(os.path.exists(path))
+
+
 class TestChecksum(unittest.TestCase):
     def test_known_vector(self):
         # fnv1a32 of the empty string is the offset basis.
@@ -527,17 +542,9 @@ class TestStructuralHardFailures(unittest.TestCase):
     the #25 incident (tool-call markup appended after the JSON document)."""
 
     def assert_hard_failure(self, ws, plan, needle):
-        proc = run_script(ws.write_plan(plan))
-        self.assertNotEqual(proc.returncode, 0, proc.stdout)
-        receipt = json.loads(proc.stdout)
-        self.assertFalse(receipt["ok"])
-        self.assertEqual(receipt["written"], [])
-        self.assertTrue(
-            any(needle in e for e in receipt["errors"]),
-            f"expected {needle!r} in {receipt['errors']!r}",
+        assert_assemble_hard_failure(
+            self, ws, plan, needle, also_absent=(ws.post_path,)
         )
-        self.assertFalse(os.path.exists(ws.post_path))
-        self.assertFalse(os.path.exists(ws.checkpoint_path))
 
     def test_missing_expected_file(self):
         with _Workspace() as ws:
@@ -1232,16 +1239,7 @@ class TestCheckpointSkeletonGuardMirrorsTheJsOne(unittest.TestCase):
             self.assertEqual(len(cp["phases"]["challenge"]["findings"]), 2)
 
     def assert_hard_failure_for(self, ws, plan, needle):
-        proc = run_script(ws.write_plan(plan))
-        self.assertNotEqual(proc.returncode, 0, proc.stdout)
-        receipt = json.loads(proc.stdout)
-        self.assertFalse(receipt["ok"])
-        self.assertEqual(receipt["written"], [])
-        self.assertTrue(
-            any(needle in e for e in receipt["errors"]),
-            f"expected {needle!r} in {receipt['errors']!r}",
-        )
-        self.assertFalse(os.path.exists(ws.checkpoint_path))
+        assert_assemble_hard_failure(self, ws, plan, needle)
 
 
 class TestStdoutIsNeverEmpty(unittest.TestCase):

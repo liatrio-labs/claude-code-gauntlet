@@ -66,9 +66,13 @@ No external Python dependencies -- stdlib only.
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.dirname(__file__))
+from script_io import write_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1454,22 +1458,14 @@ def main():
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    output_text = json.dumps(result, indent=2, ensure_ascii=False)
-
-    if args.output:
-        try:
-            with open(args.output, "w") as fh:
-                fh.write(output_text)
-                fh.write("\n")
-            print(f"Output written to {args.output}")
-            print(
-                f"  {len(findings)} finding(s) passed, "
-                f"{len(all_eliminated)} eliminated."
-            )
-        except OSError as e:
-            die(f"Could not write output file: {e}")
-    else:
-        print(output_text)
+    summary = [
+        f"Output written to {args.output}",
+        f"  {len(findings)} finding(s) passed, {len(all_eliminated)} eliminated.",
+    ]
+    try:
+        write_result(args.output, result, summary)
+    except OSError as e:
+        die(f"Could not write output file: {e}")
 
 
 if __name__ == "__main__":

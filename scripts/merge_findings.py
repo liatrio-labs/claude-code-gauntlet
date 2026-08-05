@@ -161,46 +161,8 @@ def _extract_json_blocks(text: str) -> list[dict]:
     return results
 
 
-def _try_parse_json_at(text: str, start: int) -> dict | None:
-    """Try to parse a JSON object starting at position start."""
-    depth = 0
-    in_string = False
-    escape_next = False
-    i = start
-    while i < len(text):
-        ch = text[i]
-        if escape_next:
-            escape_next = False
-            i += 1
-            continue
-        if ch == "\\" and in_string:
-            escape_next = True
-            i += 1
-            continue
-        if ch == '"':
-            in_string = not in_string
-            i += 1
-            continue
-        if in_string:
-            i += 1
-            continue
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                candidate = text[start : i + 1]
-                try:
-                    parsed = json.loads(candidate)
-                except json.JSONDecodeError:
-                    return None
-                return parsed if isinstance(parsed, dict) else None
-        i += 1
-    return None
-
-
-def _find_end_of_json(text: str, start: int) -> int:
-    """Return position after the JSON object starting at start."""
+def _scan_json_object(text: str, start: int) -> int:
+    """Return exclusive end index of the JSON object at start, or -1 if never closed."""
     depth = 0
     in_string = False
     escape_next = False
@@ -229,7 +191,28 @@ def _find_end_of_json(text: str, start: int) -> int:
             if depth == 0:
                 return i + 1
         i += 1
-    return i + 1
+    return -1
+
+
+def _try_parse_json_at(text: str, start: int) -> dict | None:
+    """Try to parse a JSON object starting at position start."""
+    end = _scan_json_object(text, start)
+    if end < 0:
+        return None
+    candidate = text[start:end]
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _find_end_of_json(text: str, start: int) -> int:
+    """Return position after the JSON object starting at start."""
+    end = _scan_json_object(text, start)
+    if end < 0:
+        return len(text) + 1
+    return end
 
 
 def parse_text_file(path: str, agent: str) -> tuple[list[dict], list[str], bool, bool]:

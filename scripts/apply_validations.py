@@ -66,8 +66,12 @@ No external Python dependencies — stdlib only.
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timezone
+
+sys.path.insert(0, os.path.dirname(__file__))
+from script_io import write_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -308,24 +312,16 @@ def main():
             if key in envelope:
                 result[key] = envelope[key]
 
-    output_text = json.dumps(result, indent=2, ensure_ascii=False)
-
-    if args.output:
-        try:
-            with open(args.output, "w") as fh:
-                fh.write(output_text)
-                fh.write("\n")
-            print(f"Output written to {args.output}", file=sys.stderr)
-            print(
-                f"  {total} finding(s) total, "
-                f"{adjusted_count} adjusted, "
-                f"{pass_through} passed through unchanged.",
-                file=sys.stderr,
-            )
-        except OSError as e:
-            die(f"Could not write output file: {e}")
-    else:
-        print(output_text)
+    summary = [
+        f"Output written to {args.output}",
+        f"  {total} finding(s) total, "
+        f"{adjusted_count} adjusted, "
+        f"{pass_through} passed through unchanged.",
+    ]
+    try:
+        write_result(args.output, result, summary)
+    except OSError as e:
+        die(f"Could not write output file: {e}")
 
     print(
         f"Done: {adjusted_count}/{total} finding(s) adjusted, "

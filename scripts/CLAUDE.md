@@ -36,3 +36,6 @@ assume a language in the reviewed codebase.
   the orchestrator's context, and the whole point is that those bytes reach disk without passing
   through a model. The replacement key is deliberately named differently so a consumer wanting the
   bytes fails loudly instead of writing empty files.
+- **Stdout carries the payload or nothing.** Human-facing status lines
+  (`Output written…`, `Done:…`) go to stderr. `script_io.write_result` is the
+  shared write path for the three transform CLIs.
