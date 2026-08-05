@@ -80,6 +80,9 @@ Per-dimension fields are optional and never nullable (a not-applicable value is 
 
 ## Full Report Template
 
+This template interpolates **canonical** finding fields (`description`, `line_start`, …).
+Delivery JSON and the Inline PR Comment Format below use the v2 aliases (`body`, `line`, …).
+
 ```markdown
 # Code Gauntlet: {title}
 

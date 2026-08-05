@@ -59,6 +59,12 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 > `suggested_fix_code` below is caller-supplied only — no review-pipeline agent emits it and no dispatch schema declares it. `post_review.py` still renders it when present, for callers that construct their own post-review JSON.
 
+> `post_review.py` reads the **v2-aliased** field names (`body`, `line`, `end_line`).
+> The persist boundary adds these aliases alongside the canonical names
+> (`description`, `line_start`, `line_end`) — a union schema; existing keys are
+> never overwritten. Report markdown uses the canonical names — see
+> `report-format.md`.
+
 ```json
 {
     "review_body": "Executive summary comment with finding counts (post_review.py appends the footer)",
@@ -69,7 +75,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
             "end_line": 45,
             "severity": "critical|high|medium|low",
             "title": "Finding title",
-            "body": "Detailed description (note: delivery schema uses 'body', not 'description' — the orchestrator maps description→body when constructing delivery JSON)",
+            "body": "Detailed explanation and context",
             "suggestion": "prose fix advice (optional; renders as a **Suggested fix:** block)",
             "claude_md_rule": "the cited project rule (optional; renders as **Cited rule:**)",
             "spec_text": "the contradicted spec text (optional; renders as **Cited rule:** when there is no claude_md_rule)",
@@ -93,7 +99,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
   - `end_line` — optional; enables multi-line comments on GitHub
   - `severity` — emoji selected from: critical, high, medium, low
   - `title` — one-line finding summary
-  - `body` — explanation and context
+  - `body` — explanation and context (delivery alias of canonical `description`; see boundary note above)
   - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
   - `claude_md_rule` / `spec_text` — optional; whichever is present renders as a single **Cited rule:** line, `claude_md_rule` winning when both are. These are how a convention or intent finding shows the reviewer the rule it is measured against.
   - `suggested_fix_code` — optional code block rendered as GitHub/GitLab suggestion; caller-supplied only, never populated by the review pipeline
