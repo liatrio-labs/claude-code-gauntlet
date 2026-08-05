@@ -39,6 +39,20 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
+import sys
+
+sys.path.insert(0, str(REPO))
+
+from scripts.filter_findings import _FIELD_RENAMES  # noqa: E402
+
+DELIVERY_GUIDE = REPO / "skills/code-gauntlet/references/delivery-guide.md"
+
+# Key-form scans for the Example-workflow bash fence. Left-boundary on body so
+# 'review_body' does not false-positive; description requires a JSON/Python key
+# colon so the Bash( description="..." ) kwarg at the fence header stays green.
+_BODY_KEY = re.compile(r"(?<![a-zA-Z_])['\"]body['\"]\s*:")
+_DESCRIPTION_KEY = re.compile(r"['\"]description['\"]\s*:")
+
 # `origin` is the one canonical field NO agent emits — scripts/verify_findings.py stamps it
 # during blame classification. Every other declared canonical field must appear in every
 # discovery contract's output block. Adding a name here is a deliberate, reviewable act:
@@ -228,6 +242,45 @@ def claude_md_bullet(anchor):
             f"expected exactly one agents/AGENTS.md line containing {anchor!r}, found {len(lines)}"
         )
     return lines[0]
+
+
+def full_report_template_region(text: str) -> str:
+    """Bytes between ## Full Report Template and ## PR Comment Format.
+
+    Heading anchors — not fence-aware. The template fence self-terminates at the
+    first bare fence closer (evidence block), so a fence parse would vacuous-green
+    the alias-absent scan over most of the template.
+    """
+    start = re.search(r"^## Full Report Template\s*$", text, re.MULTILINE)
+    end = re.search(r"^## PR Comment Format\b", text, re.MULTILINE)
+    if start is None or end is None:
+        raise AssertionError(
+            "report-format.md must contain both '## Full Report Template' and "
+            f"'## PR Comment Format' headings — found start={start is not None}, "
+            f"end={end is not None}"
+        )
+    if end.start() <= start.start():
+        raise AssertionError(
+            "## PR Comment Format must appear after ## Full Report Template"
+        )
+    return text[start.end() : end.start()]
+
+
+def delivery_guide_json_object(text: str) -> dict:
+    """The exactly-one json fence in delivery-guide.md, parsed."""
+    blocks = _JSON_BLOCK.findall(text)
+    if len(blocks) != 1:
+        raise AssertionError(
+            "delivery-guide.md must contain exactly one json fence "
+            f"(the findings-schema example); found {len(blocks)}"
+        )
+    try:
+        return json.loads(blocks[0])
+    except json.JSONDecodeError as exc:
+        raise AssertionError(
+            f"delivery-guide.md's json fence is not valid JSON ({exc}). "
+            "Never skip a parse failure — silent skip is how this guard stops guarding."
+        ) from exc
 
 
 class TestDimensionsRegistry(unittest.TestCase):
@@ -578,6 +631,101 @@ class TestReportFormatFieldTables(unittest.TestCase):
                 "now declares it — move it into the canonical or per-dimension "
                 "table and instruct it in the agent contracts",
             )
+
+
+class TestDeliveryVocabularySurfaces(unittest.TestCase):
+    """Pin report vs delivery field vocabulary to `_FIELD_RENAMES`.
+
+    `_FIELD_RENAMES` is underscore-private on `scripts.filter_findings`; this
+    import is deliberate — same pattern as other parity pins that reach private
+    script surfaces — so a rename-map change fails this guard for the right
+    reason instead of both docs drifting together away from code.
+
+    Report markdown uses the canonical name; delivery-guide examples document
+    the post_review *read* surface (aliases). The persisted findings.json is a
+    union that also carries canonical names — if deliberately changing the
+    delivery example to show the union, update this pin and the boundary
+    callout together.
+    """
+
+    def setUp(self):
+        self.assertIn(
+            "body",
+            _FIELD_RENAMES,
+            "_FIELD_RENAMES no longer maps 'body' — this guard has nowhere to "
+            "derive the alias pair from",
+        )
+        self.alias = "body"
+        self.canonical = _FIELD_RENAMES["body"]
+
+    def test_full_report_template_uses_canonical_not_alias(self):
+        region = full_report_template_region(REPORT_FORMAT.read_text(encoding="utf-8"))
+        canonical_token = f"{{finding.{self.canonical}}}"
+        alias_token = f"{{finding.{self.alias}}}"
+        self.assertIn(
+            canonical_token,
+            region,
+            f"Full Report Template must interpolate {canonical_token} "
+            f"(canonical name from _FIELD_RENAMES). Inline PR Comment Format is "
+            f"a different, legitimate alias surface — do not 'fix' it into this "
+            f"region.",
+        )
+        self.assertNotIn(
+            alias_token,
+            region,
+            f"Full Report Template must not interpolate {alias_token}; that "
+            f"alias belongs to the delivery / inline-comment read surface",
+        )
+
+    def test_delivery_guide_json_example_uses_alias_not_canonical(self):
+        obj = delivery_guide_json_object(
+            DELIVERY_GUIDE.read_text(encoding="utf-8")
+        )
+        finding = obj["findings"][0]
+        self.assertIn(
+            self.alias,
+            finding,
+            f"delivery-guide findings-schema example must include key "
+            f"{self.alias!r} (post_review read surface)",
+        )
+        self.assertNotIn(
+            self.canonical,
+            finding,
+            f"delivery-guide findings-schema example must not include key "
+            f"{self.canonical!r}. The example documents the read surface "
+            f"(aliases); the persisted union also carries canonical names — if "
+            f"deliberately changing the example to show the union, update this "
+            f"pin and the boundary callout together.",
+        )
+
+    def test_delivery_guide_bash_example_uses_alias_not_canonical(self):
+        text = DELIVERY_GUIDE.read_text(encoding="utf-8")
+        # Bound loosely to the Example workflow section so we do not scan the
+        # whole file's English prose; still structural key-form regexes inside.
+        match = re.search(
+            r"\*\*Example workflow:\*\*(.*?)(?=^\*\*Script behavior:\*\*)",
+            text,
+            re.DOTALL | re.MULTILINE,
+        )
+        self.assertIsNotNone(
+            match,
+            "delivery-guide.md is missing the Example workflow / Script "
+            "behavior anchors the loose bash scan needs",
+        )
+        region = match.group(1)
+        self.assertRegex(
+            region,
+            _BODY_KEY,
+            "Example workflow must assign a finding key 'body'/\"body\" "
+            "(alias read surface); regex uses a left boundary so 'review_body' "
+            "does not count",
+        )
+        self.assertIsNone(
+            _DESCRIPTION_KEY.search(region),
+            "Example workflow must not assign a finding key 'description' "
+            f"(canonical belongs to the report surface); matched "
+            f"{_DESCRIPTION_KEY.search(region)!r}",
+        )
 
 
 if __name__ == "__main__":
