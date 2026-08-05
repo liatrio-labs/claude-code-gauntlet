@@ -71,7 +71,7 @@ import sys
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
-from script_io import write_result  # type: ignore[import-not-found]
+from script_io import write_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -319,11 +319,7 @@ def main():
         f"{pass_through} passed through unchanged.",
     ]
     try:
-        write_result(
-            args.output if args.output else None,
-            result,
-            summary if args.output else None,
-        )
+        write_result(args.output, result, summary)
     except OSError as e:
         die(f"Could not write output file: {e}")
 

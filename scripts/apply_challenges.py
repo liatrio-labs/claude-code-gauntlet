@@ -73,7 +73,7 @@ from datetime import datetime, timezone
 # Import shared dedup utility from filter_findings (stdlib only, same package)
 sys.path.insert(0, os.path.dirname(__file__))
 from filter_findings import dedup_cross_agent
-from script_io import write_result  # type: ignore[import-not-found]
+from script_io import write_result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -498,11 +498,7 @@ def main():
         f"{len(all_eliminated) - len(prior_eliminated)} eliminated in Phase 7.",
     ]
     try:
-        write_result(
-            args.output if args.output else None,
-            result,
-            summary if args.output else None,
-        )
+        write_result(args.output, result, summary)
     except OSError as e:
         die(f"Could not write output file: {e}")
 
