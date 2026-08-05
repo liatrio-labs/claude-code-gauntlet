@@ -1662,7 +1662,8 @@ def _format_css_vars(vars_map, indent):
     return "\n".join(f"{pad}{k}: {v};" for k, v in vars_map.items())
 
 
-CSS = """
+CSS = (
+    """
 *, *::before, *::after { box-sizing: border-box; }
 :root { color-scheme: light dark; }
 .viz-root {
@@ -1688,11 +1689,15 @@ CSS = """
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) .viz-root {
-""" + _format_css_vars(_DARK_VIZ_VARS, 4) + """
+"""
+    + _format_css_vars(_DARK_VIZ_VARS, 4)
+    + """
   }
 }
 :root[data-theme="dark"] .viz-root {
-""" + _format_css_vars(_DARK_VIZ_VARS, 2) + """
+"""
+    + _format_css_vars(_DARK_VIZ_VARS, 2)
+    + """
 }
 html, body { margin: 0; padding: 0; }
 body {
@@ -2183,6 +2188,7 @@ td.muted-cell { color: var(--ink-muted); }
   .tiles { grid-template-columns: repeat(2, 1fr); }
 }
 """
+)
 
 
 TOOLTIP_JS = """
