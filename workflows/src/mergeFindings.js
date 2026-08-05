@@ -94,51 +94,7 @@ export function extractJsonBlocks(text) {
   return results;
 }
 
-function tryParseJsonAt(text, start) {
-  let depth = 0;
-  let inString = false;
-  let escapeNext = false;
-  let i = start;
-  while (i < text.length) {
-    const ch = text[i];
-    if (escapeNext) {
-      escapeNext = false;
-      i += 1;
-      continue;
-    }
-    if (ch === '\\' && inString) {
-      escapeNext = true;
-      i += 1;
-      continue;
-    }
-    if (ch === '"') {
-      inString = !inString;
-      i += 1;
-      continue;
-    }
-    if (inString) {
-      i += 1;
-      continue;
-    }
-    if (ch === '{') {
-      depth += 1;
-    } else if (ch === '}') {
-      depth -= 1;
-      if (depth === 0) {
-        const candidate = text.slice(start, i + 1);
-        try {
-          return JSON.parse(candidate);
-        } catch {
-          return null;
-        }
-      }
-    }
-    i += 1;
-  }
-  return null;
-}
-
-function findEndOfJson(text, start) {
+function scanJsonObject(text, start) {
   let depth = 0;
   let inString = false;
   let escapeNext = false;
@@ -172,7 +128,23 @@ function findEndOfJson(text, start) {
     }
     i += 1;
   }
-  return i + 1;
+  return -1;
+}
+
+function tryParseJsonAt(text, start) {
+  const end = scanJsonObject(text, start);
+  if (end < 0) return null;
+  try {
+    return JSON.parse(text.slice(start, end));
+  } catch {
+    return null;
+  }
+}
+
+function findEndOfJson(text, start) {
+  const end = scanJsonObject(text, start);
+  if (end < 0) return text.length + 1;
+  return end;
 }
 
 // Port of parse_text_file. Returns id-bearing JSON blocks plus prose/skip flags.
