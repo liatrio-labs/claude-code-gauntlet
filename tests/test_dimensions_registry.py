@@ -34,12 +34,11 @@ edit walks around (see CLAUDE.md, "Do not replace a structural property with a p
 import json
 import re
 import subprocess
+import sys
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-
-import sys
 
 sys.path.insert(0, str(REPO))
 
@@ -275,12 +274,15 @@ def delivery_guide_json_object(text: str) -> dict:
             f"(the findings-schema example); found {len(blocks)}"
         )
     try:
-        return json.loads(blocks[0])
+        obj = json.loads(blocks[0])
     except json.JSONDecodeError as exc:
         raise AssertionError(
             f"delivery-guide.md's json fence is not valid JSON ({exc}). "
             "Never skip a parse failure — silent skip is how this guard stops guarding."
         ) from exc
+    if not isinstance(obj, dict):
+        raise AssertionError("delivery-guide.md JSON fence must contain a JSON object.")
+    return obj
 
 
 class TestDimensionsRegistry(unittest.TestCase):
@@ -678,9 +680,7 @@ class TestDeliveryVocabularySurfaces(unittest.TestCase):
         )
 
     def test_delivery_guide_json_example_uses_alias_not_canonical(self):
-        obj = delivery_guide_json_object(
-            DELIVERY_GUIDE.read_text(encoding="utf-8")
-        )
+        obj = delivery_guide_json_object(DELIVERY_GUIDE.read_text(encoding="utf-8"))
         finding = obj["findings"][0]
         self.assertIn(
             self.alias,
