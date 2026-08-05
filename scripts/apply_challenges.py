@@ -73,6 +73,7 @@ from datetime import datetime, timezone
 # Import shared dedup utility from filter_findings (stdlib only, same package)
 sys.path.insert(0, os.path.dirname(__file__))
 from filter_findings import dedup_cross_agent
+from script_io import write_result  # type: ignore[import-not-found]
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -490,24 +491,20 @@ def main():
         "generated_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    output_text = json.dumps(result, indent=2, ensure_ascii=False)
-
-    if args.output:
-        try:
-            with open(args.output, "w") as fh:
-                fh.write(output_text)
-                fh.write("\n")
-            print(f"Output written to {args.output}", file=sys.stderr)
-            print(
-                f"  {total_input} input finding(s); "
-                f"{len(active)} final finding(s); "
-                f"{len(all_eliminated) - len(prior_eliminated)} eliminated in Phase 7.",
-                file=sys.stderr,
-            )
-        except OSError as e:
-            die(f"Could not write output file: {e}")
-    else:
-        print(output_text)
+    summary = [
+        f"Output written to {args.output}",
+        f"  {total_input} input finding(s); "
+        f"{len(active)} final finding(s); "
+        f"{len(all_eliminated) - len(prior_eliminated)} eliminated in Phase 7.",
+    ]
+    try:
+        write_result(
+            args.output if args.output else None,
+            result,
+            summary if args.output else None,
+        )
+    except OSError as e:
+        die(f"Could not write output file: {e}")
 
     print(
         f"Done: {len(active)} finding(s) delivered, "

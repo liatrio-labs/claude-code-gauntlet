@@ -31,8 +31,9 @@ assume a language in the reviewed codebase.
   workflow's own return out of `tasks/<task-id>.output` and writes the primaries itself. It must
   reuse `await_workflow.py`'s task resolution and `assemble_artifacts.py`'s checksum, atomic write
   and derivation — a second copy of either would be a second thing to keep at parity.
-- **Never print a returned payload to stdout.** `await_workflow.py` elides `persistReturn.entries`
-  down to `paths` + `resolvedPath` on purpose: its documented caller is a Bash call straight into
-  the orchestrator's context, and the whole point is that those bytes reach disk without passing
-  through a model. The replacement key is deliberately named differently so a consumer wanting the
-  bytes fails loudly instead of writing empty files.
+- **Never print a returned payload to stdout.** `await_workflow.py` replaces
+  `persistReturn.entries` with distinct `paths` + `resolvedPath` keys, keeping artifact bytes out
+  of model context and making byte consumers fail loudly.
+- **Stdout carries the payload or nothing.** Human-facing status lines
+  (`Output written…`, `Done:…`) go to stderr. `script_io.write_result` is the
+  shared write path for the three transform CLIs.

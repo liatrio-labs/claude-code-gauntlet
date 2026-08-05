@@ -1889,6 +1889,31 @@ class TestDefaultConstants(unittest.TestCase):
     def test_contestation_drop_threshold_is_25(self):
         self.assertEqual(_CONTESTATION_DROP_THRESHOLD, 25)
 
+    def test_output_flag_leaves_stdout_empty(self):
+        import io
+        import json
+        from unittest.mock import patch
+
+        from scripts.filter_findings import main
+
+        with tempfile.TemporaryDirectory() as td:
+            findings_path = os.path.join(td, "findings.json")
+            out_path = os.path.join(td, "out.json")
+            with open(findings_path, "w") as fh:
+                json.dump({"findings": [_make_finding()]}, fh)
+            captured_out = io.StringIO()
+            captured_err = io.StringIO()
+            argv = ["filter_findings.py", findings_path, "--output", out_path]
+            with (
+                patch("sys.argv", argv),
+                patch("sys.stdout", captured_out),
+                patch("sys.stderr", captured_err),
+            ):
+                main()
+            self.assertEqual(captured_out.getvalue(), "")
+            self.assertIn("Output written", captured_err.getvalue())
+            self.assertTrue(os.path.exists(out_path))
+
 
 if __name__ == "__main__":
     unittest.main()
