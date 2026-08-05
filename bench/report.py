@@ -1634,6 +1634,34 @@ def build_footnotes_html(baselines, rows=None):
 # ---------------------------------------------------------------------------
 # CSS
 # ---------------------------------------------------------------------------
+_DARK_VIZ_VARS = {
+    "--surface": "#1a1a19",
+    "--page": "#0d0d0d",
+    "--ink-primary": "#ffffff",
+    "--ink-secondary": "#c3c2b7",
+    "--ink-muted": "#898781",
+    "--hairline": "rgba(255, 255, 255, .10)",
+    "--grid": "#2c2c2a",
+    "--baseline": "#383835",
+    "--series-golden": "#3987e5",
+    "--series-noise": "#d55181",
+    "--series-precision": "#008300",
+    "--tool-deepreview": "#3987e5",
+    "--tool-claude": "#008300",
+    "--tool-claude-code": "#d55181",
+    "--tool-coderabbit": "#c98500",
+    "--tool-v3": "#d95926",
+    "--tool-naive": "#898781",
+    "--ref-goal": "#0ca30c",
+    "--ref-ceiling": "#e66767",
+}
+
+
+def _format_css_vars(vars_map, indent):
+    pad = " " * indent
+    return "\n".join(f"{pad}{k}: {v};" for k, v in vars_map.items())
+
+
 CSS = """
 *, *::before, *::after { box-sizing: border-box; }
 :root { color-scheme: light dark; }
@@ -1660,47 +1688,11 @@ CSS = """
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) .viz-root {
-    --surface: #1a1a19;
-    --page: #0d0d0d;
-    --ink-primary: #ffffff;
-    --ink-secondary: #c3c2b7;
-    --ink-muted: #898781;
-    --hairline: rgba(255, 255, 255, .10);
-    --grid: #2c2c2a;
-    --baseline: #383835;
-    --series-golden: #3987e5;
-    --series-noise: #d55181;
-    --series-precision: #008300;
-    --tool-deepreview: #3987e5;
-    --tool-claude: #008300;
-    --tool-claude-code: #d55181;
-    --tool-coderabbit: #c98500;
-    --tool-v3: #d95926;
-    --tool-naive: #898781;
-    --ref-goal: #0ca30c;
-    --ref-ceiling: #e66767;
+""" + _format_css_vars(_DARK_VIZ_VARS, 4) + """
   }
 }
 :root[data-theme="dark"] .viz-root {
-  --surface: #1a1a19;
-  --page: #0d0d0d;
-  --ink-primary: #ffffff;
-  --ink-secondary: #c3c2b7;
-  --ink-muted: #898781;
-  --hairline: rgba(255, 255, 255, .10);
-  --grid: #2c2c2a;
-  --baseline: #383835;
-  --series-golden: #3987e5;
-  --series-noise: #d55181;
-  --series-precision: #008300;
-  --tool-deepreview: #3987e5;
-  --tool-claude: #008300;
-  --tool-claude-code: #d55181;
-  --tool-coderabbit: #c98500;
-  --tool-v3: #d95926;
-  --tool-naive: #898781;
-  --ref-goal: #0ca30c;
-  --ref-ceiling: #e66767;
+""" + _format_css_vars(_DARK_VIZ_VARS, 2) + """
 }
 html, body { margin: 0; padding: 0; }
 body {
