@@ -681,7 +681,17 @@ class TestDeliveryVocabularySurfaces(unittest.TestCase):
 
     def test_delivery_guide_json_example_uses_alias_not_canonical(self):
         obj = delivery_guide_json_object(DELIVERY_GUIDE.read_text(encoding="utf-8"))
-        finding = obj["findings"][0]
+        self.assertIn(
+            "findings",
+            obj,
+            "delivery-guide findings-schema example must include a 'findings' array",
+        )
+        findings = obj["findings"]
+        self.assertTrue(
+            isinstance(findings, list) and findings,
+            "delivery-guide findings-schema example's 'findings' must be a non-empty array",
+        )
+        finding = findings[0]
         self.assertIn(
             self.alias,
             finding,
