@@ -1278,7 +1278,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
         "scripts.post_review.post_json", return_value={"html_url": "http://example.com"}
     )
     @patch("scripts.post_review.warn")
-    def test_github_skip_no_diag_when_valid_lines_none(
+    def test_github_skip_empty_valid_lines_reports_an_empty_diag_list(
         self, mock_warn, _post, _tool, _sha
     ):
         from scripts.post_review import post_github
@@ -1289,16 +1289,46 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
             "pr_number": 1,
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
-        # valid_lines=None means validation was skipped, so is_line_valid returns True
-        # and the skip branch is never entered. An EMPTY mapping is the shape that
-        # reaches the skip branch: validation ran and found nothing for this line.
+        # Empty mapping: validation ran and found nothing for this line → skip + empty diag.
         post_github(data, {})
         mock_warn.assert_called_once()
         msg = mock_warn.call_args[0][0]
         self.assertIn("line not found in diff.", msg)
-        # With an empty mapping the valid-lines list is [] not None, so the diagnostic
-        # is present but empty.
         self.assertIn("Valid lines for this file: []", msg)
+
+    @patch(
+        "scripts.post_review.get_head_sha",
+        return_value="abc1234def5678abc1234def5678abc1234def56",
+    )
+    @patch("scripts.post_review.check_tool")
+    @patch(
+        "scripts.post_review.post_json", return_value={"html_url": "http://example.com"}
+    )
+    @patch("scripts.post_review.warn")
+    def test_github_skip_no_diag_when_valid_lines_none(
+        self, mock_warn, mock_post, _tool, _sha
+    ):
+        from scripts.post_review import post_github
+
+        data = {
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 1,
+            "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
+        }
+        # valid_lines=None: validation skipped → is_line_valid returns True → finding posts.
+        post_github(data, None)
+        mock_post.assert_called_once()
+        payload = mock_post.call_args[0][1]
+        self.assertEqual(len(payload["comments"]), 1)
+        self.assertEqual(payload["comments"][0]["path"], "src/app.py")
+        self.assertEqual(payload["comments"][0]["line"], 99)
+        for call in mock_warn.call_args_list:
+            self.assertNotIn(
+                "Valid lines for this file:",
+                call[0][0],
+                "None must not emit a valid-lines diagnostic",
+            )
 
     @patch(
         "scripts.post_review.get_head_sha",
