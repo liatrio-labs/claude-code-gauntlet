@@ -310,19 +310,11 @@ def snapshot_workflow_records(claude_home):
     return out
 
 
-def collect_workflow_records(claude_home, pr_dir, baseline=None):
-    """Copy new/changed ``wf_*.json`` records into ``{pr_dir}/workflows/``.
-
-    ``baseline`` is the dict from :func:`snapshot_workflow_records` taken before the
-    child ran. Returns the list of basenames copied. Name collisions (same ``wf_`` id
-    from a different project slug) get a numeric suffix so nothing is overwritten.
-    """
+def _iter_new_wf_paths(root, baseline):
+    """Yield ``wf_*.json`` Paths under *root* that are new/changed vs *baseline*."""
     baseline = baseline or {}
-    root = Path(claude_home) / "config"
-    dest_dir = Path(pr_dir) / "workflows"
-    copied = []
     if not root.is_dir():
-        return copied
+        return
     for path in sorted(root.rglob("wf_*.json")):
         try:
             resolved = str(path.resolve())
@@ -332,6 +324,20 @@ def collect_workflow_records(claude_home, pr_dir, baseline=None):
         prev = baseline.get(resolved)
         if prev is not None and prev == (st.st_mtime_ns, st.st_size):
             continue
+        yield path
+
+
+def collect_workflow_records(claude_home, pr_dir, baseline=None):
+    """Copy new/changed ``wf_*.json`` records into ``{pr_dir}/workflows/``.
+
+    ``baseline`` is the dict from :func:`snapshot_workflow_records` taken before the
+    child ran. Returns the list of basenames copied. Name collisions (same ``wf_`` id
+    from a different project slug) get a numeric suffix so nothing is overwritten.
+    """
+    root = Path(claude_home) / "config"
+    dest_dir = Path(pr_dir) / "workflows"
+    copied = []
+    for path in _iter_new_wf_paths(root, baseline):
         dest_dir.mkdir(parents=True, exist_ok=True)
         target = dest_dir / path.name
         if target.exists():
@@ -856,20 +862,9 @@ def _script_path_matches_repo(script_path, repo_root):
 
 def _new_workflow_script_paths(claude_home, baseline):
     """Top-level Workflow ``scriptPath`` values from records changed since *baseline*."""
-    baseline = baseline or {}
     root = Path(claude_home) / "config"
     paths = []
-    if not root.is_dir():
-        return paths
-    for path in sorted(root.rglob("wf_*.json")):
-        try:
-            resolved = str(path.resolve())
-            st = path.stat()
-        except OSError:
-            continue
-        prev = baseline.get(resolved)
-        if prev is not None and prev == (st.st_mtime_ns, st.st_size):
-            continue
+    for path in _iter_new_wf_paths(root, baseline):
         try:
             data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
         except (OSError, ValueError, json.JSONDecodeError):
