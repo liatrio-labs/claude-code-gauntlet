@@ -246,7 +246,7 @@ Each finding is a JSON object with this shape:
 Found real vulnerability — query constructed by string concatenation with unvalidated user input.
 
 ```json
-{"id":"security-1","dimension":"security","severity":"critical","confidence":92,"file":"src/api/users.py","line_start":87,"line_end":89,"title":"SQL injection in user search endpoint","description":"User-supplied search term is concatenated directly into SQL query and doesn\u0027t use parameterized queries. An attacker can inject arbitrary SQL.","evidence":"query = \"SELECT * FROM users WHERE name = '\" + search_term + \"'\";","suggestion":"Use parameterized queries: cursor.execute(\"SELECT * FROM users WHERE name = %s\", (search_term,))","attack_vector":"1. Send search_term=\"'OR 1=1--\". 2. Query becomes SELECT * WHERE name = '' OR 1=1--'. 3. Returns all users.","cross_file_refs":[]}
+{"id":"security-1","dimension":"security","severity":"critical","confidence":92,"file":"src/api/users.py","line_start":87,"line_end":89,"title":"SQL injection in user search endpoint","description":"User-supplied search term is concatenated directly into SQL query and doesn't use parameterized queries. An attacker can inject arbitrary SQL.","evidence":"query = \"SELECT * FROM users WHERE name = '\" + search_term + \"'\";","suggestion":"Use parameterized queries: cursor.execute(\"SELECT * FROM users WHERE name = %s\", (search_term,))","attack_vector":"1. Send search_term=\"'OR 1=1--\". 2. Query becomes SELECT * WHERE name = '' OR 1=1--'. 3. Returns all users.","cross_file_refs":[]}
 ```
 
 [investigation of missing CSRF token on settings page — no issue found]

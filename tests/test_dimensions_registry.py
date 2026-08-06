@@ -79,6 +79,15 @@ _JSON_BLOCK = re.compile(r"```(?i:json)\n(.*?)\n```", re.DOTALL)
 # (immediately after the key's colon), so a `<` inside a quoted string is never touched.
 _UNQUOTED_PLACEHOLDER = re.compile(r"(?<=:)\s*<[^>]*>")
 
+# A `\uXXXX` escape in a contract block's RAW source. The parse-level guards cannot see these:
+# `\u0027` decodes to a clean `'`, so it is invisible the moment json.loads runs. Matching the
+# hex digits rather than one literal spelling makes the guard cover the class — `\u0022`,
+# `\u0065`, any of them — because what leaks back is the v2 convention, not one character.
+# Deliberately over-broad at one edge: an already-escaped backslash followed by `u` — a value
+# that really means the literal text \u0027 — matches too. Nothing here needs that spelling,
+# and the failure names the file and the escape, so a false positive would be loud and obvious.
+_UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
 # A field row in one of report-format.md's reference tables: the first cell is a single
 # backticked field name and nothing else.
 _FIELD_ROW = re.compile(r"^\|\s*`([a-z_][a-z0-9_]*)`\s*\|(.+)\|\s*$")
@@ -152,11 +161,11 @@ def all_extras():
     return owner
 
 
-def contract_blocks(name):
-    """Every ```json block in agents/<name>.md, parsed to a dict.
+def raw_contract_blocks(name):
+    """Every ```json block in agents/<name>.md, as raw source text.
 
-    Raises (rather than skipping) on a block that will not parse: an unparseable output
-    contract is itself the defect — it is what the model is shown and told to reproduce.
+    Source-level guards read from here and parse-level guards from `contract_blocks`, which
+    is built on it — so the two can never disagree about which blocks exist.
     """
     text = (REPO / "agents" / f"{name}.md").read_text()
     raw_blocks = _JSON_BLOCK.findall(text)
@@ -166,8 +175,17 @@ def contract_blocks(name):
             "removed or its fence changed, and this whole lockstep guard just stopped covering "
             "that agent. Restore the block or update the parser deliberately."
         )
+    return raw_blocks
+
+
+def contract_blocks(name):
+    """Every ```json block in agents/<name>.md, parsed to a dict.
+
+    Raises (rather than skipping) on a block that will not parse: an unparseable output
+    contract is itself the defect — it is what the model is shown and told to reproduce.
+    """
     blocks = []
-    for raw in raw_blocks:
+    for raw in raw_contract_blocks(name):
         normalized = _UNQUOTED_PLACEHOLDER.sub(" 0", raw)
         try:
             obj = json.loads(normalized)
@@ -479,6 +497,37 @@ class TestContractSchemaLockstep(unittest.TestCase):
             "an output-contract example over-escapes an apostrophe — v3 agents "
             "return findings by value through StructuredOutput, so there is no "
             f"shell quoting to escape for: {offenders}",
+        )
+
+    def test_no_contract_block_unicode_escapes_a_printable_character(self):
+        # The sibling guard above reads PARSED values, so it is blind to this: `\u0027`
+        # decodes to a clean `'` and survives every parse-level check. The convention it
+        # comes from is still in the tree — the retained v2/bench emission contract spells
+        # apostrophes that way — so a contract edit made with that rule in context puts it
+        # back, which is exactly how the residue #68 removes got there. Pinned as a class,
+        # not as one spelling: any printable ASCII character written as an escape is the
+        # same mistake. Scoped to the discovery contracts, so the deliberate `\u0027` in
+        # tests/test_validate_ndjson.py and in test_agent_contracts.py's comment stay clear.
+        offenders = {}
+        for agent_type in declared_by_agent():
+            name = agent_name(agent_type)
+            for raw in raw_contract_blocks(name):
+                for match in _UNICODE_ESCAPE.finditer(raw):
+                    char = chr(int(match.group(1), 16))
+                    if " " <= char <= "~":
+                        offenders.setdefault(name, []).append(
+                            f"{match.group(0)} -> {char}"
+                        )
+        self.assertEqual(
+            offenders,
+            {},
+            "an output-contract block spells a printable character as a unicode "
+            "escape. That is the v2 printf/NDJSON emission convention, which still "
+            "governs the retained v2/bench surface only — v3 discovery returns "
+            "findings by value through StructuredOutput, so there is no shell "
+            "quoting to escape for, and this block is the shape the model copies. "
+            "Write the character literally — a double-quote and a backslash keep "
+            f"their short JSON escapes: {offenders}",
         )
 
     def test_criticality_is_declared_as_a_number(self):

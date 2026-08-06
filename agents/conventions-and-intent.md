@@ -263,7 +263,7 @@ Each finding is a JSON object with this shape:
 Real violation — CLAUDE.md requires structured logging with error_id but handler uses print().
 
 ```json
-{"id":"conv-1","dimension":"convention","severity":"medium","confidence":88,"file":"src/api/handlers.py","line_start":112,"line_end":114,"title":"Error handler uses print() instead of structured logger","description":"CLAUDE.md section 4 requires all error handling to use the structured logger with an error_id field. Line 113 uses print(str(e)) and doesn\u0027t integrate with monitoring.","evidence":"Line 113: print(f\"Error: {e}\")","suggestion":"Replace with: logger.error(\"handler_failed\", error_id=generate_id(), exc_info=True)","claude_md_rule":"All errors must be logged via logger.error() with an error_id (CLAUDE.md section 4)","cross_file_refs":[]}
+{"id":"conv-1","dimension":"convention","severity":"medium","confidence":88,"file":"src/api/handlers.py","line_start":112,"line_end":114,"title":"Error handler uses print() instead of structured logger","description":"CLAUDE.md section 4 requires all error handling to use the structured logger with an error_id field. Line 113 uses print(str(e)) and doesn't integrate with monitoring.","evidence":"Line 113: print(f\"Error: {e}\")","suggestion":"Replace with: logger.error(\"handler_failed\", error_id=generate_id(), exc_info=True)","claude_md_rule":"All errors must be logged via logger.error() with an error_id (CLAUDE.md section 4)","cross_file_refs":[]}
 ```
 
 [investigation of function naming convention — follows project pattern correctly]
