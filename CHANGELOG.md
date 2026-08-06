@@ -2,6 +2,61 @@
 
 <!-- version list -->
 
+## v3.3.14 (2026-08-06)
+
+### Bug Fixes
+
+- **bench**: G3 degrade regex + retry archive for --check (#57, #85)
+  ([#147](https://github.com/liatrio-labs/claude-code-gauntlet/pull/147),
+  [`140bee2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/140bee2ed06e084ca95846715216d77ae52ebcf0))
+
+- **bench**: Narrow G3 degrade regex and archive superseded wf records on retry
+  ([#147](https://github.com/liatrio-labs/claude-code-gauntlet/pull/147),
+  [`140bee2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/140bee2ed06e084ca95846715216d77ae52ebcf0))
+
+### Chores
+
+- Re-trigger CI after Actions recovery
+  ([#147](https://github.com/liatrio-labs/claude-code-gauntlet/pull/147),
+  [`140bee2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/140bee2ed06e084ca95846715216d77ae52ebcf0))
+
+### Documentation
+
+- Pin delivery vs report finding vocabularies (#64)
+  ([#144](https://github.com/liatrio-labs/claude-code-gauntlet/pull/144),
+  [`09970a2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/09970a29b6dcadd33037041d274747d523baacd6))
+
+- **agents**: Write apostrophes literally in contract examples
+  ([#145](https://github.com/liatrio-labs/claude-code-gauntlet/pull/145),
+  [`d8b938f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d8b938fc4d2a54a6ef3073f6575afc48a579b032))
+
+- **agents**: Write apostrophes literally in contract examples (#68)
+  ([#145](https://github.com/liatrio-labs/claude-code-gauntlet/pull/145),
+  [`d8b938f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d8b938fc4d2a54a6ef3073f6575afc48a579b032))
+
+- **skills**: Name delivery vs report finding vocabularies
+  ([#144](https://github.com/liatrio-labs/claude-code-gauntlet/pull/144),
+  [`09970a2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/09970a29b6dcadd33037041d274747d523baacd6))
+
+### Testing
+
+- Assert delivery-guide JSON example has non-empty findings
+  ([#144](https://github.com/liatrio-labs/claude-code-gauntlet/pull/144),
+  [`09970a2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/09970a29b6dcadd33037041d274747d523baacd6))
+
+- Make delivery guide JSON assertion type-safe
+  ([#144](https://github.com/liatrio-labs/claude-code-gauntlet/pull/144),
+  [`09970a2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/09970a29b6dcadd33037041d274747d523baacd6))
+
+- Pin delivery vs report vocabulary to _FIELD_RENAMES
+  ([#144](https://github.com/liatrio-labs/claude-code-gauntlet/pull/144),
+  [`09970a2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/09970a29b6dcadd33037041d274747d523baacd6))
+
+- Sharpen the unicode-escape guard's comment and advice
+  ([#145](https://github.com/liatrio-labs/claude-code-gauntlet/pull/145),
+  [`d8b938f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d8b938fc4d2a54a6ef3073f6575afc48a579b032))
+
+
 ## v3.3.13 (2026-08-05)
 
 ### Bug Fixes
