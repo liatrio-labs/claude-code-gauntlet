@@ -44,6 +44,7 @@ __all__ = [
     "script_path_matches_repo",
     "scriptpath_from_record",
     "snapshot_workflow_records",
+    "supersede_workflow_records",
 ]
 
 # Repo root == the code-gauntlet plugin dir. bench/runner/invoke.py -> parents[2].
@@ -327,6 +328,28 @@ def _iter_new_wf_paths(root, baseline):
         yield path
 
 
+def _unique_target(dest_dir, name):
+    """Return a path under ``dest_dir`` for ``name``, suffixing on collision.
+
+    First call for a free name returns ``dest_dir / name``. If that exists,
+    try ``{stem}-2{suffix}``, ``{stem}-3{suffix}``, … — never overwrite.
+    Shared by :func:`collect_workflow_records` and
+    :func:`supersede_workflow_records`.
+    """
+    dest_dir = Path(dest_dir)
+    target = dest_dir / name
+    if not target.exists():
+        return target
+    stem = Path(name).stem
+    suffix = Path(name).suffix
+    n = 2
+    while True:
+        candidate = dest_dir / f"{stem}-{n}{suffix}"
+        if not candidate.exists():
+            return candidate
+        n += 1
+
+
 def collect_workflow_records(claude_home, pr_dir, baseline=None):
     """Copy new/changed ``wf_*.json`` records into ``{pr_dir}/workflows/``.
 
@@ -339,19 +362,42 @@ def collect_workflow_records(claude_home, pr_dir, baseline=None):
     copied = []
     for path in _iter_new_wf_paths(root, baseline):
         dest_dir.mkdir(parents=True, exist_ok=True)
-        target = dest_dir / path.name
-        if target.exists():
-            stem, suffix = path.stem, path.suffix
-            n = 2
-            while target.exists():
-                target = dest_dir / f"{stem}-{n}{suffix}"
-                n += 1
+        target = _unique_target(dest_dir, path.name)
         try:
             shutil.copy2(path, target)
         except OSError:
             continue
         copied.append(target.name)
     return copied
+
+
+def supersede_workflow_records(pr_dir):
+    """Move current-attempt ``wf_*.json`` into ``{pr_dir}/workflows/superseded/``.
+
+    Called at ``--retry-failed`` start for each PR about to be re-invoked, so
+    the meaning is "this attempt is superseded" — not "the retry succeeded".
+    Non-recursive: only direct children of ``workflows/`` move; an existing
+    ``superseded/`` tree is left alone. Missing or empty ``workflows/`` is a
+    clean no-op. Collisions in ``superseded/`` get a numeric suffix (never
+    overwrite a forensic record). Returns the list of moved basenames.
+    """
+    wf_dir = Path(pr_dir) / "workflows"
+    if not wf_dir.is_dir():
+        return []
+    records = sorted(p for p in wf_dir.glob("wf_*.json") if p.is_file())
+    if not records:
+        return []
+    dest_dir = wf_dir / "superseded"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for path in records:
+        target = _unique_target(dest_dir, path.name)
+        try:
+            shutil.move(str(path), str(target))
+        except OSError:
+            continue
+        moved.append(path.name)
+    return moved
 
 
 def _seed_trust(config_dir, worktree):

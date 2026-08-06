@@ -1630,6 +1630,60 @@ class PrsListTest(RunTestBase):
 
 
 class ResumeTest(RunTestBase):
+    def test_retry_failed_supersedes_prior_workflow_records(self):
+        """#85: --retry-failed archives wf_*.json before re-invoke (not on success)."""
+        self._install_runner_fakes(invoke_fn=fake_invoke_ok)
+        url = PLAIN_URL
+        run_id = "smoke-retry-supersede"
+        run_dir = self.runs_root / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps(
+                {
+                    "tier": "smoke",
+                    "pr_urls": [url],
+                    "anchor": None,
+                    "child_auth": "api",
+                    "tool": "deep-review-v3",
+                }
+            ),
+            encoding="utf-8",
+        )
+        cp = run.checkpoint.Checkpoint(run_dir)
+        cp.mark(url, "failed", detail={"reason": "timeout"})
+        pr = {"url": url, **self.shas[url]}
+        pr_dir = run_dir / run.invoke.pr_dir_name(pr)
+        stale = pr_dir / "workflows" / "wf_stale.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_text(
+            json.dumps({"runId": "stale", "scriptPath": "/x/workflows/pipeline.js"}),
+            encoding="utf-8",
+        )
+        # A sibling ok PR's record must stay put (not in failed() todo).
+        ok_url = FIXTURE_URL
+        manifest = json.loads((run_dir / "run.json").read_text())
+        manifest["pr_urls"] = [url, ok_url]
+        (run_dir / "run.json").write_text(json.dumps(manifest), encoding="utf-8")
+        cp.mark(ok_url, "ok", detail={})
+        ok_pr = {"url": ok_url, **self.shas[ok_url]}
+        ok_dir = run_dir / run.invoke.pr_dir_name(ok_pr)
+        ok_wf = ok_dir / "workflows" / "wf_ok.json"
+        ok_wf.parent.mkdir(parents=True)
+        ok_wf.write_text(
+            json.dumps({"runId": "ok", "scriptPath": "/x/workflows/pipeline.js"}),
+            encoding="utf-8",
+        )
+
+        args = run.parse_args(["--retry-failed", run_id])
+        with contextlib.redirect_stdout(io.StringIO()):
+            run._resume(run_id, args, retry=True)
+
+        self.assertFalse(stale.exists())
+        self.assertTrue(
+            (pr_dir / "workflows" / "superseded" / "wf_stale.json").is_file()
+        )
+        self.assertTrue(ok_wf.is_file())
+
     def test_resume_skips_completed_prs(self):
         # First pass: everything succeeds.
         self._install_runner_fakes(invoke_fn=fake_invoke_ok)
