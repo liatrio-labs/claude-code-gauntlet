@@ -83,6 +83,9 @@ _UNQUOTED_PLACEHOLDER = re.compile(r"(?<=:)\s*<[^>]*>")
 # `\u0027` decodes to a clean `'`, so it is invisible the moment json.loads runs. Matching the
 # hex digits rather than one literal spelling makes the guard cover the class — `\u0022`,
 # `\u0065`, any of them — because what leaks back is the v2 convention, not one character.
+# Deliberately over-broad at one edge: an already-escaped backslash followed by `u` — a value
+# that really means the literal text \u0027 — matches too. Nothing here needs that spelling,
+# and the failure names the file and the escape, so a false positive would be loud and obvious.
 _UNICODE_ESCAPE = re.compile(r"\\u([0-9a-fA-F]{4})")
 
 # A field row in one of report-format.md's reference tables: the first cell is a single
@@ -523,7 +526,8 @@ class TestContractSchemaLockstep(unittest.TestCase):
             "governs the retained v2/bench surface only — v3 discovery returns "
             "findings by value through StructuredOutput, so there is no shell "
             "quoting to escape for, and this block is the shape the model copies. "
-            f"Write the character literally: {offenders}",
+            "Write the character literally — a double-quote and a backslash keep "
+            f"their short JSON escapes: {offenders}",
         )
 
     def test_criticality_is_declared_as_a_number(self):
