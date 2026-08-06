@@ -1000,6 +1000,15 @@ def _resume(run_id, args, retry):
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
+    # --retry-failed: archive each todo PR's prior wf_*.json before re-invoke so
+    # workflows/ holds only the new attempt (#85). Meaning is "superseded", not
+    # "retry succeeded" — a second failure still leaves only the latest record.
+    # Passed PRs are not in todo and keep their records untouched.
+    if retry:
+        for url in todo:
+            meta = shas.get(url) or {}
+            pr = {"url": url, **meta}
+            invoke.supersede_workflow_records(run_dir / invoke.pr_dir_name(pr))
     summary = _run_prs(
         run_dir,
         todo,

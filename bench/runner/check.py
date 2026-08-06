@@ -43,8 +43,14 @@ _CANONICAL_OR_ALIAS = (
 _LINE_FIELDS = ("line_start", "line")
 
 _SCRIPT_PATH_RE = re.compile(r'"scriptPath"\s*:\s*"([^"]+)"')
+# Hyphen-only ``partial-artifacts``: the pipeline emits that spelling exclusively
+# (stages.js / pipeline.js gap strings and comments). A former ``partial.artifacts``
+# alternative treated ``.`` as any character and false-positived on TEXT-carrier
+# prose such as "partial artifacts" (#57). G3 is the *writer* degrade gate — not
+# Phase 8 timeout prose ("deliver whatever partial artifacts exist") whose
+# structural signal is ``workflow-timeout`` in ``gaps[]`` when present.
 _DEGRADE_RE = re.compile(
-    r"(no write proof|partial-artifacts|partial.artifacts)",
+    r"(no write proof|partial-artifacts)",
     re.IGNORECASE,
 )
 
@@ -66,6 +72,14 @@ PIPELINE_REL = Path("workflows") / "pipeline.js"
 # (those are written before the echo proof runs). Report/checkpoint remain
 # scanned as secondary carriers.
 #
+# ``_DEGRADE_RE`` matches only the hyphenated pipeline literals (``no write
+# proof``, ``partial-artifacts``). Structured carriers consult parsed ``gaps[]``
+# whose values are those exact emit strings; TEXT carriers are free model prose
+# over an arbitrary reviewed repo, so a broader separator class (e.g. matching
+# "partial artifacts") would false-positive (#57). G3 is the *writer* degrade
+# gate — Phase 8 timeout partial delivery is a different failure whose
+# structural token is ``workflow-timeout`` in ``gaps[]``, not this regex.
+#
 # STRUCTURED carriers own a real ``gaps`` array, so that parsed array is the
 # authoritative — and only — signal consulted; their raw bytes are never
 # regex-scanned:
@@ -75,6 +89,8 @@ PIPELINE_REL = Path("workflows") / "pipeline.js"
 #       ordinary substrings ("no write proof" x4 string/template literals;
 #       "partial-artifacts" x6 — 1 string literal + 5 comments) — so a raw
 #       scan matches on EVERY collected record, degraded or not.
+#       ``workflows/superseded/`` (archived prior attempts; #85) is invisible:
+#       ``_iter_workflow_records`` / degrade globs are non-recursive.
 #   code-gauntlet-checkpoint-all-*.json  the persisted checkpoint's ``gaps``.
 #
 # TEXT carriers have no ``gaps`` structure to parse, so a raw-text scan is the

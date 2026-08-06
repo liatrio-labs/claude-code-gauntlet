@@ -329,6 +329,26 @@ class CheckRunTest(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertTrue(any("code-gauntlet-report" in f for f in result["failures"]))
 
+    def test_g3_ignores_benign_spaced_partial_artifacts_prose(self):
+        """#57: ordinary English ``partial artifacts`` must not trip G3.
+
+        The pre-fix ``partial.artifacts`` alternative treated ``.`` as any
+        character, so a spaced phrase in a TEXT carrier false-positived. Mutate
+        that alternative back into ``_DEGRADE_RE`` and this test goes red.
+        """
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        (pr / "code-gauntlet-report-deadbeef.md").write_text(
+            "# Report\n\nThe build produces partial artifacts in the build dir.\n"
+            "Also noted: partialXartifacts naming and the partial/artifacts path.\n",
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertFalse(
+            any("writer degrade" in f for f in result["failures"]), result["failures"]
+        )
+
     def test_workflow_return_partial_artifacts_gap_fails_g3(self):
         """writeArtifacts gaps land on the compact return, not report/checkpoint."""
         _build_ok_run(self.run_dir)
@@ -912,6 +932,143 @@ class WorkflowRecordCollectionTest(unittest.TestCase):
         self.assertTrue((dest / "wf_same-2.json").is_file())
         paths = {json.loads((dest / name).read_text())["scriptPath"] for name in copied}
         self.assertEqual(paths, {PIPELINE, "/other/workflows/pipeline.js"})
+
+
+class SupersedeWorkflowRecordsTest(unittest.TestCase):
+    """#85: archive prior wf_*.json before --retry-failed re-invoke."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-supersede-")
+        self.pr_dir = Path(self.tmp) / "pr-example-repo-1"
+        self.pr_dir.mkdir()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _plant_wf(self, name, payload=None):
+        path = self.pr_dir / "workflows" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload if payload is not None else _wf_record(PIPELINE)),
+            encoding="utf-8",
+        )
+        return path
+
+    def test_supersede_moves_wf_records_to_superseded(self):
+        wf = self._plant_wf("wf_old.json")
+        moved = invoke.supersede_workflow_records(self.pr_dir)
+        self.assertEqual(moved, ["wf_old.json"])
+        self.assertFalse(wf.exists())
+        archived = self.pr_dir / "workflows" / "superseded" / "wf_old.json"
+        self.assertTrue(archived.is_file())
+        self.assertEqual(
+            json.loads(archived.read_text())["scriptPath"],
+            PIPELINE,
+        )
+
+    def test_supersede_collision_suffixes(self):
+        dest = self.pr_dir / "workflows" / "superseded"
+        dest.mkdir(parents=True)
+        (dest / "wf_same.json").write_text("{}", encoding="utf-8")
+        self._plant_wf("wf_same.json", _wf_record(PIPELINE))
+        moved = invoke.supersede_workflow_records(self.pr_dir)
+        self.assertEqual(moved, ["wf_same.json"])
+        self.assertTrue((dest / "wf_same.json").is_file())
+        self.assertTrue((dest / "wf_same-2.json").is_file())
+        self.assertEqual(
+            json.loads((dest / "wf_same-2.json").read_text())["scriptPath"],
+            PIPELINE,
+        )
+
+    def test_supersede_missing_dir_noop(self):
+        self.assertEqual(invoke.supersede_workflow_records(self.pr_dir), [])
+
+    def test_supersede_empty_workflows_noop(self):
+        (self.pr_dir / "workflows").mkdir()
+        self.assertEqual(invoke.supersede_workflow_records(self.pr_dir), [])
+
+    def test_supersede_does_not_recurse_into_superseded(self):
+        archived = self.pr_dir / "workflows" / "superseded" / "wf_prior.json"
+        archived.parent.mkdir(parents=True)
+        archived.write_text(json.dumps(_wf_record(PIPELINE)), encoding="utf-8")
+        self._plant_wf("wf_current.json")
+        moved = invoke.supersede_workflow_records(self.pr_dir)
+        self.assertEqual(moved, ["wf_current.json"])
+        self.assertTrue(archived.is_file())
+        self.assertTrue(
+            (self.pr_dir / "workflows" / "superseded" / "wf_current.json").is_file()
+        )
+
+
+class CheckAfterSupersedeTest(unittest.TestCase):
+    """#85 regression: checker pass requires executing the supersede path.
+
+    Hand-placing records in superseded/ alone would stay green under a no-op
+    mutation of supersede_workflow_records. This test builds pre-retry state,
+    invokes supersede, plants a clean current record, then asserts --check
+    passes. Mutating supersede to a no-op leaves the stale degrade in
+    workflows/ and the checker FAILs — reproducing the permanent-FAIL.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-check-supersede-")
+        self.run_dir = Path(self.tmp) / "smoke-20260723-000000-abc1234"
+        self.run_dir.mkdir()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_check_passes_after_supersede_of_failed_attempt_record(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        (pr / "code-gauntlet-report-deadbeef.md").write_text(
+            "# Report\n", encoding="utf-8"
+        )
+        _write_json(pr / "code-gauntlet-checkpoint-all-deadbeef.json", {"phases": {}})
+        # Pre-retry state: failed attempt left a writer-degrade gap in workflows/.
+        failed = pr / "workflows" / "wf_failed.json"
+        if (pr / "workflows" / "wf_test-0001.json").exists():
+            (pr / "workflows" / "wf_test-0001.json").unlink()
+        _write_json(
+            failed,
+            {
+                "runId": "wf_failed",
+                "scriptPath": PIPELINE,
+                "status": "completed",
+                "result": {
+                    "ok": True,
+                    "partial": True,
+                    "gaps": [
+                        "writeArtifacts: writer returned null — artifacts not "
+                        "persisted (partial-artifacts)"
+                    ],
+                },
+            },
+        )
+        moved = invoke.supersede_workflow_records(pr)
+        self.assertEqual(moved, ["wf_failed.json"])
+        self.assertFalse(
+            failed.exists(),
+            "supersede must move the file, not only report the basename",
+        )
+        archived = pr / "workflows" / "superseded" / "wf_failed.json"
+        self.assertTrue(archived.is_file())
+        # Current attempt: clean gaps (and G4 scriptPath).
+        _write_json(
+            pr / "workflows" / "wf_ok.json",
+            {
+                "runId": "wf_ok",
+                "scriptPath": PIPELINE,
+                "status": "completed",
+                "result": {"ok": True, "partial": False, "gaps": []},
+            },
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
 
 
 class CheckCliTest(unittest.TestCase):

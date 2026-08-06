@@ -95,6 +95,12 @@ python3 bench/run.py --check <RUN_ID>
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
 
+`--retry-failed` moves each retried PR's prior `workflows/wf_*.json` into
+`workflows/superseded/` before re-invoking, so `--check` gates the current
+attempt only; forensic records stay on disk. Pre-fix run dirs that still hold
+a failed attempt beside a success keep FAILing `--check` until retried under
+this behavior.
+
 ### Reading a FAIL — the tier has a non-change failure floor
 
 A red checker does **not** by itself mean the change under test is broken. Two
