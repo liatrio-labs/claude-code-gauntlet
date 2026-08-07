@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.5.1 (2026-08-07)
+
+### Bug Fixes
+
+- Give Cursor Cloud VMs a build-time toolchain fix instead of deleted prose (#98)
+  ([#151](https://github.com/liatrio-labs/claude-code-gauntlet/pull/151),
+  [`da495f6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/da495f6a796a312fb6e530c0dee60d00b87905e5))
+
+
 ## v3.5.0 (2026-08-07)
 
 ### Features
