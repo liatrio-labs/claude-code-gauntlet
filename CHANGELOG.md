@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.5.2 (2026-08-07)
+
+### Bug Fixes
+
+- **args**: Absolute-harden provenance-only repoRoot
+  ([#152](https://github.com/liatrio-labs/claude-code-gauntlet/pull/152),
+  [`300ddef`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/300ddeff9932e583ff828cc79a17c04253057689))
+
+- **args**: Absolute-harden provenance-only repoRoot (#81)
+  ([#152](https://github.com/liatrio-labs/claude-code-gauntlet/pull/152),
+  [`300ddef`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/300ddeff9932e583ff828cc79a17c04253057689))
+
+### Refactoring
+
+- **args**: Merge absolute path guards for outputDir and repoRoot
+  ([#152](https://github.com/liatrio-labs/claude-code-gauntlet/pull/152),
+  [`300ddef`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/300ddeff9932e583ff828cc79a17c04253057689))
+
+
 ## v3.5.1 (2026-08-07)
 
 ### Bug Fixes
