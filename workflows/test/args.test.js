@@ -497,3 +497,21 @@ test('validateArgs rejects headShaShort that would split or inject in the verify
 test('validateArgs still accepts the existing good waist untouched (the path-field guard is not overzealous)', () => {
   assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
 });
+
+// Issue #86: outputDir must be absolute (POSIX /-prefix). Relative paths type-checked
+// fine before this guard; the waist rejects them rather than resolving (no reliable cwd).
+test('validateArgs rejects a relative outputDir', () => {
+  const r = validateArgs({ ...good, outputDir: '.code-gauntlet' });
+  assert.equal(r.ok, false);
+  assert.ok(
+    r.errors.some((e) => e.includes('outputDir') && e.includes('absolute')),
+    r.errors.join('; '),
+  );
+});
+
+test('validateArgs accepts an absolute outputDir (POSIX /-prefix)', () => {
+  assert.deepEqual(
+    validateArgs({ ...good, outputDir: '/r/.code-gauntlet' }),
+    { ok: true, errors: [] },
+  );
+});

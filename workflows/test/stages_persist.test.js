@@ -29,7 +29,7 @@ import {
 import { validateArgs } from '../src/args.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
-const OUT_DIR = '.code-gauntlet';
+const OUT_DIR = '/repo/.code-gauntlet';
 const SHA = 'abc1234';
 const PATHS = plannedArtifactPaths(OUT_DIR, SHA);
 const PLAN_PATH = `${OUT_DIR}/code-gauntlet-persist-plan-${SHA}.json`;

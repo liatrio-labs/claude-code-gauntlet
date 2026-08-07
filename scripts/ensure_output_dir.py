@@ -164,6 +164,7 @@ def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) ->
                 f"({DEFAULT_OUTPUT_DIR})."
             )
             return 2, "", msg + "\n"
+        raw = raw.strip()
     else:
         raw = DEFAULT_OUTPUT_DIR
 
@@ -205,10 +206,9 @@ def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) ->
             return (
                 1,
                 "",
-                "cannot establish gitignore: could not resolve "
-                "`git rev-parse --git-path info/exclude`\n"
                 f"cannot establish gitignore for {abs_dir} "
-                "(info/exclude unresolvable, not otherwise ignored); "
+                "(info/exclude unresolvable via `git rev-parse --git-path`, "
+                "not otherwise ignored); "
                 "set CODE_GAUNTLET_OUTPUT_DIR to a path outside the repo and re-run.\n",
             )
         if not exclude_writable(exclude_path):

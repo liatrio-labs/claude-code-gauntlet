@@ -413,11 +413,15 @@ export function validateArgs(args) {
   // against above. A present-but-garbage value would otherwise render a junk path into
   // every paid dispatch instead of failing here, at the waist. repoRoot is shape-checked
   // alongside them as stamped provenance, though nothing in workflows/src reads it (see
-  // REQUIRED at the top of this file). Absence is already a
-  // REQUIRED-field error above; these fire only when the field is PRESENT. Nothing valid is
-  // newly rejected: the skill stamps `git rev-parse --show-toplevel`, an absolute
-  // {output_dir}, `git rev-parse --short=8 HEAD`, and a `{output_dir}/….patch` path — all
-  // non-empty plain strings — and every existing fixture already uses those.
+  // REQUIRED at the top of this file; absolute hardening for repoRoot is deferred to #81).
+  // Absence is already a REQUIRED-field error above; these fire only when the field is PRESENT.
+  // outputDir must be absolute: the waist rejects a non-absolute value rather than resolving
+  // it (the workflow has no reliable cwd). Phase 1's ensure_output_dir.py is the only layer
+  // that resolves; absolute here means a POSIX `/`-prefix — the rest of the tree does not
+  // honor Windows drive paths, so inventing that support in a guard nothing else honors
+  // would be dishonest. The skill stamps `git rev-parse --show-toplevel`, the absolute
+  // output dir from ensure_output_dir.py, `git rev-parse --short=8 HEAD`, and a
+  // `{output_dir}/….patch` path.
   const PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
   for (const field of ['repoRoot', 'outputDir', 'headShaShort', 'diffPath']) {
     const v = args[field];
@@ -437,6 +441,10 @@ export function validateArgs(args) {
     // the same AST-safe charset NONCE_RE already enforces above.
     if (field === 'headShaShort' && !NONCE_RE.test(v)) {
       errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
+    }
+    // Issue #86: reject relative outputDir. Fail loud — do not resolve.
+    if (field === 'outputDir' && !v.startsWith('/')) {
+      errors.push('outputDir must be an absolute path (POSIX /-prefix)');
     }
   }
   // agentFlags is the scope-gating map consumed by agentActive (stages.js): OPT-OUT, so an
