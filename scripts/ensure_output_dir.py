@@ -31,6 +31,7 @@ import argparse
 import os
 import subprocess
 import sys
+from collections.abc import Mapping
 
 DEFAULT_OUTPUT_DIR = ".code-gauntlet"
 GLOB_META = set("*?[]\\!")
@@ -135,9 +136,12 @@ def resolve_absolute(repo_root: str, raw: str) -> str:
     return os.path.realpath(os.path.join(repo_root, raw))
 
 
-def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) -> tuple[int, str, str]:
+def run(
+    argv: list[str] | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> tuple[int, str, str]:
     """Run the gate. Returns (exit_code, stdout, stderr)."""
-    env = environ if environ is not None else os.environ
+    env: Mapping[str, str] = environ if environ is not None else os.environ
     parser = argparse.ArgumentParser(
         description="Resolve and create the review output directory under an ignore gate."
     )
@@ -153,7 +157,7 @@ def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) ->
         return (code if code != 0 else 2, "", "")
 
     cwd = os.path.realpath(args.cwd or os.getcwd())
-    stderr_parts: list[str] = []
+    disclosure = ""
 
     if "CODE_GAUNTLET_OUTPUT_DIR" in env:
         raw = env["CODE_GAUNTLET_OUTPUT_DIR"]
@@ -183,7 +187,7 @@ def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) ->
         )
 
     if not is_under_repo(repo_root, abs_dir):
-        stderr_parts.append(
+        disclosure = (
             f"outside-repo: skip exclude for {abs_dir} "
             "(artifacts are outside the working tree)"
         )
@@ -191,7 +195,7 @@ def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) ->
             os.makedirs(abs_dir, exist_ok=True)
         except OSError as exc:
             return 1, "", f"mkdir failed for {abs_dir}: {exc}\n"
-        return 0, abs_dir + "\n", "".join(line + "\n" for line in stderr_parts)
+        return 0, abs_dir + "\n", disclosure + "\n"
 
     # --- in-repo gate (before mkdir) ---
     ignore_rc = git_check_ignore(cwd, abs_dir)
@@ -235,7 +239,11 @@ def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) ->
             )
         verify_rc = git_check_ignore(cwd, abs_dir)
         if verify_rc == 128:
-            return 2, "", f"git check-ignore failed (exit 128) after exclude append for {abs_dir}\n"
+            return (
+                2,
+                "",
+                f"git check-ignore failed (exit 128) after exclude append for {abs_dir}\n",
+            )
         if verify_rc != 0:
             return (
                 1,
@@ -244,20 +252,23 @@ def run(argv: list[str] | None = None, environ: dict[str, str] | None = None) ->
                 f"(appended {pattern!r} but check-ignore still fails); "
                 "set CODE_GAUNTLET_OUTPUT_DIR to a path outside the repo and re-run.\n",
             )
-        stderr_parts.append(f"exclude: added {pattern} via {exclude_path}")
+        disclosure = f"exclude: added {pattern} via {exclude_path}"
     else:
-        stderr_parts.append(f"exclude: already-ignored {abs_dir}")
+        disclosure = f"exclude: already-ignored {abs_dir}"
 
     try:
         os.makedirs(abs_dir, exist_ok=True)
     except OSError as exc:
         return 1, "", f"mkdir failed for {abs_dir}: {exc}\n"
 
-    return 0, abs_dir + "\n", "".join(line + "\n" for line in stderr_parts)
+    return 0, abs_dir + "\n", disclosure + "\n"
 
 
 def main(argv: list[str] | None = None) -> int:
-    code, out, err = run(argv=sys.argv[1:] if argv is None else argv, environ=os.environ)
+    code, out, err = run(
+        argv=sys.argv[1:] if argv is None else argv,
+        environ=os.environ,
+    )
     if err:
         sys.stderr.write(err)
     if out:

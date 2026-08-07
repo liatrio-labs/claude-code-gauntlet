@@ -9,6 +9,7 @@ for the resolved path.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import stat
@@ -19,9 +20,9 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import ensure_output_dir as eod  # noqa: E402
+import scripts.ensure_output_dir as eod
 
 
 def _git(cwd: str, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -61,7 +62,8 @@ def _run(
     # Drop inherited override unless the test sets it.
     if env is None or "CODE_GAUNTLET_OUTPUT_DIR" not in env:
         environ.pop("CODE_GAUNTLET_OUTPUT_DIR", None)
-    return eod.run(argv=argv or ["--cwd", cwd], environ=environ)
+    code, out, err = eod.run(argv=argv or ["--cwd", cwd], environ=environ)
+    return code, out, err
 
 
 class TestEnsureOutputDir(unittest.TestCase):
@@ -71,14 +73,13 @@ class TestEnsureOutputDir(unittest.TestCase):
         _init_repo(self.repo)
 
     def tearDown(self) -> None:
-        # Un-chmod anything we locked so cleanup can remove it.
+        # Un-chmod anything we locked so cleanup can remove it. chmod can fail
+        # if a path vanished mid-walk; ignore and keep cleaning.
         for root, dirs, files in os.walk(self.repo):
             for name in dirs + files:
                 p = os.path.join(root, name)
-                try:
+                with contextlib.suppress(OSError):
                     os.chmod(p, stat.S_IRWXU)
-                except OSError:
-                    pass
         self._td.cleanup()
 
     def _assert_in_repo_success_ignored(self, code: int, stdout: str) -> str:
@@ -97,8 +98,12 @@ class TestEnsureOutputDir(unittest.TestCase):
     def test_default_creates_ignored_dir(self) -> None:
         code, out, err = _run(self.repo)
         abs_path = self._assert_in_repo_success_ignored(code, out)
-        self.assertTrue(abs_path.endswith(".code-gauntlet") or abs_path.endswith("/.code-gauntlet"))
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        self.assertTrue(
+            abs_path.endswith(".code-gauntlet") or abs_path.endswith("/.code-gauntlet")
+        )
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         self.assertIn("/.code-gauntlet/", Path(exclude).read_text(encoding="utf-8"))
@@ -106,7 +111,9 @@ class TestEnsureOutputDir(unittest.TestCase):
     def test_rerun_idempotent_exclude_unchanged(self) -> None:
         code1, out1, _ = _run(self.repo)
         abs1 = self._assert_in_repo_success_ignored(code1, out1)
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         before = Path(exclude).read_bytes()
@@ -120,7 +127,9 @@ class TestEnsureOutputDir(unittest.TestCase):
         gi.write_text("/.code-gauntlet/\n", encoding="utf-8")
         _git(self.repo, "add", ".gitignore")
         _git(self.repo, "commit", "-m", "ignore")
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         # Ensure exclude file exists but stays empty of our pattern.
@@ -136,8 +145,12 @@ class TestEnsureOutputDir(unittest.TestCase):
             self.repo, env={"CODE_GAUNTLET_OUTPUT_DIR": "artifacts/out"}
         )
         abs_path = self._assert_in_repo_success_ignored(code, out)
-        self.assertTrue(abs_path.endswith("/artifacts/out") or abs_path.endswith("/artifacts/out/"))
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        self.assertTrue(
+            abs_path.endswith("/artifacts/out") or abs_path.endswith("/artifacts/out/")
+        )
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         self.assertIn("/artifacts/out/", Path(exclude).read_text(encoding="utf-8"))
@@ -153,14 +166,18 @@ class TestEnsureOutputDir(unittest.TestCase):
         self.assertTrue(os.path.isdir(abs_path))
         self.assertIn("outside-repo", err)
         # Not in the reviewed tree — check-ignore from repo may not apply; property exempt.
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         if os.path.isfile(exclude):
             self.assertNotIn("gauntlet-out", Path(exclude).read_text(encoding="utf-8"))
 
     def test_unwritable_exclude_hard_stop_no_mkdir(self) -> None:
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         info_dir = os.path.dirname(exclude)
@@ -195,9 +212,7 @@ class TestEnsureOutputDir(unittest.TestCase):
         self.assertFalse(os.path.exists(out_dir))
 
     def test_abs_equals_repo_root_is_usage_error(self) -> None:
-        code, out, err = _run(
-            self.repo, env={"CODE_GAUNTLET_OUTPUT_DIR": self.repo}
-        )
+        code, out, err = _run(self.repo, env={"CODE_GAUNTLET_OUTPUT_DIR": self.repo})
         self.assertEqual(code, 2)
         self.assertEqual(out.strip(), "")
         self.assertIn("repo root", err.lower())
@@ -224,7 +239,9 @@ class TestEnsureOutputDir(unittest.TestCase):
         blocker = Path(self.repo) / ".code-gauntlet"
         blocker.write_text("not a dir\n", encoding="utf-8")
         # Pre-ignore so we get past the ignore gate to mkdir.
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         Path(exclude).parent.mkdir(parents=True, exist_ok=True)
@@ -262,11 +279,15 @@ class TestEnsureOutputDir(unittest.TestCase):
         override = str(link / "out")
         code, out, err = _run(self.repo, env={"CODE_GAUNTLET_OUTPUT_DIR": override})
         abs_path = self._assert_in_repo_success_ignored(code, out)
-        self.assertTrue(os.path.realpath(abs_path).startswith(os.path.realpath(self.repo)))
+        self.assertTrue(
+            os.path.realpath(abs_path).startswith(os.path.realpath(self.repo))
+        )
         self.assertNotIn("outside-repo", err)
 
     def test_exclude_without_trailing_newline(self) -> None:
-        exclude = _git(self.repo, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+        exclude = _git(
+            self.repo, "rev-parse", "--git-path", "info/exclude"
+        ).stdout.strip()
         if not os.path.isabs(exclude):
             exclude = os.path.join(self.repo, exclude)
         Path(exclude).parent.mkdir(parents=True, exist_ok=True)
@@ -277,6 +298,23 @@ class TestEnsureOutputDir(unittest.TestCase):
         self.assertIn("/.code-gauntlet/", text)
         # Pattern must be on its own line, not concatenated.
         self.assertNotIn("newline/.code-gauntlet", text)
+
+    def test_git_exclude_path_none_hard_stop_no_mkdir(self) -> None:
+        out_dir = os.path.join(self.repo, ".code-gauntlet")
+        with unittest.mock.patch.object(eod, "git_exclude_path", return_value=None):
+            code, out, err = _run(self.repo)
+        self.assertEqual(code, 1)
+        self.assertEqual(out.strip(), "")
+        self.assertFalse(os.path.exists(out_dir))
+        self.assertIn("info/exclude unresolvable", err)
+
+    def test_not_a_git_repository_is_usage_error(self) -> None:
+        plain = tempfile.mkdtemp(prefix="cg-nongit-")
+        self.addCleanup(shutil.rmtree, plain, ignore_errors=True)
+        code, out, err = _run(plain)
+        self.assertEqual(code, 2)
+        self.assertEqual(out.strip(), "")
+        self.assertIn("not a git repository", err)
 
 
 if __name__ == "__main__":

@@ -60,6 +60,7 @@ module = [
   "assemble_artifacts",
   "await_workflow",
   "detect_prior_review",
+  "ensure_output_dir",
   "filter_findings",
   "finding_dedup",
   "merge_findings",
