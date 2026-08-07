@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.5.0 (2026-08-07)
+
+### Features
+
+- Persist outputDir-prefix fence for planned and writer paths (#148)
+  ([#150](https://github.com/liatrio-labs/claude-code-gauntlet/pull/150),
+  [`3608a60`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3608a60c9f27b39d98930db520e1e312ee35fd8e))
+
+- **workflows**: Confine Persist paths under absolute outputDir
+  ([#150](https://github.com/liatrio-labs/claude-code-gauntlet/pull/150),
+  [`3608a60`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3608a60c9f27b39d98930db520e1e312ee35fd8e))
+
+### Testing
+
+- **workflows**: Cover derived Persist path fences
+  ([#150](https://github.com/liatrio-labs/claude-code-gauntlet/pull/150),
+  [`3608a60`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3608a60c9f27b39d98930db520e1e312ee35fd8e))
+
+
 ## v3.4.0 (2026-08-07)
 
 ### Bug Fixes
