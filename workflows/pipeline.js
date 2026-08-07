@@ -1869,10 +1869,14 @@ function resolvePolicy(agentType, opts = {}) {
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
 const ARGS_VERSION = 1;
 // changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
-// REQUIRED because they're consumed. `mode` and `repoRoot` are NOT read anywhere in
-// workflows/src (mode is only ever re-checked against its own enum below; repoRoot is unread
-// entirely) — they're required as provenance/telemetry the skill always stamps, not because
-// any stage consumes them. changedFilesPath is on-disk provenance the workflow never opens.
+// REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
+// re-check against its own enum below — it is provenance/telemetry the skill always stamps.
+// `repoRoot` is also unread by every stage: it is provenance-only by measurement (issue #81
+// comment 2026-08-07: 15 completed runs / 30 security-reviewer + cross-file-impact agents —
+// ambient cwd is the reviewed repo; zero relative path-bearing Read/Grep/Glob). It stays
+// REQUIRED so the skill's `git rev-parse --show-toplevel` stamp remains in the persisted
+// waist for forensics, not because any stage consumes it. changedFilesPath is on-disk
+// provenance the workflow never opens.
 const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'agentFlags', 'policy', 'limits'];
 
 // The nonce is interpolated into the verify executor command argv (the verify stage
@@ -2266,23 +2270,26 @@ function validateArgs(args) {
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
-  // Path-bearing waist fields (requirement 6, issue #27). outputDir/headShaShort
-  // interpolate into the shared-context path
-  // (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in stages.js), which
-  // reaches every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
-  // (--head-sha, --diff-file) — the same argv-splitting hazard NONCE_RE already guards
-  // against above. A present-but-garbage value would otherwise render a junk path into
-  // every paid dispatch instead of failing here, at the waist. repoRoot is shape-checked
-  // alongside them as stamped provenance, though nothing in workflows/src reads it (see
-  // REQUIRED at the top of this file; absolute hardening for repoRoot is deferred to #81).
-  // Absence is already a REQUIRED-field error above; these fire only when the field is PRESENT.
-  // outputDir must be absolute: the waist rejects a non-absolute value rather than resolving
-  // it (the workflow has no reliable cwd). Phase 1's ensure_output_dir.py is the only layer
-  // that resolves; absolute here means a POSIX `/`-prefix — the rest of the tree does not
-  // honor Windows drive paths, so inventing that support in a guard nothing else honors
-  // would be dishonest. The skill stamps `git rev-parse --show-toplevel`, the absolute
-  // output dir from ensure_output_dir.py, `git rev-parse --short=8 HEAD`, and a
-  // `{output_dir}/….patch` path.
+  // Path-bearing waist fields (requirement 6, issue #27). Per-field reachability — do not
+  // collapse these into one claim:
+  //   - outputDir / headShaShort → shared-context path
+  //     (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in stages.js), which
+  //     reaches every discovery prompt
+  //   - headShaShort / diffPath → verify executor argv (--head-sha, --diff-file) — the same
+  //     argv-splitting hazard NONCE_RE already guards against above
+  //   - repoRoot → provenance-only, unread by every stage (see REQUIRED at the top of this
+  //     file); absolute-shape-checked for honesty of the skill's stamp
+  // A present-but-garbage value on a consumed path field would otherwise render a junk path
+  // into every paid dispatch instead of failing here, at the waist. Absence is already a
+  // REQUIRED-field error above; these fire only when the field is PRESENT.
+  // outputDir and repoRoot must be absolute: the waist rejects a non-absolute value rather
+  // than resolving it (the workflow has no reliable cwd). Phase 1's ensure_output_dir.py is
+  // the only layer that resolves outputDir; absolute here means a POSIX `/`-prefix — the
+  // rest of the tree does not honor Windows drive paths, so inventing that support in a
+  // guard nothing else honors would be dishonest. No existence / isDirectory probe: the
+  // waist validates shape, not filesystem state. The skill stamps
+  // `git rev-parse --show-toplevel`, the absolute output dir from ensure_output_dir.py,
+  // `git rev-parse --short=8 HEAD`, and a `{output_dir}/….patch` path.
   const PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
   for (const field of ['repoRoot', 'outputDir', 'headShaShort', 'diffPath']) {
     const v = args[field];
@@ -2306,6 +2313,11 @@ function validateArgs(args) {
     // Issue #86: reject relative outputDir. Fail loud — do not resolve.
     if (field === 'outputDir' && !v.startsWith('/')) {
       errors.push('outputDir must be an absolute path (POSIX /-prefix)');
+    }
+    // Issue #81: reject relative repoRoot (provenance stamp honesty). Fail loud — do not
+    // resolve; do not probe the filesystem (unread field; shape only).
+    if (field === 'repoRoot' && !v.startsWith('/')) {
+      errors.push('repoRoot must be an absolute path (POSIX /-prefix)');
     }
   }
   // agentFlags is the scope-gating map consumed by agentActive (stages.js): OPT-OUT, so an
