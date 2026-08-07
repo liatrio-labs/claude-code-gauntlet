@@ -949,6 +949,106 @@ class TestDocContract(unittest.TestCase):
             "`.git/info/exclude` instead (matching SKILL.md's forbidding rule).",
         )
 
+    def test_skill_invokes_ensure_output_dir_and_has_no_gitignore_composite(self):
+        """Issue #86: Phase 1 owns containment via ensure_output_dir.py; Composite A
+        must not carry a vestigial gitignore bash section."""
+        skill = _read(self.SKILL_REL)
+        self.assertIn(
+            "ensure_output_dir.py",
+            skill,
+            f"{self.SKILL_REL} must invoke scripts/ensure_output_dir.py in Phase 1",
+        )
+        self.assertNotIn(
+            'echo "=== gitignore ==="',
+            skill,
+            f"{self.SKILL_REL} still has Composite A gitignore bash — ignore "
+            "establishment moved to ensure_output_dir.py in Phase 1",
+        )
+        self.assertNotIn(
+            ">> .gitignore",
+            skill,
+            f"{self.SKILL_REL} must never append to the tracked .gitignore",
+        )
+
+    def test_phase2_points_at_ensure_output_dir_not_independent_gitignore(self):
+        """Issue #86: phase2-triage owns a pointer, not a second ignore implementation."""
+        text = _read(self.PHASE2_REL)
+        self.assertIn(
+            "ensure_output_dir.py",
+            text,
+            f"{self.PHASE2_REL} must point at ensure_output_dir.py for ignore establishment",
+        )
+        self.assertNotIn(
+            "skip if using env var override",
+            text,
+            f"{self.PHASE2_REL} still tells the model to skip ignore on env override — "
+            "the script handles in-repo vs out-of-repo",
+        )
+        self.assertNotIn(
+            "artifacts will show as untracked files",
+            text,
+            f"{self.PHASE2_REL} still documents disclose-and-continue for unwritable "
+            "exclude — that is now a Phase 1 hard stop",
+        )
+
+    def test_markdown_delivery_is_path_surface_not_root_write(self):
+        """Issue #86 refined-A: Step C surfaces artifactPaths.report; no default
+        root-level code-gauntlet-{date}.md write instruction survives."""
+        phase8 = "skills/code-gauntlet/references/phase8-delivery.md"
+        delivery = self.DELIVERY_GUIDE_REL
+        phase8_text = _read(phase8)
+        self.assertIn(
+            "artifactPaths.report",
+            phase8_text,
+            f"{phase8} Step C must name artifactPaths.report as the delivery source",
+        )
+        self.assertIn(
+            "do not write a new file",
+            phase8_text.lower().replace("**", ""),
+            f"{phase8} Step C must forbid a fresh write",
+        )
+        # Forbid the old default root write as an instruction (mentions in "never"
+        # sentences are OK only if they do not prescribe write-to-root).
+        for rel, text in (
+            (phase8, phase8_text),
+            (delivery, _read(delivery)),
+            (self.PHASE1_REL, _read(self.PHASE1_REL)),
+            (
+                "skills/code-gauntlet/references/review-md-spec.md",
+                _read("skills/code-gauntlet/references/review-md-spec.md"),
+            ),
+        ):
+            with self.subTest(path=rel):
+                self.assertNotRegex(
+                    text,
+                    r"[Ww]rite(?:\s+the\s+full\s+report)?\s+to\s+`?\./code-gauntlet-",
+                    f"{rel} still instructs writing a root-level code-gauntlet-* file",
+                )
+                self.assertNotIn(
+                    "Save as code-gauntlet-{date}.md",
+                    text,
+                    f"{rel} still promises creating code-gauntlet-{{date}}.md",
+                )
+                self.assertNotIn(
+                    "Save as `code-gauntlet-{date}.md`",
+                    text,
+                    f"{rel} still promises creating code-gauntlet-{{date}}.md",
+                )
+
+    def test_headless_markdown_delivery_is_path_only(self):
+        """Issue #86: headless markdown must not re-invent a root write."""
+        text = _read(self.HEADLESS_MODE_REL)
+        self.assertIn(
+            "artifactPaths.report",
+            text,
+            f"{self.HEADLESS_MODE_REL} must state headless markdown = persisted report path",
+        )
+        self.assertIn(
+            "no additional file is written",
+            text,
+            f"{self.HEADLESS_MODE_REL} must state no additional markdown file is written",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Round-3 fix regressions — each of these MUST fail if its fix is reverted.
