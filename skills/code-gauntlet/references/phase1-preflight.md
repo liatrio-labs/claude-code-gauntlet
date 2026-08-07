@@ -216,7 +216,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
   options: [
     { label: "Chat (Recommended)", description: "Full report in the conversation" },
     { label: "PR comments", description: "Inline comments on the PR" },
-    { label: "Markdown file", description: "Save as code-gauntlet-{date}.md" }
+    { label: "Markdown file", description: "Report is already saved under the output dir; I'll give you the path (or name a path to copy it elsewhere)" }
   ]
 }
 ```
@@ -279,7 +279,7 @@ AskUserQuestion(
     { question: "How should I deliver the review results?", header: "Delivery", multiSelect: true, options: [
         { label: "Chat (Recommended)", description: "Full report in the conversation" },
         { label: "PR comments", description: "Inline comments on the PR" },
-        { label: "Markdown file", description: "Save as code-gauntlet-{date}.md" }
+        { label: "Markdown file", description: "Report is already saved under the output dir; I'll give you the path (or name a path to copy it elsewhere)" }
     ]},
     { question: "Which findings should post as PR comments?", header: "PR Comment Tier", multiSelect: false, options: [
         { label: "All challenge-surviving findings (Recommended)", description: "Post every finding that survived the blind challenge, including improvement suggestions" },

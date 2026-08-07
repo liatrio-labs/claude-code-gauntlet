@@ -164,7 +164,7 @@ Controls how review results are delivered. A comma-separated list of delivery me
 
 - `chat` — Display the full report in the conversation
 - `pr_comments` — Post findings as inline PR/MR comments
-- `markdown` — Save as `code-gauntlet-{date}.md`
+- `markdown` — Surface the path to the already-persisted report under the output directory (`artifactPaths.report`); no default new file
 
 When set in REVIEW.md, the delivery preference prompt is skipped during Phase 1. When not set, the user is prompted at the start of each review. Task creation is always offered separately after delivery, regardless of this setting.
 

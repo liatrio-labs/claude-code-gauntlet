@@ -187,7 +187,7 @@ After creating: "Created N tasks from review findings."
 
 ## Markdown File
 
-Write the full report to `./code-gauntlet-<date>.md` or a user-specified path.
+Canonical behavior is Phase 8 **Step C** in `phase8-delivery.md`: surface the path to the already-persisted `artifactPaths.report` — no default write. A write outside `{output_dir}` happens only when the user names a destination.
 
 ---
 
