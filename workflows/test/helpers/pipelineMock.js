@@ -82,7 +82,7 @@ export function validArgs(over = {}) {
     argsVersion: 1,
     mode: 'headless',
     repoRoot: '/repo',
-    outputDir: '.code-gauntlet',
+    outputDir: '/repo/.code-gauntlet',
     headShaShort: 'abc1234',
     nonce: 'nonce-xyz',
     generatedAt: '2026-07-18T00:00:00Z',

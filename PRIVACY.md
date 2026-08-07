@@ -24,7 +24,7 @@ This plugin does not connect to any third-party services of its own. It operates
 
 ## Data Storage
 
-The only files created are within the `.code-gauntlet/` directory in your local project (configurable via `$CODE_GAUNTLET_OUTPUT_DIR`). These contain review context, findings (NDJSON), and intermediate pipeline artifacts. You control these files entirely — you can read, edit, delete, or gitignore them at any time. The directory is gitignored by default.
+The only files created in the working tree are within the review output directory (`.code-gauntlet/` by default, configurable via `$CODE_GAUNTLET_OUTPUT_DIR`). These contain review context, findings, and intermediate pipeline artifacts. You control these files entirely — you can read, edit, delete, or ignore them at any time. When the output directory is inside the repo, it is ignored by default via `.git/info/exclude` (never by editing the tracked `.gitignore`). The sole default write outside that directory is the exclude entry under the git dir, which does not appear in `git status`.
 
 ## Contact
 

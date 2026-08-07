@@ -2,7 +2,7 @@
 
 Workflow-tool availability check, review target resolution, eligibility logic, AskUserQuestion templates, and consolidated pre-flight configuration gate for Phase 1.
 
-> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) and gitignore check (`git check-ignore`) happen in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Phase 1's own Bash work is the single composite call in SKILL.md (output directory + `mkdir -p`, plugin-dir confirmation, PR state, a root REVIEW.md quick-check, and the trivial-check file list) — no checkout-dependent state.
+> **Note:** SHA resolution (`git rev-parse --short=8 HEAD` → `head_sha_short`) happens in Phase 2 after checkout — see `phase2-triage.md` section 2b-post. Output-directory resolve/ignore/mkdir is owned by `scripts/ensure_output_dir.py` in Phase 1's composite (SKILL.md) — not Phase 2. Phase 1's own Bash work is that composite (ensure_output_dir + plugin-dir confirmation, PR state, a root REVIEW.md quick-check, and the trivial-check file list) — no checkout-dependent state.
 
 ---
 
@@ -216,7 +216,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
   options: [
     { label: "Chat (Recommended)", description: "Full report in the conversation" },
     { label: "PR comments", description: "Inline comments on the PR" },
-    { label: "Markdown file", description: "Save as code-gauntlet-{date}.md" }
+    { label: "Markdown file", description: "Report is already saved under the output dir; I'll give you the path (or name a path to copy it elsewhere)" }
   ]
 }
 ```
@@ -279,7 +279,7 @@ AskUserQuestion(
     { question: "How should I deliver the review results?", header: "Delivery", multiSelect: true, options: [
         { label: "Chat (Recommended)", description: "Full report in the conversation" },
         { label: "PR comments", description: "Inline comments on the PR" },
-        { label: "Markdown file", description: "Save as code-gauntlet-{date}.md" }
+        { label: "Markdown file", description: "Report is already saved under the output dir; I'll give you the path (or name a path to copy it elsewhere)" }
     ]},
     { question: "Which findings should post as PR comments?", header: "PR Comment Tier", multiSelect: false, options: [
         { label: "All challenge-surviving findings (Recommended)", description: "Post every finding that survived the blind challenge, including improvement suggestions" },

@@ -4,7 +4,7 @@ Sub-steps, detection logic, and **args preparation** for Phase 2: Target, Triage
 
 ## Contents
 
-- **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + gitignore + previously-reviewed gate + stale cleanup — **2c** Review target + diff/changed-files save
+- **2a** VCS platform detection — **2b** Working tree checkout — **2b-post** SHA + previously-reviewed gate + stale cleanup — **2c** Review target + diff/changed-files save
 - **2d** Project context (CLAUDE.md, REVIEW.md parse) — **2e** Risk classification
 - **2g** Test discovery — **2h** Docs/specs — **2i** History context
 - **2k** AI-generated code detection — **2l** Review dimensions
@@ -71,19 +71,19 @@ No fallback or workaround — a silently wrong working tree produces unreliable 
 
 ---
 
-## 2b-post. Resolve Head SHA, Gitignore, Previously-Reviewed Gate, and Clean Stale Files
+## 2b-post. Resolve Head SHA, Previously-Reviewed Gate, and Clean Stale Files
 
 Now that the working tree reflects the review target, compute the short SHA and perform housekeeping. **These steps run as SKILL.md's "Phase 2 Composite A — pre-gather" — one Bash call whose sections form the genuine dependency chain below.** See SKILL.md for the full runnable script; this section explains the reasoning behind its ordering.
 
 **1. Resolve head SHA** (`sha` section) — after checkout, so it reflects the actual PR HEAD, not whatever branch was checked out before.
 
-**2. Ensure `{output_dir}` is ignored via `.git/info/exclude`** (`gitignore` section; skip if using env var override). Never append to the repo's tracked `.gitignore` — that silently dirties the reviewed repo's working tree with an undisclosed edit to a user file. `info/exclude` is repo-local, untracked, and shared across worktrees. Added after checkout to avoid stash/pop loss from `gh pr checkout` — if this ran before checkout, the exclude-file edit would be stashed and potentially lost. Disclose the outcome in the triage output (one line): either `.code-gauntlet/ excluded via .git/info/exclude` or, if the exclude file is unwritable, `note: .code-gauntlet/ is NOT ignored (info/exclude unwritable) — artifacts will show as untracked files` — never fall back to editing `.gitignore`.
+**2. Output-dir ignore** — owned by `scripts/ensure_output_dir.py`, invoked in Phase 1. Phase 2 does not re-establish ignore and has no `gitignore` composite section. Never append to the repo's tracked `.gitignore`.
 
 **3. Previously-reviewed gate** (`owner_repo` + `prior_review` sections; PR/MR targets only — skip for `local`):
 
 Runs the gate documented in `phase1-preflight.md` → "Previously-Reviewed Gate", which resolves whether this PR/MR was already reviewed and whether the incremental path is safe. `{owner}`/`{repo}` are resolved first from the PR's **own URL** — never the `origin` remote, which is the fork in a fork clone (`gh repo view` would resolve the current clone instead). GitLab: `glab mr view {pr_number} --output json | jq -r '.web_url'`, then take the path segments before `/-/merge_requests/`.
 
-This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. By this point the checkout section has already switched the working tree to the PR and the gitignore section may already have written to `.git/info/exclude`; a Skip answer below stops the review but reverts neither — the tree stays checked out on the PR branch.
+This runs **here, not in Phase 1**: the gate compares the last-reviewed commit against the PR head and counts the commits between them, so it needs the working tree at the review target and the PR's objects fetched. Before checkout it would measure whatever branch the session started on. By this point the checkout section has already switched the working tree to the PR; a Skip answer below stops the review but does not revert the checkout — the tree stays checked out on the PR branch.
 
 If the gate resolves to **Incremental**, store `last_reviewed_sha` — section 2c's incremental branch consumes it. If it resolves to **Skip**, stop the run here. Otherwise continue as a full review.
 

@@ -510,7 +510,7 @@ test('writeArtifacts in isolation: a bare agent() throw yields a partial-artifac
     agent: async () => { throw new Error('disk on fire'); },
     parallel: async () => [],
   };
-  const out = await writeArtifacts(ctx, { findings: [makeFinding('F1')], report: '# r', checkpoints: {}, outputDir: '.code-gauntlet', headShaShort: 'abc1234' });
+  const out = await writeArtifacts(ctx, { findings: [makeFinding('F1')], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' });
   assert.ok(out.gaps.some((g) => /partial|artifact/i.test(g)));
   assert.equal(out.artifactPaths.findings, null);
 });
@@ -518,7 +518,7 @@ test('writeArtifacts in isolation: a bare agent() throw yields a partial-artifac
 // Item 5: the artifact-writer echo must ACCOUNT for all four planned paths — a schema-valid
 // but degenerate echo (empty {} or partial) is no write proof and degrades to partial.
 test('writeArtifacts: an empty {} echo (no write proof) degrades to a partial-artifacts gap', async () => {
-  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '.code-gauntlet', headShaShort: 'abc1234' };
+  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' };
   const ctx = { agent: async () => ({}), parallel: async () => [] }; // schema-valid, accounts for nothing
   const out = await writeArtifacts(ctx, wIn);
   assert.equal(out.partial, true);
@@ -527,7 +527,7 @@ test('writeArtifacts: an empty {} echo (no write proof) degrades to a partial-ar
 });
 
 test('writeArtifacts: a partial echo (missing one planned path) also degrades to partial-artifacts', async () => {
-  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '.code-gauntlet', headShaShort: 'abc1234' };
+  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' };
   const paths = plannedArtifactPaths(wIn.outputDir, wIn.headShaShort);
   const partialEcho = { ...paths }; delete partialEcho.checkpoints; // three of four
   const ctx = { agent: async () => ({ artifactPaths: partialEcho }), parallel: async () => [] };
@@ -537,7 +537,7 @@ test('writeArtifacts: a partial echo (missing one planned path) also degrades to
 });
 
 test('writeArtifacts: a faithful echo of all four planned paths persists (partial:false)', async () => {
-  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '.code-gauntlet', headShaShort: 'abc1234' };
+  const wIn = { findings: [makeFinding('F1')], postReview: [], report: '# r', checkpoints: {}, outputDir: '/repo/.code-gauntlet', headShaShort: 'abc1234' };
   const paths = plannedArtifactPaths(wIn.outputDir, wIn.headShaShort);
   const ctx = { agent: async () => ({ artifactPaths: paths }), parallel: async () => [] };
   const out = await writeArtifacts(ctx, wIn);

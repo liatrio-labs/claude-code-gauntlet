@@ -133,7 +133,7 @@ python3 {plugin_root}/scripts/post_review.py "{output_dir}/code-gauntlet-post-re
 
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
-**Step C. Markdown file** — if selected, write to `./code-gauntlet-{date}.md`.
+**Step C. Markdown file** — if selected, **do not write a new file**. The full report is already persisted at `artifactPaths.report` (e.g. `{output_dir}/code-gauntlet-report-{head_sha_short}.md`). Tell the user that absolute path in chat — that is the delivery. The only allowed write outside `{output_dir}` is when the user explicitly names a destination path; then copy/write the report there. Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside `{output_dir}`).
 
 ---
 
