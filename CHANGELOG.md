@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v3.4.0 (2026-08-07)
+
+### Bug Fixes
+
+- Contain review artifacts in a single ignored output dir (#86)
+  ([#149](https://github.com/liatrio-labs/claude-code-gauntlet/pull/149),
+  [`ccd8dcc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ccd8dccff161806b9d38f247a026e0e7367a6a71))
+
+- **args**: Reject non-absolute outputDir
+  ([#149](https://github.com/liatrio-labs/claude-code-gauntlet/pull/149),
+  [`ccd8dcc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ccd8dccff161806b9d38f247a026e0e7367a6a71))
+
+- **scripts**: Address #86 PR review and lint failures
+  ([#149](https://github.com/liatrio-labs/claude-code-gauntlet/pull/149),
+  [`ccd8dcc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ccd8dccff161806b9d38f247a026e0e7367a6a71))
+
+- **skill**: Phase 1 ensure_output_dir; drop Composite A gitignore
+  ([#149](https://github.com/liatrio-labs/claude-code-gauntlet/pull/149),
+  [`ccd8dcc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ccd8dccff161806b9d38f247a026e0e7367a6a71))
+
+### Documentation
+
+- Markdown delivery is path-surface only
+  ([#149](https://github.com/liatrio-labs/claude-code-gauntlet/pull/149),
+  [`ccd8dcc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ccd8dccff161806b9d38f247a026e0e7367a6a71))
+
+### Features
+
+- **scripts**: Ensure_output_dir containment gate
+  ([#149](https://github.com/liatrio-labs/claude-code-gauntlet/pull/149),
+  [`ccd8dcc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ccd8dccff161806b9d38f247a026e0e7367a6a71))
+
+### Testing
+
+- Pin output-dir containment and no-write markdown delivery
+  ([#149](https://github.com/liatrio-labs/claude-code-gauntlet/pull/149),
+  [`ccd8dcc`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ccd8dccff161806b9d38f247a026e0e7367a6a71))
+
+
 ## v3.3.14 (2026-08-06)
 
 ### Bug Fixes
