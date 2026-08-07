@@ -443,7 +443,7 @@ test('contextLines/contextChars are bounded above — an absurd measurement fail
 });
 
 // --- Requirement 6 (issue #27): path-bearing waist fields are type/shape-checked ----------
-// Per-field reachability — do not collapse these into one claim:
+// Per-field reachability:
 //   - outputDir / headShaShort → shared-context path
 //     (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in runWith), which
 //     reaches every discovery prompt

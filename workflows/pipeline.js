@@ -2270,8 +2270,7 @@ function validateArgs(args) {
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
   }
-  // Path-bearing waist fields (requirement 6, issue #27). Per-field reachability — do not
-  // collapse these into one claim:
+  // Path-bearing waist fields (requirement 6, issue #27). Per-field reachability:
   //   - outputDir / headShaShort → shared-context path
   //     (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in stages.js), which
   //     reaches every discovery prompt
@@ -2310,14 +2309,10 @@ function validateArgs(args) {
     if (field === 'headShaShort' && !NONCE_RE.test(v)) {
       errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
     }
-    // Issue #86: reject relative outputDir. Fail loud — do not resolve.
-    if (field === 'outputDir' && !v.startsWith('/')) {
-      errors.push('outputDir must be an absolute path (POSIX /-prefix)');
-    }
-    // Issue #81: reject relative repoRoot (provenance stamp honesty). Fail loud — do not
-    // resolve; do not probe the filesystem (unread field; shape only).
-    if (field === 'repoRoot' && !v.startsWith('/')) {
-      errors.push('repoRoot must be an absolute path (POSIX /-prefix)');
+    // Issues #86 / #81: reject relative outputDir / repoRoot. Fail loud — do not resolve;
+    // do not probe the filesystem (shape only; repoRoot is unread provenance).
+    if ((field === 'outputDir' || field === 'repoRoot') && !v.startsWith('/')) {
+      errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
     }
   }
   // agentFlags is the scope-gating map consumed by agentActive (stages.js): OPT-OUT, so an
