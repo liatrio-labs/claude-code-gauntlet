@@ -4463,7 +4463,7 @@ async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, e
       ARTIFACT_PATH_KEYS.map((k) => ({
         name: k,
         path: echoed ? echoed[k] : undefined,
-        present: !!(echoed && Object.prototype.hasOwnProperty.call(echoed, k)),
+        present: !!(echoed && Object.hasOwn(echoed, k)),
       })),
     );
     if (escape) return partial(escape, extraGaps);

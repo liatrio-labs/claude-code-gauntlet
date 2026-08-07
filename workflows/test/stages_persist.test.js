@@ -671,6 +671,35 @@ test('writer gate: an empty {written:[]} echo degrades to partial-artifacts', as
   assert.equal(out.partial, true);
 });
 
+test('writer gate: an escaping derived written[] path emits a path-escape gap', async () => {
+  const ctx = persistCtx({
+    writtenEcho: (payload) => payload.map((e) => e.path).concat('/tmp/evil.json'),
+  });
+  const out = await writeArtifacts(ctx, persistInput());
+  assert.equal(out.partial, true);
+  assert.ok(
+    out.gaps.some((g) => /path-escape/.test(g) && /written\[3\]=\/tmp\/evil\.json/.test(g)),
+    out.gaps,
+  );
+  assert.deepEqual(labels(ctx), ['artifact-writer'], 'the assembler must not run after an escaping writer echo');
+});
+
+test('receipt gate: escaping verified and written paths emit one path-escape gap', async () => {
+  const ctx = persistCtx({
+    receiptFrom: (r) => ({
+      ...r,
+      verified: r.verified.concat({ path: '/tmp/evil-verified.json' }),
+      written: r.written.concat({ path: '/tmp/evil-written.json' }),
+    }),
+  });
+  const out = await writeArtifacts(ctx, persistInput());
+  assert.equal(out.partial, true);
+  const escapeGaps = out.gaps.filter((g) => /path-escape/.test(g));
+  assert.equal(escapeGaps.length, 1, out.gaps);
+  assert.match(escapeGaps[0], /verified\[2\]=\/tmp\/evil-verified\.json/);
+  assert.match(escapeGaps[0], /receipt\.written\[2\]=\/tmp\/evil-written\.json/);
+});
+
 test('writer gate: a writer throw degrades to partial-artifacts', async () => {
   const out = await writeArtifacts(persistCtx({ throwOn: 'artifact-writer' }), persistInput());
   assert.equal(out.partial, true);
