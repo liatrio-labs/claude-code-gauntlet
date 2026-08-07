@@ -46,9 +46,11 @@ One Bash call gathers every independent Phase-1 input at once: output-directory 
 
 ```bash
 echo "=== output_dir ==="
-OUTPUT_DIR="${CODE_GAUNTLET_OUTPUT_DIR:-.code-gauntlet}"
+if ! OUTPUT_DIR=$(python3 "{plugin_root}/scripts/ensure_output_dir.py"); then
+  echo "output_dir: FAILED"
+  exit 1
+fi
 echo "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR" && echo "mkdir: ok" || echo "mkdir: FAILED"
 
 echo "=== plugin_dirs ==="
 command ls "{plugin_root}/scripts" "{plugin_root}/agents" "{plugin_root}/workflows"
@@ -65,7 +67,14 @@ gh pr diff {pr_number} --name-only
 
 (GitLab: swap `pr_view` for `glab mr view {pr_number} --output json`, and `changed_files` for `glab mr diff {pr_number} --name-only`. Local/branch targets skip `pr_view` and `changed_files` entirely — use `git diff --name-only <base>...HEAD` / `git diff --name-only HEAD` for the trivial-check list instead.)
 
-If `mkdir -p` fails, stop — the output directory is not writable. This catches read-only filesystems early rather than producing mysterious partial-artifacts failures at persist time.
+**Output-dir hard stops** (same severity class — stop before any agent dispatch; script stderr already flowed into this Bash result with disclosures/remedy lines):
+
+| Marker | Script exit | Meaning |
+| --- | --- | --- |
+| `output_dir: FAILED` | **1** | Cannot establish ignore for an in-repo dir (`info/exclude` unwritable/unresolvable and not otherwise ignored), or `mkdir` failed. Empty stdout — do not stamp `args.outputDir`. Remedy (ignore case): set `$CODE_GAUNTLET_OUTPUT_DIR` outside the repo and re-run. |
+| `output_dir: FAILED` | **2** | Usage: not a git repo, empty/whitespace `$CODE_GAUNTLET_OUTPUT_DIR`, output dir equals repo root, or `git check-ignore` error (exit 128). Empty stdout — do not stamp. |
+
+On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
 
 Store: `output_dir` (section 1); the plugin-dir confirmation (section 2 — if any directory is missing, stop, `plugin_root` was resolved wrong); the PR's `state`/`isDraft` (section 3, feeds eligibility checks 1 and 2 below); the REVIEW.md root text or `NONE` (section 4, feeds the pre-flight configuration gate's quick-check); and the changed-file list (section 5, feeds eligibility check 4 below — the same primitive the recorded run got wrong by inventing `gh pr diff --stat`, which does not exist; see `references/phase1-preflight.md` eligibility check 4 for the worked command).
 
@@ -104,9 +113,9 @@ Check REVIEW.md for `model_tier` and `default_delivery` — read from the `revie
 
 Identify the review target, gather the git artifacts the workflow consumes, and assemble the args object. This is a fast pass in the main context — the review stages run later, inside the workflow. Read `references/phase2-triage.md` for the full sub-steps (VCS detection, checkout, risk classification, REVIEW.md parse) and the args-preparation walkthrough.
 
-### Phase 2 Composite A — pre-gather (status → checkout → SHA/gitignore → prior-review gate → stale truncation)
+### Phase 2 Composite A — pre-gather (status → checkout → SHA → prior-review gate → stale truncation)
 
-One Bash call, but its sections form the **genuine dependency chain** — status → checkout → SHA/gitignore → prior-review gate → stale truncation — each depends on the previous section's output, so unlike Composite B below they cannot be reordered or run separately. `{owner}`/`{repo}` resolve *inside the call itself*, parsed from the PR's own URL — never the `origin` remote, which is the fork in a fork clone. `{platform}` is a different kind of thing entirely: a template placeholder, substituted before dispatch (like `{pr_number}` and `{plugin_root}`) from what Phase 1 already determined (PR vs. MR), not a value the shell computes from anything fetched inside this composite.
+One Bash call, but its sections form the **genuine dependency chain** — status → checkout → SHA → prior-review gate → stale truncation — each depends on the previous section's output, so unlike Composite B below they cannot be reordered or run separately. `{owner}`/`{repo}` resolve *inside the call itself*, parsed from the PR's own URL — never the `origin` remote, which is the fork in a fork clone. `{platform}` is a different kind of thing entirely: a template placeholder, substituted before dispatch (like `{pr_number}` and `{plugin_root}`) from what Phase 1 already determined (PR vs. MR), not a value the shell computes from anything fetched inside this composite.
 
 > **Shell hygiene:** user shells commonly alias `ls`/`cp`/`grep` to incompatible replacements (an `ls`→`eza --icons` alias broke a live run's directory listing). In every Bash call, prefer `git ls-files` / `find` for file enumeration, and prefix coreutils with `command` (`command ls`, `command cp`) when you must use them. (Same reminder as Phase 1 — see the duplication rationale there.)
 
@@ -131,15 +140,6 @@ HEAD_SHA_SHORT=$(git rev-parse --short=8 HEAD)
 HEAD_SHA_FULL=$(git rev-parse HEAD)
 echo "head_sha_short=$HEAD_SHA_SHORT"
 echo "head_sha_full=$HEAD_SHA_FULL"
-
-echo "=== gitignore ==="
-if git check-ignore -q .code-gauntlet 2>/dev/null; then
-  echo "already-ignored"
-elif echo "/.code-gauntlet/" >> "$(git rev-parse --git-common-dir)/info/exclude"; then
-  echo "added"
-else
-  echo "unwritable"
-fi
 
 echo "=== owner_repo ==="
 OWNER_REPO=$(gh pr view {pr_number} --json url --jq '.url | split("/") | .[3] + "/" + .[4]')
@@ -172,7 +172,7 @@ else:
 "
 ```
 
-Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above already handles this branch inline — the `elif` fires before any `gh pr checkout` is attempted and `exit 1`s the whole composite call immediately, so `sha`/`gitignore`/`owner_repo`/`prior_review`/`stale_truncate` never run against the wrong commit. `CODE_GAUNTLET_HEADLESS` is read directly by the script (not pre-resolved by the model), so this is self-contained regardless of who assembles the call. See `references/headless-mode.md`.
+Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `checkout` section above already handles this branch inline — the `elif` fires before any `gh pr checkout` is attempted and `exit 1`s the whole composite call immediately, so `sha`/`owner_repo`/`prior_review`/`stale_truncate` never run against the wrong commit. `CODE_GAUNTLET_HEADLESS` is read directly by the script (not pre-resolved by the model), so this is self-contained regardless of who assembles the call. See `references/headless-mode.md`.
 
 **`status`/`checkout` duplicate `references/phase2-triage.md` 2b — 2b is the owner.** 2b's target-type table (PR/MR, branch, local) and its checkout-failure STOP are canonical; this composite is one concrete instantiation of that table (the PR/MR row) plus the headless row. For **branch/local targets**, apply 2b's table directly: in `status`, replace `TARGET_SHA=$(gh pr view ...)` with `TARGET_SHA=$(git rev-parse <branch>)` (branch comparison) or drop the `status`/`checkout` sections entirely and set `TARGET_SHA=$CURRENT_SHA` (local changes — always a no-op, per 2b step 1); in `checkout`, replace `gh pr checkout {pr_number}` with `git checkout <branch>` (branch comparison) or nothing (local changes). **Checkout failure** (2b step 4): the `checkout` section's `||` clause already exits non-zero on a failed `gh pr checkout`/`git checkout` — on that exit, stop and print 2b step 4's message (`Unable to checkout [branch/PR]. The review requires the target code to be accessible locally. You can checkout the branch manually and re-run the review.`); no fallback.
 
