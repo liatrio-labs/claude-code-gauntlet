@@ -443,13 +443,17 @@ test('contextLines/contextChars are bounded above — an absurd measurement fail
 });
 
 // --- Requirement 6 (issue #27): path-bearing waist fields are type/shape-checked ----------
-// repoRoot/outputDir/headShaShort/diffPath interpolate into the shared-context path
-// (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in runWith), which reaches
-// every discovery prompt, and headShaShort/diffPath also reach the verify executor's argv
-// (--head-sha, --diff-file) — the same argv-splitting hazard NONCE_RE already guards against.
-// A present-but-garbage value would otherwise render a junk path into every paid dispatch
-// instead of failing at the waist. Absence stays a REQUIRED-field error (tested elsewhere);
-// these checks fire only when the field is PRESENT.
+// Per-field reachability:
+//   - outputDir / headShaShort → shared-context path
+//     (`${outputDir}/code-gauntlet-context-${headShaShort}.md`, built in runWith), which
+//     reaches every discovery prompt
+//   - headShaShort / diffPath → verify executor argv (--head-sha, --diff-file) — the same
+//     argv-splitting hazard NONCE_RE already guards against
+//   - repoRoot → provenance-only, unread by every stage; absolute-shape-checked for stamp
+//     honesty (issue #81)
+// A present-but-garbage value on a consumed path field would otherwise render a junk path
+// into every paid dispatch instead of failing at the waist. Absence stays a REQUIRED-field
+// error (tested elsewhere); these checks fire only when the field is PRESENT.
 const PATH_FIELDS = ['repoRoot', 'outputDir', 'headShaShort', 'diffPath'];
 
 test('validateArgs rejects a non-string value for each path-bearing field when present', () => {
@@ -512,6 +516,26 @@ test('validateArgs rejects a relative outputDir', () => {
 test('validateArgs accepts an absolute outputDir (POSIX /-prefix)', () => {
   assert.deepEqual(
     validateArgs({ ...good, outputDir: '/r/.code-gauntlet' }),
+    { ok: true, errors: [] },
+  );
+});
+
+// Issue #81: repoRoot must be absolute (POSIX /-prefix). Provenance-only / unread, but the
+// waist rejects a relative stamp rather than resolving (no reliable cwd; no FS probe).
+test('validateArgs rejects a relative repoRoot', () => {
+  for (const bad of ['.', 'repo']) {
+    const r = validateArgs({ ...good, repoRoot: bad });
+    assert.equal(r.ok, false, `repoRoot=${JSON.stringify(bad)} should be rejected`);
+    assert.ok(
+      r.errors.some((e) => e.includes('repoRoot') && e.includes('absolute')),
+      r.errors.join('; '),
+    );
+  }
+});
+
+test('validateArgs accepts an absolute repoRoot (POSIX /-prefix)', () => {
+  assert.deepEqual(
+    validateArgs({ ...good, repoRoot: '/r' }),
     { ok: true, errors: [] },
   );
 });
