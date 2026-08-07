@@ -4194,16 +4194,119 @@ const WRITTEN_SCHEMA = {
   properties: { written: { type: 'array', items: { type: 'string' } } },
 };
 
+// Issue #148: Persist outputDir-prefix fence. One predicate for stamp throws and
+// writer-echo gaps. Sandbox has no fs/realpath — string normalize then prefix only.
+// Deliberately do NOT collapse `//` (still under the fence; collapsing it would be a
+// separate normalizer that tests would then need to pin). Reject `..` outright — do not
+// resolve it textually (symlinks make a/b/../c ≠ a/c). Reject `\` so a Windows separator
+// cannot sail past a /-based prefix test.
+
+/** Gap token for writer-reported paths outside outputDir. Registered in docs/machine-parsed-strings.md; G3 still keys off the surrounding `(partial-artifacts)` suffix. */
+const PATH_ESCAPE_TOKEN = 'path-escape';
+
+function collapseDotSlash(p) {
+  let out = p;
+  for (;;) {
+    const next = out.replace(/\/\.\//g, '/');
+    if (next === out) return out;
+    out = next;
+  }
+}
+
+function stripTrailingSlashes(p) {
+  let out = p;
+  while (out.length > 1 && out.endsWith('/')) out = out.slice(0, -1);
+  return out;
+}
+
+// Collapse `/./` then strip trailing `/` (and a leftover trailing `/.` from `..././`).
+// Deliberately does NOT collapse `//` — still under the fence; see #148 design.
+function normalizePathString(p) {
+  let out = p;
+  for (;;) {
+    let next = stripTrailingSlashes(collapseDotSlash(out));
+    if (next.endsWith('/.')) next = next.length === 2 ? '/' : next.slice(0, -2);
+    next = stripTrailingSlashes(next);
+    if (next === out) return next;
+    out = next;
+  }
+}
+
+function hasBackslash(s) {
+  return s.includes('\\');
+}
+
+function hasDotDotSegment(s) {
+  return s.split('/').includes('..');
+}
+
+// Normalize an absolute confined root, or null if it fails the absolute/root arms.
+function normalizeOutputDirRoot(outputDir) {
+  if (typeof outputDir !== 'string' || outputDir === '') return null;
+  const root = normalizePathString(outputDir);
+  if (!root.startsWith('/') || hasBackslash(root) || hasDotDotSegment(root)) return null;
+  return root;
+}
+
+function requireAbsoluteOutputDir(outputDir) {
+  const root = normalizeOutputDirRoot(outputDir);
+  if (root === null) {
+    throw new Error(
+      `outputDir must be an absolute confined root (POSIX /-prefix, no .. or \\ segments); got ${JSON.stringify(outputDir)}`,
+    );
+  }
+  return root;
+}
+
+// True iff path is under the absolute outputDir root after the shared normalize arms.
+// Empty / null / undefined path → false (gap, not TypeError). Bad root → false.
+function pathUnderOutputDir(outputDir, path) {
+  const root = normalizeOutputDirRoot(outputDir);
+  if (root === null) return false;
+  if (typeof path !== 'string' || path === '') return false;
+  const p = normalizePathString(path);
+  if (!p.startsWith('/') || hasBackslash(p) || hasDotDotSegment(p)) return false;
+  // Equality arm: path === root must pass (startsWith(root + '/') alone would reject it).
+  return p === root || p.startsWith(`${root}/`);
+}
+
+function assertPlannedPathUnderOutputDir(outputDir, path) {
+  if (!pathUnderOutputDir(outputDir, path)) {
+    throw new Error(`planned artifact path escapes outputDir: ${path}`);
+  }
+}
+
+// Collect writer-reported fields that fail the fence. Check ALL present fields (do not
+// bail early) so the one gap can name every escape. Missing keys are left to write-proof
+// (`{}` echo → "no write proof"); an explicit null/empty still fails the fence (gap, not
+// TypeError). Persist remains all-or-nothing on partial().
+function pathEscapeReason(outputDir, fields) {
+  const escaped = [];
+  for (const { name, path, present } of fields) {
+    if (!present) continue;
+    if (!pathUnderOutputDir(outputDir, path)) {
+      escaped.push(`${name}=${path == null ? String(path) : path}`);
+    }
+  }
+  if (!escaped.length) return null;
+  return `${PATH_ESCAPE_TOKEN}: writer-reported paths outside outputDir (${escaped.join(', ')})`;
+}
+
 // The four artifacts writeArtifacts plans (and asks the writer to echo). Exported so a
 // faithful mock/recorder echoes the SAME paths the write-proof gate checks against — the
 // gate rejects any echo that fails to account for all four planned paths.
+// Issue #148: requires absolute outputDir; every stamped path must pass pathUnderOutputDir
+// or this throws (programming-error / stamp regression — not a partial-artifacts gap).
 function plannedArtifactPaths(outputDir, sha) {
-  return {
-    findings: `${outputDir}/code-gauntlet-findings-${sha}.json`,
-    report: `${outputDir}/code-gauntlet-report-${sha}.md`,
-    postReview: `${outputDir}/code-gauntlet-post-review-${sha}.json`,
-    checkpoints: `${outputDir}/${checkpointPath('all', sha)}`,
+  const root = requireAbsoluteOutputDir(outputDir);
+  const paths = {
+    findings: `${root}/code-gauntlet-findings-${sha}.json`,
+    report: `${root}/code-gauntlet-report-${sha}.md`,
+    postReview: `${root}/code-gauntlet-post-review-${sha}.json`,
+    checkpoints: `${root}/${checkpointPath('all', sha)}`,
   };
+  for (const p of Object.values(paths)) assertPlannedPathUnderOutputDir(root, p);
+  return paths;
 }
 const ARTIFACT_PATH_KEYS = ['findings', 'report', 'postReview', 'checkpoints'];
 
@@ -4279,14 +4382,18 @@ async function writeArtifacts(ctx, input) {
     partial: true,
   });
 
-  try {
-    const c = ctx || defaultCtx();
-    const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
-    const outputDir = inp.outputDir || '.code-gauntlet';
-    const sha = inp.headShaShort || 'head';
-    const policy = inp.policy || {};
-    const paths = plannedArtifactPaths(outputDir, sha);
+  // Issue #148: absolute outputDir + planned-path stamp BEFORE the outer try so a
+  // programming-error / stamp regression throws to runWith ({ ok:false }) instead of
+  // being softened into a partial-artifacts gap. No relative fallback — omitting or
+  // passing a relative outputDir is the same class of failure as a stamp escape.
+  const c = ctx || defaultCtx();
+  const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
+  const outputDir = requireAbsoluteOutputDir(inp.outputDir);
+  const sha = inp.headShaShort || 'head';
+  const policy = inp.policy || {};
+  const paths = plannedArtifactPaths(outputDir, sha);
 
+  try {
     const persist = inp.persist || {};
     const scriptPath = typeof persist.assembleScriptPath === 'string' && persist.assembleScriptPath !== ''
       ? persist.assembleScriptPath
@@ -4317,19 +4424,19 @@ async function writeArtifacts(ctx, input) {
           const viaReturn = returnChannelPersist(inp, paths, outputDir, sha);
           if (viaReturn.ok) return viaReturn.result;
           const gap = `writeArtifacts: ${viaReturn.reason} — persisted through the artifact-writer instead, which transcribes the bytes`;
-          if (!scriptPath) return await writeArtifactsLegacy(c, inp, paths, policy, partial, [gap]);
+          if (!scriptPath) return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [gap]);
           const fallback = await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
           return { ...fallback, gaps: [gap].concat(fallback.gaps || []) };
         }
         return await writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, scriptPath);
       }
-      return await writeArtifactsLegacy(c, inp, paths, policy, partial, [
+      return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, [
         `writeArtifacts: derived persistence unavailable (${derivable.reason}) — persisted the full by-value payload instead`,
       ]);
     }
     // No persist waist: the documented clean degradation for older callers (bench
     // included). Legacy path, no gap — nothing was lost, only latency.
-    return await writeArtifactsLegacy(c, inp, paths, policy, partial, []);
+    return await writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, []);
   } catch (e) {
     return partial(`persistence threw before any artifact was written (${(e && e.message) || 'unknown'})`, []);
   }
@@ -4338,7 +4445,7 @@ async function writeArtifacts(ctx, input) {
 // The legacy full by-value persist: ONE artifact-writer dispatch carrying all four
 // artifacts. `extraGaps` rides along on both the success and the degradation return so
 // an id-integrity fallback is always visible in the envelope.
-async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
+async function writeArtifactsLegacy(c, inp, paths, outputDir, policy, partial, extraGaps) {
   const model = modelFor('code-gauntlet:artifact-writer', policy);
   try {
     const result = await c.agent(writeArtifactsPrompt(inp, paths), {
@@ -4348,7 +4455,19 @@ async function writeArtifactsLegacy(c, inp, paths, policy, partial, extraGaps) {
       schema: WRITER_SCHEMA,
     });
     if (!result) return partial('writer returned null', extraGaps);
-    if (!writerEchoCoversPaths(result.artifactPaths, paths)) {
+    // Issue #148: check EVERY echoed path field; one gap naming each escape; all-or-nothing
+    // null via partial() (same shape as write-proof failure).
+    const echoed = result.artifactPaths;
+    const escape = pathEscapeReason(
+      outputDir,
+      ARTIFACT_PATH_KEYS.map((k) => ({
+        name: k,
+        path: echoed ? echoed[k] : undefined,
+        present: !!(echoed && Object.prototype.hasOwnProperty.call(echoed, k)),
+      })),
+    );
+    if (escape) return partial(escape, extraGaps);
+    if (!writerEchoCoversPaths(echoed, paths)) {
       return partial('writer echo did not account for all four planned artifact paths (no write proof)', extraGaps);
     }
     return { artifactPaths: paths, gaps: extraGaps, partial: false };
@@ -4487,7 +4606,7 @@ function returnChannelPersist(inp, paths, outputDir, sha) {
 //     narrowly-rescued) run stays honest about what happened.
 async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, partial, assembleScriptPath) {
   const { plan, planPath, entries } = persistEntries(inp, paths, outputDir, sha);
-  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, policy, assembleScriptPath);
+  const attempt = () => attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath);
 
   // The primaries a refused receipt still proved, keyed by artifactPaths name. Only the
   // LAST attempt's proof counts: a retry re-dispatches the writer, which overwrites the
@@ -4522,7 +4641,7 @@ async function writeArtifactsDerived(c, inp, paths, outputDir, sha, policy, part
 //   { ok: false, retryable, reason }         — failed; `retryable` iff the assemble script
 //                                              structurally refused (see the caller).
 // Never throws: every dispatch keeps its own try/catch, exactly as before.
-async function attemptDerivedPersist(c, entries, planPath, plan, paths, policy, assembleScriptPath) {
+async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDir, policy, assembleScriptPath) {
   const fail = (reason, retryable) => ({ ok: false, retryable: !!retryable, reason });
 
   let writerOut;
@@ -4541,7 +4660,14 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, policy, 
   // no `required`, so an empty { written: [] } is schema-valid and a writer under
   // StructuredOutput retry pressure can return one having written nothing. Without this
   // the assembler would then read primaries that never landed.
-  const written = new Set(Array.isArray(writerOut.written) ? writerOut.written : []);
+  const writtenList = Array.isArray(writerOut.written) ? writerOut.written : [];
+  // Issue #148: every writer-reported written[] path; one reason naming each escape.
+  const writtenEscape = pathEscapeReason(
+    outputDir,
+    writtenList.map((p, i) => ({ name: `written[${i}]`, path: p, present: true })),
+  );
+  if (writtenEscape) return fail(writtenEscape);
+  const written = new Set(writtenList);
   if (!entries.every((e) => written.has(e.path))) {
     return fail('writer echo did not cover all three primary artifact paths (no write proof)');
   }
@@ -4556,6 +4682,16 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, policy, 
     });
   } catch (e) {
     return fail(`assemble executor threw (${(e && e.message) || 'unknown'})`);
+  }
+  // Issue #148: every receipt-reported path field (verified + written).
+  if (receipt && typeof receipt === 'object') {
+    const receiptFields = [];
+    const verified = Array.isArray(receipt.verified) ? receipt.verified : [];
+    const receiptWritten = Array.isArray(receipt.written) ? receipt.written : [];
+    verified.forEach((e, i) => receiptFields.push({ name: `verified[${i}]`, path: e && e.path, present: true }));
+    receiptWritten.forEach((e, i) => receiptFields.push({ name: `receipt.written[${i}]`, path: e && e.path, present: true }));
+    const receiptEscape = pathEscapeReason(outputDir, receiptFields);
+    if (receiptEscape) return fail(receiptEscape);
   }
   const trust = trustAssembleReceipt(receipt, paths, plan);
   // The one retryable class: the primaries reached disk (write-proof passed) and the
@@ -4830,7 +4966,10 @@ function normalizeForChecksum(s) {
 // glob `code-gauntlet-*-<sha>.*`, so no skill change is needed to clean it up. It is
 // NOT an artifactPaths key — the public contract stays at exactly four.
 function persistPlanPath(outputDir, sha) {
-  return `${outputDir}/code-gauntlet-persist-plan-${sha}.json`;
+  const root = requireAbsoluteOutputDir(outputDir);
+  const path = `${root}/code-gauntlet-persist-plan-${sha}.json`;
+  assertPlannedPathUnderOutputDir(root, path);
+  return path;
 }
 
 // hardenEscapeRuns(json) -> the same JSON document with every escaped backslash (`\\`)
