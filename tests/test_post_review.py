@@ -1138,6 +1138,8 @@ class TestOutboundRenderBounding(unittest.TestCase):
 
     def test_fence_contains_payload_with_inner_triple_backticks(self):
         payload = "before\n```\nafter"
+        open_f = "````suggestion"
+        close_f = "````"
         finding = {
             "severity": "low",
             "title": "T",
@@ -1145,8 +1147,8 @@ class TestOutboundRenderBounding(unittest.TestCase):
             "suggested_fix_code": payload,
         }
         body = render_comment_body(finding)
-        open_f, close_f = _suggestion_fence(payload)
         self.assertIn(open_f, body)
+        self.assertIn(close_f, body)
         # Parse: content between first open and last close equals payload
         start = body.index(open_f) + len(open_f) + 1  # +1 for newline
         end = body.rindex("\n" + close_f)
