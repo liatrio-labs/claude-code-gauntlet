@@ -231,7 +231,7 @@ A `Read` can return only PART of a file and tell you nothing about it. There is 
 truncation notice, and a partial result looks exactly like a complete file. One `Read`
 is never proof you have the whole file.
 
-- **The shared context file is mandatory reading in full.** When your dispatch prompt
+- **When your dispatch prompt names a shared context file, it is mandatory reading in full.** When your dispatch prompt
   lists the `Read` calls that cover it, make every one of them. When it instead states
   a line count, read until you reach that line. When it gives neither, keep issuing
   `Read` with `offset` set past the last line you received until a call returns no
