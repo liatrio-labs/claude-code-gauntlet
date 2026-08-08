@@ -509,26 +509,44 @@ def _rendered_text(value):
 _RULE_TEXT_CAP = 500
 _TRUNCATION_MARKER = "…[truncated]"
 
-_GH_TOKEN_RE = re.compile(
-    r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}"
-)
+_GH_TOKEN_RE = re.compile(r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}")
 _GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
 
 _ENTITY_DEC_RE = re.compile(r"&#(\d+);")
 _ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
 _HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
 _HTML_COMMENT_UNTERMINATED_RE = re.compile(r"<!--[\s\S]*\Z")
-_INVISIBLE_RE = re.compile(
-    "["
-    "\u0000-\u0008\u000B\u000C\u000E-\u001F"  # C0 minus \t \n
-    "\u007F"  # DEL
-    "\u0080-\u009F"  # C1
-    "\u00AD"  # soft hyphen
-    "\u200B-\u200D\uFEFF\u2060"  # zero-width
-    "\u202A-\u202E\u2066-\u2069"  # bidi
-    "]"
-)
 _BACKTICK_RUN_RE = re.compile(r"`{3,}")
+
+# Invisible / control code points stripped from outbound prose. Built as an
+# explicit frozenset (not a regex character-class range) so CR (U+000D) is
+# included while TAB/LF stay, and so CodeQL does not flag C0/C1 ranges as
+# "overly permissive" (py/overly-large-range). Design: C0 minus \\t\\n, DEL,
+# C1, soft hyphen, zero-width, bidi controls.
+_INVISIBLE_ORDS = frozenset(
+    (
+        *range(0x00, 0x09),  # C0 through BS (excludes TAB)
+        0x0B,  # VT
+        0x0C,  # FF
+        0x0D,  # CR — must strip: _blockquote splits only on \\n
+        *range(0x0E, 0x20),  # rest of C0 (excludes LF, already skipped)
+        0x7F,  # DEL
+        *range(0x80, 0xA0),  # C1
+        0xAD,  # soft hyphen
+        0x200B,
+        0x200C,
+        0x200D,
+        0xFEFF,
+        0x2060,  # zero-width
+        *range(0x202A, 0x202F),  # bidi embeddings/overrides
+        *range(0x2066, 0x206A),  # bidi isolates
+    )
+)
+
+
+def _strip_invisibles(text):
+    """Remove C0/C1/zero-width/bidi controls; keep TAB and LF."""
+    return "".join(ch for ch in text if ord(ch) not in _INVISIBLE_ORDS)
 
 
 def _decode_numeric_entities(text):
@@ -569,7 +587,7 @@ def _sanitize_outbound_prose(text):
     text = _decode_numeric_entities(text)
     text = _HTML_COMMENT_RE.sub("", text)
     text = _HTML_COMMENT_UNTERMINATED_RE.sub("", text)
-    text = _INVISIBLE_RE.sub("", text)
+    text = _strip_invisibles(text)
     text = _BACKTICK_RUN_RE.sub("``", text)
     return text
 
@@ -609,7 +627,13 @@ def _prepared_prose(text, *, cap=False):
 
 
 def _blockquote(text):
-    """Prefix every line for a markdown blockquote; bare ``>`` on blanks."""
+    """Prefix every line for a markdown blockquote; bare ``>`` on blanks.
+
+    Normalizes ``\\r\\n`` / lone ``\\r`` to ``\\n`` before splitting so a
+    surviving CR cannot end a CommonMark line after a single ``>`` prefix
+    (defense in depth on top of ``_strip_invisibles`` removing CR).
+    """
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = text.split("\n")
     out = []
     for line in lines:

@@ -660,7 +660,7 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
         )
 
     def test_multiline_newlines_preserved_invisibles_stripped(self):
-        raw = "line1\nline2\u200B\nline3\u202E"
+        raw = "line1\nline2\u200b\nline3\u202e"
         out = _sanitize_outbound_prose(raw)
         self.assertEqual(out, "line1\nline2\nline3")
         self.assertIn("\n", out)
@@ -670,6 +670,11 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
 
     def test_tab_and_newline_not_stripped_as_c0(self):
         self.assertEqual(_sanitize_outbound_prose("a\tb\nc"), "a\tb\nc")
+
+    def test_carriage_return_stripped_as_c0(self):
+        # CR is a CommonMark line ending; leaving it lets markdown after a
+        # single '>' escape the blockquote. Design: C0 minus \\t\\n only.
+        self.assertEqual(_sanitize_outbound_prose("a\rb\rc"), "abc")
 
     def test_non_ascii_numeric_entity_dropped(self):
         # &#8212; em-dash dropped (printable-ASCII-only decode).
@@ -717,7 +722,7 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
     def test_cap_postcondition_no_backtick_run_ge_3(self):
         # Vacuous today after collapse-before-cap; kept so cap-before-sanitize
         # reorder goes red. Feed already-sanitized text with only `` runs.
-        text = ("ab``cd" * 100)  # length > 500, max run 2
+        text = "ab``cd" * 100  # length > 500, max run 2
         out = _cap_rule_text(text, limit=500)
         self.assertIsNone(re.search(r"`{3,}", out))
         self.assertTrue(out.endswith("…[truncated]"))
@@ -727,6 +732,25 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
             _blockquote("a\n\nb"),
             "> a\n>\n> b",
         )
+
+    def test_blockquote_normalizes_cr_before_prefix(self):
+        # Defense in depth: even if a CR reached _blockquote, it must not
+        # become a line ending after a single '>' that escapes the quote.
+        self.assertEqual(_blockquote("a\rb"), "> a\n> b")
+        self.assertEqual(_blockquote("a\r\nb"), "> a\n> b")
+
+    def test_cited_rule_cr_cannot_escape_blockquote(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "keep\rescape **bold**",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**", body)
+        # CR stripped by sanitize → single line inside the quote.
+        self.assertIn("> keepescape **bold**", body)
+        self.assertNotIn("\r", body)
 
     def test_suggestion_fence_lengthens_for_inner_triple(self):
         payload = "line1\n```\nline3"
@@ -1022,9 +1046,7 @@ class TestRenderCommentBody(unittest.TestCase):
         }
         body = render_comment_body(finding)
         self.assertIn("**Cited rule:**", body)
-        self.assertIn(
-            "> The endpoint MUST return 422 on a schema violation.", body
-        )
+        self.assertIn("> The endpoint MUST return 422 on a schema violation.", body)
 
     def test_non_string_spec_text_does_not_crash(self):
         finding = {"severity": "low", "title": "T", "body": "b", "spec_text": 9}
