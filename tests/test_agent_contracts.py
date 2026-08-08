@@ -243,13 +243,16 @@ class TestCompleteReadContract(unittest.TestCase):
     def test_the_block_states_the_three_load_bearing_facts(self):
         # Requirement 2: the fix must not depend on the Read tool emitting a truncation
         # notice — none of the 7 profiled first-reads carried one. Assert the block says
-        # so explicitly, names the shared context file, and calls out the silent-failure
-        # consequence. Worded against the canonical source only; the byte-identity test
-        # above propagates it to all 10 copies.
+        # so explicitly, names the shared context file in conditional form, and calls out
+        # the silent-failure consequence. Worded against the canonical source only; the
+        # byte-identity test above propagates it to all 10 copies.
         block = _canonical_complete_read_block()
         self.assertIn("no", block.lower())
         self.assertIn("truncation notice", block)
-        self.assertIn("shared context file is mandatory reading in full", block)
+        self.assertIn(
+            "When your dispatch prompt names a shared context file, it is mandatory reading in full",
+            block,
+        )
         self.assertIn("silent failure", block)
         self.assertIn("offset", block)
 
