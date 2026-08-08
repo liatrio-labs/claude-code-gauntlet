@@ -299,7 +299,8 @@ and whitespace-only all count as absent, and no heading is emitted at all.
 **Suggested fix:**
 {suggestion}
 
-**Cited rule:** {claude_md_rule, falling back to spec_text when there is no rule}
+**Cited rule:**
+> {claude_md_rule, falling back to spec_text when there is no surviving rule — blockquoted, one `>` line per source line}
 
 [If a caller supplied suggested_fix_code — the review pipeline never does:]
 ```suggestion

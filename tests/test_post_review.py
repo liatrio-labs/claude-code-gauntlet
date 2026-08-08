@@ -652,6 +652,13 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
             "xy",
         )
 
+    def test_hex_entity_decoded_comment_then_stripped(self):
+        # &#x3C;!-- … --&#x3E; pins the _ENTITY_HEX_RE / _hex path.
+        self.assertEqual(
+            _sanitize_outbound_prose("x&#x3C;!-- hidden --&#x3E;y"),
+            "xy",
+        )
+
     def test_multiline_newlines_preserved_invisibles_stripped(self):
         raw = "line1\nline2\u200B\nline3\u202E"
         out = _sanitize_outbound_prose(raw)
@@ -674,7 +681,25 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
         out = _redact_secrets(f"tok {ghp} and {glpat} end")
         self.assertEqual(out, "tok [REDACTED] and [REDACTED] end")
 
-    def test_bare_glpat_prefix_survives(self):
+    def test_redact_all_eight_credential_prefixes(self):
+        prefixes = (
+            "ghp_",
+            "gho_",
+            "ghs_",
+            "ghr_",
+            "ghu_",
+            "github_pat_",
+            "glpat-",
+            "glrt-",
+        )
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                body = "A" * 20 if prefix.endswith("-") else "A" * 36
+                token = prefix + body
+                self.assertEqual(_redact_secrets(f"x {token} y"), "x [REDACTED] y")
+
+    def test_bare_glpat_prefix_survives_without_credential_body(self):
+        # Prefix alone or followed by space/short token — not ≥20 hyphenated word chars.
         text = "Document the glpat- prefix in CLAUDE.md examples."
         self.assertEqual(_redact_secrets(text), text)
 
@@ -1100,6 +1125,18 @@ class TestOutboundRenderBounding(unittest.TestCase):
         }
         body = render_comment_body(finding)
         self.assertNotIn("Cited rule:", body)
+
+    def test_comment_only_claude_md_rule_falls_back_to_spec_text(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "<!-- steer the reviewer -->",
+            "spec_text": "The spec says X must happen before Y.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The spec says X must happen before Y.", body)
 
     def test_cited_rule_is_blockquoted_multiline(self):
         finding = {

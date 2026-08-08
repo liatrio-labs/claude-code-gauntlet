@@ -577,8 +577,10 @@ def _sanitize_outbound_prose(text):
 def _redact_secrets(text):
     """Replace prefixed credential-shaped tokens with ``[REDACTED]``.
 
-    Prefixed formats only (GitHub + GitLab); no entropy heuristics. Minimum
-    body length keeps bare prefixes like ``glpat-`` in prose untouched.
+    Prefixed formats only (GitHub + GitLab); no entropy heuristics. A prefix
+    with no credential-shaped body (e.g. ``glpat-`` followed by space or a
+    short token) survives; a prefix immediately followed by ≥20 hyphenated
+    word chars is redacted.
     """
     text = _GH_TOKEN_RE.sub("[REDACTED]", text)
     text = _GL_TOKEN_RE.sub("[REDACTED]", text)
@@ -590,6 +592,20 @@ def _cap_rule_text(text, limit=_RULE_TEXT_CAP):
     if len(text) <= limit:
         return text
     return text[:limit] + _TRUNCATION_MARKER
+
+
+def _prepared_prose(text, *, cap=False):
+    """Sanitize and redact repo-derived prose; optionally cap cited-rule text.
+
+    Returns ``None`` when the field is absent before or after processing.
+    """
+    text = _rendered_text(text)
+    if not text:
+        return None
+    text = _redact_secrets(_sanitize_outbound_prose(text))
+    if cap:
+        text = _cap_rule_text(text)
+    return _rendered_text(text)
 
 
 def _blockquote(text):
@@ -636,23 +652,18 @@ def render_comment_body(finding):
 
     # Prose fix suggestion (issue #47 / #122). Agent-authored: sanitize +
     # redact, uncapped. Structural sanitize only — not the cited-rule cap.
-    suggestion_text = _rendered_text(finding.get("suggestion"))
+    suggestion_text = _prepared_prose(finding.get("suggestion"))
     if suggestion_text:
-        suggestion_text = _redact_secrets(_sanitize_outbound_prose(suggestion_text))
-        if suggestion_text.strip():
-            parts += ["", "**Suggested fix:**", suggestion_text]
+        parts += ["", "**Suggested fix:**", suggestion_text]
 
     # Cited rule (issue #47 / #122). Repo-derived: sanitize → redact → cap →
-    # blockquote. `claude_md_rule` wins when both it and `spec_text` are present.
-    rule_text = _rendered_text(finding.get("claude_md_rule"))
+    # blockquote. Each candidate is prepared independently; `claude_md_rule`
+    # wins only when it survives sanitize (comment-only rules fall through).
+    rule_text = _prepared_prose(finding.get("claude_md_rule"), cap=True)
     if not rule_text:
-        rule_text = _rendered_text(finding.get("spec_text"))
+        rule_text = _prepared_prose(finding.get("spec_text"), cap=True)
     if rule_text:
-        rule_text = _cap_rule_text(
-            _redact_secrets(_sanitize_outbound_prose(rule_text))
-        )
-        if rule_text.strip():
-            parts += ["", "**Cited rule:**", _blockquote(rule_text)]
+        parts += ["", "**Cited rule:**", _blockquote(rule_text)]
 
     # `criticality`, `failure_scenario`, `evidence`, `confidence`, and
     # `dimension` are deliberately NOT rendered into posted PR comments
@@ -663,8 +674,8 @@ def render_comment_body(finding):
     # lengthened. Structural sanitize OFF so one-click apply stays byte-exact
     # aside from credential redaction (deliberate exception).
     if suggested_fix:
-        suggested_fix = _redact_secrets(suggested_fix)
-        if suggested_fix.strip():
+        suggested_fix = _rendered_text(_redact_secrets(suggested_fix))
+        if suggested_fix:
             open_f, close_f = _suggestion_fence(suggested_fix)
             parts += ["", open_f, suggested_fix, close_f]
 

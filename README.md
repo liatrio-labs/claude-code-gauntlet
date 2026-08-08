@@ -101,7 +101,7 @@ Or invoke it directly:
 - **Full-codebase investigation** — agents actively trace data flows beyond the diff via Read/Grep/LSP rather than receiving a passive context dump.
 - **New vs. surfaced findings** — git blame distinguishes issues in code you wrote from pre-existing issues your changes exposed; surfaced findings are downgraded and grouped separately so they don't drown out real ones.
 - **Incremental review** — re-reviewing a PR with new commits offers to review only the delta since the last review.
-- **Prompt-injection defense** — code under review is untrusted input: trust-boundary delimiters on the way in; delivery filters `title`/`description` for injection patterns; `post_review` sanitizes and bounds echoed `suggestion` / cited-rule fields (and redacts known token prefixes in those fields and `suggested_fix_code`) on the way out.
+- **Prompt-injection defense** — code under review is untrusted input: trust-boundary delimiters on the way in; delivery filters `title`/`description` for injection patterns; `post_review` sanitizes echoed `suggestion` and cited-rule fields (and bounds cited-rule at 500) and redacts known token prefixes in those fields and `suggested_fix_code` on the way out.
 - **GitHub and GitLab** — platform auto-detected from the git remote.
 - **Flexible delivery** — PR/MR comments, markdown file, chat, task board, or any combination, with user-controlled finding selection for task creation.
 
