@@ -19,6 +19,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -32,6 +33,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import scripts.post_review as post_review
 import scripts.review_marker as review_marker
 from scripts.post_review import (
+    _blockquote,
+    _cap_rule_text,
+    _redact_secrets,
+    _sanitize_outbound_prose,
+    _suggestion_fence,
     build_footer,
     detect_platform,
     gitlab_project_id,
@@ -624,6 +630,146 @@ class TestOldLineFor(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestOutboundSanitizeHelpers(unittest.TestCase):
+    """Issue #122 — unit pins for each outbound transform (mutate whole helper)."""
+
+    def test_terminated_html_comment_stripped(self):
+        self.assertEqual(
+            _sanitize_outbound_prose("before <!-- hide --> after"),
+            "before  after",
+        )
+
+    def test_unterminated_html_comment_stripped_to_eos(self):
+        self.assertEqual(
+            _sanitize_outbound_prose("before <!-- forever"),
+            "before ",
+        )
+
+    def test_entity_decoded_comment_then_stripped(self):
+        # &#60;!-- … --&#62; must become a real comment then vanish (order fixture).
+        self.assertEqual(
+            _sanitize_outbound_prose("x&#60;!-- hidden --&#62;y"),
+            "xy",
+        )
+
+    def test_hex_entity_decoded_comment_then_stripped(self):
+        # &#x3C;!-- … --&#x3E; pins the _ENTITY_HEX_RE / _hex path.
+        self.assertEqual(
+            _sanitize_outbound_prose("x&#x3C;!-- hidden --&#x3E;y"),
+            "xy",
+        )
+
+    def test_multiline_newlines_preserved_invisibles_stripped(self):
+        raw = "line1\nline2\u200b\nline3\u202e"
+        out = _sanitize_outbound_prose(raw)
+        self.assertEqual(out, "line1\nline2\nline3")
+        self.assertIn("\n", out)
+
+    def test_backtick_run_collapsed_to_two(self):
+        self.assertEqual(_sanitize_outbound_prose("a````b"), "a``b")
+
+    def test_tab_and_newline_not_stripped_as_c0(self):
+        self.assertEqual(_sanitize_outbound_prose("a\tb\nc"), "a\tb\nc")
+
+    def test_carriage_return_stripped_as_c0(self):
+        # CR is a CommonMark line ending; leaving it lets markdown after a
+        # single '>' escape the blockquote. Design: C0 minus \\t\\n only.
+        self.assertEqual(_sanitize_outbound_prose("a\rb\rc"), "abc")
+
+    def test_non_ascii_numeric_entity_dropped(self):
+        # &#8212; em-dash dropped (printable-ASCII-only decode).
+        self.assertEqual(_sanitize_outbound_prose("a&#8212;b"), "ab")
+
+    def test_redact_github_and_gitlab_tokens(self):
+        ghp = "ghp_" + ("A" * 36)
+        glpat = "glpat-" + ("B" * 20)
+        out = _redact_secrets(f"tok {ghp} and {glpat} end")
+        self.assertEqual(out, "tok [REDACTED] and [REDACTED] end")
+
+    def test_redact_all_eight_credential_prefixes(self):
+        prefixes = (
+            "ghp_",
+            "gho_",
+            "ghs_",
+            "ghr_",
+            "ghu_",
+            "github_pat_",
+            "glpat-",
+            "glrt-",
+        )
+        for prefix in prefixes:
+            with self.subTest(prefix=prefix):
+                body = "A" * 20 if prefix.endswith("-") else "A" * 36
+                token = prefix + body
+                self.assertEqual(_redact_secrets(f"x {token} y"), "x [REDACTED] y")
+
+    def test_bare_glpat_prefix_survives_without_credential_body(self):
+        # Prefix alone or followed by space/short token — not ≥20 hyphenated word chars.
+        text = "Document the glpat- prefix in CLAUDE.md examples."
+        self.assertEqual(_redact_secrets(text), text)
+
+    def test_cap_appends_marker_outside_limit(self):
+        text = "x" * 510
+        out = _cap_rule_text(text, limit=500)
+        self.assertTrue(out.endswith("…[truncated]"))
+        self.assertEqual(out[:500], "x" * 500)
+        self.assertEqual(len(out), 500 + len("…[truncated]"))
+
+    def test_cap_exact_limit_no_marker(self):
+        text = "y" * 500
+        self.assertEqual(_cap_rule_text(text, limit=500), text)
+
+    def test_cap_postcondition_no_backtick_run_ge_3(self):
+        # Vacuous today after collapse-before-cap; kept so cap-before-sanitize
+        # reorder goes red. Feed already-sanitized text with only `` runs.
+        text = "ab``cd" * 100  # length > 500, max run 2
+        out = _cap_rule_text(text, limit=500)
+        self.assertIsNone(re.search(r"`{3,}", out))
+        self.assertTrue(out.endswith("…[truncated]"))
+
+    def test_blockquote_prefixes_every_line_bare_gt_on_blank(self):
+        self.assertEqual(
+            _blockquote("a\n\nb"),
+            "> a\n>\n> b",
+        )
+
+    def test_blockquote_normalizes_cr_before_prefix(self):
+        # Defense in depth: even if a CR reached _blockquote, it must not
+        # become a line ending after a single '>' that escapes the quote.
+        self.assertEqual(_blockquote("a\rb"), "> a\n> b")
+        self.assertEqual(_blockquote("a\r\nb"), "> a\n> b")
+
+    def test_cited_rule_cr_cannot_escape_blockquote(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "keep\rescape **bold**",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**", body)
+        # CR stripped by sanitize → single line inside the quote.
+        self.assertIn("> keepescape **bold**", body)
+        self.assertNotIn("\r", body)
+
+    def test_suggestion_fence_lengthens_for_inner_triple(self):
+        payload = "line1\n```\nline3"
+        open_f, close_f = _suggestion_fence(payload)
+        self.assertEqual(open_f, "````suggestion")
+        self.assertEqual(close_f, "````")
+
+    def test_suggestion_fence_stays_three_without_backticks(self):
+        open_f, close_f = _suggestion_fence("return None")
+        self.assertEqual(open_f, "```suggestion")
+        self.assertEqual(close_f, "```")
+
+    def test_suggestion_fence_four_inner_needs_five(self):
+        payload = "````"
+        open_f, close_f = _suggestion_fence(payload)
+        self.assertEqual(open_f, "`````suggestion")
+        self.assertEqual(close_f, "`````")
+
+
 class TestRenderCommentBody(unittest.TestCase):
     def test_critical_severity_emoji(self):
         finding = {
@@ -777,7 +923,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "claude_md_rule": "Scripts must be stdlib-only Python.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** Scripts must be stdlib-only Python.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> Scripts must be stdlib-only Python.", body)
 
     def test_spec_text_present_claude_md_rule_absent_renders_as_cited_rule(self):
         finding = {
@@ -787,7 +934,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The spec says X must happen before Y.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** The spec says X must happen before Y.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The spec says X must happen before Y.", body)
 
     def test_both_claude_md_rule_and_spec_text_present_rule_wins(self):
         finding = {
@@ -798,7 +946,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The spec text.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** The CLAUDE.md rule.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The CLAUDE.md rule.", body)
         self.assertNotIn("The spec text.", body)
 
     def test_neither_claude_md_rule_nor_spec_text_no_heading(self):
@@ -815,7 +964,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The spec text wins here.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** The spec text wins here.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The spec text wins here.", body)
 
     # -- ordering / combinations -------------------------------------------
 
@@ -864,7 +1014,8 @@ class TestRenderCommentBody(unittest.TestCase):
         body = render_comment_body(finding)
         self.assertIn("**Suggested fix:**", body)
         self.assertIn("42", body)
-        self.assertIn("**Cited rule:** 7", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> 7", body)
 
     def test_no_new_fields_produces_byte_identical_output(self):
         """Regression pin: a finding with none of the new fields must produce
@@ -894,13 +1045,14 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The endpoint MUST return 422 on a schema violation.",
         }
         body = render_comment_body(finding)
-        self.assertIn(
-            "**Cited rule:** The endpoint MUST return 422 on a schema violation.", body
-        )
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The endpoint MUST return 422 on a schema violation.", body)
 
     def test_non_string_spec_text_does_not_crash(self):
         finding = {"severity": "low", "title": "T", "body": "b", "spec_text": 9}
-        self.assertIn("**Cited rule:** 9", render_comment_body(finding))
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> 9", body)
 
     def test_leading_newlines_are_stripped_from_rendered_values(self):
         # The sections are joined with their own blank lines, so a value padded at the FRONT
@@ -926,9 +1078,9 @@ class TestRenderCommentBody(unittest.TestCase):
             "claude_md_rule": "Rule text\n",
         }
         body = render_comment_body(finding)
-        self.assertIn(
-            "**Suggested fix:**\nLine one\nLine two\n\n**Cited rule:** Rule text", body
-        )
+        self.assertIn("**Suggested fix:**\nLine one\nLine two", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> Rule text", body)
         self.assertFalse(body.endswith("\n"))
 
     def test_non_string_suggested_fix_code_does_not_crash(self):
@@ -981,6 +1133,99 @@ class TestRenderCommentBody(unittest.TestCase):
             self.assertNotIn(
                 sentinel, body, f"{sentinel!r} leaked into the comment body"
             )
+
+
+class TestOutboundRenderBounding(unittest.TestCase):
+    """Issue #122 — render_comment_body composed behaviors."""
+
+    def test_comment_only_claude_md_rule_omits_cited_rule_heading(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "<!-- steer the reviewer -->",
+        }
+        body = render_comment_body(finding)
+        self.assertNotIn("Cited rule:", body)
+
+    def test_comment_only_claude_md_rule_falls_back_to_spec_text(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "<!-- steer the reviewer -->",
+            "spec_text": "The spec says X must happen before Y.",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The spec says X must happen before Y.", body)
+
+    def test_cited_rule_is_blockquoted_multiline(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "line1\n\nline3",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**\n> line1\n>\n> line3", body)
+
+    def test_long_rule_capped_with_marker(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "R" * 600,
+        }
+        body = render_comment_body(finding)
+        self.assertIn("…[truncated]", body)
+        # Quoted content before marker is 500 R's
+        self.assertIn("> " + ("R" * 500) + "…[truncated]", body)
+
+    def test_suggestion_sanitized_but_uncapped(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "suggestion": ("fix it <!-- no --> " + ("s" * 600)),
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**", body)
+        self.assertNotIn("<!--", body)
+        self.assertNotIn("…[truncated]", body)
+        self.assertIn("s" * 600, body)
+
+    def test_fence_contains_payload_with_inner_triple_backticks(self):
+        payload = "before\n```\nafter"
+        open_f = "````suggestion"
+        close_f = "````"
+        finding = {
+            "severity": "low",
+            "title": "T",
+            "body": "b",
+            "suggested_fix_code": payload,
+        }
+        body = render_comment_body(finding)
+        self.assertIn(open_f, body)
+        self.assertIn(close_f, body)
+        # Parse: content between first open and last close equals payload
+        start = body.index(open_f) + len(open_f) + 1  # +1 for newline
+        end = body.rindex("\n" + close_f)
+        self.assertEqual(body[start:end], payload)
+
+    def test_suggested_fix_code_token_redacted_inside_fence(self):
+        tok = "ghp_" + ("C" * 36)
+        payload = f"token = '{tok}'"
+        finding = {
+            "severity": "low",
+            "title": "T",
+            "body": "b",
+            "suggested_fix_code": payload,
+        }
+        body = render_comment_body(finding)
+        self.assertNotIn(tok, body)
+        self.assertIn("[REDACTED]", body)
+        self.assertIn("```suggestion", body)  # no backticks in redacted form → 3-fence
 
 
 # ---------------------------------------------------------------------------

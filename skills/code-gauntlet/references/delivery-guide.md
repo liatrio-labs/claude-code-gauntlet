@@ -25,7 +25,8 @@ from the fields you supply. Its output, for reference:
 **Suggested fix:**
 {suggestion}
 
-**Cited rule:** {claude_md_rule, falling back to spec_text}
+**Cited rule:**
+> {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}
 
 ```suggestion
 {suggested_fix_code}
@@ -101,7 +102,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
   - `title` — one-line finding summary
   - `body` — explanation and context (delivery alias of canonical `description`; see boundary note above)
   - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
-  - `claude_md_rule` / `spec_text` — optional; whichever is present renders as a single **Cited rule:** line, `claude_md_rule` winning when both are. These are how a convention or intent finding shows the reviewer the rule it is measured against.
+  - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a **Cited rule:** heading as a blockquote (`claude_md_rule` preferred when both survive). These are how a convention or intent finding shows the reviewer the rule it is measured against.
   - `suggested_fix_code` — optional code block rendered as GitHub/GitLab suggestion; caller-supplied only, never populated by the review pipeline
   - Every optional field above treats `null`, `""` and whitespace-only identically to absent: no heading is emitted at all.
 - `owner` — repository owner (GitHub org/user or GitLab group)
