@@ -874,7 +874,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "claude_md_rule": "Scripts must be stdlib-only Python.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** Scripts must be stdlib-only Python.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> Scripts must be stdlib-only Python.", body)
 
     def test_spec_text_present_claude_md_rule_absent_renders_as_cited_rule(self):
         finding = {
@@ -884,7 +885,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The spec says X must happen before Y.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** The spec says X must happen before Y.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The spec says X must happen before Y.", body)
 
     def test_both_claude_md_rule_and_spec_text_present_rule_wins(self):
         finding = {
@@ -895,7 +897,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The spec text.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** The CLAUDE.md rule.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The CLAUDE.md rule.", body)
         self.assertNotIn("The spec text.", body)
 
     def test_neither_claude_md_rule_nor_spec_text_no_heading(self):
@@ -912,7 +915,8 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The spec text wins here.",
         }
         body = render_comment_body(finding)
-        self.assertIn("**Cited rule:** The spec text wins here.", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> The spec text wins here.", body)
 
     # -- ordering / combinations -------------------------------------------
 
@@ -961,7 +965,8 @@ class TestRenderCommentBody(unittest.TestCase):
         body = render_comment_body(finding)
         self.assertIn("**Suggested fix:**", body)
         self.assertIn("42", body)
-        self.assertIn("**Cited rule:** 7", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> 7", body)
 
     def test_no_new_fields_produces_byte_identical_output(self):
         """Regression pin: a finding with none of the new fields must produce
@@ -991,13 +996,16 @@ class TestRenderCommentBody(unittest.TestCase):
             "spec_text": "The endpoint MUST return 422 on a schema violation.",
         }
         body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**", body)
         self.assertIn(
-            "**Cited rule:** The endpoint MUST return 422 on a schema violation.", body
+            "> The endpoint MUST return 422 on a schema violation.", body
         )
 
     def test_non_string_spec_text_does_not_crash(self):
         finding = {"severity": "low", "title": "T", "body": "b", "spec_text": 9}
-        self.assertIn("**Cited rule:** 9", render_comment_body(finding))
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> 9", body)
 
     def test_leading_newlines_are_stripped_from_rendered_values(self):
         # The sections are joined with their own blank lines, so a value padded at the FRONT
@@ -1023,9 +1031,9 @@ class TestRenderCommentBody(unittest.TestCase):
             "claude_md_rule": "Rule text\n",
         }
         body = render_comment_body(finding)
-        self.assertIn(
-            "**Suggested fix:**\nLine one\nLine two\n\n**Cited rule:** Rule text", body
-        )
+        self.assertIn("**Suggested fix:**\nLine one\nLine two", body)
+        self.assertIn("**Cited rule:**", body)
+        self.assertIn("> Rule text", body)
         self.assertFalse(body.endswith("\n"))
 
     def test_non_string_suggested_fix_code_does_not_crash(self):
@@ -1078,6 +1086,85 @@ class TestRenderCommentBody(unittest.TestCase):
             self.assertNotIn(
                 sentinel, body, f"{sentinel!r} leaked into the comment body"
             )
+
+
+class TestOutboundRenderBounding(unittest.TestCase):
+    """Issue #122 — render_comment_body composed behaviors."""
+
+    def test_comment_only_claude_md_rule_omits_cited_rule_heading(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "<!-- steer the reviewer -->",
+        }
+        body = render_comment_body(finding)
+        self.assertNotIn("Cited rule:", body)
+
+    def test_cited_rule_is_blockquoted_multiline(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "line1\n\nline3",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Cited rule:**\n> line1\n>\n> line3", body)
+
+    def test_long_rule_capped_with_marker(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "claude_md_rule": "R" * 600,
+        }
+        body = render_comment_body(finding)
+        self.assertIn("…[truncated]", body)
+        # Quoted content before marker is 500 R's
+        self.assertIn("> " + ("R" * 500) + "…[truncated]", body)
+
+    def test_suggestion_sanitized_but_uncapped(self):
+        finding = {
+            "severity": "medium",
+            "title": "T",
+            "body": "b",
+            "suggestion": ("fix it <!-- no --> " + ("s" * 600)),
+        }
+        body = render_comment_body(finding)
+        self.assertIn("**Suggested fix:**", body)
+        self.assertNotIn("<!--", body)
+        self.assertNotIn("…[truncated]", body)
+        self.assertIn("s" * 600, body)
+
+    def test_fence_contains_payload_with_inner_triple_backticks(self):
+        payload = "before\n```\nafter"
+        finding = {
+            "severity": "low",
+            "title": "T",
+            "body": "b",
+            "suggested_fix_code": payload,
+        }
+        body = render_comment_body(finding)
+        open_f, close_f = _suggestion_fence(payload)
+        self.assertIn(open_f, body)
+        # Parse: content between first open and last close equals payload
+        start = body.index(open_f) + len(open_f) + 1  # +1 for newline
+        end = body.rindex("\n" + close_f)
+        self.assertEqual(body[start:end], payload)
+
+    def test_suggested_fix_code_token_redacted_inside_fence(self):
+        tok = "ghp_" + ("C" * 36)
+        payload = f"token = '{tok}'"
+        finding = {
+            "severity": "low",
+            "title": "T",
+            "body": "b",
+            "suggested_fix_code": payload,
+        }
+        body = render_comment_body(finding)
+        self.assertNotIn(tok, body)
+        self.assertIn("[REDACTED]", body)
+        self.assertIn("```suggestion", body)  # no backticks in redacted form → 3-fence
 
 
 # ---------------------------------------------------------------------------

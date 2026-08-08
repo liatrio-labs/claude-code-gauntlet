@@ -20,12 +20,12 @@ Input JSON schema:
                 "severity": "high",
                 "title": "SQL injection risk",
                 "body": "...",
-                "suggestion": "...",         # optional — renders as a "Suggested fix:" prose block
-                "claude_md_rule": "...",     # optional — renders as "Cited rule:"; wins over spec_text
-                "spec_text": "...",          # optional — renders as "Cited rule:" when there is
-                                             #            no claude_md_rule (intent findings)
-                "suggested_fix_code": "..."  # optional — renders as suggestion block. Caller-supplied
-                                             #            only: no review-pipeline agent emits it.
+                "suggestion": "...",         # optional — **Suggested fix:**; sanitized + redacted; uncapped
+                "claude_md_rule": "...",     # optional — **Cited rule:** (wins over spec_text); sanitized, redacted, capped at 500, blockquoted
+                "spec_text": "...",          # optional — **Cited rule:** when no claude_md_rule; same treatment
+                "suggested_fix_code": "..."  # optional — suggestion fence. Caller-supplied only.
+                                             #            Secret-redacted; outer fence lengthened; payload
+                                             #            otherwise byte-exact (structural sanitize off).
             }
         ],
         "platform": "github",            # optional — auto-detected from git remote
@@ -630,39 +630,43 @@ def render_comment_body(finding):
 
     title = finding.get("title", "Finding")
     body = finding.get("body", "")
-    # Through the same normalizer as the fields below: a non-string here used to reach
-    # .rstrip() and raise, and a whitespace-only value used to render a ```suggestion fence
-    # whose one-click apply would BLANK the cited lines. Both are now treated as absent.
     suggested_fix = _rendered_text(finding.get("suggested_fix_code"))
 
     parts = [f"**{emoji} [{severity.upper()}] {title}**", "", body]
 
-    # Prose fix suggestion (issue #47). Sourced from `suggestion`; rendered
-    # only when non-empty, ahead of the ```suggestion fence below.
+    # Prose fix suggestion (issue #47 / #122). Agent-authored: sanitize +
+    # redact, uncapped. Structural sanitize only — not the cited-rule cap.
     suggestion_text = _rendered_text(finding.get("suggestion"))
     if suggestion_text:
-        parts += ["", "**Suggested fix:**", suggestion_text]
+        suggestion_text = _redact_secrets(_sanitize_outbound_prose(suggestion_text))
+        if suggestion_text.strip():
+            parts += ["", "**Suggested fix:**", suggestion_text]
 
-    # Cited rule (issue #47). `claude_md_rule` wins when both it and
-    # `spec_text` are present.
+    # Cited rule (issue #47 / #122). Repo-derived: sanitize → redact → cap →
+    # blockquote. `claude_md_rule` wins when both it and `spec_text` are present.
     rule_text = _rendered_text(finding.get("claude_md_rule"))
     if not rule_text:
         rule_text = _rendered_text(finding.get("spec_text"))
     if rule_text:
-        parts += ["", f"**Cited rule:** {rule_text}"]
+        rule_text = _cap_rule_text(
+            _redact_secrets(_sanitize_outbound_prose(rule_text))
+        )
+        if rule_text.strip():
+            parts += ["", "**Cited rule:**", _blockquote(rule_text)]
 
     # `criticality`, `failure_scenario`, `evidence`, `confidence`, and
     # `dimension` are deliberately NOT rendered into posted PR comments
     # (issue #47) — they are scoped to the artifact/report consumers, not
     # this deterministic comment renderer. Do not "helpfully" add them here.
 
+    # suggested_fix_code: caller-supplied; secret-redacted; outer fence
+    # lengthened. Structural sanitize OFF so one-click apply stays byte-exact
+    # aside from credential redaction (deliberate exception).
     if suggested_fix:
-        parts += [
-            "",
-            "```suggestion",
-            suggested_fix,
-            "```",
-        ]
+        suggested_fix = _redact_secrets(suggested_fix)
+        if suggested_fix.strip():
+            open_f, close_f = _suggestion_fence(suggested_fix)
+            parts += ["", open_f, suggested_fix, close_f]
 
     return "\n".join(parts)
 
