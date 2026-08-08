@@ -2,6 +2,45 @@
 
 <!-- version list -->
 
+## v3.6.0 (2026-08-08)
+
+### Bug Fixes
+
+- Sanitize and bound post_review echoed comment fields (#122)
+  ([#154](https://github.com/liatrio-labs/claude-code-gauntlet/pull/154),
+  [`2735353`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/273535329eff608034db6209cc8a4b32f02962f6))
+
+- **post_review**: Address review findings for cited-rule rendering
+  ([#154](https://github.com/liatrio-labs/claude-code-gauntlet/pull/154),
+  [`2735353`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/273535329eff608034db6209cc8a4b32f02962f6))
+
+- **post_review**: Bound and sanitize echoed comment fields
+  ([#154](https://github.com/liatrio-labs/claude-code-gauntlet/pull/154),
+  [`2735353`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/273535329eff608034db6209cc8a4b32f02962f6))
+
+- **post_review**: Strip CR and drop CodeQL C0 range
+  ([#154](https://github.com/liatrio-labs/claude-code-gauntlet/pull/154),
+  [`2735353`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/273535329eff608034db6209cc8a4b32f02962f6))
+
+### Documentation
+
+- Narrow README injection-defense claim to match post_review
+  ([#154](https://github.com/liatrio-labs/claude-code-gauntlet/pull/154),
+  [`2735353`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/273535329eff608034db6209cc8a4b32f02962f6))
+
+### Features
+
+- **post_review**: Add outbound sanitize/redact/cap/fence helpers
+  ([#154](https://github.com/liatrio-labs/claude-code-gauntlet/pull/154),
+  [`2735353`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/273535329eff608034db6209cc8a4b32f02962f6))
+
+### Testing
+
+- **post_review**: Hardcode fence expectations for mutation proof
+  ([#154](https://github.com/liatrio-labs/claude-code-gauntlet/pull/154),
+  [`2735353`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/273535329eff608034db6209cc8a4b32f02962f6))
+
+
 ## v3.5.2 (2026-08-07)
 
 ### Bug Fixes
