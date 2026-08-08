@@ -19,6 +19,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -32,6 +33,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import scripts.post_review as post_review
 import scripts.review_marker as review_marker
 from scripts.post_review import (
+    _blockquote,
+    _cap_rule_text,
+    _redact_secrets,
+    _sanitize_outbound_prose,
+    _suggestion_fence,
     build_footer,
     detect_platform,
     gitlab_project_id,
@@ -622,6 +628,97 @@ class TestOldLineFor(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # render_comment_body
 # ---------------------------------------------------------------------------
+
+
+class TestOutboundSanitizeHelpers(unittest.TestCase):
+    """Issue #122 — unit pins for each outbound transform (mutate whole helper)."""
+
+    def test_terminated_html_comment_stripped(self):
+        self.assertEqual(
+            _sanitize_outbound_prose("before <!-- hide --> after"),
+            "before  after",
+        )
+
+    def test_unterminated_html_comment_stripped_to_eos(self):
+        self.assertEqual(
+            _sanitize_outbound_prose("before <!-- forever"),
+            "before ",
+        )
+
+    def test_entity_decoded_comment_then_stripped(self):
+        # &#60;!-- … --&#62; must become a real comment then vanish (order fixture).
+        self.assertEqual(
+            _sanitize_outbound_prose("x&#60;!-- hidden --&#62;y"),
+            "xy",
+        )
+
+    def test_multiline_newlines_preserved_invisibles_stripped(self):
+        raw = "line1\nline2\u200B\nline3\u202E"
+        out = _sanitize_outbound_prose(raw)
+        self.assertEqual(out, "line1\nline2\nline3")
+        self.assertIn("\n", out)
+
+    def test_backtick_run_collapsed_to_two(self):
+        self.assertEqual(_sanitize_outbound_prose("a````b"), "a``b")
+
+    def test_tab_and_newline_not_stripped_as_c0(self):
+        self.assertEqual(_sanitize_outbound_prose("a\tb\nc"), "a\tb\nc")
+
+    def test_non_ascii_numeric_entity_dropped(self):
+        # &#8212; em-dash dropped (printable-ASCII-only decode).
+        self.assertEqual(_sanitize_outbound_prose("a&#8212;b"), "ab")
+
+    def test_redact_github_and_gitlab_tokens(self):
+        ghp = "ghp_" + ("A" * 36)
+        glpat = "glpat-" + ("B" * 20)
+        out = _redact_secrets(f"tok {ghp} and {glpat} end")
+        self.assertEqual(out, "tok [REDACTED] and [REDACTED] end")
+
+    def test_bare_glpat_prefix_survives(self):
+        text = "Document the glpat- prefix in CLAUDE.md examples."
+        self.assertEqual(_redact_secrets(text), text)
+
+    def test_cap_appends_marker_outside_limit(self):
+        text = "x" * 510
+        out = _cap_rule_text(text, limit=500)
+        self.assertTrue(out.endswith("…[truncated]"))
+        self.assertEqual(out[:500], "x" * 500)
+        self.assertEqual(len(out), 500 + len("…[truncated]"))
+
+    def test_cap_exact_limit_no_marker(self):
+        text = "y" * 500
+        self.assertEqual(_cap_rule_text(text, limit=500), text)
+
+    def test_cap_postcondition_no_backtick_run_ge_3(self):
+        # Vacuous today after collapse-before-cap; kept so cap-before-sanitize
+        # reorder goes red. Feed already-sanitized text with only `` runs.
+        text = ("ab``cd" * 100)  # length > 500, max run 2
+        out = _cap_rule_text(text, limit=500)
+        self.assertIsNone(re.search(r"`{3,}", out))
+        self.assertTrue(out.endswith("…[truncated]"))
+
+    def test_blockquote_prefixes_every_line_bare_gt_on_blank(self):
+        self.assertEqual(
+            _blockquote("a\n\nb"),
+            "> a\n>\n> b",
+        )
+
+    def test_suggestion_fence_lengthens_for_inner_triple(self):
+        payload = "line1\n```\nline3"
+        open_f, close_f = _suggestion_fence(payload)
+        self.assertEqual(open_f, "````suggestion")
+        self.assertEqual(close_f, "````")
+
+    def test_suggestion_fence_stays_three_without_backticks(self):
+        open_f, close_f = _suggestion_fence("return None")
+        self.assertEqual(open_f, "```suggestion")
+        self.assertEqual(close_f, "```")
+
+    def test_suggestion_fence_four_inner_needs_five(self):
+        payload = "````"
+        open_f, close_f = _suggestion_fence(payload)
+        self.assertEqual(open_f, "`````suggestion")
+        self.assertEqual(close_f, "`````")
 
 
 class TestRenderCommentBody(unittest.TestCase):

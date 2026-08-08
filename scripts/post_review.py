@@ -506,6 +506,117 @@ def _rendered_text(value):
     return value.strip("\n")
 
 
+_RULE_TEXT_CAP = 500
+_TRUNCATION_MARKER = "…[truncated]"
+
+_GH_TOKEN_RE = re.compile(
+    r"(?:ghp_|gho_|ghs_|ghr_|ghu_|github_pat_)[A-Za-z0-9_]{20,}"
+)
+_GL_TOKEN_RE = re.compile(r"(?:glpat-|glrt-)[A-Za-z0-9_\-]{20,}")
+
+_ENTITY_DEC_RE = re.compile(r"&#(\d+);")
+_ENTITY_HEX_RE = re.compile(r"&#x([0-9a-fA-F]+);", re.IGNORECASE)
+_HTML_COMMENT_RE = re.compile(r"<!--[\s\S]*?-->")
+_HTML_COMMENT_UNTERMINATED_RE = re.compile(r"<!--[\s\S]*\Z")
+_INVISIBLE_RE = re.compile(
+    "["
+    "\u0000-\u0008\u000B\u000C\u000E-\u001F"  # C0 minus \t \n
+    "\u007F"  # DEL
+    "\u0080-\u009F"  # C1
+    "\u00AD"  # soft hyphen
+    "\u200B-\u200D\uFEFF\u2060"  # zero-width
+    "\u202A-\u202E\u2066-\u2069"  # bidi
+    "]"
+)
+_BACKTICK_RUN_RE = re.compile(r"`{3,}")
+
+
+def _decode_numeric_entities(text):
+    """Decode printable-ASCII numeric entities; drop all others.
+
+    Named entities are left untouched. Non-ASCII numeric entities (e.g.
+    ``&#8212;``) are dropped deliberately — decoding the full Unicode range
+    would reintroduce smuggleable invisibles if pass order ever drifts.
+    Markdown parses fences before HTML entity decode, so a surviving literal
+    ``&#96;`` cannot form a fence.
+    """
+
+    def _dec(match):
+        num = int(match.group(1), 10)
+        if 32 <= num <= 126:
+            return chr(num)
+        return ""
+
+    def _hex(match):
+        num = int(match.group(1), 16)
+        if 32 <= num <= 126:
+            return chr(num)
+        return ""
+
+    text = _ENTITY_DEC_RE.sub(_dec, text)
+    text = _ENTITY_HEX_RE.sub(_hex, text)
+    return text
+
+
+def _sanitize_outbound_prose(text):
+    """Sanitize repo-derived / quoted prose before it enters a PR/MR comment.
+
+    Order is load-bearing: decode entities first (so ``&#60;!--`` becomes a
+    real comment), then strip terminated HTML comments, then unterminated
+    ``<!--`` through EOS, then invisibles, then collapse backtick runs of
+    length ≥3 to exactly two.
+    """
+    text = _decode_numeric_entities(text)
+    text = _HTML_COMMENT_RE.sub("", text)
+    text = _HTML_COMMENT_UNTERMINATED_RE.sub("", text)
+    text = _INVISIBLE_RE.sub("", text)
+    text = _BACKTICK_RUN_RE.sub("``", text)
+    return text
+
+
+def _redact_secrets(text):
+    """Replace prefixed credential-shaped tokens with ``[REDACTED]``.
+
+    Prefixed formats only (GitHub + GitLab); no entropy heuristics. Minimum
+    body length keeps bare prefixes like ``glpat-`` in prose untouched.
+    """
+    text = _GH_TOKEN_RE.sub("[REDACTED]", text)
+    text = _GL_TOKEN_RE.sub("[REDACTED]", text)
+    return text
+
+
+def _cap_rule_text(text, limit=_RULE_TEXT_CAP):
+    """Hard-cap cited-rule text; marker is appended outside ``limit``."""
+    if len(text) <= limit:
+        return text
+    return text[:limit] + _TRUNCATION_MARKER
+
+
+def _blockquote(text):
+    """Prefix every line for a markdown blockquote; bare ``>`` on blanks."""
+    lines = text.split("\n")
+    out = []
+    for line in lines:
+        if line:
+            out.append(f"> {line}")
+        else:
+            out.append(">")
+    return "\n".join(out)
+
+
+def _suggestion_fence(payload):
+    """Return ``(open, close)`` fence lines that contain ``payload``.
+
+    Length is ``max(3, longest_backtick_run + 1)`` so CommonMark cannot close
+    early. Platforms keep Apply for 4+ (GitHub confirmed; GitLab documents
+    nesting with four backticks).
+    """
+    runs = re.findall(r"`+", payload)
+    n = max(3, max((len(r) for r in runs), default=0) + 1)
+    fence = "`" * n
+    return f"{fence}suggestion", fence
+
+
 def render_comment_body(finding):
     """Build the markdown comment body for a finding."""
     severity = finding.get("severity", "medium").lower()
