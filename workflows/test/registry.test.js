@@ -19,10 +19,14 @@ test('challenger resolves sonnet — the single benchmarked policy; no mode flag
   // A stray legacy frontier flag in opts must be ignored, not resurrect an upgrade path.
   assert.equal(resolvePolicy('code-gauntlet:challenger', { frontier: true, frontierModelId: 'claude-fable-5' }).model, 'claude-sonnet-5');
 });
-test('CLAUDE_CODE_SUBAGENT_MODEL overrides everything and is flagged', () => {
+test('CLAUDE_CODE_SUBAGENT_MODEL overrides everything', () => {
   const r = resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5' });
   assert.equal(r.model, 'claude-haiku-4-5');
-  assert.match(r.note, /CLAUDE_CODE_SUBAGENT_MODEL/);
+});
+test('resolvePolicy returns only { model } — provenance lives in resolvedPolicy.subagentModel (#114)', () => {
+  // Both branches: the env-override return and the policy-table return.
+  assert.deepEqual(Object.keys(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5' })), ['model']);
+  assert.deepEqual(Object.keys(resolvePolicy('code-gauntlet:bug-detector', {})), ['model']);
 });
 test('report-writer / artifact-writer suffixes bind to STAGE_DEFAULTS (not the bare "report" key)', () => {
   // The split(':').pop() suffix is the full 'report-writer'/'artifact-writer', so the
