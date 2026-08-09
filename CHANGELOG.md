@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.6.1 (2026-08-09)
+
+### Bug Fixes
+
+- **agents**: Make complete-read shared-context bullet conditional
+  ([#155](https://github.com/liatrio-labs/claude-code-gauntlet/pull/155),
+  [`5224fe0`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5224fe0132ebd16ea8161448a45ee62aa070cb72))
+
+
 ## v3.6.0 (2026-08-08)
 
 ### Bug Fixes
