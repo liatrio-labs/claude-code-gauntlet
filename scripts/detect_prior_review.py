@@ -364,6 +364,13 @@ def finding_keys_for_sha(entries, sha):
     EXACT sha equality, same rule and reason as :func:`entries_carry_sha`: a key left by
     a review of a DIFFERENT commit must not suppress a finding for this one. A body with
     no valid finding marker contributes nothing.
+
+    The notes surface carries every MR participant's notes, so anyone with write access
+    can suppress one finding on the next run by pasting that finding's key into a note.
+    Accepted knowingly: this endpoint already carries the summary signal, where the same
+    forgery suppresses the WHOLE re-review (see :func:`fetch_entries_github` for why the
+    weaker GitHub surface was dropped rather than tolerated), so per-finding keys add no
+    capability an attacker does not already have here.
     """
     keys = set()
     for entry in entries or []:

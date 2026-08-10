@@ -8,6 +8,9 @@ Usage:
     --dry-run captures the would-be GitHub/GitLab API payloads to
     post-review-payload.json (written next to the findings file) instead of
     posting. Line validation and read-only fetches (diff, MR versions) still run.
+    One capture is deliberately NOT the live bytes: a GitLab discussion body is
+    captured as the rendered comment alone, without the per-finding delivery
+    marker the live post appends (see the marker note in post_gitlab).
 
 Input JSON schema:
     {
@@ -932,6 +935,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         f"projects/{project_id}/merge_requests/{mr_iid}/notes",
     ]
     summary_posted, delivered_keys = gitlab_prior_delivery(owner, repo, mr_iid, sha)
+    # Same predicate that makes gitlab_prior_delivery skip the fetch: a marker built
+    # from a non-SHA-shaped sha (get_head_sha's "unknown" fallback) is one
+    # find_finding_marker is guaranteed to reject, so appending it would leave an
+    # unreadable comment on every discussion and dedup nothing.
+    sha_is_markable = is_sha_shaped(sha)
     if summary_posted:
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
@@ -1020,7 +1028,7 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         # has to recognize what it already posted.
         payload = {
             "body": comment_body
-            if DRY_RUN
+            if DRY_RUN or not sha_is_markable
             else f"{comment_body}\n\n{build_finding_marker(sha, key)}",
             "position": position,
         }
@@ -1100,7 +1108,8 @@ def build_dry_run_payload(platform):
     GitHub posts a single review, so the payload exposes ``endpoint`` / ``method``
     / ``payload`` for that one call. GitLab posts a summary note followed by one
     discussion per finding, so the first capture becomes ``summary`` and the rest
-    become ``discussions``.
+    become ``discussions``. A ``discussions`` body is the rendered comment alone —
+    the per-finding delivery marker is appended on the live wire only.
     """
     if platform == "github":
         cap = _CAPTURED[0] if _CAPTURED else {"cmd_prefix": [], "payload": {}}
@@ -1153,7 +1162,8 @@ def main():
         action="store_true",
         help="Capture the would-be API payloads to post-review-payload.json "
         "(next to the findings file) instead of posting. Line validation "
-        "and read-only fetches still run.",
+        "and read-only fetches still run. A captured GitLab discussion body "
+        "omits the per-finding delivery marker the live post appends.",
     )
     args = parser.parse_args()
 

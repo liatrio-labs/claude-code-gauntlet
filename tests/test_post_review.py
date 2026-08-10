@@ -3003,18 +3003,22 @@ class _GitlabLiveRunBase(_DryRunTestBase):
     fault tolerance, and per-finding idempotency).
     """
 
-    def _run_main(self, dry_run=False, findings=None, prior=None, **fake_run_kwargs):
-        self._write(
-            {
-                "platform": "gitlab",
-                "owner": "o",
-                "repo": "r",
-                "pr_number": 5,
-                "sha": "a" * 40,
-                "review_body": "MR review",
-                "findings": GL_CONTRACT_FINDINGS if findings is None else findings,
-            }
-        )
+    def _run_main(
+        self, dry_run=False, findings=None, prior=None, sha="a" * 40, **fake_run_kwargs
+    ):
+        data = {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "findings": GL_CONTRACT_FINDINGS if findings is None else findings,
+        }
+        # sha=None omits the key entirely, so resolve_marker_sha falls through to
+        # `git rev-parse HEAD` — the only way to reach its "unknown" outcome.
+        if sha is not None:
+            data["sha"] = sha
+        self._write(data)
         argv = ["post_review.py", self.findings_path]
         if dry_run:
             argv.append("--dry-run")
@@ -3347,6 +3351,35 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
                 review_marker.find_finding_marker(body),
                 {"sha": "a" * 40, "key": key},
             )
+
+    def test_key_is_derived_from_the_diff_spelling_not_the_raw_finding_path(self):
+        """The key must be built from the path the position ships. A finding whose
+        raw path needs resolving must land on the SAME key as its resolved twin —
+        otherwise the marker written on the wire and the marker a rerun looks up
+        drift apart the moment a `b/`-prefixed path appears."""
+        payloads = []
+        prefixed = dict(GL_CONTRACT_FINDINGS[0], file="b/src/edited.py")
+        run = self._run_main(findings=[prefixed], payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        discussion = self._discussion_payloads(payloads)[0]
+        self.assertEqual(discussion["position"]["new_path"], "src/edited.py")
+        self.assertEqual(
+            review_marker.find_finding_marker(discussion["body"]),
+            {"sha": "a" * 40, "key": self.CONTEXT_LINE_KEY},
+        )
+
+    def test_an_unmarkable_sha_posts_without_writing_an_unreadable_marker(self):
+        """`git rev-parse` failing yields "unknown", which find_finding_marker is
+        guaranteed to reject. Delivery still happens — it just carries no marker,
+        rather than a permanent one nothing can read."""
+        payloads = []
+        run = self._run_main(sha=None, head_sha="unknown\n", payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        run.mock_prior.assert_not_called()
+        bodies = [p["body"] for p in self._discussion_payloads(payloads)]
+        self.assertEqual(len(bodies), 3)
+        for body, finding in zip(bodies, GL_CONTRACT_FINDINGS, strict=True):
+            self.assertEqual(body, render_comment_body(finding))
 
     def test_dry_run_fetches_nothing_captures_everything_and_stays_marker_free(self):
         """bench pins dry-run and scores the captured bodies as candidate text, so a
