@@ -258,8 +258,10 @@ _DIFF_PREFIX_RE = re.compile(r"^[ab]/")
 
 
 def _path_spellings(path):
-    """Every spelling of a ``+++`` header's path this set must answer to.
+    """Both prefix spellings of a decoded ``+++`` header path.
 
+    Git's wire spelling of the header — its TAB terminator and C-quoting — is already
+    undone by the walk; the prefix is what is left, and it is ambiguous.
     The header alone cannot say whether a leading ``a/``/``b/`` is git's synthetic
     prefix (``gh pr diff``, ``git diff``) or a real top-level directory (``glab mr
     diff`` writes paths verbatim, so there the prefix is part of the path). REQUIRING

@@ -8,9 +8,11 @@ otherwise plausible list, which an assertIn-shaped test reads straight past.
 
 Covers:
   - header zone: `---`/`+++`/`@@` recognition, verbatim paths, `/dev/null`, noise
+  - header wire spelling: the TAB terminator and C-quoting git writes for a path
+    holding a space, a control character or a non-ASCII byte
   - hunk budgets: resolved counts, omitted counts, drain across files
   - hunk body: added/removed/context line numbering, header-shaped body content,
-    `\\ No newline at end of file`, form feeds and friends
+    `\\ No newline at end of file`, form feeds and friends, a body cut short
 """
 
 import os
@@ -79,6 +81,98 @@ class TestHeaderZone(unittest.TestCase):
             "Binary files a/logo.png and b/logo.png differ\n"
         )
         self.assertEqual(events(diff), [])
+
+
+# ---------------------------------------------------------------------------
+# Header wire spelling
+# ---------------------------------------------------------------------------
+
+
+class TestHeaderPathSpelling(unittest.TestCase):
+    """Every header below is what `git diff` really writes for that filename.
+
+    A path git had to encode reaches the caller as a string no finding can name, so
+    the file's whole set of addressable lines is keyed under a spelling nothing
+    matches — the same silent "not in the diff" outcome as failing to match the
+    header at all.
+    """
+
+    def test_a_space_in_the_path_ends_the_field_with_a_tab(self):
+        diff = "--- a/My Docs/read me.md\t\n+++ b/My Docs/read me.md\t\n"
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("old_path", path="a/My Docs/read me.md"),
+                DiffEvent("new_path", path="b/My Docs/read me.md"),
+            ],
+        )
+
+    def test_non_ascii_bytes_arrive_c_quoted_and_octal_escaped(self):
+        # Default `core.quotePath`. The octal escapes name the two UTF-8 bytes of
+        # "é" individually, so they resolve to one character, not two.
+        diff = '--- "a/caf\\303\\251.py"\n+++ "b/caf\\303\\251.py"\n'
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("old_path", path="a/café.py"),
+                DiffEvent("new_path", path="b/café.py"),
+            ],
+        )
+
+    def test_quoting_survives_a_tab_a_quote_and_a_backslash_in_the_name(self):
+        # Control characters and the quoting characters themselves are C-quoted
+        # whatever `core.quotePath` says.
+        diff = (
+            '+++ "b/tab\\there.txt"\n+++ "b/quo\\"te.txt"\n+++ "b/back\\\\slash.txt"\n'
+        )
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("new_path", path="b/tab\there.txt"),
+                DiffEvent("new_path", path='b/quo"te.txt'),
+                DiffEvent("new_path", path="b/back\\slash.txt"),
+            ],
+        )
+
+    def test_a_quoted_path_carries_its_tab_outside_the_closing_quote(self):
+        diff = '+++ "b/caf\\303\\251 space.py"\t\n'
+        self.assertEqual(
+            events(diff),
+            [DiffEvent("new_path", path="b/café space.py")],
+        )
+
+    def test_a_field_that_does_not_decode_is_yielded_verbatim(self):
+        # None of these is an escape git writes: `\q` names nothing, `\400` is past a
+        # byte, `\377` alone is not valid UTF-8, and a backslash cannot be the last
+        # thing inside the quotes. Guessing at any of them would invent a path — and a
+        # verbatim field just matches nothing, which is what an unreadable path is.
+        diff = (
+            '--- "a/bad\\q.py"\n'
+            '+++ "b/\\377.py"\n'
+            '+++ "b/\\400.py"\n'
+            '+++ "b/trailing\\"\n'
+        )
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("old_path", path='"a/bad\\q.py"'),
+                DiffEvent("new_path", path='"b/\\377.py"'),
+                DiffEvent("new_path", path='"b/\\400.py"'),
+                DiffEvent("new_path", path='"b/trailing\\"'),
+            ],
+        )
+
+    def test_quotes_inside_an_unquoted_path_are_left_alone(self):
+        # `glab mr diff` writes paths verbatim; only a field git itself quoted opens
+        # and closes with a quote.
+        diff = '+++ say"hi".py\n+++ "quoted"/app.py\n'
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("new_path", path='say"hi".py'),
+                DiffEvent("new_path", path='"quoted"/app.py'),
+            ],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +334,52 @@ class TestHunkBody(unittest.TestCase):
                 DiffEvent("line", new_line=2),
                 DiffEvent("line", old_line=3, new_line=3),
                 DiffEvent("line", old_line=4),
+            ],
+        )
+
+    def test_a_hunk_body_cut_short_mints_no_extra_line(self):
+        # A diff can end mid-hunk — a `--diff-file` truncated to a byte budget, or one
+        # page of a paginated API diff. The hunk here declares four new-side lines and
+        # supplies two, so the terminating newline's tail is still inside the body zone
+        # and reads as a context line: a line number the file may not even have, which
+        # a finding can then match.
+        diff = "--- a/f.py\n+++ b/f.py\n@@ -1,4 +1,4 @@\n ctx\n+added\n"
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("old_path", path="a/f.py"),
+                DiffEvent("new_path", path="b/f.py"),
+                DiffEvent("hunk", old_line=1, new_line=1, old_count=4, new_count=4),
+                DiffEvent("line", old_line=1, new_line=1),
+                DiffEvent("line", new_line=2),
+            ],
+        )
+
+    def test_a_stream_that_ends_without_a_newline_keeps_its_last_line(self):
+        # Only a TERMINATING newline leaves a tail to drop; a stream that ends on
+        # content ends with the line itself, which is a real body line.
+        diff = "@@ -1,2 +1,2 @@\n ctx\n+added"
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
+                DiffEvent("line", old_line=1, new_line=1),
+                DiffEvent("line", new_line=2),
+            ],
+        )
+
+    def test_a_body_line_that_is_empty_still_drains_its_budget(self):
+        # The line before the guard above: an empty CONTEXT line reaches some readers
+        # with its leading space stripped, and dropping it would drain nothing and shift
+        # every line after it. Only the split artifact at the very end is not a line.
+        diff = "@@ -1,3 +1,3 @@\n a\n\n+b\n"
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("hunk", old_line=1, new_line=1, old_count=3, new_count=3),
+                DiffEvent("line", old_line=1, new_line=1),
+                DiffEvent("line", old_line=2, new_line=2),
+                DiffEvent("line", new_line=3),
             ],
         )
 

@@ -2,14 +2,22 @@
 diff_lines.py — the one unified-diff walk the retained diff parsers share.
 
 SCOPE SPLIT, and the whole reason this module is thin: THE WALK lives here —
-header zone vs. hunk-body zone, the per-hunk budgets that separate them, and the
-old/new line-number advance. HEADER SEMANTICS stay in the callers. What a path
-spelling means (git's synthetic ``a/``/``b/`` prefixes are diff syntax under
-``gh pr diff`` and a real top-level directory under ``glab mr diff``, which
-writes paths verbatim), what ``/dev/null`` implies, and which lines are worth
-recording at all are decisions the two callers answer differently — folding them
-in here would need a platform flag and would put one caller's answer on the
-other's path.
+header zone vs. hunk-body zone, the per-hunk budgets that separate them, the
+old/new line-number advance, and the wire spelling of a header path (git's TAB
+terminator and C-quoting, which mean the same thing everywhere). HEADER SEMANTICS
+stay in the callers. What a path spelling means (git's synthetic ``a/``/``b/``
+prefixes are diff syntax under ``gh pr diff`` and a real top-level directory under
+``glab mr diff``, which writes paths verbatim), what ``/dev/null`` implies, and
+which lines are worth recording at all are decisions the two callers answer
+differently — folding them in here would need a platform flag and would put one
+caller's answer on the other's path.
+
+The event vocabulary is the UNION of what both retained parsers need, so some of
+it has no reader yet: the poster's own copy of this walk keys its GitLab position
+fields off ``---`` headers and reads a hunk's old count to recognise an added file
+(``@@ -0,0 +N,M @@``, the only added-file signal a verbatim-path diff carries).
+Narrowing the events to today's single caller would only have to be undone when
+that copy moves here; until then their coverage is this module's own tests.
 
 No external dependencies. stdlib only.
 
@@ -33,7 +41,8 @@ class DiffEvent(NamedTuple):
     ``kind`` is one of:
 
     * ``"old_path"`` / ``"new_path"`` — a ``---`` / ``+++`` header, matched only
-      between hunks. ``path`` is the header's text VERBATIM: no prefix stripped and
+      between hunks. ``path`` is the header's text with git's wire spelling undone
+      (see :func:`_decode_header_path`) and NOTHING else: no prefix stripped and
       ``/dev/null`` passed through as itself, because both are caller semantics.
     * ``"hunk"`` — an ``@@`` header. ``old_line``/``new_line`` are the sides' start
       lines; ``old_count``/``new_count`` are the RESOLVED body-line budgets. A unified
@@ -61,6 +70,77 @@ _OLD_HEADER_RE = re.compile(r"^--- (.+)$")
 _NEW_HEADER_RE = re.compile(r"^\+\+\+ (.+)$")
 _HUNK_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
 
+# The escapes git's C-quoting spells with a letter; every other byte it escapes it
+# writes as one to three octal digits.
+_C_ESCAPES = {
+    ord("a"): 0x07,
+    ord("b"): 0x08,
+    ord("f"): 0x0C,
+    ord("n"): 0x0A,
+    ord("r"): 0x0D,
+    ord("t"): 0x09,
+    ord("v"): 0x0B,
+    ord("\\"): 0x5C,
+    ord('"'): 0x22,
+}
+_BACKSLASH = 0x5C
+_OCTAL_DIGITS = range(0x30, 0x38)
+
+
+def _decode_header_path(field: str) -> str:
+    """Undo the two encodings git puts on a ``---``/``+++`` path field.
+
+    A TAB terminates the field, and git appends one whenever the path contains a
+    space — otherwise the path would run into where the classic unified-diff
+    timestamp column begins. And a path holding a control character, a quote, a
+    backslash, or (unless ``core.quotePath=false``) a non-ASCII byte is written
+    C-quoted as a whole, with the quotes OUTSIDE the synthetic prefix and the tab, if
+    any, after the closing quote: ``+++ "b/caf\\303\\251 x.py"<TAB>``. Neither
+    encoding is platform-specific — they are how git writes the header — so a caller
+    left to strip them itself would be re-deriving diff syntax to answer a question
+    about a path.
+
+    A field that does not decode comes back verbatim: git never writes an escape this
+    cannot read, so an undecodable field is not a path a finding could name either,
+    and passing it through keeps the walk lossless.
+    """
+    path = field.split("\t", 1)[0]
+    if len(path) < 2 or not path.startswith('"') or not path.endswith('"'):
+        return path
+
+    # Byte-wise, not character-wise: an octal escape names a BYTE of a multi-byte
+    # character, so the escapes must be resolved before anything is decoded as text.
+    quoted = path[1:-1].encode("utf-8", "surrogateescape")
+    decoded = bytearray()
+    index = 0
+    while index < len(quoted):
+        byte = quoted[index]
+        index += 1
+        if byte != _BACKSLASH:
+            decoded.append(byte)
+            continue
+        if index >= len(quoted):
+            return field
+        if quoted[index] in _C_ESCAPES:
+            decoded.append(_C_ESCAPES[quoted[index]])
+            index += 1
+            continue
+        end = index
+        while end < len(quoted) and end - index < 3 and quoted[end] in _OCTAL_DIGITS:
+            end += 1
+        if end == index:
+            return field
+        value = int(quoted[index:end], 8)
+        if value > 0xFF:
+            return field
+        decoded.append(value)
+        index = end
+
+    try:
+        return bytes(decoded).decode("utf-8")
+    except UnicodeDecodeError:
+        return field
+
 
 def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
     """Yield a :class:`DiffEvent` for every meaningful line of *diff_text*.
@@ -80,19 +160,30 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
     # and U+2028/U+2029, which git treats as ordinary line CONTENT. A form feed inside a
     # hunk body would become two parsed lines, draining the declared budgets one line
     # early — flipping the header/body zone boundary and shifting every line number
-    # after it. The trailing "" a newline-terminated stream yields lands in the header
-    # zone and matches nothing.
-    for raw_line in diff_text.split("\n"):
+    # after it.
+    lines = diff_text.split("\n")
+    if lines[-1] == "":
+        # The tail of the terminating newline is not a line. Walked as one, it is
+        # harmless between hunks but reads as a context line inside a hunk body that
+        # ran out of text — a diff truncated or paginated mid-hunk — minting a final
+        # line number the file does not have.
+        lines.pop()
+
+    for raw_line in lines:
         if old_rem <= 0 and new_rem <= 0:
             # -- header zone -------------------------------------------------
             old_match = _OLD_HEADER_RE.match(raw_line)
             if old_match:
-                yield DiffEvent("old_path", path=old_match.group(1))
+                yield DiffEvent(
+                    "old_path", path=_decode_header_path(old_match.group(1))
+                )
                 continue
 
             new_match = _NEW_HEADER_RE.match(raw_line)
             if new_match:
-                yield DiffEvent("new_path", path=new_match.group(1))
+                yield DiffEvent(
+                    "new_path", path=_decode_header_path(new_match.group(1))
+                )
                 continue
 
             hunk_match = _HUNK_RE.match(raw_line)

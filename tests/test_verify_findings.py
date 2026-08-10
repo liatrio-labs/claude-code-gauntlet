@@ -159,12 +159,12 @@ class TestParseDiffLines(unittest.TestCase):
             "+new\n"
             "\\ No newline at end of file\n"
         )
-        result = parse_diff_lines(diff)
-        self.assertIn(("f.py", 1), result)
-        self.assertIn(("f.py", 2), result)
         # Two commentable lines, each recorded under both spellings of the header's
-        # path (see _path_spellings) — the count is 2 x 2, not 2.
-        self.assertEqual(len(result), 4)
+        # path (see _path_spellings) — four entries, and no entry for the marker.
+        self.assertEqual(
+            sorted(parse_diff_lines(diff)),
+            [("b/f.py", 1), ("b/f.py", 2), ("f.py", 1), ("f.py", 2)],
+        )
 
     def test_multiple_hunks_same_file(self):
         diff = (
@@ -418,6 +418,53 @@ class TestParseDiffLinesExactSet(unittest.TestCase):
             ],
         )
 
+    def test_encoded_header_paths_record_the_name_a_finding_can_use(self):
+        """A finding names the file as it exists, never as the header encodes it.
+
+        git writes a space-holding path with a trailing TAB and escapes a non-ASCII
+        one C-style; keyed under either raw field, every line of those files sits in
+        the set under a spelling no finding matches, which is the empty-set outcome
+        the GitLab shape had.
+        """
+        diff = (
+            "--- a/My Docs/read me.md\t\n"
+            "+++ b/My Docs/read me.md\t\n"
+            "@@ -1,1 +1,2 @@\n"
+            " intro\n"
+            "+added\n"
+            '--- "a/caf\\303\\251.py"\n'
+            '+++ "b/caf\\303\\251.py"\n'
+            "@@ -5,1 +5,2 @@\n"
+            " ctx\n"
+            "+brewed\n"
+        )
+        self.assertLines(
+            diff,
+            [
+                ("My Docs/read me.md", 1),
+                ("My Docs/read me.md", 2),
+                ("b/My Docs/read me.md", 1),
+                ("b/My Docs/read me.md", 2),
+                ("café.py", 5),
+                ("café.py", 6),
+                ("b/café.py", 5),
+                ("b/café.py", 6),
+            ],
+        )
+
+    def test_a_diff_cut_off_mid_hunk_records_no_phantom_line(self):
+        """A truncated or paginated diff supplies fewer body lines than it declares.
+
+        The hunk below owes four new-side lines and carries two. Counting the
+        terminating newline's tail as the third records a line the head revision may
+        not have — a finding there would validate as in-diff against nothing.
+        """
+        diff = "--- a/f.py\n+++ b/f.py\n@@ -1,4 +1,4 @@\n ctx\n+added\n"
+        self.assertLines(
+            diff,
+            [("b/f.py", 1), ("b/f.py", 2), ("f.py", 1), ("f.py", 2)],
+        )
+
     def test_gitlab_finding_inside_the_diff_stays_new(self):
         """The GitLab symptom end to end: in-diff findings must not be downgraded."""
         finding = {
@@ -428,6 +475,27 @@ class TestParseDiffLinesExactSet(unittest.TestCase):
             "severity": "high",
         }
         validate_diff_lines(finding, parse_diff_lines(GLAB_SHAPED_DIFF))
+        self.assertTrue(finding["diff_validation"]["in_diff"])
+        self.assertEqual(finding["origin"], "new")
+        self.assertEqual(finding["severity"], "high")
+
+    def test_finding_in_a_space_named_file_stays_new(self):
+        """The same symptom, reached by the filename instead of by the platform."""
+        diff = (
+            "--- a/My Docs/read me.md\t\n"
+            "+++ b/My Docs/read me.md\t\n"
+            "@@ -1,1 +1,2 @@\n"
+            " intro\n"
+            "+added\n"
+        )
+        finding = {
+            "file": "My Docs/read me.md",
+            "line_start": 2,
+            "line_end": 2,
+            "origin": "new",
+            "severity": "high",
+        }
+        validate_diff_lines(finding, parse_diff_lines(diff))
         self.assertTrue(finding["diff_validation"]["in_diff"])
         self.assertEqual(finding["origin"], "new")
         self.assertEqual(finding["severity"], "high")
