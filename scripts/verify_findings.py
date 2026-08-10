@@ -106,6 +106,7 @@ from assemble_artifacts import (
     fnv1a32,
     js_stringify_pretty,
 )
+from diff_lines import walk_diff
 
 # ---------------------------------------------------------------------------
 # Repo root — resolved once at startup (RF-01)
@@ -253,6 +254,29 @@ def get_diff(base_branch, diff_file=None):
     return None
 
 
+_DIFF_PREFIX_RE = re.compile(r"^[ab]/")
+
+
+def _path_spellings(path):
+    """Every spelling of a ``+++`` header's path this set must answer to.
+
+    The header alone cannot say whether a leading ``a/``/``b/`` is git's synthetic
+    prefix (``gh pr diff``, ``git diff``) or a real top-level directory (``glab mr
+    diff`` writes paths verbatim, so there the prefix is part of the path). REQUIRING
+    the prefix — the shape this replaced — matched no header at all in a verbatim diff,
+    left the set empty, and tagged every finding in the review "surfaced". Stripping it
+    unconditionally would instead lose a genuinely ``b/``-rooted file's own spelling.
+
+    Recording BOTH costs one extra tuple per line and cannot lose a legitimate match on
+    either platform, with no platform flag to thread through the caller. The set feeds a
+    membership test only (:func:`is_line_in_diff`), so the union is sound: its only cost
+    is that a finding naming a literal ``b/x`` can match a diff that touched ``x`` —
+    which ``is_line_in_diff``'s own prefix strip already allows from the other side.
+    """
+    stripped = _DIFF_PREFIX_RE.sub("", path)
+    return (path,) if stripped == path else (path, stripped)
+
+
 def parse_diff_lines(diff_text):
     """
     Parse a unified diff and return a set of (filepath, line_number) tuples
@@ -263,41 +287,28 @@ def parse_diff_lines(diff_text):
     - ``None``  → diff retrieval failed; callers should skip validation entirely.
     - ``""``    → diff retrieved successfully but is empty (e.g. no changes);
                   callers should treat every finding as "surfaced" (not in diff).
+
+    The walk is ``diff_lines.walk_diff``; what lives here is this parser's own header
+    semantics — which spellings of a path enter the set, and that a deleted file's
+    ``+++ /dev/null`` contributes nothing.
     """
     if diff_text is None:
         return None
 
     valid_lines = set()
-    current_file = None
-    new_line = 0
+    current_paths = ()
 
-    for raw_line in diff_text.splitlines():
-        # New file header: +++ b/path/to/file
-        file_match = re.match(r"^\+\+\+ b/(.+)$", raw_line)
-        if file_match:
-            current_file = file_match.group(1)
-            new_line = 0
-            continue
-
-        # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
-        hunk_match = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", raw_line)
-        if hunk_match:
-            new_line = int(hunk_match.group(1))
-            continue
-
-        if current_file is None:
-            continue
-
-        if raw_line.startswith("+") and not raw_line.startswith("+++"):
-            valid_lines.add((current_file, new_line))
-            new_line += 1
-        elif raw_line.startswith("-") and not raw_line.startswith("---"):
-            # Removed line — does not advance new_line
-            pass
-        elif not raw_line.startswith("\\"):
-            # Context line
-            valid_lines.add((current_file, new_line))
-            new_line += 1
+    for event in walk_diff(diff_text):
+        if event.kind == "new_path":
+            # `/dev/null` names a deleted file: it owns no new-side line, and the
+            # previous file's spellings must not survive into its hunk bodies.
+            current_paths = (
+                () if event.path == "/dev/null" else _path_spellings(event.path)
+            )
+        elif event.kind == "line" and event.new_line is not None:
+            # A removed line has no new side and is therefore not addressable here.
+            for path in current_paths:
+                valid_lines.add((path, event.new_line))
 
     return valid_lines
 
