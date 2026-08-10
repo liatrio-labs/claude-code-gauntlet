@@ -41,6 +41,20 @@ The ``findings`` payload key is a reserved, writer-supported extension slot owne
 by issue #36: supply ``findings=`` and it is emitted last; omit it (always, today)
 and the key is absent — byte-identical to the legacy payload.
 
+A SECOND, separate wire format lives here too: the per-finding delivery marker
+``post_review.py`` appends to every inline GitLab discussion it posts on the live
+wire, and ``detect_prior_review.py`` reads back so a rerun after a partial
+delivery does not repost the discussions already on the MR::
+
+    <!-- code-gauntlet-finding-key: {"sha":"<sha>","key":"<16 lowercase hex>"} -->
+
+It shares no token bytes with the summary marker above, so neither reader can
+match the other's marker and a body carrying both is unambiguous. Unlike the
+summary payload it is validated rather than duck-typed: a finding's title and
+body reach the wire RAW (only ``suggestion``/``claude_md_rule``/``spec_text``
+are sanitized), so a marker spelled inside a finding's own text is hostile input
+that must never be collected as a delivery record.
+
 No external Python dependencies — stdlib only.
 """
 
@@ -56,6 +70,11 @@ from datetime import datetime, timezone
 MARKER_TOKEN = "code-gauntlet-findings"
 LEGACY_MARKER_TOKEN = "deep-review-findings"  # pre-rename; still in the wild
 MARKER_TOKENS = (MARKER_TOKEN, LEGACY_MARKER_TOKEN)
+# Per-finding delivery marker. Neither this token nor its regex below can be
+# reached by the summary-marker patterns above (nor they by it): the summary
+# tokens end in `findings`, this one continues into `-key`, so the `:` each
+# pattern demands right after its token cannot follow the other's bytes.
+FINDING_MARKER_TOKEN = "code-gauntlet-finding-key"
 PRODUCT = "code-gauntlet"
 LEGACY_PRODUCT = "deep-review"
 MARKER_VERSION = "3.0"  # informational; never dispatched on
@@ -69,6 +88,16 @@ SHA_RE = re.compile(r"\b([0-9a-f]{7,40})\b")  # git object ids are lowercase hex
 _MARKER_RE = re.compile(
     r"<!--\s*(" + "|".join(re.escape(t) for t in MARKER_TOKENS) + r")\s*:\s*"
 )
+
+# The finding payload is two short strings this module writes itself, so a plain
+# regex spans it: no `{`/`}` can appear inside, and every candidate is therefore a
+# disjoint, brace-bounded span. That is why the finding reader needs no equivalent
+# of _MAX_MARKER_SCANS — scanning every candidate is linear in the body, whereas
+# the summary marker's balanced-brace scan is not.
+_FINDING_MARKER_RE = re.compile(
+    r"<!--\s*" + re.escape(FINDING_MARKER_TOKEN) + r"\s*:\s*(\{[^{}]*\})\s*-->"
+)
+_FINDING_KEY_RE = re.compile(r"[0-9a-f]{16}")
 
 _PROSE_LABEL_RE = re.compile(r"Reviewed\s+up\s+to\s*:", re.IGNORECASE)
 
@@ -105,6 +134,21 @@ def build_marker(sha, findings_count, findings=None):
     if findings is not None:
         payload["findings"] = findings
     return f"<!-- {MARKER_TOKEN}: {json.dumps(payload, separators=(',', ':'))} -->"
+
+
+def build_finding_marker(sha, key):
+    """Return the per-finding delivery marker for one inline comment body.
+
+    Key order is fixed: ``sha``, then ``key``. The caller composes layout — no
+    surrounding newlines. *key* is expected to be 16 lowercase hex characters;
+    anything else round-trips as bytes but is rejected by
+    :func:`find_finding_marker`, so a bad key degrades to "not deduped" rather
+    than to a silently wrong match.
+    """
+    payload = {"sha": sha, "key": key}
+    return (
+        f"<!-- {FINDING_MARKER_TOKEN}: {json.dumps(payload, separators=(',', ':'))} -->"
+    )
 
 
 def build_prose_footer(sha):
@@ -259,6 +303,42 @@ def find_marker(text):
                 found["_token"] = match.group(1)
                 found["_legacy"] = match.group(1) == LEGACY_MARKER_TOKEN
                 return found
+        return None
+    except Exception:  # noqa: BLE001  # pragma: no cover - a reader never raises
+        return None
+
+
+def find_finding_marker(text):
+    """Return ``{"sha", "key"}`` from the LAST valid finding marker in *text*, else None.
+
+    Last-wins for the reason :func:`find_marker` is: ``post_review.py`` APPENDS its
+    marker, so the mechanical one always follows anything a finding's own unsanitized
+    prose spelled earlier in the same body — such a forgery can be shadowed, never
+    shadow.
+
+    Both fields are validated before a payload is accepted: ``key`` must be 16
+    lowercase hex characters and ``sha`` SHA-shaped. A payload of the right syntax but
+    the wrong types (``"key": []``) is skipped rather than returned — the caller
+    collects keys into a set, and an unhashable one would abort a delivery mid-loop.
+    Only those two fields come back: nothing downstream echoes this payload, so it
+    carries no forward-compatibility slot to preserve. Never raises.
+    """
+    if not isinstance(text, str) or not text:
+        return None
+    try:
+        for candidate in reversed(_FINDING_MARKER_RE.findall(text)):
+            try:
+                payload = json.loads(candidate)
+            except (ValueError, RecursionError):
+                continue
+            # No isinstance(dict) guard: the regex above spans a brace-delimited
+            # literal, so a successful parse cannot be anything else.
+            key = payload.get("key")
+            if not isinstance(key, str) or not _FINDING_KEY_RE.fullmatch(key):
+                continue
+            if not is_sha_shaped(payload.get("sha")):
+                continue
+            return {"sha": payload["sha"].strip(), "key": key}
         return None
     except Exception:  # noqa: BLE001  # pragma: no cover - a reader never raises
         return None
