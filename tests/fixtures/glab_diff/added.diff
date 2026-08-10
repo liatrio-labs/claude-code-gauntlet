@@ -1,19 +1,19 @@
 --- src/app/clients/api/__init__.py
 +++ src/app/clients/api/__init__.py
 @@ -0,0 +1,16 @@
-+"""HTTP client exports for the API package."""
++added_01
++added_02
 +
-+from .base import BaseClient
-+from .billing import BillingClient
-+from .identity import IdentityClient
-+
-+__all__ = [
-+    "BaseClient",
-+    "BillingClient",
-+    "IdentityClient",
-+]
-+
-+
-+def default_client(session):
-+    """Return the client every module in this package starts from."""
-+    return BaseClient(session)
++added_04
++added_05
++added_06
++added_07
++added_08
++added_09
++added_10
++added_11
++added_12
++added_13
++added_14
++added_15
++added_16

@@ -271,10 +271,10 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         # PLAIN `glab mr diff` — never `--raw`. Plain output is glab's OWN reconstruction
         # from the MR versions API: `--- <old_path>` / `+++ <new_path>` with the path
         # verbatim, and nothing else between hunks. `--raw` streams git's diff instead,
-        # which reintroduces `a/` / `b/` prefixes and `/dev/null` — every signal read
-        # below (unprefixed keys, the `@@ -0,0` added-file test, the old-side path) is
-        # premised on their absence. tests/fixtures/glab_diff/ records the shape and
-        # where it comes from.
+        # which reintroduces `a/` / `b/` prefixes and `/dev/null` — the gitlab branch
+        # below keys on paths exactly as printed and reads the old-side header as a real
+        # path, both premised on their absence. tests/fixtures/glab_diff/ records the
+        # shape and where it comes from.
         stdout, stderr, rc = run_api(["glab", "mr", "diff", str(pr_number)])
     else:
         warn(

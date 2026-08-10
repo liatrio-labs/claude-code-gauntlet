@@ -29,6 +29,15 @@ Everything the parser relies on follows from that:
   unlike the GitHub shape, where `+++ /dev/null` blanks it.
 - **A RENAMED file is the one case where the two headers differ**, and that `---` path is
   what `position.old_path` needs.
+- **Nothing separates two files.** glab writes the header pair and then the API's body,
+  and appends no separator of its own, so one file's last line runs straight into the
+  next file's `---` unless that body is newline-terminated. Git's patch text always is
+  (a file with no final newline still gets a `\ No newline at end of file` line), and
+  GitLab hands the body through, so it is — but this is the one property here **inferred
+  rather than sourced**, and it is the whole basis of the multi-file constants, which are
+  plain concatenations. `TestGlabFixtureBytes` asserts it on every fixture, so a fixture
+  that stops satisfying it cannot silently turn the concatenation into a shape no CLI
+  emits.
 
 `glab mr diff --raw` streams git's own diff instead and has none of these properties. The
 parser is written against the plain output, and `post_review.py` records that constraint
@@ -47,8 +56,12 @@ block quoted verbatim in the issue #127 report:
 
 Everything else here — those 16 body lines, and every byte of `modified.diff`,
 `deleted.diff` and `rename.diff` — is **constructed** to the shape described above, not
-captured from a run. The constructed files use plainly synthetic paths (`src/edited.py`,
-`src/removed.py`, `old_name.py` / `new_name.py`) so no reader mistakes one for a capture.
+captured from a run. Constructed material is kept plainly synthetic in-band, so no reader
+mistakes one line for a capture without consulting this file: synthetic paths
+(`src/edited.py`, `src/removed.py`, `old_name.py` / `new_name.py`) and synthetic content
+(`added_01`, `unchanged_ctx`, `alpha`). That matters most in `added.diff`, the one file
+where captured and constructed bytes sit together and a diff has no comment syntax to
+mark the seam.
 
 The shape itself is sourced, not inferred:
 
@@ -60,9 +73,11 @@ The shape itself is sourced, not inferred:
 
 **Upgrade path.** Anyone with a GitLab account can replace these files with a real
 `glab mr diff` capture from a throwaway MR covering the same four cases; that is a
-provenance upgrade, not a behaviour change. If the captured bytes disagree with what is
-here, the parser's contract is what moved, and these tests should be the first thing to
-say so.
+provenance upgrade, not a behaviour change. The first thing such a capture settles is the
+inferred property above — whether a file's body really is newline-terminated, i.e. whether
+a multi-file capture reads `+last--- next_path` or the two on separate lines. If the
+captured bytes disagree with what is here, the parser's contract is what moved, and these
+tests should be the first thing to say so.
 
 ## Why there is no binary fixture
 
@@ -78,10 +93,13 @@ same branch and no new failure mode.
 
 ## Byte-exactness
 
-`.pre-commit-config.yaml` excludes `*.diff` in this directory from `trailing-whitespace`
-and `end-of-file-fixer`. A unified diff renders a blank context line as a lone space
-(`rename.diff` has one), and a capture's final newline is part of the record; both hooks
-would rewrite the recorded bytes without anyone noticing.
+`tests/test_post_review.py::TestGlabFixtureBytes` asserts the two recorded properties the
+parser itself cannot see: a blank context line is a lone space (`rename.diff` has one, and
+`parse_diff_lines` yields the identical key whether it is a space or empty), and each file
+ends in exactly one newline (the file-to-file boundary above). `.pre-commit-config.yaml`
+excludes `*.diff` in this directory from `trailing-whitespace` and `end-of-file-fixer` so
+the hooks do not rewrite what those assertions defend — but the assertions, not the
+exclusion, are what report the loss.
 
 ## Files
 

@@ -157,8 +157,8 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_gitlab_dispatches_to_glab_mr_diff(self, mock_run):
         """platform='gitlab' must call glab mr diff."""
-        # glab-faithful: `glab mr diff` writes paths verbatim, with no `a/` / `b/`.
-        diff = "+++ bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
+        # glab-faithful: an unconditional `---`/`+++` pair, paths verbatim, no `a/`/`b/`.
+        diff = "--- bar.py\n+++ bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
         mock_run.return_value = (diff, "", 0)
         valid_lines, _, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
         self.assertIsNotNone(valid_lines)
@@ -454,7 +454,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual([k for k in valid_lines if k[0] == "img.png"], [])
 
     @patch("scripts.post_review.run_api")
-    def test_pre_hunk_lines_are_not_admitted(self, mock_run):
+    def test_between_hunk_lines_are_not_admitted(self, mock_run):
         """Between-hunk lines are not commentable lines: the key set is EXACTLY the
         hunk bodies' addressable lines, with nothing admitted from around them.
 
@@ -1889,6 +1889,9 @@ GL_DIFF = (
 )
 
 
+_GLAB_FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "glab_diff")
+
+
 def _glab_fixture(name):
     """Read one `glab mr diff` fixture verbatim.
 
@@ -1897,8 +1900,7 @@ def _glab_fixture(name):
     so the parser's contract has ONE spelling that a real capture can later replace
     without touching a test.
     """
-    path = os.path.join(os.path.dirname(__file__), "fixtures", "glab_diff", name)
-    with open(path, encoding="utf-8") as fh:
+    with open(os.path.join(_GLAB_FIXTURE_DIR, name), encoding="utf-8") as fh:
         return fh.read()
 
 
@@ -1919,6 +1921,64 @@ GL_DIFF_DELETED_THEN_MODIFIED = _glab_fixture("deleted.diff") + _glab_fixture(
 # new 3 = old 3 (context), new 4 = added, new 5 = old 5 (context), new 6 = old 6 (a BLANK
 # context line, which a unified diff spells as a lone space).
 GL_DIFF_RENAME = _glab_fixture("rename.diff")
+
+
+class TestGlabFixtureBytes(unittest.TestCase):
+    """The fixtures above are a RECORD, so their bytes are the contract — including the
+    bytes no parser assertion can see.
+
+    ``parse_diff_lines`` reads a blank context line (a lone space) and a stripped one
+    (empty) through the same catch-all and produces the identical key, so a whitespace
+    fixer could rewrite the record with every other test in this file still green. These
+    assertions are what make the `.pre-commit-config.yaml` exclusion enforceable rather
+    than advisory: drop the exclusion, or add any hook that normalises these files, and
+    the record's loss is reported here instead of going unnoticed.
+    """
+
+    def _fixtures(self):
+        names = sorted(n for n in os.listdir(_GLAB_FIXTURE_DIR) if n.endswith(".diff"))
+        self.assertTrue(names, "no fixture files to hold to their recorded bytes")
+        return [(n, _glab_fixture(n)) for n in names]
+
+    def test_a_blank_context_line_is_recorded_as_a_lone_space(self):
+        blanks = []
+        for name, text in self._fixtures():
+            for lineno, line in enumerate(text.splitlines(), 1):
+                if line.strip():
+                    continue
+                self.assertEqual(
+                    line,
+                    " ",
+                    f"{name}:{lineno}: a unified diff spells a blank context line as a "
+                    "lone space; an empty line is a stripped record, not glab output",
+                )
+                blanks.append(f"{name}:{lineno}")
+        self.assertTrue(
+            blanks,
+            "no fixture carries a blank context line any more, so the assertion above "
+            "passes over nothing and defends nothing",
+        )
+
+    def test_every_fixture_ends_with_exactly_one_newline(self):
+        """glab appends no separator between two files: it writes the `---`/`+++` pair
+        and then the API's diff body, so one file's last line runs straight into the
+        next file's `---` unless that body is newline-terminated.
+
+        The multi-file constants above concatenate these files directly, which is real
+        output only under that property — the one part of the recorded shape that is
+        inferred rather than captured (see the fixture README). Asserting it here keeps
+        the concatenation from quietly becoming a shape no CLI emits.
+        """
+        for name, text in self._fixtures():
+            self.assertTrue(
+                text.endswith("\n"), f"{name}: file boundary needs a final newline"
+            )
+            self.assertFalse(
+                text.endswith("\n\n"),
+                f"{name}: a trailing blank line is not glab output — a blank context "
+                "line is a lone space and a blank added line is a bare `+`",
+            )
+
 
 # A glab diff for a repo with a REAL top-level `a/` directory. `glab mr diff` prints
 # paths verbatim, so `a/foo.py` here is a directory named `a` — not git's synthetic
