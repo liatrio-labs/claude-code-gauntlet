@@ -63,7 +63,7 @@ GitLab path:
     Every position is checked against the diff facts before it is sent OR captured — see
     validate_position for what that does and does not cover. Any malformed position fails
     a --dry-run; live, it is a per-finding loss like a rejection, so it exits non-zero
-    only when nothing was posted inline.
+    only when nothing NEW was posted inline.
 
 Line validation:
     Parses diff to validate each finding line is in the diff.
