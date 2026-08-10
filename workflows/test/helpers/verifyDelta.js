@@ -10,7 +10,7 @@
 // with this helper is the trust/join/degradation LOGIC; that the computation itself
 // matches Python's is pinned separately by the golden fixture in
 // tests/fixtures/parity/verify_deltas/, whose checksum verify_findings.py produced.
-import { deltaContentProof } from '../../src/stages.js';
+import { deltaContentProof, fnv1a32, parseWriterPayload } from '../../src/stages.js';
 
 // The exact string run_verification() stamps on every real elimination. Tests that
 // synthesise an eliminated delta must use it — trustSlice requires a non-empty stamp,
@@ -56,5 +56,36 @@ export function deltaEnvelope(findings, opts = {}) {
       deltas_checksum: opts.checksum === undefined ? deltaContentProof(ids, deltas) : opts.checksum,
     },
     result: { deltas },
+  };
+}
+
+// The slice-input content proof (issue #69 / #25 req 4-6) is computed by the workflow
+// over the content it DISPATCHED, so a faithful executor mock must echo the checksum of
+// the bytes the writer was actually handed -- not a value the test invented. This
+// recorder sits on the writer dispatch, remembers each slice's content, and stamps the
+// matching proof onto any executor envelope that does not already declare one. Tests
+// that probe the proof declare `input_checksum` explicitly (a wrong value, or null for
+// "the executor dropped it") and the stamp leaves them alone.
+export function sliceInputRecorder() {
+  const byPath = new Map();
+  return {
+    // Serve the writer dispatch faithfully AND remember what it was told to persist.
+    write(prompt) {
+      const entries = parseWriterPayload(prompt) || [];
+      for (const e of entries) byPath.set(e.path, e.content);
+      return { written: entries.map((e) => e.path) };
+    },
+    checksumFor(i) {
+      for (const [p, content] of byPath) {
+        if (p.endsWith(`.slice${i}.json`)) return fnv1a32(JSON.stringify(content, null, 2));
+      }
+      return null;
+    },
+    stamp(env, i) {
+      if (env && env.status === 'ok' && env.receipt && !Object.hasOwn(env.receipt, 'input_checksum')) {
+        env.receipt.input_checksum = this.checksumFor(i);
+      }
+      return env;
+    },
   };
 }

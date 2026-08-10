@@ -10,7 +10,7 @@
 //                           a thrown member resolves to null (siblings unaffected).
 import { parseWriterPayload, plannedArtifactPaths } from '../../src/stages.js';
 import { AGENTS } from '../../src/registry.js';
-import { deltaEnvelope } from './verifyDelta.js';
+import { deltaEnvelope, sliceInputRecorder } from './verifyDelta.js';
 
 const DISCOVERY_AGENT_TYPES = new Set(AGENTS);
 
@@ -125,6 +125,7 @@ export function makeCtx(args, opts = {}) {
   const calls = [];
   const violations = [];
   const A = args;
+  const rec = sliceInputRecorder();
   const seedFindings = () => (opts.findings ? opts.findings.map((f) => ({ ...f })) : makeFindings());
 
   // Mirror verifyStage's chunking so a multi-slice mock can echo the right findings and
@@ -155,9 +156,9 @@ export function makeCtx(args, opts = {}) {
     if (label.startsWith('verify-input-writer')) {
       // Faithful slice-input writer: echo back the exact paths it was asked to write, so
       // materializeVerifySlices' write-proof gate (written must cover the dispatched paths)
-      // passes on the happy path. The dispatched entries ride after the payload marker.
-      const entries = parseWriterPayload(prompt) || [];
-      return { written: entries.map((e) => e.path) };
+      // passes on the happy path. The recorder also remembers each slice's content so the
+      // executor branch below can stamp a matching input_checksum onto its envelope.
+      return rec.write(prompt);
     }
     if (label.startsWith('verify-slice-')) {
       // Per-slice DELTA receipt (issue #25 PR2): label carries the index (and optional
@@ -179,12 +180,12 @@ export function makeCtx(args, opts = {}) {
       // "verified" apart from "unknown"/degraded origin; the override here reproduces that
       // same signal on every delta in the slice.
       const originOverrides = Object.fromEntries(slice.map((f) => [f.id, { origin: 'new' }]));
-      return deltaEnvelope(slice, {
+      return rec.stamp(deltaEnvelope(slice, {
         sha: A.headShaShort,
         nonce: sliceNonce,
         n_in: slice.length,
         overrides: originOverrides,
-      });
+      }), sliceIndex);
     }
     if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };

@@ -18,7 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runWith, reportStage, verifyStage, slimPersistedCheckpoints, parseWriterPayload } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
-import { deltaEnvelope } from './helpers/verifyDelta.js';
+import { deltaEnvelope, sliceInputRecorder } from './helpers/verifyDelta.js';
 
 // Drain the microtask queue far enough that a SEQUENTIAL implementation has provably
 // parked on the gate (it can make no further progress without it).
@@ -438,6 +438,7 @@ test('D2.3: a healthy writer group\'s slices reach the executor and stay verifie
   const seen = [];
   const groupSliceIndices = {};
   const FAILED_LABELS = new Set(['verify-input-writer-1', 'verify-input-writer-2']);
+  const rec = sliceInputRecorder();
   const ctx = {
     agent: async (prompt, opts) => {
       const label = (opts || {}).label || '';
@@ -447,7 +448,7 @@ test('D2.3: a healthy writer group\'s slices reach the executor and stay verifie
         groupSliceIndices[label] = entries.map((e) => sliceIndexFromPath(e.path));
         if (label === 'verify-input-writer-1') return null;
         if (label === 'verify-input-writer-2') throw new Error('third-group boom');
-        return { written: entries.map((e) => e.path) };
+        return rec.write(prompt);
       }
       if (label.startsWith('verify-slice-')) {
         // A slice from a HEALTHY writer group reaches the executor. verifySliceSize is 1
@@ -456,10 +457,11 @@ test('D2.3: a healthy writer group\'s slices reach the executor and stay verifie
         // answers with a per-id DECISION — verified/origin/severity/confidence — and can
         // no longer hand back a substitute finding at all). Retry-agnostic: whichever
         // attempt dispatches, its own nonce is what gets echoed into the receipt, so this
-        // fixture proves reachability without asserting on which attempt landed.
+        // fixture proves reachability without asserting on which attempt landed. The
+        // recorder stamps a matching input_checksum so the new proof guard trusts it too.
         const sliceIndex = Number(/^verify-slice-(\d+)(?:-retry)?$/.exec(label)[1]);
         const nonce = (prompt.match(/--nonce (\S+)/) || [])[1];
-        return deltaEnvelope([findings[sliceIndex]], { sha: 'abc1234', nonce, n_in: 1 });
+        return rec.stamp(deltaEnvelope([findings[sliceIndex]], { sha: 'abc1234', nonce, n_in: 1 }), sliceIndex);
       }
       throw new Error(`unexpected dispatch label: ${label}`);
     },
