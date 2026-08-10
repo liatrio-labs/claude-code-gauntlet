@@ -1724,6 +1724,23 @@ def _parse_fixture(diff, platform="gitlab"):
         return parse_diff_lines(platform, "o", "r", 1)
 
 
+_MR_SHAS = ("base1", "head1", "start1")
+
+# The four keys every position carries whatever the finding is. Spelled here so a test
+# case states only the fields its own case is about.
+_POSITION_INVARIANTS = {
+    "position_type": "text",
+    "base_sha": "base1",
+    "head_sha": "head1",
+    "start_sha": "start1",
+}
+
+
+def _position(**fields):
+    """A position carrying the invariant keys plus *fields*."""
+    return dict(_POSITION_INVARIANTS, **fields)
+
+
 class TestValidatePosition(unittest.TestCase):
     """One test per violation branch, each mutating a sound position in exactly ONE way.
 
@@ -1733,20 +1750,18 @@ class TestValidatePosition(unittest.TestCase):
 
     # A sound context-line position for a modified file. Every violation test below
     # starts here and breaks one field.
-    def _sound(self):
-        return {
-            "position_type": "text",
-            "base_sha": "base1",
-            "head_sha": "head1",
-            "start_sha": "start1",
-            "new_path": "src/edited.py",
-            "new_line": 61,
-            "old_line": 50,
-            "old_path": "src/edited.py",
-        }
+    def _sound(self, **fields):
+        return _position(
+            new_path="src/edited.py",
+            new_line=61,
+            old_line=50,
+            old_path="src/edited.py",
+            **fields,
+        )
 
     def _check(self, position, **overrides):
         kwargs = {
+            "shas": _MR_SHAS,
             "valid_lines": {("src/edited.py", 61): 50},
             "new_files": set(),
             "old_paths": {"src/edited.py": "src/edited.py"},
@@ -1785,7 +1800,7 @@ class TestValidatePosition(unittest.TestCase):
         """``True`` is an ``int`` to ``isinstance`` and hashes equal to ``1``, so a
         boolean line number passes line validation and ships as JSON ``true``."""
         self.assertTrue(is_line_valid({("f.py", 1): None}, "f.py", True))
-        position = {"new_path": "f.py", "new_line": True, "old_path": "f.py"}
+        position = _position(new_path="f.py", new_line=True, old_path="f.py")
         problem = self._only_problem(
             position,
             valid_lines={("f.py", 1): None},
@@ -1822,7 +1837,7 @@ class TestValidatePosition(unittest.TestCase):
             valid_lines={("src/edited.py", 62): None},
             line=62,
         )
-        self.assertIn("old_line is set on a line that has no old side", problem)
+        self.assertIn("old_line must not be sent for this position", problem)
 
     def test_old_line_wrong_value(self):
         position = dict(self._sound(), old_line=49)
@@ -1839,11 +1854,11 @@ class TestValidatePosition(unittest.TestCase):
         )
 
     def test_old_path_present_on_an_added_file(self):
-        position = {
-            "new_path": "src/added.py",
-            "new_line": 1,
-            "old_path": "src/added.py",
-        }
+        position = _position(
+            new_path="src/added.py",
+            new_line=1,
+            old_path="src/added.py",
+        )
         problem = self._only_problem(
             position,
             valid_lines={("src/added.py", 1): None},
@@ -1852,18 +1867,18 @@ class TestValidatePosition(unittest.TestCase):
             filepath="src/added.py",
             line=1,
         )
-        self.assertIn("old_path is set on a newly-added file", problem)
+        self.assertIn("old_path must not be sent for this position", problem)
 
     def test_old_path_carries_the_post_rename_path(self):
         """The rename class: the post-rename path is a path the old side does not
         contain, and presence alone cannot tell it from the pre-rename one."""
         valid_lines, new_files, old_paths = _parse_fixture(GL_DIFF_RENAME)
-        position = {
-            "new_path": "new_name.py",
-            "new_line": 3,
-            "old_line": 3,
-            "old_path": "new_name.py",
-        }
+        position = _position(
+            new_path="new_name.py",
+            new_line=3,
+            old_line=3,
+            old_path="new_name.py",
+        )
         problem = self._only_problem(
             position,
             valid_lines=valid_lines,
@@ -1873,6 +1888,41 @@ class TestValidatePosition(unittest.TestCase):
             line=3,
         )
         self.assertIn("old_path is 'new_name.py', expected 'old_name.py'", problem)
+
+    # -- the loop-invariant keys -------------------------------------------
+
+    def test_sha_key_missing(self):
+        """A dropped SHA is a guaranteed 400 that no per-finding fact can reveal — the
+        position must be checked for CARRYING the fetched value, not just for the value
+        being usable."""
+        for key in ("base_sha", "head_sha", "start_sha"):
+            with self.subTest(key=key):
+                position = self._sound()
+                del position[key]
+                self.assertIn(f"{key} is missing", self._only_problem(position))
+
+    def test_sha_value_disagrees_with_the_fetch(self):
+        position = dict(self._sound(), head_sha="wrong")
+        self.assertIn(
+            "head_sha is 'wrong', expected 'head1'", self._only_problem(position)
+        )
+
+    def test_position_type_wrong(self):
+        position = dict(self._sound(), position_type="txet")
+        self.assertIn(
+            "position_type is 'txet', expected 'text'", self._only_problem(position)
+        )
+
+    def test_new_path_disagrees_with_the_resolved_path(self):
+        position = dict(self._sound(), new_path="b/src/edited.py")
+        self.assertIn("new_path is 'b/src/edited.py'", self._only_problem(position))
+
+    def test_unrecognised_key(self):
+        """`line_range` is `line_code`'s sibling: both are derived server-side and both
+        answer the identical 400. Nothing enumerates them — an unexpected key is a
+        malformed position whether or not anyone knew to name it."""
+        position = dict(self._sound(), line_range={"start": {}})
+        self.assertIn("line_range must not be sent", self._only_problem(position))
 
     # -- no false positives ------------------------------------------------
 
@@ -1887,54 +1937,54 @@ class TestValidatePosition(unittest.TestCase):
                 contract,
                 "src/edited.py",
                 61,
-                {
-                    "new_path": "src/edited.py",
-                    "new_line": 61,
-                    "old_line": 50,
-                    "old_path": "src/edited.py",
-                },
+                _position(
+                    new_path="src/edited.py",
+                    new_line=61,
+                    old_line=50,
+                    old_path="src/edited.py",
+                ),
             ),
             (
                 "added line in a modified file",
                 contract,
                 "src/edited.py",
                 62,
-                {
-                    "new_path": "src/edited.py",
-                    "new_line": 62,
-                    "old_path": "src/edited.py",
-                },
+                _position(
+                    new_path="src/edited.py",
+                    new_line=62,
+                    old_path="src/edited.py",
+                ),
             ),
             (
                 "line in a newly added file",
                 contract,
                 "src/app/clients/api/__init__.py",
                 1,
-                {"new_path": "src/app/clients/api/__init__.py", "new_line": 1},
+                _position(new_path="src/app/clients/api/__init__.py", new_line=1),
             ),
             (
                 "context line in a renamed file",
                 rename,
                 "new_name.py",
                 3,
-                {
-                    "new_path": "new_name.py",
-                    "new_line": 3,
-                    "old_line": 3,
-                    "old_path": "old_name.py",
-                },
+                _position(
+                    new_path="new_name.py",
+                    new_line=3,
+                    old_line=3,
+                    old_path="old_name.py",
+                ),
             ),
             (
                 "literal a/ directory path",
                 real_a_dir,
                 "a/foo.py",
                 1,
-                {
-                    "new_path": "a/foo.py",
-                    "new_line": 1,
-                    "old_line": 1,
-                    "old_path": "a/foo.py",
-                },
+                _position(
+                    new_path="a/foo.py",
+                    new_line=1,
+                    old_line=1,
+                    old_path="a/foo.py",
+                ),
             ),
         ]
         for label, parsed, filepath, line, position in cases:
@@ -1942,7 +1992,13 @@ class TestValidatePosition(unittest.TestCase):
             with self.subTest(case=label):
                 self.assertEqual(
                     validate_position(
-                        position, valid_lines, new_files, old_paths, filepath, line
+                        position,
+                        _MR_SHAS,
+                        valid_lines,
+                        new_files,
+                        old_paths,
+                        filepath,
+                        line,
                     ),
                     [],
                 )
@@ -1950,9 +2006,9 @@ class TestValidatePosition(unittest.TestCase):
     def test_skipped_validation_position_reports_nothing(self):
         """With no diff to consult the poster ships the finding's raw path and no
         old_line; the gate must not invent an expectation it cannot have."""
-        position = {"new_path": "b/x.py", "new_line": 3, "old_path": "b/x.py"}
+        position = _position(new_path="b/x.py", new_line=3, old_path="b/x.py")
         self.assertEqual(
-            validate_position(position, None, None, None, "b/x.py", 3),
+            validate_position(position, _MR_SHAS, None, None, None, "b/x.py", 3),
             [],
         )
 
@@ -3469,13 +3525,26 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
             "the payload must say why the finding is absent from it",
         )
 
-    def test_live_malformed_position_is_never_sent_and_exits_one(self):
+    def test_live_malformed_position_is_never_sent(self):
+        """Live, a malformed position is a per-finding loss like a rejection: the sound
+        findings still land, and the run stays a success with warnings. Inline
+        discussions have no idempotency key, so exiting non-zero on a PARTIAL delivery
+        would invite the rerun that double-posts everything that already landed."""
         findings = [dict(GL_CONTRACT_FINDINGS[0], line=61.0), GL_CONTRACT_FINDINGS[1]]
         run = self._run_main(findings=findings)
-        self.assertEqual(run.exit_code, 1)
+        self.assertIsNone(run.exit_code)
         posts = _discussion_posts(run.mock_run)
         self.assertEqual(len(posts), 1, "only the sound position may be posted")
         self.assertIn("  1 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 finding(s) had a malformed position", run.out)
+
+    def test_live_all_malformed_exits_one_with_nothing_posted(self):
+        findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]
+        run = self._run_main(findings=findings)
+        self.assertEqual(run.exit_code, 1)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("nothing new was posted inline", run.err)
 
 
 # ---------------------------------------------------------------------------
@@ -3738,6 +3807,25 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         )
         self.assertEqual(run.exit_code, 1)
         self.assertIn("attempted this run were rejected", run.err)
+        self.assertIn("2 from an earlier run remain on the MR", run.err)
+        self.assertNotIn("nothing was posted inline", run.err)
+
+    def test_already_present_plus_one_malformed_fails_honestly(self):
+        """The malformed-position exit reports the same outcome as the rejection exit
+        above — nothing NEW landed — so it owes the operator the same true statement
+        about what an earlier run left standing. A malformed position is caught before
+        the wire, so it is never one of the "attempted" discussions."""
+        run = self._run_main(
+            findings=[
+                GL_CONTRACT_FINDINGS[0],
+                GL_CONTRACT_FINDINGS[1],
+                dict(GL_CONTRACT_FINDINGS[2], line=1.0),
+            ],
+            prior=(True, {self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}, None),
+        )
+        self.assertEqual(run.exit_code, 1)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn("had a malformed position", run.err)
         self.assertIn("2 from an earlier run remain on the MR", run.err)
         self.assertNotIn("nothing was posted inline", run.err)
 

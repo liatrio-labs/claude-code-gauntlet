@@ -26,8 +26,8 @@ npx --yes jscpd --min-tokens 60 --reporters json,console \
 It reported 116 clone pairs, 1,483 duplicated lines, 2.16% of lines and 2.49% of tokens over 232
 first-party files. Thirty-two of the 116 pairs were opened at both locations and given their own
 row; 84 were grouped into the seven patterns in the second table, each with one exemplar read at
-both locations. Eight duplications that jscpd cannot detect were added as rows. Rows plus groups
-reconcile to 116 pairs plus the eight tool-invisible relationships.
+both locations. Duplications that jscpd cannot detect were added as rows as well. Rows plus groups
+reconcile to 116 pairs plus the ten tool-invisible relationships.
 
 **Two limits on the 2.16% figure, to be quoted alongside it.**
 
@@ -40,7 +40,7 @@ reconcile to 116 pairs plus the eight tool-invisible relationships.
 
 ## Individually classified rows
 
-Thirty-seven rows: 28 `intentional-and-documented`, 9 `intentional-but-undocumented`, 0
+Thirty-eight rows: 29 `intentional-and-documented`, 9 `intentional-but-undocumented`, 0
 `accidental`.
 
 | Pair | Classification | Reason | Doc ref |
@@ -71,6 +71,7 @@ Thirty-seven rows: 28 `intentional-and-documented`, 9 `intentional-but-undocumen
 | `bench/golden/anchors/candidates.json:2366-2388` ↔ `:2642-2664` | intentional-but-undocumented | Text content is entirely different; jscpd is matching the JSON record shape of a data file, not duplicated content. Nothing actionable. | — |
 | `bench/tests/test_check.py:341-365` ↔ `:451-475` | intentional-but-undocumented | Two upstream triggers for one G3 failure; the second copy's extra `script` key is the variable under test and is legible only because the surrounding literal is present. | — |
 | `tests/test_parity_fixtures.py:151-165` ↔ `workflows/test/tools/record_parity.py:158-171` | intentional-but-undocumented | Load-bearing and must not be consolidated: `record_parity.py` generates `expected.json`, so importing it into the test would compare the recorder to its own output. | — |
+| `scripts/post_review.py` — the GitLab position assembly ↔ `validate_position`'s expected position | intentional-and-documented | Load-bearing mirror, same shape as the row above: the gate must recompute every field independently, because one that derives its answer through the assembly moves with the assembly's bug and passes it. Below the 60-token threshold, so jscpd cannot see it. | `scripts/post_review.py:514-516` |
 | `tests/test_boundary_parity.py:104-114,197-207` ↔ `tests/test_post_review.py:1018-1028,1038-1048` | intentional-but-undocumented | Trimmed local `_fake_run` plus setUp/tearDown. The alternative is test modules importing each other, which lets an unrelated suite's refactor break this one. | — |
 | `workflows/src/mergeFindings.js:97-127` ↔ `:141-171` (`tryParseJsonAt` vs `findEndOfJson`) | intentional-and-documented | Consolidated behind `scanJsonObject` in #110; the thin wrappers retain their distinct parse and end-index contracts. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
 | `scripts/merge_findings.py:154-180` ↔ `:191-217` | intentional-and-documented | Consolidated behind `_scan_json_object` in #110; the thin wrappers retain their distinct parse and end-index contracts. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |

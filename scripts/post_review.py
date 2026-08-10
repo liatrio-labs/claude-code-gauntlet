@@ -60,9 +60,10 @@ GitLab path:
     aborting the batch. Each posted discussion carries a delivery marker keyed on its own
     rendered content, which is what makes the retry recognizable.
 
-    Every position is checked against the diff facts before it is sent OR captured, and a
-    malformed one exits non-zero in both modes — see validate_position for what that does
-    and does not cover.
+    Every position is checked against the diff facts before it is sent OR captured — see
+    validate_position for what that does and does not cover. Any malformed position fails
+    a --dry-run; live, it is a per-finding loss like a rejection, so it exits non-zero
+    only when nothing was posted inline.
 
 Line validation:
     Parses diff to validate each finding line is in the diff.
@@ -498,7 +499,9 @@ def is_new_file(new_files, filepath):
     return filepath in new_files
 
 
-def validate_position(position, valid_lines, new_files, old_paths, filepath, line):
+def validate_position(
+    position, shas, valid_lines, new_files, old_paths, filepath, line
+):
     """Return the reasons *position* is malformed for GitLab; empty when it is sound.
 
     This is what makes a capture mean something. ``try_post_json`` short-circuits into
@@ -508,58 +511,62 @@ def validate_position(position, valid_lines, new_files, old_paths, filepath, lin
     modes by construction, because a check that runs only under --dry-run cannot be the
     thing that makes --dry-run trustworthy.
 
-    Every expectation is recomputed here from the SAME diff facts the assembly consumed,
+    The gate is an EXACT-SHAPE comparison against a full expected position, in both
+    directions: a missing key, an unexpected key and a wrong value are the same kind of
+    400, and only a whole-shape check catches the ones nobody thought to enumerate.
+    ``line_code`` is the known case — GitLab derives it server-side — but its sibling
+    ``line_range`` reproduces the identical 400, and a key-by-key gate stays silent on
+    every field added to the assembly after it was written. Two-directional presence
+    matters for the same reason: an if-present-check-equality test passes every fixture
+    while saying nothing about the omission it exists to catch, which is precisely how a
+    dropped conditional attach reaches the wire.
+
+    *shas* is the ``fetch_gitlab_shas`` triple. Whether the fetched values are usable at
+    all is a loop-invariant question answered once at the fetch; whether each position
+    CARRIES them is per-position structure, and only this gate sees that.
+
+    Every expectation is recomputed here from the SAME facts the assembly consumed,
     rather than shared with it: a gate that derives its answer through the code under
-    test moves with the bug and passes it. The old_line and old_path comparisons are
-    TWO-directional for that same reason — an if-present-check-equality test is silent on
-    the omission it exists to catch, which is precisely how a dropped conditional attach
-    reaches the wire.
+    test moves with the bug and passes it.
 
     SCOPE, stated plainly: this catches a regression in the assembly below, or a
     malformed finding. It cannot catch a parser defect — ``valid_lines``, ``new_files``
     and ``old_paths`` are the ground truth BOTH sides are derived from, so a wrong answer
     there is compared against itself and passes.
-
-    SHA fields are deliberately absent: they are loop-invariant, so their check belongs
-    once at the fetch, not once per finding.
     """
+    base_sha, head_sha, start_sha = shas
+    expected = {
+        "position_type": "text",
+        "base_sha": base_sha,
+        "head_sha": head_sha,
+        "start_sha": start_sha,
+        "new_path": filepath,
+        "new_line": line,
+    }
+    expected_old_line = old_line_for(valid_lines, filepath, line)
+    if expected_old_line is not None:
+        expected["old_line"] = expected_old_line
+    if not is_new_file(new_files, filepath):
+        expected["old_path"] = (old_paths or {}).get(filepath, filepath)
+
     problems = []
 
+    # `True` and `61.0` both hash equal to the integer key, so a bool or a float line
+    # number passes line validation AND the equality check below, reaching the wire in
+    # its own spelling. Type is the only thing that separates them from the integer.
     new_line = position.get("new_line")
-    if "new_line" not in position:
-        problems.append("new_line is missing")
-    elif isinstance(new_line, bool) or not isinstance(new_line, int):
-        # `True` and `61.0` both hash equal to the integer key, so a bool or a float line
-        # number passes line validation and reaches the wire in its own spelling.
+    if "new_line" in position and (
+        isinstance(new_line, bool) or not isinstance(new_line, int)
+    ):
         problems.append(f"new_line must be an integer, got {new_line!r}")
-    elif new_line != line:
-        problems.append(f"new_line is {new_line!r}, expected {line!r}")
 
-    if "line_code" in position:
-        problems.append("line_code is derived server-side and must never be sent")
-
-    expected_old_line = old_line_for(valid_lines, filepath, line)
-    if expected_old_line is None:
-        if "old_line" in position:
-            problems.append("old_line is set on a line that has no old side")
-    elif "old_line" not in position:
-        problems.append(f"old_line is missing, expected {expected_old_line!r}")
-    elif position["old_line"] != expected_old_line:
-        problems.append(
-            f"old_line is {position['old_line']!r}, expected {expected_old_line!r}"
-        )
-
-    if is_new_file(new_files, filepath):
-        if "old_path" in position:
-            problems.append("old_path is set on a newly-added file")
-    else:
-        expected_old_path = (old_paths or {}).get(filepath, filepath)
-        if "old_path" not in position:
-            problems.append(f"old_path is missing, expected {expected_old_path!r}")
-        elif position["old_path"] != expected_old_path:
-            problems.append(
-                f"old_path is {position['old_path']!r}, expected {expected_old_path!r}"
-            )
+    for key in sorted(set(expected) - set(position)):
+        problems.append(f"{key} is missing, expected {expected[key]!r}")
+    for key in sorted(set(position) - set(expected)):
+        problems.append(f"{key} must not be sent for this position")
+    for key in sorted(set(position) & set(expected)):
+        if position[key] != expected[key]:
+            problems.append(f"{key} is {position[key]!r}, expected {expected[key]!r}")
 
     return problems
 
@@ -996,7 +1003,8 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     check_tool("glab")
 
     project_id = gitlab_project_id(owner, repo)
-    base_sha, head_sha, start_sha = fetch_gitlab_shas(project_id, mr_iid)
+    shas = fetch_gitlab_shas(project_id, mr_iid)
+    base_sha, head_sha, start_sha = shas
 
     # fetch_gitlab_shas dies when the FETCH fails but never inspects the field values. An
     # empty sha is a loop-invariant configuration failure — every position built below
@@ -1118,7 +1126,7 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             position["old_path"] = (old_paths or {}).get(filepath, filepath)
 
         problems = validate_position(
-            position, valid_lines, new_files, old_paths, filepath, line
+            position, shas, valid_lines, new_files, old_paths, filepath, line
         )
         if problems:
             warn_skip(
@@ -1174,6 +1182,17 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         )
     if invalid:
         print(f"  {invalid} finding(s) had a malformed position (see warnings above).")
+
+    # Both "nothing new landed" exits below report the same outcome for two different
+    # losses, so both owe the operator the same true statement about what is already
+    # there: on a rerun, "nothing was posted inline" is a lie whenever this review's
+    # discussions are standing on the MR from an earlier run (issue #132).
+    standing = (
+        f" {already_present} from an earlier run remain on the MR."
+        if already_present
+        else ""
+    )
+
     if failed:
         print(
             f"  {failed} inline discussion(s) rejected by GitLab (see warnings above)."
@@ -1183,12 +1202,8 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             # abandon the batch. A partial delivery is a success with warnings, but a
             # run that delivered nothing NEW and had a rejection is a failure, and the
             # message counts only what THIS run attempted: discussions an earlier run
-            # already placed are neither successes of this one nor part of the total.
-            standing = (
-                f" {already_present} from an earlier run remain on the MR."
-                if already_present
-                else ""
-            )
+            # already placed are neither successes of this one nor part of the total,
+            # and a malformed position never reached the wire to be "attempted".
             die(
                 f"all {failed} inline discussion(s) attempted this run were rejected by "
                 f"GitLab — nothing new was posted inline.{standing} The MR summary note "
@@ -1196,10 +1211,24 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"duplicating what is already there."
             )
 
-    # A malformed position is a payload defect, not a delivery outcome: it is the thing
-    # --dry-run exists to catch, so it fails BOTH modes. Returned rather than exited on,
-    # so main() still writes the dry-run payload that shows what was wrong.
-    return 1 if invalid else 0
+    # A malformed position is a payload defect, not a delivery outcome, and catching one
+    # before the live post is the whole point of the pre-flight: ANY of them fails the
+    # dry run, however many other findings captured cleanly. Returned rather than exited
+    # on, so main() still writes the dry-run payload that shows what was wrong.
+    if DRY_RUN:
+        return 1 if invalid else 0
+
+    # Live, the rule the rejection branch above already follows applies whichever way a
+    # finding was lost: a partial delivery is a success with warnings. Inline discussions
+    # carry no idempotency key — only the summary note is deduplicated — so a non-zero
+    # exit here invites the rerun that double-posts every discussion that landed.
+    if invalid and posted == 0:
+        die(
+            f"{invalid} finding(s) had a malformed position — nothing new was posted "
+            f"inline.{standing} The MR summary note is on the MR; rerunning retries the "
+            f"inline comments without duplicating what is already there."
+        )
+    return 0
 
 
 # ---------------------------------------------------------------------------
