@@ -104,13 +104,22 @@ test('orderMismatches reports each duplicate once, sorted, beside the other dire
 // lint, the bundle-fresh check and the suites all call clean, and that throws on
 // the first live dispatch (the sandbox has no Node builtins).
 
-test('unsafeImports accepts relative sibling imports', () => {
+test('unsafeImports accepts single-line relative sibling imports', () => {
   const source = [
     "import { dedupById } from './findingDedup.js';",
-    "import './sideEffect.js';",
+    "import registry from './registry.js';",
     'const x = 1;',
   ].join('\n');
   assert.deepEqual(unsafeImports(source), []);
+});
+
+test('unsafeImports flags a side-effect import even when the specifier is relative', () => {
+  // strip() matches only `import … from …`, so this line ships into the bundle
+  // verbatim — unsafe for the same reason a multi-line import is, despite './'.
+  const violations = unsafeImports("import './sideEffect.js';");
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].specifier, null);
+  assert.match(violations[0].reason, /single-line `from` clause/);
 });
 
 test('unsafeImports flags a node: builtin import with file line and specifier', () => {
@@ -121,22 +130,19 @@ test('unsafeImports flags a node: builtin import with file line and specifier', 
   assert.match(violations[0].reason, /undefined reference/);
 });
 
-test('unsafeImports flags bare, parent-relative and side-effect non-relative specifiers', () => {
-  const source = [
-    "import lodash from 'lodash';",
-    "import { x } from '../outside.js';",
-    "import 'node:fs';",
-  ].join('\n');
-  assert.deepEqual(unsafeImports(source).map((v) => v.specifier), ['lodash', '../outside.js', 'node:fs']);
+test('unsafeImports flags bare and parent-relative specifiers', () => {
+  // '../' is not a sibling: ORDER inlines nothing for it, so it is as unsafe as 'lodash'.
+  const source = ["import lodash from 'lodash';", "import { x } from '../outside.js';"].join('\n');
+  assert.deepEqual(unsafeImports(source).map((v) => v.specifier), ['lodash', '../outside.js']);
 });
 
-test('unsafeImports flags a multi-line import, whose specifier strip() never sees', () => {
+test('unsafeImports flags a multi-line import, whose `from` clause is on another line', () => {
   // strip()'s regex is single-line, so this statement survives into the bundle verbatim.
   const violations = unsafeImports(['import {', "  thing,", "} from './registry.js';"].join('\n'));
   assert.equal(violations.length, 1);
   assert.equal(violations[0].line, 1);
   assert.equal(violations[0].specifier, null);
-  assert.match(violations[0].reason, /multi-line import/);
+  assert.match(violations[0].reason, /single-line `from` clause/);
 });
 
 test('unsafeImports ignores import.meta and dynamic import()', () => {

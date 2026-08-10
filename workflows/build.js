@@ -92,11 +92,14 @@ function present() {
 // bundle-fresh check calls clean (committed bundle and rebuild are wrong together),
 // and that only throws on a live dispatch, since the sandbox provides no Node
 // builtins. Same crash class as the `structuredClone` live-smoke failure. Detect it
-// at BUILD time instead. A line whose specifier this cannot read on that one line
-// (a multi-line import) is also unsafe: strip()'s regex is single-line, so the
-// statement would survive into the bundle verbatim.
+// at BUILD time instead. The OTHER unsafe shape is any import line strip() does not
+// match at all — its regex wants a single-line `import … from …`, so a side-effect
+// (`import './x.js';`) or multi-line import survives into the bundle verbatim, which
+// the runtime cannot parse. Both are the same defect (the line ships as written), so
+// they carry one reason: it is the missing single-line `from` clause, not the
+// specifier, that makes them unsafe.
 const IMPORT_LINE = /^\s*import(?:\s+|\s*['"])/;
-const IMPORT_SPECIFIER = /(?:from\s*|^\s*import\s*)['"]([^'"]*)['"]/;
+const IMPORT_SPECIFIER = /\bfrom\s*['"]([^'"]*)['"]/;
 
 export function unsafeImports(source) {
   const bad = [];
@@ -107,7 +110,7 @@ export function unsafeImports(source) {
     if (specifier === null) {
       bad.push({
         line: i + 1, text: line.trim(), specifier: null,
-        reason: 'no import specifier on this line — a multi-line import survives stripping and ships into the bundle verbatim; put the statement on one line',
+        reason: 'no single-line `from` clause — strip() matches only `import … from …` on one line, so a side-effect or multi-line import ships into the bundle verbatim; ORDER already concatenates every module body, so no src module needs one',
       });
     } else if (!specifier.startsWith('./')) {
       bad.push({
