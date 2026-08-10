@@ -13,6 +13,13 @@ repos:
       - id: check-yaml
       - id: check-toml
       - id: check-json
+        # tests/fixtures/verify_slice_recovery/*.json are byte-exact captures of a
+        # writer bug: a complete JSON document with trailing closing punctuation
+        # appended after it. That trailing data is the fixture's entire point — it's
+        # what the raw_decode recovery path is tested against — so a strict single-
+        # document JSON parse is expected to fail here, not a defect to silence
+        # elsewhere.
+        exclude: "^tests/fixtures/verify_slice_recovery/.*\\.json$"
       - id: check-added-large-files
       # tests/fixtures/glab_diff/*.diff record another tool's output byte for byte.
       # trailing-whitespace strips the lone space a unified diff spells a blank context
