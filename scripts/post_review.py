@@ -60,6 +60,10 @@ GitLab path:
     aborting the batch. Each posted discussion carries a delivery marker keyed on its own
     rendered content, which is what makes the retry recognizable.
 
+    Every position is checked against the diff facts before it is sent OR captured, and a
+    malformed one exits non-zero in both modes — see validate_position for what that does
+    and does not cover.
+
 Line validation:
     Parses diff to validate each finding line is in the diff.
     Skips findings with invalid lines with a warning.
@@ -494,6 +498,72 @@ def is_new_file(new_files, filepath):
     return filepath in new_files
 
 
+def validate_position(position, valid_lines, new_files, old_paths, filepath, line):
+    """Return the reasons *position* is malformed for GitLab; empty when it is sound.
+
+    This is what makes a capture mean something. ``try_post_json`` short-circuits into
+    ``_CAPTURED`` before a payload reaches the network, so a pre-flight that only counts
+    captures reports twelve discussions "captured" immediately before the live run
+    answers 400 on all twelve. Its caller runs this UNCONDITIONALLY — one gate for both
+    modes by construction, because a check that runs only under --dry-run cannot be the
+    thing that makes --dry-run trustworthy.
+
+    Every expectation is recomputed here from the SAME diff facts the assembly consumed,
+    rather than shared with it: a gate that derives its answer through the code under
+    test moves with the bug and passes it. The old_line and old_path comparisons are
+    TWO-directional for that same reason — an if-present-check-equality test is silent on
+    the omission it exists to catch, which is precisely how a dropped conditional attach
+    reaches the wire.
+
+    SCOPE, stated plainly: this catches a regression in the assembly below, or a
+    malformed finding. It cannot catch a parser defect — ``valid_lines``, ``new_files``
+    and ``old_paths`` are the ground truth BOTH sides are derived from, so a wrong answer
+    there is compared against itself and passes.
+
+    SHA fields are deliberately absent: they are loop-invariant, so their check belongs
+    once at the fetch, not once per finding.
+    """
+    problems = []
+
+    new_line = position.get("new_line")
+    if "new_line" not in position:
+        problems.append("new_line is missing")
+    elif isinstance(new_line, bool) or not isinstance(new_line, int):
+        # `True` and `61.0` both hash equal to the integer key, so a bool or a float line
+        # number passes line validation and reaches the wire in its own spelling.
+        problems.append(f"new_line must be an integer, got {new_line!r}")
+    elif new_line != line:
+        problems.append(f"new_line is {new_line!r}, expected {line!r}")
+
+    if "line_code" in position:
+        problems.append("line_code is derived server-side and must never be sent")
+
+    expected_old_line = old_line_for(valid_lines, filepath, line)
+    if expected_old_line is None:
+        if "old_line" in position:
+            problems.append("old_line is set on a line that has no old side")
+    elif "old_line" not in position:
+        problems.append(f"old_line is missing, expected {expected_old_line!r}")
+    elif position["old_line"] != expected_old_line:
+        problems.append(
+            f"old_line is {position['old_line']!r}, expected {expected_old_line!r}"
+        )
+
+    if is_new_file(new_files, filepath):
+        if "old_path" in position:
+            problems.append("old_path is set on a newly-added file")
+    else:
+        expected_old_path = (old_paths or {}).get(filepath, filepath)
+        if "old_path" not in position:
+            problems.append(f"old_path is missing, expected {expected_old_path!r}")
+        elif position["old_path"] != expected_old_path:
+            problems.append(
+                f"old_path is {position['old_path']!r}, expected {expected_old_path!r}"
+            )
+
+    return problems
+
+
 # ---------------------------------------------------------------------------
 # Comment body rendering
 # ---------------------------------------------------------------------------
@@ -847,6 +917,7 @@ def post_github(data, valid_lines):
         print(f"  {len(comments)} inline comment(s) posted.")
     if skipped:
         print(f"  {len(skipped)} finding(s) skipped (lines not in diff).")
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -927,6 +998,21 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     project_id = gitlab_project_id(owner, repo)
     base_sha, head_sha, start_sha = fetch_gitlab_shas(project_id, mr_iid)
 
+    # fetch_gitlab_shas dies when the FETCH fails but never inspects the field values. An
+    # empty sha is a loop-invariant configuration failure — every position built below
+    # carries the same three — so it is reported ONCE, here, before the summary note
+    # lands on the MR, rather than as N per-finding rejections after it.
+    for name, value in (
+        ("base_sha", base_sha),
+        ("head_sha", head_sha),
+        ("start_sha", start_sha),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            die(
+                f"MR version {name} is {value!r} — every inline position would be "
+                f"rejected. Check that the MR has a version carrying all three SHAs."
+            )
+
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
     review_body += build_footer(len(findings), sha, body=review_body)
@@ -959,11 +1045,12 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         )
 
     # Post each finding as an inline discussion. Every finding lands in exactly one of
-    # the four counters below, so the outcome reported at the end is a partition of
+    # the five counters below, so the outcome reported at the end is a partition of
     # `findings` — a run cannot both under-report and claim success.
     posted = 0
     skipped = 0
     already_present = 0
+    invalid = 0
     failed = 0
     for f in findings:
         line = f.get("line")
@@ -1030,6 +1117,17 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             # coincide anyway.
             position["old_path"] = (old_paths or {}).get(filepath, filepath)
 
+        problems = validate_position(
+            position, valid_lines, new_files, old_paths, filepath, line
+        )
+        if problems:
+            warn_skip(
+                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+                f"— malformed GitLab position: {'; '.join(problems)}."
+            )
+            invalid += 1
+            continue
+
         # The delivery marker goes on the LIVE wire only. The benchmark harness pins
         # dry-run and scores the captured bodies as candidate text, so a marker in a
         # capture would change what is scored; the live path is the only place a rerun
@@ -1074,6 +1172,8 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             f"  {already_present} inline discussion(s) already on the MR from an "
             f"earlier run — left alone."
         )
+    if invalid:
+        print(f"  {invalid} finding(s) had a malformed position (see warnings above).")
     if failed:
         print(
             f"  {failed} inline discussion(s) rejected by GitLab (see warnings above)."
@@ -1095,6 +1195,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"is on the MR; rerunning retries the inline comments without "
                 f"duplicating what is already there."
             )
+
+    # A malformed position is a payload defect, not a delivery outcome: it is the thing
+    # --dry-run exists to catch, so it fails BOTH modes. Returned rather than exited on,
+    # so main() still writes the dry-run payload that shows what was wrong.
+    return 1 if invalid else 0
 
 
 # ---------------------------------------------------------------------------
@@ -1219,15 +1324,20 @@ def main():
         platform, data["owner"], data["repo"], data["pr_number"]
     )
 
-    # Deliver
+    # Deliver. A poster RETURNS its exit status instead of exiting, so a payload defect
+    # it found cannot pre-empt the dry-run payload write below — that file is the artifact
+    # an operator reads to see what the run would have sent.
     if platform == "github":
-        post_github(data, valid_lines)
+        status = post_github(data, valid_lines)
     else:
-        post_gitlab(data, valid_lines, new_files, old_paths)
+        status = post_gitlab(data, valid_lines, new_files, old_paths)
 
     if DRY_RUN:
         out_path = write_dry_run_payload(platform, args.findings_json)
         print(f"Dry run — no comments posted. Payload written to: {out_path}")
+
+    if status:
+        sys.exit(status)
 
 
 if __name__ == "__main__":
