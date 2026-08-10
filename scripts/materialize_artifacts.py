@@ -369,8 +369,8 @@ def _receipt(ok, source, scanned, materialized, assemble_receipt, gaps, errors):
     }
 
 
-def materialize(task, nonce, output_dir, environ=None):
-    """Do the whole job and return the receipt dict. Never raises."""
+def _materialize(task, nonce, output_dir, environ=None):
+    """Write what the run returned, derive the projections, return the receipt."""
     environ = os.environ if environ is None else environ
     errors = []
     gaps = []
@@ -404,6 +404,29 @@ def materialize(task, nonce, output_dir, environ=None):
         )
         return _receipt(False, source, scanned, materialized, receipt, gaps, errors)
     return _receipt(not gaps, source, scanned, materialized, receipt, gaps, errors)
+
+
+def materialize(task, nonce, output_dir, environ=None):
+    """_materialize, with a last-resort guard so the caller ALWAYS gets a receipt.
+
+    Same shape and same reason as assemble_artifacts.py's assemble(): the guard
+    belongs to the function that promises a receipt, not to one caller of it, so
+    every caller — main(), a test, a future importer — gets the promise. Every
+    expected failure is already a receipt above; this catches the unexpected one
+    and still reports it honestly as ok:false.
+    """
+    try:
+        return _materialize(task, nonce, output_dir, environ)
+    except Exception as exc:  # noqa: BLE001 - the one-line-receipt contract
+        return _receipt(
+            False,
+            None,
+            0,
+            [],
+            None,
+            [],
+            [f"materializer failed unexpectedly: {type(exc).__name__}: {exc}"],
+        )
 
 
 def _minimal_receipt_line(exc):
@@ -464,18 +487,7 @@ def main(argv=None, environ=None):
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
     if not args.task and not args.nonce:
         parser.error("give --task, --nonce, or both — there is nothing to resolve")
-    try:
-        receipt = materialize(args.task, args.nonce, args.output_dir, environ)
-    except Exception as exc:  # noqa: BLE001 - the one-line-receipt contract
-        receipt = _receipt(
-            False,
-            None,
-            0,
-            [],
-            None,
-            [],
-            [f"materializer failed unexpectedly: {type(exc).__name__}: {exc}"],
-        )
+    receipt = materialize(args.task, args.nonce, args.output_dir, environ)
     try:
         line = escape_lone_surrogates(
             json.dumps(receipt, ensure_ascii=False, allow_nan=False)

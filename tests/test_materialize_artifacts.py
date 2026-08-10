@@ -184,46 +184,59 @@ class TestHappyPath(MaterializeTestCase):
 
     def test_materialize_happy_path_returns_a_success_receipt(self):
         # Direct materialize() on a pristine recorder task takes the success path.
-        # The one-line-receipt guarantee for *unexpected* exceptions lives in main()
-        # (see test_main_unexpected_exception_still_prints_one_line_receipt) — not
-        # here. materialize()'s "Never raises" docstring is false; that scripts/
-        # defect is filed separately under #109's req 8 (do not fix in this PR).
         receipt = materialize(self.task, None, self.out_dir, environ={})
         self.assertTrue(receipt["ok"], receipt)
         self.assertEqual(receipt["channel"], "return")
 
 
-class TestMainUnexpectedFailure(unittest.TestCase):
+# What the last-resort guard returns, whole: main()'s stdout line is this dict
+# serialized, so a field left unasserted is a stdout line that can change silently.
+UNEXPECTED_RECEIPT = {
+    "ok": False,
+    "channel": "return",
+    "source": None,
+    "scanned": 0,
+    "materialized": [],
+    "assemble": None,
+    "gaps": [],
+    "errors": ["materializer failed unexpectedly: RuntimeError: injected"],
+}
+
+
+class TestUnexpectedFailure(unittest.TestCase):
+    """The guard at both ends: materialize() builds the receipt for every caller,
+    main() prints it."""
+
+    def setUp(self):
+        self.out_dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.out_dir, ignore_errors=True)
+
+    def raising_source(self):
+        # Raise inside the first call materialize() makes, before any fixture work;
+        # run_cli cannot inject across a process boundary without touching scripts/.
+        return patch(
+            "scripts.materialize_artifacts.select_source",
+            side_effect=RuntimeError("injected"),
+        )
+
+    def test_materialize_converts_an_unexpected_exception_into_a_receipt(self):
+        # materialize() promises a receipt to EVERY caller, not just to main(), so
+        # the guard is asserted where it lives. Without this, moving the guard back
+        # into main() would leave the docstring's promise untested and false again.
+        with self.raising_source():
+            receipt = materialize("/nonexistent", None, self.out_dir, environ={})
+        self.assertEqual(receipt, UNEXPECTED_RECEIPT)
+
     def test_main_unexpected_exception_still_prints_one_line_receipt(self):
-        # main():469 converts an escape from materialize() into a serializable
-        # ok:false receipt. Patch select_source so materialize raises before any
-        # fixture work; do not use run_cli (cannot inject across a process boundary
-        # without touching scripts/).
-        out_dir = tempfile.mkdtemp()
-        self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
         buf = io.StringIO()
-        with (
-            patch(
-                "scripts.materialize_artifacts.select_source",
-                side_effect=RuntimeError("injected"),
-            ),
-            patch("sys.stdout", buf),
-        ):
+        with self.raising_source(), patch("sys.stdout", buf):
             code = main(
-                ["--output-dir", out_dir, "--task", "/nonexistent"],
+                ["--output-dir", self.out_dir, "--task", "/nonexistent"],
             )
         lines = [line for line in buf.getvalue().splitlines() if line.strip()]
         self.assertEqual(len(lines), 1, buf.getvalue())
-        receipt = json.loads(lines[0])
-        self.assertFalse(receipt["ok"], receipt)
+        self.assertEqual(json.loads(lines[0]), UNEXPECTED_RECEIPT)
         self.assertEqual(code, 1)
-        self.assertTrue(
-            any(
-                "materializer failed unexpectedly: RuntimeError: injected" in err
-                for err in receipt["errors"]
-            ),
-            receipt["errors"],
-        )
 
 
 class TestResolution(MaterializeTestCase):

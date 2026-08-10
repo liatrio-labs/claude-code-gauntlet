@@ -40,7 +40,8 @@ reconcile to 116 pairs plus the eight tool-invisible relationships.
 
 ## Individually classified rows
 
-Thirty-six rows: 27 `intentional-and-documented`, 9 `intentional-but-undocumented`, 0 `accidental`.
+Thirty-seven rows: 28 `intentional-and-documented`, 9 `intentional-but-undocumented`, 0
+`accidental`.
 
 | Pair | Classification | Reason | Doc ref |
 | --- | --- | --- | --- |
@@ -80,6 +81,7 @@ Thirty-six rows: 27 `intentional-and-documented`, 9 `intentional-but-undocumente
 | `bench/report.html:32-52` ↔ `:54-74` | intentional-and-documented | Regenerated from `bench/report.py` in #110; its two dark-mode blocks now derive from `_DARK_VIZ_VARS`. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
 | `workflows/src/stages.js:608-614` ↔ `:1275-1281` ↔ `:1439-1445` | intentional-but-undocumented | Declined in #110: only 2 of the ~6 lines are identical across the 8 sites; the remainder is per-stage extraction and defaults, and each parse is independently tested. Revisit only if a ninth stage or a change to the shared 2-line parse itself lands. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
 | `tests/test_assemble_artifacts.py:503-513` ↔ `:1158-1168` | intentional-and-documented | Consolidated behind `assert_assemble_hard_failure` in #110. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
+| `scripts/assemble_artifacts.py:658-676` (`assemble`) ↔ `scripts/materialize_artifacts.py:409-429` (`materialize`) | intentional-and-documented | The public wrapper whose only body is the last-resort guard over a private worker. Below the 60-token threshold, so jscpd missed it. Not shared: each side builds its own `_receipt` shape and names its own script in the error, and the guard belongs to whichever function promises the receipt. | `scripts/AGENTS.md:23-25` |
 
 ## Grouped patterns
 
