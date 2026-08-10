@@ -95,7 +95,12 @@ CODEX_CAP_BYTES = 32_768
 # are legal in src/. The rule takes two clauses, not one: the specifier must be a
 # relative sibling AND the `from` clause must be on the same line, because a
 # side-effect import satisfies the first and still ships into the bundle verbatim.
-AGENTS_SET_BUDGET_BYTES = 19_751
+# Raised 19_751 -> 19_812 (2026-08-10, #171): floor ratchet to newly-measured CI
+# headroom — Python 91.7 -> 91.8 (CI: 92.77), JS branches 82.3 -> 83.3 (CI: 84.23),
+# JS functions 97 -> 97.2 (CI: 98.18); JS lines stayed at 98, headroom under 1.0 pp.
+# The floor policy requires each value's provenance note name the measurement it
+# came from, so a stale note is the unverifiable claim the repo's own rules prohibit.
+AGENTS_SET_BUDGET_BYTES = 19_812
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
