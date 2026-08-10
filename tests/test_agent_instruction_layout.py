@@ -87,7 +87,15 @@ CODEX_CAP_BYTES = 32_768
 # Raised 19_079 -> 19_282 (2026-08-04, #110): restore await_workflow stdout-payload
 # rationale (Bash caller / model-context / distinct keys) wrongly compressed earlier in
 # #110; add scripts CLI stdout/stderr contract pointing at script_io.write_result.
-AGENTS_SET_BUDGET_BYTES = 19_282
+# Raised 19_282 -> 19_751 (2026-08-09, #137): build.js now fails on an import strip()
+# cannot safely drop rather than silently stripping (or emitting) it. The mechanism is
+# code, but the rule an author needs *before* writing the import is not — build.js's
+# comment is only read after the failure, and neither the Biome gate nor the
+# bundle-fresh check reports one, so nothing else in the tree tells them which imports
+# are legal in src/. The rule takes two clauses, not one: the specifier must be a
+# relative sibling AND the `from` clause must be on the same line, because a
+# side-effect import satisfies the first and still ships into the bundle verbatim.
+AGENTS_SET_BUDGET_BYTES = 19_751
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

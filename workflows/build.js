@@ -85,6 +85,43 @@ function present() {
   return ORDER.filter((f) => found.has(f));
 }
 
+// Only a RELATIVE import is safe to drop: the target is a sibling src module whose
+// body ORDER inlines into the bundle, so the stripped binding still resolves. A
+// `node:*` or bare specifier inlines nothing — stripping it ships an undefined
+// reference that lint cannot see (the binding IS declared in the src file), that the
+// bundle-fresh check calls clean (committed bundle and rebuild are wrong together),
+// and that only throws on a live dispatch, since the sandbox provides no Node
+// builtins. Same crash class as the `structuredClone` live-smoke failure. Detect it
+// at BUILD time instead. The OTHER unsafe shape is any import line strip() does not
+// match at all — its regex wants a single-line `import … from …`, so a side-effect
+// (`import './x.js';`) or multi-line import survives into the bundle verbatim, which
+// the runtime cannot parse. Both are the same defect (the line ships as written), so
+// they carry one reason: it is the missing single-line `from` clause, not the
+// specifier, that makes them unsafe.
+const IMPORT_LINE = /^\s*import(?:\s+|\s*['"])/;
+const IMPORT_SPECIFIER = /\bfrom\s*['"]([^'"]*)['"]/;
+
+export function unsafeImports(source) {
+  const bad = [];
+  source.split('\n').forEach((line, i) => {
+    if (!IMPORT_LINE.test(line)) return;
+    const match = IMPORT_SPECIFIER.exec(line);
+    const specifier = match ? match[1] : null;
+    if (specifier === null) {
+      bad.push({
+        line: i + 1, text: line.trim(), specifier: null,
+        reason: 'no single-line `from` clause — strip() matches only `import … from …` on one line, so a side-effect or multi-line import ships into the bundle verbatim; ORDER already concatenates every module body, so no src module needs one',
+      });
+    } else if (!specifier.startsWith('./')) {
+      bad.push({
+        line: i + 1, text: line.trim(), specifier,
+        reason: `specifier '${specifier}' is not relative to src/ — nothing is inlined for it, so stripping the line ships an undefined reference; inline the value into src/ instead`,
+      });
+    }
+  });
+  return bad;
+}
+
 // Drop import lines and the hoisted consts (emitted at the top instead); rewrite
 // `export X` -> `X` for every other declaration.
 function strip(source) {
@@ -118,12 +155,31 @@ export function detectTopLevelCollisions(bundleText) {
     .map(([name, lines]) => ({ name, lines }));
 }
 
+// Extracted so the throw path itself — not just the pure unsafeImports() scan — is
+// directly testable against a synthetic files/sources map, without also having to
+// satisfy present()'s ORDER-matches-disk guard for a real file added to workflows/src/.
+export function checkUnsafeImports(files, sources) {
+  const unsafe = files.flatMap((file) =>
+    unsafeImports(sources.get(file)).map((v) => ({ ...v, file })));
+  if (unsafe.length) {
+    throw new Error(
+      `build.js: unsafe import(s) in workflows/src — only single-line './sibling.js' imports may be stripped:\n`
+        + unsafe.map((v) => `  src/${v.file}:${v.line}: ${v.text}\n    ${v.reason}`).join('\n'),
+    );
+  }
+}
+
 export function build() {
   const files = present();
+  const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
+
+  // 0) Fail on any import strip() cannot safely drop (see unsafeImports).
+  checkUnsafeImports(files, sources);
+
   // 1) Hoist the public surface so the bundle's first line is `export const meta`.
   const hoisted = [];
   for (const file of files) {
-    for (const line of readFileSync(join(SRC, file), 'utf8').split('\n')) {
+    for (const line of sources.get(file).split('\n')) {
       if (isHoisted(line)) hoisted.push(line);
     }
   }
@@ -131,7 +187,7 @@ export function build() {
   // 2) Emit every module body (public consts already hoisted, imports dropped).
   for (const file of files) {
     parts.push(`// --- ${file} ---`);
-    parts.push(strip(readFileSync(join(SRC, file), 'utf8')));
+    parts.push(strip(sources.get(file)));
   }
   const bundle = parts.join('\n').replace(/\n+$/, '') + '\n';
 

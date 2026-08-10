@@ -2,10 +2,11 @@
 // completeness guard: the build-time guards that turn a would-be runtime
 // `Identifier 'X' has already been declared` SyntaxError (the SEVERITY_ORDER
 // collision the live smoke run hit) or a silently incomplete bundle into loud
-// build failures naming the duplicate or the missing file.
+// build failures naming the duplicate or the missing file — plus the import guard
+// that refuses any specifier strip() cannot safely drop.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectTopLevelCollisions, build, orderMismatches } from '../build.js';
+import { detectTopLevelCollisions, build, orderMismatches, unsafeImports, checkUnsafeImports } from '../build.js';
 
 test('detectTopLevelCollisions flags a duplicated top-level declaration', () => {
   const text = [
@@ -96,4 +97,85 @@ test('orderMismatches reports each duplicate once, sorted, beside the other dire
   assert.deepEqual(result.duplicatedInOrder, ['a.js', 'z.js']); // deduped and sorted
   assert.deepEqual(result.missingFromOrder, ['stray.js']);
   assert.deepEqual(result.missingFromDisk, ['orphan-order.js']);
+});
+
+// unsafeImports — only a relative sibling import may be stripped. A `node:`/bare
+// specifier inlines nothing, so stripping it ships an undefined reference that
+// lint, the bundle-fresh check and the suites all call clean, and that throws on
+// the first live dispatch (the sandbox has no Node builtins).
+
+test('unsafeImports accepts single-line relative sibling imports', () => {
+  const source = [
+    "import { dedupById } from './findingDedup.js';",
+    "import registry from './registry.js';",
+    'const x = 1;',
+  ].join('\n');
+  assert.deepEqual(unsafeImports(source), []);
+});
+
+test('unsafeImports flags a side-effect import even when the specifier is relative', () => {
+  // strip() matches only `import … from …`, so this line ships into the bundle
+  // verbatim — unsafe for the same reason a multi-line import is, despite './'.
+  const violations = unsafeImports("import './sideEffect.js';");
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].specifier, null);
+  assert.match(violations[0].reason, /single-line `from` clause/);
+});
+
+test('unsafeImports flags a node: builtin import with file line and specifier', () => {
+  const violations = unsafeImports(['const a = 1;', "import { inspect } from 'node:util';"].join('\n'));
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].line, 2);
+  assert.equal(violations[0].specifier, 'node:util');
+  assert.match(violations[0].reason, /undefined reference/);
+});
+
+test('unsafeImports flags bare and parent-relative specifiers', () => {
+  // '../' is not a sibling: ORDER inlines nothing for it, so it is as unsafe as 'lodash'.
+  const source = ["import lodash from 'lodash';", "import { x } from '../outside.js';"].join('\n');
+  assert.deepEqual(unsafeImports(source).map((v) => v.specifier), ['lodash', '../outside.js']);
+});
+
+test('unsafeImports flags a multi-line import, whose `from` clause is on another line', () => {
+  // strip()'s regex is single-line, so this statement survives into the bundle verbatim.
+  const violations = unsafeImports(['import {', "  thing,", "} from './registry.js';"].join('\n'));
+  assert.equal(violations.length, 1);
+  assert.equal(violations[0].line, 1);
+  assert.equal(violations[0].specifier, null);
+  assert.match(violations[0].reason, /single-line `from` clause/);
+});
+
+test('unsafeImports ignores import.meta and dynamic import()', () => {
+  const source = ['const here = import.meta.url;', "const m = await import('./lazy.js');"].join('\n');
+  assert.deepEqual(unsafeImports(source), []);
+});
+
+test('the real src tree has no unsafe imports (build() succeeds)', () => {
+  assert.doesNotThrow(() => build());
+});
+
+// checkUnsafeImports is the exact function build() calls at step 0 — this exercises the
+// throw wiring itself (the `{ ...v, file }` spread and the multi-line Error format), not
+// just the pure unsafeImports() scan it's built on.
+test('checkUnsafeImports throws naming file, line and reason for violations spanning two files', () => {
+  const files = ['a.js', 'b.js'];
+  const sources = new Map([
+    ['a.js', "const ok = 1;\nimport { x } from 'lodash';"],
+    ['b.js', "import './sideEffect.js';"],
+  ]);
+  assert.throws(
+    () => checkUnsafeImports(files, sources),
+    (err) => {
+      assert.match(err.message, /unsafe import\(s\) in workflows\/src/);
+      assert.match(err.message, /src\/a\.js:2:.*lodash/);
+      assert.match(err.message, /src\/b\.js:1:.*sideEffect\.js/);
+      return true;
+    },
+  );
+});
+
+test('checkUnsafeImports does not throw when every file is clean', () => {
+  const files = ['a.js'];
+  const sources = new Map([['a.js', "import { x } from './sibling.js';"]]);
+  assert.doesNotThrow(() => checkUnsafeImports(files, sources));
 });
