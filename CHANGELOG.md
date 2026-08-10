@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v3.6.6 (2026-08-10)
+
+### Bug Fixes
+
+- **scripts**: Decode git's encoded diff header paths (#134, #162)
+  ([#170](https://github.com/liatrio-labs/claude-code-gauntlet/pull/170),
+  [`adeb0d7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/adeb0d708253cb0aa5427c4c3612f75da654fb3c))
+
+- **scripts**: One diff walk for verify, and GitLab-shaped headers (#134, #162)
+  ([#170](https://github.com/liatrio-labs/claude-code-gauntlet/pull/170),
+  [`adeb0d7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/adeb0d708253cb0aa5427c4c3612f75da654fb3c))
+
+- **verify**: Shared diff-line walk + GitLab-shape parsing for parse_diff_lines (#134, #162)
+  ([#170](https://github.com/liatrio-labs/claude-code-gauntlet/pull/170),
+  [`adeb0d7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/adeb0d708253cb0aa5427c4c3612f75da654fb3c))
+
+
 ## v3.6.5 (2026-08-10)
 
 ### Bug Fixes
