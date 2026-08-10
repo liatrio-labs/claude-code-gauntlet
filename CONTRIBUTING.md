@@ -155,6 +155,7 @@ python -m pytest tests/ -q
 python -m pytest bench/tests/ -q
 node --test workflows/test/*.test.js
 node workflows/build.js && git diff --exit-code workflows/pipeline.js
+claude plugin validate .
 pre-commit run --all-files
 ```
 
@@ -163,12 +164,21 @@ This will:
 - Execute the pytest suite for pipeline scripts and the bench harness
 - Execute the Node workflow test suite (stage contracts, parity replay, and the bundler's collision guard)
 - Confirm the committed bundle is byte-identical to a fresh build
+- Validate the plugin and marketplace manifests
 - Check YAML and TOML syntax
 - Fix Markdown formatting issues
 - Spell-check public-facing documentation
 - Scan for committed secrets
 - Audit GitHub Actions workflows for unsafe configuration, including non-hash-pinned actions
 - Validate the commit message format (on commit)
+
+`claude plugin validate .` needs the Claude Code CLI on your `PATH` — the same CLI this plugin installs into, so
+no extra dependency. CI installs a pinned version (`.github/workflows/validate.yml`) and runs it on every pull
+request, so a local run is a fast pre-check, not the enforcement. Skip it only if you do not have the CLI.
+
+Two required checks have no local command and are **CI-only**: `Run Workflow JS Lint` (Biome, downloaded and
+checksum-pinned in `.github/workflows/ci.yml`) and `lint-pr-title` (needs the PR title). Everything else in the
+merge gate is reproducible from the block above.
 
 Live bench smoke and paired measurements are **not** contributor gates — see
 [`bench/MEASUREMENT.md`](bench/MEASUREMENT.md).
@@ -217,8 +227,9 @@ If a change is breaking, include `!` (e.g., `feat!: change findings JSON schema`
 ```
 
 - Ensure all checks pass (pre-commit and the test suite) before requesting review. The checklist in
-  `.github/pull_request_template.md` enumerates every CI-enforced gate; tick the ones that apply and say why for
-  any you skipped.
+  `.github/pull_request_template.md` enumerates every CI-enforced gate a contributor can run locally; tick the
+  ones that apply and say why for any you skipped. The two CI-only checks named under
+  [Testing](#testing) have no local command and are not on the checklist.
 - **Merges to `main` require the always-on CI check-runs to be green** (lint, pytest
   matrix, workflow JS tests, bench self-tests, plugin validate, PR title lint). Those
   contexts are frozen in `REQUIRED_PR_CHECK_CONTEXTS` in

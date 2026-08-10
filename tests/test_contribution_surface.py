@@ -933,6 +933,24 @@ REQUIRED_PR_CHECK_CONTEXTS = (
     "lint-pr-title",
 )
 
+# Every required check maps to the command a contributor runs locally to reproduce it,
+# or to None when the check is CI-only. CONTRIBUTING claims the PR checklist covers the
+# locally-runnable gates and names the CI-only ones; this mapping is what makes that
+# claim checkable instead of a promise. A new required check must be added here, which
+# forces the docs question to be answered rather than skipped.
+LOCAL_COMMAND_FOR_REQUIRED_CHECK = {
+    "Run Linting": "pre-commit run --all-files",
+    "Run Tests (3.10)": "python -m pytest tests/ -q",
+    "Run Tests (3.11)": "python -m pytest tests/ -q",
+    "Run Tests (3.12)": "python -m pytest tests/ -q",
+    "Run Workflow JS Lint": None,  # Biome is a checksum-pinned CI download.
+    "Run Workflow JS Tests": "node --test workflows/test/*.test.js",
+    "Run Bench Self-Tests (3.11)": "python -m pytest bench/tests/ -q",
+    "Run Bench Self-Tests (3.12)": "python -m pytest bench/tests/ -q",
+    "Validate plugin.json": "claude plugin validate .",
+    "lint-pr-title": None,  # Needs the PR title; nothing local to run.
+}
+
 REQUIRED_PR_CHECK_WORKFLOWS = (
     ".github/workflows/ci.yml",
     ".github/workflows/validate.yml",
@@ -1008,6 +1026,34 @@ class TestRequiredPrCheckContexts(unittest.TestCase):
             "workflow job names drifted from REQUIRED_PR_CHECK_CONTEXTS — "
             "update the tuple AND ruleset 16049246 together",
         )
+
+    def test_every_required_check_is_classified_local_or_ci_only(self):
+        self.assertEqual(
+            tuple(sorted(LOCAL_COMMAND_FOR_REQUIRED_CHECK)),
+            tuple(sorted(REQUIRED_PR_CHECK_CONTEXTS)),
+        )
+
+    def test_locally_runnable_gates_are_on_the_pr_checklist(self):
+        contributing = _read("CONTRIBUTING.md")
+        template = _read(".github/pull_request_template.md")
+        for context, command in sorted(LOCAL_COMMAND_FOR_REQUIRED_CHECK.items()):
+            if command is None:
+                continue
+            with self.subTest(context=context):
+                self.assertIn(command, contributing)
+                self.assertIn(command, template)
+
+    def test_ci_only_gates_are_named_in_contributing(self):
+        contributing = _read("CONTRIBUTING.md")
+        ci_only = [
+            context
+            for context, command in LOCAL_COMMAND_FOR_REQUIRED_CHECK.items()
+            if command is None
+        ]
+        self.assertTrue(ci_only)
+        for context in ci_only:
+            with self.subTest(context=context):
+                self.assertIn(context, contributing)
 
     def test_docstring_names_the_ruleset(self):
         doc = _derive_required_pr_check_contexts.__doc__ or ""
