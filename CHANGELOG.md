@@ -2,6 +2,35 @@
 
 <!-- version list -->
 
+## v3.6.5 (2026-08-10)
+
+### Bug Fixes
+
+- **post-review**: Gate GitLab position payloads against parser ground truth (#131)
+  ([#168](https://github.com/liatrio-labs/claude-code-gauntlet/pull/168),
+  [`ca1828b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ca1828b23a3cfa77ef721350dcf778fc53fdcc2f))
+
+- **scripts**: Gate the whole GitLab position shape, not four of its keys
+  ([#168](https://github.com/liatrio-labs/claude-code-gauntlet/pull/168),
+  [`ca1828b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ca1828b23a3cfa77ef721350dcf778fc53fdcc2f))
+
+- **scripts**: Validate the GitLab position shape in dry-run and live
+  ([#168](https://github.com/liatrio-labs/claude-code-gauntlet/pull/168),
+  [`ca1828b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ca1828b23a3cfa77ef721350dcf778fc53fdcc2f))
+
+### Documentation
+
+- **post-review**: Say "nothing NEW" in the module's exit-status contract
+  ([#168](https://github.com/liatrio-labs/claude-code-gauntlet/pull/168),
+  [`ca1828b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ca1828b23a3cfa77ef721350dcf778fc53fdcc2f))
+
+### Testing
+
+- **post-review**: Re-pin NEW_FILE_KEY to the path added.diff actually records
+  ([#168](https://github.com/liatrio-labs/claude-code-gauntlet/pull/168),
+  [`ca1828b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ca1828b23a3cfa77ef721350dcf778fc53fdcc2f))
+
+
 ## v3.6.4 (2026-08-10)
 
 ### Bug Fixes
