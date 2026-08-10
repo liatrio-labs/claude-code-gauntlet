@@ -1044,15 +1044,57 @@ def _coerce_numeric_fields(finding):
     return finding
 
 
+# The trailing-byte class this loader RECOVERS from: whitespace and unbalanced closing
+# punctuation only. Issue #69 — the artifact-writer is a sampled agent, not a function,
+# and on smoke-20260728-144630-a162ecd it appended exactly `}\n` after two otherwise
+# complete slice-input documents, costing 23 fully intact findings their verification.
+# Recovering that class is deterministic; recovering anything wider is guessing. Matched
+# with fullmatch, so a document ending in real content can never sneak past on the
+# strength of a closing character.
+_RECOVERABLE_TRAILING_RE = re.compile(r"[ \t\r\n}\]]*")
+
+
 def load_input(findings_json_path):
-    """Load and validate the input JSON file."""
+    """Load and validate the input JSON file.
+
+    Returns ``(data, recovery)``. ``recovery`` is ``None`` for a clean parse, else
+    ``{"trailing_bytes": <the exact remainder>}`` — the caller MUST disclose it.
+
+    The parse is deliberately lenient about one measured corruption class and strict
+    about everything else. ``raw_decode`` takes the leading complete JSON value and
+    reports where it ended; a remainder of whitespace and unbalanced ``}``/``]`` is the
+    writer defect above and is recovered-and-disclosed. Anything else — a truncated
+    leading value, a duplicated document, trailing text — still dies with the message a
+    strict ``json.load`` produced, byte for byte, because those are cases where the
+    document on disk genuinely is not the one the pipeline dispatched.
+    """
     try:
         with open(findings_json_path) as fh:
-            data = json.load(fh)
+            text = fh.read()
     except FileNotFoundError:
         die(f"Findings file not found: {findings_json_path}")
+
+    # raw_decode does not skip leading whitespace; json.load does, so the offset is
+    # computed rather than the text stripped (stripping would shift every position in
+    # the error message below).
+    start = len(text) - len(text.lstrip())
+    try:
+        data, end = json.JSONDecoder().raw_decode(text, start)
     except json.JSONDecodeError as e:
         die(f"Invalid JSON in findings file: {e}")
+
+    recovery = None
+    tail = text[end:]
+    if tail.strip():
+        if not _RECOVERABLE_TRAILING_RE.fullmatch(tail):
+            # Byte-identical to the strict parser's own message: json.load skips the
+            # whitespace after the value before pointing at the offending character.
+            bad = end + len(tail) - len(tail.lstrip())
+            die(
+                "Invalid JSON in findings file: "
+                f"{json.JSONDecodeError('Extra data', text, bad)}"
+            )
+        recovery = {"trailing_bytes": tail}
 
     if not isinstance(data, dict):
         die("Input JSON must be an object with a 'findings' key.")
@@ -1066,7 +1108,7 @@ def load_input(findings_json_path):
     for finding in data["findings"]:
         _coerce_numeric_fields(finding)
 
-    return data
+    return data, recovery
 
 
 def _write_output(output, output_path):
@@ -1327,7 +1369,7 @@ def _run_receipt(args):
     """
     sha = args.head_sha or _resolve_head_sha() or ""
     try:
-        data = load_input(args.input)
+        data, recovery = load_input(args.input)
         findings = data["findings"]
         base_branch = data.get("base_branch") or args.base_branch
         result = run_verification(findings, base_branch, args.diff_file, verbose=False)
@@ -1440,7 +1482,18 @@ def _run_legacy(args, parser):
         )
 
     # Phase 1: Load
-    data = load_input(source)
+    data, recovery = load_input(source)
+    if recovery:
+        # The legacy path's stdout schema is frozen for v2/bench consumers, so the
+        # disclosure rides on stderr — loud, and naming the exact bytes, because a
+        # tolerated corruption that says nothing is the failure mode this whole change
+        # exists to avoid.
+        print(
+            f"RECOVERED: {source} carried {recovery['trailing_bytes']!r} after a "
+            "complete JSON document; the leading document was used and the trailing "
+            "bytes were ignored.",
+            file=sys.stderr,
+        )
     findings = data["findings"]
     base_branch = data.get("base_branch") or args.base_branch
     total = len(findings)
