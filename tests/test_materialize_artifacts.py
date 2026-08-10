@@ -184,21 +184,35 @@ class TestHappyPath(MaterializeTestCase):
 
     def test_materialize_happy_path_returns_a_success_receipt(self):
         # Direct materialize() on a pristine recorder task takes the success path.
-        # The one-line-receipt guarantee for *unexpected* exceptions lives in main()
-        # (see test_main_unexpected_exception_still_prints_one_line_receipt) — not
-        # here. materialize()'s "Never raises" docstring is false; that scripts/
-        # defect is filed separately under #109's req 8 (do not fix in this PR).
         receipt = materialize(self.task, None, self.out_dir, environ={})
         self.assertTrue(receipt["ok"], receipt)
         self.assertEqual(receipt["channel"], "return")
 
+    def test_materialize_converts_an_unexpected_exception_into_a_receipt(self):
+        # materialize() promises a receipt to EVERY caller, not just to main(), so
+        # the guard is asserted where it lives. Without this, moving the guard back
+        # into main() would leave the docstring's promise untested and false again.
+        with patch(
+            "scripts.materialize_artifacts.select_source",
+            side_effect=RuntimeError("injected"),
+        ):
+            receipt = materialize(self.task, None, self.out_dir, environ={})
+        self.assertFalse(receipt["ok"], receipt)
+        self.assertTrue(
+            any(
+                "materializer failed unexpectedly: RuntimeError: injected" in err
+                for err in receipt["errors"]
+            ),
+            receipt["errors"],
+        )
+
 
 class TestMainUnexpectedFailure(unittest.TestCase):
     def test_main_unexpected_exception_still_prints_one_line_receipt(self):
-        # main():469 converts an escape from materialize() into a serializable
-        # ok:false receipt. Patch select_source so materialize raises before any
-        # fixture work; do not use run_cli (cannot inject across a process boundary
-        # without touching scripts/).
+        # materialize()'s own guard is what converts an escape into a serializable
+        # ok:false receipt; main() prints it. Patch select_source so it raises before
+        # any fixture work; do not use run_cli (cannot inject across a process
+        # boundary without touching scripts/).
         out_dir = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, out_dir, ignore_errors=True)
         buf = io.StringIO()
