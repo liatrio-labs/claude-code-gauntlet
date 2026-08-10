@@ -1811,10 +1811,11 @@ class TestReceipt(unittest.TestCase):
 
             # (a) envelope shape + receipt fields. deltas_checksum is the delta echo's
             # content proof (issue #25 PR2) -- it now rides alongside sha/n_in/nonce.
+            # input_checksum is the slice-input content proof (issue #69, #25 req 4-6).
             self.assertEqual(envelope["status"], "ok")
             self.assertEqual(
                 set(envelope["receipt"].keys()),
-                {"sha", "n_in", "nonce", "deltas_checksum"},
+                {"sha", "n_in", "nonce", "deltas_checksum", "input_checksum"},
             )
             self.assertEqual(envelope["receipt"]["sha"], "deadbeef")
             self.assertEqual(envelope["receipt"]["n_in"], len(findings))
@@ -1822,6 +1823,11 @@ class TestReceipt(unittest.TestCase):
             self.assertRegex(
                 envelope["receipt"]["deltas_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
             )
+            self.assertRegex(
+                envelope["receipt"]["input_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
+            )
+            # Clean parse: input_recovery must be absent entirely, never null.
+            self.assertNotIn("input_recovery", envelope)
 
             # (b) result.verified is exactly what the legacy path produces
             self.assertEqual(envelope["result"]["verified"], legacy["verified"])
@@ -1922,6 +1928,7 @@ class TestReceipt(unittest.TestCase):
             self.assertEqual(envelope["status"], "ok")
             self.assertEqual(envelope["receipt"]["n_in"], len(self._findings()))
             self.assertEqual(len(envelope["result"]["deltas"]), len(self._findings()))
+            self.assertEqual(envelope["input_recovery"], {"trailing_bytes": "}"})
         finally:
             os.unlink(corrupt_path)
             os.unlink(out_path)
@@ -2552,7 +2559,7 @@ class TestCoerceNumericFields(unittest.TestCase):
             )
             path = f.name
         try:
-            data, _recovery = load_input(path)
+            data, _recovery, _checksum = load_input(path)
             self.assertEqual(data["findings"][0]["line_start"], 10)
             self.assertEqual(data["findings"][0]["line_end"], 12)
         finally:
@@ -2716,7 +2723,9 @@ class TestSliceInputRecovery(unittest.TestCase):
     def test_captured_writer_corruption_recovers_every_finding(self):
         for name, count in self.CAPTURES:
             with self.subTest(capture=name):
-                data, recovery = load_input(os.path.join(self.FIXTURES, name))
+                data, recovery, _checksum = load_input(
+                    os.path.join(self.FIXTURES, name)
+                )
                 self.assertIsNotNone(
                     recovery, "the capture must RECOVER, not parse clean"
                 )
@@ -2729,7 +2738,7 @@ class TestSliceInputRecovery(unittest.TestCase):
 
     def test_a_clean_document_reports_no_recovery(self):
         path = self._write(json.dumps({"findings": [], "base_branch": "main"}))
-        data, recovery = load_input(path)
+        data, recovery, _checksum = load_input(path)
         self.assertIsNone(recovery)
         self.assertEqual(data["findings"], [])
 
@@ -2737,7 +2746,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         path = self._write(
             json.dumps({"findings": [], "base_branch": "main"}) + "\n\n  \t\n"
         )
-        _data, recovery = load_input(path)
+        _data, recovery, _checksum = load_input(path)
         self.assertIsNone(recovery)
 
     def test_recovery_accepts_only_whitespace_and_closing_punctuation(self):
@@ -2749,7 +2758,7 @@ class TestSliceInputRecovery(unittest.TestCase):
             ("mixed closers and whitespace", "\n }\n ]\n"),
         ):
             with self.subTest(tail=label):
-                _data, recovery = load_input(self._write(doc + tail))
+                _data, recovery, _checksum = load_input(self._write(doc + tail))
                 self.assertEqual(recovery, {"trailing_bytes": tail})
 
     def test_everything_outside_the_class_still_dies_as_before(self):
@@ -2781,6 +2790,152 @@ class TestSliceInputRecovery(unittest.TestCase):
         with self.assertRaises(InputError) as ctx:
             load_input(path)
         self.assertEqual(str(ctx.exception), strict)
+
+    def test_the_extra_data_message_matches_on_a_multi_line_document(self):
+        # The single-line case above cannot exercise the line/column arithmetic in
+        # load_input's `bad` offset computation. A multi-line document does, both with
+        # and without a newline separating the document from the garbage.
+        doc = {"findings": [], "base_branch": "main"}
+        for label, text in (
+            ("garbage on the closing line", json.dumps(doc, indent=2) + "  oops"),
+            ("garbage after blank lines", json.dumps(doc, indent=2) + "\n\noops"),
+        ):
+            with self.subTest(case=label):
+                path = self._write(text)
+                try:
+                    json.loads(text)
+                except json.JSONDecodeError as e:
+                    strict = f"Invalid JSON in findings file: {e}"
+                with self.assertRaises(InputError) as ctx:
+                    load_input(path)
+                self.assertEqual(str(ctx.exception), strict)
+
+    def _receipt_findings(self):
+        # Nonexistent files and no line_start, so classify_blame short-circuits on
+        # os.path.exists and verify_factual skips -- no git subprocess, deterministic.
+        return [
+            {
+                "id": "bug-1",
+                "dimension": "bug",
+                "severity": "high",
+                "confidence": 75,
+                "file": "nope/does-not-exist-xyz.py",
+                "title": "t",
+                "description": "d",
+                "evidence": "e",
+                "cross_file_refs": [],
+            }
+        ]
+
+    def _run_receipt_over(self, text):
+        import io
+
+        in_path = self._write(text)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
+        self.addCleanup(os.unlink, out_path)
+        with (
+            patch("sys.stderr", new_callable=io.StringIO),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "verify_findings.py",
+                    "--input",
+                    in_path,
+                    "--output",
+                    out_path,
+                    "--nonce",
+                    "N.0",
+                    "--head-sha",
+                    "abc1234",
+                ],
+            ),
+        ):
+            from scripts.verify_findings import main
+
+            main()
+        with open(out_path) as fh:
+            return json.load(fh)
+
+    def test_the_input_checksum_covers_the_document_as_parsed(self):
+        # The workflow computes fnv1a32(JSON.stringify(content, null, 2)) over the
+        # content it DISPATCHED; this side must produce the same value from the bytes
+        # that reached disk. Recomputed here from the shared pair rather than pinned as
+        # a literal, so this test proves the wiring and the parity fixture (Task 4)
+        # proves the cross-runtime agreement.
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        doc = {"findings": [{"id": "b1", "title": "t"}], "base_branch": "main"}
+        path = self._write(json.dumps(doc))
+        _data, _recovery, checksum = load_input(path)
+        self.assertEqual(checksum, fnv1a32(js_stringify_pretty(doc)))
+
+    def test_the_checksum_is_taken_before_numeric_coercion_rewrites_the_document(self):
+        # Regression this guards: computing the checksum AFTER _coerce_numeric_fields
+        # would silently forgive a writer that re-quoted a number, because "10" and 10
+        # would hash the same. The workflow dispatched the NUMBER (pinNumericFields runs
+        # before the slice input is written), so a quoted value on disk is a real
+        # divergence and must fail the proof.
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        quoted = {"findings": [{"id": "b1", "line_start": "10"}], "base_branch": "main"}
+        pinned = {"findings": [{"id": "b1", "line_start": 10}], "base_branch": "main"}
+        _data, _recovery, checksum = load_input(self._write(json.dumps(quoted)))
+        self.assertEqual(checksum, fnv1a32(js_stringify_pretty(quoted)))
+        self.assertNotEqual(checksum, fnv1a32(js_stringify_pretty(pinned)))
+
+    def test_the_receipt_omits_an_uncomputable_checksum_rather_than_nulling_it(self):
+        # The echo schema types input_checksum as a string, so a null in the file would
+        # be an unrepresentable value at the StructuredOutput boundary -- the executor
+        # could neither echo it faithfully nor drop it honestly. Omission is the one
+        # spelling both sides of the wire agree on (same contract as input_recovery).
+        findings = self._receipt_findings()
+        findings[0]["criticality"] = 7.5
+        doc = {"findings": findings, "base_branch": "main"}
+        envelope = self._run_receipt_over(json.dumps(doc))
+        self.assertEqual(envelope["status"], "ok")
+        self.assertNotIn("input_checksum", envelope["receipt"])
+
+    def test_a_document_python_cannot_spell_identically_yields_no_checksum(self):
+        # js_stringify_pretty refuses a non-integral number rather than reimplement
+        # Number#toString (assemble_artifacts.assert_js_reproducible). An absent proof
+        # is a legal thing to report; the workflow decides what to do about it. Raising
+        # here would take out the whole envelope, including its honest failure shape --
+        # the same None-rather-than-raise contract deltas_checksum already uses.
+        doc = {"findings": [{"id": "b1", "criticality": 7.5}], "base_branch": "main"}
+        _data, _recovery, checksum = load_input(self._write(json.dumps(doc)))
+        self.assertIsNone(checksum)
+
+    def test_receipt_envelope_carries_the_checksum_and_omits_recovery_when_clean(self):
+        doc = {"findings": self._receipt_findings(), "base_branch": "main"}
+        envelope = self._run_receipt_over(json.dumps(doc))
+        self.assertEqual(envelope["status"], "ok")
+        self.assertTrue(envelope["receipt"]["input_checksum"].startswith("fnv1a32:0x"))
+        # Omitted, never null: the workflow keys the RECOVERED disclosure on this key's
+        # PRESENCE, so a null on the clean path would make every slice look recovered.
+        self.assertNotIn("input_recovery", envelope)
+
+    def test_receipt_envelope_discloses_recovery_with_the_exact_trailing_bytes(self):
+        doc = json.dumps({"findings": self._receipt_findings(), "base_branch": "main"})
+        envelope = self._run_receipt_over(doc + "}\n")
+        self.assertEqual(envelope["status"], "ok")
+        self.assertEqual(envelope["input_recovery"], {"trailing_bytes": "}\n"})
+        # The proof covers the LEADING document, not the file, so it is unaffected by
+        # the trailing bytes -- that equality is the whole reason recovery is safe.
+        _d, _r, expected = load_input(self._write(doc))
+        self.assertEqual(envelope["receipt"]["input_checksum"], expected)
+
+    def test_result_deltas_is_still_the_first_key_of_result(self):
+        # The executor's Read of this file is length-capped with NO truncation notice,
+        # so what it must echo has to sit at the front. Adding input_recovery to the
+        # envelope must not push deltas behind the two full finding arrays.
+        doc = json.dumps({"findings": self._receipt_findings(), "base_branch": "main"})
+        envelope = self._run_receipt_over(doc + "}\n")
+        self.assertEqual(next(iter(envelope["result"])), "deltas")
+        self.assertEqual(
+            list(envelope), ["status", "receipt", "input_recovery", "result"]
+        )
 
 
 if __name__ == "__main__":

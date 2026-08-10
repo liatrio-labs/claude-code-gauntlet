@@ -56,7 +56,10 @@ workflow's verify stage consumes, and adds the DELTA ECHO (issue #25 req 1/2):
 
     {
       "status": "ok",
-      "receipt": {"sha": ..., "n_in": N, "nonce": ..., "deltas_checksum": "fnv1a32:0x..."},
+      "receipt": {"sha": ..., "n_in": N, "nonce": ...,
+                  "deltas_checksum": "fnv1a32:0x...",
+                  "input_checksum": "fnv1a32:0x..."},
+      "input_recovery": {"trailing_bytes": "}\n"},   <- ONLY when the input was recovered
       "result": {
         "deltas": [ {"id", "verified", "origin", "severity", "confidence",
                      "elimination_reason"?}, ... ],   <- FIRST key, see below
@@ -1044,6 +1047,32 @@ def _coerce_numeric_fields(finding):
     return finding
 
 
+def _input_checksum(doc):
+    """The slice-input content proof: ``fnv1a32(js_stringify_pretty(doc))``.
+
+    The workflow computes the SAME value over the content it dispatched
+    (``JSON.stringify(content, null, 2)`` in materializeVerifySlices), so a match proves
+    the bytes the writer put on disk carry the document this run asked for. That is the
+    proof the write-proof echo never was: an echoed path only ever said "I wrote
+    something here" (issue #25 requirements 4-6).
+
+    It is a VALUE proof, not a byte proof, and deliberately so: the writer persists
+    compact JSON, so a byte comparison against the pretty form would fail every real
+    run. Both sides therefore hash a canonical re-serialisation of the same value —
+    the identical pair the persist path uses, pinned across runtimes by
+    tests/test_assemble_artifacts.py and by tests/fixtures/parity/slice_input_proof/.
+
+    Returns None rather than raising when the document holds a value the two runtimes
+    spell differently: an absent proof lets the workflow decide honestly, where an
+    exception here would take out the whole envelope including its failure shape. Same
+    contract, same reason, as ``deltas_checksum``.
+    """
+    try:
+        return fnv1a32(js_stringify_pretty(doc))
+    except JsSerializationError:
+        return None
+
+
 # The trailing-byte class this loader RECOVERS from: whitespace and unbalanced closing
 # punctuation only. Issue #69 — the artifact-writer is a sampled agent, not a function,
 # and on smoke-20260728-144630-a162ecd it appended exactly `}\n` after two otherwise
@@ -1057,8 +1086,9 @@ _RECOVERABLE_TRAILING_RE = re.compile(r"[ \t\r\n}\]]*")
 def load_input(findings_json_path):
     """Load and validate the input JSON file.
 
-    Returns ``(data, recovery)``. ``recovery`` is ``None`` for a clean parse, else
-    ``{"trailing_bytes": <the exact remainder>}`` — the caller MUST disclose it.
+    Returns ``(data, recovery, input_checksum)``. ``recovery`` is ``None`` for a clean
+    parse, else ``{"trailing_bytes": <the exact remainder>}`` — the caller MUST
+    disclose it.
 
     The parse is deliberately lenient about one measured corruption class and strict
     about everything else. ``raw_decode`` takes the leading complete JSON value and
@@ -1103,12 +1133,17 @@ def load_input(findings_json_path):
     if not isinstance(data["findings"], list):
         die("'findings' must be an array.")
 
+    # BEFORE the coercion below, on purpose. The workflow's expected checksum covers the
+    # document it DISPATCHED, and coercion rewrites values ("10" -> 10); checksumming
+    # after it would make a writer that re-quoted a number look byte-faithful.
+    checksum = _input_checksum(data)
+
     # Defensive int-cast at the --input boundary: numbers that arrived quoted must not
     # crash the arithmetic downstream (see _coerce_numeric_fields).
     for finding in data["findings"]:
         _coerce_numeric_fields(finding)
 
-    return data, recovery
+    return data, recovery, checksum
 
 
 def _write_output(output, output_path):
@@ -1354,12 +1389,17 @@ def _run_receipt(args):
     """Receipt mode (Task 11): load findings, run the shared verification, and emit
     the discriminated-union envelope the JS verify stage trusts.
 
-    On success:  ``{status:'ok', receipt:{sha, n_in, nonce, deltas_checksum},
-    result:{deltas, verified, eliminated, batches, stats}}``.
+    On success:  ``{status:'ok', receipt:{sha, n_in, nonce, deltas_checksum,
+    input_checksum}, input_recovery?, result:{deltas, verified, eliminated,
+    batches, stats}}``.
     On an uncaught exception during the body: ``{status:'failed', exitCode:1,
     stderr:str(e)}`` — written with exit 0 because an honest failure is
     schema-valid; the workflow routes it to the UNVERIFIED path rather than
     trusting a fabricated success under retry pressure.
+
+    `input_recovery` rides between the receipt and the result so `result.deltas` stays
+    near the front of the document — the executor's Read is length-capped with no
+    truncation notice, and what it must echo has to be a prefix.
 
     The result dict is REBUILT here with ``deltas`` first rather than mutated in
     place: the executor's Read of this file is length-capped with no truncation
@@ -1369,19 +1409,30 @@ def _run_receipt(args):
     """
     sha = args.head_sha or _resolve_head_sha() or ""
     try:
-        data, recovery = load_input(args.input)
+        data, recovery, input_checksum = load_input(args.input)
         findings = data["findings"]
         base_branch = data.get("base_branch") or args.base_branch
         result = run_verification(findings, base_branch, args.diff_file, verbose=False)
         deltas = build_deltas(findings, result["verified"])
+        receipt = {
+            "sha": sha,
+            "n_in": len(findings),
+            "nonce": args.nonce,
+            "deltas_checksum": deltas_checksum(deltas),
+        }
+        # OMITTED when no cross-runtime spelling exists -- never emitted as null. The
+        # executor's echo schema types this as a string, so a null would be an
+        # unrepresentable value at the StructuredOutput boundary; trustSlice skips the
+        # check when the dispatch side could not compute a proof either.
+        if input_checksum is not None:
+            receipt["input_checksum"] = input_checksum
         envelope = {
             "status": "ok",
-            "receipt": {
-                "sha": sha,
-                "n_in": len(findings),
-                "nonce": args.nonce,
-                "deltas_checksum": deltas_checksum(deltas),
-            },
+            "receipt": receipt,
+            # OMITTED when the parse was clean -- never emitted as null. The workflow
+            # keys its RECOVERED disclosure on this key's PRESENCE (stages.js), so a
+            # null here would mark every slice in every run as recovered.
+            **({"input_recovery": recovery} if recovery else {}),
             "result": {"deltas": deltas, **result},
         }
     except Exception as e:  # noqa: BLE001 — honest failure is the contract
@@ -1482,7 +1533,7 @@ def _run_legacy(args, parser):
         )
 
     # Phase 1: Load
-    data, recovery = load_input(source)
+    data, recovery, _input_checksum = load_input(source)
     if recovery:
         # The legacy path's stdout schema is frozen for v2/bench consumers, so the
         # disclosure rides on stderr — loud, and naming the exact bytes, because a
