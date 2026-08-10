@@ -40,8 +40,9 @@ reconcile to 116 pairs plus the ten tool-invisible relationships.
 
 ## Individually classified rows
 
-Thirty-eight rows: 29 `intentional-and-documented`, 9 `intentional-but-undocumented`, 0
-`accidental`.
+Thirty-nine rows: 29 `intentional-and-documented`, 9 `intentional-but-undocumented`, 1
+`accidental`. The `accidental` row postdates the scan basis above and is outside its 116-pair
+reconciliation.
 
 | Pair | Classification | Reason | Doc ref |
 | --- | --- | --- | --- |
@@ -83,6 +84,7 @@ Thirty-eight rows: 29 `intentional-and-documented`, 9 `intentional-but-undocumen
 | `workflows/src/stages.js:608-614` ↔ `:1275-1281` ↔ `:1439-1445` | intentional-but-undocumented | Declined in #110: only 2 of the ~6 lines are identical across the 8 sites; the remainder is per-stage extraction and defaults, and each parse is independently tested. Revisit only if a ninth stage or a change to the shared 2-line parse itself lands. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
 | `tests/test_assemble_artifacts.py:503-513` ↔ `:1158-1168` | intentional-and-documented | Consolidated behind `assert_assemble_hard_failure` in #110. | [#110](https://github.com/liatrio-labs/claude-code-gauntlet/issues/110) |
 | `scripts/assemble_artifacts.py:658-676` (`assemble`) ↔ `scripts/materialize_artifacts.py:409-429` (`materialize`) | intentional-and-documented | The public wrapper whose only body is the last-resort guard over a private worker. Below the 60-token threshold, so jscpd missed it. Not shared: each side builds its own `_receipt` shape and names its own script in the error, and the guard belongs to whichever function promises the receipt. | `scripts/AGENTS.md:23-25` |
+| `scripts/post_review.py:234-421` ↔ `scripts/verify_findings.py:257-315` (the `parse_diff_lines` pair) | accidental | Two walks of the same unified-diff grammar, which carried the same two defects and were fixed twice. Half-consolidated behind `scripts/diff_lines.py`: the verify side now delegates the walk and keeps only its own header semantics, while `post_review.py` still holds its copy. Interim by sequencing — the poster's GitLab position fields (`old_line`, `new_files`, `old_paths`) migrate under their own tests rather than alongside this change, and until they do the poster's copy keeps reading git's encoded header paths (a space's trailing TAB, a C-quoted non-ASCII name) as the path itself. | [#163](https://github.com/liatrio-labs/claude-code-gauntlet/issues/163) |
 
 ## Grouped patterns
 
