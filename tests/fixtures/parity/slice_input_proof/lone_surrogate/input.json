@@ -1,0 +1,22 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "bug-1",
+        "dimension": "bug",
+        "severity": "medium",
+        "confidence": 60,
+        "file": "src/text.go",
+        "line_start": 3,
+        "line_end": 5,
+        "title": "lone surrogate",
+        "description": "value has a lone surrogate: [\ud800]",
+        "evidence": "n/a",
+        "suggestion": "n/a",
+        "cross_file_refs": [],
+        "agent": "bug-detector"
+      }
+    ],
+    "base_branch": "main"
+  }
+}

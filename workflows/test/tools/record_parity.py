@@ -219,6 +219,18 @@ def _apply_challenges(inp):
     }
 
 
+def _slice_input_proof(inp):
+    # The slice-input content proof (issue #69 / #25 req 4-6). Python computes it over
+    # the document verify_findings.py parses off disk; the JS twin computes the same
+    # value over the content materializeVerifySlices dispatched, and trustSlice compares
+    # them. A divergence between the runtimes would present as a corrupt slice input
+    # rather than as a bug, so it is pinned by a golden rather than by each side
+    # agreeing with itself.
+    from verify_findings import _input_checksum
+
+    return {"checksum": _input_checksum(inp["doc"])}
+
+
 # Registered per-script recorders. Later tasks append entries here.
 RECORDERS = {
     "finding_dedup": _finding_dedup,
@@ -227,6 +239,7 @@ RECORDERS = {
     "apply_validations": _apply_validations,
     "apply_challenges": _apply_challenges,
     "verify_deltas": _verify_deltas,
+    "slice_input_proof": _slice_input_proof,
 }
 
 

@@ -293,6 +293,27 @@ class TestVerifyDeltasParity(unittest.TestCase):
                 self.assertEqual(got, expected)
 
 
+class TestSliceInputProofParity(unittest.TestCase):
+    def test_all_cases(self):
+        # Re-derived from the shared pair rather than imported from record_parity.py,
+        # matching this file's convention: a shared import would let a recorder bug and
+        # its "parity" test agree with each other by construction. The second assertion
+        # pins verify_findings' own wrapper to that pair, which is the value the receipt
+        # actually carries.
+        from assemble_artifacts import fnv1a32, js_stringify_pretty
+        from verify_findings import _input_checksum
+
+        for case_dir in sorted((FIXTURES / "slice_input_proof").iterdir()):
+            if not case_dir.is_dir():
+                continue
+            with self.subTest(case=case_dir.name):
+                inp, expected = _load(case_dir)
+                self.assertEqual(
+                    fnv1a32(js_stringify_pretty(inp["doc"])), expected["checksum"]
+                )
+                self.assertEqual(_input_checksum(inp["doc"]), expected["checksum"])
+
+
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
         before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}

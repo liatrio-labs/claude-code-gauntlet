@@ -1,0 +1,52 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "bug-1",
+        "dimension": "bug",
+        "severity": "low",
+        "confidence": 0,
+        "file": "src/zero.go",
+        "line_start": 0,
+        "line_end": 0,
+        "title": "zero-confidence edge",
+        "description": "boundary check",
+        "evidence": "n/a",
+        "suggestion": "n/a",
+        "cross_file_refs": [],
+        "agent": "bug-detector"
+      },
+      {
+        "id": "bug-2",
+        "dimension": "bug",
+        "severity": "high",
+        "confidence": 90,
+        "file": "src/max.go",
+        "line_start": 9007199254740991,
+        "line_end": 9007199254740991,
+        "title": "JS_MAX_SAFE_INTEGER line",
+        "description": "line at the safe-integer boundary",
+        "evidence": "n/a",
+        "suggestion": "n/a",
+        "cross_file_refs": [],
+        "agent": "bug-detector"
+      },
+      {
+        "id": "bug-3",
+        "dimension": "bug",
+        "severity": "high",
+        "confidence": 90,
+        "file": "src/negmax.go",
+        "line_start": -9007199254740991,
+        "line_end": 42,
+        "title": "negative safe-integer boundary",
+        "description": "a negative line number at the boundary",
+        "evidence": "n/a",
+        "suggestion": "n/a",
+        "cross_file_refs": [],
+        "agent": "bug-detector"
+      }
+    ],
+    "base_branch": "main"
+  }
+}
