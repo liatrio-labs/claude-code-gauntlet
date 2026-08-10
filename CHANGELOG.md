@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.6.3 (2026-08-10)
+
+### Bug Fixes
+
+- **scripts**: Make materialize() keep its own never-raises promise
+  ([#166](https://github.com/liatrio-labs/claude-code-gauntlet/pull/166),
+  [`5f8b381`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5f8b3817ea8b1e36fffee65e962b48c329771cdb))
+
+- **scripts**: Make materialize() self-guarding so its never-raises contract is true (#141)
+  ([#166](https://github.com/liatrio-labs/claude-code-gauntlet/pull/166),
+  [`5f8b381`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5f8b3817ea8b1e36fffee65e962b48c329771cdb))
+
+### Chores
+
+- **deps**: Bump the actions group with 2 updates
+  ([#160](https://github.com/liatrio-labs/claude-code-gauntlet/pull/160),
+  [`d2e1a64`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d2e1a64713c8d9aae07c71a4e97f9b362d1b385a))
+
+### Testing
+
+- **materialize**: Pin the whole guard receipt, not two of its fields
+  ([#166](https://github.com/liatrio-labs/claude-code-gauntlet/pull/166),
+  [`5f8b381`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5f8b3817ea8b1e36fffee65e962b48c329771cdb))
+
+
 ## v3.6.2 (2026-08-10)
 
 ### Bug Fixes
