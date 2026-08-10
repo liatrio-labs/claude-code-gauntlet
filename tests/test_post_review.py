@@ -3747,10 +3747,12 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
     broken implementation that keys every finding identically.
     """
 
-    # GL_CONTRACT_FINDINGS, in order: src/edited.py:61, src/edited.py:62, src/added.py:1.
+    # GL_CONTRACT_FINDINGS, in order: src/edited.py:61, src/edited.py:62, and line 1 of
+    # the added file, whose path is whatever `added.diff` records — a key is over the
+    # path, so re-recording that fixture re-pins these literals.
     CONTEXT_LINE_KEY = "f87d51ec25846a5e"
     ADDED_LINE_KEY = "ee15b1fc2a6db296"
-    NEW_FILE_KEY = "645f0e9e5cc472b3"
+    NEW_FILE_KEY = "a9cb7253f6710b82"
     ALL_KEYS: ClassVar[set[str]] = {CONTEXT_LINE_KEY, ADDED_LINE_KEY, NEW_FILE_KEY}
 
     @staticmethod
