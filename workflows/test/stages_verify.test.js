@@ -765,4 +765,51 @@ test('(p7) the echo schema and the executor prompt both name input_checksum and 
   // for the checksum (trustSlice), exactly like deltas_checksum.
   assert.deepEqual(call.schema.required, ['status']);
   assert.ok(!('required' in call.schema.properties.receipt), 'receipt declares no required list');
+  // The object's PRESENCE is optional (no top-level `required`), but once it is present,
+  // `trailing_bytes` is not — a schema-legal `{}` must not be an answerable shape.
+  assert.deepEqual(call.schema.properties.input_recovery.required, ['trailing_bytes']);
+});
+
+// --- code review fix round 1: input_recovery shape + ledger disjointness -------
+
+test('(p9) a schema-legal empty input_recovery ({}) is not a recovery: no RECOVERED gap, counted proven, no "undefined" ever appears', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.input_recovery = {}; // schema-legal (no top-level `required`), but unusable
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.gaps.length, 0, 'an unusable recovery is silently not a disclosure');
+  assert.ok(!out.gaps.some((g) => g.includes('undefined')), 'the literal word "undefined" never appears in a gap');
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 1, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p10) an input_recovery with a non-string trailing_bytes is also not a recovery: same outcome as {}', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.input_recovery = { trailing_bytes: 42 }; // wrong type: not a usable value
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.gaps.length, 0);
+  assert.ok(!out.gaps.some((g) => g.includes('undefined')));
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 1, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p11) a slice degraded for a NON-input reason (both attempts wrong nonce) leaves the input-proof ledger untouched: mismatched===0, missing===0', async () => {
+  // The ledger's disjointness invariant (stated in verifyStage's own comment: "a slice
+  // degraded for any other reason is counted in `slices` and nowhere else") has to be
+  // pinned by a test, not just by reading the code — a mutation that widens
+  // `else if (attempt.inputFault === 'missing')` to a bare `else` would otherwise count
+  // THIS slice's ordinary nonce-mismatch degrade as an input-proof failure and the whole
+  // suite would stay green.
+  const input = baseInput();
+  const ctx = verifyCtx(() => okEnvelope(input.findings, { nonce: 'WRONG' })); // fails both attempts, never an input-proof fault
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 0, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
 });

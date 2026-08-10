@@ -560,12 +560,16 @@ const VERIFY_SCHEMA = {
       },
     },
     // Present ONLY when the script recovered a slice-input file whose sole defect was
-    // trailing closing punctuation. Never declared `required` and never emitted as
-    // null: the RECOVERED disclosure keys on this object's PRESENCE, so a schema that
-    // forced it would mark every slice in every run as recovered.
+    // trailing closing punctuation. Never declared `required` at the TOP level (an absent
+    // object is a legal, common answer) — but `trailing_bytes` IS required WITHIN the
+    // object once it exists, because the RECOVERED disclosure keys on a usable string
+    // there, not on the object's mere presence: a schema-legal `input_recovery: {}` must
+    // not be answerable at all, or trustSlice's caller would have to distinguish "no
+    // recovery" from "a recovery that forgot to say what it recovered" on its own.
     input_recovery: {
       type: 'object',
       properties: { trailing_bytes: { type: 'string' } },
+      required: ['trailing_bytes'],
     },
     exitCode: { type: 'number' },
     stderr: { type: 'string' },
@@ -701,8 +705,9 @@ export async function verifyStage(ctx, input) {
       degrade(`slice ${i}: ${attempt.reason}`);
       continue;
     }
+    const recoveryBytes = usableRecoveryBytes(attempt.recovery);
     if (expectedInputChecksum == null) inputProof.unprovable += 1;
-    else if (attempt.recovery) inputProof.recovered += 1;
+    else if (recoveryBytes) inputProof.recovered += 1;
     else inputProof.proven += 1;
     // Trusted: this slice's OWN findings, enriched by the script's delta (origin
     // new/surfaced, the surfaced severity downgrade, the factual-verification confidence
@@ -713,7 +718,7 @@ export async function verifyStage(ctx, input) {
     // trustSlice requires the script's elimination stamp on every one of them).
     out.push(...attempt.verified);
     if (attempt.gap) gaps.push(attempt.gap);
-    if (attempt.recovery) {
+    if (recoveryBytes) {
       // Degraded-but-disclosed, never invisible: the writer appended bytes after a
       // complete document and the script recovered from it. Nothing was lost — the
       // LEADING document is the one the input proof matched — but a tolerance the run
@@ -728,7 +733,7 @@ export async function verifyStage(ctx, input) {
       const provenClause = expectedInputChecksum == null
         ? 'no cross-runtime proof was computable for this slice; verdicts trusted on the remaining guards'
         : 'leading document proven against dispatch, verdicts trusted';
-      gaps.push(`verify: RECOVERED — slice ${i}: writer appended trailing bytes ${JSON.stringify(attempt.recovery.trailing_bytes)} after a complete slice-input document; ${provenClause}`);
+      gaps.push(`verify: RECOVERED — slice ${i}: writer appended trailing bytes ${JSON.stringify(recoveryBytes)} after a complete slice-input document; ${provenClause}`);
     }
   }
 
@@ -755,6 +760,20 @@ function degradedSlice(slice) {
 // of mismatched / missing (a slice degraded for any other reason is counted in `slices`
 // and nowhere else).
 const emptyInputProof = () => ({ slices: 0, proven: 0, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+
+// A recovery is only USABLE when it names a non-empty `trailing_bytes` string. The
+// schema declares `input_recovery` an object with no top-level `required`, so an absent
+// recovery (`undefined`) is the common legal answer — but WITHIN the object,
+// `trailing_bytes` is schema-required (VERIFY_SCHEMA), so a StructuredOutput answer can
+// still arrive malformed only via a non-string value the schema's own type check missed,
+// or (pre-schema-fix) an empty string. Both the `recovered` counter and the RECOVERED
+// disclosure key on THIS, never on the weaker truthiness of the `input_recovery` object
+// itself — an object with no usable bytes is not a recovery, it is an unusable answer,
+// and treating it as one would fabricate a disclosure claiming bytes that do not exist.
+function usableRecoveryBytes(recovery) {
+  const bytes = recovery && recovery.trailing_bytes;
+  return typeof bytes === 'string' && bytes !== '' ? bytes : null;
+}
 
 // The loud gap for one degraded slice. `detail` names the slice (and, for a write
 // failure, the writer group) and carries the underlying reason, so a reader can tell

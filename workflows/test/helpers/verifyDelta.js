@@ -68,6 +68,15 @@ export function deltaEnvelope(findings, opts = {}) {
 // "the executor dropped it") and the stamp leaves them alone.
 export function sliceInputRecorder() {
   const byPath = new Map();
+  // A local function, not a method relying on `this` — a caller that destructures
+  // `{ stamp }` off the returned object (rather than always calling `rec.stamp(...)`)
+  // must not silently lose the closure it depends on.
+  const checksumFor = (i) => {
+    for (const [p, content] of byPath) {
+      if (p.endsWith(`.slice${i}.json`)) return fnv1a32(JSON.stringify(content, null, 2));
+    }
+    return null;
+  };
   return {
     // Serve the writer dispatch faithfully AND remember what it was told to persist.
     write(prompt) {
@@ -75,15 +84,10 @@ export function sliceInputRecorder() {
       for (const e of entries) byPath.set(e.path, e.content);
       return { written: entries.map((e) => e.path) };
     },
-    checksumFor(i) {
-      for (const [p, content] of byPath) {
-        if (p.endsWith(`.slice${i}.json`)) return fnv1a32(JSON.stringify(content, null, 2));
-      }
-      return null;
-    },
+    checksumFor,
     stamp(env, i) {
       if (env && env.status === 'ok' && env.receipt && !Object.hasOwn(env.receipt, 'input_checksum')) {
-        env.receipt.input_checksum = this.checksumFor(i);
+        env.receipt.input_checksum = checksumFor(i);
       }
       return env;
     },
