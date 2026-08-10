@@ -268,7 +268,13 @@ def parse_diff_lines(platform, owner, repo, pr_number):
             ["gh", "pr", "diff", str(pr_number), "--repo", f"{owner}/{repo}"]
         )
     elif platform == "gitlab":
-        # For GitLab, use glab mr diff
+        # PLAIN `glab mr diff` — never `--raw`. Plain output is glab's OWN reconstruction
+        # from the MR versions API: `--- <old_path>` / `+++ <new_path>` with the path
+        # verbatim, and nothing else between hunks. `--raw` streams git's diff instead,
+        # which reintroduces `a/` / `b/` prefixes and `/dev/null` — the gitlab branch
+        # below keys on paths exactly as printed and reads the old-side header as a real
+        # path, both premised on their absence. tests/fixtures/glab_diff/ records the
+        # shape and where it comes from.
         stdout, stderr, rc = run_api(["glab", "mr", "diff", str(pr_number)])
     else:
         warn(
@@ -289,7 +295,9 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     # paths VERBATIM and never writes a synthetic prefix, so a leading `a/` there is a
     # REAL top-level directory; stripping it truncated `a/`-rooted paths (`a/foo.py` ->
     # `foo.py`) into keys and positions GitLab does not know, and every finding in such
-    # a repo was rejected. The catch-all group carries `/dev/null` on both platforms.
+    # a repo was rejected. The catch-all group carries `/dev/null`, which only the GitHub
+    # shape ever writes — glab repeats the real path on both sides for an added or
+    # deleted file (tests/fixtures/glab_diff/ pins both shapes).
     if platform == "github":
         old_header_re = re.compile(r"^--- (?:a/)?(.+)$")
         new_header_re = re.compile(r"^\+\+\+ (?:b/)?(.+)$")

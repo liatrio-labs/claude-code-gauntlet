@@ -1,0 +1,7 @@
+--- src/edited.py
++++ src/edited.py
+@@ -50,3 +61,3 @@
+ unchanged_ctx
+-removed
++added
+ tail_ctx

@@ -14,8 +14,15 @@ repos:
       - id: check-toml
       - id: check-json
       - id: check-added-large-files
+      # tests/fixtures/glab_diff/*.diff record another tool's output byte for byte.
+      # trailing-whitespace strips the lone space a unified diff spells a blank context
+      # line with; end-of-file-fixer is a no-op on the files as they stand and is
+      # excluded so a later capture's final newlines are not normalised either. What
+      # reports a loss is tests/test_post_review.py::TestGlabFixtureBytes.
       - id: end-of-file-fixer
+        exclude: "^tests/fixtures/glab_diff/.*\\.diff$"
       - id: trailing-whitespace
+        exclude: "^tests/fixtures/glab_diff/.*\\.diff$"
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.45.0
