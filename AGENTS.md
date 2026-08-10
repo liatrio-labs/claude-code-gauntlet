@@ -23,8 +23,9 @@ takes coordinated edits across N files, fix the shape rather than documenting th
 - No `package.json`, lockfile, or `node_modules` is tracked in the repository.
 - The shipped pipeline runtime (`workflows/src`, `workflows/pipeline.js`) has zero
   dependencies — language globals plus the host-injected `agent`/`parallel`/
-  `pipeline`/`args` only. No import survives into the bundle (`build.js` strips
-  import lines); see `workflows/AGENTS.md` for the sandbox surface.
+  `pipeline`/`args` only. No import survives into the bundle: `build.js` strips
+  relative sibling imports and *fails* on any other specifier, which would ship
+  as an undefined reference. See `workflows/AGENTS.md` for the sandbox surface.
 - Pinned static binaries in CI are permitted (e.g. Biome for the `js-lint` job).
   Bumps are manual and deliberate; do not add a package manifest to get Dependabot
   coverage for those pins.

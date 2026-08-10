@@ -45,6 +45,10 @@ stay off so a later re-evaluation need not re-derive them:
 
 - `pipeline.js` is **generated** — never hand-edit it. Source is `src/*.js`, which may use ESM
   `import`/`export` for tests only; `build.js` strips those and concatenates.
+- Only single-line `'./sibling.js'` imports are strippable; `build.js` (`unsafeImports`) fails on
+  any other specifier. Nothing is inlined for a `node:`/bare one, so stripping it ships an
+  undefined reference that lint and the bundle-fresh check both call clean — inline the value
+  into `src/` instead.
 - Rebuild after any source change: `node workflows/build.js`. `tests/test_bundle_fresh.py` requires
   the committed bundle to be byte-identical to a fresh build, and import-free.
 - **`meta.name` must never equal the skill's name.** Both are registered by this plugin; an
