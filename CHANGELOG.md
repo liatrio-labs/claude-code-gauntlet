@@ -2,6 +2,55 @@
 
 <!-- version list -->
 
+## v3.6.2 (2026-08-10)
+
+### Bug Fixes
+
+- **build**: Exercise unsafeImports' throw wiring, not just the pure scan
+  ([#159](https://github.com/liatrio-labs/claude-code-gauntlet/pull/159),
+  [`b2117fb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b2117fbcce891b609fdcbc8e1690a2e55b4cab69))
+
+- **build**: Fail the build on a non-relative import in src/
+  ([#159](https://github.com/liatrio-labs/claude-code-gauntlet/pull/159),
+  [`b2117fb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b2117fbcce891b609fdcbc8e1690a2e55b4cab69))
+
+- **build**: Fail the build on a non-relative import in src/ (#137)
+  ([#159](https://github.com/liatrio-labs/claude-code-gauntlet/pull/159),
+  [`b2117fb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b2117fbcce891b609fdcbc8e1690a2e55b4cab69))
+
+- **build**: Reject a side-effect import even when its specifier is relative
+  ([#159](https://github.com/liatrio-labs/claude-code-gauntlet/pull/159),
+  [`b2117fb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b2117fbcce891b609fdcbc8e1690a2e55b4cab69))
+
+### Documentation
+
+- Document plugin validate as a contributor gate
+  ([#159](https://github.com/liatrio-labs/claude-code-gauntlet/pull/159),
+  [`b2117fb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b2117fbcce891b609fdcbc8e1690a2e55b4cab69))
+
+- Document plugin validate as a contributor gate
+  ([#157](https://github.com/liatrio-labs/claude-code-gauntlet/pull/157),
+  [`c5f45f2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c5f45f2d68015a20fb578cb59fa640471881f361))
+
+- Document plugin validate as a contributor gate (#116)
+  ([#157](https://github.com/liatrio-labs/claude-code-gauntlet/pull/157),
+  [`c5f45f2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c5f45f2d68015a20fb578cb59fa640471881f361))
+
+### Refactoring
+
+- **workflows**: Remove dead resolvePolicy note field
+  ([#159](https://github.com/liatrio-labs/claude-code-gauntlet/pull/159),
+  [`b2117fb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b2117fbcce891b609fdcbc8e1690a2e55b4cab69))
+
+- **workflows**: Remove dead resolvePolicy note field
+  ([#157](https://github.com/liatrio-labs/claude-code-gauntlet/pull/157),
+  [`c5f45f2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c5f45f2d68015a20fb578cb59fa640471881f361))
+
+- **workflows**: Remove dead resolvePolicy note field (#114)
+  ([#156](https://github.com/liatrio-labs/claude-code-gauntlet/pull/156),
+  [`0a6b40e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0a6b40e5f42e624efcf23e6adf157fb39ec799a2))
+
+
 ## v3.6.1 (2026-08-09)
 
 ### Bug Fixes
