@@ -27,6 +27,9 @@ Covers:
     to suppress both halves and leave no signal at all.
   - TestBuildMarkerFindingsSlot — the #36 extension point: findings=None is
     byte-absent from the payload; a supplied list round-trips.
+  - TestFindingMarker         — issue #132's per-finding delivery marker: build ->
+    parse round-trip, last-wins, malformed payloads rejected without raising, and
+    non-collision with the summary marker in both directions.
   - TestSelectLatest         — newest-timestamp-wins entry selection.
   - TestDocContract           — phase1-preflight.md / SKILL.md / phase2-triage.md
     reference the new script and the fields the incremental gate depends on,
@@ -45,15 +48,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import scripts.review_marker as review_marker
 from scripts.review_marker import (
+    FINDING_MARKER_TOKEN,
     LEGACY_MARKER_TOKEN,
     LEGACY_PRODUCT,
     MARKER_TOKEN,
     MARKER_TOKENS,
     PRODUCT,
+    build_finding_marker,
     build_footer,
     build_marker,
     build_prose_footer,
     detect_signal,
+    find_finding_marker,
     find_marker,
     has_prose_footer,
     parse_prose_footer,
@@ -509,6 +515,105 @@ class TestBuildMarkerFindingsSlot(unittest.TestCase):
         signal = detect_signal(marker_text)
         self.assertIsNotNone(signal)
         self.assertEqual(signal["marker"]["findings"], findings)
+
+
+# ---------------------------------------------------------------------------
+# TestFindingMarker — issue #132's per-finding delivery marker.
+# ---------------------------------------------------------------------------
+
+# Single-character keys, like the SHAs above: a full-alphabet 16-hex fixture reads
+# as a credential to the gitleaks entropy rule and fails the lint gate.
+KEY_16 = "a" * 16
+OTHER_KEY_16 = "b" * 16
+
+
+class TestFindingMarker(unittest.TestCase):
+    def test_build_parse_round_trip(self):
+        for sha in (SHA_40, SHA_8):
+            with self.subTest(sha=sha):
+                parsed = find_finding_marker(build_finding_marker(sha, KEY_16))
+                self.assertEqual(parsed, {"sha": sha, "key": KEY_16})
+
+    def test_round_trip_through_a_realistic_comment_body(self):
+        """Mirrors post_gitlab's composition: rendered body, blank line, marker."""
+        body = "**🟠 [HIGH] SQL injection risk**\n\nUse a parameterized query.\n"
+        text = f"{body}\n\n{build_finding_marker(SHA_40, KEY_16)}"
+        self.assertEqual(find_finding_marker(text)["key"], KEY_16)
+
+    def test_last_marker_wins(self):
+        """post_review APPENDS its marker, so a marker spelled inside a finding's own
+        text always precedes the mechanical one. Finding titles and bodies are NOT run
+        through _sanitize_outbound_prose, so that forgery reaches the wire verbatim and
+        must be shadowed rather than shadow."""
+        forged = build_finding_marker(SHA_40, OTHER_KEY_16)
+        real = build_finding_marker(SHA_40, KEY_16)
+        self.assertEqual(find_finding_marker(f"{forged}\n\n{real}")["key"], KEY_16)
+
+    def test_malformed_payloads_are_ignored_and_never_raise(self):
+        """An unhashable key would abort post_review's delivery loop mid-flight, so a
+        payload of the right syntax but the wrong types must simply not be a record."""
+        payloads = [
+            {"sha": SHA_40, "key": ["not", "a", "string"]},
+            {"sha": SHA_40, "key": {"nested": "object"}},
+            {"sha": SHA_40, "key": 123456789},
+            {"sha": SHA_40, "key": None},
+            {"sha": SHA_40, "key": KEY_16.upper()},  # hex, but not lowercase
+            {"sha": SHA_40, "key": KEY_16[:15]},  # too short
+            {"sha": SHA_40, "key": KEY_16 + "0"},  # too long
+            {"sha": SHA_40, "key": "g" * 16},  # right length, not hex
+            {"sha": SHA_40},  # no key at all
+            {"key": KEY_16},  # no sha
+            {"sha": "not-a-sha", "key": KEY_16},
+            {"sha": ["a" * 40], "key": KEY_16},
+        ]
+        for payload in payloads:
+            text = f"<!-- {FINDING_MARKER_TOKEN}: {json.dumps(payload)} -->"
+            with self.subTest(payload=payload):
+                try:
+                    self.assertIsNone(find_finding_marker(text))
+                except Exception as exc:  # noqa: BLE001  # pragma: no cover
+                    self.fail(f"raised {exc!r} on {text!r}")
+
+    def test_assorted_garbage_never_raises(self):
+        garbage = [
+            "",
+            None,
+            123,
+            f"<!-- {FINDING_MARKER_TOKEN}: -->",
+            f"<!-- {FINDING_MARKER_TOKEN}: {{broken -->",
+            # Brace-delimited (so the regex spans it) but not JSON.
+            f"<!-- {FINDING_MARKER_TOKEN}: {{not json at all}} -->",
+            f"<!-- {FINDING_MARKER_TOKEN}: [] -->",
+            f'<!-- {FINDING_MARKER_TOKEN}: {{"sha":"{SHA_40}","key":"{KEY_16}"}}',
+            "{" * 50,
+        ]
+        for text in garbage:
+            with self.subTest(text=text):
+                try:
+                    self.assertIsNone(find_finding_marker(text))
+                except Exception as exc:  # noqa: BLE001  # pragma: no cover
+                    self.fail(f"raised {exc!r} on {text!r}")
+
+    def test_a_valid_marker_after_a_malformed_one_is_still_found(self):
+        broken = f"<!-- {FINDING_MARKER_TOKEN}: {{broken -->"
+        text = f"{broken}\n{build_finding_marker(SHA_40, KEY_16)}"
+        self.assertEqual(find_finding_marker(text)["key"], KEY_16)
+
+    def test_the_two_marker_kinds_never_see_each_other(self):
+        """The tokens share no bytes, so a body carrying BOTH resolves each reader to
+        its own marker — collision is structural, not a matter of parse order."""
+        summary = build_marker(SHA_40, 3)
+        finding = build_finding_marker(SHA_40, KEY_16)
+        both = f"{summary}\n\n{finding}"
+
+        self.assertEqual(find_finding_marker(both), {"sha": SHA_40, "key": KEY_16})
+        self.assertEqual(find_marker(both)["findings_count"], 3)
+        self.assertEqual(detect_signal(both)["signal"], "marker")
+
+        # ...and each reader is blind to the other's marker standing alone.
+        self.assertIsNone(find_finding_marker(summary))
+        self.assertIsNone(find_marker(finding))
+        self.assertIsNone(detect_signal(finding))
 
 
 # ---------------------------------------------------------------------------

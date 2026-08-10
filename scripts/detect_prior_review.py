@@ -75,7 +75,7 @@ import sys
 # `scripts.detect_prior_review`, without swallowing real ImportErrors.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from review_marker import detect_signal, select_latest
+from review_marker import detect_signal, find_finding_marker, select_latest
 
 FETCH_TIMEOUT_SECONDS = 30
 GIT_TIMEOUT_SECONDS = 10
@@ -254,24 +254,30 @@ def fetch_entries_gitlab(owner, repo, number):
     return collect_entries_gitlab(notes), ([err] if err else [])
 
 
-def gitlab_note_exists_for_sha(owner, repo, number, sha):
-    """Return ``(exists, error)`` — is *sha*'s review marker already on this MR?
+def gitlab_prior_delivery_state(owner, repo, number, sha):
+    """Return ``(summary_posted, finding_keys, error)`` — what *sha*'s review left here.
 
-    ``post_review.post_gitlab`` calls this before posting its summary note so a rerun
-    after a partially-failed delivery does not stack a second summary (issue #127). The
+    ``post_review.post_gitlab`` asks both questions before delivering: is my summary
+    note already on the MR (issue #127), and which of my inline discussions did a
+    partially-failed delivery already place (issue #132). ONE fetch answers both — a
+    second round trip would also be a second, possibly inconsistent view of the MR. The
     read lives here because this module is the only reader; post_review.py writes the
-    signal and never parses it. Goes through :func:`fetch_entries_gitlab`, so the
-    ``--paginate`` requirement documented there applies unchanged — an unpaginated fetch
-    would miss the summary on any MR with more than 20 notes and duplicate it on every
-    retry.
+    signal and never parses it.
 
-    ``error`` is a string when the fetch failed; the caller degrades (posts) rather than
-    reading a fetch failure as "already posted".
+    Goes through :func:`fetch_entries_gitlab`, so the ``--paginate`` requirement
+    documented there applies unchanged, and so does its endpoint: the flat
+    ``merge_requests/{n}/notes`` list, NOT ``/discussions``. A discussion object nests
+    its text under ``notes[]`` and has no top-level ``body``, which ``_entries_from``
+    drops — the key set would come back empty and dedup would never fire. The notes an
+    inline discussion is made of DO appear in the flat list.
+
+    ``error`` is a string when the fetch failed; the caller degrades (delivers) rather
+    than reading a fetch failure as "already posted".
     """
     entries, errors = fetch_entries_gitlab(owner, repo, number)
     if errors:
-        return False, errors[0]
-    return entries_carry_sha(entries, sha), None
+        return False, set(), errors[0]
+    return entries_carry_sha(entries, sha), finding_keys_for_sha(entries, sha), None
 
 
 # ---------------------------------------------------------------------------
@@ -350,6 +356,30 @@ def entries_carry_sha(entries, sha):
         if signal and signal.get("sha") == sha:
             return True
     return False
+
+
+def finding_keys_for_sha(entries, sha):
+    """Return the set of per-finding delivery keys recorded for *sha* in *entries*.
+
+    EXACT sha equality, same rule and reason as :func:`entries_carry_sha`: a key left by
+    a review of a DIFFERENT commit must not suppress a finding for this one. A body with
+    no valid finding marker contributes nothing.
+
+    The notes surface carries every MR participant's notes, so anyone with write access
+    can suppress one finding on the next run by pasting that finding's key into a note.
+    Accepted knowingly: this endpoint already carries the summary signal, where the same
+    forgery suppresses the WHOLE re-review (see :func:`fetch_entries_github` for why the
+    weaker GitHub surface was dropped rather than tolerated), so per-finding keys add no
+    capability an attacker does not already have here.
+    """
+    keys = set()
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        marker = find_finding_marker(entry.get("body"))
+        if marker and marker["sha"] == sha:
+            keys.add(marker["key"])
+    return keys
 
 
 def count_by_source(entries):

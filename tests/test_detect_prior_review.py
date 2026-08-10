@@ -12,6 +12,10 @@ Covers:
     one call and that call never touches issues/.
   - GitLab notes are fetched with --paginate (post_gitlab posts the marker
     summary note FIRST, so an unpaginated fetch can miss it past page 1).
+  - gitlab_prior_delivery_state answers BOTH idempotency questions post_gitlab
+    asks — is the summary note already here, and which inline discussions did a
+    partial delivery already place — from ONE fetch of the FLAT notes endpoint
+    (a /discussions-shaped response yields no keys at all, which is the point).
   - build_result(signal, git_facts): the branches (found+advanced,
     found+not-advanced, found+sha-unresolvable, found+resolvable-but-not-an-
     ancestor, not-found), pinning incremental_safe == sha_resolvable and
@@ -316,17 +320,24 @@ class TestFetchEntriesGitlabPagination(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# gitlab_note_exists_for_sha — the summary-note idempotency read (issue #127 D4)
+# gitlab_prior_delivery_state — the idempotency read: summary note (issue #127 D4)
+# and per-finding delivery keys (issue #132), from ONE fetch.
 # ---------------------------------------------------------------------------
 
+# Single-character keys, like the SHAs above: a full-alphabet 16-hex fixture reads
+# as a credential to the gitleaks entropy rule and fails the lint gate.
+FINDING_KEY = "c" * 16
+OTHER_FINDING_KEY = "d" * 16
 
-class TestGitlabNoteExistsForSha(unittest.TestCase):
-    """``post_review.post_gitlab`` asks THIS module whether its summary note is
-    already on the MR, so a rerun after a partially-failed delivery does not stack a
-    second summary. The reader stays the only reader of the signal.
 
-    Note bodies are built with the REAL writer (``review_marker.build_footer``), so the
-    fixture cannot drift from the bytes ``post_review`` actually posts.
+class TestGitlabPriorDeliveryState(unittest.TestCase):
+    """``post_review.post_gitlab`` asks THIS module what its own review already left on
+    the MR — the summary note, and which inline discussions a partially-failed delivery
+    placed — so a rerun stacks neither. The reader stays the only reader of the signals.
+
+    Note bodies are built with the REAL writers (``review_marker.build_footer`` /
+    ``build_finding_marker``), so the fixtures cannot drift from the bytes
+    ``post_review`` actually posts.
     """
 
     def _fake_notes_run(self, notes, rc=0, stderr="", calls=None):
@@ -341,12 +352,22 @@ class TestGitlabNoteExistsForSha(unittest.TestCase):
 
         return fake_run
 
-    def _exists(self, notes, sha, rc=0, stderr="", calls=None):
+    def _state(self, notes, sha, rc=0, stderr="", calls=None):
         with patch(
             "scripts.detect_prior_review.subprocess.run",
             side_effect=self._fake_notes_run(notes, rc=rc, stderr=stderr, calls=calls),
         ):
-            return detect_prior_review.gitlab_note_exists_for_sha("o", "r", 5, sha)
+            return detect_prior_review.gitlab_prior_delivery_state("o", "r", 5, sha)
+
+    @staticmethod
+    def _discussion_note(key, sha=FULL_SHA, note_id=1):
+        """A note as post_review posts one: rendered body, blank line, delivery marker."""
+        return {
+            "id": note_id,
+            "body": "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n"
+            + review_marker.build_finding_marker(sha, key),
+            "created_at": "2026-08-03T00:02:00Z",
+        }
 
     def test_true_when_a_note_carries_this_shas_marker(self):
         calls = []
@@ -357,8 +378,9 @@ class TestGitlabNoteExistsForSha(unittest.TestCase):
                 "created_at": "2026-08-03T00:00:00Z",
             }
         ]
-        exists, error = self._exists(notes, FULL_SHA, calls=calls)
-        self.assertTrue(exists)
+        summary_posted, keys, error = self._state(notes, FULL_SHA, calls=calls)
+        self.assertTrue(summary_posted)
+        self.assertEqual(keys, set())
         self.assertIsNone(error)
         # GitLab serves 20 notes per page and the summary is posted FIRST, so an
         # unpaginated fetch would answer "not posted" and duplicate it on every retry.
@@ -372,8 +394,8 @@ class TestGitlabNoteExistsForSha(unittest.TestCase):
                 "created_at": "2026-08-03T00:00:00Z",
             }
         ]
-        exists, error = self._exists(notes, FULL_SHA)
-        self.assertFalse(exists)
+        summary_posted, _keys, error = self._state(notes, FULL_SHA)
+        self.assertFalse(summary_posted)
         self.assertIsNone(error)
 
     def test_false_when_no_note_carries_a_signal(self):
@@ -381,8 +403,9 @@ class TestGitlabNoteExistsForSha(unittest.TestCase):
             {"id": 1, "body": "Nice work", "created_at": "2026-08-03T00:00:00Z"},
             {"id": 2, "body": "LGTM", "created_at": "2026-08-03T00:01:00Z"},
         ]
-        exists, error = self._exists(notes, FULL_SHA)
-        self.assertFalse(exists)
+        summary_posted, keys, error = self._state(notes, FULL_SHA)
+        self.assertFalse(summary_posted)
+        self.assertEqual(keys, set())
         self.assertIsNone(error)
 
     def test_prose_footer_only_note_is_recognized(self):
@@ -395,15 +418,85 @@ class TestGitlabNoteExistsForSha(unittest.TestCase):
                 "created_at": "2026-08-03T00:00:00Z",
             }
         ]
-        exists, error = self._exists(notes, FULL_SHA)
-        self.assertTrue(exists)
+        summary_posted, _keys, error = self._state(notes, FULL_SHA)
+        self.assertTrue(summary_posted)
         self.assertIsNone(error)
 
     def test_fetch_failure_returns_the_error_and_not_a_false_negative(self):
-        exists, error = self._exists([], FULL_SHA, rc=1, stderr="boom")
-        self.assertFalse(exists)
+        summary_posted, keys, error = self._state([], FULL_SHA, rc=1, stderr="boom")
+        self.assertFalse(summary_posted)
+        self.assertEqual(keys, set())
         self.assertTrue(error)
         self.assertIn("boom", error)
+
+    def test_delivery_keys_are_collected_from_inline_discussion_notes(self):
+        """Issue #132: the keys of the discussions already on the MR, from the SAME
+        fetch that answers the summary question — no second round trip."""
+        calls = []
+        notes = [
+            {
+                "id": 1,
+                "body": "Summary" + review_marker.build_footer(2, FULL_SHA),
+                "created_at": "2026-08-03T00:00:00Z",
+            },
+            self._discussion_note(FINDING_KEY, note_id=2),
+            self._discussion_note(OTHER_FINDING_KEY, note_id=3),
+        ]
+        summary_posted, keys, error = self._state(notes, FULL_SHA, calls=calls)
+        self.assertTrue(summary_posted)
+        self.assertEqual(keys, {FINDING_KEY, OTHER_FINDING_KEY})
+        self.assertIsNone(error)
+        self.assertEqual(len(calls), 1, "one fetch must answer both questions")
+        self.assertIn("--paginate", calls[0])
+
+    def test_keys_recorded_against_another_sha_are_not_collected(self):
+        """A discussion from a review of a DIFFERENT commit must not suppress this
+        run's finding — the comment is anchored to a diff that has since moved."""
+        notes = [self._discussion_note(FINDING_KEY, sha="b" * 40)]
+        _summary, keys, _error = self._state(notes, FULL_SHA)
+        self.assertEqual(keys, set())
+
+    def test_notes_endpoint_is_what_is_fetched_not_discussions(self):
+        """Pins the endpoint decision. ``/discussions`` returns DISCUSSION objects —
+        a nested ``notes[]`` array and no top-level ``body`` — which ``_entries_from``
+        drops, so the key set would come back empty and dedup would never fire. The
+        notes an inline discussion is made of DO appear in the flat ``/notes`` list.
+        """
+        calls = []
+        discussions_shape = [
+            {
+                "id": "8f4a",
+                "individual_note": False,
+                "notes": [self._discussion_note(FINDING_KEY, note_id=2)],
+            }
+        ]
+        _summary, keys, error = self._state(discussions_shape, FULL_SHA, calls=calls)
+        self.assertIsNone(error)
+        self.assertEqual(
+            keys,
+            set(),
+            "a discussions-shaped response yields nothing — which is why the flat "
+            "notes endpoint is the one fetched",
+        )
+        joined = " ".join(calls[0])
+        self.assertIn("merge_requests/5/notes", joined)
+        self.assertNotIn("/discussions", joined)
+
+    def test_malformed_key_payload_is_ignored_rather_than_collected(self):
+        """A finding's own title/body reaches the wire unsanitized, so a marker-shaped
+        forgery is reachable input. An unhashable key would abort delivery mid-loop."""
+        notes = [
+            {
+                "id": 1,
+                "body": '<!-- code-gauntlet-finding-key: {"sha":"'
+                + FULL_SHA
+                + '","key":["oops"]} -->',
+                "created_at": "2026-08-03T00:00:00Z",
+            }
+        ]
+        _summary, keys, error = self._state(notes, FULL_SHA)
+        self.assertEqual(keys, set())
+        self.assertIsNone(error)
 
     def test_no_prefix_match(self):
         """EXACT equality: a prefix match would let a review of a DIFFERENT commit
@@ -426,6 +519,17 @@ class TestGitlabNoteExistsForSha(unittest.TestCase):
             {"body": review_marker.build_footer(1, FULL_SHA), "timestamp": None},
         ]
         self.assertTrue(detect_prior_review.entries_carry_sha(entries, FULL_SHA))
+
+    def test_finding_keys_for_sha_ignores_non_dict_and_body_less_entries(self):
+        entries = [
+            None,
+            "x",
+            {"body": None},
+            self._discussion_note(FINDING_KEY),
+        ]
+        self.assertEqual(
+            detect_prior_review.finding_keys_for_sha(entries, FULL_SHA), {FINDING_KEY}
+        )
 
 
 # ---------------------------------------------------------------------------
