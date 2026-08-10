@@ -14,8 +14,13 @@ repos:
       - id: check-toml
       - id: check-json
       - id: check-added-large-files
+      # tests/fixtures/glab_diff/*.diff record another tool's output byte for byte: a
+      # unified diff spells a blank context line as a lone space, and the final newline
+      # is part of the record. Both fixers would rewrite them silently.
       - id: end-of-file-fixer
+        exclude: "^tests/fixtures/glab_diff/.*\\.diff$"
       - id: trailing-whitespace
+        exclude: "^tests/fixtures/glab_diff/.*\\.diff$"
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.45.0

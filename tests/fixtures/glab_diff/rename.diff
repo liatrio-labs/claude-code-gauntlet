@@ -1,0 +1,8 @@
+--- old_name.py
++++ new_name.py
+@@ -3,4 +3,4 @@
+ ctx
+-x
++y
+ ctx2
+ 

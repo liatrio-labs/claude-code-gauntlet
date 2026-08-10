@@ -166,6 +166,12 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(call_args[0], "glab")
         self.assertEqual(call_args[1], "mr")
         self.assertEqual(call_args[2], "diff")
+        self.assertNotIn(
+            "--raw",
+            call_args,
+            "the parser reads glab's own reconstruction of the MR versions API; --raw "
+            "streams git's diff instead, reintroducing a/ b/ prefixes and /dev/null",
+        )
 
     @patch("scripts.post_review.run_api")
     def test_glab_no_prefix_headers_are_parsed(self, mock_run):
@@ -256,7 +262,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         precedes it must not be swept into new_files with it."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         _, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertEqual(new_files, {"src/added.py"})
+        self.assertEqual(new_files, {"src/app/clients/api/__init__.py"})
 
     @patch("scripts.post_review.run_api")
     def test_deleted_file_does_not_add_dev_null_to_valid_lines(self, mock_run):
@@ -335,6 +341,30 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertEqual(valid_lines[("next.py", 5)], 5)
         self.assertIsNone(valid_lines[("next.py", 6)])
         self.assertEqual([k for k in valid_lines if k[0] == "gone.py"], [])
+
+    @patch("scripts.post_review.run_api")
+    def test_gitlab_deleted_file_records_no_targets_of_its_own(self, mock_run):
+        """`glab mr diff` has no `+++ /dev/null`: a deletion repeats the path on BOTH
+        headers, so ``current_file`` stays LIVE through the deleted file's body.
+
+        On GitHub the new-side header blanks ``current_file``, and a mis-drained body can
+        only lose the NEXT file's lines. Here nothing blanks it, so the same fault also
+        writes keys onto a file that no longer exists — inline comments aimed at a
+        deleted path. Draining the old-side budget is the only thing that ends the body.
+        """
+        mock_run.return_value = (GL_DIFF_DELETED_THEN_MODIFIED, "", 0)
+        valid_lines, new_files, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+        self.assertEqual([k for k in valid_lines if k[0] == "src/removed.py"], [])
+        self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
+        self.assertIsNone(valid_lines[("src/edited.py", 62)])
+        self.assertEqual(valid_lines[("src/edited.py", 63)], 52)
+        # `@@ -1,3 +0,0 @@` is a deletion: only an OLD-side start of 0 means added. The
+        # repeated path still yields an old_paths entry, harmlessly mapping to itself.
+        self.assertEqual(new_files, set())
+        self.assertEqual(
+            old_paths,
+            {"src/removed.py": "src/removed.py", "src/edited.py": "src/edited.py"},
+        )
 
     # -- hunk-body budget tracking (headers are body content too) -----------
 
@@ -425,18 +455,22 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
 
     @patch("scripts.post_review.run_api")
     def test_pre_hunk_lines_are_not_admitted(self, mock_run):
-        """`diff --git` / `index` lines between files are not commentable lines.
+        """Between-hunk lines are not commentable lines: the key set is EXACTLY the
+        hunk bodies' addressable lines, with nothing admitted from around them.
 
-        They used to fall through to the context branch and be admitted under the
-        PREVIOUS file at its next new-side number.
+        In plain `glab mr diff` the only lines between two hunks are the next file's
+        `---`/`+++` pair — an under-drained hunk budget reads them as body content and
+        admits a phantom target on the file before. Git's own decoration (`diff --git`,
+        `index`, `Binary files … differ`) never appears in this output; it reaches the
+        parser through `gh pr diff`, and the github-platform binary-prose test above
+        owns that arm of the same catch-all.
         """
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(
             sorted(valid_lines),
-            [
-                ("src/added.py", 1),
-                ("src/added.py", 2),
+            [("src/app/clients/api/__init__.py", n) for n in range(1, 17)]
+            + [
                 ("src/edited.py", 61),
                 ("src/edited.py", 62),
                 ("src/edited.py", 63),
@@ -476,12 +510,17 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     def test_old_side_counter_resets_between_files(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
         valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
-        self.assertIsNone(valid_lines[("src/added.py", 1)])
-        # The `diff --git` line introducing src/added.py sits between hunks; it used to
-        # be read as a context line and admitted as a phantom target on the file before.
+        self.assertIsNone(valid_lines[("src/app/clients/api/__init__.py", 1)])
+        # The added file's `---`/`+++` headers sit between hunks. If the modified file's
+        # budgets under-drain, the parser is still in its body zone when they arrive and
+        # reads them as content — admitting a phantom target on the file before.
         self.assertNotIn(("src/edited.py", 64), valid_lines)
         self.assertEqual(
-            {v for (fp, _), v in valid_lines.items() if fp == "src/added.py"},
+            {
+                v
+                for (fp, _), v in valid_lines.items()
+                if fp == "src/app/clients/api/__init__.py"
+            },
             {None},
             "an added file's lines must carry no old-side leftovers from the file before",
         )
@@ -507,13 +546,16 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         The parser previously read the old-side header only to compare it to
         ``/dev/null`` and threw the path away, so a renamed file's position shipped the
         post-rename path as ``old_path`` — a path that does not exist on the old side
-        (#130). The `rename from`/`rename to`/`similarity index` lines sit in the header
-        zone and must stay no-ops.
+        (#130). A rename is the ONE case where glab's two headers name different paths;
+        it emits no `rename from`/`rename to`/`similarity index` lines to corroborate
+        them.
         """
         mock_run.return_value = (GL_DIFF_RENAME, "", 0)
         valid_lines, _, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(old_paths, {"new_name.py": "old_name.py"})
         self.assertEqual(valid_lines[("new_name.py", 3)], 3)
+        # A BLANK context line is a lone space, and is addressable like any other.
+        self.assertEqual(valid_lines[("new_name.py", 6)], 6)
 
     @patch("scripts.post_review.run_api")
     def test_added_file_absent_from_old_paths(self, mock_run):
@@ -1833,8 +1875,10 @@ GH_DIFF = (
 )
 
 # A GitLab diff (glab mr diff) that makes bar.py lines 1 and 2 valid. The `---`/`+++`
-# headers are UNPREFIXED because that is what glab emits; the `diff --git` line keeps
-# git's a//b/ spelling, which glab prints verbatim and the parser ignores.
+# headers are UNPREFIXED because that is what glab emits. The leading `diff --git` line is
+# NOT part of plain `glab mr diff` output (tests/fixtures/glab_diff/README.md has the
+# shape and its sources); it survives here because these are delivery-path tests that do
+# not turn on diff shape, and the parser ignores the line either way.
 GL_DIFF = (
     "diff --git a/bar.py b/bar.py\n"
     "--- bar.py\n"
@@ -1845,48 +1889,41 @@ GL_DIFF = (
 )
 
 
-# Real `glab mr diff` shape, captured from the issue #127 report: NO a/ b/ prefixes, the
-# SAME path on both sides for an added file, and `@@ -0,0` as the only added-file signal.
+def _glab_fixture(name):
+    """Read one `glab mr diff` fixture verbatim.
+
+    The shape these files record — and which bytes of it are a real capture — is
+    documented in tests/fixtures/glab_diff/README.md. They are read rather than inlined
+    so the parser's contract has ONE spelling that a real capture can later replace
+    without touching a test.
+    """
+    path = os.path.join(os.path.dirname(__file__), "fixtures", "glab_diff", name)
+    with open(path, encoding="utf-8") as fh:
+        return fh.read()
+
+
+# A modified file followed by an added one, in the shape plain `glab mr diff` emits.
 # src/edited.py: new 61 = old 50 (context), new 62 = added, new 63 = old 52 (context).
-# src/added.py:  new 1, 2 — added file.
-GL_DIFF_CONTRACT = (
-    "diff --git a/src/edited.py b/src/edited.py\n"
-    "--- src/edited.py\n"
-    "+++ src/edited.py\n"
-    "@@ -50,3 +61,3 @@\n"
-    " unchanged_ctx\n"
-    "-removed\n"
-    "+added\n"
-    " tail_ctx\n"
-    "diff --git a/src/added.py b/src/added.py\n"
-    "--- src/added.py\n"
-    "+++ src/added.py\n"
-    "@@ -0,0 +1,2 @@\n"
-    "+first\n"
-    "+second\n"
+# src/app/clients/api/__init__.py: new 1..16 — added file, signalled only by `@@ -0,0`.
+GL_DIFF_CONTRACT = _glab_fixture("modified.diff") + _glab_fixture("added.diff")
+
+# A deleted file followed by a modified one. glab repeats the path on BOTH headers for a
+# deletion (there is no `+++ /dev/null` to blank `current_file`), so the deleted file's
+# hunk budget draining is the only thing keeping the next file's headers out of its body.
+GL_DIFF_DELETED_THEN_MODIFIED = _glab_fixture("deleted.diff") + _glab_fixture(
+    "modified.diff"
 )
 
-# A RENAMED file, glab-flavoured (unprefixed headers): the `---` header names the
-# PRE-rename path and the `+++` header the post-rename one. That old-side path is what
-# GitLab needs in `position.old_path` (#130).
-# new 3 = old 3 (context), new 4 = added, new 5 = old 5 (context).
-GL_DIFF_RENAME = (
-    "diff --git a/old_name.py b/new_name.py\n"
-    "similarity index 87%\n"
-    "rename from old_name.py\n"
-    "rename to new_name.py\n"
-    "--- old_name.py\n"
-    "+++ new_name.py\n"
-    "@@ -3,3 +3,3 @@\n"
-    " ctx\n"
-    "-x\n"
-    "+y\n"
-    " ctx2\n"
-)
+# A RENAMED file: the `---` header names the PRE-rename path and the `+++` header the
+# post-rename one. That old-side path is what GitLab needs in `position.old_path` (#130).
+# new 3 = old 3 (context), new 4 = added, new 5 = old 5 (context), new 6 = old 6 (a BLANK
+# context line, which a unified diff spells as a lone space).
+GL_DIFF_RENAME = _glab_fixture("rename.diff")
 
 # A glab diff for a repo with a REAL top-level `a/` directory. `glab mr diff` prints
 # paths verbatim, so `a/foo.py` here is a directory named `a` — not git's synthetic
-# old-side prefix. new 1 = old 1 (context), new 2 = added.
+# old-side prefix. The `diff --git` decoration is not glab's (see GL_DIFF above).
+# new 1 = old 1 (context), new 2 = added.
 GL_DIFF_REAL_A_DIR = (
     "diff --git a/a/foo.py b/a/foo.py\n"
     "--- a/foo.py\n"
@@ -1942,7 +1979,7 @@ GL_CONTRACT_FINDINGS = [
         "body": "Body two",
     },
     {
-        "file": "src/added.py",
+        "file": "src/app/clients/api/__init__.py",
         "line": 1,
         "severity": "low",
         "title": "New-file finding",
@@ -2802,7 +2839,7 @@ class TestGitlabPositionContract(_DryRunTestBase):
         """The test the old suite could not provide: ``new_files`` comes from the
         parser here, not from a fixture that asserted the conclusion."""
         position = self._positions()[2]
-        self.assertEqual(position["new_path"], "src/added.py")
+        self.assertEqual(position["new_path"], "src/app/clients/api/__init__.py")
         self.assertNotIn("old_path", position)
         self.assertNotIn("old_line", position)
 
