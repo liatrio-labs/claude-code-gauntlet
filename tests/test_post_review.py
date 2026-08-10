@@ -13,6 +13,9 @@ Covers:
     headline "write signal == read signal" guarantee, proven against the REAL
     post_github/post_gitlab DRY_RUN capture path rather than a
     re-implementation of their footer composition. See the class docstring.
+  - TestGitlabInlineDiscussionIdempotency — issue #132: a rerun after a partial
+    GitLab delivery must not duplicate the inline discussions that landed, and
+    the outcome it reports must stay honest about what THIS run attempted.
 """
 
 import contextlib
@@ -1582,13 +1585,16 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
     @patch("scripts.post_review.check_tool")
     @patch("scripts.post_review.post_json", return_value={})
     @patch("scripts.post_review.fetch_gitlab_shas", return_value=("b", "h", "s"))
-    # The live path now asks detect_prior_review whether the summary note is already on
-    # the MR; that read shells out to `glab`, so it is stubbed here rather than left to
-    # reach a real forge from a unit test.
-    @patch("scripts.post_review.gitlab_note_exists_for_sha", return_value=(False, None))
+    # The live path now asks detect_prior_review what the MR already carries; that read
+    # shells out to `glab`, so it is stubbed here rather than left to reach a real forge
+    # from a unit test.
+    @patch(
+        "scripts.post_review.gitlab_prior_delivery_state",
+        return_value=(False, set(), None),
+    )
     @patch("scripts.post_review.warn")
     def test_gitlab_skip_includes_valid_lines(
-        self, mock_warn, _exists, _shas, _post, _tool, _sha
+        self, mock_warn, _prior, _shas, _post, _tool, _sha
     ):
         from scripts.post_review import post_gitlab
 
@@ -1704,12 +1710,12 @@ class TestGitlabPositionPayload(unittest.TestCase):
                 return_value=("base", "head", "start"),
             ),
             patch("scripts.post_review.try_post_json", side_effect=fake_try_post_json),
-            # The live path asks detect_prior_review whether the summary note is
-            # already on the MR; that read shells out to `glab`, so it is stubbed
-            # rather than left to reach a real forge from a unit test.
+            # The live path asks detect_prior_review what the MR already carries;
+            # that read shells out to `glab`, so it is stubbed rather than left to
+            # reach a real forge from a unit test.
             patch(
-                "scripts.post_review.gitlab_note_exists_for_sha",
-                return_value=(False, None),
+                "scripts.post_review.gitlab_prior_delivery_state",
+                return_value=(False, set(), None),
             ),
         ):
             post_gitlab(data, valid_lines, new_files)
@@ -1966,6 +1972,7 @@ def _fake_run(
     note_rc=0,
     discussion_rcs=None,
     calls=None,
+    payloads=None,
 ):
     """Build a ``subprocess.run`` side_effect that mocks the read-only CLI calls.
 
@@ -1977,7 +1984,8 @@ def _fake_run(
     The live GitLab POSTs are steerable so the fault-tolerance path is exercisable:
     *note_rc* is the summary note's exit code, and *discussion_rcs* is consumed one per
     inline-discussion POST (default 0 once exhausted). A non-zero discussion rc comes
-    back with the verbatim glab 400. *calls* collects every argv when given.
+    back with the verbatim glab 400. *calls* collects every argv when given, and
+    *payloads* collects the JSON body of every live POST.
     """
     rcs = iter(discussion_rcs or [])
 
@@ -1987,6 +1995,12 @@ def _fake_run(
 
         if calls is not None:
             calls.append(cmd)
+        if payloads is not None and "--input" in cmd:
+            # The live path hands its JSON to gh/glab through a temp file that is
+            # unlinked the moment the call returns, so reading it here is the only
+            # place a test can see the bytes that actually go on the wire.
+            with open(cmd[cmd.index("--input") + 1]) as fh:
+                payloads.append(json.load(fh))
         if cmd[0] == "which":
             return res(out="/usr/bin/" + cmd[1])
         if cmd[:3] == ["git", "remote", "get-url"]:
@@ -2981,15 +2995,15 @@ class TestGitlabFindingPathNormalization(_DryRunTestBase):
 # ---------------------------------------------------------------------------
 
 
-class TestGitlabFaultTolerance(_DryRunTestBase):
-    """A single rejected position must not strand the findings behind it.
+class _GitlabLiveRunBase(_DryRunTestBase):
+    """Drives post_review.main() over the GitLab contract fixtures.
 
-    The summary note is posted FIRST, so aborting mid-loop left partial,
-    non-retryable state on the MR. The loop now warns, counts and continues; the run
-    only exits non-zero when EVERY attempted post was rejected.
+    Carries no tests of its own — a subclass of a TestCase inherits its tests, and
+    the two classes below need the same runner for different subjects (per-finding
+    fault tolerance, and per-finding idempotency).
     """
 
-    def _run_main(self, dry_run=False, findings=None, **fake_run_kwargs):
+    def _run_main(self, dry_run=False, findings=None, prior=None, **fake_run_kwargs):
         self._write(
             {
                 "platform": "gitlab",
@@ -3009,12 +3023,13 @@ class TestGitlabFaultTolerance(_DryRunTestBase):
         with (
             patch.object(sys, "argv", argv),
             patch.dict(os.environ, {}, clear=False),
-            # The idempotency fetch is not the subject here; pin it to "not posted yet"
-            # so every run reaches the per-finding loop.
+            # The idempotency fetch defaults to "nothing delivered yet" so every run
+            # reaches the per-finding loop; TestGitlabInlineDiscussionIdempotency
+            # steers it to exercise the dedup gate.
             patch(
-                "scripts.post_review.gitlab_note_exists_for_sha",
-                return_value=(False, None),
-            ),
+                "scripts.post_review.gitlab_prior_delivery_state",
+                return_value=(False, set(), None) if prior is None else prior,
+            ) as mock_prior,
             patch(
                 "scripts.post_review.subprocess.run",
                 side_effect=_fake_run(
@@ -3033,10 +3048,20 @@ class TestGitlabFaultTolerance(_DryRunTestBase):
                 exit_code = exc.code
         return SimpleNamespace(
             mock_run=mock_run,
+            mock_prior=mock_prior,
             out=stdout.getvalue(),
             err=stderr.getvalue(),
             exit_code=exit_code,
         )
+
+
+class TestGitlabFaultTolerance(_GitlabLiveRunBase):
+    """A single rejected position must not strand the findings behind it.
+
+    The summary note is posted FIRST, so aborting mid-loop left partial,
+    non-retryable state on the MR. The loop now warns, counts and continues; the run
+    only exits non-zero when nothing NEW reached the MR and something was rejected.
+    """
 
     def test_one_rejection_does_not_abort_the_remaining_findings(self):
         run = self._run_main(discussion_rcs=[1, 0, 0])
@@ -3094,14 +3119,14 @@ class TestGitlabFaultTolerance(_DryRunTestBase):
 class TestGitlabSummaryIdempotency(_DryRunTestBase):
     """A rerun after a partial delivery must not stack a second summary note.
 
-    ``scripts.post_review.gitlab_note_exists_for_sha`` — the name bound INTO this
+    ``scripts.post_review.gitlab_prior_delivery_state`` — the name bound INTO this
     module — is what these tests patch. ``post_review`` imports the bare
     ``detect_prior_review`` while ``tests/test_detect_prior_review.py`` imports
     ``scripts.detect_prior_review``: two distinct module objects in one pytest process,
     so patching the other one would not be seen here.
     """
 
-    def _run_main(self, exists, data=None, dry_run=False, head_sha="deadbeefcafe\n"):
+    def _run_main(self, prior, data=None, dry_run=False, head_sha="deadbeefcafe\n"):
         self._write(
             {
                 "platform": "gitlab",
@@ -3123,8 +3148,8 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
             patch.object(sys, "argv", argv),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "scripts.post_review.gitlab_note_exists_for_sha", return_value=exists
-            ) as mock_exists,
+                "scripts.post_review.gitlab_prior_delivery_state", return_value=prior
+            ) as mock_prior,
             patch(
                 "scripts.post_review.subprocess.run",
                 side_effect=_fake_run(
@@ -3139,29 +3164,36 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
             os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
             post_review.main()
         return SimpleNamespace(
-            mock_exists=mock_exists,
+            mock_prior=mock_prior,
             mock_run=mock_run,
             out=stdout.getvalue(),
             err=stderr.getvalue(),
         )
 
     def test_summary_skipped_when_this_shas_marker_is_already_on_the_mr(self):
-        run = self._run_main(exists=(True, None))
+        run = self._run_main(prior=(True, set(), None))
         self.assertEqual(_note_posts(run.mock_run), [])
         # The retry still delivers the inline comments — that is the whole point.
         self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
         self.assertIn("already on the MR", run.out)
         self.assertNotIn("MR summary note posted.", run.out)
-        run.mock_exists.assert_called_once_with("o", "r", 5, "a" * 40)
+        run.mock_prior.assert_called_once_with("o", "r", 5, "a" * 40)
 
     def test_summary_posted_when_the_marker_records_a_different_sha(self):
-        run = self._run_main(exists=(False, None))
+        run = self._run_main(prior=(False, set(), None))
         self.assertEqual(len(_note_posts(run.mock_run)), 1)
         self.assertIn("MR summary note posted.", run.out)
 
+    def test_one_fetch_serves_both_idempotency_checks(self):
+        """Issue #132: the summary check and the finding-key set come from ONE fetch.
+        A second round trip would also be a second, possibly inconsistent view of the
+        MR — one where the summary is already there but the discussions are not."""
+        run = self._run_main(prior=(True, set(), None))
+        self.assertEqual(run.mock_prior.call_count, 1)
+
     def test_notes_fetch_failure_degrades_to_posting(self):
         run = self._run_main(
-            exists=(False, "gitlab notes: fetch failed (exit 1): boom")
+            prior=(False, set(), "gitlab notes: fetch failed (exit 1): boom")
         )
         self.assertEqual(len(_note_posts(run.mock_run)), 1)
         self.assertIn("could not check for an existing summary note", run.err)
@@ -3171,8 +3203,8 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
         """The hard "no network in dry-run" pin: the check would say "skip" if it were
         consulted, and build_dry_run_payload's "first capture is the summary" shape
         depends on the note being captured regardless."""
-        run = self._run_main(exists=(True, None), dry_run=True)
-        run.mock_exists.assert_not_called()
+        run = self._run_main(prior=(True, set(), None), dry_run=True)
+        run.mock_prior.assert_not_called()
         self.assertIn("code-gauntlet-findings:", self._payload()["summary"]["body"])
         self.assertEqual(
             post_review._CAPTURED[0]["payload"]["body"],
@@ -3182,7 +3214,7 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
     def test_unresolvable_sha_skips_the_check_and_posts(self):
         """get_head_sha's "unknown" fallback is not a usable dedup key."""
         run = self._run_main(
-            exists=(True, None),
+            prior=(True, set(), None),
             data={
                 "platform": "gitlab",
                 "owner": "o",
@@ -3193,13 +3225,145 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
             },
             head_sha="unknown\n",
         )
-        run.mock_exists.assert_not_called()
+        run.mock_prior.assert_not_called()
         self.assertEqual(len(_note_posts(run.mock_run)), 1)
 
     def test_summary_check_delegates_to_the_reader_module(self):
-        """post_review must not grow its own parse of the signal it writes."""
+        """post_review must not grow its own parse of the signals it writes."""
         self.assertEqual(
-            post_review.gitlab_note_exists_for_sha.__module__, "detect_prior_review"
+            post_review.gitlab_prior_delivery_state.__module__, "detect_prior_review"
+        )
+
+
+# ---------------------------------------------------------------------------
+# GitLab per-finding delivery idempotency (issue #132)
+# ---------------------------------------------------------------------------
+
+
+class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
+    """A rerun after a partial delivery must not duplicate the inline discussions
+    that DID land — issue #132, the half issue #127 D4 left open for the summary.
+
+    The expected keys below are LITERAL constants, computed once and hardcoded.
+    Deriving them in the assertions by calling ``post_review.finding_key`` would make
+    every test here agree with the implementation by construction — including a
+    broken implementation that keys every finding identically.
+    """
+
+    # GL_CONTRACT_FINDINGS, in order: src/edited.py:61, src/edited.py:62, src/added.py:1.
+    CONTEXT_LINE_KEY = "f87d51ec25846a5e"
+    ADDED_LINE_KEY = "ee15b1fc2a6db296"
+    NEW_FILE_KEY = "645f0e9e5cc472b3"
+    ALL_KEYS: ClassVar[set[str]] = {CONTEXT_LINE_KEY, ADDED_LINE_KEY, NEW_FILE_KEY}
+
+    @staticmethod
+    def _discussion_payloads(payloads):
+        return [p for p in payloads if "position" in p]
+
+    def test_keys_match_their_pinned_literals(self):
+        """The tautology guard itself: the derivation must reproduce hardcoded
+        values, and the three findings must not collide onto one key."""
+        keys = [
+            post_review.finding_key(
+                f["file"], f["line"], f["title"], render_comment_body(f)
+            )
+            for f in GL_CONTRACT_FINDINGS
+        ]
+        self.assertEqual(
+            keys, [self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY, self.NEW_FILE_KEY]
+        )
+
+    def test_a_finding_already_on_the_mr_is_not_reposted(self):
+        payloads = []
+        run = self._run_main(
+            prior=(True, {self.CONTEXT_LINE_KEY}, None), payloads=payloads
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 2)
+        bodies = [p["body"] for p in self._discussion_payloads(payloads)]
+        self.assertEqual(len(bodies), 2)
+        self.assertNotIn(
+            "Context-line finding",
+            "\n".join(bodies),
+            "the finding whose key is already on the MR must not be reposted",
+        )
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+        self.assertIn("1 inline discussion(s) already on the MR", run.out)
+        self.assertNotIn("rejected", run.out)
+
+    def test_rerun_with_everything_already_present_posts_nothing_and_exits_zero(self):
+        run = self._run_main(prior=(True, set(self.ALL_KEYS), None))
+        self.assertIsNone(run.exit_code, "a fully-delivered rerun is a success")
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertEqual(_note_posts(run.mock_run), [])
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("3 inline discussion(s) already on the MR", run.out)
+
+    def test_already_present_plus_one_rejection_fails_honestly(self):
+        """The bare ``posted == 0`` die used to call this "all 1 inline discussion(s)
+        were rejected — nothing was posted inline", which was wrong twice: one
+        rejection out of three findings is not "all", and two of this review's
+        discussions ARE on the MR."""
+        run = self._run_main(
+            prior=(True, {self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY}, None),
+            discussion_rcs=[1],
+        )
+        self.assertEqual(run.exit_code, 1)
+        self.assertIn("attempted this run were rejected", run.err)
+        self.assertIn("2 from an earlier run remain on the MR", run.err)
+        self.assertNotIn("nothing was posted inline", run.err)
+
+    def test_fetch_failure_delivers_every_finding(self):
+        """Availability over dedup: a failed read must never be taken for "already
+        delivered" — a possible duplicate beats a silently dropped review."""
+        run = self._run_main(
+            prior=(False, set(), "gitlab notes: fetch failed (exit 1): boom")
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 3)
+        self.assertEqual(len(_note_posts(run.mock_run)), 1)
+        self.assertIn("could not check for an existing summary note", run.err)
+        self.assertIn("boom", run.err)
+
+    def test_live_posted_bodies_carry_a_marker_the_reader_recovers(self):
+        """The round trip that makes the rerun possible: what the live wire carries
+        must parse back to the same key, through the real writer and real reader."""
+        payloads = []
+        run = self._run_main(payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        bodies = [p["body"] for p in self._discussion_payloads(payloads)]
+        self.assertEqual(len(bodies), 3)
+        for body, finding, key in zip(
+            bodies,
+            GL_CONTRACT_FINDINGS,
+            (self.CONTEXT_LINE_KEY, self.ADDED_LINE_KEY, self.NEW_FILE_KEY),
+            strict=True,
+        ):
+            self.assertTrue(
+                body.startswith(render_comment_body(finding)),
+                "the marker is appended — the rendered comment is untouched",
+            )
+            self.assertEqual(
+                review_marker.find_finding_marker(body),
+                {"sha": "a" * 40, "key": key},
+            )
+
+    def test_dry_run_fetches_nothing_captures_everything_and_stays_marker_free(self):
+        """bench pins dry-run and scores the captured bodies as candidate text, so a
+        marker in a capture would change what is scored. The capture must also ignore
+        the dedup state entirely — every finding is captured, none deduped away."""
+        run = self._run_main(dry_run=True, prior=(True, set(self.ALL_KEYS), None))
+        run.mock_prior.assert_not_called()
+        captured = self._payload()
+        self.assertEqual(len(captured["discussions"]), 3)
+        for disc, finding in zip(
+            captured["discussions"], GL_CONTRACT_FINDINGS, strict=True
+        ):
+            self.assertEqual(disc["body"], render_comment_body(finding))
+        self.assertNotIn(
+            review_marker.FINDING_MARKER_TOKEN,
+            json.dumps(captured),
+            "no dry-run capture may carry the delivery marker",
         )
 
 

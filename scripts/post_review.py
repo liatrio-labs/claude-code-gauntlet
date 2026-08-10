@@ -50,10 +50,12 @@ GitHub path:
 
 GitLab path:
     Fetches MR version SHAs (GET /projects/{id}/merge_requests/{iid}/versions).
-    Skips the summary note when this SHA's review marker is already on the MR (asked of
-    detect_prior_review.py, the only reader), so a rerun after a partial delivery does not
-    duplicate it. Posts per-finding discussions with a position object, via glab api --input;
-    a rejected position warns and skips that finding rather than aborting the batch.
+    Asks detect_prior_review.py — the only reader — what this SHA's review already left on
+    the MR, so a rerun after a partial delivery duplicates neither the summary note nor the
+    inline discussions that did land. Posts per-finding discussions with a position object,
+    via glab api --input; a rejected position warns and skips that finding rather than
+    aborting the batch. Each posted discussion carries a delivery marker keyed on its own
+    rendered content, which is what makes the retry recognizable.
 
 Line validation:
     Parses diff to validate each finding line is in the diff.
@@ -63,6 +65,7 @@ No external Python dependencies — stdlib only.
 """
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -77,11 +80,11 @@ import tempfile
 # swallowing a real ImportError raised from inside review_marker.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# The summary-note idempotency check READS the marker, and detect_prior_review.py is the
-# only reader (review_marker.py's contract). Importing its one yes/no helper keeps this
-# module write-only: it must never grow a second parse of the signal it writes.
-from detect_prior_review import gitlab_note_exists_for_sha
-from review_marker import SHA_RE, build_footer, is_sha_shaped
+# The idempotency checks READ the markers, and detect_prior_review.py is the only reader
+# (review_marker.py's contract). Importing its one state helper keeps this module
+# write-only: it must never grow a second parse of the signals it writes.
+from detect_prior_review import gitlab_prior_delivery_state
+from review_marker import SHA_RE, build_finding_marker, build_footer, is_sha_shaped
 
 # ---------------------------------------------------------------------------
 # Dry-run capture
@@ -706,6 +709,20 @@ def render_comment_body(finding):
     return "\n".join(parts)
 
 
+def finding_key(filepath, line, title, body):
+    """Return the 16-hex delivery key recorded in a posted inline discussion's marker.
+
+    Derived from what a reader can see on the wire — the path and line the comment is
+    anchored to, the title, and the RENDERED body — never from an upstream finding
+    ``id``: the input schema documented at the top of this file does not require one, so
+    keying on it would make dedup depend on a field a caller need not supply. Content
+    derivation also gives the right answer when it changes: an edited finding is a
+    different comment and gets posted, rather than being suppressed as "already there".
+    """
+    material = "\x00".join((str(filepath), str(line), str(title), body))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
 # ---------------------------------------------------------------------------
 # Metadata footer
 # ---------------------------------------------------------------------------
@@ -859,31 +876,33 @@ def fetch_gitlab_shas(project_id, mr_iid):
     )
 
 
-def summary_already_posted(owner, repo, mr_iid, sha):
-    """True when a note on this MR already carries THIS sha's review marker.
+def gitlab_prior_delivery(owner, repo, mr_iid, sha):
+    """Return ``(summary_posted, finding_keys)`` — what THIS sha's review already left.
 
-    Makes a rerun after a partial delivery retry-safe: the per-finding loop can be
-    re-attempted without stacking a second summary note (issue #127 D4). The read itself
-    lives in detect_prior_review.py — the only reader of the signal — so this module
-    stays write-only.
+    Makes a rerun after a partial delivery retry-safe in both halves: the summary note is
+    not stacked a second time (issue #127 D4) and the inline discussions that did land
+    are not reposted (issue #132). ONE fetch serves both, in detect_prior_review.py — the
+    only reader of the signals — so this module stays write-only.
 
-    Never blocks the post. Dry-run does not fetch AT ALL: dry-run's invariant is that it
+    Never blocks delivery. Dry-run does not fetch AT ALL: dry-run's invariant is that it
     issues no WRITE calls (reads do happen under dry-run — `glab mr diff` and the
     versions fetch both run), and the DRY_RUN guard here exists so dry-run adds no READ
-    either and `_CAPTURED[0]` stays the summary, which build_dry_run_payload's "the
-    first capture is the summary" shape depends on. A marker sha that is not SHA-shaped
-    (get_head_sha's "unknown" fallback) is not a usable dedup key. A failed fetch warns
-    and posts — a possible duplicate note beats a silently dropped review.
+    either. That keeps `_CAPTURED[0]` the summary, which build_dry_run_payload's "the
+    first capture is the summary" shape depends on, and keeps every finding captured
+    rather than deduped away. A marker sha that is not SHA-shaped (get_head_sha's
+    "unknown" fallback) is not a usable dedup key. A failed fetch warns and delivers
+    everything — a possible duplicate beats a silently dropped review.
     """
-    if DRY_RUN:
-        return False
-    if not is_sha_shaped(sha):
-        return False
-    exists, error = gitlab_note_exists_for_sha(owner, repo, mr_iid, sha)
+    if DRY_RUN or not is_sha_shaped(sha):
+        return False, frozenset()
+    summary_posted, keys, error = gitlab_prior_delivery_state(owner, repo, mr_iid, sha)
     if error:
-        warn(f"could not check for an existing summary note ({error}); posting it.")
-        return False
-    return exists
+        warn(
+            f"could not check for an existing summary note or already-delivered inline "
+            f"discussions ({error}); posting them."
+        )
+        return False, frozenset()
+    return summary_posted, keys
 
 
 def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
@@ -912,7 +931,8 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         "Content-Type: application/json",
         f"projects/{project_id}/merge_requests/{mr_iid}/notes",
     ]
-    if summary_already_posted(owner, repo, mr_iid, sha):
+    summary_posted, delivered_keys = gitlab_prior_delivery(owner, repo, mr_iid, sha)
+    if summary_posted:
         print(f"MR summary note for {sha} already on the MR — skipping.")
     else:
         post_json(cmd_prefix, summary_payload)
@@ -922,9 +942,12 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             else "MR summary note posted."
         )
 
-    # Post each finding as an inline discussion
+    # Post each finding as an inline discussion. Every finding lands in exactly one of
+    # the four counters below, so the outcome reported at the end is a partition of
+    # `findings` — a run cannot both under-report and claim success.
     posted = 0
     skipped = 0
+    already_present = 0
     failed = 0
     for f in findings:
         line = f.get("line")
@@ -950,6 +973,14 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"— line not found in diff.{diag}"
             )
             skipped += 1
+            continue
+
+        comment_body = render_comment_body(f)
+        key = finding_key(filepath, line, f.get("title", ""), comment_body)
+        if key in delivered_keys:
+            # An earlier run already delivered this exact discussion for this sha.
+            # Reposting it is the duplication issue #132 reports, not a failure.
+            already_present += 1
             continue
 
         position = {
@@ -983,8 +1014,14 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             # coincide anyway.
             position["old_path"] = (old_paths or {}).get(filepath, filepath)
 
+        # The delivery marker goes on the LIVE wire only. The benchmark harness pins
+        # dry-run and scores the captured bodies as candidate text, so a marker in a
+        # capture would change what is scored; the live path is the only place a rerun
+        # has to recognize what it already posted.
         payload = {
-            "body": render_comment_body(f),
+            "body": comment_body
+            if DRY_RUN
+            else f"{comment_body}\n\n{build_finding_marker(sha, key)}",
             "position": position,
         }
 
@@ -1016,17 +1053,31 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         print(f"  {posted} inline discussion(s) posted.")
     if skipped:
         print(f"  {skipped} finding(s) skipped.")
+    if already_present:
+        print(
+            f"  {already_present} inline discussion(s) already on the MR from an "
+            f"earlier run — left alone."
+        )
     if failed:
         print(
             f"  {failed} inline discussion(s) rejected by GitLab (see warnings above)."
         )
         if posted == 0:
             # Every attempt was made first — this exit reports the outcome, it does not
-            # abandon the batch. A partial delivery is a success with warnings.
+            # abandon the batch. A partial delivery is a success with warnings, but a
+            # run that delivered nothing NEW and had a rejection is a failure, and the
+            # message counts only what THIS run attempted: discussions an earlier run
+            # already placed are neither successes of this one nor part of the total.
+            standing = (
+                f" {already_present} from an earlier run remain on the MR."
+                if already_present
+                else ""
+            )
             die(
-                f"all {failed} inline discussion(s) were rejected by GitLab — nothing "
-                f"was posted inline. The MR summary note is on the MR; rerunning retries "
-                f"the inline comments without duplicating it."
+                f"all {failed} inline discussion(s) attempted this run were rejected by "
+                f"GitLab — nothing new was posted inline.{standing} The MR summary note "
+                f"is on the MR; rerunning retries the inline comments without "
+                f"duplicating what is already there."
             )
 
 
