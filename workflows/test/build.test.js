@@ -6,7 +6,7 @@
 // that refuses any specifier strip() cannot safely drop.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { detectTopLevelCollisions, build, orderMismatches, unsafeImports } from '../build.js';
+import { detectTopLevelCollisions, build, orderMismatches, unsafeImports, checkUnsafeImports } from '../build.js';
 
 test('detectTopLevelCollisions flags a duplicated top-level declaration', () => {
   const text = [
@@ -152,4 +152,30 @@ test('unsafeImports ignores import.meta and dynamic import()', () => {
 
 test('the real src tree has no unsafe imports (build() succeeds)', () => {
   assert.doesNotThrow(() => build());
+});
+
+// checkUnsafeImports is the exact function build() calls at step 0 — this exercises the
+// throw wiring itself (the `{ ...v, file }` spread and the multi-line Error format), not
+// just the pure unsafeImports() scan it's built on.
+test('checkUnsafeImports throws naming file, line and reason for violations spanning two files', () => {
+  const files = ['a.js', 'b.js'];
+  const sources = new Map([
+    ['a.js', "const ok = 1;\nimport { x } from 'lodash';"],
+    ['b.js', "import './sideEffect.js';"],
+  ]);
+  assert.throws(
+    () => checkUnsafeImports(files, sources),
+    (err) => {
+      assert.match(err.message, /unsafe import\(s\) in workflows\/src/);
+      assert.match(err.message, /src\/a\.js:2:.*lodash/);
+      assert.match(err.message, /src\/b\.js:1:.*sideEffect\.js/);
+      return true;
+    },
+  );
+});
+
+test('checkUnsafeImports does not throw when every file is clean', () => {
+  const files = ['a.js'];
+  const sources = new Map([['a.js', "import { x } from './sibling.js';"]]);
+  assert.doesNotThrow(() => checkUnsafeImports(files, sources));
 });

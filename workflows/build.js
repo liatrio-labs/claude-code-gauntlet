@@ -155,11 +155,10 @@ export function detectTopLevelCollisions(bundleText) {
     .map(([name, lines]) => ({ name, lines }));
 }
 
-export function build() {
-  const files = present();
-  const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
-
-  // 0) Fail on any import strip() cannot safely drop (see unsafeImports).
+// Extracted so the throw path itself — not just the pure unsafeImports() scan — is
+// directly testable against a synthetic files/sources map, without also having to
+// satisfy present()'s ORDER-matches-disk guard for a real file added to workflows/src/.
+export function checkUnsafeImports(files, sources) {
   const unsafe = files.flatMap((file) =>
     unsafeImports(sources.get(file)).map((v) => ({ ...v, file })));
   if (unsafe.length) {
@@ -168,6 +167,14 @@ export function build() {
         + unsafe.map((v) => `  src/${v.file}:${v.line}: ${v.text}\n    ${v.reason}`).join('\n'),
     );
   }
+}
+
+export function build() {
+  const files = present();
+  const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
+
+  // 0) Fail on any import strip() cannot safely drop (see unsafeImports).
+  checkUnsafeImports(files, sources);
 
   // 1) Hoist the public surface so the bundle's first line is `export const meta`.
   const hoisted = [];
