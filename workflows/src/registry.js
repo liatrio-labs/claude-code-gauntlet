@@ -141,12 +141,14 @@ export function resolvePolicy(agentType, opts = {}) {
   if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
     // The override maps through the same full-ID pin: a bare alias pins the plain full ID
     // (it can no longer inherit the session variant — intended; see headless-mode.md).
-    return { model: toModelId(opts.subagentModelEnv), note: 'CLAUDE_CODE_SUBAGENT_MODEL override — model policy bypassed' };
+    // Override provenance is carried structurally by the run envelope's
+    // resolvedPolicy.subagentModel (null = no override), not restated here.
+    return { model: toModelId(opts.subagentModelEnv) };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);
   // Single benchmarked policy: discovery on sonnet with security-reviewer's opus
   // override, stage agents per STAGE_DEFAULTS. Alternate model modes (fable) are
   // roadmap work (issue #17 V3.2) and land behind their own paired measurement.
   const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet');
-  return { model, note: '' };
+  return { model };
 }
