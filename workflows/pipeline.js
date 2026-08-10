@@ -5864,6 +5864,9 @@ async function runWith(ctx, rawArgs) {
         // The slice-input proof ledger (issue #69 / #25 req 4-6). `verified` is one
         // boolean about the whole stage; this says how many slices were PROVEN to have
         // been verified against the document this run dispatched, and how many were not.
+        // `recovered` counts only PROVEN-and-recovered slices: a slice that is both
+        // unprovable and recovered lands in `unprovable`, not here (the counters are
+        // disjoint by construction — see emptyInputProof's comment).
         inputProof: verifyOut.inputProof,
         highConfidence: (challengeOut.findings || []).length,
         unverified: (challengeOut.unverified || []).length,

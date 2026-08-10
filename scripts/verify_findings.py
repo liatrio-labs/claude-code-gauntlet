@@ -1106,8 +1106,11 @@ def load_input(findings_json_path):
 
     # raw_decode does not skip leading whitespace; json.load does, so the offset is
     # computed rather than the text stripped (stripping would shift every position in
-    # the error message below).
-    start = len(text) - len(text.lstrip())
+    # the error message below). " \t\n\r" is JSON's own whitespace set (RFC 8259 §2),
+    # not str.lstrip()'s Unicode one -- using the latter would silently accept a
+    # leading \x0b/\x0c/\xa0 that strict json.load rejects, breaking "strict about
+    # everything else".
+    start = len(text) - len(text.lstrip(" \t\n\r"))
     try:
         data, end = json.JSONDecoder().raw_decode(text, start)
     except json.JSONDecodeError as e:
@@ -1115,11 +1118,12 @@ def load_input(findings_json_path):
 
     recovery = None
     tail = text[end:]
-    if tail.strip():
+    if tail.strip(" \t\n\r"):
         if not _RECOVERABLE_TRAILING_RE.fullmatch(tail):
             # Byte-identical to the strict parser's own message: json.load skips the
             # whitespace after the value before pointing at the offending character.
-            bad = end + len(tail) - len(tail.lstrip())
+            # Same JSON-whitespace set as above, so the offset agrees with json.load's.
+            bad = end + len(tail) - len(tail.lstrip(" \t\n\r"))
             die(
                 "Invalid JSON in findings file: "
                 f"{json.JSONDecodeError('Extra data', text, bad)}"

@@ -2769,6 +2769,13 @@ class TestSliceInputRecovery(unittest.TestCase):
             "a closing brace then a new object": doc + "}{",
             "trailing alphanumeric garbage": doc + "oops42",
             "a closing bracket mixed with letters": doc + "]x",
+            # JSON's whitespace set is exactly " \t\n\r" (RFC 8259 SS2), not Python's
+            # Unicode one -- these are Unicode-whitespace but JSON-hostile, leading AND
+            # trailing, so a str.lstrip()-based class would wrongly accept them.
+            "leading form feed": "\x0c" + doc,
+            "leading no-break space": "\xa0" + doc,
+            "trailing form feed alone": doc + "\x0c",
+            "trailing no-break space alone": doc + "\xa0",
         }
         for label, text in cases.items():
             with self.subTest(case=label):
@@ -2781,15 +2788,24 @@ class TestSliceInputRecovery(unittest.TestCase):
         # The message shape is what the honest-failure envelope carries into the run's
         # gap text, and issue #69's own report quotes it. A recovery-capable parser
         # that reworded it would silently invalidate every existing diagnosis.
-        text = json.dumps({"findings": [], "base_branch": "main"}) + "  oops"
-        path = self._write(text)
-        try:
-            json.loads(text)
-        except json.JSONDecodeError as e:
-            strict = f"Invalid JSON in findings file: {e}"
-        with self.assertRaises(InputError) as ctx:
-            load_input(path)
-        self.assertEqual(str(ctx.exception), strict)
+        doc = json.dumps({"findings": [], "base_branch": "main"})
+        cases = {
+            "ascii space tail": doc + "  oops",
+            # \x0c is JSON-hostile whitespace (not in " \t\n\r"), so it lands in the
+            # extra-data tail rather than being silently skipped -- the offset must
+            # still agree with the strict parser's own char count.
+            "form feed tail": doc + "\x0coops",
+        }
+        for label, text in cases.items():
+            with self.subTest(case=label):
+                path = self._write(text)
+                try:
+                    json.loads(text)
+                except json.JSONDecodeError as e:
+                    strict = f"Invalid JSON in findings file: {e}"
+                with self.assertRaises(InputError) as ctx:
+                    load_input(path)
+                self.assertEqual(str(ctx.exception), strict)
 
     def test_the_extra_data_message_matches_on_a_multi_line_document(self):
         # The single-line case above cannot exercise the line/column arithmetic in
@@ -2936,6 +2952,23 @@ class TestSliceInputRecovery(unittest.TestCase):
         self.assertEqual(
             list(envelope), ["status", "receipt", "input_recovery", "result"]
         )
+
+    def test_receipt_mode_reports_the_honest_failure_envelope_on_unrecoverable_input(
+        self,
+    ):
+        # The half of the honest-failure contract that die()-inside-load_input still
+        # has to clear: an unrecoverable slice input (outside the trailing-bytes class)
+        # must still produce a schema-valid {status:'failed'} envelope on disk, not an
+        # uncaught exception that leaves the executor with no output file and no reason
+        # -- the exact smoke-20260729-191253-8ae2ee3 failure mode the InputError
+        # docstring documents. `_run_receipt_over` already writes the envelope on this
+        # path (main() unconditionally returns `_run_receipt(args)`'s write), so no
+        # separate helper is needed.
+        doc = json.dumps({"findings": [], "base_branch": "main"})
+        envelope = self._run_receipt_over(doc + "oops")
+        self.assertEqual(envelope["status"], "failed")
+        self.assertEqual(envelope["exitCode"], 1)
+        self.assertIn("Invalid JSON in findings file", envelope["stderr"])
 
 
 if __name__ == "__main__":
