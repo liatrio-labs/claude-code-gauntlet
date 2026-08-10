@@ -2,6 +2,41 @@
 
 <!-- version list -->
 
+## v3.6.4 (2026-08-10)
+
+### Bug Fixes
+
+- **marker**: Add a per-finding delivery marker wire format
+  ([#169](https://github.com/liatrio-labs/claude-code-gauntlet/pull/169),
+  [`c70456d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c70456de2e6f52735a85f759127828190a652a2d))
+
+- **post-review**: Dedup GitLab inline discussions on rerun via finding markers (#132)
+  ([#169](https://github.com/liatrio-labs/claude-code-gauntlet/pull/169),
+  [`c70456d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c70456de2e6f52735a85f759127828190a652a2d))
+
+- **post-review**: Do not repost inline discussions on a GitLab rerun
+  ([#169](https://github.com/liatrio-labs/claude-code-gauntlet/pull/169),
+  [`c70456d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c70456de2e6f52735a85f759127828190a652a2d))
+
+- **post-review**: Keep the dry-run promise and the marker honest
+  ([#169](https://github.com/liatrio-labs/claude-code-gauntlet/pull/169),
+  [`c70456d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c70456de2e6f52735a85f759127828190a652a2d))
+
+### Testing
+
+- **post-review**: Pin the plain glab mr diff contract with honest fixtures (#133)
+  ([#167](https://github.com/liatrio-labs/claude-code-gauntlet/pull/167),
+  [`8b85372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b85372a2c7ae2cc353eca53cfc1c99d6505abfc))
+
+- **post_review**: Defend the glab fixtures' bytes with an assertion
+  ([#167](https://github.com/liatrio-labs/claude-code-gauntlet/pull/167),
+  [`8b85372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b85372a2c7ae2cc353eca53cfc1c99d6505abfc))
+
+- **post_review**: Pin the glab mr diff output shape with fixtures
+  ([#167](https://github.com/liatrio-labs/claude-code-gauntlet/pull/167),
+  [`8b85372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8b85372a2c7ae2cc353eca53cfc1c99d6505abfc))
+
+
 ## v3.6.3 (2026-08-10)
 
 ### Bug Fixes
