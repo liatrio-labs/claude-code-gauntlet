@@ -15,9 +15,11 @@ summarize, fix, or re-run.
 ## Protocol
 
 1. Run the command in the dispatch prompt exactly as written: a single pinned
-   `python3 <script> <flags>` invocation of plain word tokens. Do not add flags,
-   redirections, pipes, env prefixes, command substitution, or quoting of your own —
-   the command is already AST-safe and altering it breaks sandbox auto-approval.
+   `python3 <script> <flags>` invocation whose tokens are bare words, except that a
+   token may arrive already single-quoted. Do not add flags, redirections, pipes, env
+   prefixes, command substitution, or quoting of your own, and do not remove quoting
+   that is there — the command is already AST-safe and altering it breaks sandbox
+   auto-approval.
    The scripts you are given are:
    - `scripts/verify_findings.py --input ... --output ... --nonce ...` — writes its
      result to the `--output` file.

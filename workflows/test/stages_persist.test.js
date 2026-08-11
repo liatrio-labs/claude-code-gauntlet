@@ -28,6 +28,7 @@ import {
 } from '../src/stages.js';
 import { validateArgs } from '../src/args.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
+import { shellSplit } from './helpers/shellWords.js';
 
 const OUT_DIR = '/repo/.code-gauntlet';
 const SHA = 'abc1234';
@@ -604,6 +605,19 @@ test('derived path: the executor gets a single pinned python3 command of plain w
   const command = exec.prompt.split('\n').filter((l) => l.startsWith('python3'))[0];
   assert.equal(command.split(' ').length, 4, 'four plain word tokens');
   assert.ok(!/[$`;|&><(){}]/.test(command), `command must be AST-safe: ${command}`);
+});
+
+test('(#75) derived path: a space in the script or plan path still names ONE file per argv word', async () => {
+  // assemblePrompt has verifyCommand's defect and verifyCommand's fix: a space-bearing
+  // {output_dir} used to hand the executor `--plan /My Repo/....json` as two arguments,
+  // and assemble_artifacts.py refused a plan it could not open. Asserted on the argv a
+  // shell would build — a substring match cannot tell one word from two.
+  const outDir = '/My Repo/.code-gauntlet';
+  const script = "/plug in/scripts/o'brien/assemble_artifacts.py";
+  const ctx = persistCtx();
+  await writeArtifacts(ctx, persistInput({ outputDir: outDir, persist: { assembleScriptPath: script } }));
+  const command = ctx.calls[1].prompt.split('\n').pop();
+  assert.deepEqual(shellSplit(command), ['python3', script, '--plan', persistPlanPath(outDir, SHA)]);
 });
 
 test('derived path: the writer payload is dramatically smaller than the legacy by-value one', async () => {
