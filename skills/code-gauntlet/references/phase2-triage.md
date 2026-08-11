@@ -373,7 +373,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
 | `agentFlags` | scope-gating flag map (opt-out): `{}` for full scope (all dimensions on), `{ deep: false }` for light scope (bugs+security only). Values must be booleans; only literal `false` disables |
-| `policy` | `{ tier, subagentModel }` — see below |
+| `policy` | `{ tier, subagentModel, provider }` — see below |
 | `limits` | `{ summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200, deliveryCap }` (override from REVIEW.md if set) |
 | `delivery` | `{ tier: "all" \| "main_only" }` — the Phase 8 PR-comment tier (default `all`); optional (absent ⇒`all`) |
 
@@ -383,6 +383,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 
 - `tier` — always `"optimized"`, the single benchmarked policy (recorded from the `model_tier` knob). A REVIEW.md `Model Tier` value other than `optimized` self-heals to `optimized` with a loud methodology warning (never a question, never an abort); the env knob `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. See Phase 1 for the exact resolution split. Alternate model modes are roadmap work (issue #17).
 - `subagentModel` — read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment (or `null`). **The workflow cannot read `process.env`**, so this capture is the only path for it. If set, warn the user and record it in the methodology — it silently overrides the entire per-stage model policy.
+- `provider` — which API provider the session runs on, resolved from the environment (first match wins): `CLAUDE_CODE_USE_BEDROCK` non-empty → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, `ANTHROPIC_BASE_URL` set → `"gateway"`, else `"firstParty"`. Same capture-only path as `subagentModel`. On `firstParty` the workflow pins full first-party model IDs; on any other value it dispatches bare aliases (`sonnet`/`opus`) because third-party providers use deployment-specific model IDs and pass first-party names through unchecked, failing every agent dispatch as an invalid model identifier. Any other spelling is rejected at the waist (`invalid policy.provider`).
 
 **Other inputs (optional unless noted):**
 

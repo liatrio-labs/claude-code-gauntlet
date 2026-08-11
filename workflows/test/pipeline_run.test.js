@@ -837,6 +837,29 @@ test('sweep: runWith drives every stage with STRING prompts + valid JSON Schemas
   }
 });
 
+// policy.provider must thread waist -> modelFor -> every dispatch: the registry test alone
+// cannot catch modelFor dropping the field (it would silently re-pin first-party full IDs
+// on Bedrock — the exact live failure this exists to prevent).
+test('policy.provider threads through modelFor: bedrock dispatches the bare alias', async () => {
+  const args = validArgs({ policy: { tier: 'optimized', subagentModel: null, provider: 'bedrock' } });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  const models = [...new Set(ctx.calls.map((c) => c.model))].sort();
+  // Discovery + stage agents on the sonnet alias, security-reviewer on the opus alias —
+  // and no first-party full ID anywhere in the run.
+  assert.deepEqual(models, ['opus', 'sonnet']);
+  assert.equal(out.resolvedPolicy.provider, 'bedrock');
+});
+test('absent policy.provider keeps first-party full-ID pins and reports firstParty', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.ok(ctx.calls.every((c) => /^claude-/.test(c.model)), 'every dispatch pins a full first-party ID');
+  assert.equal(out.resolvedPolicy.provider, 'firstParty');
+});
+
 test('sweep: bucketed summarize + segmented report emit only contract-valid dispatches', async () => {
   const args = validArgs();
   // Bucketed summarize (parallel thunks + merge): >500 lines AND more files than the bucket.

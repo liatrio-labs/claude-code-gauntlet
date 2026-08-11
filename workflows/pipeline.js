@@ -1843,22 +1843,38 @@ const STAGE_DEFAULTS = {
 // variant into every agent whose policy says 'sonnet' (measured: cache reads 15.6M→28.7M,
 // zero plain-sonnet rows). Pinning full IDs makes agent pins immune to the orchestrator's
 // session model. Model migrations update this one map.
+//
+// FIRST-PARTY ONLY. These are Anthropic API model names; Bedrock / Vertex / Foundry use
+// provider-specific deployment IDs and pass any other string through UNCHECKED to the
+// provider, where these names 400 as invalid model identifiers (observed live: a Bedrock
+// run degraded all discovery dimensions in 2s). On those providers the bare alias is the
+// only provider-portable spelling — the harness resolves 'sonnet'/'opus' through the
+// deployment mapping (ANTHROPIC_DEFAULT_*_MODEL). The [1m]-cascade the pin exists to stop
+// was measured on first-party variants; on a third-party provider alias resolution is the
+// correct behavior, not the bug. So: pin full IDs first-party, emit bare aliases elsewhere.
 const MODEL_IDS = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-4-8', haiku: 'claude-haiku-4-5-20251001' };
-const toModelId = (m) => MODEL_IDS[m] || m;
+// policy.provider === 'firstParty' (or absent — older waists predate the field) pins;
+// ANY other value emits the alias untouched. Unknown values are deliberately not an error
+// here: the alias is the one spelling that resolves on every provider, so alias-through is
+// the safe arm, and the waist (args.js) enum-rejects a typo'd provider before dispatch.
+const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
+const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
 
 function resolvePolicy(agentType, opts = {}) {
   if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
     // The override maps through the same full-ID pin: a bare alias pins the plain full ID
     // (it can no longer inherit the session variant — intended; see headless-mode.md).
+    // On a third-party provider it passes through untouched — an explicit deployment ID
+    // (us.anthropic.…) is exactly what the operator escaped to this knob for.
     // Override provenance is carried structurally by the run envelope's
     // resolvedPolicy.subagentModel (null = no override), not restated here.
-    return { model: toModelId(opts.subagentModelEnv) };
+    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);
   // Single benchmarked policy: discovery on sonnet with security-reviewer's opus
   // override, stage agents per STAGE_DEFAULTS. Alternate model modes (fable) are
   // roadmap work (issue #17 V3.2) and land behind their own paired measurement.
-  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet');
+  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
   return { model };
 }
 
@@ -1866,11 +1882,17 @@ function resolvePolicy(agentType, opts = {}) {
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
-// policy shape: { tier, subagentModel } — tier records the resolved model_tier knob
-// (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
+// policy shape: { tier, subagentModel, provider } — tier records the resolved model_tier
+// knob (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
 //   - policy.subagentModel is passed to registry.js's resolvePolicy() as opts.subagentModelEnv.
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
+//   - policy.provider (optional; POLICY_PROVIDERS) is the skill's Phase 2 capture of which
+//     API provider the session runs on (the workflow cannot read process.env, so this
+//     capture is the only path). resolvePolicy pins full first-party model IDs only for
+//     'firstParty'/absent; any other provider dispatches bare aliases, which the harness
+//     resolves through the provider's deployment mapping — first-party IDs like
+//     claude-sonnet-5 are passed through unchecked on Bedrock/Vertex/Foundry and 400.
 const ARGS_VERSION = 1;
 // changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
 // REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
@@ -1892,6 +1914,14 @@ const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 // The optional Phase 8 delivery selector: { tier }. Absent is fine (the workflow defaults
 // the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
 const DELIVERY_TIERS = ['all', 'main_only'];
+
+// Known values for policy.provider. The enum exists because the two arms diverge silently:
+// a typo ('first-party', 'aws') would flip a first-party session onto bare aliases —
+// reintroducing the measured [1m] session-variant cascade the full-ID pin exists to stop —
+// with no error anywhere. Fail loud at the waist instead. 'gateway' is an LLM gateway /
+// custom ANTHROPIC_BASE_URL, where the gateway defines the model names, so aliases are the
+// portable spelling there too.
+const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry', 'gateway'];
 
 // Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
 // stamped `null` rather than absent — a wasted model round trip. These five top-level
@@ -2335,6 +2365,15 @@ function validateArgs(args) {
       }
     }
   }
+  // policy.provider drives which arm of registry.js's model resolution runs (full-ID pin
+  // vs bare alias — see POLICY_PROVIDERS above for why a typo must not resolve silently).
+  // Only the provider field is shape-checked here: tier/subagentModel predate this guard
+  // and keep their existing tolerance. Absent provider means 'firstParty' (older waists).
+  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
+    && args.policy.provider !== undefined && args.policy.provider !== null
+    && !POLICY_PROVIDERS.includes(args.policy.provider)) {
+    errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
+  }
   // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
   if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
     errors.push('changedFiles must be an array of repo-relative paths');
@@ -2502,7 +2541,7 @@ function defaultCtx() {
 // Resolve the dispatch model for an agent type from the args-waist policy object —
 // the single place the policy shape maps onto resolvePolicy's opts.
 function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel }).model;
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
 
 // Shared char budget for a single agent's by-value PROMPT payload. Above it, stages
@@ -5913,6 +5952,9 @@ async function runWith(ctx, rawArgs) {
       artifactPaths: writeOut.artifactPaths,
       resolvedPolicy: {
         subagentModel: policy.subagentModel || null,
+        // 'firstParty' when the waist omitted it — the omission and the explicit value
+        // resolve identically in resolvePolicy, and the envelope reports the resolution.
+        provider: policy.provider || 'firstParty',
       },
       // On persist success the resume state lives in artifactPaths.checkpoints — the
       // compact return carries only phase NAMES (never the findings bulk). If the writer

@@ -1,11 +1,17 @@
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
-// policy shape: { tier, subagentModel } — tier records the resolved model_tier knob
-// (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
+// policy shape: { tier, subagentModel, provider } — tier records the resolved model_tier
+// knob (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
 //   - policy.subagentModel is passed to registry.js's resolvePolicy() as opts.subagentModelEnv.
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
+//   - policy.provider (optional; POLICY_PROVIDERS) is the skill's Phase 2 capture of which
+//     API provider the session runs on (the workflow cannot read process.env, so this
+//     capture is the only path). resolvePolicy pins full first-party model IDs only for
+//     'firstParty'/absent; any other provider dispatches bare aliases, which the harness
+//     resolves through the provider's deployment mapping — first-party IDs like
+//     claude-sonnet-5 are passed through unchecked on Bedrock/Vertex/Foundry and 400.
 export const ARGS_VERSION = 1;
 // changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
 // REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
@@ -27,6 +33,14 @@ const NONCE_RE = /^[A-Za-z0-9._-]+$/;
 // The optional Phase 8 delivery selector: { tier }. Absent is fine (the workflow defaults
 // the tier to 'all' — post every challenge-survivor). A present tier must be a known value.
 const DELIVERY_TIERS = ['all', 'main_only'];
+
+// Known values for policy.provider. The enum exists because the two arms diverge silently:
+// a typo ('first-party', 'aws') would flip a first-party session onto bare aliases —
+// reintroducing the measured [1m] session-variant cascade the full-ID pin exists to stop —
+// with no error anywhere. Fail loud at the waist instead. 'gateway' is an LLM gateway /
+// custom ANTHROPIC_BASE_URL, where the gateway defines the model names, so aliases are the
+// portable spelling there too.
+const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry', 'gateway'];
 
 // Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
 // stamped `null` rather than absent — a wasted model round trip. These five top-level
@@ -469,6 +483,15 @@ export function validateArgs(args) {
         if (typeof v !== 'boolean') errors.push(`invalid agentFlags.${k}: must be a boolean (got ${typeof v})`);
       }
     }
+  }
+  // policy.provider drives which arm of registry.js's model resolution runs (full-ID pin
+  // vs bare alias — see POLICY_PROVIDERS above for why a typo must not resolve silently).
+  // Only the provider field is shape-checked here: tier/subagentModel predate this guard
+  // and keep their existing tolerance. Absent provider means 'firstParty' (older waists).
+  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
+    && args.policy.provider !== undefined && args.policy.provider !== null
+    && !POLICY_PROVIDERS.includes(args.policy.provider)) {
+    errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
   }
   // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
   if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))

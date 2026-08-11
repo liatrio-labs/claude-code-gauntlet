@@ -136,21 +136,37 @@ const STAGE_DEFAULTS = {
 // variant into every agent whose policy says 'sonnet' (measured: cache reads 15.6M→28.7M,
 // zero plain-sonnet rows). Pinning full IDs makes agent pins immune to the orchestrator's
 // session model. Model migrations update this one map.
+//
+// FIRST-PARTY ONLY. These are Anthropic API model names; Bedrock / Vertex / Foundry use
+// provider-specific deployment IDs and pass any other string through UNCHECKED to the
+// provider, where these names 400 as invalid model identifiers (observed live: a Bedrock
+// run degraded all discovery dimensions in 2s). On those providers the bare alias is the
+// only provider-portable spelling — the harness resolves 'sonnet'/'opus' through the
+// deployment mapping (ANTHROPIC_DEFAULT_*_MODEL). The [1m]-cascade the pin exists to stop
+// was measured on first-party variants; on a third-party provider alias resolution is the
+// correct behavior, not the bug. So: pin full IDs first-party, emit bare aliases elsewhere.
 const MODEL_IDS = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-4-8', haiku: 'claude-haiku-4-5-20251001' };
-const toModelId = (m) => MODEL_IDS[m] || m;
+// policy.provider === 'firstParty' (or absent — older waists predate the field) pins;
+// ANY other value emits the alias untouched. Unknown values are deliberately not an error
+// here: the alias is the one spelling that resolves on every provider, so alias-through is
+// the safe arm, and the waist (args.js) enum-rejects a typo'd provider before dispatch.
+const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
+const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
 
 export function resolvePolicy(agentType, opts = {}) {
   if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
     // The override maps through the same full-ID pin: a bare alias pins the plain full ID
     // (it can no longer inherit the session variant — intended; see headless-mode.md).
+    // On a third-party provider it passes through untouched — an explicit deployment ID
+    // (us.anthropic.…) is exactly what the operator escaped to this knob for.
     // Override provenance is carried structurally by the run envelope's
     // resolvedPolicy.subagentModel (null = no override), not restated here.
-    return { model: toModelId(opts.subagentModelEnv) };
+    return { model: toModelId(opts.subagentModelEnv, opts.provider) };
   }
   const dim = DIMENSIONS.find((d) => d.agentType === agentType);
   // Single benchmarked policy: discovery on sonnet with security-reviewer's opus
   // override, stage agents per STAGE_DEFAULTS. Alternate model modes (fable) are
   // roadmap work (issue #17 V3.2) and land behind their own paired measurement.
-  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet');
+  const model = toModelId(dim?.modelOverride || STAGE_DEFAULTS[agentType.split(':').pop()] || 'sonnet', opts.provider);
   return { model };
 }

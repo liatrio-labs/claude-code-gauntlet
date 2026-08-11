@@ -36,7 +36,7 @@ function defaultCtx() {
 // Resolve the dispatch model for an agent type from the args-waist policy object —
 // the single place the policy shape maps onto resolvePolicy's opts.
 function modelFor(agentType, policy) {
-  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel }).model;
+  return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
 
 // Shared char budget for a single agent's by-value PROMPT payload. Above it, stages
@@ -3447,6 +3447,9 @@ export async function runWith(ctx, rawArgs) {
       artifactPaths: writeOut.artifactPaths,
       resolvedPolicy: {
         subagentModel: policy.subagentModel || null,
+        // 'firstParty' when the waist omitted it — the omission and the explicit value
+        // resolve identically in resolvePolicy, and the envelope reports the resolution.
+        provider: policy.provider || 'firstParty',
       },
       // On persist success the resume state lives in artifactPaths.checkpoints — the
       // compact return carries only phase NAMES (never the findings bulk). If the writer
