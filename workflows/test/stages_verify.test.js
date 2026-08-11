@@ -542,6 +542,23 @@ test('(#75) a $ or backtick in baseBranch is quoted, never live shell syntax', a
   assert.doesNotMatch(outsideSingleQuotes(cmd), /[$`]/, `expansion escaped its quotes: ${cmd}`);
 });
 
+test('(#75) an apostrophe path and a $ branch in the SAME command: neither escape leaks live syntax', async () => {
+  // The two escapes interact: the `'\''` a quoted path emits ends and reopens quoted runs,
+  // so a scanner that mis-pairs quotes reads the branch's `$` as live (or throws) even
+  // though both tokens are correctly quoted. Realistic together — /Users/o'brien plus a
+  // legal `feature/$x` refname.
+  const verify = {
+    ...baseInput().verify,
+    diffPath: "/Users/o'brien/out/code-gauntlet diff.patch",
+    baseBranch: 'feature/$x-`y`',
+  };
+  const cmd = await dispatchedCommand(baseInput({ verify }));
+  assert.deepEqual(shellSplit(cmd).slice(-4), [
+    '--base-branch', verify.baseBranch, '--diff-file', verify.diffPath,
+  ]);
+  assert.doesNotMatch(outsideSingleQuotes(cmd), /[$`]/, `expansion escaped its quotes: ${cmd}`);
+});
+
 test('(#75) an absent head SHA contributes an empty token, never the word "undefined"', async () => {
   // Array.join stringifies null/undefined to '' — shellWord must keep that exact
   // semantics, or a missing optional field starts passing a literal `undefined` to argv.

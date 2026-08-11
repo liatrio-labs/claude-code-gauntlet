@@ -16,7 +16,7 @@ summarize, fix, or re-run.
 
 1. Run the command in the dispatch prompt exactly as written: a single pinned
    `python3 <script> <flags>` invocation whose tokens are bare words, except that a
-   path may arrive already single-quoted. Do not add flags, redirections, pipes, env
+   token may arrive already single-quoted. Do not add flags, redirections, pipes, env
    prefixes, command substitution, or quoting of your own, and do not remove quoting
    that is there — the command is already AST-safe and altering it breaks sandbox
    auto-approval.

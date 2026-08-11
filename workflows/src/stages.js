@@ -1269,11 +1269,13 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum })
 
 // shellWord(tok) -> the token as ONE shell word. A token of ordinary path characters is
 // returned bare, so an ordinary command is byte-identical to a plain `parts.join(' ')`;
-// anything else is POSIX single-quoted, which keeps the command AST-safe (a single-quoted
-// token is one `raw_string` node to tree-sitter-bash — no expansion, no operator, and
-// nothing the sandbox's auto-approval parse does not recognise). The charset is
+// anything else is POSIX single-quoted, which keeps the command AST-safe: with no embedded
+// single quote the token is one `raw_string` node to tree-sitter-bash — no expansion, no
+// operator, nothing the sandbox's auto-approval parse does not recognise. The charset is
 // shlex.quote's: deliberately conservative, since every character outside it only costs a
-// pair of quotes. `'\''` closes, escapes, and reopens for an embedded single quote.
+// pair of quotes. `'\''` closes, escapes, and reopens for an embedded single quote; that
+// token parses as a `concatenation` rather than a `raw_string`, so auto-approval is not
+// guaranteed on that rare edge (a quote in a repo path) — a correct command is worth more.
 const SHELL_SAFE_RE = /^[A-Za-z0-9_%+=:,.\/@-]+$/;
 function shellWord(tok) {
   // null/undefined/'' contribute an empty string, exactly as Array.join did: an absent

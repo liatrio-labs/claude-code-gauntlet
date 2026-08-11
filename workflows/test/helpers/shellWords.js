@@ -45,13 +45,21 @@ export function shellSplit(cmd) {
   return words;
 }
 
-// outsideSingleQuotes(cmd) -> everything NOT inside a single-quoted run, quotes dropped.
-// A `$` or a backtick here would be live shell syntax; the same character inside a
-// single-quoted run is an ordinary byte. Tests scan this, never the raw command.
+// outsideSingleQuotes(cmd) -> everything NOT inside a single-quoted run and not
+// backslash-escaped, quotes dropped. A `$` or a backtick here would be live shell syntax;
+// the same character inside a single-quoted run, or behind a backslash, is an ordinary
+// byte. Tests scan this, never the raw command.
 export function outsideSingleQuotes(cmd) {
   let out = '';
   let i = 0;
   while (i < cmd.length) {
+    // Mirrors shellSplit's backslash arm: `\'` must not be read as opening a quoted run,
+    // which is exactly the `'\''` escape shellWord emits for an embedded single quote.
+    if (cmd[i] === '\\') {
+      if (i + 1 >= cmd.length) throw new Error(`trailing backslash: ${cmd}`);
+      i += 2;
+      continue;
+    }
     if (cmd[i] === "'") {
       const end = cmd.indexOf("'", i + 1);
       if (end === -1) throw new Error(`unterminated single quote: ${cmd}`);
