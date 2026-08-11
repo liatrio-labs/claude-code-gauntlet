@@ -7,10 +7,13 @@ nine dimension names in agents/AGENTS.md, the field lists there,
 and `references/report-format.md`'s Finding Fields Reference tables. A fourth — the seven
 discovery agents' `.md` output contracts — tells the models what to emit.
 
-Every one of those can drift from the registry silently, and drift is not cosmetic here:
-StructuredOutput returns ONLY declared properties, so a field an agent contract instructs but
-the registry does not declare is discarded the instant the agent answers, before merge,
-verify, filter, challenge or report ever see it. That is issue #47 — `suggestion` and
+Every one of those can drift from the registry silently, and drift is not cosmetic here: the
+discovery item schema is CLOSED (`additionalProperties: false`, issue #53), so a field an agent
+contract instructs but the registry does not declare is a schema violation the platform rejects
+— the agent burns retries and, if it keeps emitting the field, returns nothing and its whole
+dimension degrades. Before #53 the same drift was silent instead: the undeclared field was
+simply discarded the instant the agent answered. Either way it never reaches merge, verify,
+filter, challenge or report. That is issue #47 — `suggestion` and
 `claude_md_rule` (instructed by all 7 contracts), `spec_text` (intent) and
 `criticality`/`failure_scenario` (test_coverage) were instructed for the life of the v3
 pipeline and declared by nothing, so `report-format.md` marked `suggestion` **required** while
@@ -332,8 +335,9 @@ class TestContractSchemaLockstep(unittest.TestCase):
     """The issue #47 guard: what a contract instructs and what the schema declares agree."""
 
     def test_every_instructed_field_is_schema_declared(self):
-        # The #47 direction. An instructed-but-undeclared field is dropped by
-        # StructuredOutput the instant the agent answers — silently, on every run.
+        # The #47 direction. Since #53 closed the item schema, an instructed-but-undeclared
+        # field is REJECTED at the dispatch boundary on every run: schema retries, and a
+        # model that keeps emitting it fails the agent and degrades the dimension.
         offenders = {}
         for agent_type, declared in declared_by_agent().items():
             name = agent_name(agent_type)
@@ -343,8 +347,9 @@ class TestContractSchemaLockstep(unittest.TestCase):
         self.assertEqual(
             offenders,
             {},
-            "agent contracts instruct fields no schema declares — they will be "
-            "dropped at the StructuredOutput boundary. Declare them in "
+            "agent contracts instruct fields no schema declares — the CLOSED item "
+            "schema rejects them at the dispatch boundary, costing schema retries and "
+            "risking a terminal agent failure that degrades the dimension. Declare them in "
             f"workflows/src/registry.js (canonical or the owning dimension's "
             f"schemaExtra): {offenders}",
         )
