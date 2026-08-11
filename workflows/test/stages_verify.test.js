@@ -664,6 +664,32 @@ test('(p2) a receipt with NO input_checksum -> UNVERIFIED after the retry, count
   assert.equal(ctx.execCallsFor(0).length, VERIFY_ATTEMPTS_PER_SLICE);
 });
 
+test('(p2b) a receipt missing input_checksum on attempt 1 but valid (with input_recovery) on the retry -> TRUSTED, verified true, recovery forwarded, counted recovered', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i, { attempt }) => {
+    const env = okEnvelope(input.findings, { nonce: attempt === 2 ? `n-1.${i}.r1` : `n-1.${i}` });
+    if (attempt === 1) {
+      // Attempt 1 drops the checksum entirely -- the retryable "missing" fault, not the
+      // deterministic "mismatch" fault probed by (p3).
+      env.receipt.input_checksum = null;
+    } else {
+      // Attempt 2 is a fresh, valid sample: leave input_checksum undeclared so the
+      // recorder's rec.stamp fills in the checksum of what was actually dispatched, and
+      // additionally carry input_recovery to prove that field is forwarded on a
+      // retry-success path too, not just on a first-attempt trusted slice (p4).
+      env.input_recovery = { trailing_bytes: '}\n' };
+    }
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true, 'the retry recovers cleanly -- a missing checksum on attempt 1 does not sink the slice');
+  assert.equal(ctx.execCallsFor(0).length, VERIFY_ATTEMPTS_PER_SLICE, 'missing input_checksum is retryable, so the retry is spent');
+  assert.ok(out.findings.every((f) => f.origin !== 'unknown'), 'the recovered slice is trusted, not degraded');
+  const gap = out.gaps.find((g) => g.startsWith('verify: RECOVERED —'));
+  assert.ok(gap, 'the retry-success recovery is disclosed exactly like a first-attempt recovery');
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 0, recovered: 1, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
 test('(p3) a receipt whose input_checksum disagrees -> UNVERIFIED, NOT retried (deterministic), counted mismatched', async () => {
   const input = baseInput();
   const ctx = verifyCtx((_t, i) => {
