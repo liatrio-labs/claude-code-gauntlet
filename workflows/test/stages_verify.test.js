@@ -22,7 +22,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { verifyStage, parseWriterPayload, VERIFY_ATTEMPTS_PER_SLICE } from '../src/stages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
-import { deltaEnvelope, deltasFor, ELIMINATION_STAMP } from './helpers/verifyDelta.js';
+import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, sliceInputRecorder } from './helpers/verifyDelta.js';
 
 // Platform contract: agent(promptString, opts). The EXECUTOR slice loop is deliberately
 // SEQUENTIAL bare agent() calls (never parallel() — the order pairs receipts to slices),
@@ -41,6 +41,7 @@ import { deltaEnvelope, deltasFor, ELIMINATION_STAMP } from './helpers/verifyDel
 function verifyCtx(agentImpl, cfg = {}) {
   const calls = [];
   let inParallel = 0;
+  const rec = sliceInputRecorder();
   const agent = async (prompt, opts = {}) => {
     assertPrompt(prompt);
     assertValidSchema(opts.schema);
@@ -48,10 +49,13 @@ function verifyCtx(agentImpl, cfg = {}) {
     calls.push(call);
     const label = opts.label || '';
     if (label.startsWith('verify-input-writer')) {
-      if (cfg.sliceWriter) return cfg.sliceWriter(call);
-      // Faithful default: echo the exact slice-input paths so the write-proof gate passes.
-      const entries = parseWriterPayload(prompt) || [];
-      return { written: entries.map((e) => e.path) };
+      // The recorder always learns the dispatched content from the PROMPT — that is what
+      // materializeVerifySlices itself checksums against, independent of what the writer
+      // echoes back — so a stamped executor envelope is provable even when cfg.sliceWriter
+      // overrides the write-proof RESPONSE (a test simulating a lying/failing writer whose
+      // healthy sibling groups still reach the executor, e.g. (n7)).
+      const faithful = rec.write(prompt);
+      return cfg.sliceWriter ? cfg.sliceWriter(call) : faithful;
     }
     if (label.startsWith('verify-slice-')) {
       if (inParallel > 0) {
@@ -60,7 +64,7 @@ function verifyCtx(agentImpl, cfg = {}) {
       const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
       const sliceIndex = m ? Number(m[1]) : -1;
       const attempt = m && m[2] ? 2 : 1;
-      return agentImpl(call, sliceIndex, { attempt });
+      return rec.stamp(await agentImpl(call, sliceIndex, { attempt }), sliceIndex);
     }
     return agentImpl(call, -1, { attempt: 1 });
   };
@@ -633,4 +637,205 @@ test('(n8) every slice degraded -> every finding origin=unknown, one gap PER sli
   assert.match(out.gaps[2], /slice 2:/);
   // Blast radius is per slice: 2 + 2 + 1 of 5, never "all 5" three times over.
   assert.deepEqual(out.gaps.map((g) => (g.match(/(\d+) of (\d+) finding/) || []).slice(1, 3)), [['2', '5'], ['2', '5'], ['1', '5']]);
+});
+
+// --- issue #69 / #25 req 4-6: the slice-input content proof --------------------
+
+test('(p1) a receipt whose input_checksum matches the dispatched content -> TRUSTED, counted proven', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 1, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p2) a receipt with NO input_checksum -> UNVERIFIED after the retry, counted missing', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i, { attempt }) => {
+    const env = okEnvelope(input.findings, { nonce: attempt === 2 ? `n-1.${i}.r1` : `n-1.${i}` });
+    env.receipt.input_checksum = null; // declared, so the harness stamp leaves it alone
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.ok(out.gaps.some((g) => g.includes('input content proof missing from receipt')));
+  assert.equal(out.inputProof.missing, 1);
+  // A dropped field is a sampled-agent transcription failure, so it IS retried.
+  assert.equal(ctx.execCallsFor(0).length, VERIFY_ATTEMPTS_PER_SLICE);
+});
+
+test('(p2b) a receipt missing input_checksum on attempt 1 but valid (with input_recovery) on the retry -> TRUSTED, verified true, recovery forwarded, counted recovered', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i, { attempt }) => {
+    const env = okEnvelope(input.findings, { nonce: attempt === 2 ? `n-1.${i}.r1` : `n-1.${i}` });
+    if (attempt === 1) {
+      // Attempt 1 drops the checksum entirely -- the retryable "missing" fault, not the
+      // deterministic "mismatch" fault probed by (p3).
+      env.receipt.input_checksum = null;
+    } else {
+      // Attempt 2 is a fresh, valid sample: leave input_checksum undeclared so the
+      // recorder's rec.stamp fills in the checksum of what was actually dispatched, and
+      // additionally carry input_recovery to prove that field is forwarded on a
+      // retry-success path too, not just on a first-attempt trusted slice (p4).
+      env.input_recovery = { trailing_bytes: '}\n' };
+    }
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true, 'the retry recovers cleanly -- a missing checksum on attempt 1 does not sink the slice');
+  assert.equal(ctx.execCallsFor(0).length, VERIFY_ATTEMPTS_PER_SLICE, 'missing input_checksum is retryable, so the retry is spent');
+  assert.ok(out.findings.every((f) => f.origin !== 'unknown'), 'the recovered slice is trusted, not degraded');
+  const gap = out.gaps.find((g) => g.startsWith('verify: RECOVERED —'));
+  assert.ok(gap, 'the retry-success recovery is disclosed exactly like a first-attempt recovery');
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 0, recovered: 1, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p3) a receipt whose input_checksum disagrees -> UNVERIFIED, NOT retried (deterministic), counted mismatched', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.receipt.input_checksum = 'fnv1a32:0xdeadbeef';
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  const gap = out.gaps.find((g) => g.includes('slice-input content proof mismatch'));
+  assert.ok(gap, 'the gap names the fault');
+  assert.ok(gap.includes('fnv1a32:0xdeadbeef'), 'the gap names the receipt value');
+  assert.equal(out.inputProof.mismatched, 1);
+  // The file on disk is what it is: a second dispatch re-reads the same bytes, so the
+  // retry cannot change the answer and is not spent.
+  assert.equal(ctx.execCallsFor(0).length, 1);
+});
+
+test('(p4) a TRUSTED slice whose envelope carries input_recovery -> RECOVERED disclosure, findings kept verified', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.input_recovery = { trailing_bytes: '}\n' };
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true, 'a recovered input does not degrade the slice');
+  const gap = out.gaps.find((g) => g.startsWith('verify: RECOVERED —'));
+  assert.ok(gap, 'the recovery is disclosed');
+  assert.ok(gap.includes(JSON.stringify('}\n')), 'the exact trailing bytes are named');
+  assert.ok(gap.includes('proven against dispatch'), 'a proven slice may claim the proof');
+  // The bench checker's degrade sentinels must NOT match a disclosure that degraded
+  // nothing (bench/runner/check.py _DEGRADE_RE), and neither must the UNVERIFIED token.
+  for (const token of ['no write proof', 'partial-artifacts', 'path-escape', 'UNVERIFIED']) {
+    assert.ok(!gap.includes(token), `RECOVERED gap must not contain ${token}`);
+  }
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 0, recovered: 1, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p5) a slice carrying a number Python cannot spell has no computable proof -> trusted, counted unprovable', async () => {
+  // criticality is declared `number` in registry.js's test_coverage schemaExtra and is
+  // NOT in VERIFY_NUMERIC_FIELDS, so pinNumericFields leaves a fractional value alone.
+  // js_stringify_pretty REFUSES such a number (assemble_artifacts.assert_js_reproducible),
+  // so no cross-runtime proof exists. Skipping the check keeps every other guard and
+  // costs nothing; degrading here would repeat the exact bug #69 exists to close.
+  const input = baseInput();
+  input.findings = input.findings.map((f) => ({ ...f, criticality: 7.5 }));
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.receipt.input_checksum = null;
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 0, recovered: 0, mismatched: 0, missing: 0, unprovable: 1 });
+});
+
+test('(p6) the empty finding set still reports zero-populated inputProof counters', async () => {
+  const ctx = verifyCtx(() => { throw new Error('no executor should run'); });
+  const out = await verifyStage(ctx, { ...baseInput(), findings: [] });
+  assert.deepEqual(out.inputProof, { slices: 0, proven: 0, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p8) a slice that is both unprovable and recovered does not claim a proof it never had', async () => {
+  // The RECOVERED disclosure's closing clause states only what was established. On an
+  // unprovable slice (no cross-runtime checksum exists) claiming "proven against
+  // dispatch" would be a false measurement in a delivered disclosure — the exact
+  // overstatement class this repo rejects in report prose.
+  const input = baseInput();
+  input.findings = input.findings.map((f) => ({ ...f, criticality: 7.5 }));
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.receipt.input_checksum = null; // declared: the harness stamp leaves it alone
+    env.input_recovery = { trailing_bytes: '}\n' };
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  const gap = out.gaps.find((g) => g.startsWith('verify: RECOVERED —'));
+  assert.ok(gap, 'the recovery is still disclosed');
+  assert.ok(!gap.includes('proven against dispatch'), 'no proof claim without a proof');
+  assert.ok(gap.includes('no cross-runtime proof was computable'), 'the honest clause is stated');
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 0, recovered: 0, mismatched: 0, missing: 0, unprovable: 1 });
+});
+
+test('(p7) the echo schema and the executor prompt both name input_checksum and input_recovery', async () => {
+  // A stale prompt that does not name a field silently drops it on EVERY slice, and a
+  // schema that does not declare it drops it at the StructuredOutput boundary. Both
+  // halves are pinned here because either alone is a silent total loss of the proof.
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  await verifyStage(ctx, input);
+  const call = ctx.execCalls()[0];
+  assert.ok(call.prompt.includes('input_checksum'), 'the prompt asks for input_checksum');
+  assert.ok(call.prompt.includes('input_recovery'), 'the prompt asks for input_recovery');
+  assert.ok(call.schema.properties.receipt.properties.input_checksum, 'schema declares receipt.input_checksum');
+  assert.ok(call.schema.properties.input_recovery, 'schema declares input_recovery');
+  // Optional in the schema so an absent recovery is a legal answer, mandatory-in-logic
+  // for the checksum (trustSlice), exactly like deltas_checksum.
+  assert.deepEqual(call.schema.required, ['status']);
+  assert.ok(!('required' in call.schema.properties.receipt), 'receipt declares no required list');
+  // The object's PRESENCE is optional (no top-level `required`), but once it is present,
+  // `trailing_bytes` is not — a schema-legal `{}` must not be an answerable shape.
+  assert.deepEqual(call.schema.properties.input_recovery.required, ['trailing_bytes']);
+});
+
+// --- code review fix round 1: input_recovery shape + ledger disjointness -------
+
+test('(p9) a schema-legal empty input_recovery ({}) is not a recovery: no RECOVERED gap, counted proven, no "undefined" ever appears', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.input_recovery = {}; // schema-legal (no top-level `required`), but unusable
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.gaps.length, 0, 'an unusable recovery is silently not a disclosure');
+  assert.ok(!out.gaps.some((g) => g.includes('undefined')), 'the literal word "undefined" never appears in a gap');
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 1, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p10) an input_recovery with a non-string trailing_bytes is also not a recovery: same outcome as {}', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_t, i) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
+    env.input_recovery = { trailing_bytes: 42 }; // wrong type: not a usable value
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.gaps.length, 0);
+  assert.ok(!out.gaps.some((g) => g.includes('undefined')));
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 1, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+});
+
+test('(p11) a slice degraded for a NON-input reason (both attempts wrong nonce) leaves the input-proof ledger untouched: mismatched===0, missing===0', async () => {
+  // The ledger's disjointness invariant (stated in verifyStage's own comment: "a slice
+  // degraded for any other reason is counted in `slices` and nowhere else") has to be
+  // pinned by a test, not just by reading the code — a mutation that widens
+  // `else if (attempt.inputFault === 'missing')` to a bare `else` would otherwise count
+  // THIS slice's ordinary nonce-mismatch degrade as an input-proof failure and the whole
+  // suite would stay green.
+  const input = baseInput();
+  const ctx = verifyCtx(() => okEnvelope(input.findings, { nonce: 'WRONG' })); // fails both attempts, never an input-proof fault
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.deepEqual(out.inputProof, { slices: 1, proven: 0, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
 });

@@ -19,7 +19,7 @@ import {
   tagFindings,
 } from '../src/filterFindings.js';
 import { applyChallenges } from '../src/applyChallenges.js';
-import { joinVerifyDeltas, deltaContentProof } from '../src/stages.js';
+import { joinVerifyDeltas, deltaContentProof, fnv1a32 } from '../src/stages.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, '..', '..', 'tests', 'fixtures', 'parity');
@@ -239,5 +239,19 @@ for (const c of loadCases('verify_deltas')) {
     // finding joinVerifyDeltas emits may carry `agent`, even though the script's own
     // output (and the dispatched finding, in the extras-survive fixture) may have one.
     for (const f of joined) assert.ok(!Object.hasOwn(f, 'agent'));
+  });
+}
+
+// --- slice_input_proof: the slice-input content proof's cross-runtime agreement ----
+//
+// The workflow computes the EXPECTED checksum over the content it dispatched
+// (materializeVerifySlices) and verify_findings.py computes the ACTUAL one over the
+// document it parsed off disk. Those two numbers are compared by trustSlice, so a
+// serializer divergence between the runtimes would not read as a bug — it would read as
+// a corrupt slice input, and degrade every slice of every run. Python (record_parity.py,
+// via verify_findings._input_checksum) owns one half; this block owns the other.
+for (const c of loadCases('slice_input_proof')) {
+  test(`slice_input_proof parity: ${c.name}`, () => {
+    assert.equal(fnv1a32(JSON.stringify(c.input.doc, null, 2)), c.expected.checksum);
   });
 }

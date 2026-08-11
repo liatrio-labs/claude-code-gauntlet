@@ -1,0 +1,22 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "bug-1",
+        "dimension": "bug",
+        "severity": "high",
+        "confidence": 85,
+        "file": "src/中.go",
+        "line_start": 12,
+        "line_end": 14,
+        "title": "café",
+        "description": "astral 𝄞 and U+2028 U+2029 end",
+        "evidence": "ctrl \u0001 end",
+        "suggestion": "fix",
+        "cross_file_refs": [],
+        "agent": "bug-detector"
+      }
+    ],
+    "base_branch": "main"
+  }
+}

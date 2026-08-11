@@ -15,6 +15,7 @@ Covers:
   - batch_findings: grouping by file, min/max bounds, tail merging, empty input
 """
 
+import json
 import os
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from scripts.assemble_artifacts import JS_MAX_SAFE_INTEGER
 from scripts.verify_findings import (
     _DELTA_FIELDS,
     REPO_ROOT,
+    InputError,
     _coerce_numeric_fields,
     _delta_confidence,
     _extract_symbols,
@@ -1809,10 +1811,11 @@ class TestReceipt(unittest.TestCase):
 
             # (a) envelope shape + receipt fields. deltas_checksum is the delta echo's
             # content proof (issue #25 PR2) -- it now rides alongside sha/n_in/nonce.
+            # input_checksum is the slice-input content proof (issue #69, #25 req 4-6).
             self.assertEqual(envelope["status"], "ok")
             self.assertEqual(
                 set(envelope["receipt"].keys()),
-                {"sha", "n_in", "nonce", "deltas_checksum"},
+                {"sha", "n_in", "nonce", "deltas_checksum", "input_checksum"},
             )
             self.assertEqual(envelope["receipt"]["sha"], "deadbeef")
             self.assertEqual(envelope["receipt"]["n_in"], len(findings))
@@ -1820,6 +1823,11 @@ class TestReceipt(unittest.TestCase):
             self.assertRegex(
                 envelope["receipt"]["deltas_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
             )
+            self.assertRegex(
+                envelope["receipt"]["input_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
+            )
+            # Clean parse: input_recovery must be absent entirely, never null.
+            self.assertNotIn("input_recovery", envelope)
 
             # (b) result.verified is exactly what the legacy path produces
             self.assertEqual(envelope["result"]["verified"], legacy["verified"])
@@ -1872,21 +1880,19 @@ class TestReceipt(unittest.TestCase):
         finally:
             os.unlink(findings_path)
 
-    def test_malformed_input_yields_the_honest_failure_envelope_not_silence(self):
-        """A die() condition in receipt mode must WRITE the failure envelope.
+    def test_one_stray_closing_brace_now_recovers_instead_of_losing_the_slice(self):
+        """Issue #69, the case that motivated it: the artifact-writer appended one
+        stray `}` after an otherwise complete slice-input document. This used to reach
+        die() and produce a status:'failed' envelope, degrading every finding in the
+        slice to origin=unknown. It now RECOVERS — the leading document is used, the
+        verdicts are computed, and the trailing bytes are disclosed verbatim in
+        `input_recovery` so nothing about the tolerance is silent.
 
-        Regression this guards, measured live on smoke-20260729-191253-8ae2ee3: the
-        artifact-writer appended one stray `}` after an otherwise complete slice-input
-        document (issue #69's transcription defect). load_input reported it through
-        die(), which called sys.exit -- SystemExit is a BaseException, so it flew past
-        `except Exception` and the script exited having written NO output file. The
-        executor found nothing to read, so the slice degraded with "no file" instead of
-        the reason, and diagnosing the run meant re-running the command by hand.
-
-        The fixture is that exact byte: a complete document with one `}` appended.
+        The die()-writes-an-envelope behaviour this test used to guard is still pinned,
+        by test_everything_outside_the_class_still_dies_as_before plus the receipt
+        envelope's own failure test above.
         """
         import io
-        import json
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(
@@ -1916,27 +1922,53 @@ class TestReceipt(unittest.TestCase):
             ):
                 from scripts.verify_findings import main
 
-                main()  # must NOT raise SystemExit
+                main()
             with open(out_path) as fh:
                 envelope = json.load(fh)
-            self.assertEqual(envelope["status"], "failed")
-            self.assertEqual(envelope["exitCode"], 1)
-            # The REAL reason, not a placeholder — this is the whole point.
-            self.assertIn("Invalid JSON in findings file", envelope["stderr"])
-            self.assertIn("Extra data", envelope["stderr"])
+            self.assertEqual(envelope["status"], "ok")
+            self.assertEqual(envelope["receipt"]["n_in"], len(self._findings()))
+            self.assertEqual(len(envelope["result"]["deltas"]), len(self._findings()))
+            self.assertEqual(envelope["input_recovery"], {"trailing_bytes": "}"})
         finally:
             os.unlink(corrupt_path)
             os.unlink(out_path)
 
-    def test_legacy_path_still_exits_nonzero_on_malformed_input(self):
-        """The other half of the same change: die() raising InputError instead of calling
-        sys.exit must not soften the LEGACY positional path, which has always exited 1
-        with the message on stderr and nothing on stdout."""
+    def test_legacy_path_recovers_the_same_class_and_says_so_on_stderr(self):
+        """The legacy positional path shares load_input, so it recovers the same class.
+        Its stdout schema is unchanged (v2/bench consumers parse it), so the disclosure
+        rides on stderr as a loud `RECOVERED: ` line naming the exact trailing bytes.
+        The hard-fail half of the old behaviour — exit 1, message on stderr, nothing on
+        stdout — is pinned by the sibling below.
+        """
         import io
-        import json
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             f.write(json.dumps({"findings": self._findings()}) + "}")
+            corrupt_path = f.name
+        try:
+            with (
+                patch("sys.stderr", new_callable=io.StringIO) as err,
+                patch("sys.stdout", new_callable=io.StringIO) as out,
+                patch.object(sys, "argv", ["verify_findings.py", corrupt_path]),
+            ):
+                from scripts.verify_findings import main
+
+                main()  # must NOT raise SystemExit any more
+            self.assertIn("RECOVERED: ", err.getvalue())
+            self.assertIn("'}'", err.getvalue())
+            self.assertIn("verified", json.loads(out.getvalue()))
+        finally:
+            os.unlink(corrupt_path)
+
+    def test_legacy_path_still_exits_nonzero_on_input_outside_the_recoverable_class(
+        self,
+    ):
+        """Unchanged contract for everything the recovery does NOT cover: exit 1, the
+        message on stderr, nothing on stdout."""
+        import io
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write(json.dumps({"findings": self._findings()}) + "oops")
             corrupt_path = f.name
         try:
             with (
@@ -2521,15 +2553,13 @@ class TestCoerceNumericFields(unittest.TestCase):
         self.assertEqual(f["title"], "t")
 
     def test_load_input_casts_numeric_fields(self):
-        import json
-
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             json.dump(
                 {"findings": [{"id": "b1", "line_start": "10", "line_end": "12"}]}, f
             )
             path = f.name
         try:
-            data = load_input(path)
+            data, _recovery, _checksum = load_input(path)
             self.assertEqual(data["findings"][0]["line_start"], 10)
             self.assertEqual(data["findings"][0]["line_end"], 12)
         finally:
@@ -2660,6 +2690,285 @@ class TestEliminationReasonStamp(unittest.TestCase):
             self.assertTrue(reason.strip())
         finally:
             os.unlink(empty_diff)
+
+
+class TestSliceInputRecovery(unittest.TestCase):
+    """Issue #69: the artifact-writer is a SAMPLED AGENT, and on
+    smoke-20260728-144630-a162ecd it appended exactly `}\\n` after two otherwise
+    complete slice-input documents. A strict json.load turned that one character into
+    a total loss of the verify stage for 23 intact findings. These pin the recovery on
+    the two byte-exact captures, and pin that everything outside that corruption class
+    still hard-fails with the message a strict parse produced.
+    """
+
+    FIXTURES = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "fixtures",
+        "verify_slice_recovery",
+    )
+    # (filename, finding count) — both measured from the retained run directories.
+    CAPTURES = (
+        ("grafana-80329.slice0.json", 11),
+        ("discourse-graphite-6.slice0.json", 12),
+    )
+
+    def _write(self, text):
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        ) as fh:
+            fh.write(text)
+            self.addCleanup(os.unlink, fh.name)
+            return fh.name
+
+    def test_captured_writer_corruption_recovers_every_finding(self):
+        for name, count in self.CAPTURES:
+            with self.subTest(capture=name):
+                data, recovery, _checksum = load_input(
+                    os.path.join(self.FIXTURES, name)
+                )
+                self.assertIsNotNone(
+                    recovery, "the capture must RECOVER, not parse clean"
+                )
+                self.assertEqual(recovery, {"trailing_bytes": "}\n"})
+                self.assertEqual(len(data["findings"]), count)
+                self.assertEqual(data["base_branch"], "main")
+                for finding in data["findings"]:
+                    self.assertTrue(finding.get("id"))
+                    self.assertTrue(finding.get("description"))
+
+    def test_a_clean_document_reports_no_recovery(self):
+        path = self._write(json.dumps({"findings": [], "base_branch": "main"}))
+        data, recovery, _checksum = load_input(path)
+        self.assertIsNone(recovery)
+        self.assertEqual(data["findings"], [])
+
+    def test_trailing_whitespace_alone_is_a_clean_parse_not_a_recovery(self):
+        path = self._write(
+            json.dumps({"findings": [], "base_branch": "main"}) + "\n\n  \t\n"
+        )
+        _data, recovery, _checksum = load_input(path)
+        self.assertIsNone(recovery)
+
+    def test_recovery_accepts_only_whitespace_and_closing_punctuation(self):
+        doc = json.dumps({"findings": [], "base_branch": "main"})
+        for label, tail in (
+            ("the measured writer defect", "}\n"),
+            ("two closing braces", "}}"),
+            ("a closing bracket", "]"),
+            ("mixed closers and whitespace", "\n }\n ]\n"),
+        ):
+            with self.subTest(tail=label):
+                _data, recovery, _checksum = load_input(self._write(doc + tail))
+                self.assertEqual(recovery, {"trailing_bytes": tail})
+
+    def test_everything_outside_the_class_still_dies_as_before(self):
+        doc = json.dumps({"findings": [], "base_branch": "main"})
+        cases = {
+            "truncated leading value": doc[:-6],
+            "duplicated document": doc + doc,
+            "a closing brace then a new object": doc + "}{",
+            "trailing alphanumeric garbage": doc + "oops42",
+            "a closing bracket mixed with letters": doc + "]x",
+            # JSON's whitespace set is exactly " \t\n\r" (RFC 8259 SS2), not Python's
+            # Unicode one -- these are Unicode-whitespace but JSON-hostile, leading AND
+            # trailing, so a str.lstrip()-based class would wrongly accept them.
+            "leading form feed": "\x0c" + doc,
+            "leading no-break space": "\xa0" + doc,
+            "trailing form feed alone": doc + "\x0c",
+            "trailing no-break space alone": doc + "\xa0",
+        }
+        for label, text in cases.items():
+            with self.subTest(case=label):
+                path = self._write(text)
+                with self.assertRaises(InputError) as ctx:
+                    load_input(path)
+                self.assertIn("Invalid JSON in findings file", str(ctx.exception))
+
+    def test_the_extra_data_message_is_byte_identical_to_the_strict_parser(self):
+        # The message shape is what the honest-failure envelope carries into the run's
+        # gap text, and issue #69's own report quotes it. A recovery-capable parser
+        # that reworded it would silently invalidate every existing diagnosis.
+        doc = json.dumps({"findings": [], "base_branch": "main"})
+        cases = {
+            "ascii space tail": doc + "  oops",
+            # \x0c is JSON-hostile whitespace (not in " \t\n\r"), so it lands in the
+            # extra-data tail rather than being silently skipped -- the offset must
+            # still agree with the strict parser's own char count.
+            "form feed tail": doc + "\x0coops",
+        }
+        for label, text in cases.items():
+            with self.subTest(case=label):
+                path = self._write(text)
+                try:
+                    json.loads(text)
+                except json.JSONDecodeError as e:
+                    strict = f"Invalid JSON in findings file: {e}"
+                with self.assertRaises(InputError) as ctx:
+                    load_input(path)
+                self.assertEqual(str(ctx.exception), strict)
+
+    def test_the_extra_data_message_matches_on_a_multi_line_document(self):
+        # The single-line case above cannot exercise the line/column arithmetic in
+        # load_input's `bad` offset computation. A multi-line document does, both with
+        # and without a newline separating the document from the garbage.
+        doc = {"findings": [], "base_branch": "main"}
+        for label, text in (
+            ("garbage on the closing line", json.dumps(doc, indent=2) + "  oops"),
+            ("garbage after blank lines", json.dumps(doc, indent=2) + "\n\noops"),
+        ):
+            with self.subTest(case=label):
+                path = self._write(text)
+                try:
+                    json.loads(text)
+                except json.JSONDecodeError as e:
+                    strict = f"Invalid JSON in findings file: {e}"
+                with self.assertRaises(InputError) as ctx:
+                    load_input(path)
+                self.assertEqual(str(ctx.exception), strict)
+
+    def _receipt_findings(self):
+        # Nonexistent files and no line_start, so classify_blame short-circuits on
+        # os.path.exists and verify_factual skips -- no git subprocess, deterministic.
+        return [
+            {
+                "id": "bug-1",
+                "dimension": "bug",
+                "severity": "high",
+                "confidence": 75,
+                "file": "nope/does-not-exist-xyz.py",
+                "title": "t",
+                "description": "d",
+                "evidence": "e",
+                "cross_file_refs": [],
+            }
+        ]
+
+    def _run_receipt_over(self, text):
+        import io
+
+        in_path = self._write(text)
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            out_path = out_file.name
+        self.addCleanup(os.unlink, out_path)
+        with (
+            patch("sys.stderr", new_callable=io.StringIO),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "verify_findings.py",
+                    "--input",
+                    in_path,
+                    "--output",
+                    out_path,
+                    "--nonce",
+                    "N.0",
+                    "--head-sha",
+                    "abc1234",
+                ],
+            ),
+        ):
+            from scripts.verify_findings import main
+
+            main()
+        with open(out_path) as fh:
+            return json.load(fh)
+
+    def test_the_input_checksum_covers_the_document_as_parsed(self):
+        # The workflow computes fnv1a32(JSON.stringify(content, null, 2)) over the
+        # content it DISPATCHED; this side must produce the same value from the bytes
+        # that reached disk. Recomputed here from the shared pair rather than pinned as
+        # a literal, so this test proves the wiring and the parity fixture (Task 4)
+        # proves the cross-runtime agreement.
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        doc = {"findings": [{"id": "b1", "title": "t"}], "base_branch": "main"}
+        path = self._write(json.dumps(doc))
+        _data, _recovery, checksum = load_input(path)
+        self.assertEqual(checksum, fnv1a32(js_stringify_pretty(doc)))
+
+    def test_the_checksum_is_taken_before_numeric_coercion_rewrites_the_document(self):
+        # Regression this guards: computing the checksum AFTER _coerce_numeric_fields
+        # would silently forgive a writer that re-quoted a number, because "10" and 10
+        # would hash the same. The workflow dispatched the NUMBER (pinNumericFields runs
+        # before the slice input is written), so a quoted value on disk is a real
+        # divergence and must fail the proof.
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        quoted = {"findings": [{"id": "b1", "line_start": "10"}], "base_branch": "main"}
+        pinned = {"findings": [{"id": "b1", "line_start": 10}], "base_branch": "main"}
+        _data, _recovery, checksum = load_input(self._write(json.dumps(quoted)))
+        self.assertEqual(checksum, fnv1a32(js_stringify_pretty(quoted)))
+        self.assertNotEqual(checksum, fnv1a32(js_stringify_pretty(pinned)))
+
+    def test_the_receipt_omits_an_uncomputable_checksum_rather_than_nulling_it(self):
+        # The echo schema types input_checksum as a string, so a null in the file would
+        # be an unrepresentable value at the StructuredOutput boundary -- the executor
+        # could neither echo it faithfully nor drop it honestly. Omission is the one
+        # spelling both sides of the wire agree on (same contract as input_recovery).
+        findings = self._receipt_findings()
+        findings[0]["criticality"] = 7.5
+        doc = {"findings": findings, "base_branch": "main"}
+        envelope = self._run_receipt_over(json.dumps(doc))
+        self.assertEqual(envelope["status"], "ok")
+        self.assertNotIn("input_checksum", envelope["receipt"])
+
+    def test_a_document_python_cannot_spell_identically_yields_no_checksum(self):
+        # js_stringify_pretty refuses a non-integral number rather than reimplement
+        # Number#toString (assemble_artifacts.assert_js_reproducible). An absent proof
+        # is a legal thing to report; the workflow decides what to do about it. Raising
+        # here would take out the whole envelope, including its honest failure shape --
+        # the same None-rather-than-raise contract deltas_checksum already uses.
+        doc = {"findings": [{"id": "b1", "criticality": 7.5}], "base_branch": "main"}
+        _data, _recovery, checksum = load_input(self._write(json.dumps(doc)))
+        self.assertIsNone(checksum)
+
+    def test_receipt_envelope_carries_the_checksum_and_omits_recovery_when_clean(self):
+        doc = {"findings": self._receipt_findings(), "base_branch": "main"}
+        envelope = self._run_receipt_over(json.dumps(doc))
+        self.assertEqual(envelope["status"], "ok")
+        self.assertTrue(envelope["receipt"]["input_checksum"].startswith("fnv1a32:0x"))
+        # Omitted, never null: the workflow keys the RECOVERED disclosure on this key's
+        # PRESENCE, so a null on the clean path would make every slice look recovered.
+        self.assertNotIn("input_recovery", envelope)
+
+    def test_receipt_envelope_discloses_recovery_with_the_exact_trailing_bytes(self):
+        doc = json.dumps({"findings": self._receipt_findings(), "base_branch": "main"})
+        envelope = self._run_receipt_over(doc + "}\n")
+        self.assertEqual(envelope["status"], "ok")
+        self.assertEqual(envelope["input_recovery"], {"trailing_bytes": "}\n"})
+        # The proof covers the LEADING document, not the file, so it is unaffected by
+        # the trailing bytes -- that equality is the whole reason recovery is safe.
+        _d, _r, expected = load_input(self._write(doc))
+        self.assertEqual(envelope["receipt"]["input_checksum"], expected)
+
+    def test_result_deltas_is_still_the_first_key_of_result(self):
+        # The executor's Read of this file is length-capped with NO truncation notice,
+        # so what it must echo has to sit at the front. Adding input_recovery to the
+        # envelope must not push deltas behind the two full finding arrays.
+        doc = json.dumps({"findings": self._receipt_findings(), "base_branch": "main"})
+        envelope = self._run_receipt_over(doc + "}\n")
+        self.assertEqual(next(iter(envelope["result"])), "deltas")
+        self.assertEqual(
+            list(envelope), ["status", "receipt", "input_recovery", "result"]
+        )
+
+    def test_receipt_mode_reports_the_honest_failure_envelope_on_unrecoverable_input(
+        self,
+    ):
+        # The half of the honest-failure contract that die()-inside-load_input still
+        # has to clear: an unrecoverable slice input (outside the trailing-bytes class)
+        # must still produce a schema-valid {status:'failed'} envelope on disk, not an
+        # uncaught exception that leaves the executor with no output file and no reason
+        # -- the exact smoke-20260729-191253-8ae2ee3 failure mode the InputError
+        # docstring documents. `_run_receipt_over` already writes the envelope on this
+        # path (main() unconditionally returns `_run_receipt(args)`'s write), so no
+        # separate helper is needed.
+        doc = json.dumps({"findings": [], "base_branch": "main"})
+        envelope = self._run_receipt_over(doc + "oops")
+        self.assertEqual(envelope["status"], "failed")
+        self.assertEqual(envelope["exitCode"], 1)
+        self.assertIn("Invalid JSON in findings file", envelope["stderr"])
 
 
 if __name__ == "__main__":

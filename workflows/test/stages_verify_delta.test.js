@@ -24,8 +24,8 @@
 // would make the honest ones less obvious in the file that tests them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyStage, joinVerifyDeltas, deltaContentProof, parseWriterPayload } from '../src/stages.js';
-import { deltaEnvelope, deltasFor, ELIMINATION_STAMP } from './helpers/verifyDelta.js';
+import { verifyStage, joinVerifyDeltas, deltaContentProof } from '../src/stages.js';
+import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, sliceInputRecorder } from './helpers/verifyDelta.js';
 
 function makeFindings(n, over = {}) {
   return Array.from({ length: n }, (_, k) => ({
@@ -68,17 +68,18 @@ function baseInput(findings, over = {}) {
 // subject), so every dispatch this harness sees is an executor dispatch.
 function ctxFor(executorImpl) {
   const calls = [];
+  const rec = sliceInputRecorder();
   const agent = async (prompt, opts = {}) => {
     calls.push({ prompt, ...opts });
     const label = opts.label || '';
     if (label.startsWith('verify-input-writer')) {
-      return { written: (parseWriterPayload(prompt) || []).map((e) => e.path) };
+      return rec.write(prompt);
     }
     const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
     const i = m ? Number(m[1]) : -1;
     const attempt = m && m[2] ? 2 : 1;
     const nonce = (prompt.match(/--nonce (\S+)/) || [])[1];
-    return executorImpl(i, attempt, nonce);
+    return rec.stamp(await executorImpl(i, attempt, nonce), i);
   };
   return {
     calls,

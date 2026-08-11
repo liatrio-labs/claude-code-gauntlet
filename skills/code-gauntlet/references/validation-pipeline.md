@@ -23,17 +23,20 @@ and returns the script's discriminated-union envelope — but no longer by value
 
 ```
 { status: 'ok',
-  receipt: { sha, n_in, nonce, deltas_checksum },
+  receipt: { sha, n_in, nonce, deltas_checksum, input_checksum? },
   result: {
     deltas: [ { id, verified, origin?, severity?, confidence?, elimination_reason? }, ... ],
     verified, eliminated, batches, stats   // unchanged on disk; NEVER echoed by the executor
-  }
+  },
+  input_recovery?: { trailing_bytes, ... }   // present only when the script recovered a slice input truncated by stray trailing bytes
 } | { status: 'failed', exitCode, stderr }
 ```
 
 `deltas` carries only what `verify_findings.py` changed on a finding, keyed by id and ordered by the dispatched slice — the workflow already holds every finding it dispatched by value, so the delta is the only new information the script can offer. `joinVerifyDeltas` rebuilds the slice's verified findings by walking the DISPATCHED slice (not the echo) and applying each finding's delta onto the copy this stage already holds; a finding whose delta says `verified: false` was eliminated by the script and is omitted, exactly as it was omitted from the old echo's `verified[]`. `joinVerifyDeltas` also strips `agent` from every finding it emits — see below.
 
 **Trust.** A slice is trusted only when `status==='ok'` AND the receipt echoes the dispatched nonce (`{nonce}.{i}`), head sha, and `n_in` (slice length), AND the echoed `deltas` cover **exactly** the ids this slice dispatched — no missing id, no duplicate, no stranger (delta-id coverage; #25 req. 2) — AND each delta's shape and elimination stamp are honest (`verified` is a boolean; a `verified: false` delta must carry the script's `elimination_reason` stamp, a `verified: true` delta must not carry one) — AND a **content proof**: `fnv1a32` recomputed over the deltas, in the same canonical order the script used, must equal the receipt's `deltas_checksum`. The per-slice nonce (`{nonce}.{i}`) means two equal-length slices can never satisfy each other's receipts.
+
+**Guard (4): slice-input content proof.** A fourth guard covers the *input* side, not just the deltas the script echoes back: `materializeVerifySlices` computes an `fnv1a32` checksum over the canonical-JSON slice input at dispatch time and the executor's receipt must echo that same `input_checksum` back (when the script reports one). This catches the writer-agent trailing-byte corruption class (#69) — stray bytes appended after the JSON body during materialization — separately from the deltas-side content proof above. A slice whose input was truncated but still parses (a JSON document followed by trailing garbage) is recoverable: `verify_findings.py` uses `json.JSONDecoder().raw_decode` to recover the intact document, reports it via a top-level `input_recovery: { trailing_bytes, ... }` object on the envelope, and the stage emits a `RECOVERED` disclosure gap rather than treating the slice as untrusted. `stats.inputProof` tallies every slice into `proven` / `recovered` / `mismatched` / `missing` / `unprovable`, so a run's report can show how many slices needed recovery.
 
 **Degradation is per slice (issues #54, #25 req. 3).** An untrusted slice — receipt mismatch, `status:'failed'`, an executor throw, or a slice whose `--input` file was never provably written by the artifact-writer — degrades only its OWN findings to `origin='unknown'` (surfaced-classification skipped) and the loop keeps going; trusted slices keep their verified output. This replaced an all-or-nothing `break`: measured live on 2026-07-27, a single dropped nonce echo on slice 0 marked all 16 findings of a one-slice PR `origin=unknown`. The blast radius now tracks the size of the fault.
 

@@ -70,6 +70,11 @@ test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true
   const out = await runWith(ctx, args);
   assert.equal(out.stats.verified, true);
   assert.ok(!out.gaps.some((g) => /UNVERIFIED/.test(g)), `no verify degradation, got: ${out.gaps}`);
+  // The slice-input proof ledger (issue #69 / #25 req 4-6) must actually be surfaced on
+  // run()'s stats, not just computed and dropped — nothing else in this file touches
+  // `stats.inputProof`, so deleting the `inputProof: verifyOut.inputProof` line from
+  // run()'s stats block would otherwise pass the whole suite.
+  assert.deepEqual(out.stats.inputProof, { slices: 1, proven: 1, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
 });
 
 test('partially-degraded verify: one failed slice keeps origin=unknown; healthy slices and downstream stages survive', async () => {
