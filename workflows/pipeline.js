@@ -1918,10 +1918,11 @@ const DELIVERY_TIERS = ['all', 'main_only'];
 // Known values for policy.provider. The enum exists because the two arms diverge silently:
 // a typo ('first-party', 'aws') would flip a first-party session onto bare aliases —
 // reintroducing the measured [1m] session-variant cascade the full-ID pin exists to stop —
-// with no error anywhere. Fail loud at the waist instead. 'gateway' is an LLM gateway /
-// custom ANTHROPIC_BASE_URL, where the gateway defines the model names, so aliases are the
-// portable spelling there too.
-const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry', 'gateway'];
+// with no error anywhere. Fail loud at the waist instead. No 'gateway' value: an LLM
+// gateway (ANTHROPIC_BASE_URL) proxies the Anthropic API and expects standard Claude model
+// names, so gateway sessions are firstParty; non-standard gateway names go through the
+// subagentModel escape hatch.
+const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
 
 // Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
 // stamped `null` rather than absent — a wasted model round trip. These five top-level
