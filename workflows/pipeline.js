@@ -1773,11 +1773,11 @@ const FINDING_PROP_TYPES = {
 };
 
 // The subset findingItemSchema marks `required`. Deliberately NOT extended by this fix:
-// `required` is ONE flat list shared by every dimension's dispatch schema and by the verify
-// echo (which carries findings from all agents mixed together), so a field that is required
-// for one dimension — claude_md_rule for convention, spec_text for intent, criticality and
-// failure_scenario for test_coverage — cannot be marked required here without making it
-// required for all nine. Those stay contract-required/schema-optional, enforced by the agent
+// `required` is ONE flat list shared by every agent's dispatch schema (all nine dimensions —
+// a multi-dimension agent's findings arrive mixed in one dispatch), so a field that is
+// required for one dimension — claude_md_rule for convention, spec_text for intent,
+// criticality and failure_scenario for test_coverage — cannot be marked required here
+// without making it required for all nine. Those stay contract-required/schema-optional, enforced by the agent
 // .md prose, the same bucket hidden_errors and invalid_state_example already sit in. Adding a
 // per-dimension `requiredExtra` mechanism is tracked separately; do not fake it by appending
 // a single-dimension field to this array.
@@ -1785,9 +1785,11 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 
 // `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema above —
 // the extras each agent's .md output contract actually emits (findingItemSchema in stages.js
-// unions them onto that agent's discovery item schema, and the verify echo item schema unions
-// them ALL). Each row MUST match its contract (agents/<agent>.md output block) or the executor
-// drops the field when transcribing findings "verbatim via the schema": bug -> hidden_errors,
+// unions them onto that agent's discovery item schema — the only boundary that carries finding
+// items by value; the verify executor echoes per-id deltas, never findings). Each row MUST
+// match its contract (agents/<agent>.md output block): the item schema is CLOSED
+// (`additionalProperties: false`), so an extra a contract instructs but no row declares is
+// rejected at dispatch and costs a schema retry: bug -> hidden_errors,
 // security -> attack_vector, cross_file_impact -> affected_consumers (ARRAY), intent ->
 // spec_text, test_coverage -> criticality (NUMBER, a 1-10 impact scale distinct from
 // confidence's 0-100 certainty) + failure_scenario, type_design -> invalid_state_example,
@@ -2764,11 +2766,23 @@ function agentActive(spec, agentFlags) {
 // descriptions for every downstream stage (validate/filter/challenge) and false-firing the
 // filter's short-description injection guard on high-confidence findings.
 //
-// An UNDECLARED property is dropped by the same mechanism, silently and by design — which is
-// why FINDING_PROP_TYPES and every dimension's `schemaExtra` live together in registry.js and
-// are pinned against the agent .md output contracts by tests/test_dimensions_registry.py
-// (issue #47: `suggestion`/`claude_md_rule`/`spec_text`/`criticality`/`failure_scenario` were
-// instructed by the contracts, declared by nothing, and dropped at this boundary on every run).
+// An UNDECLARED property is REJECTED at dispatch, not silently dropped: `additionalProperties:
+// false` makes a field no one declared a schema violation the platform retries, rather than
+// pass-through tolerated at random (issue #53 watched one undeclared field survive 0/8, then
+// 8/8, then 5/5 across three PRs of a single smoke — permitted, never a contract). Closing the
+// item schema is safe because the declaration is complete and STAYS complete: every field an
+// agent contract instructs is one entry in FINDING_PROP_TYPES or a dimension's `schemaExtra` in
+// registry.js, and tests/test_dimensions_registry.py fails the build when the declared set
+// drifts from what the .md contracts instruct (declared − instructed == {origin}), so the
+// closed schema cannot reject a field a contract asks for (issue #47: `suggestion`/
+// `claude_md_rule`/`spec_text`/`criticality`/`failure_scenario` were instructed by the
+// contracts, declared by nothing, and dropped at this boundary on every run). The blast radius
+// is ONE boundary — this item schema reaches only the per-agent discovery dispatch
+// (findingSchema below); verify echoes per-id deltas, validate per-id confidence adjustments,
+// challenge a score, none of them finding items. `agent`, the one field whose undeclared
+// survival ever mattered (the filter's cross-agent dedup keyed on it), is not emitted by
+// discovery at all: discover() stamps it in code after StructuredOutput returns and
+// joinVerifyDeltas deletes it — both deterministic.
 // Entries are EITHER a type-name shorthand string ({ k: 'string' } -> { type:'string' }) OR a
 // full JSON-Schema fragment used verbatim (how array-valued fields like cross_file_refs and
 // affected_consumers are declared); the shorthand keeps the common case terse while the
@@ -2780,7 +2794,7 @@ function findingItemSchema(schemaExtra) {
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : t;
   }
-  return { type: 'object', properties: props, required: FINDING_REQUIRED };
+  return { type: 'object', properties: props, required: FINDING_REQUIRED, additionalProperties: false };
 }
 
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
@@ -3577,10 +3591,10 @@ function verifySliceWriterPrompt(entries) {
 // verify_findings.py's build_deltas() emits exactly this shape in exactly this order.
 //
 // The rebuild therefore also makes the proof BLIND to any key outside DELTA_KEYS. That is
-// deliberate and not a hole: an undeclared key does not survive StructuredOutput, and
-// joinVerifyDeltas copies only DELTA_VALUE_KEYS, so a key the proof ignores is a key
-// nothing reads. Covering it would buy no protection and would cost the order- and
-// noise-tolerance that keeps a harmless echo quirk from degrading a slice.
+// deliberate and not a hole: joinVerifyDeltas copies only DELTA_VALUE_KEYS, so a key the
+// proof ignores is a key nothing reads — and VERIFY_SCHEMA is deliberately OPEN, so an
+// undeclared key genuinely can arrive. Covering it would buy no protection and would cost
+// the order- and noise-tolerance that keeps a harmless echo quirk from degrading a slice.
 function canonicalDeltas(ids, byId) {
   return ids.map((id) => {
     const src = byId.get(id) || {};

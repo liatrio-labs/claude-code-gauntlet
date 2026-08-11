@@ -92,15 +92,51 @@ test('every declared field reaches the dispatch with the registry-declared type'
 
 test('required is the flat FINDING_REQUIRED — no per-dimension extra sneaks into it', async () => {
   const schemas = await discoverySchemas();
-  // A field required for ONE dimension cannot be marked required here: `required` is shared
-  // by every dispatch AND by the verify echo, which carries all agents' findings mixed
-  // together, so marking (say) criticality required would reject every non-test finding.
+  // A field required for ONE dimension cannot be marked required here: `required` is the one
+  // flat list shared by every agent's dispatch schema, so marking (say) criticality required
+  // would reject every non-test finding at its own dispatch.
   const extras = new Set(DIMENSIONS.flatMap((d) => Object.keys(d.schemaExtra || {})));
   for (const spec of agentSpecs()) {
     const { required } = schemas[spec.agentType].properties.findings.items;
     assert.deepEqual(required, FINDING_REQUIRED, `${spec.agentType}: required list drifted`);
     for (const field of required) {
       assert.ok(!extras.has(field), `${field} is a per-dimension extra and must not be required`);
+    }
+  }
+});
+
+test('every discovery dispatch closes the finding item schema to undeclared fields', async () => {
+  // Issue #53 requirement 3. Before this, an undeclared property was permitted-but-unenforced
+  // pass-through: the same field survived 0/8, 8/8 and 5/5 across three PRs of one smoke.
+  // `additionalProperties: false` replaces that coin flip with a rejection the platform retries.
+  const schemas = await discoverySchemas();
+  for (const spec of agentSpecs()) {
+    assert.equal(
+      schemas[spec.agentType].properties.findings.items.additionalProperties,
+      false,
+      `${spec.agentType}: the finding item schema must be closed to undeclared fields`,
+    );
+  }
+});
+
+test('a CLOSED item schema declares every field it requires — no unsatisfiable schema', async () => {
+  // `required` and `additionalProperties: false` are only safe TOGETHER. A required name that
+  // `properties` does not declare is satisfiable while the schema is open (the value arrives as
+  // an additional property) and UNSATISFIABLE once it is closed — every finding an agent emits
+  // violates the schema, the platform retries to the cap, and the dimension degrades. Nothing
+  // else in this file pins required ⊆ properties, and the first test's derived-set equality
+  // cannot: it compares properties against the registry, never against FINDING_REQUIRED. Both
+  // legs are asserted here, on the same schema object, so the pair cannot drift apart.
+  const schemas = await discoverySchemas();
+  for (const spec of agentSpecs()) {
+    const items = schemas[spec.agentType].properties.findings.items;
+    assert.equal(items.additionalProperties, false, `${spec.agentType}: item schema is not closed`);
+    for (const field of items.required) {
+      assert.ok(
+        field in items.properties,
+        `${spec.agentType}: required "${field}" is not declared in properties — a CLOSED schema ` +
+          'that requires an undeclared field can never be satisfied',
+      );
     }
   }
 });

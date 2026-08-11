@@ -64,7 +64,8 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
   `TextEncoder`, `URL`, `setTimeout`, `process` and `console` exist under `node --test` but not in
   the workflow sandbox, so a reference passes every test and throws on first live dispatch.
 - **A new finding field must appear in `workflows/src/registry.js`.** A field declared only in an
-  agent contract is dropped silently by StructuredOutput on every run.
+  agent contract is rejected at dispatch by the closed item schema (`additionalProperties: false`)
+  — schema retries, then a terminal agent failure that degrades the dimension.
 - **Instruction files are loaded on every turn.** Flag additions to `CLAUDE.md` or `AGENTS.md`
   that are derivable from the code, already stated in a comment at the site, or that record
   history, version numbers, or past incidents.

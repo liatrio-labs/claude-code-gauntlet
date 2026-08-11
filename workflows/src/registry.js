@@ -66,11 +66,11 @@ export const FINDING_PROP_TYPES = {
 };
 
 // The subset findingItemSchema marks `required`. Deliberately NOT extended by this fix:
-// `required` is ONE flat list shared by every dimension's dispatch schema and by the verify
-// echo (which carries findings from all agents mixed together), so a field that is required
-// for one dimension — claude_md_rule for convention, spec_text for intent, criticality and
-// failure_scenario for test_coverage — cannot be marked required here without making it
-// required for all nine. Those stay contract-required/schema-optional, enforced by the agent
+// `required` is ONE flat list shared by every agent's dispatch schema (all nine dimensions —
+// a multi-dimension agent's findings arrive mixed in one dispatch), so a field that is
+// required for one dimension — claude_md_rule for convention, spec_text for intent,
+// criticality and failure_scenario for test_coverage — cannot be marked required here
+// without making it required for all nine. Those stay contract-required/schema-optional, enforced by the agent
 // .md prose, the same bucket hidden_errors and invalid_state_example already sit in. Adding a
 // per-dimension `requiredExtra` mechanism is tracked separately; do not fake it by appending
 // a single-dimension field to this array.
@@ -78,9 +78,11 @@ export const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'descripti
 
 // `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema above —
 // the extras each agent's .md output contract actually emits (findingItemSchema in stages.js
-// unions them onto that agent's discovery item schema, and the verify echo item schema unions
-// them ALL). Each row MUST match its contract (agents/<agent>.md output block) or the executor
-// drops the field when transcribing findings "verbatim via the schema": bug -> hidden_errors,
+// unions them onto that agent's discovery item schema — the only boundary that carries finding
+// items by value; the verify executor echoes per-id deltas, never findings). Each row MUST
+// match its contract (agents/<agent>.md output block): the item schema is CLOSED
+// (`additionalProperties: false`), so an extra a contract instructs but no row declares is
+// rejected at dispatch and costs a schema retry: bug -> hidden_errors,
 // security -> attack_vector, cross_file_impact -> affected_consumers (ARRAY), intent ->
 // spec_text, test_coverage -> criticality (NUMBER, a 1-10 impact scale distinct from
 // confidence's 0-100 certainty) + failure_scenario, type_design -> invalid_state_example,
