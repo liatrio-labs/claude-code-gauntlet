@@ -2,6 +2,57 @@
 
 <!-- version list -->
 
+## v3.7.0 (2026-08-11)
+
+### Bug Fixes
+
+- **docs**: Sync verify-stage receipt docs with input-checksum guard; add retry-recovery test
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+- **lint**: Exclude byte-exact slice-recovery fixtures from check-json
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+- **verify**: Pin the receipt failure envelope and use JSON's whitespace set
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+- **verify**: Recover a slice input whose only defect is trailing closing punctuation
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+- **verify**: Shape-check input_recovery and pin the inputProof ledger invariants
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+- **verify**: Slice-input integrity — trailing-byte recovery + cross-runtime content proof (#69)
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+### Chores
+
+- **ci**: Ratchet coverage floors to CI-measured headroom
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+### Features
+
+- **verify**: Prove each slice input against what the stage dispatched (#69, #25)
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+- **verify**: Report a slice-input content proof in the receipt (#69, #25)
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+### Testing
+
+- **parity**: Pin the slice-input content proof across both runtimes
+  ([#171](https://github.com/liatrio-labs/claude-code-gauntlet/pull/171),
+  [`6a5782f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6a5782fb746bcbd4e2458d3985ea97ad59f7fddc))
+
+
 ## v3.6.6 (2026-08-10)
 
 ### Bug Fixes
