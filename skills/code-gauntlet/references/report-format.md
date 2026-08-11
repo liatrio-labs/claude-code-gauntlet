@@ -34,7 +34,7 @@ For self-hosted instances, replace the hostname with the one detected from the g
 
 ## Finding Fields Reference
 
-The pipeline's declaration lives in `workflows/src/registry.js`. A field this table lists but the registry does not declare is dropped silently before any stage sees it — which is why `tests/test_dimensions_registry.py` pins this table, the registry, and the agent contracts to each other.
+The pipeline's declaration lives in `workflows/src/registry.js`. A field this table lists but the registry does not declare is rejected at the dispatch boundary (the item schema is closed — `additionalProperties: false`) before any stage sees it — which is why `tests/test_dimensions_registry.py` pins this table, the registry, and the agent contracts to each other.
 
 ### Canonical fields — every finding, every dimension
 

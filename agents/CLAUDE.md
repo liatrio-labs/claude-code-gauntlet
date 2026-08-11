@@ -11,9 +11,9 @@ Subagent contracts. Each `.md` is a system prompt with enforced YAML frontmatter
 - **LSP-first investigation.** Agents prefer `goToDefinition` / `findReferences` / `hover`, with
   Grep as fallback.
 - **A finding field is one entry in `workflows/src/registry.js` plus the owning agent's output
-  block.** A field no schema declares is **dropped silently** — StructuredOutput returns only
-  declared properties — so a field a contract instructs but the registry does not declare never
-  reaches merge, on every run. `tests/test_dimensions_registry.py` fails the build when the two drift.
+  block.** A field no schema declares is **rejected at dispatch** — the item schema is closed
+  (`additionalProperties: false`, issue #53) — so emitting it burns schema retries and, persisted,
+  fails the agent. `tests/test_dimensions_registry.py` fails the build when the two drift.
 - **Declared-but-optional fields are not nullable.** A not-applicable value is *omitted*, never
   `null`; the platform types each property to a single type and a null burns retries.
 - **`required` is one flat list shared by every dimension.** A field a contract calls required for
