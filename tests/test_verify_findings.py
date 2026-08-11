@@ -15,12 +15,15 @@ Covers:
   - batch_findings: grouping by file, min/max bounds, tail merging, empty input
 """
 
+import copy
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
+from typing import ClassVar
 from unittest.mock import patch
 
 # Add project root to path so we can import scripts as a module
@@ -31,6 +34,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scripts.assemble_artifacts import JS_MAX_SAFE_INTEGER
 from scripts.verify_findings import (
     _DELTA_FIELDS,
+    _LEGACY_CLI_FIELDS,
+    _NUMERIC_FIELDS,
+    _SCRIPT_WRITTEN_FIELDS,
+    _SLICE_INPUT_FIELDS,
     REPO_ROOT,
     InputError,
     _coerce_numeric_fields,
@@ -2969,6 +2976,354 @@ class TestSliceInputRecovery(unittest.TestCase):
         self.assertEqual(envelope["status"], "failed")
         self.assertEqual(envelope["exitCode"], 1)
         self.assertIn("Invalid JSON in findings file", envelope["stderr"])
+
+
+# ---------------------------------------------------------------------------
+# _SLICE_INPUT_FIELDS lockstep + behavioral equivalence (issue #50b)
+# ---------------------------------------------------------------------------
+
+# workflows/src/stages.js's single-line projection constant, e.g.:
+#   export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', ...];
+# The `export` keyword is optional in the pattern (stages.js's other module-level
+# constants are a mix of both) -- what this pins is the field list, not the keyword.
+_JS_SLICE_FIELDS_RE = re.compile(
+    r"^(?:export\s+)?const VERIFY_SLICE_FIELDS = \[(.*?)\];\s*$", re.MULTILINE
+)
+_JS_STRING_LITERAL_RE = re.compile(r"'([^']*)'|\"([^\"]*)\"")
+
+
+def _js_slice_input_fields(js_text):
+    """Parse the quoted field names out of a single-line
+    'const VERIFY_SLICE_FIELDS = [...];' declaration, in order. Returns None if no
+    such declaration is found (moved, renamed, reflowed across lines, or removed)."""
+    match = _JS_SLICE_FIELDS_RE.search(js_text)
+    if match is None:
+        return None
+    return tuple(a or b for a, b in _JS_STRING_LITERAL_RE.findall(match.group(1)))
+
+
+class TestSliceInputFieldsLockstep(unittest.TestCase):
+    """_SLICE_INPUT_FIELDS (Python, this module's target) and VERIFY_SLICE_FIELDS
+    (JS, workflows/src/stages.js) are ONE projection allowlist declared in two
+    runtimes -- materializeVerifySlices dispatches only these fields per finding,
+    and every field verify_findings.py reads must be in the list (workflows/AGENTS.md:
+    "one list in two runtimes, walked in the same order"). This pins the pair
+    literally rather than trusting the prose comment to stay true.
+    """
+
+    STAGES_JS = os.path.join(REPO_ROOT, "workflows", "src", "stages.js")
+
+    def test_parser_extracts_a_representative_declaration(self):
+        # Self-check on the parsing regex, independent of the real file's current
+        # content -- proves _js_slice_input_fields reads the documented shape
+        # before the next test trusts it against the real source.
+        sample = (
+            "// comment\n"
+            "const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'origin'];\n"
+            "const OTHER = 1;\n"
+        )
+        self.assertEqual(
+            _js_slice_input_fields(sample), ("id", "file", "line_start", "origin")
+        )
+
+    def test_python_and_js_projection_lists_agree_in_order(self):
+        with open(self.STAGES_JS, encoding="utf-8") as fh:
+            js_text = fh.read()
+        js_fields = _js_slice_input_fields(js_text)
+        self.assertIsNotNone(
+            js_fields,
+            f"{self.STAGES_JS} has no single-line 'const VERIFY_SLICE_FIELDS = "
+            "[...];' declaration -- it moved, was renamed, was reflowed across "
+            "lines, or the projection was dropped. Update this test's parser "
+            "deliberately if the shape changed on purpose, or restore the "
+            "declaration in stages.js.",
+        )
+        self.assertEqual(
+            js_fields,
+            _SLICE_INPUT_FIELDS,
+            "workflows/src/stages.js's VERIFY_SLICE_FIELDS and "
+            "scripts/verify_findings.py's _SLICE_INPUT_FIELDS have drifted -- "
+            "both name the SAME verify slice-input dispatch projection and must "
+            f"list the same fields in the same order. JS={js_fields!r} "
+            f"Python={_SLICE_INPUT_FIELDS!r}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Read-site scan: every finding-field literal verify_findings.py mentions must be
+# accounted for by one of the four field lists (issue #50b fix 2)
+# ---------------------------------------------------------------------------
+
+# Matches `finding.get("x"`, `finding["x"]`, `f.get("x"`, `f["x"]` (either quote style)
+# -- the two variable names every finding-dict access site in this module uses (see
+# classify_blame / verify_factual / validate_diff_lines / run_verification /
+# build_deltas / batch_findings).
+_FINDING_FIELD_LITERAL_RE = re.compile(
+    r"\b(?:finding|f)\s*(?:\.get\(\s*|\[\s*)[\"']([A-Za-z_][A-Za-z0-9_]*)[\"']"
+)
+
+
+def _finding_field_literals(src):
+    """Every literal finding-dict key verify_findings.py's source mentions via
+    `finding.get("x")`, `finding["x"]`, `f.get("x")` or `f["x"]` -- reads and writes
+    alike, since a write to an unlisted field is exactly what _SCRIPT_WRITTEN_FIELDS
+    exists to allowlist. Deliberately over-inclusive (also matches inside docstrings
+    that describe a side effect in prose, e.g. 'Sets finding["blame_metadata"]') --
+    a name mentioned only in prose still names a real field and must resolve
+    somewhere, so the extra recall costs nothing."""
+    return sorted(set(_FINDING_FIELD_LITERAL_RE.findall(src)))
+
+
+class TestSliceInputFieldsReadSiteScan(unittest.TestCase):
+    """workflows/AGENTS.md's verify-boundary rule -- 'every finding field
+    verify_findings.py reads must be listed [in _SLICE_INPUT_FIELDS]' -- was prose
+    with no enforcement. `f.get("finding_id")` in `batch_findings` (the legacy
+    batch-naming fallback) already violated a literal reading of that rule before
+    this test existed. This scans the script's own source for every finding-field
+    literal and requires each one to resolve to _SLICE_INPUT_FIELDS (the dispatch
+    projection), _SCRIPT_WRITTEN_FIELDS (this script's own audit-trail writes, never
+    expected from input), _LEGACY_CLI_FIELDS (positional-CLI-only fallbacks) or
+    _NUMERIC_FIELDS (line/end_line -- coerced generically by _coerce_numeric_fields's
+    `for key in _NUMERIC_FIELDS` loop, never read via a literal string, but still a
+    real read path this regex-based scan cannot see).
+    """
+
+    SCRIPT_PATH = os.path.join(REPO_ROOT, "scripts", "verify_findings.py")
+    _ALLOWED: ClassVar[set] = (
+        set(_SLICE_INPUT_FIELDS)
+        | set(_SCRIPT_WRITTEN_FIELDS)
+        | set(_LEGACY_CLI_FIELDS)
+        | set(_NUMERIC_FIELDS)
+    )
+
+    def setUp(self):
+        with open(self.SCRIPT_PATH, encoding="utf-8") as fh:
+            self.src = fh.read()
+
+    def test_parser_extracts_a_representative_sample(self):
+        # Self-check on the extraction regex, independent of the real file's
+        # current content -- proves all four call/subscript shapes are caught
+        # before the next test trusts it against the real source.
+        sample = (
+            'x = finding.get("file", "")\n'
+            "finding['blame_metadata'] = {}\n"
+            'y = f.get("finding_id")\n'
+            'f["origin"] = "surfaced"\n'
+        )
+        self.assertEqual(
+            _finding_field_literals(sample),
+            sorted({"file", "blame_metadata", "finding_id", "origin"}),
+        )
+
+    def test_every_finding_field_literal_is_accounted_for(self):
+        unaccounted = [
+            name
+            for name in _finding_field_literals(self.src)
+            if name not in self._ALLOWED
+        ]
+        self.assertEqual(
+            unaccounted,
+            [],
+            f"{self.SCRIPT_PATH} reads/writes finding field(s) {unaccounted} that "
+            "are not in _SLICE_INPUT_FIELDS, _SCRIPT_WRITTEN_FIELDS, "
+            "_LEGACY_CLI_FIELDS or _NUMERIC_FIELDS -- add the field to "
+            "_SLICE_INPUT_FIELDS AND VERIFY_SLICE_FIELDS (workflows/src/stages.js) "
+            "if the script now consults it on dispatched slices, or exempt it "
+            "here (in scripts/verify_findings.py) with a reason.",
+        )
+
+    def test_every_legacy_cli_field_still_occurs_in_the_source(self):
+        # A dead exemption -- a name kept in _LEGACY_CLI_FIELDS after its one read
+        # site was deleted or renamed -- must be cleaned up, not left to rot as an
+        # unused allowance nothing checks against.
+        literals = _finding_field_literals(self.src)
+        missing = [name for name in _LEGACY_CLI_FIELDS if name not in literals]
+        self.assertEqual(
+            missing,
+            [],
+            f"{self.SCRIPT_PATH} no longer mentions legacy field(s) {missing} -- "
+            "remove the dead entry from _LEGACY_CLI_FIELDS.",
+        )
+
+
+class TestSliceProjectionBehavioralEquivalence(unittest.TestCase):
+    """Running the verify decision pipeline on a FULL-shape finding vs. its
+    PROJECTED twin (only _SLICE_INPUT_FIELDS keys) must produce IDENTICAL
+    decisions. This is the output-preserving claim issue #50b rests on: the
+    delta echo rebuilds findings from the workflow's in-memory copy, so a field
+    the slice-input projection drops must be one this script never reads.
+    """
+
+    # Fields a real merged finding carries beyond the slice-input projection --
+    # present on the FULL shape, absent from the PROJECTED twin. None of these is
+    # read by verify_findings.py (that is the whole premise of the projection);
+    # their presence or absence must never change a decision.
+    _NON_PROJECTED_EXTRAS: ClassVar[dict] = {
+        "dimension": "bug",
+        "title": "Off-by-one bound check",
+        "suggestion": "Use <= instead of <.",
+        "agent": "bug-detector",
+        "criticality": 7,  # integer -- keeps any checksum this finding feeds
+        # JS-reproducible, though these tests do not compare checksums.
+    }
+
+    def _empty_diff(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".patch", delete=False) as f:
+            self.addCleanup(os.unlink, f.name)
+            return f.name  # empty file -> parse_diff_lines("") -> set(), not None
+
+    def _write_file(self, lines):
+        """A real temp file OUTSIDE the repo tree -- git blame/log always fail on
+        a path outside the repository, so classify_blame deterministically takes
+        its own conservative 'new' branch with zero dependence on this repo's
+        actual history (proven in the docstring's dry run). verify_factual reads
+        real content from it."""
+        fd, path = tempfile.mkstemp(suffix=".py")
+        with os.fdopen(fd, "w") as fh:
+            fh.write("\n".join(lines) + "\n")
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def _twins(self, base):
+        """``base`` already holds only _SLICE_INPUT_FIELDS keys (asserted below).
+        Returns (full, projected) deep copies: full adds fields no slice-input
+        document would ever carry; projected is exactly the allowlisted shape."""
+        extra = set(base) - set(_SLICE_INPUT_FIELDS)
+        self.assertEqual(
+            extra,
+            set(),
+            f"test fixture base finding carries non-projected keys {extra} -- the "
+            "fixture must carry every _SLICE_INPUT_FIELDS key. If you removed a "
+            "field from the lists on purpose, TestSliceInputFieldsReadSiteScan "
+            "must prove the script no longer reads it -- otherwise restore the "
+            "field instead of shrinking the fixture.",
+        )
+        full = {**base, **self._NON_PROJECTED_EXTRAS}
+        return copy.deepcopy(full), copy.deepcopy(base)
+
+    def _run(self, finding, diff_file):
+        findings = [finding]
+        result = run_verification(findings, "main", diff_file, verbose=False)
+        deltas = build_deltas(findings, result["verified"])
+        decision = {
+            k: findings[0].get(k)
+            for k in ("severity", "confidence", "elimination_reason", "origin")
+        }
+        return decision, deltas
+
+    def _assert_equivalent(self, base):
+        diff_file = self._empty_diff()
+        full, projected = self._twins(base)
+        full_decision, full_deltas = self._run(full, diff_file)
+        proj_decision, proj_deltas = self._run(projected, diff_file)
+        self.assertEqual(
+            full_decision,
+            proj_decision,
+            "the FULL-shape and PROJECTED-shape findings produced different "
+            "decisions -- a field _SLICE_INPUT_FIELDS omits is being consulted",
+        )
+        self.assertEqual(full_deltas, proj_deltas)
+        return full_decision, full_deltas
+
+    def test_elimination_via_missing_file(self):
+        base = {
+            "id": "bug-1",
+            "file": "does/not/exist-xyz-50b.py",
+            "line_start": 5,
+            "line_end": 5,
+            "description": "The bound excludes the last element.",
+            "evidence": "for i in range(len(xs) - 1):",
+            "severity": "high",
+            "confidence": 80,
+            "cross_file_refs": [],
+        }
+        decision, deltas = self._assert_equivalent(base)
+        self.assertEqual(
+            decision["elimination_reason"], "evidence does not match file content"
+        )
+        self.assertEqual(deltas[0]["verified"], False)
+
+    def test_elimination_via_out_of_range_line_start(self):
+        path = self._write_file(["a = 1", "b = 2", "c = 3"])
+        base = {
+            "id": "bug-2",
+            "file": path,
+            "line_start": 999,
+            "line_end": 999,
+            "description": "Out of range reference.",
+            "evidence": "unused",
+            "severity": "medium",
+            "confidence": 60,
+            "cross_file_refs": [],
+        }
+        decision, deltas = self._assert_equivalent(base)
+        self.assertEqual(
+            decision["elimination_reason"], "evidence does not match file content"
+        )
+        self.assertEqual(deltas[0]["verified"], False)
+
+    def test_confidence_reduction_via_symbol_miss(self):
+        # The symbol lives ONLY in `description` -- `evidence` carries no code
+        # punctuation or snake_case token of its own, so this case is sensitive to
+        # a projection that silently dropped `description` (see the mutation-verify
+        # note above this class). Built by concatenation, not written contiguously,
+        # so `git grep` (which searches this very file's own working-tree bytes)
+        # cannot find it as an already-present symbol -- a literal identifier
+        # embedded here would defeat its own "missing symbol" premise.
+        absent_symbol = "zqxxq_absent" + "_marker_50b_case"
+        path = self._write_file(["def handler():", "    return 1"])
+        base = {
+            "id": "bug-3",
+            "file": path,
+            "line_start": 1,
+            "line_end": 2,
+            "description": f"References `{absent_symbol}`",
+            "evidence": "return 1",
+            "severity": "high",
+            "confidence": 90,
+            "cross_file_refs": [],
+        }
+        decision, deltas = self._assert_equivalent(base)
+        self.assertIsNone(decision["elimination_reason"])
+        self.assertEqual(decision["confidence"], 30)  # miss_ratio=1.0 -> floor 30
+        self.assertEqual(deltas[0]["verified"], True)
+        self.assertEqual(deltas[0]["confidence"], decision["confidence"])
+
+    def test_cross_file_refs_forces_surfaced_and_downgrades_severity(self):
+        path = self._write_file(["x = 1", "y = 2", "z = 3"])
+        base = {
+            "id": "bug-4",
+            "file": path,
+            "line_start": 1,
+            "line_end": 1,
+            "description": "Depends on state mutated elsewhere.",
+            "evidence": "x = 1",
+            "severity": "critical",
+            "confidence": 70,
+            "cross_file_refs": ["other/module.py:10"],
+        }
+        decision, deltas = self._assert_equivalent(base)
+        self.assertEqual(decision["origin"], "surfaced")
+        self.assertEqual(decision["severity"], "high")  # critical -> high, once
+        self.assertEqual(deltas[0]["verified"], True)
+
+    def test_clean_verified_finding(self):
+        path = self._write_file(["def add(a, b):", "    return a + b"])
+        base = {
+            "id": "bug-5",
+            "file": path,
+            "line_start": 1,
+            "line_end": 2,
+            "description": "Straightforward addition helper.",
+            "evidence": "def add(a, b):",
+            "severity": "low",
+            "confidence": 55,
+            "cross_file_refs": [],
+        }
+        decision, deltas = self._assert_equivalent(base)
+        self.assertIsNone(decision["elimination_reason"])
+        self.assertEqual(decision["confidence"], 55)  # symbol 'add' found in-line
+        self.assertEqual(deltas[0]["verified"], True)
 
 
 if __name__ == "__main__":

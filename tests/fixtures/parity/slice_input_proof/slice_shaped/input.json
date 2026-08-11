@@ -3,20 +3,17 @@
     "findings": [
       {
         "id": "bug-1",
-        "dimension": "bug",
-        "severity": "high",
-        "confidence": 85,
         "file": "src/handler.go",
         "line_start": 12,
         "line_end": 14,
-        "title": "Off-by-one in slice bound",
         "description": "The upper bound excludes the last element.",
         "evidence": "for i := 0; i < len(xs)-1; i++ {",
-        "suggestion": "Use i < len(xs)",
+        "severity": "high",
+        "confidence": 85,
         "cross_file_refs": [
           "src/other.go"
         ],
-        "agent": "bug-detector"
+        "origin": "new"
       }
     ],
     "base_branch": "main"

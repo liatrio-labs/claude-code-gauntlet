@@ -20,10 +20,11 @@
 // granularity; output stays in strict slice-index order.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyStage, parseWriterPayload, VERIFY_ATTEMPTS_PER_SLICE } from '../src/stages.js';
+import { verifyStage, parseWriterPayload, VERIFY_ATTEMPTS_PER_SLICE, VERIFY_SLICE_FIELDS } from '../src/stages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, sliceInputRecorder } from './helpers/verifyDelta.js';
 import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
+import { FINDING_PROP_TYPES } from '../src/registry.js';
 
 // Platform contract: agent(promptString, opts). The EXECUTOR slice loop is deliberately
 // SEQUENTIAL bare agent() calls (never parallel() — the order pairs receipts to slices),
@@ -266,6 +267,21 @@ test('(h) one bad slice among several -> ONLY that slice degrades, per-slice (is
   assert.match(out.gaps[0], /2 of 5/);
 });
 
+test('(h1) a null finding must not crash materializeVerifySlices — it degrades honestly via dispatchableIds, never throws (issue #50b regression)', async () => {
+  const input = baseInput({ findings: [null] });
+  // The executor must never be dispatched: dispatchableIds degrades the slice (no usable
+  // id on a null finding) before verifySliceWithRetry is ever called.
+  const ctx = verifyCtx(() => {
+    throw new Error('executor must never be dispatched for a slice with no usable id');
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, false);
+  assert.equal(out.findings.length, 1); // preserved, never dropped
+  assert.equal(out.findings[0].origin, 'unknown');
+  assert.equal(ctx.execCalls().length, 0);
+  assert.ok(out.gaps.some((g) => /no usable id/.test(g)));
+});
+
 test('(h2) equal-length slices cannot satisfy each other: per-slice nonces are distinct', async () => {
   const findings = Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
   const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
@@ -296,6 +312,66 @@ test('(j) slice inputs are materialized by the artifact-writer BEFORE any execut
   // The writer prompt carries the sliced findings by value and their target paths.
   assert.match(ctx.calls[0].prompt, /phase4-input-abc123\.slice0\.json/);
   assert.match(ctx.calls[0].prompt, /"id":"F1"/);
+});
+
+// (j2)-(j4): the slice-input projection (issue #50b). The slice-input file is narrowed to
+// VERIFY_SLICE_FIELDS — every other finding field is dropped before the artifact-writer
+// ever sees it. Nothing downstream loses it: joinVerifyDeltas rebuilds every verified
+// finding from the workflow's OWN in-memory copy of the dispatched finding, never from
+// this projection (see workflows/AGENTS.md, "The verify boundary").
+test('(j2) the slice-input projection drops every field outside VERIFY_SLICE_FIELDS, keeping the rest in list order', async () => {
+  const input = baseInput();
+  input.findings = [{
+    id: 'F1', file: 'a.js', line_start: 1, line_end: 3, description: 'desc',
+    evidence: 'ev', severity: 'high', confidence: 90, cross_file_refs: ['b.js:9'],
+    origin: 'new',
+    // Fields VERIFY_SLICE_FIELDS does not carry — verify_findings.py never reads these.
+    agent: 'security', title: 'title text', dimension: 'security',
+    suggestion: 'do X instead', claude_md_rule: 'rule-1', criticality: 8,
+  }];
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  await verifyStage(ctx, input);
+  const entries = parseWriterPayload(ctx.calls[0].prompt);
+  const written = entries[0].content.findings[0];
+  assert.deepEqual(Object.keys(written), VERIFY_SLICE_FIELDS, 'exactly the projected keys, in VERIFY_SLICE_FIELDS order');
+  for (const dropped of ['agent', 'title', 'dimension', 'suggestion', 'claude_md_rule', 'criticality']) {
+    assert.ok(!Object.hasOwn(written, dropped), `${dropped} must not reach the slice-input file`);
+  }
+});
+
+test('(j3) a field absent from the dispatched finding stays absent in the slice input — never written as null', async () => {
+  const input = baseInput();
+  // No evidence, no cross_file_refs, no line_end: a discovery finding before verification
+  // fills those in is a realistic shape, not a contrived one.
+  input.findings = [{ id: 'F1', file: 'a.js', line_start: 1, description: 'd', severity: 'high', confidence: 50, origin: 'new' }];
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  await verifyStage(ctx, input);
+  const entries = parseWriterPayload(ctx.calls[0].prompt);
+  const written = entries[0].content.findings[0];
+  for (const absent of ['evidence', 'cross_file_refs', 'line_end']) {
+    assert.ok(!Object.hasOwn(written, absent), `${absent} was never dispatched, so it must not appear at all`);
+    assert.notEqual(written[absent], null, `${absent} must be omitted, not written as null`);
+  }
+  assert.deepEqual(Object.keys(written), ['id', 'file', 'line_start', 'description', 'severity', 'confidence', 'origin']);
+});
+
+test('(j4) VERIFY_SLICE_FIELDS is a subset of the closed finding schema (registry.js FINDING_PROP_TYPES)', () => {
+  // Every field verify_findings.py reads must be a real, declared finding field — a typo
+  // or a stale entry here would silently project nothing for that key on every run.
+  for (const field of VERIFY_SLICE_FIELDS) {
+    assert.ok(Object.hasOwn(FINDING_PROP_TYPES, field), `${field} is not declared in FINDING_PROP_TYPES`);
+  }
+});
+
+test('(j5) the projection still applies pinNumericFields: a fractional line_start/confidence is half-up rounded before it reaches the slice-input file', async () => {
+  const input = baseInput();
+  input.findings = [{ id: 'F1', file: 'a.js', line_start: 3.5, description: 'd', severity: 'high', confidence: 90.2, origin: 'new' }];
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  await verifyStage(ctx, input);
+  const entries = parseWriterPayload(ctx.calls[0].prompt);
+  const written = entries[0].content.findings[0];
+  assert.equal(written.line_start, 4, 'Math.floor(3.5 + 0.5) === 4, matching pinNumericFields elsewhere');
+  assert.equal(written.confidence, 90, 'Math.floor(90.2 + 0.5) === 90');
 });
 
 test('(k) slice-input writer failure -> that slice UNVERIFIED (here: the only slice), no executor dispatched', async () => {
@@ -827,13 +903,15 @@ test('(p4) a TRUSTED slice whose envelope carries input_recovery -> RECOVERED di
 });
 
 test('(p5) a slice carrying a number Python cannot spell has no computable proof -> trusted, counted unprovable', async () => {
-  // criticality is declared `number` in registry.js's test_coverage schemaExtra and is
-  // NOT in VERIFY_NUMERIC_FIELDS, so pinNumericFields leaves a fractional value alone.
-  // js_stringify_pretty REFUSES such a number (assemble_artifacts.assert_js_reproducible),
-  // so no cross-runtime proof exists. Skipping the check keeps every other guard and
-  // costs nothing; degrading here would repeat the exact bug #69 exists to close.
+  // line_start IS in VERIFY_NUMERIC_FIELDS, so pinNumericFields (inside
+  // projectVerifySliceFinding) does touch it — but it only ROUNDS a finite,
+  // non-integer value; a value that is already integral is left exactly as large as it
+  // arrived, even outside JS's safe integer range. js_stringify_pretty REFUSES such a
+  // number (assemble_artifacts.assert_js_reproducible), so no cross-runtime proof
+  // exists. Skipping the check keeps every other guard and costs nothing; degrading
+  // here would repeat the exact bug #69 exists to close.
   const input = baseInput();
-  input.findings = input.findings.map((f) => ({ ...f, criticality: 7.5 }));
+  input.findings = input.findings.map((f) => ({ ...f, line_start: Number.MAX_SAFE_INTEGER + 10 }));
   const ctx = verifyCtx((_t, i) => {
     const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
     env.receipt.input_checksum = null;
@@ -856,7 +934,7 @@ test('(p8) a slice that is both unprovable and recovered does not claim a proof 
   // dispatch" would be a false measurement in a delivered disclosure — the exact
   // overstatement class this repo rejects in report prose.
   const input = baseInput();
-  input.findings = input.findings.map((f) => ({ ...f, criticality: 7.5 }));
+  input.findings = input.findings.map((f) => ({ ...f, line_start: Number.MAX_SAFE_INTEGER + 10 }));
   const ctx = verifyCtx((_t, i) => {
     const env = okEnvelope(input.findings, { nonce: `n-1.${i}` });
     env.receipt.input_checksum = null; // declared: the harness stamp leaves it alone

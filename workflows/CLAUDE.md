@@ -90,6 +90,13 @@ The executor echoes a per-id delta, never findings.
   `id`/`verified`) are one list in two runtimes, walked in the same order.
 - `result.deltas` must stay the **first** key of `result` — the reading executor's `Read` is
   length-capped with no truncation notice, so what it echoes must be a prefix.
+- The slice input is a projection, not a full finding copy: `VERIFY_SLICE_FIELDS` (JS) and
+  `_SLICE_INPUT_FIELDS` (Python) are one list in two runtimes, walked in the same order. Every
+  field the script consults on dispatched slices must be listed there — a lockstep test pins the
+  JS/Python pair, and a read-site scan over `verify_findings.py`'s own source (both in
+  `tests/test_verify_findings.py`) enforces the list against the script, exempting its own writes
+  (`_SCRIPT_WRITTEN_FIELDS`), legacy-CLI-only reads (`_LEGACY_CLI_FIELDS`), and the `line`/`end_line`
+  numeric-coercion loop (`_NUMERIC_FIELDS`).
 
 ## Reading the shared context file
 

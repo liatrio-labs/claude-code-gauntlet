@@ -1008,6 +1008,34 @@ function pinNumericFields(finding) {
   return out;
 }
 
+// The slice-input projection (issue #50b): the fields verify_findings.py consults on a
+// dispatched slice, walked in this fixed order so the serialized key order is
+// deterministic — NOT the order the script reads them in (classify_blame's reads come
+// first there and don't match this order). One list in two runtimes with
+// `_SLICE_INPUT_FIELDS` in scripts/verify_findings.py — `tests/test_verify_findings.py`
+// pins the pair in lockstep and scans the script's own source to enforce the list against
+// it. `origin` is listed as tolerated forward-compat even though the script never actually
+// reads the dispatched value: classify_blame overwrites `origin` before every read site.
+// Keep this list on ONE LINE — tests/test_verify_findings.py regex-parses it against the
+// Python twin.
+export const VERIFY_SLICE_FIELDS = ['id', 'file', 'line_start', 'line_end', 'description', 'evidence', 'severity', 'confidence', 'cross_file_refs', 'origin'];
+
+// projectVerifySliceFinding(finding) -> a finding narrowed to VERIFY_SLICE_FIELDS, in that
+// key order, with absent fields left absent (never written as null — an omitted key and an
+// explicit null are different signals to the script's own `.get()` defaults). The delta
+// echo (joinVerifyDeltas) rebuilds every verified finding from the workflow's OWN in-memory
+// copy, never from this projection, so a field dropped here loses nothing downstream (see
+// workflows/AGENTS.md, "The verify boundary"). Numeric fields get the identical
+// pinNumericFields treatment applied to the full finding elsewhere (degradedSlice,
+// joinVerifyDeltas) so a slice's on-disk numbers and its in-memory numbers never diverge.
+export function projectVerifySliceFinding(finding) {
+  const projected = {};
+  for (const k of VERIFY_SLICE_FIELDS) {
+    if (finding && Object.hasOwn(finding, k) && finding[k] !== undefined) projected[k] = finding[k];
+  }
+  return pinNumericFields(projected);
+}
+
 // Dispatch the artifact-writer to persist each slice's --input JSON (the shape
 // verify_findings.py --input reads: { findings, base_branch }). Segmented under the
 // shared char budget. Returns { failed, expected } — `failed` a Map from SLICE INDEX to
@@ -1034,7 +1062,7 @@ async function materializeVerifySlices(c, inp, slices, policy) {
   const model = modelFor('code-gauntlet:artifact-writer', policy);
   const entries = slices.map((slice, i) => ({
     path: `${inputPathBase}.slice${i}.json`,
-    content: { findings: slice.map(pinNumericFields), base_branch: v.baseBranch },
+    content: { findings: slice.map(projectVerifySliceFinding), base_branch: v.baseBranch },
   }));
   // The slice-input CONTENT proof (issue #25 requirements 4-6). The write proof below
   // only ever confirms a path came back in the echo — it cannot tell a file holding
@@ -1050,10 +1078,18 @@ async function materializeVerifySlices(c, inp, slices, policy) {
   // persist path uses, pinned by tests/fixtures/parity/slice_input_proof/.
   //
   // null means NO PROOF IS COMPUTABLE: the Python twin refuses a number it cannot spell
-  // identically (firstUnsafeNumber's rule, assemble_artifacts.assert_js_reproducible),
-  // and `criticality` is a declared `number` that pinNumericFields does not round. The
-  // check is then skipped rather than failed — every other guard still applies, and
-  // degrading a slice over one fractional value would repeat the defect issue #69 closes.
+  // identically (firstUnsafeNumber's rule, assemble_artifacts.assert_js_reproducible).
+  // Since issue #50b, the fields pinNumericFields walks (line_start, line_end, confidence)
+  // already had a fractional value rounded inside projectVerifySliceFinding — but that is
+  // not every numeric the slice document can carry: `cross_file_refs` is projected too,
+  // and while the schema types its items as strings, a legacy/checkpoint-resume finding is
+  // off-schema and firstUnsafeNumber walks arrays, so a numeric hiding inside
+  // `cross_file_refs` still reaches this branch unrounded. Likewise an already-integral
+  // pinned field outside JS's safe integer range (e.g. a corrupted line_start) is left
+  // exactly as large as it arrived — pinNumericFields only rounds a FINITE NON-INTEGER
+  // value. Either way the check is skipped rather than failed — every other guard still
+  // applies, and degrading a slice over one unspellable value would repeat the defect
+  // issue #69 closes.
   const expected = new Map(
     entries.map((e, i) => [
       i,
