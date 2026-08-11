@@ -106,9 +106,12 @@ CODEX_CAP_BYTES = 32_768
 # script never reads is not otherwise stated anywhere in the tree.
 # Raised 20_118 -> 20_357 (2026-08-11, #50b review fix): the same bullet was reworded to
 # name the read-site scan mechanism (a lockstep test plus a source scan, not prose) and
-# the two exemption lists it checks against — the rule now matches what actually
+# the three exemption lists it checks against — the rule now matches what actually
 # enforces it, which is worth the extra bytes for the same reason the first raise was.
-AGENTS_SET_BUDGET_BYTES = 20_357
+# Raised 20_357 -> 20_420 (2026-08-11, #50b review fix): the bullet undercounted the
+# exemptions by one (omitted _NUMERIC_FIELDS, the line/end_line numeric-coercion loop);
+# corrected to name all three.
+AGENTS_SET_BUDGET_BYTES = 20_420
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
