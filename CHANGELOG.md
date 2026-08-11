@@ -2,6 +2,23 @@
 
 <!-- version list -->
 
+## v3.7.1 (2026-08-11)
+
+### Bug Fixes
+
+- **verify**: Correct the argv-quoting doc claims and the test shell scanner
+  ([#174](https://github.com/liatrio-labs/claude-code-gauntlet/pull/174),
+  [`348681f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348681fccd8e6f36e727963c8de3eafafeb0cc6b))
+
+- **verify**: Quote argv tokens in pinned executor commands
+  ([#174](https://github.com/liatrio-labs/claude-code-gauntlet/pull/174),
+  [`348681f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348681fccd8e6f36e727963c8de3eafafeb0cc6b))
+
+- **verify**: Quote argv tokens in pinned executor commands (#75)
+  ([#174](https://github.com/liatrio-labs/claude-code-gauntlet/pull/174),
+  [`348681f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/348681fccd8e6f36e727963c8de3eafafeb0cc6b))
+
+
 ## v3.7.0 (2026-08-11)
 
 ### Bug Fixes
