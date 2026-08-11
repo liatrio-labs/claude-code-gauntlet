@@ -5,30 +5,27 @@ verify_findings.py — Deterministic finding verification for code-gauntlet Phas
 Usage:
     python3 verify_findings.py <findings_json> [--base-branch main] [--diff-file path]
 
-Input JSON schema:
+Input JSON schema. The workflow's verify stage dispatches a PROJECTION of each finding
+(VERIFY_SLICE_FIELDS in workflows/src/stages.js / _SLICE_INPUT_FIELDS below — one list in
+two runtimes) rather than the full finding object; extra fields are tolerated and passed
+through untouched when present (the positional CLI feeds full persisted artifacts, which
+carry every field merge/filter/challenge produced):
     {
         "findings": [
             {
                 "id": "bug-1",
-                "dimension": "bug",
-                "severity": "high",
-                "confidence": 75,
                 "file": "src/foo.py",
                 "line_start": 42,
                 "line_end": 45,
-                "title": "...",
                 "description": "...",
                 "evidence": "...",
-                "suggestion": "...",
-                "suggested_fix_code": null,
-                "cross_file_refs": []
+                "severity": "high",
+                "confidence": 75,
+                "cross_file_refs": [],
+                "origin": "new"
             }
         ],
-        "base_branch": "main",
-        "head_sha": "abc123",
-        "pr_number": 42,
-        "owner": "org",
-        "repo": "name"
+        "base_branch": "main"
     }
 
 Output JSON schema (legacy positional path — unchanged):
@@ -981,6 +978,40 @@ def batch_findings(findings, min_batch=3, max_batch=5):
 # status:'failed' and degrades the whole slice to UNVERIFIED (the live-smoke failure).
 _NUMERIC_FIELDS = ("line_start", "line_end", "line", "end_line", "confidence")
 _INT_RE = re.compile(r"[+-]?\d+")
+
+# The workflow's dispatch projection (VERIFY_SLICE_FIELDS in workflows/src/stages.js, one
+# list in two runtimes, same order). Every finding field this script READS must be listed
+# here — a read of an unlisted field sees only the .get() default on dispatched slices.
+# Extra fields remain tolerated (the positional CLI feeds full persisted artifacts).
+_SLICE_INPUT_FIELDS = (
+    "id",
+    "file",
+    "line_start",
+    "line_end",
+    "description",
+    "evidence",
+    "severity",
+    "confidence",
+    "cross_file_refs",
+    "origin",
+)
+
+# Written by this script before any read — never expected from the input. A dispatched
+# slice never carries these; they exist only after classify_blame / verify_factual /
+# validate_diff_lines / run_verification stamp them onto the in-memory finding.
+_SCRIPT_WRITTEN_FIELDS = (
+    "blame_metadata",
+    "factual_verification",
+    "diff_validation",
+    "elimination_reason",
+)
+
+# Read only as a batch-naming fallback for pre-v3 positional-CLI artifacts
+# (batch_findings' `f.get("finding_id")`). Inert on dispatched slices: dispatchableIds
+# (workflows/src/stages.js) refuses id-less findings before dispatch, and nothing in this
+# repo reads `result.batches`. tests/test_verify_findings.py fails if an entry here stops
+# occurring in the source — a dead exemption must be removed, not left to rot.
+_LEGACY_CLI_FIELDS = ("finding_id",)
 
 
 def _half_up_int(value):
