@@ -52,6 +52,31 @@ test('subagentModelEnv override maps through the same full-ID pin', () => {
   assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5-20251001' }).model, 'claude-haiku-4-5-20251001');
 });
 
+// Bedrock live failure (2026-08-11 transcript): third-party providers use deployment-
+// specific model IDs and pass first-party names (claude-sonnet-5, claude-opus-4-8) through
+// UNCHECKED to the provider, which 400s them — every discovery agent degraded in one 2s
+// run. On any provider other than firstParty the bare alias is the only spelling the
+// harness's deployment mapping resolves, so resolvePolicy must emit it untouched.
+test('non-firstParty provider dispatches bare aliases, never first-party full IDs', () => {
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'bedrock' }).model, 'sonnet');
+  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', { provider: 'bedrock' }).model, 'opus');
+  assert.equal(resolvePolicy('code-gauntlet:executor', { provider: 'vertex' }).model, 'sonnet');
+  // Unknown provider strings are waist-rejected upstream; the registry's safe arm for any
+  // non-firstParty value is still the alias (it resolves on every provider).
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'someday-provider' }).model, 'sonnet');
+});
+test('firstParty / absent / null provider keeps the full-ID pin (the [1m]-cascade guard)', () => {
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: 'firstParty' }).model, 'claude-sonnet-5');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { provider: null }).model, 'claude-sonnet-5');
+  assert.equal(resolvePolicy('code-gauntlet:security-reviewer', {}).model, 'claude-opus-4-8');
+});
+test('subagentModelEnv passes through unmapped on a third-party provider', () => {
+  // An operator's explicit deployment ID (the Bedrock escape hatch) must survive verbatim,
+  // and a bare alias must NOT be rewritten to a first-party full ID there.
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'us.anthropic.claude-sonnet-4-6', provider: 'bedrock' }).model, 'us.anthropic.claude-sonnet-4-6');
+  assert.equal(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'sonnet', provider: 'bedrock' }).model, 'sonnet');
+});
+
 // S7 model bump: security-reviewer's agent frontmatter says opus; assert the registry's
 // modelOverride actually binds through resolvePolicy AND that security-reviewer is the ONLY
 // discovery agent bumped off the sonnet default (the deviation Task 8 review confirmed).

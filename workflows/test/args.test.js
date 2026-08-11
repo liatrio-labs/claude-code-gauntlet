@@ -66,6 +66,24 @@ test('validateArgs accepts delivery.tier "all" and "main_only"', () => {
 test('validateArgs accepts an empty delivery object (tier defaults to all downstream)', () => {
   assert.deepEqual(validateArgs({ ...good, delivery: {} }), { ok: true, errors: [] });
 });
+// Bedrock live failure (2026-08-11 transcript): a typo'd provider would silently flip the
+// registry between the full-ID-pin arm and the bare-alias arm, so unknown spellings fail
+// loud at the waist. null and absent both mean 'firstParty' (older waists omit the field).
+test('validateArgs accepts every known policy.provider and tolerates null/absent', () => {
+  for (const provider of ['firstParty', 'bedrock', 'vertex', 'foundry']) {
+    assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, provider } }), { ok: true, errors: [] });
+  }
+  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, provider: null } }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // absent
+});
+test('validateArgs rejects an unknown policy.provider', () => {
+  const r = validateArgs({ ...good, policy: { ...good.policy, provider: 'aws' } });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /invalid policy\.provider: aws/);
+  // 'gateway' is deliberately NOT a provider: an LLM gateway proxies the Anthropic API and
+  // expects standard Claude model names, so gateway sessions stay firstParty (bugbot #179).
+  assert.equal(validateArgs({ ...good, policy: { ...good.policy, provider: 'gateway' } }).ok, false);
+});
 test('validateArgs rejects an unknown delivery.tier', () => {
   const r = validateArgs({ ...good, delivery: { tier: 'suggestions_only' } });
   assert.equal(r.ok, false);
