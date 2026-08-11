@@ -488,9 +488,10 @@ test('validateArgs rejects a path-bearing field carrying an embedded control cha
 });
 
 test('validateArgs rejects headShaShort that would split or inject in the verify argv', () => {
-  // headShaShort is joined into a shell-run string by verifyCommand (stages.js). Apply the
-  // same NONCE_RE charset as the nonce — whitespace, shell metacharacters, and anything
-  // outside [A-Za-z0-9._-] must fail at the waist. A real short SHA never needs them.
+  // headShaShort reaches the shell-run string verifyCommand builds (stages.js), where it
+  // is carried as a bare word. Apply the same NONCE_RE charset as the nonce — whitespace,
+  // shell metacharacters, and anything outside [A-Za-z0-9._-] must fail at the waist. A
+  // real short SHA never needs them (unlike a path, which verifyCommand quotes instead).
   for (const bad of ['abc 1234', 'abc;id', 'abc$(id)', 'abc`id`', "abc'x", 'abc|x']) {
     const r = validateArgs({ ...good, headShaShort: bad });
     assert.equal(r.ok, false, `headShaShort=${JSON.stringify(bad)} should be rejected`);

@@ -1267,11 +1267,29 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum })
   return { ok: true };
 }
 
-// The pinned command: a single `python3 <script> --flags...` invocation of plain word
-// tokens only (CLAUDE.md AST-safe emission — no command substitution, heredocs, env
-// prefix, or shell operators). Per-slice input/output paths are sha-scoped and index-
-// suffixed; verifyStage materializes the slice inputs via the artifact-writer (see
-// materializeVerifySlices) before dispatch, then the executor reads the slice output.
+// shellWord(tok) -> the token as ONE shell word. A token of ordinary path characters is
+// returned bare, so an ordinary command is byte-identical to a plain `parts.join(' ')`;
+// anything else is POSIX single-quoted, which keeps the command AST-safe (a single-quoted
+// token is one `raw_string` node to tree-sitter-bash — no expansion, no operator, and
+// nothing the sandbox's auto-approval parse does not recognise). The charset is
+// shlex.quote's: deliberately conservative, since every character outside it only costs a
+// pair of quotes. `'\''` closes, escapes, and reopens for an embedded single quote.
+const SHELL_SAFE_RE = /^[A-Za-z0-9_%+=:,.\/@-]+$/;
+function shellWord(tok) {
+  // null/undefined/'' contribute an empty string, exactly as Array.join did: an absent
+  // optional field must not materialize a literal `undefined` or a stray `''` in argv.
+  if (tok == null) return '';
+  const s = String(tok);
+  if (s === '' || SHELL_SAFE_RE.test(s)) return s;
+  return `'${s.replaceAll("'", `'\\''`)}'`;
+}
+
+// The pinned command: a single `python3 <script> --flags...` invocation whose tokens are
+// AST-safe (CLAUDE.md AST-safe emission — no command substitution, heredocs, env prefix,
+// or shell operators), each shellWord-quoted so a path bearing a space stays ONE argv word
+// (issue #75). Per-slice input/output paths are sha-scoped and index-suffixed; verifyStage
+// materializes the slice inputs via the artifact-writer (see materializeVerifySlices)
+// before dispatch, then the executor reads the slice output.
 //
 // `sliceNonce` is THREADED IN, never re-derived: it is the same value verifySliceWithRetry
 // hands trustSlice as the expected receipt nonce, so argv and the trust check cannot
@@ -1292,7 +1310,7 @@ function verifyCommand(inp, i, sliceNonce) {
     '--base-branch', v.baseBranch || 'main',
   ];
   if (v.diffPath) parts.push('--diff-file', v.diffPath);
-  return parts.join(' ');
+  return parts.map(shellWord).join(' ');
 }
 
 // What the executor is asked for is now a PREFIX of the output document, not the whole of
@@ -2988,11 +3006,12 @@ const ASSEMBLE_RECEIPT_SCHEMA = {
   },
 };
 
-// The pinned command: a single `python3 <script> --plan <plan>` invocation of plain
-// word tokens only (CLAUDE.md AST-safe emission — no command substitution, heredocs,
-// env prefix, or shell operators), exactly like verifyCommand.
+// The pinned command: a single `python3 <script> --plan <plan>` invocation whose tokens are
+// AST-safe (CLAUDE.md AST-safe emission — no command substitution, heredocs, env prefix, or
+// shell operators), each shellWord-quoted so a path bearing a space stays ONE argv word
+// (issue #75) — exactly like verifyCommand.
 function assemblePrompt(scriptPath, planPath) {
-  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\npython3 ${scriptPath} --plan ${planPath}`;
+  return `Run exactly this command, then return its single line of stdout JSON verbatim via the schema:\npython3 ${shellWord(scriptPath)} --plan ${shellWord(planPath)}`;
 }
 
 // --- Checkpoints ------------------------------------------------------------

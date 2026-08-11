@@ -23,6 +23,7 @@ import assert from 'node:assert/strict';
 import { verifyStage, parseWriterPayload, VERIFY_ATTEMPTS_PER_SLICE } from '../src/stages.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 import { deltaEnvelope, deltasFor, ELIMINATION_STAMP, sliceInputRecorder } from './helpers/verifyDelta.js';
+import { outsideSingleQuotes, shellSplit } from './helpers/shellWords.js';
 
 // Platform contract: agent(promptString, opts). The EXECUTOR slice loop is deliberately
 // SEQUENTIAL bare agent() calls (never parallel() — the order pairs receipts to slices),
@@ -470,6 +471,85 @@ test('the executor command is a single AST-safe python3 word-token invocation', 
   // No shell substitution / heredocs / env-prefix (CLAUDE.md AST-safe emission).
   assert.doesNotMatch(cmd, /\$\(|`|<<|\$\{|&&|\|\|/);
   assert.equal(t.agentType, 'code-gauntlet:executor');
+});
+
+// --- Issue #75: the pinned command's tokens are shell WORDS, not space-joined ----------
+//
+// verifyCommand builds argv and hands it to the executor as one string that Bash splits.
+// A path holding a space used to split into two arguments there — `--diff-file /My
+// Documents/d.patch` reached verify_findings.py as `--diff-file /My`, and the slice
+// degraded on an input the caller spelled correctly. Each token is now shellWord-quoted,
+// so these tests assert on the ARGV a shell would build (shellSplit), never on substrings
+// of the command: a substring match cannot tell one word from two.
+
+// The command dispatched for slice `i` is the last line of the executor prompt.
+const commandOf = (call) => call.prompt.split('\n').pop();
+
+async function dispatchedCommand(input) {
+  const ctx = verifyCtx((_t, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
+  await verifyStage(ctx, input);
+  return commandOf(ctx.execCalls()[0]);
+}
+
+test('(#75) ordinary paths stay BYTE-IDENTICAL to the unquoted join — quoting costs nothing by default', async () => {
+  // Every real fixture ({output_dir} paths, hex nonces, --flags, short SHAs, ordinary
+  // branch names) matches the bare charset, so the shipped command must not change at
+  // all. Pinned as an exact string: a regex would not notice a stray pair of quotes.
+  assert.equal(
+    await dispatchedCommand(baseInput()),
+    'python3 /plugin/scripts/verify_findings.py'
+    + ' --input /out/phase4-input-abc123.slice0.json'
+    + ' --output /out/phase4-output-abc123.slice0.json'
+    + ' --nonce n-1.0 --head-sha abc123 --base-branch main'
+    + ' --diff-file /out/code-gauntlet-diff-abc123.patch',
+  );
+});
+
+test('(#75) a space in ANY path field still names ONE file in the executor argv', async () => {
+  const verify = {
+    scriptPath: '/plug in/scripts/verify_findings.py',
+    inputPathBase: '/My Documents/out/phase4-input-abc123',
+    outputPathBase: '/My Documents/out/phase4-output-abc123',
+    baseBranch: 'main',
+    diffPath: '/My Documents/out/code-gauntlet diff.patch',
+  };
+  const cmd = await dispatchedCommand(baseInput({ verify }));
+  assert.deepEqual(shellSplit(cmd), [
+    'python3', verify.scriptPath,
+    '--input', '/My Documents/out/phase4-input-abc123.slice0.json',
+    '--output', '/My Documents/out/phase4-output-abc123.slice0.json',
+    '--nonce', 'n-1.0',
+    '--head-sha', 'abc123',
+    '--base-branch', 'main',
+    '--diff-file', verify.diffPath,
+  ]);
+});
+
+test("(#75) a single quote inside a path round-trips through the '\\'' escape", async () => {
+  const diffPath = "/Users/o'brien/out/code-gauntlet diff.patch";
+  const cmd = await dispatchedCommand(baseInput({ verify: { ...baseInput().verify, diffPath } }));
+  const argv = shellSplit(cmd);
+  assert.equal(argv[argv.length - 1], diffPath);
+  assert.equal(argv[argv.length - 2], '--diff-file');
+});
+
+test('(#75) a $ or backtick in baseBranch is quoted, never live shell syntax', async () => {
+  // git refnames forbid a space but PERMIT `$` and a backtick, so `feature/$x` is a legal
+  // branch that must reach the script literally — and must not reach the shell at all.
+  const baseBranch = 'feature/$x-`y`';
+  const cmd = await dispatchedCommand(baseInput({ verify: { ...baseInput().verify, baseBranch } }));
+  assert.deepEqual(shellSplit(cmd).slice(-4, -2), ['--base-branch', baseBranch]);
+  assert.doesNotMatch(outsideSingleQuotes(cmd), /[$`]/, `expansion escaped its quotes: ${cmd}`);
+});
+
+test('(#75) an absent head SHA contributes an empty token, never the word "undefined"', async () => {
+  // Array.join stringifies null/undefined to '' — shellWord must keep that exact
+  // semantics, or a missing optional field starts passing a literal `undefined` to argv.
+  for (const headShaShort of [undefined, null, '']) {
+    const cmd = await dispatchedCommand(baseInput({ headShaShort }));
+    assert.ok(cmd.includes('--head-sha  --base-branch main'), `${headShaShort}: ${cmd}`);
+    assert.ok(!cmd.includes('undefined') && !cmd.includes('null'), cmd);
+  }
 });
 
 // --- Issue #54: per-slice degradation + the single deterministic retry ------

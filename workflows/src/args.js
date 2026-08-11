@@ -440,11 +440,11 @@ export function validateArgs(args) {
       errors.push(`${field} must not contain a control character`);
       continue;
     }
-    // headShaShort is interpolated bare into the verify executor's --head-sha argv
-    // (verifyCommand joins tokens with spaces into a shell-run string). Whitespace alone
-    // is not enough — `;`, `$`, backticks and friends would still reach the shell. A real
-    // short SHA never needs those characters (unlike path fields / issue #75), so apply
-    // the same AST-safe charset NONCE_RE already enforces above.
+    // headShaShort reaches the verify executor's --head-sha argv (verifyCommand). Path
+    // fields are quoted at that construction site (issue #75) because a legitimate path
+    // may hold a space; a real short SHA never needs one, and never needs `;`, `$` or a
+    // backtick either — so the waist keeps it to the same AST-safe charset NONCE_RE
+    // already enforces above, and the command carries it as a bare word.
     if (field === 'headShaShort' && !NONCE_RE.test(v)) {
       errors.push(`headShaShort must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv)`);
     }
