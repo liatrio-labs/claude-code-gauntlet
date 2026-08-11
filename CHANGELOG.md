@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.7.3 (2026-08-11)
+
+### Bug Fixes
+
+- **policy**: Dispatch bare model aliases on third-party providers
+  ([#179](https://github.com/liatrio-labs/claude-code-gauntlet/pull/179),
+  [`b968986`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b96898633442af1b25bb7e471271af74da34fd09))
+
+- **policy**: Keep gateway sessions first-party; truthy provider flags only
+  ([#179](https://github.com/liatrio-labs/claude-code-gauntlet/pull/179),
+  [`b968986`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b96898633442af1b25bb7e471271af74da34fd09))
+
+### Documentation
+
+- **policy**: Align headless-mode and phase8-delivery with provider-conditional pins
+  ([#179](https://github.com/liatrio-labs/claude-code-gauntlet/pull/179),
+  [`b968986`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b96898633442af1b25bb7e471271af74da34fd09))
+
+
 ## v3.7.2 (2026-08-11)
 
 ### Bug Fixes
