@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.7.4 (2026-08-11)
+
+### Bug Fixes
+
+- **docs**: Correct exemption count in verify-slice-input scan bullet
+  ([#177](https://github.com/liatrio-labs/claude-code-gauntlet/pull/177),
+  [`1423964`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14239644de8c99b159fa5f5fa620a6bec1467e48))
+
+### Performance Improvements
+
+- **verify**: Project the slice input to the fields the script consults
+  ([#177](https://github.com/liatrio-labs/claude-code-gauntlet/pull/177),
+  [`1423964`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14239644de8c99b159fa5f5fa620a6bec1467e48))
+
+- **verify**: Project the slice input to the fields the script consults (#50 item b)
+  ([#177](https://github.com/liatrio-labs/claude-code-gauntlet/pull/177),
+  [`1423964`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/14239644de8c99b159fa5f5fa620a6bec1467e48))
+
+
 ## v3.7.3 (2026-08-11)
 
 ### Bug Fixes
