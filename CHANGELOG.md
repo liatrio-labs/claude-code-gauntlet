@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.7.2 (2026-08-11)
+
+### Bug Fixes
+
+- **discover**: Close the finding item schema to undeclared fields
+  ([#175](https://github.com/liatrio-labs/claude-code-gauntlet/pull/175),
+  [`e19c627`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e19c627fd88ad3c1f544b60e2a08afd9f2161dba))
+
+- **discover**: Close the finding item schema to undeclared fields (#53)
+  ([#175](https://github.com/liatrio-labs/claude-code-gauntlet/pull/175),
+  [`e19c627`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e19c627fd88ad3c1f544b60e2a08afd9f2161dba))
+
+### Documentation
+
+- Describe closed-schema rejection semantics on every instruction surface
+  ([#175](https://github.com/liatrio-labs/claude-code-gauntlet/pull/175),
+  [`e19c627`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e19c627fd88ad3c1f544b60e2a08afd9f2161dba))
+
+
 ## v3.7.1 (2026-08-11)
 
 ### Bug Fixes
