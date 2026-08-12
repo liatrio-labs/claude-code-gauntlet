@@ -106,7 +106,10 @@ jobs:
           set -euo pipefail
           url="https://github.com/biomejs/biome/releases/download/@biomejs/biome@${BIOME_VERSION}/biome-linux-x64"
           out="${RUNNER_TEMP}/biome"
-          curl -fsSL "$url" -o "$out"
+          # --retry-all-errors: GitHub releases intermittently 503s (redded main
+          # 2026-08-12 on a docs-only merge); the sha256 check below still gates
+          # whatever the retry finally fetches.
+          curl -fsSL --retry 4 --retry-all-errors "$url" -o "$out"
           echo "${BIOME_SHA256}  ${out}" | sha256sum -c -
           chmod +x "$out"
           echo "BIOME=${out}" >> "$GITHUB_ENV"
