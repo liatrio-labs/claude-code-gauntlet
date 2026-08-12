@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { dimensionsSummaryTable, reportStage } from '../src/stages.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS } from '../src/registry.js';
+import { AGENTS, AGENT_LABELS } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
 // A rendered table's data rows (skipping the header + separator), each cell trimmed.
