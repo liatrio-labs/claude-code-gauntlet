@@ -43,10 +43,13 @@ marginal cost. Mechanics, prerequisites, and cost-honesty rules:
 | Paired mini-subset | **No** | Of record: clean cost accounting, no throttle-induced timeouts mid-leg |
 | Full-15 / holdout | **No** | Same, at release grade |
 
-Caveat on the "yes" rows: what a subscription usage-limit hit looks like in bench terms
-is **not yet confirmed** — expected to surface as a per-PR watchdog `timeout`, recoverable
-with `--retry-failed`, but no live subscription smoke has run yet. The first one settles
-it and updates [`README.md` → Usage limits](README.md#usage-limits).
+Caveat on the "yes" rows: the first live subscription smoke has now run
+(`smoke-20260812-030333-0f3f550`, 2026-08-12, main @ 0f3f550 / v3.8.0, `--tier
+smoke`, 3 PRs sequential, `--child-auth subscription`). All 3 review children
+ran to completion under the subscription token — no watchdog timeout, no
+mid-run auth failure. N=1: what a usage-limit hit looks like in bench terms
+remains unobserved. See [`README.md` → Usage limits](README.md#usage-limits)
+for the full record.
 
 Every ledger cost figure in this runbook is `auth_mode=api` spend. A
 `auth_mode=subscription` row's `cost_usd` is recorded but is not billable spend

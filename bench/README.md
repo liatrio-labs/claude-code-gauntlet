@@ -251,14 +251,16 @@ qualifies it with `auth_mode` on the ledger row:
 
 ### Usage limits
 
-**Unconfirmed — to be recorded here by the first subscription-mode smoke.**
-Official docs describe a 5-hour rolling window plus weekly and Opus-specific
-caps, and say that on a limit hit further `-p` requests are blocked until the
-window resets. No machine-readable error shape is documented, so in bench terms
-the expected symptom is the per-PR watchdog firing (status `timeout`, reason
-`watchdog_timeout`) rather than a clean error. Either way, `--retry-failed
-RUN_ID` after the reset recovers the affected PRs. The first live smoke settles
-which of the two it actually is; update this paragraph with what was observed.
+The first live subscription smoke (`smoke-20260812-030333-0f3f550`,
+2026-08-12, main @ 0f3f550 / v3.8.0) observed **no usage-limit hit** across 3
+sequential PRs (~38 min of child time). Official docs describe a 5-hour
+rolling window plus weekly and Opus-specific caps, and say that on a limit hit
+further `-p` requests are blocked until the window resets. No machine-readable
+error shape is documented, so the predicted symptom in bench terms — the
+per-PR watchdog firing (status `timeout`, reason `watchdog_timeout`) rather
+than a clean error — remains unexercised; this run didn't trip the window.
+Either way, `--retry-failed RUN_ID` after a reset is expected to recover the
+affected PRs.
 
 ### Recommended usage, and scope
 
