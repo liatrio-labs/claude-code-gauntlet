@@ -42,9 +42,9 @@ A finding that fails a stage is eliminated, downgraded, or routed to a lower tie
 
 Development is gated by a judged benchmark ([`bench/`](bench/README.md)). The golden PRs and their reference findings are not ours: they come from the MIT-licensed [Martian code-review benchmark](https://github.com/withmartian/code-review-benchmark), vendored at pinned upstream commit `dfc6cb4`, so the findings a run is scored against were established upstream, independently of this project. Scoring uses a pinned judge (`claude-opus-4-5-20251101`) with symmetric three-bucket adjudication (golden-matched / valid-extra / noise), blind to which tool produced a comment.
 
+<!-- bench-results:begin — this block is slated to be generated from the run ledger (issue #185); keep hand edits inside it minimal -->
 | Release | Run | PRs | Golden recall | Noise rate | Tokens |
 |---|---|---|---|---|---|
-| v3.1 (most recent gate-grade run) | paired mini subset | 6 | 0.633 | 0.223 | 6.4M |
 | v3.0 | gate subset | 15 | 0.695 | 0.180 | 20.9M |
 | v3.0 | holdout | 10 | 0.741 | 0.209 | 17.8M |
 | v2 (previous architecture) | gate subset | 15 | 0.492 | 0.164 | 41.1M |
@@ -52,17 +52,16 @@ Development is gated by a judged benchmark ([`bench/`](bench/README.md)). The go
 | Claude CLI review (anchor) | gate subset | 15 | 0.339 | 0.481 (not comparable&dagger;) | — |
 | claude-code review (anchor) | gate subset | 15 | 0.271 | 0.542 (not comparable&dagger;) | — |
 
-Rows are not a single trend line: the mini subset (6 PRs, selected for highest golden density), the gate subset (15), and the holdout (10) are different, non-interchangeable PR sets. v3.0 was the workflow rewrite, measured at its July 2026 release gate; v3.1 added schema-fidelity hardening, light scope, and orchestrator-model pinning.
+The gate subset and the holdout are separate PR sets; anchors exist only for the gate subset, where every row above is the same 15 PRs under the same judge. The most recent measurement is smaller: a 6-PR paired mini of v3.1 (`custom-20260723-102149-381e9ff`, 2026-07-23) came in at 0.633 recall / 0.223 noise, under the pre-registered 0.24 noise ceiling — at that size one finding moves recall by 3.3 points, so it reads as a consistency check rather than a comparison.
+<!-- bench-results:end -->
 
-The best-powered comparison against an anchor is the 15-PR gate subset, where CodeRabbit was also scored: v3.0 at 0.695 recall against CodeRabbit's 0.627. The v3.1 row is smaller and noisier — 19 of 30 golden findings across 6 PRs, where one finding moves recall by 3.3 points, so its 0.633 against the same 0.627 anchor is inside the resolution of the measurement and should not be read as a win on its own. Its noise rate of 0.223 sits under the pre-registered 0.24 ceiling, which is derived from the deep-review v2 baseline (mean noise 0.164 plus 1.5 binomial standard errors), not from anchor noise. The run is `custom-20260723-102149-381e9ff`, measured 2026-07-23 on the six mini-subset PRs registered in [`bench/golden/subsets.json`](bench/golden/subsets.json) before any of them were run.
+Releases since ship behind the always-on deterministic test suites; the heavier measurement tiers are owner-triggered (cadence and method in [`bench/MEASUREMENT.md`](bench/MEASUREMENT.md)).
 
-v3.1 is the most recent gate-grade measurement, not the current release — the plugin is at 3.8.0. Releases since have shipped behind the always-on deterministic suites; paired mini, full-15, and holdout runs are owner-triggered only, and no next run is scheduled.
-
-Two limitations worth stating plainly. First, the judge is an Anthropic model grading a Claude Code plugin, and one anchor (`claude-code review`) is also an Anthropic product; same-vendor self-preference is a known failure mode of LLM-as-judge setups and we have not measured it here, so treat it as an open limitation rather than a settled one. Second, the anchors are not fresh runs of those tools: they are the comments recorded for them in that same upstream dataset at commit `dfc6cb4`, so each anchor reflects that tool as the dataset captured it, not as it ships today.
+The judge is an Anthropic model grading a Claude Code plugin, and one anchor (`claude-code review`) is also an Anthropic product; same-vendor self-preference is a known failure mode of LLM-as-judge setups and has not been measured here. The anchors are also not fresh runs of those tools: they are the comments the upstream dataset recorded for them at commit `dfc6cb4`, as those tools shipped then. That dataset records comments from 41 tools; so far three have been adjudicated under this project's pinned judge, and widening the anchor set is planned.
 
 &dagger; Anchor noise rates are not comparable to Code Gauntlet's, and some unknown part of the gap between them is an artifact of how each side was scored. Anchors are adjudicated from stored upstream comments that carry no file/line anchors, so their non-golden comments were judged against the capped PR diff rather than the precise code slice Code Gauntlet's own comments receive (see `adjudicator_context_note` in [`bench/baselines.json`](bench/baselines.json)). That asymmetry inflates anchor noise by an unmeasured amount; recall is the like-for-like column.
 
-Method, tiers, and cadence are in [`bench/MEASUREMENT.md`](bench/MEASUREMENT.md); harness details and the run ledger are in [`bench/README.md`](bench/README.md). `bench/report.py` generates the interactive report — per-PR buckets, per-dimension recall, cost, judge drift — and a rendered copy is [published here](https://claude.ai/code/artifact/fbe487de-b09d-4d11-9b8c-c8c8891215ad).
+Harness details and the run ledger are in [`bench/README.md`](bench/README.md). `bench/report.py` generates the interactive report — per-PR buckets, per-dimension recall, cost, judge drift — and a rendered copy is [published here](https://claude.ai/code/artifact/fbe487de-b09d-4d11-9b8c-c8c8891215ad).
 
 ## Installation
 
