@@ -26,6 +26,7 @@ import {
   coarsenLimits, plannedArtifactPaths,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
+import { AGENTS } from '../src/registry.js';
 
 // Node/browser host globals the workflow runtime SANDBOX does not provide (but node:test
 // does). Deleting them makes the pipeline run under sandbox-parity conditions, so a
@@ -876,4 +877,35 @@ test('sweep: bucketed summarize + segmented report emit only contract-valid disp
   await reportStage(rctx, { findings: big, unverified: [], stats: {}, policy: {} });
   assert.deepEqual(rctx.violations, [], `report violations: ${rctx.violations.join('; ')}`);
   assert.ok(rctx.calls.filter((c) => c.label.startsWith('report-writer-')).length > 1);
+});
+
+// Issue #89: discover()'s own dispatched/degraded lists flow through reportInput
+// (stages.js ~3366) into the dimensionsSummaryTable dispatched to the report-writer.
+// makeCtx's default fixture dispatches every one of the 7 AGENTS (agentFlags={}), only
+// bug-detector returns findings (the 2-element makeFindings() set — both survive to
+// challengeOut.findings, confirmed by the happy-path test's `highConfidence === 2`), and
+// no discovery agent throws — so the expected end state is dispatched=AGENTS, degraded=[].
+test('happy path: discoverOut.dispatched/degraded reach the final Review Dimensions Summary table via reportInput', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+
+  const reportCall = ctx.calls.find((c) => c.label === 'report-writer');
+  assert.ok(reportCall, 'the tiny fixture must dispatch a single unsegmented report-writer call');
+  const m = /Results JSON:\n([\s\S]*)\nReturn \{ report \}/.exec(reportCall.prompt);
+  assert.ok(m, 'the report-writer prompt carries a Results JSON body');
+  const body = JSON.parse(m[1]);
+  assert.ok(body.dimensionsTable, 'dimensionsTable is present on the segment-0 dispatch');
+
+  const rows = body.dimensionsTable.split('\n').slice(2)
+    .map((line) => line.split('|').slice(1, -1).map((c) => c.trim()));
+  assert.equal(rows.length, AGENTS.length);
+  const bugRow = rows.find((r) => r[1] === 'bug-detector');
+  assert.equal(bugRow[2], '2', 'bug-detector reports the 2 seeded findings that survived to delivery');
+  const otherRows = rows.filter((r) => r[1] !== 'bug-detector');
+  assert.ok(
+    otherRows.every((r) => r[2] === '0' && r[3] === 'Clean — no findings returned'),
+    `every other dispatched agent must read Clean/0: ${JSON.stringify(otherRows)}`,
+  );
 });

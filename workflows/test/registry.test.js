@@ -1,7 +1,7 @@
 // registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, resolvePolicy } from '../src/registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy } from '../src/registry.js';
 
 test('7 unique discovery agents', () => { assert.equal(AGENTS.length, 7); });
 test('conventions-and-intent covers 3 dimensions', () => {
@@ -103,4 +103,11 @@ test('promptExtra: security sweep on security-reviewer, typo/naming on bug + con
   for (const dim of ['cross_file_impact', 'test_coverage', 'type_design', 'simplification']) {
     assert.equal(byDim(dim).promptExtra, null);
   }
+});
+
+// Issue #89 sync guard: AGENT_LABELS is keyed by agentType, not by DIMENSIONS row, so
+// nothing else fails the build the day AGENTS gains an 8th member without a matching
+// label — this is the guard that would.
+test('AGENT_LABELS key set is exactly AGENTS — a new agent needs a label too', () => {
+  assert.deepEqual(Object.keys(AGENT_LABELS).sort(), [...AGENTS].sort());
 });

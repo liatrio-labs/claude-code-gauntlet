@@ -120,6 +120,27 @@ export const DIMENSIONS = [
 
 export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 
+// Per-agent display label for the Review Dimensions Summary table (issue #89):
+// dimensionsSummaryTable (stages.js) renders ONE row per discovery agent — a
+// multi-dimension agent (conventions-and-intent) gets a single label for its whole
+// aggregated row, not one per dimension — so this is keyed by agentType directly
+// rather than living on DIMENSIONS rows, which would force every one of a
+// multi-dimension agent's rows to repeat the identical value (the trap promptExtra's
+// comment above already documents for a genuinely per-agent value). This map is the
+// single source of truth for the display strings — report-format.md's template
+// deliberately no longer lists them, it tells Phase 8 to paste the rendered table
+// verbatim. Extending: one
+// entry here when AGENTS gains a member — registry.test.js pins the key set to AGENTS.
+export const AGENT_LABELS = {
+  'code-gauntlet:bug-detector': 'Correctness & Error Handling',
+  'code-gauntlet:security-reviewer': 'Security',
+  'code-gauntlet:cross-file-impact': 'Cross-file Impact',
+  'code-gauntlet:test-analyzer': 'Test Coverage',
+  'code-gauntlet:conventions-and-intent': 'Conventions & Intent',
+  'code-gauntlet:type-design-analyzer': 'Type Design',
+  'code-gauntlet:code-simplifier': 'Code Simplification',
+};
+
 // The stage agents' models, restating each one's `model:` frontmatter explicitly so a
 // dispatch pins a full model ID instead of inheriting the session variant (see MODEL_IDS
 // below). No entry currently deviates from its frontmatter, and all five match
