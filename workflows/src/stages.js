@@ -16,10 +16,10 @@
 // bucket members without per-bucket gaps, and emits one generic gap if no partial
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
-import { DIMENSIONS, AGENTS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED } from './registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED } from './registry.js';
 import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
-import { applyFilterPipeline } from './filterFindings.js';
+import { applyFilterPipeline, SEVERITY_ORDER } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './args.js';
 
@@ -1791,6 +1791,113 @@ export function selectDelivery(survivors, cap, tier) {
 
 const REPORT_SCHEMA = { type: 'object', properties: { report: { type: 'string' } }, required: ['report'] };
 
+// dimensionsSummaryTable({ dispatched, degraded, findings, unverified }) -> markdown string
+//
+// Computes the Review Dimensions Summary table (report-format.md) in CODE, as a pure
+// function of pipeline stats, instead of asking the Phase 8 model to classify each
+// dimension itself (issue #89). Before this, the table was never rendered at all:
+// reportPrompt never asked for it and reportInput never carried discoverOut.degraded /
+// discoverOut.dispatched. One row per DISCOVERY AGENT (registry AGENTS order), not per
+// dimension — a multi-dimension agent (conventions-and-intent) aggregates all of its
+// dimensions' findings into one row. Output starts at the header row (no leading
+// `## Review Dimensions Summary` heading) — heading placement is the caller's concern.
+//
+// Row classification (N = high-confidence finding count for the agent, M = unverified
+// count, evaluated in this fixed priority order so at most one rule ever fires):
+//   1. not dispatched (scope-skipped, e.g. light-scope agentFlags.deep=false) -> Skipped
+//   2. degraded (one of its dimensions is in `degraded`) with N+M==0 -> agent never
+//      returned usable coverage
+//   3. degraded with N+M>0 -> partial coverage
+//   4. dispatched, not degraded, N+M==0 -> clean run, genuinely zero findings
+//   5. N>0, not degraded -> the normal case; Notes carries a severity breakdown
+//   6. N==0, M>0, not degraded -> every finding this agent produced was routed to the
+//      unverified/pipeline-degraded bucket
+//
+// SEVERITY_ORDER is imported from filterFindings.js (its single owner, per that file's
+// own note — a second top-level declaration collides at bundle time).
+
+// Findings with a missing/unknown `dimension` are silently excluded from every row's
+// count: the discovery contracts pin `dimension` to one of the nine registry names, so
+// an unmapped value here is belt-and-braces, never a live path.
+function dimensionOwnerMap() {
+  const owner = {};
+  for (const d of DIMENSIONS) owner[d.dimension] = d.agentType;
+  return owner;
+}
+
+// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in a fixed
+// severity order (critical, high, medium, low first; any other value the schema does not
+// forbid — `severity` is declared `string`, not an enum — trails in first-seen order so
+// no finding is silently dropped from the count). Empty string when no finding in the row
+// carries a severity value at all.
+function severityBreakdown(rowFindings) {
+  const counts = new Map();
+  for (const f of rowFindings) {
+    if (!f || !f.severity) continue;
+    counts.set(f.severity, (counts.get(f.severity) || 0) + 1);
+  }
+  if (counts.size === 0) return '';
+  const known = SEVERITY_ORDER.filter((s) => counts.has(s));
+  const rest = [...counts.keys()].filter((s) => !SEVERITY_ORDER.includes(s));
+  return [...known, ...rest].map((s) => `${counts.get(s)} ${s}`).join(', ');
+}
+
+export function dimensionsSummaryTable(input) {
+  const inp = input || {};
+  const dispatchedSet = new Set(inp.dispatched || []);
+  const degradedSet = new Set(inp.degraded || []);
+  const owner = dimensionOwnerMap();
+
+  const byAgent = new Map(AGENTS.map((a) => [a, []]));
+  const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
+  for (const f of (inp.findings || [])) {
+    const agentType = owner[f && f.dimension];
+    if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
+  }
+  for (const f of (inp.unverified || [])) {
+    const agentType = owner[f && f.dimension];
+    if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
+  }
+
+  const rows = AGENTS.map((agentType) => {
+    const rowFindings = byAgent.get(agentType);
+    const rowUnverified = unverifiedByAgent.get(agentType);
+    const n = rowFindings.length;
+    const m = rowUnverified.length;
+    const dims = DIMENSIONS.filter((d) => d.agentType === agentType).map((d) => d.dimension);
+    const isDegraded = dims.some((d) => degradedSet.has(d));
+    const isDispatched = dispatchedSet.has(agentType);
+    const label = AGENT_LABELS[agentType] || agentType;
+    const agentShort = agentType.split(':').pop();
+
+    let findingsCell;
+    let notes;
+    if (!isDispatched) {
+      findingsCell = '—';
+      notes = 'Skipped — not dispatched in this run';
+    } else if (isDegraded && n + m === 0) {
+      findingsCell = '—';
+      notes = 'No results — agent did not complete';
+    } else if (isDegraded) {
+      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
+      notes = 'Partial — agent may not have completed';
+    } else if (n + m === 0) {
+      findingsCell = '0';
+      notes = 'Clean — no findings returned';
+    } else if (n > 0) {
+      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
+      notes = severityBreakdown(rowFindings);
+    } else {
+      findingsCell = `0 (+${m} unverified)`;
+      notes = 'Unverified findings only — see secondary section';
+    }
+
+    return `| ${label} | ${agentShort} | ${findingsCell} | ${notes} |`;
+  });
+
+  return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
+}
+
 // reportStage(ctx, input) -> { report, gaps }
 // Dispatches the report-writer agent to render the review markdown from the
 // high-confidence + unverified buckets (carried BY VALUE in the prompt — the
@@ -1816,22 +1923,30 @@ export async function reportStage(ctx, input) {
   const model = modelFor('code-gauntlet:report-writer', policy);
 
   const findings = inp.findings || [];
+  // Computed once over the WHOLE run (not per-chunk) so the table's counts are never
+  // scoped to one segment's slice of findings; threaded to segment 0 only (below).
+  const dimensionsTable = dimensionsSummaryTable({
+    ...(inp.dimensions || {}), findings, unverified: inp.unverified || [],
+  });
   const oversized = JSON.stringify(findings).length > PROMPT_SEGMENT_CHAR_BUDGET;
   if (!oversized) {
-    return dispatchReportSegment(c, model, inp, findings, null);
+    return dispatchReportSegment(c, model, inp, findings, null, dimensionsTable);
   }
 
   // Segment: one dispatch per chunk through parallel(), titled sections joined IN INDEX
   // ORDER. dispatchReportSegment already owns its try/catch and never throws, so no member
   // can be nulled by parallel(); the null branch below is defense-in-depth only.
   const chunks = chunkBySerializedSize(findings, PROMPT_SEGMENT_CHAR_BUDGET);
-  const thunks = chunks.map((chunk, i) => () => dispatchReportSegment(c, model, inp, chunk, { index: i, total: chunks.length }));
+  const thunks = chunks.map((chunk, i) => () => dispatchReportSegment(c, model, inp, chunk, { index: i, total: chunks.length }, dimensionsTable));
   const results = await c.parallel(thunks);
   const parts = [];
   const gaps = [];
   for (let i = 0; i < chunks.length; i += 1) {
     const out = results[i] || {
-      report: minimalReport({ ...inp, findings: chunks[i] }),
+      // Table belongs to segment 0 only, same as the dispatchReportSegment path below —
+      // this null-isolated fallback is defense-in-depth and must honor the same rule so
+      // a member nulled by parallel() cannot duplicate the section into a later segment.
+      report: minimalReport({ ...inp, findings: chunks[i], dimensionsTable: i === 0 ? dimensionsTable : '' }),
       gaps: [`report segment ${i}: dispatch produced no result — assembled a minimal report from pipeline stats`],
     };
     parts.push(`## Report segment ${i + 1} of ${chunks.length}\n\n${out.report}`);
@@ -1842,10 +1957,13 @@ export async function reportStage(ctx, input) {
 
 // One report-writer dispatch over `findings` (a whole set or one segment). Owns
 // the try/catch + minimal-section fallback. `seg` (or null) labels the dispatch
-// and tags the gap so a segmented failure is traceable to its chunk.
-async function dispatchReportSegment(c, model, inp, findings, seg) {
+// and tags the gap so a segmented failure is traceable to its chunk. `dimensionsTable`
+// is scoped to segment 0 (or the unsegmented dispatch) here — every downstream read of
+// `segInp.dimensionsTable` (reportPrompt, minimalReport) is a plain truthiness check
+// with no segment-awareness of its own, so the section can never render twice.
+async function dispatchReportSegment(c, model, inp, findings, seg, dimensionsTable) {
   const tag = seg ? ` segment ${seg.index}` : '';
-  const segInp = { ...inp, findings };
+  const segInp = { ...inp, findings, dimensionsTable: (!seg || seg.index === 0) ? dimensionsTable : '' };
   try {
     const result = await c.agent(reportPrompt(segInp, seg), {
       label: seg ? `report-writer-${seg.index}` : 'report-writer',
@@ -1926,6 +2044,10 @@ function minimalReport(inp) {
       lines.push(`- [${(f.severity || 'unknown').toUpperCase()}] ${f.title || f.id || 'finding'} (${f.file || '?'}:${f.line_start != null ? f.line_start : '?'})`);
     }
   }
+  // Present only when the caller scoped it in (segment 0 / unsegmented dispatch — see
+  // dispatchReportSegment) — this fallback survives even when the Phase 8 model itself
+  // never ran, so the table is never lost to a report-writer outage.
+  if (inp.dimensionsTable) lines.push('', '## Review Dimensions Summary', '', inp.dimensionsTable);
   return lines.join('\n');
 }
 
@@ -1942,8 +2064,17 @@ function reportPrompt(inp, seg) {
     findings: inp.findings || [],
     unverified: (!seg || seg.index === 0) ? (inp.unverified || []) : [], // render the unverified bucket once, in segment 0
     stats: inp.stats || {},
+    // Pre-scoped to segment 0 by the caller (dispatchReportSegment) — '' on every later
+    // segment, so this is a plain truthiness check, not a second segment-index test.
+    ...(inp.dimensionsTable ? { dimensionsTable: inp.dimensionsTable } : {}),
   });
-  return `${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section. Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
+  // Verbatim-paste instruction (issue #89): the table is generated in code, not
+  // classified by this model — pasting it unmodified is what removes the capability to
+  // get the classification wrong. Only present when dimensionsTable is (segment 0).
+  const dimensionsInstruction = inp.dimensionsTable
+    ? ' The `dimensionsTable` field is the complete, pre-rendered Review Dimensions Summary table — paste it verbatim, unmodified, as the "## Review Dimensions Summary" section; never reconstruct, reclassify, or edit its rows.'
+    : '';
+  return `${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section.${dimensionsInstruction} Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
 }
 
 // --- Persistence: writeArtifacts --------------------------------------------
@@ -3373,6 +3504,12 @@ export async function runWith(ctx, rawArgs) {
         filter: filterOut.stats,
         challenge: challengeOut.stats,
       },
+      // discover()'s own fan-out list and degraded-dimensions list (issue #89) — feeds
+      // dimensionsSummaryTable inside reportStage. `dispatched` already excludes any
+      // agent scope-gated out via agentFlags (agentSpecs().filter(agentActive) runs
+      // before discover() builds its spec list), so a light-scope run's skipped agents
+      // are absent from `dispatched`, not merely present-but-empty.
+      dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [] },
       // No context at all (issue #38, R1): the report-writer renders from the by-value
       // { summary, findings, unverified, stats } above and never needs the shared context
       // file. No stage is ever given contextPath; of the prebuilt contextLine, only

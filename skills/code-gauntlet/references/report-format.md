@@ -212,17 +212,14 @@ Severity has been downgraded one level from the original classification (see the
 
 ## Review Dimensions Summary
 
-{Brief per-dimension summary showing what each agent found or confirmed was clean.}
+This table is generated in code by `dimensionsSummaryTable()` in `workflows/src/stages.js`
+and delivered to you pre-rendered, as the `dimensionsTable` field of the dispatch input.
+Paste it here **verbatim, unmodified** — never reconstruct, reclassify, or edit its rows.
+(The same treatment the footer/marker gets from `scripts/post_review.py`: the code owns
+the content, you place it.) Column reference:
 
 | Dimension | Agent | Findings | Notes |
 |-----------|-------|----------|-------|
-| Correctness & Error Handling | bug-detector | {N issues} | {summary or "Clean"} |
-| Security | security-reviewer | {N issues} | {summary} |
-| Cross-file Impact | cross-file-impact | {N issues} | {summary} |
-| Test Coverage | test-analyzer | {N issues} | {summary} |
-| Conventions & Intent | conventions-and-intent | {N issues} | {summary} |
-| Type Design | type-design-analyzer | {N issues or "Skipped"} | {summary} |
-| Code Simplification | code-simplifier | {N issues or "Skipped"} | {summary} |
 
 ## Review Methodology
 

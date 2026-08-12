@@ -16,12 +16,15 @@ you do NOT write files (a separate writer persists artifacts).
 ## Input
 
 The dispatch prompt carries a results JSON object by value:
-`{ summary, findings, unverified, stats }`.
+`{ summary, findings, unverified, stats, dimensionsTable }`.
 
 - `summary` — the semantic change summary.
 - `findings` — the high-confidence bucket (survived verification + blind challenge).
 - `unverified` — the pipeline-degraded bucket (skipped or failed a stage; lower trust).
 - `stats` — per-stage counts.
+- `dimensionsTable` — the complete, pre-rendered Review Dimensions Summary markdown
+  table (computed in code from pipeline stats). Present on segment 0 only — absent on
+  every later segment of a multi-segment report.
 
 Each finding carries the canonical fields (`severity`, `title`, `file`, `line_start`,
 `description`, plus optionally `suggestion` and `claude_md_rule`) and, for intent
@@ -40,11 +43,16 @@ Everything you need is in that object — there is no shared context file to rea
    (`suggestion`). When a finding carries a cited rule (`claude_md_rule`) or contradicted
    spec text (`spec_text`), render that too. These trailing fields are OPTIONAL on a
    finding — render them only when present, never invent or back-fill them (consistent
-   with step 4's "do not invent" rule).
+   with step 5's "do not invent" rule).
 3. **Unverified / pipeline-degraded** — a clearly-labelled secondary section for
    the `unverified` bucket. State plainly that these did not clear the full
    pipeline and carry lower confidence. Never present them as confirmed.
-4. Do not invent findings, severities, or locations not present in the input.
+4. **Review Dimensions Summary** — when `dimensionsTable` is present, place it
+   **verbatim**, unmodified, as the `## Review Dimensions Summary` section (after the
+   main and unverified sections). Never edit, reorder, reclassify, or regenerate its
+   rows — it is pre-computed from pipeline stats, not something you assess. Omit the
+   section entirely when the field is absent (every segment after segment 0).
+5. Do not invent findings, severities, or locations not present in the input.
 
 ## Output
 
