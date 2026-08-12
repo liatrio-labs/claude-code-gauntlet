@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.8.0 (2026-08-12)
+
+### Features
+
+- **report**: Generate the Review Dimensions Summary table in code
+  ([#180](https://github.com/liatrio-labs/claude-code-gauntlet/pull/180),
+  [`87fe09f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/87fe09fdc4a125026096667ac22bac9e9017ff31))
+
+- **report**: Generate the Review Dimensions Summary table in code (#89)
+  ([#180](https://github.com/liatrio-labs/claude-code-gauntlet/pull/180),
+  [`87fe09f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/87fe09fdc4a125026096667ac22bac9e9017ff31))
+
+### Testing
+
+- **report**: Drop unused DIMENSIONS import flagged by code-quality review
+  ([#180](https://github.com/liatrio-labs/claude-code-gauntlet/pull/180),
+  [`87fe09f`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/87fe09fdc4a125026096667ac22bac9e9017ff31))
+
+
 ## v3.7.4 (2026-08-11)
 
 ### Bug Fixes
