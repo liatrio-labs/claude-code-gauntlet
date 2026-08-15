@@ -3319,6 +3319,15 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
   return { phases, completed, phaseReached, counts };
 }
 
+// resolvedPolicyEnvelope(policy) -> the envelope's resolvedPolicy field, shared by the
+// success return and the all-degraded failure return so the two report the identical
+// resolution and a change to either fallback costs one edit.
+// 'firstParty' when the waist omitted provider — the omission and the explicit value
+// resolve identically in resolvePolicy, and the envelope reports the resolution.
+function resolvedPolicyEnvelope(policy) {
+  return { subagentModel: policy.subagentModel || null, provider: policy.provider || 'firstParty' };
+}
+
 // --- Full orchestration: runWith --------------------------------------------
 
 // runWith(ctx, rawArgs) -> compact envelope.
@@ -3539,7 +3548,7 @@ export async function runWith(ctx, rawArgs) {
         failingPhase: 'discover',
         artifactPaths: {},
         stats: { discovered: 0, degraded: discoverOut.degraded || [] },
-        resolvedPolicy: { subagentModel: policy.subagentModel || null, provider: policy.provider || 'firstParty' },
+        resolvedPolicy: resolvedPolicyEnvelope(policy),
         checkpoints: buildResumeCheckpoints(resumable),
         gaps,
       };
@@ -3712,12 +3721,7 @@ export async function runWith(ctx, rawArgs) {
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,
-      resolvedPolicy: {
-        subagentModel: policy.subagentModel || null,
-        // 'firstParty' when the waist omitted it — the omission and the explicit value
-        // resolve identically in resolvePolicy, and the envelope reports the resolution.
-        provider: policy.provider || 'firstParty',
-      },
+      resolvedPolicy: resolvedPolicyEnvelope(policy),
       // On persist success the resume state lives in artifactPaths.checkpoints — the
       // compact return carries only phase NAMES (never the findings bulk). If the writer
       // FAILED nothing was persisted, so carry the in-memory resume state (phases, or
