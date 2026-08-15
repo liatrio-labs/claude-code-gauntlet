@@ -89,20 +89,22 @@ Generate a root REVIEW.md with 8–10 rules drawn from the detected stack and se
 - CRITICAL label is reserved for security and correctness violations that are always wrong. Use it for at most 3–4 rules per file — overuse destroys emphasis.
 - Do not write rules that duplicate what linters catch deterministically (formatting, indentation, import sorting).
 
-**Start with conservative thresholds:**
+**Do not pin a threshold the user didn't ask for.** The pipeline's built-in defaults (non-security confidence **55**, security confidence **70**, severity **low** — everything shown) apply automatically whenever a key is absent from REVIEW.md; writing an explicit number here — even a "conservative starting point" — silently overrides that default the moment the wizard runs, for every user, without them choosing it. Emit only `## Model Tier`, and leave the threshold keys out entirely, documented as commented-out examples:
 
 ```markdown
-## Confidence Threshold
-85
-
-## Severity Threshold
-medium
-
 ## Model Tier
 optimized
+
+<!-- Uncomment and set to override the built-in defaults (non-security confidence
+     55, security confidence 70, severity threshold low — i.e. everything shown).
+     Confidence Threshold
+     70
+
+     Severity Threshold
+     medium -->
 ```
 
-The research consensus: start at confidence 85 and severity medium for the first 2–4 weeks. Lower thresholds after reviewing acceptance rates. Document this in a comment above the thresholds block.
+If Step 2 surfaced an explicit user preference for a starting threshold, write that value instead of leaving the example commented out — but never substitute a number the user didn't state.
 
 **Rule sections** — organize by selected priorities:
 
@@ -198,12 +200,13 @@ After all files are written, output a brief summary:
 REVIEW.md created. Start your review — the config will be picked up automatically.
 
 Files written:
-  REVIEW.md — [N] rules ([threshold] confidence, medium severity)
+  REVIEW.md — [N] rules (built-in thresholds: 55 confidence / 70 for security, low severity)
   [subdir]/REVIEW.md — [N] rules  (if applicable)
 
-Thresholds are conservative for week 1. After 2–4 weeks, review your acceptance rate:
-- If >60% of findings result in fixes, lower severity threshold to "low"
-- If false positives accumulate, raise confidence threshold to 90
+The built-in thresholds show everything above 55 confidence (70 for security
+findings) at any severity. After a few reviews, tune them in REVIEW.md if needed:
+- If false positives accumulate, raise `## Confidence Threshold`
+- If low-severity noise drowns out what matters, set `## Severity Threshold` to medium or high
 - Run `code-gauntlet` on any open PR to see results immediately
 ```
 
@@ -217,4 +220,4 @@ Do not offer to run a review or explain the review process. The user can trigger
 2. **Prescriptive for non-negotiables, directional for preferences.** Never write a CRITICAL rule for a style preference, never write a directional rule for a security requirement.
 3. **15–25 rules total across all files.** Exceeding this degrades LLM instruction-following. Prefer 8–10 in root, 5–8 per subdirectory.
 4. **Do not create subdirectory configs without the decision test.** Technology-specific rules that pass the false-positive test belong in root with a path qualifier.
-5. **Conservative defaults.** Always start at confidence 85, severity medium. The research is unambiguous: teams that start broad generate noise and lose trust.
+5. **Never pin an unrequested threshold.** Leave `## Confidence Threshold` / `## Severity Threshold` out of generated files unless the user explicitly asked for a specific value — the pipeline's built-in defaults (55 non-security / 70 security confidence, low severity) already apply when the keys are absent.

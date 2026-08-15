@@ -39,14 +39,16 @@ export function normalizeFieldNames(findings) {
 export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
 // DEFAULT_CONFIDENCE_THRESHOLD is the Python-parity-pinned default: parseReviewMd
 // substitutes it when REVIEW.md omits confidence_threshold (the parse_review_md
-// `missing_defaults` fixture pins 70), and the SECURITY branch of
-// applyThresholdFilter uses it so an unconfigured security bar stays min(70,70)=70.
-// The NON-security runtime default is decoupled below (hill-climb iter 5): when the
-// skill's reviewConfig omits confidence_threshold, non-security dimensions filter at
-// 55 (rescues conf-55-68 goldens) while security is unchanged at 70. Only the
-// config-absent fallback differs; an EXPLICIT confidence_threshold (user REVIEW.md
-// override) still applies to BOTH branches, so parity fixtures — all of which pass an
-// explicit config — are untouched, and REVIEW.md override semantics stay intact.
+// `missing_defaults` fixture pins 70 for the PARSE function itself — an unrelated,
+// still-70 contract), and the SECURITY branch of applyThresholdFilter uses it so
+// an unconfigured security bar stays min(70,70)=70. The NON-security runtime
+// default is decoupled: when the skill's reviewConfig omits confidence_threshold,
+// non-security dimensions filter at 55 (rescues conf-55-68 goldens) while security
+// is unchanged at 70. scripts/filter_findings.py's apply_threshold_filter carries
+// the identical split (its own DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD) — both
+// runtimes agree on the config-absent split now (issue #94); an EXPLICIT
+// confidence_threshold (user REVIEW.md override) still applies to BOTH branches in
+// both languages.
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
 const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
@@ -130,11 +132,14 @@ export function parseReviewMd(text) {
 // Math.min(confidence_threshold, security_min_confidence) — faithful to the
 // Python `min()` call even though it makes the security bar the LOWER of the
 // two configured numbers (pinned by parity-map §3; not a naming bug to fix
-// in a port). The one intentional v3 divergence from Python is the CONFIG-ABSENT
-// fallback: non-security dimensions default to 55 (DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD),
-// security stays at 70. An explicit confidence_threshold in `config` overrides
-// both branches identically, so this divergence is invisible to the parity
-// fixtures (all of which pass an explicit config).
+// in a port). The CONFIG-ABSENT fallback (a `config` with no confidence_threshold
+// key) splits by dimension: non-security defaults to 55
+// (DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD), security stays at 70 — Python's
+// apply_threshold_filter carries the identical split (issue #94), so this is no
+// longer a JS-only divergence. An explicit confidence_threshold in `config`
+// overrides both branches identically in both languages, so the split is
+// invisible to the config_absent-agnostic parity fixtures that pass an explicit
+// config; the config-absent path itself is covered by its own fixture.
 export function applyThresholdFilter(findings, config) {
   const kept = [];
   const eliminated = [];

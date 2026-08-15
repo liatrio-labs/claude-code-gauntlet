@@ -125,7 +125,7 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 ## 2d. Gather Project Context
 
 1. **CLAUDE.md** — Read from repo root and directories with changed files.
-2. **REVIEW.md** — Discover hierarchically. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers customize focus areas, skip patterns, custom rules, thresholds, and ignore patterns.
+2. **REVIEW.md** — Discover hierarchically. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers set confidence/severity thresholds and finding-suppression patterns via its config block, plus custom rules and other free-text guidance folded into agent context by value. It does not gate which dimensions run — that is automatic (the trivial-scope gate below).
 3. **AGENTS.md / QODO.md — resolved by `scripts/collect_project_rules.py`, never `Read` directly.** A plain `Read` of a repo's CLAUDE.md does not expand Claude Code's `@path` import directive — verified empirically — and Anthropic's own docs tell AGENTS.md-using repos to write exactly that: a CLAUDE.md whose entire body is an import pointer. Measured against the benchmark mirror repos at current HEAD: sentry's and grafana's root CLAUDE.md is the identical 11-byte string `@AGENTS.md\n`; discourse's is the 40-byte inline pointer `See @AI-AGENTS.md for all instructions.\n`. A plain `Read` returns that literal pointer text as the entirety of "project rules" for three of five repos, silently — and a fourth hardcoded filename would still miss discourse's arbitrary `AI-AGENTS.md` target. Resolving the pointer, not naming more files, is the fix.
 
    Invoke the script directly (a standalone script call, not `python3 -c` JSON assembly), after 2c has saved the changed-files list:
@@ -202,7 +202,7 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). Skipped when REVIEW.md sets `focus`. A `light` answer stamps `agentFlags: { deep: false }`, which the Discover stage honours by dispatching only the two core agents (`bug-detector`, `security-reviewer`); `full` stamps `{}` and runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full.
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). A `light` answer stamps `agentFlags: { deep: false }`, which the Discover stage honours by dispatching only the two core agents (`bug-detector`, `security-reviewer`); `full` stamps `{}` and runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full.
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` stamps `agentFlags: { deep: false }` → bugs+security only, `full` stamps `{}` → all dimensions). At args assembly, **re-read the variable with a fresh `echo`** — never recall its value from earlier context (a live run recalled `full` while the actual value was `light`). See `references/headless-mode.md` and the assembly rule in SKILL.md.
 

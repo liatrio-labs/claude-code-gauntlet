@@ -28,6 +28,7 @@ from scripts.filter_findings import (
     _CONTESTATION_DROP_THRESHOLD,
     _SINGLETON_PENALTY,
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
     DEFAULT_SEVERITY_THRESHOLD,
     _count_words,
@@ -1881,13 +1882,39 @@ class TestNormalizeFieldNames(unittest.TestCase):
 
 class TestDefaultConstants(unittest.TestCase):
     def test_default_confidence_threshold_is_70(self):
+        """parse_review_md's own substitution default (issue #94: unrelated to
+        apply_threshold_filter's config-absent split below — this constant also
+        backs the SECURITY branch's config-absent fallback)."""
         self.assertEqual(DEFAULT_CONFIDENCE_THRESHOLD, 70)
+
+    def test_default_nonsecurity_confidence_threshold_is_55(self):
+        """apply_threshold_filter's config-absent fallback for non-security
+        dimensions (issue #94: aligned with the JS twin's
+        DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD)."""
+        self.assertEqual(DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD, 55)
 
     def test_default_security_min_confidence_is_70(self):
         self.assertEqual(DEFAULT_SECURITY_MIN_CONFIDENCE, 70)
 
     def test_contestation_drop_threshold_is_25(self):
         self.assertEqual(_CONTESTATION_DROP_THRESHOLD, 25)
+
+    def test_config_absent_threshold_split_by_dimension(self):
+        """apply_threshold_filter given a config with no confidence_threshold
+        key at all (the shape the skill hands the pipeline when REVIEW.md never
+        sets confidence_threshold) applies 55 to non-security dimensions and 70
+        to security — matching tests/fixtures/parity/filter_findings/threshold/
+        config_absent_split, which pins the same behavior for the JS twin."""
+        findings = [
+            _make_finding(
+                id="ca1", dimension="security", confidence=65, severity="low"
+            ),
+            _make_finding(id="ca2", dimension="bug", confidence=65, severity="low"),
+            _make_finding(id="ca3", dimension="bug", confidence=50, severity="low"),
+        ]
+        passed, eliminated, _ = apply_threshold_filter(findings, {})
+        self.assertEqual({f["id"] for f in passed}, {"ca2"})
+        self.assertEqual({f["id"] for f in eliminated}, {"ca1", "ca3"})
 
     def test_output_flag_leaves_stdout_empty(self):
         import io

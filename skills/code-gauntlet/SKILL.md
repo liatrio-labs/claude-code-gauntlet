@@ -264,7 +264,7 @@ Discover REVIEW.md hierarchically (`references/review-md-spec.md`). Schema-valid
 The assembled `reviewConfig` is exactly the `parseReviewMd` output shape — **`ignore` entries are flat strings, never objects** (the Filter stage regex-escapes each entry as a literal substring; a `{pattern, reason}` object crashes it after five paid stages, and the args waist rejects it). Concrete example:
 
 ```json
-{ "confidence_threshold": 65, "severity_threshold": "medium", "ignore": ["test_coverage:\"*.generated.cs\"", "TODO comments in migration files"] }
+{ "confidence_threshold": 65, "severity_threshold": "medium", "ignore": ["*.generated.cs", "TODO comments in migration files"] }
 ```
 
 > **Threshold defaults.** Only put `confidence_threshold` / `security_min_confidence` in `reviewConfig` when REVIEW.md actually sets them — do **not** pin a numeric default. When they are absent the Filter stage applies its built-in defaults (non-security **55**, security **70**); pinning an explicit `70` would silently raise the non-security bar back to 70 and undo the default.

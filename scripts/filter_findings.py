@@ -149,8 +149,17 @@ def normalize_field_names(findings):
 # Severity ordering for threshold comparisons (lower index = higher severity)
 SEVERITY_ORDER = ["critical", "high", "medium", "low"]
 
-# Default thresholds used when REVIEW.md is absent or does not specify them
+# Default thresholds used when REVIEW.md is absent or does not specify them.
+# parse_review_md() itself still substitutes DEFAULT_CONFIDENCE_THRESHOLD (70)
+# for an unset confidence_threshold -- that is its own pinned contract, covered
+# by the missing_defaults parity fixture, and is unrelated to the split below.
+# DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD is apply_threshold_filter's own
+# config-absent fallback (a `config` dict with no confidence_threshold key at
+# all -- the shape the skill hands the JS pipeline when REVIEW.md never sets
+# the key, per its "do not pin defaults" rule). Security effective threshold
+# is unaffected: it still falls back to DEFAULT_CONFIDENCE_THRESHOLD (70).
 DEFAULT_CONFIDENCE_THRESHOLD = 70
+DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55
 DEFAULT_SECURITY_MIN_CONFIDENCE = 70
 DEFAULT_SEVERITY_THRESHOLD = "low"  # pass all severities by default
 
@@ -304,7 +313,7 @@ def apply_threshold_filter(findings, config):
             )
         else:
             effective_threshold = config.get(
-                "confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD
+                "confidence_threshold", DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD
             )
 
         # -----------------------------------------------------------------

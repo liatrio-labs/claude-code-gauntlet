@@ -12,26 +12,24 @@ A `REVIEW.md` file lets project maintainers customize how code-gauntlet behaves.
 
 ## Format
 
-REVIEW.md is a markdown file with specific sections. Each section is optional.
+REVIEW.md is a markdown file. The only part code-gauntlet's parser reads mechanically is a single
+config block — a fenced ```` ```yaml # code-gauntlet ```` block, or an
+`<!-- code-gauntlet-config -->` comment block — containing plain `key: value` lines in four
+recognized snake_case keys. Everything else in the file (headings, prose, a `## Rules` list) is
+free markdown: it is never parsed, but the whole file's text — this config block included — is
+folded into the shared context every review agent reads, so prose still reaches the agents as
+advisory guidance (see "Rules and other prose" below).
+
+<!-- code-gauntlet-defaults -->
+Built-in defaults, applied whenever a key is absent from the config block: `confidence_threshold`
+**55** for non-security dimensions, `security_min_confidence` **70**, `severity_threshold`
+**low** (show everything). `scripts/filter_findings.py` and `workflows/src/filterFindings.js`
+both define these as constants; `tests/test_review_md_contract.py` asserts this paragraph's three
+numbers match both files.
+<!-- /code-gauntlet-defaults -->
 
 ```markdown
 # Review Configuration
-
-## Focus
-<!-- Which review dimensions to prioritize. If specified, only these dimensions run. -->
-<!-- Omit this section to run all applicable dimensions. -->
-- bugs
-- security
-- error-handling
-
-## Skip
-<!-- File patterns to exclude from review (glob syntax). -->
-<!-- These files won't be reviewed by any agent. -->
-- "**/*.generated.cs"
-- "**/*.designer.cs"
-- "**/migrations/**"
-- "vendor/**"
-- "dist/**"
 
 ## Rules
 <!-- Custom natural-language rules applied to all review agents. -->
@@ -41,75 +39,46 @@ REVIEW.md is a markdown file with specific sections. Each section is optional.
 - Feature flags must have an expiration date comment
 - Console.log statements should not be committed to main
 
-## Severity Threshold
-<!-- Minimum severity to include in the report. Default: low -->
-<!-- Options: critical, high, medium, low -->
-medium
-
-## Confidence Threshold
-<!-- Minimum confidence score (0-100) to include in the report. Default: 70 -->
-<!-- Use a plain number for all dimensions, or key:value pairs for per-dimension control: -->
-<!-- bugs: 75 -->
-<!-- security: 70 -->
-<!-- cross-file-impact: 75 -->
-<!-- conventions: 80 -->
-<!-- tests: 75 -->
-<!-- types: 75 -->
-<!-- simplification: 80 -->
-75
-
-## Model Tier
-<!-- Only supported value: optimized (Sonnet default, Opus for security) — the single
-     benchmarked policy. Alternate modes are roadmap work (issue #17). -->
-optimized
-
-## Default Delivery
-<!-- How to deliver review results. When set, skips the delivery preference prompt. -->
-<!-- Options: chat, pr_comments, markdown (comma-separated) -->
-chat
-
-## Ignore
-<!-- Specific finding patterns to suppress. Useful for known false positives. -->
-<!-- Format: dimension:pattern -->
-- compliance:"import order"
-- security:"console.log in development mode"
+```yaml
+# code-gauntlet
+confidence_threshold: 75
+severity_threshold: medium
+security_min_confidence: 70
+ignore:
+  - "console.log in development mode"
+  - "import order"
 ```
+
+```
+
+The config block can go anywhere in the file — the parser searches for it independent of any
+heading. It is shown here after `## Rules` only because that's how the scaffolding templates below
+lay a file out.
+
+Two more settings are read, but through a separate mechanism: Phase 1 quick-checks the root
+REVIEW.md text directly for `## Model Tier` and `## Default Delivery` headings (not the config
+block above, and not the Filter stage's `parseReviewMd`/`parse_review_md`). See their own sections
+below.
 
 ## Section Details
 
-### Focus
+### Rules and other prose
 
-Controls which review dimensions run. Valid values map to agents:
+`## Rules` (or any other free-text section — a `## Focus` or `## Skip` heading some REVIEW.md files
+still carry from older guidance) is never parsed for structure. Its content is advisory: the whole
+REVIEW.md file is gathered by value and folded into the shared context every review agent reads, so
+a well-written `## Rules` list genuinely steers the agents the same way a CLAUDE.md convention does.
+A `## Focus` or `## Skip` heading has no such effect beyond that — code-gauntlet does not read them
+as instructions to gate dimensions or exclude files; they are just more prose an agent may or may
+not act on. Two structural things actually do gate/exclude, and neither is REVIEW.md-configurable:
 
-- `bugs` — Bug detection and error handling (bug-detector agent)
-- `security` — Security vulnerability scanning (security-reviewer agent)
-- `cross-file-impact` — Cross-file impact analysis (cross-file-impact agent)
-- `tests` — Test coverage gap analysis (test-analyzer agent)
-- `conventions` — Convention compliance, intent alignment, and comment accuracy (conventions-and-intent agent)
-- `types` — Type design analysis (type-design-analyzer agent)
-- `simplification` — Code simplification (code-simplifier agent)
+- **Which dimensions run** is decided automatically by the trivial-scope gate (all changed files
+  low-risk and under 50 changed lines → light scope, `bug` + `security` only; otherwise every
+  dimension runs). There is no REVIEW.md key that changes this.
+- **Which findings are suppressed** is the `ignore` list in the config block (see below) — a
+  substring match against finding text, not a file-path exclusion.
 
-When omitted, all applicable dimensions run (the skill auto-detects which are relevant based on the changes).
-
-When specified, ONLY the listed dimensions run — this is useful for projects that want to focus on specific areas.
-
-### Skip
-
-Glob patterns for files to exclude from review. Common uses:
-
-- Generated code that shouldn't be manually modified
-- Vendored dependencies
-- Build output
-- Migration files that are auto-generated
-- Large data files
-
-**Never skip test files.** This is the most common skip pattern mistake. Tests need review for coverage gaps, incorrect assertions, and missing edge cases — but with different emphasis than production code. If test files generate too much noise, add focused rules for test directories rather than skipping them entirely. Overly broad patterns like `**/test*/**` are especially dangerous because they can match production code in directories like `testing-utils/`.
-
-### Rules
-
-Custom natural-language rules that all review agents should check in addition to their built-in logic. These are especially useful for project-specific conventions that aren't captured in CLAUDE.md.
-
-Rules should be:
+Rules that all agents should check should be:
 
 - Specific and actionable (not vague guidelines)
 - Objectively verifiable (an agent can determine compliance)
@@ -117,40 +86,32 @@ Rules should be:
 
 ### Severity Threshold
 
-The minimum severity level to include in the report:
+`severity_threshold` in the config block. The minimum severity level to include in the report:
 
 - `critical` — Only blocking issues
 - `high` — Critical + high priority
-- `medium` — Critical + high + medium (default for most projects)
-- `low` — Everything (default)
+- `medium` — Critical + high + medium
+- `low` — Everything (built-in default)
 
 ### Confidence Threshold
 
-An integer from 0-100. Findings below this confidence score are filtered out before the report. When you do not set it, non-security dimensions default to **55** and security to **70**. Higher values (e.g., 85) are stricter but may miss some real issues. Lower values surface more findings but may include more false positives.
+`confidence_threshold` (and optionally `security_min_confidence`) in the config block. An integer
+from 0-100. Findings below the effective threshold are filtered out before the report. When you do
+not set `confidence_threshold`, non-security dimensions default to **55** and security to **70**
+(see the defaults block above). Higher values are stricter but may miss some real issues. Lower
+values surface more findings but may include more false positives.
 
-**Important:** The default security bar (70) is stricter than the default non-security bar (55) — security false negatives are costlier, but a low-confidence security guess is still noise. Setting an explicit `confidence_threshold` applies it to all non-security dimensions; the security bar is then `min(confidence_threshold, security_min_confidence)`. So `confidence_threshold: 90` raises the non-security bar to 90, but if `security_min_confidence` is set lower (e.g., 60), security findings are still included at that level.
+**The effective security threshold is a ceiling that only ever gets lower, never a floor.** It is
+`min(confidence_threshold, security_min_confidence)` — the lower of the two configured numbers, not
+a minimum either one is held to. Setting `confidence_threshold: 90` raises the non-security bar to
+90; security stays governed by `min(90, security_min_confidence)`, so if `security_min_confidence`
+is left at its default 70, security findings still pass at 70+, and setting it explicitly lower
+(e.g. 60) lets more borderline security findings through. There is no minimum `security_min_confidence`
+can be set to.
 
-**Per-dimension thresholds:** You can override the threshold for individual dimensions using a YAML-like key:value format. This is useful when some dimensions (e.g., conventions) generate more noise than others (e.g., bugs).
-
-```
-## Confidence Threshold
-bugs: 75
-security: 70
-cross-file-impact: 80
-conventions: 85
-tests: 80
-types: 80
-simplification: 80
-```
-
-Rules for per-dimension thresholds:
-
-- Dimension names must match Focus section values: `bugs`, `security`, `cross-file-impact`, `tests`, `conventions`, `types`, `simplification`
-- If a plain number is provided (current format), it applies as the default for all non-security dimensions
-- If per-dimension values are provided, they override the plain number default for that dimension
-- Dimensions not listed use the plain number default (or 70 if no default is set) — that 70 contradicts the live `DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD` of 55 documented above; #118 (R-043) owns which one is authoritative, so the wording is left as-is until it lands
-- If `security_min_confidence` is set in REVIEW.md, it provides a lower floor for security findings — useful for repos that want to surface more borderline security issues
-- Per-dimension settings in subdirectory REVIEW.md files override the inherited value for that dimension only
+Per-dimension confidence thresholds (a `bugs: 75` / `security: 70` / ... key:value form) are not
+supported. `confidence_threshold` applies uniformly to every non-security dimension; there is no
+way to give `conventions` a different bar than `bugs`.
 
 ### Model Tier
 
@@ -169,27 +130,32 @@ Controls how review results are delivered. A comma-separated list of delivery me
 When set in REVIEW.md, the delivery preference prompt is skipped during Phase 1. When not set, the user is prompted at the start of each review. Task creation is always offered separately after delivery, regardless of this setting.
 
 ```
+
 ## Default Delivery
+
 chat,pr_comments
+
 ```
 
 ### Ignore
 
-Patterns for suppressing known false positives. Format is `dimension:"pattern"` where:
-
-- `dimension` is one of the review dimension names (or `*` for all)
-- `pattern` is a substring to match against finding titles/descriptions
+The `ignore` key in the config block: a plain list of substrings matched case-insensitively against
+each finding's title and description combined (`title + "\n" + description`), first match wins. It
+is not scoped by dimension — an entry suppresses any finding whose text contains it, regardless of
+which agent raised it.
 
 This is useful when a project has intentional patterns that agents consistently flag incorrectly.
 
-**Date-stamp ignore patterns** for long-term maintenance. Add a comment with the date and reason above each pattern so quarterly audits can identify stale suppressions:
+**Date-stamp ignore patterns** for long-term maintenance, so quarterly audits can identify stale
+suppressions. The parser only reads consecutive `- ` list lines under `ignore:` — a comment line
+between entries breaks the list silently, so put the date and reason inside the pattern string
+itself rather than on its own line:
 
-```
-## Ignore
-# 2026-03-25: EF Core migrations are generated, naming conventions don't apply
-conventions:"file naming" for migration files
-# 2026-03-25: Test helpers intentionally use nullable without guards
-types:"nullable reference" for test assertion helpers
+```yaml
+# code-gauntlet
+ignore:
+  - "file naming (EF Core migrations are generated, 2026-03-25)"
+  - "nullable reference (test assertion helpers intentionally skip guards, 2026-03-25)"
 ```
 
 **Soft cap: 10-15 ignore patterns per file.** If you exceed this, it signals either rules that are too sensitive (remove or rewrite them) or a systematic mismatch between your rules and your codebase. Proliferating ignore patterns erodes trust in the review system — when engineers start ignoring entire categories of findings, the tool becomes actively harmful.
@@ -215,10 +181,8 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
 | `model_tier` | **Override** — subdirectory value replaces root | Single valid value today (`optimized`), so effectively fixed; the override slot exists for future modes |
 | `default_delivery` | **Override** — subdirectory value replaces root | Unlikely to vary by directory, but supported for consistency |
-| `rules` | **Accumulate** — subdirectory rules add to root rules | Directory-specific conventions supplement project-wide ones |
+| `rules` (and other free prose) | **Accumulate** — subdirectory content adds to root content | Directory-specific conventions supplement project-wide ones |
 | `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |
-| `focus` | **Override** — subdirectory value replaces root | A directory may need only specific dimensions |
-| `skip` | **Accumulate** — subdirectory patterns add to root patterns | Skip patterns are additive |
 
 In short: **settings override, rules and patterns accumulate.**
 
@@ -337,59 +301,6 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
 <!-- Customizes how code-gauntlet analyzes this repository.
      See references/review-md-spec.md in the code-gauntlet skill for all options. -->
 
-## Confidence Threshold
-
-70
-
-<!-- Minimum confidence (0-100) to include findings. When unset, non-security
-     dimensions default to 55 and security to 70.
-     Security findings use min(this value, security_min_confidence) — there is
-     no fixed security floor.
-     Start at 70-80 and adjust based on false-positive rates.
-
-     To set per-dimension thresholds, replace the plain number with key:value pairs:
-     bugs: 75
-     security: 70
-     cross-file-impact: 75
-     conventions: 80
-     tests: 75
-     types: 75
-     simplification: 75
-     Omitted dimensions use the plain number default (or 70 if no default is set).
-     (That 70 contradicts the 55 stated at the top of this block. #118 owns the
-     call between the documented 70 and the implemented 55; not changed here.)
-     Set security lower than the plain number to keep borderline security
-     findings; there is no minimum it cannot go below. -->
-
-## Severity Threshold
-
-<!-- Minimum severity to include in the report. Default: low (show everything).
-     Options: critical, high, medium, low
-     Uncomment and set to filter out lower-severity findings.
-     Useful for high-debt codebases where low/medium noise drowns out critical issues. -->
-<!-- medium -->
-
-## Default Delivery
-
-<!-- How to deliver review results. Comma-separated list.
-     Options: chat, pr_comments, markdown
-     When set, skips the delivery preference prompt.
-     Task creation is always offered separately after delivery.
-     Uncomment and adjust to your preference. -->
-<!-- chat,pr_comments -->
-
-## Skip
-
-<!-- Files where AI review adds no value. Uncomment patterns that apply. -->
-<!-- **/dist/** -->
-<!-- **/build/** -->
-<!-- **/node_modules/** -->
-<!-- **/*.generated.* -->
-<!-- **/vendor/** -->
-<!-- package-lock.json -->
-<!-- yarn.lock -->
-<!-- pnpm-lock.yaml -->
-
 ## Rules
 
 <!-- Add 15-25 project-specific rules. Each rule should be:
@@ -417,15 +328,44 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
        Flag PRs that modify contract types without corresponding updates.
 -->
 
-## Ignore
+## Default Delivery
 
-<!-- Suppress known false positives. Date-stamp for audit trail.
-     Format: dimension:"pattern" (reason, date)
+<!-- How to deliver review results. Comma-separated list.
+     Options: chat, pr_comments, markdown
+     When set, skips the delivery preference prompt.
+     Task creation is always offered separately after delivery.
+     Uncomment and adjust to your preference. -->
+<!-- chat,pr_comments -->
 
-     Example:
-     - security:"hardcoded string" in test fixtures (test data not secrets, 2026-01-15)
-     - conventions:"file naming" for migration files (generated, 2026-01-15)
--->
+<!-- The block below is the only part of this file code-gauntlet parses
+     mechanically. Every key is optional — omit a key entirely to use its
+     built-in default rather than guessing at a starting number. -->
+```yaml
+# code-gauntlet
+# confidence_threshold: 70
+#   Minimum confidence (0-100) to include findings. Built-in default when
+#   omitted: 55 for non-security dimensions, 70 for security. Setting this
+#   applies it to all non-security dimensions; there is no per-dimension
+#   override.
+# security_min_confidence: 70
+#   Effective security threshold is min(confidence_threshold,
+#   security_min_confidence) — a ceiling, not a floor. Set this lower than
+#   confidence_threshold to keep borderline security findings; there is no
+#   minimum it cannot go below.
+# severity_threshold: medium
+#   Minimum severity to include. Options: critical, high, medium, low.
+#   Built-in default when omitted: low (show everything). Useful for
+#   high-debt codebases where low/medium noise drowns out critical issues.
+# ignore:
+#   Suppress known false positives. Each entry is a substring matched
+#   case-insensitively against a finding's title + description, first
+#   match wins — not scoped by dimension. Date-stamp inside the string
+#   for an audit trail, e.g.:
+#   ignore:
+#     - "hardcoded string (test fixtures use fake data, not secrets, 2026-01-15)"
+#     - "file naming (migration files are generated, 2026-01-15)"
+```
+
 ```
 
 ### Subdirectory REVIEW.md template
@@ -434,7 +374,7 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
 # Review Configuration — [directory name]
 
 <!-- Settings here override root REVIEW.md. Rules and ignore patterns
-     accumulate (add to root), settings (thresholds, model tier) replace root.
+     accumulate (add to root), settings (thresholds) replace root.
      Only create subdirectory configs when this area needs DIFFERENT standards
      than the root — e.g., stricter security for an API directory. -->
 
@@ -444,7 +384,12 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
      Aim for 5-10 rules covering technology or domain-specific patterns.
      Don't contradict root rules — extend them. -->
 
-## Ignore
+<!-- Optional config block — same keys as the root template, uncommented only
+     if this directory needs a different threshold or suppression list than root. -->
+```yaml
+# code-gauntlet
+# ignore:
+#   - "..."
+```
 
-<!-- Directory-specific suppressions (these ADD to root ignores). -->
 ```

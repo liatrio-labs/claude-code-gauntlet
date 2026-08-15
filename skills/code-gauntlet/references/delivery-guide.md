@@ -224,13 +224,15 @@ If yes, show the same numbered list and let the user pick (same natural patterns
 ### Show proposed entries before writing
 
 ```
-These entries would be added to REVIEW.md under ## Ignore:
+These entries would be added to REVIEW.md's ignore list:
 
-- security:"prompt injection via template tokens" (not exploitable in current architecture, 2026-03-24)
-- bug:"DateTime.UtcNow testability" (tracked in ROADMAP.md as deferred item, 2026-03-24)
+- "prompt injection via template tokens (not exploitable in current architecture, 2026-03-24)"
+- "DateTime.UtcNow testability (tracked in ROADMAP.md as deferred item, 2026-03-24)"
 ```
 
-Each entry: dimension, pattern matching finding title, parenthesized reason with date.
+Each entry: a substring matching the finding's title, parenthesized reason with date folded into
+the same string. `ignore` entries are not scoped by dimension (`references/review-md-spec.md` →
+Ignore) — do not prefix with `dimension:`.
 
 ### Confirm via AskUserQuestion before writing
 
@@ -248,11 +250,14 @@ AskUserQuestion(
 )
 ```
 
-If confirmed:
+If confirmed, the entries must land inside the parser's config block (`references/review-md-spec.md`
+→ Format) — a bare `## Ignore` heading with bullet items is never parsed, so writing there would
+silently produce dead configuration:
 
-- If no REVIEW.md exists → offer to create using scaffolding template from `references/review-md-spec.md`
-- If REVIEW.md exists without `## Ignore` → append the section
-- If `## Ignore` exists → append new entries
+- If no REVIEW.md exists → create it using the scaffolding template from `references/review-md-spec.md`, with the config block's `ignore:` key uncommented and populated
+- If REVIEW.md exists without a ` ```yaml # code-gauntlet ` block (or `<!-- code-gauntlet-config -->` block) → append one at the end of the file with an `ignore:` list
+- If a config block exists without an `ignore:` key → add the key with the new entries as its list
+- If `ignore:` already has entries → append the new entries as additional `-` list lines directly under the existing ones (the parser only reads *consecutive* `-`-led lines under `ignore:`, so nothing else may be inserted between them)
 
 After writing: "Added N dismissed findings to REVIEW.md. These won't be flagged in future reviews."
 

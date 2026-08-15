@@ -1,0 +1,41 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": 65,
+      "description": "d",
+      "dimension": "security",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 65 < threshold 70",
+      "file": "a.py",
+      "id": "CA1",
+      "line_start": 1,
+      "severity": "low",
+      "title": "sec-below-70-above-55"
+    },
+    {
+      "confidence": 50,
+      "description": "d",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 50 < threshold 55",
+      "file": "a.py",
+      "id": "CA3",
+      "line_start": 3,
+      "severity": "low",
+      "title": "bug-below-55"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 65,
+      "description": "d",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "CA2",
+      "line_start": 2,
+      "severity": "low",
+      "title": "bug-above-55-below-70"
+    }
+  ]
+}
