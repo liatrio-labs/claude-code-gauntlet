@@ -61,6 +61,7 @@ def _extract_doc_severity(text):
         text,
         re.DOTALL,
     )
+    assert m is not None, "defaults marker block not found"
     block = m.group(1)
     found = re.search(r"`severity_threshold`\s*\n?\s*\*\*(\w+)\*\*", block)
     if not found:
