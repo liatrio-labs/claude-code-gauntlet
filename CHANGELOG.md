@@ -2,6 +2,53 @@
 
 <!-- version list -->
 
+## v3.8.1 (2026-08-15)
+
+### Bug Fixes
+
+- **pipeline**: Fail loud when every active discovery dimension degrades
+  ([#189](https://github.com/liatrio-labs/claude-code-gauntlet/pull/189),
+  [`b142105`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b14210588737a289fb5724f9c7f99258230ade3a))
+
+- **pipeline**: Fail loud when every active discovery dimension degrades (#178)
+  ([#189](https://github.com/liatrio-labs/claude-code-gauntlet/pull/189),
+  [`b142105`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b14210588737a289fb5724f9c7f99258230ade3a))
+
+- **pipeline**: Preserve resume delivery and fail closed on unresolvable scope in the all-degraded
+  guard ([#189](https://github.com/liatrio-labs/claude-code-gauntlet/pull/189),
+  [`b142105`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b14210588737a289fb5724f9c7f99258230ade3a))
+
+### Continuous Integration
+
+- Retry the pinned Biome download on transient release-CDN errors
+  ([#188](https://github.com/liatrio-labs/claude-code-gauntlet/pull/188),
+  [`f247760`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f247760eb1256026a2401aeac469f4b313e2dcce))
+
+### Documentation
+
+- Pin the all-degraded bench-classification tracker to #190
+  ([#189](https://github.com/liatrio-labs/claude-code-gauntlet/pull/189),
+  [`b142105`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b14210588737a289fb5724f9c7f99258230ade3a))
+
+- **bench**: Record the first live subscription smoke (Smoke A)
+  ([#183](https://github.com/liatrio-labs/claude-code-gauntlet/pull/183),
+  [`25ef15e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/25ef15eee737e7f0c07908f2af01bc7826f41324))
+
+- **readme**: Accuracy, tone, and concision refresh
+  ([#186](https://github.com/liatrio-labs/claude-code-gauntlet/pull/186),
+  [`f8f4fdf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f8f4fdf88afe32f264f99917053d2781733be85b))
+
+- **readme**: Durable benchmark section — same-judge table, staleness pass
+  ([#186](https://github.com/liatrio-labs/claude-code-gauntlet/pull/186),
+  [`f8f4fdf`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f8f4fdf88afe32f264f99917053d2781733be85b))
+
+### Refactoring
+
+- **pipeline**: Share resolvedPolicy envelope construction across return paths
+  ([#189](https://github.com/liatrio-labs/claude-code-gauntlet/pull/189),
+  [`b142105`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/b14210588737a289fb5724f9c7f99258230ade3a))
+
+
 ## v3.8.0 (2026-08-12)
 
 ### Features
