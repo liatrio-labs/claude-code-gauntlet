@@ -26,7 +26,7 @@ import {
   coarsenLimits, plannedArtifactPaths,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
-import { AGENTS } from '../src/registry.js';
+import { AGENTS, DIMENSIONS } from '../src/registry.js';
 
 // Node/browser host globals the workflow runtime SANDBOX does not provide (but node:test
 // does). Deleting them makes the pipeline run under sandbox-parity conditions, so a
@@ -387,6 +387,154 @@ test('run never throws out of runWith even when a stage throws', async () => {
   const ctx = makeCtx(args, { parallelThrows: true });
   // Must resolve, not reject.
   await assert.doesNotReject(() => runWith(ctx, args));
+});
+
+// --- All-degraded discovery (issue #178) ------------------------------------
+//
+// Live Bedrock incident 2026-08-11: an invalid model ID null-isolated EVERY discovery
+// agent, and the pre-fix pipeline sailed on through merge/verify/validate/filter/challenge/
+// report/persist to an ok:true envelope with an empty "clean" report. These tests pin the
+// fix (allActiveDimensionsDegraded's guard in runWith): total degradation fails loud,
+// partial degradation stays exactly as before (degraded-but-disclosed, ok:true).
+
+test('issue #178 regression: every discovery agent null -> ok:false, no downstream dispatch', async () => {
+  // policy is driven through args (not left default) and resolvedPolicy asserted by exact
+  // shape — a stray/dropped field on the envelope would previously pass under key-presence
+  // checks alone (finding 4, #178 follow-up). 'bedrock' is a valid POLICY_PROVIDERS entry.
+  const args = validArgs({ policy: { subagentModel: 'claude-x', provider: 'bedrock' } });
+  const ctx = makeCtx(args, { nullAgentLabels: [...AGENTS] });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.error, 'all-degraded: every active discovery dimension degraded — no review was performed');
+  assert.equal(out.failingPhase, 'discover');
+  assert.equal(out.phaseReached, 'discover');
+  assert.deepEqual(out.artifactPaths, {});
+  assert.deepEqual([...out.stats.degraded].sort(), DIMENSIONS.map((d) => d.dimension).sort());
+  assert.deepEqual(out.resolvedPolicy, { subagentModel: 'claude-x', provider: 'bedrock' });
+
+  // The 7 per-agent gaps (one per nulled discovery dispatch) plus EXACTLY one all-degraded gap.
+  const perAgentGaps = out.gaps.filter((g) => /agent returned null/.test(g));
+  assert.equal(perAgentGaps.length, AGENTS.length, `expected ${AGENTS.length} per-agent gaps, got: ${out.gaps}`);
+  const allDegradedGaps = out.gaps.filter((g) => g.startsWith('all-degraded:'));
+  assert.equal(allDegradedGaps.length, 1, `expected exactly one all-degraded gap, got: ${out.gaps}`);
+
+  // The resume checkpoints do NOT carry a discover phase entry — a retry must re-dispatch
+  // discovery, never replay the degraded-to-nothing output.
+  assert.ok(out.checkpoints && out.checkpoints.phases, 'in-memory phases map present');
+  assert.ok('summarize' in out.checkpoints.phases, 'summarize (which completed) is still resumable');
+  assert.ok(!('discover' in out.checkpoints.phases), 'discover is dropped from the resume checkpoints');
+
+  // Nothing downstream of discover was ever dispatched.
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('validate-batch-')), 'validate was not dispatched');
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('challenge-')), 'challenge was not dispatched');
+  assert.ok(!ctx.calls.some((c) => c.label === 'report-writer' || c.label.startsWith('report-writer-')), 'report-writer was not dispatched');
+  assert.ok(!ctx.calls.some((c) => c.label === 'artifact-writer'), 'the persist writer was not dispatched');
+});
+
+test('issue #178 partial-degradation pin: one discovery agent null stays degraded-but-disclosed (ok:true)', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args, { nullAgentLabels: ['code-gauntlet:security-reviewer'] });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.phaseReached, 'report');
+  assert.deepEqual(out.stats.degraded, ['security'], 'only the nulled agent\'s own dimension(s) degrade');
+  assert.ok(out.gaps.some((g) => /security-reviewer/.test(g) && /agent returned null/.test(g)));
+  assert.ok(!out.gaps.some((g) => g.startsWith('all-degraded:')), 'partial degradation must not trip the all-degraded guard');
+  // Report/persist behavior unchanged: a real report is produced and persisted.
+  assert.equal(typeof out.artifactPaths.report, 'string');
+  assert.ok(ctx.calls.some((c) => c.label === 'report-writer'));
+  assert.ok(ctx.calls.some((c) => c.label === 'artifact-writer'));
+});
+
+test('issue #178 checkpoint-replay defense: an all-degraded discover checkpoint still fails loud on resume', async () => {
+  // Simulates a stale checkpoint from a prior all-degraded run being fed back through the
+  // args waist — the guard must fire on the REPLAYED discoverOut, not only a fresh dispatch.
+  const allDims = DIMENSIONS.map((d) => d.dimension);
+  const discoverCheckpoint = {
+    findings: [],
+    degraded: allDims,
+    dispatched: [...AGENTS],
+    gaps: AGENTS.map((a) => `${a}: agent returned null (dispatch failed) — dimensions ? not covered`),
+  };
+  const args = validArgs({ checkpoints: { discover: discoverCheckpoint } });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.error, 'all-degraded: every active discovery dimension degraded — no review was performed');
+  assert.equal(out.failingPhase, 'discover');
+  // Discovery was REPLAYED from the checkpoint, not re-dispatched.
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('code-gauntlet:')), 'no discovery agent was dispatched (replayed instead)');
+});
+
+// Inverse boundary (finding 5): every discovery agent is HEALTHY but genuinely finds
+// nothing (a real clean review), fresh dispatch, no checkpoints in play. This must sail
+// through exactly as before the guard existed — ok:true, a real report, and no
+// 'all-degraded:' gap. `opts.findings: []` drives every agent (including bug-detector,
+// the only one the mock seeds by default) to return zero findings.
+test('issue #178 inverse boundary: all agents healthy with zero findings each stays a clean ok:true review', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args, { findings: [] });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.phaseReached, 'report');
+  assert.ok(!out.gaps.some((g) => g.startsWith('all-degraded:')), `a genuine zero-finding clean review must not trip the guard; gaps: ${out.gaps}`);
+  assert.equal(typeof out.artifactPaths.report, 'string');
+});
+
+// Finding 1 (#178 follow-up): resume delivery must survive a totally re-degraded
+// re-discovery when a replayable challenge checkpoint (PERSISTED_RESUME_PHASES) is in
+// hand — aborting here would drop a prior attempt's already-delivered review.
+test('issue #178 finding 1: resume with a replayable challenge checkpoint survives a fresh all-degraded re-discovery', async () => {
+  // Run 1: a real end-to-end pass produces (and we capture) the persisted slim checkpoint,
+  // which carries `challenge` in full — this is the genuine fixture shape, not a hand-rolled
+  // guess at challengeStage's output.
+  const args1 = validArgs();
+  let persistedCheckpoints = null;
+  const ctx1 = makeCtx(args1, { onPersist: (payload) => { persistedCheckpoints = payload.checkpoints; } });
+  const out1 = await runWith(ctx1, args1);
+  assert.equal(out1.ok, true);
+  assert.ok(persistedCheckpoints.phases.challenge.findings.length > 0, 'run 1 delivered at least one finding');
+
+  // Run 2: resumes from that slim checkpoint (challenge replayable), but discovery is
+  // dispatched fresh and EVERY agent fails — simulating the exact scenario finding 1 names:
+  // a totally-degraded fresh re-discovery on a resume that already has a delivered review.
+  const args2 = validArgs({ checkpoints: persistedCheckpoints });
+  const ctx2 = makeCtx(args2, { nullAgentLabels: [...AGENTS] });
+  const out2 = await runWith(ctx2, args2);
+
+  assert.equal(out2.ok, true, `must not abort when a replayable challenge checkpoint is in hand; got: ${JSON.stringify(out2)}`);
+  assert.equal(out2.phaseReached, 'report');
+  assert.notDeepEqual(out2.artifactPaths, {}, 'artifactPaths must be populated, not the abort-path {}');
+  // Per-agent degradation is still disclosed even though the run did not abort.
+  assert.ok(out2.gaps.some((g) => /agent returned null/.test(g)), 'per-agent null gaps still present');
+  assert.ok(!out2.gaps.some((g) => g.startsWith('all-degraded:')), 'the guard must not fire on this resume path');
+  // The delivered set is the REPLAYED challenge output, not a fresh (empty) one.
+  assert.equal(out2.stats.highConfidence, persistedCheckpoints.phases.challenge.findings.length, 'the prior delivered set survives the resume');
+});
+
+// Finding 2 (#178 follow-up): a version-skew replayed discover checkpoint (an agentType
+// that no longer resolves via agentSpecs()) whose findings are NON-empty must still
+// deliver — the helper's fail-closed arm returns true, but the guard's findings-empty
+// conjunct holds it back because there is real work product to deliver.
+test('issue #178 finding 2: version-skew partial replay WITH findings keeps delivering (guard held back by findings-empty conjunct)', async () => {
+  const discoverCheckpoint = {
+    findings: [makeFinding('F1')],
+    gaps: [],
+    degraded: ['bug'],
+    dispatched: ['code-gauntlet:renamed-away'], // unresolvable: not a real agentType in the current registry
+  };
+  const args = validArgs({ checkpoints: { discover: discoverCheckpoint } });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true, `must not abort a version-skew replay that carries real findings; got: ${JSON.stringify(out)}`);
+  assert.equal(out.phaseReached, 'report');
+  assert.ok(!out.gaps.some((g) => g.startsWith('all-degraded:')), 'the guard must not fire while findings are non-empty');
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('code-gauntlet:')), 'discovery was replayed, not re-dispatched');
 });
 
 // --- Report degradation (non-fatal) -----------------------------------------

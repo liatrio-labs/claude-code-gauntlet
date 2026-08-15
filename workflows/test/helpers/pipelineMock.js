@@ -121,6 +121,12 @@ export function validArgs(over = {}) {
 //     one retry; other slices still echo a trusted per-slice delta envelope. Multi-slice
 //     tests must keep limits.verifySliceSize under the agent-count coarsening guard (same
 //     constraint the mock uses when reconstructing slices from seed findings + args.limits).
+//   - nullAgentLabels: a LIST of agent labels whose dispatch throws, so parallel()'s
+//     null-isolation (Phase 0) resolves that member to null in place — siblings dispatch
+//     normally. Discovery labels ARE the agentType (e.g. 'code-gauntlet:bug-detector'), so
+//     this is how a test drives "every/some discovery agent failed" end-to-end through
+//     runWith, mirroring stages_discover.test.js's local fakeCtx({nulls}) (issue #178).
+//     Generic by label, not scoped to discovery — any dispatch labeled here nulls out.
 export function makeCtx(args, opts = {}) {
   const calls = [];
   const violations = [];
@@ -149,6 +155,7 @@ export function makeCtx(args, opts = {}) {
     const label = dispatch.label || '';
     calls.push({ prompt, ...dispatch });
     if (opts.agentThrowLabel && label === opts.agentThrowLabel) throw new Error(`injected agent throw on ${label}`);
+    if (opts.nullAgentLabels && opts.nullAgentLabels.includes(label)) throw new Error(`injected null-agent failure on ${label}`);
 
     if (label === 'summarize' || label === 'summarize-merge' || label.startsWith('summarize-bucket-')) {
       return { summary: 'the PR changes X' };

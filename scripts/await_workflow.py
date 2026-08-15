@@ -146,9 +146,12 @@ SCAN_MAX_DEEP_CANDIDATES = 8
 #: Observed shapes this list covers (not an exhaustive field-by-field enum):
 #: the success shape {ok, phaseReached, stats, artifactPaths, resolvedPolicy,
 #: checkpoints, gaps}; the early args-rejection envelope (no checkpoints, no
-#: resolvedPolicy); and the mid-run catch failure (has checkpoints via
-#: buildResumeCheckpoints, omits resolvedPolicy). Any member below corroborates.
-#: `error` is deliberately not in this list — it is far too generic to corroborate.
+#: resolvedPolicy); the mid-run catch failure (has checkpoints via
+#: buildResumeCheckpoints, omits resolvedPolicy); and the all-degraded fail-loud
+#: envelope (issue #178) — ok:false, artifactPaths:{}, failingPhase:'discover',
+#: WITH checkpoints AND resolvedPolicy AND a non-empty stats (unlike the mid-run
+#: catch failure, this one names both). Any member below corroborates. `error` is
+#: deliberately not in this list — it is far too generic to corroborate.
 COMPACT_RETURN_KEYS = (
     "phaseReached",
     "stats",

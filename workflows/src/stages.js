@@ -291,6 +291,31 @@ export function agentActive(spec, agentFlags) {
   return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || flags[flag] !== false);
 }
 
+// allActiveDimensionsDegraded(dispatched, degraded) -> boolean (issue #178).
+// True when every dimension owned by a dispatched agent is in the degraded list.
+// Dimension-level and scope-relative on purpose: a light-scope run whose two active
+// agents both fail must fail loud too, and the comparison stays correct if degradation
+// ever becomes finer than per-agent.
+//
+// FAIL-CLOSED arm: if `dispatched` resolves to zero active dimensions — agentSpecs()
+// no longer recognizes an agentType in it (a registry rename between the run that wrote
+// a replayed checkpoint and this one) or `dispatched` is absent entirely — this is
+// UNRESOLVABLE scope, not "nothing was dispatched, so nothing degraded." Reading it as
+// "not all degraded" would let a replay with unresolvable scope and something already in
+// `degraded` sail through as an ok:true empty clean review: the exact silent success this
+// guard exists to stop. So an empty activeDims returns whether anything was reported
+// degraded at all, not false. The call site's findings-empty conjunct is what keeps this
+// arm from ever aborting a replay that actually carries findings (see runWith).
+export function allActiveDimensionsDegraded(dispatched, degraded) {
+  const dispatchedSet = new Set(dispatched || []);
+  const degradedSet = new Set(degraded || []);
+  const activeDims = agentSpecs()
+    .filter((spec) => dispatchedSet.has(spec.agentType))
+    .flatMap((spec) => spec.dimensions);
+  if (activeDims.length === 0) return degradedSet.size > 0;
+  return activeDims.every((d) => degradedSet.has(d));
+}
+
 // The canonical finding ITEM schema (one array element). Declared IN FULL — every
 // canonical property with a concrete type, `description` among them — everywhere an agent
 // returns findings BY VALUE. An items schema of `{ type:'object', properties:{} }` is the
@@ -364,7 +389,9 @@ function findingSchema(spec) {
 // failure, not counted toward a limit.) A malformed result (no findings array) is
 // treated the same. A non-null result reporting complete=false or total_seen at/over
 // an optional discoveryCap -> "possibly incomplete" gap (soft: its findings are still
-// collected, dimension not degraded).
+// collected, dimension not degraded). runWith fails loud (ok:false) instead of returning
+// this output's empty findings as a clean review when EVERY active dimension degrades —
+// see allActiveDimensionsDegraded and its guard in runWith (issue #178).
 export async function discover(ctx, input) {
   const c = ctx || defaultCtx();
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
@@ -3292,6 +3319,15 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
   return { phases, completed, phaseReached, counts };
 }
 
+// resolvedPolicyEnvelope(policy) -> the envelope's resolvedPolicy field, shared by the
+// success return and the all-degraded failure return so the two report the identical
+// resolution and a change to either fallback costs one edit.
+// 'firstParty' when the waist omitted provider — the omission and the explicit value
+// resolve identically in resolvePolicy, and the envelope reports the resolution.
+function resolvedPolicyEnvelope(policy) {
+  return { subagentModel: policy.subagentModel || null, provider: policy.provider || 'firstParty' };
+}
+
 // --- Full orchestration: runWith --------------------------------------------
 
 // runWith(ctx, rawArgs) -> compact envelope.
@@ -3450,6 +3486,73 @@ export async function runWith(ctx, rawArgs) {
 
     const discoverOut = await runPhase('discover', async () => (await discoverSettled)());
     gaps.push(...(discoverOut.gaps || []));
+
+    // All-degraded guard (issue #178, live Bedrock incident 2026-08-11: invalid model ID,
+    // 2s run, 0 findings, ok:true). Fail loud here rather than degraded-but-disclosed: an
+    // all-degraded discover output means NOTHING was reviewed, so letting the pipeline run
+    // on to a report is not a partial review with a gap attached, it is an EMPTY report
+    // dressed as ok:true — the exact silent-success class the gap channel exists to
+    // prevent. Partial degradation (some but not all active dimensions failing) is
+    // unaffected: this only fires when the intersection of dispatched and degraded is total.
+    //
+    // Placed AFTER the gap merge above, not before: this guard fires whether discoverOut
+    // came from a fresh dispatch or a REPLAYED checkpoint (the `runPhase` resume branch
+    // returns the same shape either way), so a stale checkpoint that recorded an
+    // all-degraded discover never gets to replay its emptiness into another ok:true run.
+    // The per-agent 'agent returned null' gaps pushed just above still ride the returned
+    // envelope, so the operator sees exactly which agents failed, not just that they did.
+    //
+    // The discover phase is dropped from the returned resume checkpoints (never from
+    // phaseOutputs, which the catch-path/failure envelope still needs whole): a checkpoint
+    // that resumes straight into a replay of this same degraded-to-nothing output would
+    // reproduce the failure forever. Dropping it forces a retry to re-dispatch discovery —
+    // the one phase a corrected model/provider policy can actually fix.
+    //
+    // stats.degraded and resolvedPolicy ride this failure envelope even though the
+    // top-level catch below carries neither: they are the operator's diagnosis. degraded
+    // names which dimensions came back empty and resolvedPolicy names the model/provider
+    // this run actually resolved to, so "why did discovery fail" is answerable from the
+    // envelope alone — a mismatch between resolvedPolicy and the intended model is the
+    // most common root cause (this guard's own incident was exactly that).
+    //
+    // Two more conjuncts guard this trip, both added after the helper's fail-closed arm
+    // above (issue #178 follow-up):
+    //   (a) `(discoverOut.findings || []).length === 0` — on a SAME-VERSION discover
+    //       output this is vacuously true (a degraded agent contributes no findings by
+    //       construction), so it changes nothing there. It exists solely so the helper's
+    //       fail-closed arm never aborts a VERSION-SKEW replay (a renamed/unresolvable
+    //       agentType in `dispatched`) that still carries real findings from before the
+    //       rename — those findings are real work product, not the silent emptiness this
+    //       guard exists to catch.
+    //   (b) `checkpoints.challenge === undefined` — a replayable challenge checkpoint
+    //       (PERSISTED_RESUME_PHASES) means a PRIOR attempt already reviewed and its
+    //       delivered set is sitting in `checkpoints.challenge`. Aborting here would drop
+    //       that checkpoint from the returned resume map (this branch strips `discover`,
+    //       not `challenge`, but returning early never reaches the phase that would carry
+    //       it forward) and report "no review was performed" about a run that already
+    //       delivered one. So a totally re-degraded fresh discovery on such a resume must
+    //       NOT abort — it stays degraded-but-disclosed (the per-agent gaps and
+    //       stats.degraded above still say so) and the run proceeds to replay and deliver
+    //       the prior challenge output; the empty-report guard downstream is what protects
+    //       that replayed delivery if it were ever somehow empty.
+    if (allActiveDimensionsDegraded(discoverOut.dispatched, discoverOut.degraded)
+      && (discoverOut.findings || []).length === 0
+      && checkpoints.challenge === undefined) {
+      gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
+      const resumable = { ...phaseOutputs };
+      delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy
+      return {
+        ok: false,
+        error: 'all-degraded: every active discovery dimension degraded — no review was performed',
+        phaseReached,
+        failingPhase: 'discover',
+        artifactPaths: {},
+        stats: { discovered: 0, degraded: discoverOut.degraded || [] },
+        resolvedPolicy: resolvedPolicyEnvelope(policy),
+        checkpoints: buildResumeCheckpoints(resumable),
+        gaps,
+      };
+    }
 
     const mergeOut = await runPhase('merge', () => mergeStage(discoverOut, {
       base_branch: A.baseBranch, head_sha: A.headShaShort,
@@ -3618,12 +3721,7 @@ export async function runWith(ctx, rawArgs) {
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,
-      resolvedPolicy: {
-        subagentModel: policy.subagentModel || null,
-        // 'firstParty' when the waist omitted it — the omission and the explicit value
-        // resolve identically in resolvePolicy, and the envelope reports the resolution.
-        provider: policy.provider || 'firstParty',
-      },
+      resolvedPolicy: resolvedPolicyEnvelope(policy),
       // On persist success the resume state lives in artifactPaths.checkpoints — the
       // compact return carries only phase NAMES (never the findings bulk). If the writer
       // FAILED nothing was persisted, so carry the in-memory resume state (phases, or

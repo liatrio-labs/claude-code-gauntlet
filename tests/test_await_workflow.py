@@ -84,6 +84,29 @@ FAILURE_RETURN = {
     "gaps": ["invalid args: reviewConfig must be an object"],
 }
 
+# The all-degraded fail-loud return (issue #178): every active discovery dimension
+# degraded, so the pipeline aborts BEFORE merge/verify/etc rather than shipping an empty
+# clean review as ok:true. Distinct from FAILURE_RETURN — this one carries BOTH
+# `checkpoints` AND `resolvedPolicy` (the operator's diagnosis: what would resume, and
+# which model/provider this run actually resolved to) plus a non-empty `stats.degraded`,
+# none of which the early args-rejection failure ever has.
+ALL_DEGRADED_RETURN = {
+    "ok": False,
+    "error": "all-degraded: every active discovery dimension degraded — no review was performed",
+    "phaseReached": "discover",
+    "failingPhase": "discover",
+    "artifactPaths": {},
+    "stats": {"discovered": 0, "degraded": ["bug", "security"]},
+    "resolvedPolicy": {"subagentModel": None, "provider": "firstParty"},
+    "checkpoints": {
+        "phases": {"summarize": {"summary": "the PR changes X"}},
+        "completed": ["summarize"],
+    },
+    "gaps": [
+        "all-degraded: every active discovery dimension degraded (bug, security) — no discovery agent completed, so nothing was reviewed"
+    ],
+}
+
 # The assemble receipt, from a journal.jsonl `result` record. It carries `ok` and
 # must NOT be mistaken for the return.
 ASSEMBLE_RECEIPT = {
@@ -193,6 +216,10 @@ class TestIsTerminalReturn(unittest.TestCase):
     def test_early_failure_shape_is_terminal(self):
         """ok:false is still terminal — the run is over, it just failed."""
         self.assertTrue(is_terminal_return(FAILURE_RETURN))
+
+    def test_all_degraded_shape_is_terminal(self):
+        """ok:false with checkpoints AND resolvedPolicy (issue #178) is still terminal."""
+        self.assertTrue(is_terminal_return(ALL_DEGRADED_RETURN))
 
     def test_bare_ok_is_not_terminal(self):
         self.assertFalse(is_terminal_return({"ok": True}))

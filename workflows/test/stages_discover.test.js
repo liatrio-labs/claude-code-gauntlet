@@ -3,7 +3,10 @@
 // ctx is injected {agent, parallel}; the mock ctx is the testability seam.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs, sharedContextLine } from '../src/stages.js';
+import {
+  summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs,
+  allActiveDimensionsDegraded, sharedContextLine,
+} from '../src/stages.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
 import { assertPrompt, assertValidSchema } from './helpers/pipelineMock.js';
 
@@ -145,6 +148,73 @@ test('discover returns `dispatched`: every active agentType, regardless of outco
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
   // Includes the nulled (failed) agent too — a dispatch attempt happened even though it failed.
   assert.deepEqual([...out.dispatched].sort(), [...AGENTS].sort());
+});
+
+// issue #178: with EVERY discovery agent nulled, discover() itself still returns cleanly
+// (findings [], all 9 dimensions degraded, all 7 agents dispatched, one gap per agent) — the
+// all-degraded fail-loud decision lives in runWith's guard, not in discover() itself.
+test('discover: every agent nulled -> findings [], all 9 dimensions degraded, one gap per agent', async () => {
+  const ctx = fakeCtx({ nulls: [...AGENTS] });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  assert.deepEqual(out.findings, []);
+  assert.deepEqual([...out.degraded].sort(), DIMENSIONS.map((d) => d.dimension).sort());
+  assert.deepEqual([...out.dispatched].sort(), [...AGENTS].sort());
+  assert.equal(out.gaps.length, AGENTS.length);
+  for (const agentType of AGENTS) {
+    assert.ok(out.gaps.some((g) => g.startsWith(`${agentType}: agent returned null`)), `missing gap for ${agentType}`);
+  }
+});
+
+// --- allActiveDimensionsDegraded (issue #178) --------------------------------
+
+test('allActiveDimensionsDegraded: true when every active dimension is degraded', () => {
+  const dispatched = [...AGENTS];
+  const degraded = DIMENSIONS.map((d) => d.dimension);
+  assert.equal(allActiveDimensionsDegraded(dispatched, degraded), true);
+});
+
+test('allActiveDimensionsDegraded: false when at least one active agent is healthy', () => {
+  const dispatched = [...AGENTS];
+  // Every dimension EXCEPT bug (owned by the healthy bug-detector) is degraded.
+  const degraded = DIMENSIONS.map((d) => d.dimension).filter((d) => d !== 'bug');
+  assert.equal(allActiveDimensionsDegraded(dispatched, degraded), false);
+});
+
+// Reconciled for the fail-closed arm (issue #178 follow-up, finding 2): an unresolvable
+// scope (empty `dispatched` — nothing active, OR every entry in it fails to resolve to a
+// dimension via agentSpecs(), e.g. a registry rename) is false ONLY when nothing was ever
+// reported degraded either. The instant anything is in `degraded`, unresolvable scope must
+// read as all-degraded, not as "nothing failed" — that silent-success reading is exactly
+// what the guard exists to stop on a version-skew checkpoint replay.
+test('allActiveDimensionsDegraded: empty/unresolvable dispatched is false ONLY when nothing was degraded either', () => {
+  assert.equal(allActiveDimensionsDegraded([], []), false);
+});
+
+test('allActiveDimensionsDegraded: fails CLOSED — unresolvable scope with anything degraded is true', () => {
+  // Nothing dispatched, but something is in `degraded`: not "nothing failed", but
+  // "we cannot tell what was active, and something already failed" — fail closed.
+  assert.equal(allActiveDimensionsDegraded([], ['bug', 'security']), true);
+  // A `dispatched` entry that does not resolve to any agentSpec (a registry rename between
+  // the run that wrote a replayed checkpoint and this one) also resolves to zero active
+  // dimensions — same fail-closed arm.
+  assert.equal(allActiveDimensionsDegraded(['some:renamed-agent'], ['bug']), true);
+});
+
+test('allActiveDimensionsDegraded: a multi-dimension agent degraded ALONE is not all-degraded', () => {
+  // conventions-and-intent owns convention/intent/comment_accuracy; the other 6 dimensions
+  // (owned by the other 6 dispatched agents) are healthy, so the run is not all-degraded.
+  const dispatched = [...AGENTS];
+  const degraded = ['convention', 'intent', 'comment_accuracy'];
+  assert.equal(allActiveDimensionsDegraded(dispatched, degraded), false);
+});
+
+test('allActiveDimensionsDegraded: scope-relative — a light-scope run with both active agents degraded is true', () => {
+  // Only bug-detector and security-reviewer were dispatched (e.g. { deep: false } scope);
+  // both fail, so the run is all-degraded even though 7 other dimensions exist and were
+  // never active. The comparison must be relative to `dispatched`, not to every DIMENSIONS row.
+  const dispatched = ['code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer'];
+  const degraded = ['bug', 'security'];
+  assert.equal(allActiveDimensionsDegraded(dispatched, degraded), true);
 });
 
 // v2-grade elicitation frame (hill-climb iter 1): the terse one-liner dropped raw
