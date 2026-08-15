@@ -2819,17 +2819,28 @@ function agentActive(spec, agentFlags) {
 }
 
 // allActiveDimensionsDegraded(dispatched, degraded) -> boolean (issue #178).
-// True only when at least one agent was dispatched AND every dimension owned by a
-// dispatched agent is in the degraded list. Dimension-level and scope-relative on
-// purpose: a light-scope run whose two active agents both fail must fail loud too,
-// and the comparison stays correct if degradation ever becomes finer than per-agent.
+// True when every dimension owned by a dispatched agent is in the degraded list.
+// Dimension-level and scope-relative on purpose: a light-scope run whose two active
+// agents both fail must fail loud too, and the comparison stays correct if degradation
+// ever becomes finer than per-agent.
+//
+// FAIL-CLOSED arm: if `dispatched` resolves to zero active dimensions — agentSpecs()
+// no longer recognizes an agentType in it (a registry rename between the run that wrote
+// a replayed checkpoint and this one) or `dispatched` is absent entirely — this is
+// UNRESOLVABLE scope, not "nothing was dispatched, so nothing degraded." Reading it as
+// "not all degraded" would let a replay with unresolvable scope and something already in
+// `degraded` sail through as an ok:true empty clean review: the exact silent success this
+// guard exists to stop. So an empty activeDims returns whether anything was reported
+// degraded at all, not false. The call site's findings-empty conjunct is what keeps this
+// arm from ever aborting a replay that actually carries findings (see runWith).
 function allActiveDimensionsDegraded(dispatched, degraded) {
   const dispatchedSet = new Set(dispatched || []);
   const degradedSet = new Set(degraded || []);
   const activeDims = agentSpecs()
     .filter((spec) => dispatchedSet.has(spec.agentType))
     .flatMap((spec) => spec.dimensions);
-  return activeDims.length > 0 && activeDims.every((d) => degradedSet.has(d));
+  if (activeDims.length === 0) return degradedSet.size > 0;
+  return activeDims.every((d) => degradedSet.has(d));
 }
 
 // The canonical finding ITEM schema (one array element). Declared IN FULL — every
@@ -6021,7 +6032,30 @@ async function runWith(ctx, rawArgs) {
     // this run actually resolved to, so "why did discovery fail" is answerable from the
     // envelope alone — a mismatch between resolvedPolicy and the intended model is the
     // most common root cause (this guard's own incident was exactly that).
-    if (allActiveDimensionsDegraded(discoverOut.dispatched, discoverOut.degraded)) {
+    //
+    // Two more conjuncts guard this trip, both added after the helper's fail-closed arm
+    // above (issue #178 follow-up):
+    //   (a) `(discoverOut.findings || []).length === 0` — on a SAME-VERSION discover
+    //       output this is vacuously true (a degraded agent contributes no findings by
+    //       construction), so it changes nothing there. It exists solely so the helper's
+    //       fail-closed arm never aborts a VERSION-SKEW replay (a renamed/unresolvable
+    //       agentType in `dispatched`) that still carries real findings from before the
+    //       rename — those findings are real work product, not the silent emptiness this
+    //       guard exists to catch.
+    //   (b) `checkpoints.challenge === undefined` — a replayable challenge checkpoint
+    //       (PERSISTED_RESUME_PHASES) means a PRIOR attempt already reviewed and its
+    //       delivered set is sitting in `checkpoints.challenge`. Aborting here would drop
+    //       that checkpoint from the returned resume map (this branch strips `discover`,
+    //       not `challenge`, but returning early never reaches the phase that would carry
+    //       it forward) and report "no review was performed" about a run that already
+    //       delivered one. So a totally re-degraded fresh discovery on such a resume must
+    //       NOT abort — it stays degraded-but-disclosed (the per-agent gaps and
+    //       stats.degraded above still say so) and the run proceeds to replay and deliver
+    //       the prior challenge output; the empty-report guard downstream is what protects
+    //       that replayed delivery if it were ever somehow empty.
+    if (allActiveDimensionsDegraded(discoverOut.dispatched, discoverOut.degraded)
+      && (discoverOut.findings || []).length === 0
+      && checkpoints.challenge === undefined) {
       gaps.push(`all-degraded: every active discovery dimension degraded (${(discoverOut.degraded || []).join(', ')}) — no discovery agent completed, so nothing was reviewed; failing loud instead of returning an empty clean review (see the per-agent gaps above; a model/provider mismatch is the most likely cause — the envelope's resolvedPolicy names the resolution)`);
       const resumable = { ...phaseOutputs };
       delete resumable.discover; // a degraded-to-nothing discover output must never replay on resume — a retry re-dispatches discovery under (possibly corrected) policy

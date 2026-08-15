@@ -180,9 +180,24 @@ test('allActiveDimensionsDegraded: false when at least one active agent is healt
   assert.equal(allActiveDimensionsDegraded(dispatched, degraded), false);
 });
 
-test('allActiveDimensionsDegraded: false when nothing was dispatched (empty dispatched list)', () => {
+// Reconciled for the fail-closed arm (issue #178 follow-up, finding 2): an unresolvable
+// scope (empty `dispatched` — nothing active, OR every entry in it fails to resolve to a
+// dimension via agentSpecs(), e.g. a registry rename) is false ONLY when nothing was ever
+// reported degraded either. The instant anything is in `degraded`, unresolvable scope must
+// read as all-degraded, not as "nothing failed" — that silent-success reading is exactly
+// what the guard exists to stop on a version-skew checkpoint replay.
+test('allActiveDimensionsDegraded: empty/unresolvable dispatched is false ONLY when nothing was degraded either', () => {
   assert.equal(allActiveDimensionsDegraded([], []), false);
-  assert.equal(allActiveDimensionsDegraded([], ['bug', 'security']), false);
+});
+
+test('allActiveDimensionsDegraded: fails CLOSED — unresolvable scope with anything degraded is true', () => {
+  // Nothing dispatched, but something is in `degraded`: not "nothing failed", but
+  // "we cannot tell what was active, and something already failed" — fail closed.
+  assert.equal(allActiveDimensionsDegraded([], ['bug', 'security']), true);
+  // A `dispatched` entry that does not resolve to any agentSpec (a registry rename between
+  // the run that wrote a replayed checkpoint and this one) also resolves to zero active
+  // dimensions — same fail-closed arm.
+  assert.equal(allActiveDimensionsDegraded(['some:renamed-agent'], ['bug']), true);
 });
 
 test('allActiveDimensionsDegraded: a multi-dimension agent degraded ALONE is not all-degraded', () => {
