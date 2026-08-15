@@ -70,6 +70,7 @@ import os
 import re
 import sys
 from datetime import datetime, timezone
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(__file__))
 from script_io import write_result
@@ -150,14 +151,14 @@ def normalize_field_names(findings):
 SEVERITY_ORDER = ["critical", "high", "medium", "low"]
 
 # Default thresholds used when REVIEW.md is absent or does not specify them.
-# parse_review_md() itself still substitutes DEFAULT_CONFIDENCE_THRESHOLD (70)
-# for an unset confidence_threshold -- that is its own pinned contract, covered
-# by the missing_defaults parity fixture, and is unrelated to the split below.
-# DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD is apply_threshold_filter's own
-# config-absent fallback (a `config` dict with no confidence_threshold key at
-# all -- the shape the skill hands the JS pipeline when REVIEW.md never sets
-# the key, per its "do not pin defaults" rule). Security effective threshold
-# is unaffected: it still falls back to DEFAULT_CONFIDENCE_THRESHOLD (70).
+# As of issue #94 F7, parse_review_md() does NOT pre-fill these into its returned
+# dict -- it only sets confidence_threshold/security_min_confidence/severity_threshold
+# when the corresponding key is actually found (see parse_review_md's docstring and
+# the missing_defaults / commented_keys_ignored parity fixtures, both of which now
+# return a config with those keys absent). These constants back the *fallback*
+# apply_threshold_filter applies via config.get(key, DEFAULT) when the key is
+# missing: DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD (55) for non-security
+# dimensions, DEFAULT_CONFIDENCE_THRESHOLD (70) for the security branch.
 DEFAULT_CONFIDENCE_THRESHOLD = 70
 DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55
 DEFAULT_SECURITY_MIN_CONFIDENCE = 70
@@ -168,22 +169,38 @@ DEFAULT_SEVERITY_THRESHOLD = "low"  # pass all severities by default
 _CONTESTATION_DROP_THRESHOLD = 25
 
 
+def _strip_matching_quotes(item):
+    """
+    Ignore entries are raw substrings matched against a finding's title+description
+    (apply_exclusions, below). Written REVIEW.md examples wrap the pattern in quotes
+    for readability (`- "console.log in dev mode"`) -- strip ONE matching pair of
+    surrounding quotes (single or double) so the stored pattern is the bare
+    substring, not a string that includes the quote characters (which would then
+    never appear in an unquoted finding title/description and silently never
+    match; issue #94 adversarial review F2). Only a single matching pair strips --
+    an entry that is not quote-wrapped, or whose quotes don't match, passes
+    through untouched.
+    """
+    if len(item) >= 2 and item[0] == item[-1] and item[0] in ("'", '"'):
+        return item[1:-1]
+    return item
+
+
 def parse_review_md(path):
     """
     Extract confidence_threshold, severity_threshold, and ignore patterns from REVIEW.md.
 
-    Returns a dict with keys:
-        confidence_threshold    int   (default: DEFAULT_CONFIDENCE_THRESHOLD)
-        security_min_confidence int   (default: DEFAULT_SECURITY_MIN_CONFIDENCE)
-        severity_threshold      str   (default: DEFAULT_SEVERITY_THRESHOLD)
-        ignore                  list  (default: [])
+    Returns a dict with `ignore` always present (default: []). `confidence_threshold`,
+    `security_min_confidence`, and `severity_threshold` are present ONLY when the
+    corresponding key was actually found in the file (issue #94 adversarial review
+    F7) -- this dict is not pre-filled with DEFAULT_CONFIDENCE_THRESHOLD /
+    DEFAULT_SECURITY_MIN_CONFIDENCE / DEFAULT_SEVERITY_THRESHOLD. A caller reading an
+    absent key must use `.get(key, DEFAULT)` -- apply_threshold_filter already does,
+    and that is what lets its own non-security/security default split (55/70) take
+    effect for a config-absent REVIEW.md, matching the JS pipeline's contract of
+    only stamping keys REVIEW.md actually set.
     """
-    config = {
-        "confidence_threshold": DEFAULT_CONFIDENCE_THRESHOLD,
-        "security_min_confidence": DEFAULT_SECURITY_MIN_CONFIDENCE,
-        "severity_threshold": DEFAULT_SEVERITY_THRESHOLD,
-        "ignore": [],
-    }
+    config: dict[str, Any] = {"ignore": []}
 
     try:
         with open(path) as fh:
@@ -226,32 +243,44 @@ def parse_review_md(path):
         )
         block_text = text
 
-    # confidence_threshold
-    m = re.search(r"confidence_threshold\s*[:=]\s*(\d+)", block_text)
+    # Every key regex is anchored to the start of a line (ignoring leading
+    # whitespace) via `^` + re.MULTILINE. A `#` before the key -- a commented-out
+    # example line, e.g. `# confidence_threshold: 70` in a scaffolding template --
+    # is not in the `[ \t]*` leading-whitespace class, so it breaks the anchor and
+    # the line is correctly ignored. Without this anchor, a commented example
+    # silently became live config (issue #94 adversarial review F1).
+    m = re.search(
+        r"^[ \t]*confidence_threshold\s*[:=]\s*(\d+)", block_text, re.MULTILINE
+    )
     if m:
         config["confidence_threshold"] = int(m.group(1))
 
     # security_min_confidence
-    m = re.search(r"security_min_confidence\s*[:=]\s*(\d+)", block_text)
+    m = re.search(
+        r"^[ \t]*security_min_confidence\s*[:=]\s*(\d+)", block_text, re.MULTILINE
+    )
     if m:
         config["security_min_confidence"] = int(m.group(1))
 
     # severity_threshold
     m = re.search(
-        r"severity_threshold\s*[:=]\s*(critical|high|medium|low)",
+        r"^[ \t]*severity_threshold\s*[:=]\s*(critical|high|medium|low)",
         block_text,
-        re.IGNORECASE,
+        re.IGNORECASE | re.MULTILINE,
     )
     if m:
         config["severity_threshold"] = m.group(1).lower()
 
-    # ignore list -- lines after "ignore:" that start with "  -" or "- "
-    ignore_section = re.search(r"ignore\s*:\s*\n((?:[ \t]*-[^\n]*\n?)+)", block_text)
+    # ignore list -- lines after "ignore:" that start with "  -" or "- ". The
+    # `ignore:` anchor itself: same rationale, `^[ \t]*` before it, never `#`.
+    ignore_section = re.search(
+        r"^[ \t]*ignore\s*:\s*\n((?:[ \t]*-[^\n]*\n?)+)", block_text, re.MULTILINE
+    )
     if ignore_section:
         for line in ignore_section.group(1).splitlines():
             item = re.sub(r"^\s*-\s*", "", line).strip()
             if item:
-                config["ignore"].append(item)
+                config["ignore"].append(_strip_matching_quotes(item))
 
     return config
 
@@ -1391,15 +1420,12 @@ def main():
     # ------------------------------------------------------------------
     # Parse REVIEW.md config
     # ------------------------------------------------------------------
-    if args.review_md:
-        config = parse_review_md(args.review_md)
-    else:
-        config = {
-            "confidence_threshold": DEFAULT_CONFIDENCE_THRESHOLD,
-            "security_min_confidence": DEFAULT_SECURITY_MIN_CONFIDENCE,
-            "severity_threshold": DEFAULT_SEVERITY_THRESHOLD,
-            "ignore": [],
-        }
+    # No REVIEW.md at all -- omit the threshold keys entirely (issue #94 F7) rather
+    # than pinning DEFAULT_CONFIDENCE_THRESHOLD/DEFAULT_SEVERITY_THRESHOLD, so
+    # apply_threshold_filter's own config-absent fallback (55 non-security / 70
+    # security) actually takes effect for the retained CLI, matching
+    # parse_review_md's contract above.
+    config = parse_review_md(args.review_md) if args.review_md else {"ignore": []}
 
     # ------------------------------------------------------------------
     # Load exclusions

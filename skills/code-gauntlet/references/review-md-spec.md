@@ -5,7 +5,7 @@ A `REVIEW.md` file lets project maintainers customize how code-gauntlet behaves.
 ## Contents
 
 - **Format** — Section overview, all sections optional
-- **Section Details** — Focus, Skip, Rules, Severity/Confidence Thresholds, Model Tier, Default Delivery, Ignore
+- **Section Details** — Rules and other prose, Severity/Confidence Thresholds, Model Tier, Default Delivery, Ignore
 - **Hierarchy** — Root + subdirectory configs, merge rules, discovery prompts
 - **Rule-Writing Principles** — Prescriptive vs directional, 15-25 rules per file
 - **Scaffolding Templates** — Root template, subdirectory template
@@ -28,7 +28,7 @@ both define these as constants; `tests/test_review_md_contract.py` asserts this 
 numbers match both files.
 <!-- /code-gauntlet-defaults -->
 
-```markdown
+````markdown
 # Review Configuration
 
 ## Rules
@@ -48,8 +48,7 @@ ignore:
   - "console.log in development mode"
   - "import order"
 ```
-
-```
+````
 
 The config block can go anywhere in the file — the parser searches for it independent of any
 heading. It is shown here after `## Rules` only because that's how the scaffolding templates below
@@ -146,17 +145,25 @@ which agent raised it.
 
 This is useful when a project has intentional patterns that agents consistently flag incorrectly.
 
-**Date-stamp ignore patterns** for long-term maintenance, so quarterly audits can identify stale
-suppressions. The parser only reads consecutive `- ` list lines under `ignore:` — a comment line
-between entries breaks the list silently, so put the date and reason inside the pattern string
-itself rather than on its own line:
+**Write the raw substring only — no surrounding quotes needed, and never append a reason or date to
+the pattern itself.** Quotes are optional (the parser strips one matching pair if present, so
+`"pattern"` and `pattern` behave identically), but a reason or date tacked onto the end changes what
+the entry matches: `ignore` compares the pattern as a literal substring against unquoted finding
+text, so `"file naming (EF Core migrations are generated, 2026-03-25)"` only matches a finding whose
+title or description happens to contain that entire sentence — which essentially never happens — and
+silently suppresses nothing. Keep the pattern to just the words that actually appear in the finding:
 
 ```yaml
 # code-gauntlet
 ignore:
-  - "file naming (EF Core migrations are generated, 2026-03-25)"
-  - "nullable reference (test assertion helpers intentionally skip guards, 2026-03-25)"
+  - file naming
+  - nullable reference
 ```
+
+Track *why* a pattern was added wherever you already track file history — the commit that adds the
+entry, or a PR/issue comment — not inside the pattern string. The parser only reads consecutive `-`
+list lines under `ignore:` anyway; a comment line between entries breaks the list silently, so there
+is no in-file place to put a per-entry note that both parses correctly and doesn't corrupt the match.
 
 **Soft cap: 10-15 ignore patterns per file.** If you exceed this, it signals either rules that are too sensitive (remove or rewrite them) or a systematic mismatch between your rules and your codebase. Proliferating ignore patterns erodes trust in the review system — when engineers start ignoring entire categories of findings, the tool becomes actively harmful.
 
@@ -295,7 +302,7 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
 
 ### Root REVIEW.md template
 
-```markdown
+````markdown
 # Review Configuration
 
 <!-- Customizes how code-gauntlet analyzes this repository.
@@ -342,35 +349,34 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
      built-in default rather than guessing at a starting number. -->
 ```yaml
 # code-gauntlet
-# confidence_threshold: 70
-#   Minimum confidence (0-100) to include findings. Built-in default when
-#   omitted: 55 for non-security dimensions, 70 for security. Setting this
-#   applies it to all non-security dimensions; there is no per-dimension
-#   override.
-# security_min_confidence: 70
+# confidence_threshold: <0-100>
+#   Minimum confidence to include findings. Built-in default when omitted: 55
+#   for non-security dimensions, 70 for security. Setting this applies it to
+#   all non-security dimensions; there is no per-dimension override.
+# security_min_confidence: <0-100>
 #   Effective security threshold is min(confidence_threshold,
 #   security_min_confidence) — a ceiling, not a floor. Set this lower than
 #   confidence_threshold to keep borderline security findings; there is no
 #   minimum it cannot go below.
-# severity_threshold: medium
-#   Minimum severity to include. Options: critical, high, medium, low.
-#   Built-in default when omitted: low (show everything). Useful for
-#   high-debt codebases where low/medium noise drowns out critical issues.
+# severity_threshold: <critical|high|medium|low>
+#   Minimum severity to include. Built-in default when omitted: low (show
+#   everything). Useful for high-debt codebases where low/medium noise drowns
+#   out critical issues.
 # ignore:
 #   Suppress known false positives. Each entry is a substring matched
-#   case-insensitively against a finding's title + description, first
-#   match wins — not scoped by dimension. Date-stamp inside the string
-#   for an audit trail, e.g.:
+#   case-insensitively against a finding's title + description, first match
+#   wins — not scoped by dimension. The pattern is the substring ONLY, never a
+#   reason or date appended to it (that changes what it matches); track why an
+#   entry was added in the commit/PR that added it instead. E.g.:
 #   ignore:
-#     - "hardcoded string (test fixtures use fake data, not secrets, 2026-01-15)"
-#     - "file naming (migration files are generated, 2026-01-15)"
+#     - <substring>
+#     - <another substring>
 ```
-
-```
+````
 
 ### Subdirectory REVIEW.md template
 
-```markdown
+````markdown
 # Review Configuration — [directory name]
 
 <!-- Settings here override root REVIEW.md. Rules and ignore patterns
@@ -391,5 +397,4 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
 # ignore:
 #   - "..."
 ```
-
-```
+````

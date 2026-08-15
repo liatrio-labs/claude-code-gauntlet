@@ -66,18 +66,19 @@ function normalizeFieldNames(findings) {
 // one there) collided as "already been declared" — a runtime SyntaxError. filterFindings.js
 // is emitted before applyChallenges.js (build.js ORDER), so the export is in scope there.
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
-// DEFAULT_CONFIDENCE_THRESHOLD is the Python-parity-pinned default: parseReviewMd
-// substitutes it when REVIEW.md omits confidence_threshold (the parse_review_md
-// `missing_defaults` fixture pins 70 for the PARSE function itself — an unrelated,
-// still-70 contract), and the SECURITY branch of applyThresholdFilter uses it so
-// an unconfigured security bar stays min(70,70)=70. The NON-security runtime
-// default is decoupled: when the skill's reviewConfig omits confidence_threshold,
-// non-security dimensions filter at 55 (rescues conf-55-68 goldens) while security
-// is unchanged at 70. scripts/filter_findings.py's apply_threshold_filter carries
-// the identical split (its own DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD) — both
-// runtimes agree on the config-absent split now (issue #94); an EXPLICIT
-// confidence_threshold (user REVIEW.md override) still applies to BOTH branches in
-// both languages.
+// DEFAULT_CONFIDENCE_THRESHOLD backs the SECURITY branch of applyThresholdFilter's
+// config-absent fallback, so an unconfigured security bar stays min(70,70)=70. As
+// of issue #94 F7, parseReviewMd/parse_review_md no longer pre-fill this into their
+// returned config -- they only set confidence_threshold when REVIEW.md's config
+// block actually sets it, so a truly config-absent REVIEW.md reaches
+// applyThresholdFilter's `cfgGet(config, 'confidence_threshold', DEFAULT)` fallback
+// below rather than an already-70-filled value. The NON-security runtime default is
+// decoupled: when confidence_threshold is absent, non-security dimensions filter at
+// 55 (rescues conf-55-68 goldens) while security is unchanged at 70.
+// scripts/filter_findings.py's apply_threshold_filter carries the identical split
+// (its own DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD) — both runtimes agree on the
+// config-absent split; an EXPLICIT confidence_threshold (user REVIEW.md override)
+// still applies to BOTH branches in both languages.
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
 const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
@@ -97,15 +98,38 @@ function cfgGet(config, key, fallback) {
   return v === undefined || v === null ? fallback : v;
 }
 
+// Ignore entries are raw substrings matched against a finding's title+description
+// (applyExclusions, further down). Written REVIEW.md examples wrap the pattern in
+// quotes for readability (`- "console.log in dev mode"`) -- strip ONE matching pair
+// of surrounding quotes (single or double) so the stored pattern is the bare
+// substring, not a string that includes the quote characters (which would then
+// never appear in an unquoted finding title/description and silently never match;
+// issue #94 adversarial review F2). Only a single matching pair strips -- an entry
+// that is not quote-wrapped, or whose quotes don't match, passes through untouched.
+function stripMatchingQuotes(item) {
+  if (item.length >= 2) {
+    const first = item[0];
+    const last = item[item.length - 1];
+    if ((first === '"' || first === "'") && first === last) {
+      return item.slice(1, -1);
+    }
+  }
+  return item;
+}
+
 // Port of parse_review_md. Python reads a file by path; this twin takes the
 // REVIEW.md TEXT directly (the workflow runtime has no disk access).
+//
+// `ignore` is always present (default: []). `confidence_threshold`,
+// `security_min_confidence`, and `severity_threshold` are present ONLY when the
+// corresponding key was actually found in the text (issue #94 adversarial review
+// F7) -- this object is not pre-filled with DEFAULT_CONFIDENCE_THRESHOLD /
+// DEFAULT_SECURITY_MIN_CONFIDENCE / DEFAULT_SEVERITY_THRESHOLD. A caller reading
+// an absent key must use `cfgGet` -- applyThresholdFilter already does, and that
+// is what lets its own non-security/security default split (55/70) take effect
+// for a config-absent REVIEW.md.
 function parseReviewMd(text) {
-  const config = {
-    confidence_threshold: DEFAULT_CONFIDENCE_THRESHOLD,
-    security_min_confidence: DEFAULT_SECURITY_MIN_CONFIDENCE,
-    severity_threshold: DEFAULT_SEVERITY_THRESHOLD,
-    ignore: [],
-  };
+  const config = { ignore: [] };
 
   if (text === undefined || text === null) return config;
 
@@ -134,21 +158,28 @@ function parseReviewMd(text) {
   // return value is unaffected so the JS twin has nothing to emit).
   if (!blockText) blockText = text;
 
-  let m = /confidence_threshold\s*[:=]\s*(\d+)/.exec(blockText);
+  // Every key regex is anchored to the start of a line (ignoring leading
+  // whitespace) via `^` + the `m` flag. A `#` before the key -- a commented-out
+  // example line, e.g. `# confidence_threshold: 70` in a scaffolding template --
+  // is not in the `[ \t]*` leading-whitespace class, so it breaks the anchor and
+  // the line is correctly ignored. Without this anchor, a commented example
+  // silently became live config (issue #94 adversarial review F1).
+  let m = /^[ \t]*confidence_threshold\s*[:=]\s*(\d+)/m.exec(blockText);
   if (m) config.confidence_threshold = parseInt(m[1], 10);
 
-  m = /security_min_confidence\s*[:=]\s*(\d+)/.exec(blockText);
+  m = /^[ \t]*security_min_confidence\s*[:=]\s*(\d+)/m.exec(blockText);
   if (m) config.security_min_confidence = parseInt(m[1], 10);
 
-  m = /severity_threshold\s*[:=]\s*(critical|high|medium|low)/i.exec(blockText);
+  m = /^[ \t]*severity_threshold\s*[:=]\s*(critical|high|medium|low)/im.exec(blockText);
   if (m) config.severity_threshold = m[1].toLowerCase();
 
   // ignore: consecutive "-"-led lines, indentation-tolerant (spaces or tabs).
-  const ignoreSection = /ignore\s*:\s*\n((?:[ \t]*-[^\n]*\n?)+)/.exec(blockText);
+  // The `ignore:` anchor itself. Same rationale: `^[ \t]*` before it, never `#`.
+  const ignoreSection = /^[ \t]*ignore\s*:\s*\n((?:[ \t]*-[^\n]*\n?)+)/m.exec(blockText);
   if (ignoreSection) {
     for (const line of ignoreSection[1].split('\n')) {
       const item = line.replace(/^\s*-\s*/, '').trim();
-      if (item) config.ignore.push(item);
+      if (item) config.ignore.push(stripMatchingQuotes(item));
     }
   }
 

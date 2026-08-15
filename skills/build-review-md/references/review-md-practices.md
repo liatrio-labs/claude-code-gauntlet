@@ -152,8 +152,9 @@ Run this audit when acceptance rate drops below 50%, or at minimum every quarter
 4. **Contradiction audit:** Read all REVIEW.md files in sequence. Do accumulated rules
    conflict? Root says "prefer X" while subdirectory implies "avoid X"?
 
-5. **Ignore pattern review:** Check each date-stamped ignore pattern. Is the suppressed
-   framework pattern still in use? Remove stale ignores.
+5. **Ignore pattern review:** Check each ignore pattern's commit history for why it was added
+   (`references/review-md-spec.md` → Ignore — reasons live in commit/PR history, not the pattern
+   itself). Is the suppressed framework pattern still in use? Remove stale ignores.
 
 6. **Rule count check:** Count total rules across all files. If exceeding 50 total
    (root + all subdirectories), prune ruthlessly. Each rule beyond the ceiling dilutes all
@@ -237,8 +238,8 @@ optimized
 ```yaml
 # code-gauntlet
 ignore:
-  - "optional chaining (Zod schema definitions use it intentionally)"
-  - "file length (RTK Query API slice definitions run long by convention)"
+  - optional chaining
+  - file length
 ```
 ````
 
@@ -316,8 +317,8 @@ optimized
 ```yaml
 # code-gauntlet
 ignore:
-  - "file naming (Django migration files are generated)"
-  - "missing return type (class-based Django views)"
+  - file naming
+  - missing return type
 ```
 ````
 
@@ -371,7 +372,7 @@ optimized
 ```yaml
 # code-gauntlet
 ignore:
-  - "error message capitalization (third-party library error wrapping)"
+  - error message capitalization
 ```
 ````
 
@@ -420,7 +421,7 @@ optimized
 ```yaml
 # code-gauntlet
 ignore:
-  - "wildcard imports (Spring Boot auto-configuration classes)"
+  - wildcard imports
 ```
 ````
 
@@ -459,8 +460,8 @@ optimized
 ```yaml
 # code-gauntlet
 ignore:
-  - "method length (Spring Data JPA specification classes)"
-  - "unchecked cast (Spring generic type erasure patterns)"
+  - method length
+  - unchecked cast
 ```
 ````
 
@@ -480,32 +481,38 @@ only reads *consecutive* `-` lines under `ignore:`; a comment line between entri
 as comments interleaved in one list:
 
 ```yaml
-# Good: category-level suppression
+# Good: category-level suppression (EF Core migration files / test assertion helpers)
 ignore:
-  - "file naming (EF Core migration files)"
-  - "nullable reference (test assertion helpers)"
+  - file naming
+  - nullable reference
 ```
 
 ```yaml
 # Too narrow: breaks when code moves
 ignore:
-  - "null reference in UserService.GetCoach line 47"
+  - null reference in UserService.GetCoach line 47
 ```
 
 ```yaml
 # Too broad: suppresses genuine findings
 ignore:
-  - "null reference"
+  - null reference
 ```
 
-**Date-stamp every ignore pattern.** Since a comment line breaks the consecutive-`-` list, fold the
-date and reason into the pattern string itself rather than putting it on its own line:
+**Never append a reason or date to the pattern itself.** `ignore` entries match literally against
+unquoted finding text (`references/review-md-spec.md` → Ignore) — `file naming` matches any finding
+whose title/description contains those words, but `file naming (EF Core migrations are generated,
+2026-03-30)` only matches a finding that contains that entire sentence, which essentially never
+happens. A pattern padded with a reason silently suppresses nothing. Since the parser also breaks on
+a comment line between `-` entries, there is no in-file way to attach a per-entry note that both
+parses correctly and doesn't corrupt the match — track *why* a pattern was added in the commit that
+added it, not in REVIEW.md:
 
 ```yaml
 # code-gauntlet
 ignore:
-  - "file naming (EF Core migrations are generated, 2026-03-30)"
-  - "nullable reference (test assertion helpers intentionally skip guards, 2026-03-30)"
+  - file naming
+  - nullable reference
 ```
 
 **Soft cap:** 10–15 ignore patterns per file. Exceeding this signals either over-sensitive

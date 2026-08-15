@@ -1,0 +1,4 @@
+{
+  "fn": "parse_review_md",
+  "markdown": "```yaml\n# code-gauntlet\n# confidence_threshold: 70\n# security_min_confidence: 70\n# severity_threshold: medium\n```\n"
+}

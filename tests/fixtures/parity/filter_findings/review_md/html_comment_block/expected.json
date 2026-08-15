@@ -2,7 +2,6 @@
   "config": {
     "confidence_threshold": 60,
     "ignore": [],
-    "security_min_confidence": 70,
     "severity_threshold": "high"
   }
 }

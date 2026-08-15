@@ -219,20 +219,24 @@ AskUserQuestion(
 )
 ```
 
-If yes, show the same numbered list and let the user pick (same natural patterns as task selection). Ask for a brief reason.
+If yes, show the same numbered list and let the user pick (same natural patterns as task selection). Ask for a brief reason — this reason is recorded in the chat response and, for a PR/MR target, the delivery comment thread; it is NOT written into REVIEW.md (see below).
 
 ### Show proposed entries before writing
 
 ```
 These entries would be added to REVIEW.md's ignore list:
 
-- "prompt injection via template tokens (not exploitable in current architecture, 2026-03-24)"
-- "DateTime.UtcNow testability (tracked in ROADMAP.md as deferred item, 2026-03-24)"
+- prompt injection via template tokens (reason: not exploitable in current architecture)
+- DateTime.UtcNow testability (reason: tracked in ROADMAP.md as deferred item)
 ```
 
-Each entry: a substring matching the finding's title, parenthesized reason with date folded into
-the same string. `ignore` entries are not scoped by dimension (`references/review-md-spec.md` →
-Ignore) — do not prefix with `dimension:`.
+Each entry is the raw substring only — the parenthesized reason above is chat-facing context for the
+user's confirmation, never part of the string that gets written to REVIEW.md. `ignore` entries match
+literally against unquoted finding text (`references/review-md-spec.md` → Ignore): appending a reason
+or date to the pattern changes what it matches, and a pattern padded with prose essentially never
+matches anything again — the entry would silently suppress nothing. Write only `prompt injection via
+template tokens` and `DateTime.UtcNow testability` to the file; the reason stays in the conversation.
+`ignore` entries are not scoped by dimension either — do not prefix with `dimension:`.
 
 ### Confirm via AskUserQuestion before writing
 
@@ -252,11 +256,19 @@ AskUserQuestion(
 
 If confirmed, the entries must land inside the parser's config block (`references/review-md-spec.md`
 → Format) — a bare `## Ignore` heading with bullet items is never parsed, so writing there would
-silently produce dead configuration:
+silently produce dead configuration. **Check for an existing config block first, including a legacy
+one** — `parse_review_md`/`parseReviewMd` still recognize the pre-rename `` ```deep-review `` fenced
+form and `<!-- deep-review-config -->` comment form (`references/review-md-spec.md` → Format), and
+both block-pattern lists try the current `code-gauntlet` markers before the legacy ones. If a legacy
+block exists and a NEW `code-gauntlet` block were appended instead, the current-before-legacy match
+order means the new block would win — silently discarding whatever thresholds the legacy block set,
+not just failing to add the ignore entries:
 
 - If no REVIEW.md exists → create it using the scaffolding template from `references/review-md-spec.md`, with the config block's `ignore:` key uncommented and populated
-- If REVIEW.md exists without a ` ```yaml # code-gauntlet ` block (or `<!-- code-gauntlet-config -->` block) → append one at the end of the file with an `ignore:` list
-- If a config block exists without an `ignore:` key → add the key with the new entries as its list
+- If REVIEW.md has an existing `code-gauntlet` block (current markers) → edit that one
+- If REVIEW.md has only a legacy `deep-review` block (fenced or HTML-comment form) and no `code-gauntlet` block → edit the legacy block in place (add/extend its `ignore:` key); do not create a second, competing `code-gauntlet` block
+- If REVIEW.md exists with neither form → append a new ` ```yaml # code-gauntlet ` block at the end of the file with an `ignore:` list
+- If the target block exists without an `ignore:` key → add the key with the new entries as its list
 - If `ignore:` already has entries → append the new entries as additional `-` list lines directly under the existing ones (the parser only reads *consecutive* `-`-led lines under `ignore:`, so nothing else may be inserted between them)
 
 After writing: "Added N dismissed findings to REVIEW.md. These won't be flagged in future reviews."
