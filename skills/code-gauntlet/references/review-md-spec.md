@@ -59,6 +59,12 @@ REVIEW.md text directly for `## Model Tier` and `## Default Delivery` headings (
 block above, and not the Filter stage's `parseReviewMd`/`parse_review_md`). See their own sections
 below.
 
+**Legacy forms.** `parseReviewMd`/`parse_review_md` also still recognize the pre-rename block
+forms — a fenced ```` ```deep-review ```` block and an `<!-- deep-review-config -->` comment block
+— so a REVIEW.md written before the `code-gauntlet` rename keeps working unmodified. When a file
+somehow has both a current-form block and a legacy-form block, the parser checks the current form
+first and uses that one.
+
 ## Section Details
 
 ### Rules and other prose

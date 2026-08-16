@@ -48,28 +48,18 @@ def _extract_doc_defaults(text):
             )
         return int(found.group(1))
 
-    return {
-        "confidence_threshold_nonsecurity": _num("confidence_threshold"),
-        "security_min_confidence": _num("security_min_confidence"),
-        "severity_threshold": None,  # extracted separately, not numeric
-    }
-
-
-def _extract_doc_severity(text):
-    m = re.search(
-        r"<!--\s*code-gauntlet-defaults\s*-->(.*?)<!--\s*/code-gauntlet-defaults\s*-->",
-        text,
-        re.DOTALL,
-    )
-    assert m is not None, "defaults marker block not found"
-    block = m.group(1)
-    found = re.search(r"`severity_threshold`\s*\n?\s*\*\*(\w+)\*\*", block)
-    if not found:
+    severity = re.search(r"`severity_threshold`\s*\n?\s*\*\*(\w+)\*\*", block)
+    if not severity:
         raise AssertionError(
             "Could not find a bolded value for `severity_threshold` inside the "
             "code-gauntlet-defaults marker block."
         )
-    return found.group(1)
+
+    return {
+        "confidence_threshold_nonsecurity": _num("confidence_threshold"),
+        "security_min_confidence": _num("security_min_confidence"),
+        "severity_threshold": severity.group(1),
+    }
 
 
 def _extract_py_constants(text):
@@ -124,13 +114,11 @@ class TestReviewMdDefaultsContract(unittest.TestCase):
 
     def test_doc_numbers_match_python_constants(self):
         doc = _extract_doc_defaults(self.spec_text)
-        doc["severity_threshold"] = _extract_doc_severity(self.spec_text)
         py = _extract_py_constants(self.py_text)
         self.assertEqual(doc, py)
 
     def test_doc_numbers_match_js_constants(self):
         doc = _extract_doc_defaults(self.spec_text)
-        doc["severity_threshold"] = _extract_doc_severity(self.spec_text)
         js = _extract_js_constants(self.js_text)
         self.assertEqual(doc, js)
 
