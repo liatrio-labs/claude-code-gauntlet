@@ -301,6 +301,31 @@ test('worst-case agent count stays under 1000; coarsening lowers challengeCap an
   assert.ok(worstCaseAgentCount(coarse, 500, 5000) < 900);   // loop terminated below the guard
 });
 
+// Issue #24 req 7 (C): summarize/validateStage/challengeStage/verifyStage now call the
+// SAME effective* helpers worstCaseAgentCount/coarsenLimits use, rather than re-deriving
+// their own fallback — this pins the summarize side of that unification by asserting the
+// stage's REAL bucket count against the term worstCaseAgentCount assumes, from an absent
+// summarizeBucketSize (the case a hand-duplicated fallback is most likely to drift on).
+test('summarize dispatches ceilDiv(files, effective bucket size) buckets — matches worstCaseAgentCount\'s own term', () => {
+  const files = Array.from({ length: 47 }, (_, i) => `f${i}.js`);
+  // no summarizeBucketSize in the raw limits: exercises the SAME fallback effectiveBucketSize
+  // applies, not the LIMIT_DEFAULTS-filled path (a raw stage input can still arrive this way
+  // — e.g. hand-built test fixtures, or bench callers that predate normalizeArgs filling it).
+  const limits = {};
+  const ctx = summarizeCtx();
+  return summarize(ctx, { changedFiles: files, changedLines: 600, limits, policy: {} }).then((out) => {
+    const bucketCalls = ctx.calls.filter((l) => !/merge/.test(l));
+    assert.equal(bucketCalls.length, Math.ceil(47 / 20)); // effectiveBucketSize({}) === 20
+    // worstCaseAgentCount's summarize term (isolated by zeroing every other term: 0 files
+    // difference aside, subtract the +1 merge and compare directly) must count the SAME
+    // number of buckets a live run actually dispatches.
+    const n = worstCaseAgentCount(limits, 47, 0);
+    const summarizeTerm = n - AGENTS.length - 0 - 0 - 0 - 2; // verify/validate/challenge terms are 0 at nFindings=0
+    assert.equal(summarizeTerm, bucketCalls.length + 1); // +1 for the merge call worstCaseAgentCount also counts
+    assert.equal(out.gaps.length, 0);
+  });
+});
+
 test('coarsenLimits raises summarizeBucketSize so a pathological file count still converges', () => {
   const limits = { summarizeBucketSize: 20, validateBatch: 10, challengeCap: 40, verifySliceSize: 200 };
   // ~20k changed files: the summarize term ceil(20000/20)+1 = 1001 ALONE exceeds the guard,
@@ -326,6 +351,18 @@ test('absent challengeCap counts as challenge-every-finding (mirrors challengeSt
   // Present-cap behavior is byte-identical to the pre-fix semantics (benchmark shape).
   const bench = { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 };
   assert.deepEqual(coarsenLimits(bench, 23, 40), { ...bench });
+});
+
+// Issue #72: verifySliceSize is no longer floored (a tiny slice is the legitimate
+// transcription-fidelity mitigation), so coarsenLimits must still TERMINATE when it starts
+// from the pathological floor of 1 against a large finding count — the doubling loop's
+// termination argument (this file's coarsenLimits comment) has to hold from the smallest
+// legal starting point, not just from the benchmarked default.
+test('coarsenLimits terminates starting from verifySliceSize:1 against a large finding count', () => {
+  const limits = { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 1 };
+  const coarse = coarsenLimits(limits, 20, 5000);
+  assert.ok(coarse.verifySliceSize > 1, 'coarsening must widen the slice size off the floor');
+  assert.ok(worstCaseAgentCount(coarse, 20, 5000) < 900);
 });
 
 test('absent size limits mirror stage defaults — the guard never goes NaN-silent', () => {
