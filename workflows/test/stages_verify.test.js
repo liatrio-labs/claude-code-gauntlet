@@ -243,6 +243,27 @@ test('(g) large set slices into ceil(n/verifySliceSize) executor calls; all trus
   assert.equal(out.gaps.length, 0);
 });
 
+// Issue #72: verifySliceSize is not floored (a tiny slice mitigates a transcription-
+// fidelity failure), so a caller who sets it small on a large finding set gets a
+// disclosure instead of a silent, expensive fan-out.
+test('verify_fanout gap fires once, above threshold, naming size/slices/dispatch-ceiling; absent below threshold', async () => {
+  const under = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new', cross_file_refs: [] }));
+  const underInput = baseInput({ findings: under, limits: { verifySliceSize: 1 } }); // 5 slices == threshold, not above
+  const underCtx = verifyCtx((_t, i) => okEnvelope([under[i]], { nonce: `n-1.${i}`, n_in: 1 }));
+  const underOut = await verifyStage(underCtx, underInput);
+  assert.ok(!underOut.gaps.some((g) => g.startsWith('verify_fanout:')), 'exactly-at-threshold does not disclose');
+
+  const over = Array.from({ length: 6 }, (_, i) => ({ id: `F${i}`, origin: 'new', cross_file_refs: [] }));
+  const overInput = baseInput({ findings: over, limits: { verifySliceSize: 1 } }); // 6 slices > threshold
+  const overCtx = verifyCtx((_t, i) => okEnvelope([over[i]], { nonce: `n-1.${i}`, n_in: 1 }));
+  const overOut = await verifyStage(overCtx, overInput);
+  const fanoutGaps = overOut.gaps.filter((g) => g.startsWith('verify_fanout:'));
+  assert.equal(fanoutGaps.length, 1, 'fires exactly once per run, not once per slice');
+  assert.match(fanoutGaps[0], /verifySliceSize=1/);
+  assert.match(fanoutGaps[0], /splits 6 finding\(s\) into 6 slices/);
+  assert.match(fanoutGaps[0], /up to 12 executor dispatches/); // 6 slices * VERIFY_ATTEMPTS_PER_SLICE(2)
+});
+
 test('(h) one bad slice among several -> ONLY that slice degrades, per-slice (issue #54)', async () => {
   const findings = Array.from({ length: 5 }, (_, i) => ({ id: `F${i}`, origin: 'new' }));
   const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
@@ -789,8 +810,11 @@ test('(n7) a slice-input writer GROUP failure degrades only the slices IT carrie
   assert.equal(byId.F0.origin, 'unknown');
   for (let i = 1; i < 6; i += 1) assert.notEqual(byId[`F${i}`].origin, 'unknown', `F${i} unaffected by group 0's failure`);
   assert.equal(ctx.execCallsFor(0).length, 0, 'slice 0 never reached the executor (no write proof)');
-  assert.equal(out.gaps.length, 1);
-  assert.match(out.gaps[0], /slice 0 \(slice-input group \d+\)/);
+  // 6 findings at verifySliceSize:1 -> 6 slices, above VERIFY_FANOUT_DISCLOSE_THRESHOLD
+  // (issue #72), so a fan-out disclosure gap leads the one per-slice degrade gap.
+  assert.equal(out.gaps.length, 2);
+  assert.match(out.gaps[0], /^verify_fanout: verifySliceSize=1 splits 6 finding\(s\) into 6 slices/);
+  assert.match(out.gaps[1], /slice 0 \(slice-input group \d+\)/);
 });
 
 test('(n8) every slice degraded -> every finding origin=unknown, one gap PER slice (the old whole-set outcome is still reachable, just no longer the only one)', async () => {
