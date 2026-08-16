@@ -267,10 +267,12 @@ the same directory set `scripts/collect_project_rules.py` walks for AGENTS.md/CL
   `.reviewignore`), unchanged from today.
 
 Do not hand-parse or schema-validate REVIEW.md here — pass the raw text through. The workflow's
-`resolveReviewConfig` (`workflows/src/args.js`) calls `parseReviewMd` per entry and merges them
-in array order per the precedence in `references/review-md-spec.md` (settings override deeper-
-wins, `ignore` accumulates); this is a structural guarantee of the args waist, not a prompt-level
-contract. In particular, `resolveReviewConfig` never pins a numeric default for
+`resolveReviewConfig` (`workflows/src/args.js`) calls `parseReviewMd` per entry, sorts entries
+root-first by path depth (structural, not caller order), and merges: a deeper entry's threshold
+**setting** overrides a shallower one's when both set it, `ignore` lists accumulate across every
+entry. The result is **one flat config applied to every finding in the run** — resolveReviewConfig
+does not implement the per-subtree scoping `references/review-md-spec.md` describes; see that
+file's own note on the gap. In particular, `resolveReviewConfig` never pins a numeric default for
 `confidence_threshold` / `security_min_confidence` when REVIEW.md does not set one — the Filter
 stage's own built-in defaults (non-security **55**, security **70**) apply exactly when absent,
 so there is nothing to "get right" by hand here anymore.
@@ -320,7 +322,7 @@ agentFlags = (trivial_gate_fired AND scope answer == light) ? { "deep": false } 
 
 All three inputs are on hand at this step: the 2e risk table, the `changedLines` value being stamped two lines up, and the fresh echo above. (This scope gate is distinct from Phase 1's eligibility check #4 — "only lockfile/generated changes → stop" — which aborts; this one narrows dimensions.) The map is **opt-out**: `{}` = full scope (every dimension on — byte-identical to no flags); `{ "deep": false }` = light scope (only the two core dimensions `bug`, `security` run — two discovery agents). Stamping `{}` after a light decision silently runs a full 7-agent review the user/operator declined — that exact miss occurred in live verification, which is why this is a derivation rule, not prose. Never stamp a non-boolean value: `agentActive` gates only on the literal `false`, and the args waist rejects anything else.
 
-**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `delivery`, and `checkpoints`, but omitting is the norm: a live run once stamped `reviewConfig: null` and paid a 21.3s round trip re-deriving it before dispatch. Two fields are the opposite case — `null` there is a meaningful value, not a stand-in for absent, so do not "fix" it away: `reviewConfigPath: null` (no REVIEW.md found — pure provenance) and `limits.deliveryCap: null` (uncapped delivery — an explicit choice, not an oversight).
+**Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `reviewMd`, `exclusionsText`, `delivery`, and `checkpoints`, but omitting is the norm: a live run once stamped `reviewConfig: null` and paid a 21.3s round trip re-deriving it before dispatch. Two fields are the opposite case — `null` there is a meaningful value, not a stand-in for absent, so do not "fix" it away: `reviewConfigPath: null` (no REVIEW.md found — pure provenance) and `limits.deliveryCap: null` (uncapped delivery — an explicit choice, not an oversight).
 
 Assemble the args waist (see `references/phase2-triage.md` for the full field list and shapes):
 

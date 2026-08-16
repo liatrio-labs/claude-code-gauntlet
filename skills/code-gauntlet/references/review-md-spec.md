@@ -202,6 +202,15 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 
 In short: **settings override, rules and patterns accumulate.**
 
+**Current implementation note.** This section describes the intended per-file scoping. The
+shipped merge (`resolveReviewConfig`, `workflows/src/args.js`) does not scope by subtree yet: it
+sorts every discovered REVIEW.md root-first by path depth and folds them into **one flat config
+applied to every finding in the run**, not per-file. A deeper entry's setting still overrides a
+shallower one's in that single merged config, and `ignore` still accumulates across all of
+them — so the override/accumulate rules above hold — but a subdirectory REVIEW.md's threshold
+currently governs the whole review, not just files under that subdirectory. The worked example
+below states the intended per-file result; treat it as the target, not the current behavior.
+
 ### Example
 
 ```

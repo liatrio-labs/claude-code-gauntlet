@@ -124,7 +124,8 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 
 ## 2d. Gather Project Context
 
-1. **CLAUDE.md** — Read from repo root and directories with changed files.
+1. **CLAUDE.md / AGENTS.md / QODO.md** — resolved by `scripts/collect_project_rules.py` (step 3
+   below); never `Read` or `Glob` these directly here.
 2. **REVIEW.md** — Discover across the repo root + changed-file directories + their ancestors (the same directory set step 3 below walks for AGENTS.md/CLAUDE.md/QODO.md, issue #80) — not a CLAUDE.md-location anchor. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers set confidence/severity thresholds and finding-suppression patterns via its config block, plus custom rules and other free-text guidance folded into agent context by value. It does not gate which dimensions run — that is automatic (the trivial-scope gate below). Stamp each discovered file's raw text into `args.reviewMd` (root-first, increasing depth) — do not hand-parse it here; `resolveReviewConfig` (`workflows/src/args.js`) owns the parse/merge.
 3. **AGENTS.md / QODO.md — resolved by `scripts/collect_project_rules.py`, never `Read` directly.** A plain `Read` of a repo's CLAUDE.md does not expand Claude Code's `@path` import directive — verified empirically — and Anthropic's own docs tell AGENTS.md-using repos to write exactly that: a CLAUDE.md whose entire body is an import pointer. Measured against the benchmark mirror repos at current HEAD: sentry's and grafana's root CLAUDE.md is the identical 11-byte string `@AGENTS.md\n`; discourse's is the 40-byte inline pointer `See @AI-AGENTS.md for all instructions.\n`. A plain `Read` returns that literal pointer text as the entirety of "project rules" for three of five repos, silently — and a fourth hardcoded filename would still miss discourse's arbitrary `AI-AGENTS.md` target. Resolving the pointer, not naming more files, is the fix.
 
@@ -140,14 +141,15 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 
    **Precedence.** Sources accumulate — CLAUDE.md, AGENTS.md, and QODO.md text are additive rule content, not competing settings, so every discovered file's content is included, not just the first found. A directory-level file's rules apply to that subtree. On a direct conflict between two rules, the more specific directory wins; at equal specificity, CLAUDE.md wins over AGENTS.md over QODO.md, matching `PROJECT_RULE_FILENAMES`'s declared order. This is separate from REVIEW.md's own precedence (`references/review-md-spec.md` → Hierarchy), which this script does not touch.
 
-**Tool instructions for file discovery:**
+**Tool instructions for REVIEW.md discovery:**
 
-Use **Glob** to find all CLAUDE.md and REVIEW.md files:
-
-```
-Glob(pattern: "**/CLAUDE.md")
-Glob(pattern: "**/REVIEW.md")
-```
+Do not `Glob(pattern: "**/REVIEW.md")` — a repo-wide glob returns REVIEW.md files with no
+relationship to any changed file, which then fold into the single merged config and govern
+findings they were never meant to scope (issue #80). Walk the same directory set step 3 walks
+for AGENTS.md/CLAUDE.md/QODO.md instead: the repo root, every changed file's directory, and
+their ancestors up to root. Check each directory in that walk for a `REVIEW.md`. CLAUDE.md
+project-rules discovery is not a `Glob` either — it is resolved by
+`scripts/collect_project_rules.py` in step 3 above, never `Read` or `Glob`'d directly here.
 
 Never use `find` from Bash for locating these files.
 
@@ -166,12 +168,12 @@ set), and check each for a matching REVIEW.md:
   No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one.
   ```
 
-- **Root exists but subdirectory CLAUDE.md has no matching REVIEW.md:**
+- **Root exists but a walked directory has no matching REVIEW.md:**
 
   ```
   AskUserQuestion(
     questions: [{
-      question: "Found REVIEW.md at repo root, but {directory} has a CLAUDE.md without a matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
+      question: "Found REVIEW.md at repo root, but {directory} (in the walked set) has no matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
       header: "Subdirectory REVIEW.md",
       multiSelect: false,
       options: [

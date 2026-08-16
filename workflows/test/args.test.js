@@ -236,6 +236,14 @@ test('stripNullOptionalsReport drops delivery.prIdentity: null and delivery.tier
   const stripped = stripNullOptionalsReport(a).args;
   assert.deepEqual(stripped.delivery, {});
 });
+test('stripNullOptionalsReport deletes a null reviewMd/exclusionsText and validateArgs accepts the stripped result', () => {
+  const a = { ...good, reviewMd: null, exclusionsText: null };
+  const { args: stripped, dropped } = stripNullOptionalsReport(a);
+  assert.equal('reviewMd' in stripped, false);
+  assert.equal('exclusionsText' in stripped, false);
+  assert.deepEqual([...dropped].sort(), ['exclusionsText', 'reviewMd']);
+  assert.equal(validateArgs(stripped).ok, true);
+});
 test('stripNullOptionalsReport does NOT strip limits.deliveryCap: null (uncapped is load-bearing)', () => {
   const a = { ...good, limits: { ...good.limits, deliveryCap: null } };
   const stripped = stripNullOptionalsReport(a).args;
@@ -713,7 +721,7 @@ test('validateArgs rejects non-string reviewMd path', () => {
   assert.match(r.errors.join(' '), /path must be a non-empty string/);
 });
 test('validateArgs rejects a reviewMd path with a control character', () => {
-  const r = validateArgs({ ...good, reviewMd: [{ path: 'foo bar', text: '' }] });
+  const r = validateArgs({ ...good, reviewMd: [{ path: 'foo\u0000bar', text: '' }] });
   assert.equal(r.ok, false);
   assert.match(r.errors.join(' '), /control character/);
 });
@@ -745,12 +753,12 @@ test('resolveReviewConfig: absent reviewMd/exclusionsText falls back to reviewCo
   const A = { reviewConfig: { ignore: ['a'] }, exclusionPatterns: ['b'] };
   assert.deepEqual(resolveReviewConfig(A), {
     reviewConfig: { ignore: ['a'] }, exclusionPatterns: ['b'],
-    reviewConfigSource: 'preParsed', reviewMdEntryCount: 0,
+    reviewConfigSource: 'preParsed', exclusionsSource: 'preParsed', reviewMdEntryCount: 0,
   });
 });
 test('resolveReviewConfig: neither present -> source "none"', () => {
   assert.deepEqual(resolveReviewConfig({}), {
-    reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', reviewMdEntryCount: 0,
+    reviewConfig: {}, exclusionPatterns: [], reviewConfigSource: 'none', exclusionsSource: 'none', reviewMdEntryCount: 0,
   });
 });
 test('resolveReviewConfig: single reviewMd entry parses correctly', () => {
@@ -789,4 +797,50 @@ test('resolveReviewConfig: empty reviewMd array is equivalent to today\'s no-REV
 test('resolveReviewConfig: exclusionsText is parsed via loadExclusions', () => {
   const out = resolveReviewConfig({ exclusionsText: '- foo.js\n- bar/*.js\n' });
   assert.deepEqual(out.exclusionPatterns, ['foo.js', 'bar/*.js']);
+});
+test('resolveReviewConfig: deeper entry overrides an earlier entry\'s severity_threshold setting', () => {
+  const root = '```yaml code-gauntlet\nseverity_threshold: low\n```';
+  const deep = '```yaml code-gauntlet\nseverity_threshold: high\n```';
+  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
+  assert.equal(out.reviewConfig.severity_threshold, 'high');
+});
+test('resolveReviewConfig: deeper entry overrides an earlier entry\'s security_min_confidence setting', () => {
+  const root = '```yaml code-gauntlet\nsecurity_min_confidence: 60\n```';
+  const deep = '```yaml code-gauntlet\nsecurity_min_confidence: 85\n```';
+  const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
+  assert.equal(out.reviewConfig.security_min_confidence, 85);
+});
+test('resolveReviewConfig: reviewMd + exclusionsText together — reviewConfig from reviewMd, exclusions actually parsed from exclusionsText', () => {
+  const text = '```yaml code-gauntlet\nconfidence_threshold: 80\n```';
+  const out = resolveReviewConfig({
+    reviewMd: [{ path: 'REVIEW.md', text }],
+    exclusionsText: '- foo.js\n- bar/*.js\n',
+  });
+  assert.equal(out.reviewConfig.confidence_threshold, 80);
+  assert.equal(out.reviewConfigSource, 'reviewMd');
+  assert.equal(out.exclusionsSource, 'exclusionsText');
+  assert.deepEqual(out.exclusionPatterns, ['foo.js', 'bar/*.js']);
+});
+test('resolveReviewConfig: reviewMd present + exclusionsText absent falls back to legacy exclusionPatterns', () => {
+  const text = '```yaml code-gauntlet\nconfidence_threshold: 80\n```';
+  const out = resolveReviewConfig({
+    reviewMd: [{ path: 'REVIEW.md', text }],
+    exclusionPatterns: ['legacy.js'],
+  });
+  assert.deepEqual(out.exclusionPatterns, ['legacy.js']);
+  assert.equal(out.exclusionsSource, 'preParsed');
+});
+test('resolveReviewConfig: exclusionsText-only (no reviewMd) echoes reviewConfigSource "preParsed" when reviewConfig was also stamped, never "reviewMd"', () => {
+  const out = resolveReviewConfig({ exclusionsText: '- foo.js\n', reviewConfig: { confidence_threshold: 70 } });
+  assert.equal(out.reviewConfigSource, 'preParsed');
+  assert.equal(out.exclusionsSource, 'exclusionsText');
+  assert.equal(out.reviewConfig.confidence_threshold, 70);
+});
+test('resolveReviewConfig: reviewMd entries are merged root-first by path depth, regardless of input order', () => {
+  const root = '```yaml code-gauntlet\nconfidence_threshold: 70\n```';
+  const deep = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
+  // Deliberately reversed input order (deep before root) — the merge result must still
+  // reflect "deeper wins", proving the sort runs before merge rather than trusting caller order.
+  const out = resolveReviewConfig({ reviewMd: [{ path: 'src/deep/REVIEW.md', text: deep }, { path: 'REVIEW.md', text: root }] });
+  assert.equal(out.reviewConfig.confidence_threshold, 90);
 });
