@@ -1936,6 +1936,7 @@ function resolvePolicy(agentType, opts = {}) {
 }
 
 // --- args.js ---
+
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
@@ -1981,6 +1982,12 @@ const DELIVERY_TIERS = ['all', 'main_only'];
 // subagentModel escape hatch.
 const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
 
+// Shared with PATH_CONTROL_RE further down (declared locally there because it sits inside
+// validateArgs); duplicated at module scope here so the reviewMd[].path guard above — which
+// runs earlier in validateArgs, before that local const is declared in source order — can
+// reuse the identical charset without a forward reference.
+const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
+
 // Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
 // stamped `null` rather than absent — a wasted model round trip. These five top-level
 // optional fields have no meaning as `null` (only "absent" or "a well-formed object/array"),
@@ -2003,7 +2010,7 @@ const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
 // nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
 // A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
 // is deliberately NOT disclosed — see nullToleranceRejectedKeys.
-const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'delivery', 'checkpoints', 'persist'];
+const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist'];
 
 // Issue #24 req 7: the ONE place the four benchmarked-default limits live. Every stage that
 // used to hand-roll `Math.max(1, limits.X || <literal>)` (stages.js summarize/verify/
@@ -2028,6 +2035,8 @@ const LIMIT_DEFAULTS = {
 const NULL_TOLERANCE_CONSEQUENCE = {
   reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
   exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
   delivery: 'delivery falls back to tier "all" with no PR identity',
   'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
   'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
@@ -2538,6 +2547,64 @@ function validateArgs(args) {
       }
     }
   }
+  // Optional reviewMd (issue #24 PR2): the raw, ORDERED discovery of REVIEW.md files —
+  // root-first, increasing directory depth — as [{path, text}]. This is the RAW-text
+  // counterpart to the pre-parsed `reviewConfig` above: resolveReviewConfig (below) turns it
+  // into the same shape reviewConfig has always had by calling parseReviewMd per entry and
+  // merging in array order. An empty array is a legal, authoritative "discovery ran and found
+  // nothing" signal — distinct from the field being absent entirely (see resolveReviewConfig's
+  // reviewConfigSource). `path` is repo-relative (must NOT start with '/', the opposite
+  // convention from repoRoot/outputDir above, which must) and reuses PATH_CONTROL_RE below via
+  // a local copy since this guard runs before that regex is declared in file order... — see
+  // REVIEW_MD_PATH_CONTROL_RE just below, same pattern.
+  if (args.reviewMd !== undefined) {
+    if (!Array.isArray(args.reviewMd)) {
+      errors.push('reviewMd must be an array of {path, text} objects when present');
+    } else {
+      for (let i = 0; i < args.reviewMd.length; i++) {
+        const entry = args.reviewMd[i];
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
+          continue;
+        }
+        const keys = Object.keys(entry).sort();
+        const extra = keys.filter((k) => k !== 'path' && k !== 'text');
+        if (extra.length > 0) {
+          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
+        }
+        if (typeof entry.path !== 'string' || entry.path === '') {
+          errors.push(`reviewMd[${i}].path must be a non-empty string`);
+        } else {
+          if (REVIEW_MD_PATH_CONTROL_RE.test(entry.path)) {
+            errors.push(`reviewMd[${i}].path must not contain a control character`);
+          }
+          if (entry.path.startsWith('/')) {
+            errors.push(`reviewMd[${i}].path must be repo-relative (must not start with /)`);
+          }
+        }
+        if (typeof entry.text !== 'string') {
+          errors.push(`reviewMd[${i}].text must be a string`);
+        }
+      }
+    }
+  }
+  // Optional exclusionsText (issue #24 PR2): the raw text of whatever exclusions source the
+  // skill discovered (e.g. .reviewignore), consumed by loadExclusions (filterFindings.js) in
+  // resolveReviewConfig below. Empty string is legal (an exclusions file that exists but is
+  // empty).
+  if (args.exclusionsText !== undefined && typeof args.exclusionsText !== 'string') {
+    errors.push('exclusionsText must be a string when present');
+  }
+  // Single-authority guards (issue #24 req 4 analog): a caller must pass EITHER the raw
+  // discovery (reviewMd/exclusionsText) OR the pre-parsed shape (reviewConfig/
+  // exclusionPatterns), never both for the same axis — two authorities for one piece of
+  // config is exactly the silent-substitution hazard this waist exists to refuse loudly.
+  if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
+    errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
+  }
+  if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
+    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or pre-parsed exclusionPatterns, not both (single authority)');
+  }
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the
   // 'all' default in selectDelivery, silently ignoring an operator's narrowing intent.
@@ -2637,6 +2704,71 @@ function validateArgs(args) {
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+// resolveReviewConfig(A) -> { reviewConfig, exclusionPatterns, reviewConfigSource,
+// exclusionsSource, reviewMdEntryCount } (issue #24 PR2 / #80).
+//
+// A strict SUPERSET of today's behavior: when A.reviewMd/A.exclusionsText are absent this
+// resolves to exactly A.reviewConfig/A.exclusionPatterns as before (req 8 backward compat —
+// bench children and older invocation shapes are unaffected). validateArgs above already
+// refuses a waist that stamps BOTH the raw and pre-parsed form for the same axis, so at most
+// one of each pair is ever present here.
+//
+// reviewMd entries are stably sorted by path depth ascending (root first, ties keep their
+// original relative order) BEFORE merging — "deeper wins" is a code guarantee here, not a
+// promise the caller's discovery order happens to keep. Per
+// skills/code-gauntlet/references/review-md-spec.md: a later (deeper) entry's threshold
+// SETTING overrides an earlier one's when both set it; `ignore` lists ACCUMULATE across every
+// entry, in post-sort order. Absent settings are never defaulted here — parseReviewMd only
+// stamps a key when the text actually set it (see its own doc comment), and this merge
+// preserves that: a setting neither entry set stays `undefined` so applyThresholdFilter's own
+// config-absent 55/70 split (filterFindings.js) still applies.
+//
+// reviewConfigSource and exclusionsSource are two INDEPENDENT provenance signals, one per
+// axis — 'reviewMd' when A.reviewMd was present (even an empty array: discovery ran and found
+// nothing is still authoritative) / 'exclusionsText' when A.exclusionsText was present;
+// 'preParsed' when the axis's pre-parsed field (A.reviewConfig / A.exclusionPatterns) was
+// present instead; 'none' when neither form of that axis was supplied. A mixed waist (one axis
+// raw, the other pre-parsed) is legal transition back-compat and reports one label per axis
+// accordingly — the two never need to agree.
+function pathDepth(entry) {
+  const p = (entry && entry.path) || '';
+  return p.split('/').length;
+}
+
+function resolveReviewConfig(A) {
+  const a = A || {};
+  const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
+    : (a.reviewConfig !== undefined ? 'preParsed' : 'none');
+  const exclusionsSource = a.exclusionsText !== undefined ? 'exclusionsText'
+    : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
+
+  let reviewConfig;
+  let reviewMdEntryCount = 0;
+  if (a.reviewMd !== undefined) {
+    const sorted = a.reviewMd
+      .map((entry, index) => ({ entry, index }))
+      .sort((x, y) => (pathDepth(x.entry) - pathDepth(y.entry)) || (x.index - y.index))
+      .map((wrapped) => wrapped.entry);
+    const merged = { ignore: [] };
+    for (const entry of sorted) {
+      const parsed = parseReviewMd(entry && entry.text);
+      if (parsed.confidence_threshold !== undefined) merged.confidence_threshold = parsed.confidence_threshold;
+      if (parsed.security_min_confidence !== undefined) merged.security_min_confidence = parsed.security_min_confidence;
+      if (parsed.severity_threshold !== undefined) merged.severity_threshold = parsed.severity_threshold;
+      merged.ignore.push(...parsed.ignore);
+    }
+    reviewConfig = merged;
+    reviewMdEntryCount = a.reviewMd.length;
+  } else {
+    reviewConfig = a.reviewConfig || {};
+  }
+
+  const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
+    : (a.exclusionPatterns || []);
+
+  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount };
 }
 
 // --- stages.js ---
@@ -6246,9 +6378,15 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(validateOut.gaps || []));
 
+    // resolveReviewConfig (issue #24 PR2): a strict superset of the old A.reviewConfig ||
+    // {} / A.exclusionPatterns || [] passthrough — when A.reviewMd/A.exclusionsText are
+    // absent this resolves to exactly that, unchanged. filterStage's own input shape
+    // ({findings, reviewConfig, exclusionPatterns, generatedAt}) stays untouched (parity
+    // seam, issue #24 req 9).
+    const resolvedReview = resolveReviewConfig(A);
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: validateOut.findings || [], reviewConfig: A.reviewConfig || {},
-      exclusionPatterns: A.exclusionPatterns || [], generatedAt: A.generatedAt,
+      findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
+      exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
@@ -6391,6 +6529,13 @@ async function runWith(ctx, rawArgs) {
         degraded: discoverOut.degraded || [],
         validate: validateOut.stats,
         filter: filterOut.stats,
+        // Compact provenance echo (issue #24 PR2): names/counts only, never bulk content —
+        // no raw REVIEW.md text, no full config object. Two independent per-axis signals,
+        // each 'reviewMd'/'exclusionsText' | 'preParsed' | 'none'; see resolveReviewConfig's
+        // doc comment (args.js) for the full contract.
+        reviewConfigSource: resolvedReview.reviewConfigSource,
+        exclusionsSource: resolvedReview.exclusionsSource,
+        reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,

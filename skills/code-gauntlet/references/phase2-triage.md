@@ -124,8 +124,9 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 
 ## 2d. Gather Project Context
 
-1. **CLAUDE.md** — Read from repo root and directories with changed files.
-2. **REVIEW.md** — Discover hierarchically. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers set confidence/severity thresholds and finding-suppression patterns via its config block, plus custom rules and other free-text guidance folded into agent context by value. It does not gate which dimensions run — that is automatic (the trivial-scope gate below).
+1. **CLAUDE.md / AGENTS.md / QODO.md** — resolved by `scripts/collect_project_rules.py` (step 3
+   below); never `Read` or `Glob` these directly here.
+2. **REVIEW.md** — Discover across the repo root + changed-file directories + their ancestors (the same directory set step 3 below walks for AGENTS.md/CLAUDE.md/QODO.md, issue #80) — not a CLAUDE.md-location anchor. See `references/review-md-spec.md` for format, scaffolding templates, and hierarchy rules. REVIEW.md lets maintainers set confidence/severity thresholds and finding-suppression patterns via its config block, plus custom rules and other free-text guidance folded into agent context by value. It does not gate which dimensions run — that is automatic (the trivial-scope gate below). Stamp each discovered file's raw text into `args.reviewMd` (root-first, increasing depth) — do not hand-parse it here; `resolveReviewConfig` (`workflows/src/args.js`) owns the parse/merge.
 3. **AGENTS.md / QODO.md — resolved by `scripts/collect_project_rules.py`, never `Read` directly.** A plain `Read` of a repo's CLAUDE.md does not expand Claude Code's `@path` import directive — verified empirically — and Anthropic's own docs tell AGENTS.md-using repos to write exactly that: a CLAUDE.md whose entire body is an import pointer. Measured against the benchmark mirror repos at current HEAD: sentry's and grafana's root CLAUDE.md is the identical 11-byte string `@AGENTS.md\n`; discourse's is the 40-byte inline pointer `See @AI-AGENTS.md for all instructions.\n`. A plain `Read` returns that literal pointer text as the entirety of "project rules" for three of five repos, silently — and a fourth hardcoded filename would still miss discourse's arbitrary `AI-AGENTS.md` target. Resolving the pointer, not naming more files, is the fix.
 
    Invoke the script directly (a standalone script call, not `python3 -c` JSON assembly), after 2c has saved the changed-files list:
@@ -140,14 +141,15 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 
    **Precedence.** Sources accumulate — CLAUDE.md, AGENTS.md, and QODO.md text are additive rule content, not competing settings, so every discovered file's content is included, not just the first found. A directory-level file's rules apply to that subtree. On a direct conflict between two rules, the more specific directory wins; at equal specificity, CLAUDE.md wins over AGENTS.md over QODO.md, matching `PROJECT_RULE_FILENAMES`'s declared order. This is separate from REVIEW.md's own precedence (`references/review-md-spec.md` → Hierarchy), which this script does not touch.
 
-**Tool instructions for file discovery:**
+**Tool instructions for REVIEW.md discovery:**
 
-Use **Glob** to find all CLAUDE.md and REVIEW.md files:
-
-```
-Glob(pattern: "**/CLAUDE.md")
-Glob(pattern: "**/REVIEW.md")
-```
+Do not `Glob(pattern: "**/REVIEW.md")` — a repo-wide glob returns REVIEW.md files with no
+relationship to any changed file, which then fold into the single merged config and govern
+findings they were never meant to scope (issue #80). Walk the same directory set step 3 walks
+for AGENTS.md/CLAUDE.md/QODO.md instead: the repo root, every changed file's directory, and
+their ancestors up to root. Check each directory in that walk for a `REVIEW.md`. CLAUDE.md
+project-rules discovery is not a `Glob` either — it is resolved by
+`scripts/collect_project_rules.py` in step 3 above, never `Read` or `Glob`'d directly here.
 
 Never use `find` from Bash for locating these files.
 
@@ -157,7 +159,8 @@ Complete this check before proceeding to 2e. REVIEW.md settings cascade to all t
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip both REVIEW.md-setup prompts below (the "No REVIEW.md found" build-review-md suggestion and the subdirectory-REVIEW.md `AskUserQuestion`). Root config applies to all directories; never invoke `build-review-md`. REVIEW.md is read-only in headless mode — the hierarchical parse still runs, but no REVIEW.md is created. See `references/headless-mode.md`.
 
-Find all CLAUDE.md locations, check each for a matching REVIEW.md:
+Walk the repo root + changed-file directories + their ancestors (the project-rules directory
+set), and check each for a matching REVIEW.md:
 
 - **No REVIEW.md anywhere:**
 
@@ -165,12 +168,12 @@ Find all CLAUDE.md locations, check each for a matching REVIEW.md:
   No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one.
   ```
 
-- **Root exists but subdirectory CLAUDE.md has no matching REVIEW.md:**
+- **Root exists but a walked directory has no matching REVIEW.md:**
 
   ```
   AskUserQuestion(
     questions: [{
-      question: "Found REVIEW.md at repo root, but {directory} has a CLAUDE.md without a matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
+      question: "Found REVIEW.md at repo root, but {directory} (in the walked set) has no matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
       header: "Subdirectory REVIEW.md",
       multiSelect: false,
       options: [
@@ -390,9 +393,10 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 - `contextLines` / `contextChars` — the shared context file's measured size, from the write step above. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
-- `reviewConfig` — the parsed REVIEW.md object (thresholds + `ignore`), consumed by the Filter stage.
-- `exclusionPatterns` — the parsed exclusion-pattern list, consumed by the Filter stage.
-- `reviewConfigPath` — the REVIEW.md path (or `null`), carried for provenance.
+- `reviewMd` — `[{ path, text }, ...]` in discovery order (root-first, increasing depth), the raw text of every REVIEW.md found (2d step 2). Never hand-parsed by the skill: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) calls `parseReviewMd` per entry and merges them (settings override deeper-wins, `ignore` accumulates) before the Filter stage runs. An empty array is a legal, authoritative "discovered nothing."
+- `exclusionsText` — the raw text of whatever exclusions source was found (e.g. `.reviewignore`), parsed by `resolveReviewConfig` via `loadExclusions`.
+- `reviewConfig` / `exclusionPatterns` — the LEGACY pre-parsed form. Still accepted for backward compatibility (bench children, older callers), but do not stamp these alongside `reviewMd`/`exclusionsText` for the same axis — the waist rejects a waist that stamps both the raw and pre-parsed form (single authority).
+- `reviewConfigPath` — the REVIEW.md path (or `null`), carried for provenance. Unrelated to the reviewMd/reviewConfig choice above.
 - `persist` — optional, `{ assembleScriptPath: "{plugin_root}/scripts/assemble_artifacts.py", returnPrimaries: true }`. **Stamp both.** It selects one of three channels. `returnPrimaries: true` takes the RETURN channel: no agent is dispatched at persist time — the workflow returns the three primaries (findings JSON, report markdown, persist plan) in its own return, and Phase 8 writes them with `materialize_artifacts.py`. `{ assembleScriptPath }` alone takes the derived-writer path: the artifact-writer transcribes those primaries and a pinned executor runs `assemble_artifacts.py` to *derive* the post-review and checkpoint artifacts from `findings.json` plus the plan, returning a content-proof receipt instead of re-emitting them by value. That path is still live and is the automatic fallback when the primaries exceed the return channel's budget, which is the only reason to stamp the script path alongside `returnPrimaries`. Absent → the legacy full by-value writer, unchanged. `artifactPaths` and Phase 8 are the same on all three; see `SKILL.md` § "`persist` (optional, but stamp it)".
 
 **`verify` handoff (sha-scoped paths for the executor's pinned command):**

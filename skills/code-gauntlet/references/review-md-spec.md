@@ -175,10 +175,13 @@ is no in-file place to put a per-entry note that both parses correctly and doesn
 
 ## Hierarchy
 
-REVIEW.md files mirror CLAUDE.md locations. A repository can have:
+REVIEW.md discovery walks the repo root, every changed file's directory, and their
+ancestors up to root — the same directory set the project-rules pass walks
+(`scripts/collect_project_rules.py`), not a CLAUDE.md-location anchor (issue #80). A
+repository can have:
 
 - A **root** `REVIEW.md` at the repo root (applies to all files by default)
-- **Subdirectory** `REVIEW.md` files in any directory that also has a `CLAUDE.md` (applies to files in that directory tree)
+- **Subdirectory** `REVIEW.md` files in any directory on that walked set (applies to files in that directory tree)
 
 Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different review standards (e.g., stricter security rules for an API directory, different thresholds for a legacy module).
 
@@ -198,6 +201,15 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 | `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |
 
 In short: **settings override, rules and patterns accumulate.**
+
+**Current implementation note.** This section describes the intended per-file scoping. The
+shipped merge (`resolveReviewConfig`, `workflows/src/args.js`) does not scope by subtree yet: it
+sorts every discovered REVIEW.md root-first by path depth and folds them into **one flat config
+applied to every finding in the run**, not per-file. A deeper entry's setting still overrides a
+shallower one's in that single merged config, and `ignore` still accumulates across all of
+them — so the override/accumulate rules above hold — but a subdirectory REVIEW.md's threshold
+currently governs the whole review, not just files under that subdirectory. The worked example
+below states the intended per-file result; treat it as the target, not the current behavior.
 
 ### Example
 
@@ -224,11 +236,19 @@ For a file in `legacy/`:
 
 ### Discovery
 
-REVIEW.md files are discovered lazily, following the same pattern as CLAUDE.md — loaded on demand for directories containing changed files. Code-gauntlet checks each CLAUDE.md location for a matching REVIEW.md during Phase 2d context gathering. AGENTS.md/QODO.md resolution (`references/phase2-triage.md` 2d step 3, `scripts/collect_project_rules.py`) is a separate discovery pass with its own source list and its own directory set — it does not piggyback on this CLAUDE.md-location anchor, and finding no AGENTS.md/QODO.md never affects REVIEW.md discovery or precedence.
+REVIEW.md discovery is repo root + changed-file directories + their ancestors — the same
+directory set as the project-rules pass (`scripts/collect_project_rules.py`). Code-gauntlet
+walks that set during Phase 2d context gathering and checks each directory for a matching
+REVIEW.md. AGENTS.md/QODO.md resolution (`references/phase2-triage.md` 2d step 3,
+`scripts/collect_project_rules.py`) shares that directory walk but remains a separate pass
+with its own source list: REVIEW.md config and AGENTS.md/CLAUDE.md project rules are still
+read and applied independently — only the directory walk is shared, not the content, and
+finding no AGENTS.md/QODO.md never affects REVIEW.md discovery or precedence.
 
 #### Detection flow (Phase 2d)
 
-Find all CLAUDE.md locations, check each for a matching REVIEW.md:
+Walk the repo root + changed-file directories + their ancestors (the project-rules directory
+set), and check each for a matching REVIEW.md:
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip both REVIEW.md-setup `AskUserQuestion` prompts below — root config applies, `build-review-md` is never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is created. See `references/headless-mode.md`.
 
