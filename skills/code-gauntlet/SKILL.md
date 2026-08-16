@@ -322,7 +322,15 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   diffPath, changedFilesPath, reviewConfigPath,
   agentFlags: { ...scope-gating flags: {} for full scope, { deep: false } for light... },
   policy: { tier, subagentModel, provider },
-  limits: { summarizeBucketSize, validateBatch, challengeCap, verifySliceSize, deliveryCap },
+  limits: { deliveryCap },  // pass ONLY genuine overrides — a REVIEW.md-set value, or the
+                             // env-threaded deliveryCap — never the full table:
+                             // normalizeArgs fills summarizeBucketSize/validateBatch/
+                             // challengeCap/verifySliceSize from LIMIT_DEFAULTS (args.js)
+                             // when they're absent, so stamping the benchmarked numbers
+                             // here just triplicates a value the code already owns,
+                             // and a malformed or unknown limits key now refuses the run
+                             // at validateArgs before any paid stage dispatches, rather
+                             // than falling through to the LIMIT_DEFAULTS fallback silently.
   delivery: { tier: "all" | "main_only",     // Phase 8 PR-comment tier (default "all"); consumed by selectDelivery
               prIdentity: { owner, repo, pr_number, sha_full } },  // PR/MR targets ONLY (omit for local-diff reviews):
                                              // the artifact-writer then persists postReview as the post_review-ready

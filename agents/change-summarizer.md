@@ -62,7 +62,7 @@ is never proof you have the whole file.
 
 ## Per-file summaries (Summarize-stage bucket fan-out)
 
-The workflow's Summarize stage fans out file buckets only when the change exceeds 500 lines **and** spans more files than one bucket (`limits.summarizeBucketSize`, default 20) — line count alone does not trigger it. Each dispatch receives up to `limits.summarizeBucketSize` files. When called that way, produce a **2-3 sentence summary** for the files in that bucket:
+The workflow's Summarize stage fans out file buckets only when the change exceeds 500 lines **and** spans more files than one bucket (`limits.summarizeBucketSize`) — line count alone does not trigger it. Each dispatch receives up to `limits.summarizeBucketSize` files. When called that way, produce a **2-3 sentence summary** for the files in that bucket:
 
 1. What changed in these files — the functional modifications
 2. Why it changed — the inferred reason given the PR context

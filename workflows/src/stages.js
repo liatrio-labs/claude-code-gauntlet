@@ -21,7 +21,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS } from './args.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -194,7 +194,7 @@ export async function summarize(ctx, input) {
   const changedLines = inp.changedLines || 0;
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const bucketSize = Math.max(1, limits.summarizeBucketSize || 20);
+  const bucketSize = effectiveBucketSize(limits);
   const model = modelFor('code-gauntlet:change-summarizer', policy);
 
   const bucketed = changedLines > 500 && changedFiles.length > bucketSize;
@@ -627,6 +627,18 @@ const VERIFY_SCHEMA = {
 // dispatch-count test fails instead of the guard silently over-counting.
 export const VERIFY_ATTEMPTS_PER_SLICE = 2;
 
+// Issue #72: verifySliceSize is deliberately NOT floored. A very small slice is the
+// legitimate mitigation for a transcription-fidelity failure (#25 req 1 — a smaller slice
+// means less content per executor round trip, less to transcribe faithfully, less to
+// mismatch), so clamping it upward here would remove the exact knob an operator reaches for
+// under that failure mode. Instead: degrade-and-disclose. When a configured verifySliceSize
+// produces MORE than VERIFY_FANOUT_DISCLOSE_THRESHOLD slices, verifyStage pushes a gap
+// naming the configured size, the resulting slice count, and the dispatch ceiling
+// (slices * VERIFY_ATTEMPTS_PER_SLICE) — an operator who set verifySliceSize:1 on a
+// 500-finding run sees the cost of that choice instead of discovering it from a slow run or
+// a worstCaseAgentCount rejection.
+export const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
+
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
 // Slices findings into limits.verifySliceSize chunks and dispatches an `executor` agent
 // per slice — one call, plus at most one retry (below) — SEQUENTIALLY (not parallel())
@@ -675,7 +687,7 @@ export async function verifyStage(ctx, input) {
   const policy = inp.policy || {};
   const nonce = inp.nonce;
   const headShaShort = inp.headShaShort;
-  const sliceSize = Math.max(1, limits.verifySliceSize || findings.length || 1);
+  const sliceSize = effectiveSliceSize(limits, findings.length);
 
   // Empty set: nothing to verify, trivially trusted (no executor dispatched). The
   // counters are still emitted, zero-populated: a consumer that has to distinguish
@@ -689,6 +701,18 @@ export async function verifyStage(ctx, input) {
   const slices = [];
   for (let i = 0; i < findings.length; i += sliceSize) slices.push(findings.slice(i, i + sliceSize));
 
+  // Degrade-and-disclose (issue #72), not abort: a small verifySliceSize is a legitimate
+  // transcription-fidelity mitigation, not a mistake to reject, but its dispatch cost is
+  // real and otherwise invisible until the run runs long or worstCaseAgentCount rejects it
+  // outright. Collected here rather than pushed straight into `gaps` so it lands ahead of
+  // any per-slice degrade gap, in the order this stage discovers information.
+  const fanoutGaps = slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD
+    ? [`verify_fanout: verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
+      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
+      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. Raise verifySliceSize to reduce fan-out, `
+      + 'or keep it small deliberately if this run is mitigating a transcription-fidelity failure (issue #25).']
+    : [];
+
   // Materialize each slice's --input JSON on disk BEFORE the executor loop. The
   // executor reads ${inputPathBase}.slice{i}.json, but the workflow script has no disk
   // access and the merged findings exist only mid-workflow (the skill CANNOT pre-write
@@ -699,7 +723,7 @@ export async function verifyStage(ctx, input) {
   const materialized = await materializeVerifySlices(c, inp, slices, policy);
 
   const out = [];
-  const gaps = [];
+  const gaps = [...fanoutGaps];
   let degradedSlices = 0;
   const inputProof = { ...emptyInputProof(), slices: slices.length };
 
@@ -1407,17 +1431,30 @@ const CHALLENGE_CAP_FLOOR = 5;    // never challenge fewer than this many findin
 
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 
+// Issue #24 req 7 (C): the SINGLE accessor path for a stage's effective limit — summarize,
+// verifyStage, validateStage, and challengeStage all call these directly rather than
+// re-deriving their own fallback, so worstCaseAgentCount/coarsenLimits can never count a
+// different fan-out than the stage actually dispatches. normalizeArgs (args.js
+// LIMIT_DEFAULTS) fills summarizeBucketSize/validateBatch/verifySliceSize/challengeCap on
+// every real waist before a stage ever sees `limits`, so the `|| <literal>` fallbacks below
+// are now the DEFENSIVE case (a caller that built `limits` by hand, a test, or a bare
+// `coarsenLimits({}, …)` call) rather than the common one. Keep them anyway: a literal
+// default here still has to agree with LIMIT_DEFAULTS, but that agreement is not load-
+// bearing for a normalized waist.
+//
 // Mirror challengeStage's cap semantics EXACTLY: an absent/null challengeCap means
 // "challenge every finding" (the stage defaults to findings.length), while 0 is a real
 // cap of zero. The guard math must never undercount the stage's actual fan-out.
 const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
 
-// Mirror each stage's own absent/zero-size default EXACTLY (summarize: bucket 20;
-// verify/validate: ONE slice/batch over all findings) so the guard arithmetic can
-// never go NaN (Math.max(1, undefined) is NaN — a NaN worst case silently disables
-// the coarsening loop) and never counts a different fan-out than the stage dispatches.
-const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || 20);
+// Mirror each stage's own absent/zero-size default EXACTLY (summarize: bucket
+// LIMIT_DEFAULTS.summarizeBucketSize; verify/validate: ONE slice/batch over all findings) so the
+// guard arithmetic can never go NaN (Math.max(1, undefined) is NaN — a NaN worst case silently
+// disables the coarsening loop) and never counts a different fan-out than the stage dispatches.
+// The four LIMIT_DEFAULTS numbers live in exactly one place (workflows/src/args.js); these
+// helpers read it rather than restating a literal.
+const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
 
@@ -1533,7 +1570,7 @@ export async function validateStage(ctx, input) {
   const findings = inp.findings || [];
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const batchSize = Math.max(1, limits.validateBatch || findings.length || 1);
+  const batchSize = effectiveBatchSize(limits, findings.length);
 
   if (findings.length === 0) {
     return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } };
@@ -1697,7 +1734,7 @@ export async function challengeStage(ctx, input) {
   const findings = inp.findings || [];
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const cap = Math.max(0, limits.challengeCap != null ? limits.challengeCap : findings.length);
+  const cap = effectiveChallengeCap(limits, findings.length);
 
   if (findings.length === 0) {
     return {

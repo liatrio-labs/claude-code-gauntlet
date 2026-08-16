@@ -419,9 +419,12 @@ test('D2.3: materializeVerifySlices surfaces EVERY failed group\'s own reason, a
   // Both groups failed here, so every slice degrades -> one gap per slice (per-slice
   // granularity, not one gap per group), in strict slice-index order.
   assert.equal(out.verified, false);
-  assert.equal(out.gaps.length, findings.length);
+  // verifySliceSize:1 over 60 findings makes 60 slices, above VERIFY_FANOUT_DISCLOSE_THRESHOLD
+  // (issue #72), so a fan-out disclosure gap leads the array ahead of the 60 per-slice gaps.
+  assert.equal(out.gaps.length, findings.length + 1);
+  assert.match(out.gaps[0], /^verify_fanout: verifySliceSize=1 splits 60 finding\(s\) into 60 slices/);
   for (let i = 0; i < findings.length; i += 1) {
-    const gap = out.gaps[i];
+    const gap = out.gaps[i + 1];
     assert.match(gap, new RegExp(`^verify: UNVERIFIED — slice ${i} \\(slice-input group `), `gap ${i} is attributed to slice ${i}`);
     if (g0.includes(i)) {
       assert.match(gap, /slice-input group 0\): slice-input writer threw \(group-0 boom\)/, `slice ${i} (group 0) carries group 0's own reason`);
@@ -517,14 +520,17 @@ test('D2.3: a healthy writer group\'s slices reach the executor and stay verifie
     assert.ok(!seen.some((l) => l === `verify-slice-${i}` || l === `verify-slice-${i}-retry`), `slice ${i} (writer failure) is never dispatched to the executor`);
   }
 
-  // Gaps: one per degraded slice, in strict slice-index order, each with its OWN
-  // group's reason — group 1's reason never appears on a group 2 slice and vice versa.
-  assert.equal(out.gaps.length, failedIndices.length);
+  // Gaps: a leading fan-out disclosure (120 findings, verifySliceSize:1 -> 120 slices,
+  // above VERIFY_FANOUT_DISCLOSE_THRESHOLD — issue #72), then one per degraded slice in
+  // strict slice-index order, each with its OWN group's reason — group 1's reason never
+  // appears on a group 2 slice and vice versa.
+  assert.equal(out.gaps.length, failedIndices.length + 1);
+  assert.match(out.gaps[0], /^verify_fanout: verifySliceSize=1 splits 120 finding\(s\) into 120 slices/);
   const g1 = new Set(groupSliceIndices['verify-input-writer-1']);
   const g2 = new Set(groupSliceIndices['verify-input-writer-2']);
   for (let k = 0; k < failedIndices.length; k += 1) {
     const i = failedIndices[k];
-    const gap = out.gaps[k];
+    const gap = out.gaps[k + 1];
     assert.match(gap, new RegExp(`^verify: UNVERIFIED — slice ${i} \\(slice-input group `), `gap ${k} is attributed to slice ${i}`);
     if (g1.has(i)) {
       assert.match(gap, /slice-input group 1\): slice-input writer returned null/, `slice ${i} (group 1) carries group 1's own reason`);
