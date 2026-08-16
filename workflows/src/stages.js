@@ -3762,9 +3762,11 @@ export async function runWith(ctx, rawArgs) {
         validate: validateOut.stats,
         filter: filterOut.stats,
         // Compact provenance echo (issue #24 PR2): names/counts only, never bulk content —
-        // no raw REVIEW.md text, no full config object. 'reviewMd' | 'preParsed' | 'none';
-        // see resolveReviewConfig's doc comment (args.js) for the full contract.
+        // no raw REVIEW.md text, no full config object. Two independent per-axis signals,
+        // each 'reviewMd'/'exclusionsText' | 'preParsed' | 'none'; see resolveReviewConfig's
+        // doc comment (args.js) for the full contract.
         reviewConfigSource: resolvedReview.reviewConfigSource,
+        exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
         challenge: challengeOut.stats,
       },

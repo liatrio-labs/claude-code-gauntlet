@@ -2010,7 +2010,7 @@ const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
 // nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
 // A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
 // is deliberately NOT disclosed — see nullToleranceRejectedKeys.
-const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'delivery', 'checkpoints', 'persist'];
+const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist'];
 
 // Issue #24 req 7: the ONE place the four benchmarked-default limits live. Every stage that
 // used to hand-roll `Math.max(1, limits.X || <literal>)` (stages.js summarize/verify/
@@ -2035,6 +2035,8 @@ const LIMIT_DEFAULTS = {
 const NULL_TOLERANCE_CONSEQUENCE = {
   reviewConfig: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
   exclusionPatterns: 'no exclusion patterns are applied, so the delivered findings can differ',
+  reviewMd: 'the review runs on the Filter stage built-in thresholds (non-security 55, security 70) with no ignore list, NOT your REVIEW.md configuration, so the delivered findings can differ',
+  exclusionsText: 'no exclusion patterns are applied, so the delivered findings can differ',
   delivery: 'delivery falls back to tier "all" with no PR identity',
   'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
   'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
@@ -2705,7 +2707,7 @@ function validateArgs(args) {
 }
 
 // resolveReviewConfig(A) -> { reviewConfig, exclusionPatterns, reviewConfigSource,
-// reviewMdEntryCount } (issue #24 PR2 / #80).
+// exclusionsSource, reviewMdEntryCount } (issue #24 PR2 / #80).
 //
 // A strict SUPERSET of today's behavior: when A.reviewMd/A.exclusionsText are absent this
 // resolves to exactly A.reviewConfig/A.exclusionPatterns as before (req 8 backward compat —
@@ -2713,52 +2715,60 @@ function validateArgs(args) {
 // refuses a waist that stamps BOTH the raw and pre-parsed form for the same axis, so at most
 // one of each pair is ever present here.
 //
-// reviewMd merge order is the array's OWN order (root-first, increasing depth — the caller's
-// discovery order, never re-sorted here). Per skills/code-gauntlet/references/review-md-spec.md:
-// a later (deeper) entry's threshold SETTING overrides an earlier one's when both set it;
-// `ignore` lists ACCUMULATE across every entry, in encounter order. Absent settings are never
-// defaulted here — parseReviewMd only stamps a key when the text actually set it (see its own
-// doc comment), and this merge preserves that: a setting neither entry set stays `undefined`
-// so applyThresholdFilter's own config-absent 55/70 split (filterFindings.js) still applies.
+// reviewMd entries are stably sorted by path depth ascending (root first, ties keep their
+// original relative order) BEFORE merging — "deeper wins" is a code guarantee here, not a
+// promise the caller's discovery order happens to keep. Per
+// skills/code-gauntlet/references/review-md-spec.md: a later (deeper) entry's threshold
+// SETTING overrides an earlier one's when both set it; `ignore` lists ACCUMULATE across every
+// entry, in post-sort order. Absent settings are never defaulted here — parseReviewMd only
+// stamps a key when the text actually set it (see its own doc comment), and this merge
+// preserves that: a setting neither entry set stays `undefined` so applyThresholdFilter's own
+// config-absent 55/70 split (filterFindings.js) still applies.
 //
-// reviewConfigSource covers the REVIEW.md/exclusions pair as ONE story rather than two
-// separate provenance signals (a single field, not a per-axis pair, per this repo's
-// "extending should cost one edit" design note) — 'reviewMd' when A.reviewMd was present (even
-// an empty array: discovery ran and found nothing is still authoritative), 'preParsed' when
-// A.reviewConfig or A.exclusionPatterns was present instead, 'none' when neither pair member
-// was supplied at all.
+// reviewConfigSource and exclusionsSource are two INDEPENDENT provenance signals, one per
+// axis — 'reviewMd' when A.reviewMd was present (even an empty array: discovery ran and found
+// nothing is still authoritative) / 'exclusionsText' when A.exclusionsText was present;
+// 'preParsed' when the axis's pre-parsed field (A.reviewConfig / A.exclusionPatterns) was
+// present instead; 'none' when neither form of that axis was supplied. A mixed waist (one axis
+// raw, the other pre-parsed) is legal transition back-compat and reports one label per axis
+// accordingly — the two never need to agree.
+function pathDepth(entry) {
+  const p = (entry && entry.path) || '';
+  return p.split('/').length;
+}
+
 function resolveReviewConfig(A) {
   const a = A || {};
+  const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
+    : (a.reviewConfig !== undefined ? 'preParsed' : 'none');
+  const exclusionsSource = a.exclusionsText !== undefined ? 'exclusionsText'
+    : (a.exclusionPatterns !== undefined ? 'preParsed' : 'none');
+
+  let reviewConfig;
+  let reviewMdEntryCount = 0;
   if (a.reviewMd !== undefined) {
+    const sorted = a.reviewMd
+      .map((entry, index) => ({ entry, index }))
+      .sort((x, y) => (pathDepth(x.entry) - pathDepth(y.entry)) || (x.index - y.index))
+      .map((wrapped) => wrapped.entry);
     const merged = { ignore: [] };
-    for (const entry of a.reviewMd) {
+    for (const entry of sorted) {
       const parsed = parseReviewMd(entry && entry.text);
       if (parsed.confidence_threshold !== undefined) merged.confidence_threshold = parsed.confidence_threshold;
       if (parsed.security_min_confidence !== undefined) merged.security_min_confidence = parsed.security_min_confidence;
       if (parsed.severity_threshold !== undefined) merged.severity_threshold = parsed.severity_threshold;
       merged.ignore.push(...parsed.ignore);
     }
-    return {
-      reviewConfig: merged,
-      exclusionPatterns: a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText) : (a.exclusionPatterns || []),
-      reviewConfigSource: 'reviewMd',
-      reviewMdEntryCount: a.reviewMd.length,
-    };
+    reviewConfig = merged;
+    reviewMdEntryCount = a.reviewMd.length;
+  } else {
+    reviewConfig = a.reviewConfig || {};
   }
-  if (a.exclusionsText !== undefined) {
-    return {
-      reviewConfig: a.reviewConfig || {},
-      exclusionPatterns: loadExclusions(a.exclusionsText),
-      reviewConfigSource: 'reviewMd',
-      reviewMdEntryCount: 0,
-    };
-  }
-  return {
-    reviewConfig: a.reviewConfig || {},
-    exclusionPatterns: a.exclusionPatterns || [],
-    reviewConfigSource: (a.reviewConfig !== undefined || a.exclusionPatterns !== undefined) ? 'preParsed' : 'none',
-    reviewMdEntryCount: 0,
-  };
+
+  const exclusionPatterns = a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText)
+    : (a.exclusionPatterns || []);
+
+  return { reviewConfig, exclusionPatterns, reviewConfigSource, exclusionsSource, reviewMdEntryCount };
 }
 
 // --- stages.js ---
@@ -6520,9 +6530,11 @@ async function runWith(ctx, rawArgs) {
         validate: validateOut.stats,
         filter: filterOut.stats,
         // Compact provenance echo (issue #24 PR2): names/counts only, never bulk content —
-        // no raw REVIEW.md text, no full config object. 'reviewMd' | 'preParsed' | 'none';
-        // see resolveReviewConfig's doc comment (args.js) for the full contract.
+        // no raw REVIEW.md text, no full config object. Two independent per-axis signals,
+        // each 'reviewMd'/'exclusionsText' | 'preParsed' | 'none'; see resolveReviewConfig's
+        // doc comment (args.js) for the full contract.
         reviewConfigSource: resolvedReview.reviewConfigSource,
+        exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
         challenge: challengeOut.stats,
       },
