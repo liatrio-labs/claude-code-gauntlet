@@ -21,7 +21,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -289,6 +289,23 @@ export function agentSpecs() {
 export function agentActive(spec, agentFlags) {
   const flags = agentFlags || {};
   return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || flags[flag] !== false);
+}
+
+// deriveAgentFlags(riskTable, changedLines, scopeAnswer) -> { deep: false } | {} (issue #24
+// req 1/4/5, PR3). The pipeline's OWN, tested derivation of the scope-gating map agentActive
+// consumes — replaces the orchestrator's SKILL.md-prose "stamp agentFlags at assembly time"
+// rule with deterministic JS. Behavior-preserving: the eligibility test is byte-identical to
+// the rule phase2-triage.md 2e documented (computeLightEligible, args.js — the ONE place it
+// lives, shared with validateArgs's pre-dispatch coherence guard so the two can never drift).
+//
+// validateArgs already refused an incoherent waist before runWith ever calls this (scopeAnswer
+// 'light' while not eligible, or eligible with no scopeAnswer) — see its "Fail-loud coherence"
+// block. So by the time this runs, only two coherent cases can produce `{ deep: false }`:
+// lightEligible with scopeAnswer 'light'. Every other coherent combination (not eligible,
+// eligible-but-full, not-eligible-with-no-answer) is full scope.
+export function deriveAgentFlags(riskTable, changedLines, scopeAnswer) {
+  const lightEligible = computeLightEligible(riskTable, changedLines);
+  return (lightEligible && scopeAnswer === 'light') ? { deep: false } : {};
 }
 
 // allActiveDimensionsDegraded(dispatched, degraded) -> boolean (issue #178).
@@ -3514,8 +3531,13 @@ export async function runWith(ctx, rawArgs) {
     const summarizeSettled = replay('summarize') ? null : settle(summarize(c, {
       changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextLine,
     }));
+    // Issue #24 req 1/4/5 (PR3): the scope-gating map is DERIVED here, deterministically,
+    // from the waist's riskTable/changedLines/scopeAnswer — never read from a caller-stamped
+    // agentFlags (validateArgs above hard-rejects one). Single call, echoed below in
+    // stats.scope so the resolved decision is verifiable post-hoc.
+    const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: A.agentFlags || {}, limits, policy, contextLine,
+      agentFlags: derivedAgentFlags, limits, policy, contextLine,
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
@@ -3768,6 +3790,15 @@ export async function runWith(ctx, rawArgs) {
         reviewConfigSource: resolvedReview.reviewConfigSource,
         exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
+        // Compact scope-decision echo (issue #24 req 3, PR3): names/bools only, so adherence
+        // to the derived scope decision is verifiable post-hoc without re-deriving it from
+        // riskTable. scopeAnswer is null (never omitted) when the gate was not asked, mirroring
+        // how riskTable/reviewConfigSource echo "no signal" as an explicit value, not a hole.
+        scope: {
+          lightEligible: computeLightEligible(A.riskTable, A.changedLines),
+          scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,
+          deep: derivedAgentFlags.deep !== false,
+        },
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,

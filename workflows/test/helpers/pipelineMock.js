@@ -77,7 +77,15 @@ export function makeFindings() {
 }
 
 // A fully valid args waist (every REQUIRED field from args.js). `over` patches it.
+// riskTable is DERIVED from `over.changedFiles` (each entry 'medium') when the caller
+// overrides changedFiles but not riskTable — riskTable's path set must equal changedFiles'
+// exactly, so a fixture whose default riskTable never tracked an overridden changedFiles
+// would fail validateArgs's path-set guard on every such call site. 'medium', not 'low': the
+// default fixture must NOT be light-eligible (computeLightEligible requires every entry
+// 'low'), so tests that don't care about scope get a coherent full-scope waist without also
+// having to stamp scopeAnswer.
 export function validArgs(over = {}) {
+  const changedFiles = over.changedFiles || ['a.js'];
   return {
     argsVersion: 1,
     mode: 'headless',
@@ -90,7 +98,7 @@ export function validArgs(over = {}) {
     changedFilesPath: '/repo/.code-gauntlet/changed.txt',
     changedFiles: ['a.js'],
     changedLines: 1,
-    agentFlags: {},
+    riskTable: changedFiles.map((path) => ({ path, risk: 'medium' })),
     policy: {},
     limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },
     ...over,

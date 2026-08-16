@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, LIMIT_DEFAULTS,
-  resolveReviewConfig,
+  resolveReviewConfig, computeLightEligible,
 } from '../src/args.js';
 
 const good = {
@@ -11,7 +11,10 @@ const good = {
   headShaShort: 'abc123', nonce: 'n-1', generatedAt: '2026-07-18T00:00:00Z',
   diffPath: '/r/.code-gauntlet/d.patch', changedFilesPath: '/r/.code-gauntlet/f.json',
   changedFiles: ['a.js'], changedLines: 1,
-  reviewConfigPath: null, agentFlags: {},
+  // 'medium', not 'low': changedLines(1) < 50, so a 'low' entry would be light-eligible and
+  // require a coherent scopeAnswer — keep the base fixture scope-neutral (full scope, no
+  // scopeAnswer needed) the same way it always was ({} agentFlags == full scope).
+  reviewConfigPath: null, riskTable: [{ path: 'a.js', risk: 'medium' }],
   policy: { tier: 'optimized', subagentModel: null },
   limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 },
 };
@@ -179,24 +182,96 @@ test('validateArgs accepts exclusionPatterns as an array of flat strings (and ab
   assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
 });
 
-// agentFlags scope-gating map (item 7). Empty ({}) = full scope; { deep: false } = light.
-test('validateArgs accepts the light-scope agentFlags map { deep: false }', () => {
-  assert.deepEqual(validateArgs({ ...good, agentFlags: { deep: false } }), { ok: true, errors: [] });
-});
-test('validateArgs rejects a non-object agentFlags map', () => {
-  const r = validateArgs({ ...good, agentFlags: 'deep' });
+// Single authority (issue #24 req 4, PR3): agentFlags is retired entirely.
+test('validateArgs rejects a caller-supplied agentFlags — single authority', () => {
+  const r = validateArgs({ ...good, agentFlags: {} });
   assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /agentFlags must be an object/);
-  const r2 = validateArgs({ ...good, agentFlags: ['deep'] });
-  assert.equal(r2.ok, false);
-  assert.match(r2.errors.join(' '), /agentFlags must be an object/);
+  assert.match(r.errors.join(' '), /agentFlags is no longer accepted/);
+  assert.match(r.errors.join(' '), /riskTable\/scopeAnswer/);
 });
-test('validateArgs rejects a non-boolean agentFlags value (only literal false gates)', () => {
-  // A truthy-string like "false" would slip past agentActive's strict `!== false` and read
-  // as ON, silently ignoring an operator's intent to disable — the waist rejects it.
-  const r = validateArgs({ ...good, agentFlags: { deep: 'false' } });
+
+// riskTable — the Phase 2e per-file risk classification (issue #24 req 1/2, PR3).
+test('validateArgs accepts a well-formed riskTable', () => {
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
+});
+test('validateArgs rejects a non-array riskTable', () => {
+  const r = validateArgs({ ...good, riskTable: {} });
   assert.equal(r.ok, false);
-  assert.match(r.errors.join(' '), /invalid agentFlags\.deep: must be a boolean/);
+  assert.match(r.errors.join(' '), /riskTable must be an array/);
+});
+test('validateArgs rejects an invalid risk literal', () => {
+  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'critical' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /riskTable\[0\]\.risk must be one of low, medium, high/);
+});
+test('validateArgs rejects a riskTable entry with an extra key', () => {
+  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low', note: 'x' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /unexpected key\(s\): note/);
+});
+test('validateArgs rejects riskTable missing a changed file (path-set mismatch, missing arm)', () => {
+  const r = validateArgs({ ...good, changedFiles: ['a.js', 'b.js'], riskTable: [{ path: 'a.js', risk: 'low' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /missing risk classification for changed file\(s\): b\.js/);
+});
+test('validateArgs rejects riskTable with an extra path not in changedFiles (path-set mismatch, extra arm)', () => {
+  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'medium' }, { path: 'ghost.js', risk: 'low' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /classifies file\(s\) not present in changedFiles: ghost\.js/);
+});
+
+// scopeAnswer — the light/full answer, only meaningful alongside a light-eligible riskTable.
+test('validateArgs accepts a coherent light scopeAnswer', () => {
+  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'light' });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+test('validateArgs accepts a coherent full scopeAnswer even when eligible', () => {
+  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'full' });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+test('validateArgs rejects an unknown scopeAnswer literal', () => {
+  const r = validateArgs({ ...good, scopeAnswer: 'partial' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /invalid scopeAnswer: partial/);
+});
+test('validateArgs rejects scopeAnswer "light" when the riskTable is not light-eligible (medium/high present)', () => {
+  const r = validateArgs({ ...good, scopeAnswer: 'light' }); // fixture's riskTable is 'medium'
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /gate never asked/);
+});
+test('validateArgs rejects scopeAnswer "light" when changedLines >= 50 even if every file is low', () => {
+  const r = validateArgs({ ...good, changedLines: 50, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'light' });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /gate never asked/);
+});
+test('validateArgs accepts changedLines exactly 49 as light-eligible (boundary)', () => {
+  const r = validateArgs({ ...good, changedLines: 49, riskTable: [{ path: 'a.js', risk: 'low' }], scopeAnswer: 'light' });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+test('validateArgs rejects a light-eligible waist with no scopeAnswer (the gate must have asked)', () => {
+  const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /scopeAnswer is missing/);
+});
+test('validateArgs accepts a not-eligible waist with no scopeAnswer', () => {
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // fixture riskTable is 'medium'
+});
+test('validateArgs strips a stamped scopeAnswer: null the same way as its NULLABLE_TOP_LEVEL siblings', () => {
+  const { args, dropped } = stripNullOptionalsReport({ ...good, scopeAnswer: null });
+  assert.equal(args.scopeAnswer, undefined);
+  assert.ok(dropped.includes('scopeAnswer'));
+});
+
+// computeLightEligible — the ONE eligibility rule, shared by validateArgs's coherence guard
+// and stages.js's deriveAgentFlags.
+test('computeLightEligible: true iff every entry is low AND changedLines < 50', () => {
+  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 49), true);
+  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 50), false);
+  assert.equal(computeLightEligible([{ path: 'a', risk: 'medium' }], 1), false);
+  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }, { path: 'b', risk: 'high' }], 1), false);
+  assert.equal(computeLightEligible([], 1), true); // vacuously true for an empty riskTable
+  assert.equal(computeLightEligible(null, 1), false);
+  assert.equal(computeLightEligible([{ path: 'a', risk: 'low' }], 'not-a-number'), false);
 });
 test('validateArgs requires the consumed by-value fields changedFiles + changedLines', () => {
   // REQUIRED mirrors consumption: summarize bucketing and the agent-count guard read
