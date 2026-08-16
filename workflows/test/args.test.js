@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
-  stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap,
+  stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, LIMIT_DEFAULTS,
 } from '../src/args.js';
 
 const good = {
@@ -557,4 +557,118 @@ test('validateArgs accepts an absolute repoRoot (POSIX /-prefix)', () => {
     validateArgs({ ...good, repoRoot: '/r' }),
     { ok: true, errors: [] },
   );
+});
+
+// --- Issue #24 req 7: LIMIT_DEFAULTS at the args waist ----------------------------------
+
+test('LIMIT_DEFAULTS covers exactly the four benchmarked keys, never deliveryCap/discoveryCap', () => {
+  assert.deepEqual(LIMIT_DEFAULTS, {
+    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
+  });
+});
+
+test('normalizeArgs fills every absent limits key from LIMIT_DEFAULTS', () => {
+  const raw = { ...good, limits: {} };
+  const out = normalizeArgs(raw);
+  assert.deepEqual(out.limits, LIMIT_DEFAULTS);
+});
+
+test('normalizeArgs fills only the MISSING limits keys, leaving every provided value untouched', () => {
+  const raw = { ...good, limits: { summarizeBucketSize: 7, deliveryCap: 3 } };
+  const out = normalizeArgs(raw);
+  assert.deepEqual(out.limits, {
+    summarizeBucketSize: 7, deliveryCap: 3,
+    validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
+  });
+});
+
+test('normalizeArgs treats a provided challengeCap:0 as a real value, not an absent one to default over', () => {
+  const raw = { ...good, limits: { challengeCap: 0 } };
+  const out = normalizeArgs(raw);
+  assert.equal(out.limits.challengeCap, 0);
+});
+
+test('normalizeArgs treats a provided deliveryCap:null as a real value (uncapped), never defaulted', () => {
+  const raw = { ...good, limits: { deliveryCap: null } };
+  const out = normalizeArgs(raw);
+  assert.equal(out.limits.deliveryCap, null);
+  assert.ok(!('deliveryCap' in LIMIT_DEFAULTS), 'deliveryCap must never be in LIMIT_DEFAULTS');
+});
+
+test('normalizeArgs leaves a non-object limits alone for validateArgs to reject', () => {
+  const out = normalizeArgs({ ...good, limits: 'nope' });
+  assert.equal(out.limits, 'nope');
+});
+
+test('validateArgs accepts a normalized (fully defaulted) limits object', () => {
+  const out = normalizeArgs({ ...good, limits: {} });
+  assert.deepEqual(validateArgs(out), { ok: true, errors: [] });
+});
+
+test('validateArgs accepts limits absent entirely, deliveryCap null, discoveryCap absent', () => {
+  const r = validateArgs({ ...good, limits: { ...good.limits, deliveryCap: null } });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+
+test('validateArgs accepts limits.challengeCap: 0 (challenge nothing is a legal cap)', () => {
+  const r = validateArgs({ ...good, limits: { ...good.limits, challengeCap: 0 } });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+
+test('validateArgs accepts a positive limits.discoveryCap', () => {
+  const r = validateArgs({ ...good, limits: { ...good.limits, discoveryCap: 10 } });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+
+test('validateArgs rejects a non-object limits', () => {
+  for (const bad of [null, 'x', 5, [], []]) {
+    const r = validateArgs({ ...good, limits: bad });
+    assert.equal(r.ok, false, `limits=${JSON.stringify(bad)} should be rejected`);
+  }
+});
+
+test('validateArgs rejects an unknown limits key — the silent-typo case (issue #24)', () => {
+  const r = validateArgs({ ...good, limits: { ...good.limits, verifySclieSize: 50 } });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /unknown limits key: verifySclieSize/);
+});
+
+test('validateArgs rejects zero/negative/non-integer summarizeBucketSize, validateBatch, verifySliceSize', () => {
+  for (const key of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize']) {
+    for (const bad of [0, -1, 1.5, 'x', NaN]) {
+      const r = validateArgs({ ...good, limits: { ...good.limits, [key]: bad } });
+      assert.equal(r.ok, false, `limits.${key}=${bad} should be rejected`);
+      assert.match(r.errors.join(' '), new RegExp(`limits\\.${key} must be a positive safe integer`));
+    }
+  }
+});
+
+test('validateArgs rejects a negative or non-integer challengeCap, but accepts 0', () => {
+  for (const bad of [-1, 1.5, 'x']) {
+    const r = validateArgs({ ...good, limits: { ...good.limits, challengeCap: bad } });
+    assert.equal(r.ok, false, `limits.challengeCap=${bad} should be rejected`);
+  }
+  assert.deepEqual(
+    validateArgs({ ...good, limits: { ...good.limits, challengeCap: 0 } }),
+    { ok: true, errors: [] },
+  );
+});
+
+test('validateArgs rejects a negative or non-integer deliveryCap, but accepts null/absent', () => {
+  for (const bad of [-1, 1.5, 'x']) {
+    const r = validateArgs({ ...good, limits: { ...good.limits, deliveryCap: bad } });
+    assert.equal(r.ok, false, `limits.deliveryCap=${bad} should be rejected`);
+  }
+  assert.deepEqual(
+    validateArgs({ ...good, limits: { ...good.limits, deliveryCap: null } }),
+    { ok: true, errors: [] },
+  );
+});
+
+test('validateArgs rejects a zero/negative/non-integer discoveryCap when present, but accepts absence', () => {
+  for (const bad of [0, -1, 1.5, 'x']) {
+    const r = validateArgs({ ...good, limits: { ...good.limits, discoveryCap: bad } });
+    assert.equal(r.ok, false, `limits.discoveryCap=${bad} should be rejected`);
+  }
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
 });
