@@ -3510,8 +3510,8 @@ export async function runWith(ctx, rawArgs) {
   };
 
   // Summarize and Discover have NO data dependency: summarize's output is first read at
-  // reportInput, and discover's input is built only from A.agentFlags / limits / policy /
-  // contextPath — `limits` being coarsenLimits(A.limits, nChangedFiles, 0), computed above,
+  // reportInput, and discover's input is built only from the derived scope flags / limits /
+  // policy / contextPath — `limits` being coarsenLimits(A.limits, nChangedFiles, 0), computed above,
   // before either. So both are STARTED here and awaited in order below. Four properties are
   // load-bearing and each is pinned by a test in stages_latency.test.js:
   //   1. Checkpoint semantics: a phase whose checkpoint is present must NOT dispatch, so the

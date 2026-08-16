@@ -1127,3 +1127,20 @@ test('runWith: a stale caller-stamped agentFlags is refused loud, never silently
   assert.equal(out.ok, false);
   assert.match(out.error, /agentFlags is no longer accepted/);
 });
+// F4 (PR3 review): deriveAgentFlags is computed from the args waist's riskTable/changedLines/
+// scopeAnswer directly, OUTSIDE the replay('discover') ternary — so a resumed run whose discover
+// phase is replayed from a checkpoint still echoes a truthful stats.scope, not a fabricated one.
+test('runWith: a resumed run (discover replayed from checkpoint) still echoes the true stats.scope', async () => {
+  const discoverCheckpoint = { findings: [], gaps: [], degraded: [] };
+  const args = validArgs({
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    changedLines: 10,
+    scopeAnswer: 'light',
+    checkpoints: { discover: discoverCheckpoint },
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('code-gauntlet:')), 'discover was replayed, not dispatched');
+  assert.deepEqual(out.stats.scope, { lightEligible: true, scopeAnswer: 'light', deep: false });
+});
