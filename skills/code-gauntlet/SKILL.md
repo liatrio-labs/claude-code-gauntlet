@@ -253,21 +253,31 @@ python3 -c "import secrets; print(secrets.token_hex(8))"
 
 **Composites A/B never subsume 2d (CLAUDE.md/REVIEW.md discovery), 2g (test discovery), or 2k (AI-marker scan)** — those three stay on Glob/Grep exactly as `references/phase2-triage.md` already mandates for each ("Never use `find` from Bash..." / "Never use `find` or `grep` from Bash..."). Routing them through Bash here is the mistake the recorded run made; keep them as separate Glob/Grep tool calls.
 
-### Parse REVIEW.md into the review config
+### Discover REVIEW.md and stamp its raw text
 
-Discover REVIEW.md hierarchically (`references/review-md-spec.md`). Schema-validate it and split it into the two objects the filter stage consumes by value:
+Discover REVIEW.md files across the repo root + changed-file directories + their ancestors —
+the same directory set `scripts/collect_project_rules.py` walks for AGENTS.md/CLAUDE.md/QODO.md
+(`references/review-md-spec.md`, issue #80). For each REVIEW.md found, in that discovery order
+(root first, then increasing directory depth), Read its raw text. Stamp them as:
 
-- `args.reviewConfig` — thresholds + `ignore` list (the parsed object).
-- `args.exclusionPatterns` — the exclusion-pattern list.
-- `args.reviewConfigPath` — the REVIEW.md path (or `null` if none), carried for provenance.
+- `args.reviewMd` — `[{ path, text }, ...]` in discovery order (`path` repo-relative, `text` the
+  file's raw content). An empty array means "discovery ran, no REVIEW.md found" — a legal,
+  authoritative signal in its own right, distinct from omitting the field entirely.
+- `args.exclusionsText` — the raw text of whatever exclusions source was found (e.g.
+  `.reviewignore`), unchanged from today.
 
-The assembled `reviewConfig` is exactly the `parseReviewMd` output shape — **`ignore` entries are flat strings, never objects** (the Filter stage regex-escapes each entry as a literal substring; a `{pattern, reason}` object crashes it after five paid stages, and the args waist rejects it). Concrete example:
+Do not hand-parse or schema-validate REVIEW.md here — pass the raw text through. The workflow's
+`resolveReviewConfig` (`workflows/src/args.js`) calls `parseReviewMd` per entry and merges them
+in array order per the precedence in `references/review-md-spec.md` (settings override deeper-
+wins, `ignore` accumulates); this is a structural guarantee of the args waist, not a prompt-level
+contract. In particular, `resolveReviewConfig` never pins a numeric default for
+`confidence_threshold` / `security_min_confidence` when REVIEW.md does not set one — the Filter
+stage's own built-in defaults (non-security **55**, security **70**) apply exactly when absent,
+so there is nothing to "get right" by hand here anymore.
 
-```json
-{ "confidence_threshold": 65, "severity_threshold": "medium", "ignore": ["*.generated.cs", "TODO comments in migration files"] }
-```
-
-> **Threshold defaults.** Only put `confidence_threshold` / `security_min_confidence` in `reviewConfig` when REVIEW.md actually sets them — do **not** pin a numeric default. When they are absent the Filter stage applies its built-in defaults (non-security **55**, security **70**); pinning an explicit `70` would silently raise the non-security bar back to 70 and undo the default.
+**Do not stamp both `args.reviewMd` and `args.reviewConfig`** (or both `args.exclusionsText` and
+`args.exclusionPatterns`) — the args waist refuses a waist that stamps both the raw and
+pre-parsed form for the same axis (single authority).
 
 ### Write the shared agent context file
 
@@ -338,7 +348,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
                                              // Phase 8 posts it without hand-assembly
 
   // by-value inputs the in-memory stages need (the workflow has no disk):
-  changedFiles, changedLines, baseBranch, reviewConfig, exclusionPatterns,
+  changedFiles, changedLines, baseBranch, reviewMd, exclusionsText,
 
   // the shared context file's own measured size, from the write step above. Feeds
   // contextReadPlan, which turns it into the exact Read calls the discovery/validate/

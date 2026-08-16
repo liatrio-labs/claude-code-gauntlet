@@ -1936,6 +1936,7 @@ function resolvePolicy(agentType, opts = {}) {
 }
 
 // --- args.js ---
+
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
@@ -1980,6 +1981,12 @@ const DELIVERY_TIERS = ['all', 'main_only'];
 // names, so gateway sessions are firstParty; non-standard gateway names go through the
 // subagentModel escape hatch.
 const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
+
+// Shared with PATH_CONTROL_RE further down (declared locally there because it sits inside
+// validateArgs); duplicated at module scope here so the reviewMd[].path guard above — which
+// runs earlier in validateArgs, before that local const is declared in source order — can
+// reuse the identical charset without a forward reference.
+const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
 
 // Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
 // stamped `null` rather than absent — a wasted model round trip. These five top-level
@@ -2538,6 +2545,64 @@ function validateArgs(args) {
       }
     }
   }
+  // Optional reviewMd (issue #24 PR2): the raw, ORDERED discovery of REVIEW.md files —
+  // root-first, increasing directory depth — as [{path, text}]. This is the RAW-text
+  // counterpart to the pre-parsed `reviewConfig` above: resolveReviewConfig (below) turns it
+  // into the same shape reviewConfig has always had by calling parseReviewMd per entry and
+  // merging in array order. An empty array is a legal, authoritative "discovery ran and found
+  // nothing" signal — distinct from the field being absent entirely (see resolveReviewConfig's
+  // reviewConfigSource). `path` is repo-relative (must NOT start with '/', the opposite
+  // convention from repoRoot/outputDir above, which must) and reuses PATH_CONTROL_RE below via
+  // a local copy since this guard runs before that regex is declared in file order... — see
+  // REVIEW_MD_PATH_CONTROL_RE just below, same pattern.
+  if (args.reviewMd !== undefined) {
+    if (!Array.isArray(args.reviewMd)) {
+      errors.push('reviewMd must be an array of {path, text} objects when present');
+    } else {
+      for (let i = 0; i < args.reviewMd.length; i++) {
+        const entry = args.reviewMd[i];
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`reviewMd[${i}] must be an object of the form {path, text}`);
+          continue;
+        }
+        const keys = Object.keys(entry).sort();
+        const extra = keys.filter((k) => k !== 'path' && k !== 'text');
+        if (extra.length > 0) {
+          errors.push(`reviewMd[${i}] has unexpected key(s): ${extra.join(', ')} (only path and text are allowed)`);
+        }
+        if (typeof entry.path !== 'string' || entry.path === '') {
+          errors.push(`reviewMd[${i}].path must be a non-empty string`);
+        } else {
+          if (REVIEW_MD_PATH_CONTROL_RE.test(entry.path)) {
+            errors.push(`reviewMd[${i}].path must not contain a control character`);
+          }
+          if (entry.path.startsWith('/')) {
+            errors.push(`reviewMd[${i}].path must be repo-relative (must not start with /)`);
+          }
+        }
+        if (typeof entry.text !== 'string') {
+          errors.push(`reviewMd[${i}].text must be a string`);
+        }
+      }
+    }
+  }
+  // Optional exclusionsText (issue #24 PR2): the raw text of whatever exclusions source the
+  // skill discovered (e.g. .reviewignore), consumed by loadExclusions (filterFindings.js) in
+  // resolveReviewConfig below. Empty string is legal (an exclusions file that exists but is
+  // empty).
+  if (args.exclusionsText !== undefined && typeof args.exclusionsText !== 'string') {
+    errors.push('exclusionsText must be a string when present');
+  }
+  // Single-authority guards (issue #24 req 4 analog): a caller must pass EITHER the raw
+  // discovery (reviewMd/exclusionsText) OR the pre-parsed shape (reviewConfig/
+  // exclusionPatterns), never both for the same axis — two authorities for one piece of
+  // config is exactly the silent-substitution hazard this waist exists to refuse loudly.
+  if (args.reviewMd !== undefined && args.reviewConfig !== undefined) {
+    errors.push('reviewMd and reviewConfig are both present — pass raw reviewMd or pre-parsed reviewConfig, not both (single authority)');
+  }
+  if (args.exclusionsText !== undefined && args.exclusionPatterns !== undefined) {
+    errors.push('exclusionsText and exclusionPatterns are both present — pass raw exclusionsText or pre-parsed exclusionPatterns, not both (single authority)');
+  }
   // Optional delivery selector. Absence is fine; when present it must be an object, and a
   // present tier must be a known value — an unknown tier would otherwise fall through to the
   // 'all' default in selectDelivery, silently ignoring an operator's narrowing intent.
@@ -2637,6 +2702,63 @@ function validateArgs(args) {
     }
   }
   return { ok: errors.length === 0, errors };
+}
+
+// resolveReviewConfig(A) -> { reviewConfig, exclusionPatterns, reviewConfigSource,
+// reviewMdEntryCount } (issue #24 PR2 / #80).
+//
+// A strict SUPERSET of today's behavior: when A.reviewMd/A.exclusionsText are absent this
+// resolves to exactly A.reviewConfig/A.exclusionPatterns as before (req 8 backward compat —
+// bench children and older invocation shapes are unaffected). validateArgs above already
+// refuses a waist that stamps BOTH the raw and pre-parsed form for the same axis, so at most
+// one of each pair is ever present here.
+//
+// reviewMd merge order is the array's OWN order (root-first, increasing depth — the caller's
+// discovery order, never re-sorted here). Per skills/code-gauntlet/references/review-md-spec.md:
+// a later (deeper) entry's threshold SETTING overrides an earlier one's when both set it;
+// `ignore` lists ACCUMULATE across every entry, in encounter order. Absent settings are never
+// defaulted here — parseReviewMd only stamps a key when the text actually set it (see its own
+// doc comment), and this merge preserves that: a setting neither entry set stays `undefined`
+// so applyThresholdFilter's own config-absent 55/70 split (filterFindings.js) still applies.
+//
+// reviewConfigSource covers the REVIEW.md/exclusions pair as ONE story rather than two
+// separate provenance signals (a single field, not a per-axis pair, per this repo's
+// "extending should cost one edit" design note) — 'reviewMd' when A.reviewMd was present (even
+// an empty array: discovery ran and found nothing is still authoritative), 'preParsed' when
+// A.reviewConfig or A.exclusionPatterns was present instead, 'none' when neither pair member
+// was supplied at all.
+function resolveReviewConfig(A) {
+  const a = A || {};
+  if (a.reviewMd !== undefined) {
+    const merged = { ignore: [] };
+    for (const entry of a.reviewMd) {
+      const parsed = parseReviewMd(entry && entry.text);
+      if (parsed.confidence_threshold !== undefined) merged.confidence_threshold = parsed.confidence_threshold;
+      if (parsed.security_min_confidence !== undefined) merged.security_min_confidence = parsed.security_min_confidence;
+      if (parsed.severity_threshold !== undefined) merged.severity_threshold = parsed.severity_threshold;
+      merged.ignore.push(...parsed.ignore);
+    }
+    return {
+      reviewConfig: merged,
+      exclusionPatterns: a.exclusionsText !== undefined ? loadExclusions(a.exclusionsText) : (a.exclusionPatterns || []),
+      reviewConfigSource: 'reviewMd',
+      reviewMdEntryCount: a.reviewMd.length,
+    };
+  }
+  if (a.exclusionsText !== undefined) {
+    return {
+      reviewConfig: a.reviewConfig || {},
+      exclusionPatterns: loadExclusions(a.exclusionsText),
+      reviewConfigSource: 'reviewMd',
+      reviewMdEntryCount: 0,
+    };
+  }
+  return {
+    reviewConfig: a.reviewConfig || {},
+    exclusionPatterns: a.exclusionPatterns || [],
+    reviewConfigSource: (a.reviewConfig !== undefined || a.exclusionPatterns !== undefined) ? 'preParsed' : 'none',
+    reviewMdEntryCount: 0,
+  };
 }
 
 // --- stages.js ---
@@ -6246,9 +6368,15 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(validateOut.gaps || []));
 
+    // resolveReviewConfig (issue #24 PR2): a strict superset of the old A.reviewConfig ||
+    // {} / A.exclusionPatterns || [] passthrough — when A.reviewMd/A.exclusionsText are
+    // absent this resolves to exactly that, unchanged. filterStage's own input shape
+    // ({findings, reviewConfig, exclusionPatterns, generatedAt}) stays untouched (parity
+    // seam, issue #24 req 9).
+    const resolvedReview = resolveReviewConfig(A);
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: validateOut.findings || [], reviewConfig: A.reviewConfig || {},
-      exclusionPatterns: A.exclusionPatterns || [], generatedAt: A.generatedAt,
+      findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
+      exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
@@ -6391,6 +6519,11 @@ async function runWith(ctx, rawArgs) {
         degraded: discoverOut.degraded || [],
         validate: validateOut.stats,
         filter: filterOut.stats,
+        // Compact provenance echo (issue #24 PR2): names/counts only, never bulk content —
+        // no raw REVIEW.md text, no full config object. 'reviewMd' | 'preParsed' | 'none';
+        // see resolveReviewConfig's doc comment (args.js) for the full contract.
+        reviewConfigSource: resolvedReview.reviewConfigSource,
+        reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,

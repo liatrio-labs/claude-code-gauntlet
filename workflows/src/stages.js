@@ -21,7 +21,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig } from './args.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -3610,9 +3610,15 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(validateOut.gaps || []));
 
+    // resolveReviewConfig (issue #24 PR2): a strict superset of the old A.reviewConfig ||
+    // {} / A.exclusionPatterns || [] passthrough — when A.reviewMd/A.exclusionsText are
+    // absent this resolves to exactly that, unchanged. filterStage's own input shape
+    // ({findings, reviewConfig, exclusionPatterns, generatedAt}) stays untouched (parity
+    // seam, issue #24 req 9).
+    const resolvedReview = resolveReviewConfig(A);
     const filterOut = await runPhase('filter', () => filterStage({
-      findings: validateOut.findings || [], reviewConfig: A.reviewConfig || {},
-      exclusionPatterns: A.exclusionPatterns || [], generatedAt: A.generatedAt,
+      findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
+      exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
     }));
 
     const challengeOut = await runPhase('challenge', () => challengeStage(c, {
@@ -3755,6 +3761,11 @@ export async function runWith(ctx, rawArgs) {
         degraded: discoverOut.degraded || [],
         validate: validateOut.stats,
         filter: filterOut.stats,
+        // Compact provenance echo (issue #24 PR2): names/counts only, never bulk content —
+        // no raw REVIEW.md text, no full config object. 'reviewMd' | 'preParsed' | 'none';
+        // see resolveReviewConfig's doc comment (args.js) for the full contract.
+        reviewConfigSource: resolvedReview.reviewConfigSource,
+        reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,
