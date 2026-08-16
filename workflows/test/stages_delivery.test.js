@@ -250,3 +250,48 @@ test('runWith exposes the persisted post-review artifact path', async () => {
   assert.match(out.artifactPaths.postReview, /post-review/);
   assert.match(out.artifactPaths.postReview, /abc1234/);
 });
+
+// --- runWith: args.reviewMd (issue #24 PR2) ----------------------------------
+
+test('runWith threads a single-entry args.reviewMd through resolveReviewConfig into the filter stage, and echoes provenance', async () => {
+  // A validate checkpoint gives a deterministic pre-filter finding set: one at
+  // confidence 95 (survives a confidence_threshold: 90 REVIEW.md config) and one at
+  // confidence 50 (eliminated by it). The challenge checkpoint then hands runWith a
+  // fixed post-filter delivered set so the test does not depend on challenge dispatch
+  // mocking — the assertion here is about the FILTER stage's observable effect
+  // (stats.filter / reviewConfigSource), not about what challenge does next.
+  const reviewMdText = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
+  const args = validArgs({
+    reviewMd: [{ path: 'REVIEW.md', text: reviewMdText }],
+    checkpoints: {
+      validate: {
+        findings: [
+          makeFinding('KEEP', { confidence: 95 }),
+          // 65 sits ABOVE the Filter stage's config-absent non-security default (55) but
+          // BELOW the REVIEW.md confidence_threshold: 90 above — this value is chosen
+          // specifically so the assertion below discriminates "the configured threshold was
+          // applied" from "the stage's own built-in default happened to eliminate it too".
+          makeFinding('DROP', { confidence: 65 }),
+        ],
+        stats: { batches_dispatched: 0, batches_completed: 0, validated: 2, skipped: 0, adjusted: 0 },
+      },
+      challenge: challengeCheckpoint(),
+    },
+  });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.equal(out.stats.reviewConfigSource, 'reviewMd');
+  assert.equal(out.stats.reviewMdEntryCount, 1);
+  // The filter stage kept KEEP (95 >= 90) and eliminated DROP (50 < 90) — proof the
+  // REVIEW.md confidence_threshold was actually applied, not just threaded silently.
+  assert.equal(out.stats.filter.total, 2);
+  assert.equal(out.stats.filter.passed_threshold, 1);
+});
+
+test('runWith without args.reviewMd reports reviewConfigSource "none" (no config supplied)', async () => {
+  const args = validArgs({ checkpoints: { challenge: challengeCheckpoint() } });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.equal(out.stats.reviewConfigSource, 'none');
+  assert.equal(out.stats.reviewMdEntryCount, 0);
+});
