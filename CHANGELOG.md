@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.10.0 (2026-08-16)
+
+### Bug Fixes
+
+- **reviewMd**: Make precedence structural, provenance per-axis, merge scope honest (#24 PR2
+  adversarial review) ([#197](https://github.com/liatrio-labs/claude-code-gauntlet/pull/197),
+  [`34f24ec`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/34f24ec980cc07a039d59cf42fc426e62a047393))
+
+### Features
+
+- **args**: In-pipeline REVIEW.md parse via reviewMd/exclusionsText waist fields (#24 sub-PR 2)
+  ([#197](https://github.com/liatrio-labs/claude-code-gauntlet/pull/197),
+  [`34f24ec`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/34f24ec980cc07a039d59cf42fc426e62a047393))
+
+- **args**: ReviewMd/exclusionsText waist fields + resolveReviewConfig merge (#24 req 2/4)
+  ([#197](https://github.com/liatrio-labs/claude-code-gauntlet/pull/197),
+  [`34f24ec`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/34f24ec980cc07a039d59cf42fc426e62a047393))
+
+### Testing
+
+- **stages**: Cover the 'preParsed' reviewConfigSource echo at runWith level (#24 req 2/4)
+  ([#197](https://github.com/liatrio-labs/claude-code-gauntlet/pull/197),
+  [`34f24ec`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/34f24ec980cc07a039d59cf42fc426e62a047393))
+
+
 ## v3.9.0 (2026-08-16)
 
 ### Bug Fixes
