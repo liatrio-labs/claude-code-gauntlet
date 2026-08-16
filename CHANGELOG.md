@@ -2,6 +2,41 @@
 
 <!-- version list -->
 
+## v3.8.2 (2026-08-16)
+
+### Bug Fixes
+
+- **review-md**: Align REVIEW.md contract with the real parser
+  ([#191](https://github.com/liatrio-labs/claude-code-gauntlet/pull/191),
+  [`8bdecca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bdecca1f3c1072ea90ba51bda136be94521622e))
+
+- **review-md**: Close 7 adversarial-review gaps in the config parser and docs
+  ([#191](https://github.com/liatrio-labs/claude-code-gauntlet/pull/191),
+  [`8bdecca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bdecca1f3c1072ea90ba51bda136be94521622e))
+
+- **review-md**: Merge duplicate defaults regex and fix legacy-form citation (PR #191 review)
+  ([#191](https://github.com/liatrio-labs/claude-code-gauntlet/pull/191),
+  [`8bdecca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bdecca1f3c1072ea90ba51bda136be94521622e))
+
+- **review-md**: One REVIEW.md contract — spec, parsers, and generators agree (#94, #113, #118)
+  ([#191](https://github.com/liatrio-labs/claude-code-gauntlet/pull/191),
+  [`8bdecca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bdecca1f3c1072ea90ba51bda136be94521622e))
+
+- **tests**: Narrow the possibly-None regex match in test_review_md_contract
+  ([#191](https://github.com/liatrio-labs/claude-code-gauntlet/pull/191),
+  [`8bdecca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bdecca1f3c1072ea90ba51bda136be94521622e))
+
+### Documentation
+
+- **readme**: Align REVIEW.md example with the #94 contract (review finding cross-file-1)
+  ([#191](https://github.com/liatrio-labs/claude-code-gauntlet/pull/191),
+  [`8bdecca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bdecca1f3c1072ea90ba51bda136be94521622e))
+
+- **review-md**: Align review-md-practices.md with the real config dialect
+  ([#191](https://github.com/liatrio-labs/claude-code-gauntlet/pull/191),
+  [`8bdecca`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/8bdecca1f3c1072ea90ba51bda136be94521622e))
+
+
 ## v3.8.1 (2026-08-15)
 
 ### Bug Fixes
