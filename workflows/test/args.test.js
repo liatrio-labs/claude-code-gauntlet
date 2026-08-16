@@ -204,6 +204,16 @@ test('validateArgs rejects an invalid risk literal', () => {
   assert.equal(r.ok, false);
   assert.match(r.errors.join(' '), /riskTable\[0\]\.risk must be one of low, medium, high/);
 });
+test('validateArgs rejects a non-object riskTable entry', () => {
+  const r = validateArgs({ ...good, riskTable: ['a.js'] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /riskTable\[0\] must be an object of the form \{path, risk\}/);
+});
+test('validateArgs rejects a riskTable entry with an empty path', () => {
+  const r = validateArgs({ ...good, riskTable: [{ path: '', risk: 'low' }] });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /riskTable\[0\]\.path must be a non-empty string/);
+});
 test('validateArgs rejects a riskTable entry with an extra key', () => {
   const r = validateArgs({ ...good, riskTable: [{ path: 'a.js', risk: 'low', note: 'x' }] });
   assert.equal(r.ok, false);

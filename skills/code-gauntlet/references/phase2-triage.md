@@ -205,9 +205,11 @@ Stay LOW: lock files, whitespace-only changes, generated code updates, tag case 
 
 ### Light Review for Trivial PRs
 
-If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). A `light` answer stamps `agentFlags: { deep: false }`, which the Discover stage honours by dispatching only the two core agents (`bug-detector`, `security-reviewer`); `full` stamps `{}` and runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full.
+If ALL files are low-risk AND total lines <50, ask Light review vs Full review (template in `references/phase1-preflight.md`). There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). Stamp the answer verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow itself derives the dimension flags from `scopeAnswer` together with the `riskTable`/`changedLines` you are already stamping (`deriveAgentFlags`, `workflows/src/stages.js`): a `light` answer runs only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimension set — `bugs, security` for light, the full list for full. `args.riskTable` is REQUIRED on every run regardless of the answer (or of whether this question was even asked) — see Args Preparation below.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` stamps `agentFlags: { deep: false }` → bugs+security only, `full` stamps `{}` → all dimensions). At args assembly, **re-read the variable with a fresh `echo`** — never recall its value from earlier context (a live run recalled `full` while the actual value was `light`). See `references/headless-mode.md` and the assembly rule in SKILL.md.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not ask — use `$CODE_GAUNTLET_TRIVIAL_SCOPE` (`light` or `full`, stamped verbatim into `args.scopeAnswer`). At args assembly, **re-read the variable with a fresh `echo`** — never recall its value from earlier context (a live run recalled `full` while the actual value was `light`). See `references/headless-mode.md` and the assembly rule in SKILL.md.
+
+Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND total lines <50); omit it entirely otherwise — the args waist refuses a `scopeAnswer` the riskTable/changedLines don't support, and refuses a light-eligible riskTable with no `scopeAnswer` at all (the gate must have asked).
 
 ---
 
@@ -375,7 +377,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `diffPath` | `{output_dir}/code-gauntlet-diff-{head_sha_short}.patch` |
 | `changedFiles` | the changed-file array, by value (Summarize bucketing; the workflow has no disk access) |
 | `changedLines` | total changed line count, by value (Summarize bucketing threshold) |
-| `agentFlags` | scope-gating flag map (opt-out): `{}` for full scope (all dimensions on), `{ deep: false }` for light scope (bugs+security only). Values must be booleans; only literal `false` disables |
+| `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
 | `policy` | `{ tier, subagentModel, provider }` — see below |
 | `limits` | pass only genuine overrides — a REVIEW.md-set value, or the env-threaded `deliveryCap` — never the full table. `normalizeArgs` fills `summarizeBucketSize`/`validateBatch`/`challengeCap`/`verifySliceSize` from `LIMIT_DEFAULTS` (`workflows/src/args.js`) for any key you leave absent; stamp `{}` (or just `{ deliveryCap }`) rather than restating those numbers here. `deliveryCap`/`discoveryCap` are never defaulted — their absence/`null` is meaningful, not a hole waiting to be filled |
 | `delivery` | `{ tier: "all" \| "main_only" }` — the Phase 8 PR-comment tier (default `all`); optional (absent ⇒`all`) |
@@ -390,6 +392,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 
 **Other inputs (optional unless noted):**
 
+- `scopeAnswer` — `"light"` or `"full"`, the 2e trivial-scope gate's answer, stamped ONLY when that gate actually asked (every changed file low-risk and `changedLines < 50`; see 2e). Omit otherwise — the workflow refuses a `scopeAnswer` incoherent with `riskTable`/`changedLines` (a `"light"` answer to a riskTable that wasn't light-eligible, or a light-eligible riskTable with no `scopeAnswer` at all).
 - `contextLines` / `contextChars` — the shared context file's measured size, from the write step above. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).

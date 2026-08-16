@@ -309,18 +309,13 @@ Stamp both values verbatim. Never estimate them, never carry them over from an e
 
 Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `CODE_GAUNTLET_DELIVERY_TIER`) and `deliveryCap` (from `CODE_GAUNTLET_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path. For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full }` (from the resolved PR and `git rev-parse HEAD`) — the artifact-writer then persists the post-review artifact as the `post_review.py`-ready wrapper and Phase 8 posts it without hand-assembly. Omit `prIdentity` entirely for local-diff reviews.
 
-Stamp `agentFlags` by evaluating this rule **at assembly time**, from fresh inputs — never from a remembered knob value (a live verification run recalled `full` at this step while its own Phase-1 echo said `light`):
+Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set (the args waist refuses a missing or extra path). Stamp `scopeAnswer` only when the trivial-scope gate in 2e actually asked (2e's "Light Review for Trivial PRs" — every file LOW risk AND `changedLines < 50`); omit it otherwise. For a headless run, re-read the fresh env value at THIS step, never a remembered one (a live verification run recalled `full` here while its own Phase-1 echo said `light`):
 
 ```bash
 Bash(command="echo ${CODE_GAUNTLET_TRIVIAL_SCOPE:-full}")  # headless: re-read NOW; interactive: use the recorded "Light review" answer
 ```
 
-```
-trivial_gate_fired = (every changed file classified LOW risk in 2e) AND (changedLines < 50)
-agentFlags = (trivial_gate_fired AND scope answer == light) ? { "deep": false } : {}
-```
-
-All three inputs are on hand at this step: the 2e risk table, the `changedLines` value being stamped two lines up, and the fresh echo above. (This scope gate is distinct from Phase 1's eligibility check #4 — "only lockfile/generated changes → stop" — which aborts; this one narrows dimensions.) The map is **opt-out**: `{}` = full scope (every dimension on — byte-identical to no flags); `{ "deep": false }` = light scope (only the two core dimensions `bug`, `security` run — two discovery agents). Stamping `{}` after a light decision silently runs a full 7-agent review the user/operator declined — that exact miss occurred in live verification, which is why this is a derivation rule, not prose. Never stamp a non-boolean value: `agentActive` gates only on the literal `false`, and the args waist rejects anything else.
+`scopeAnswer` is `"light"` or `"full"` — literally that echo (headless) or the recorded interactive answer, nothing derived. The pipeline itself computes dimension eligibility from `riskTable`/`changedLines`/`scopeAnswer` (`deriveAgentFlags`, `workflows/src/stages.js`) and refuses the run before any dispatch if `scopeAnswer` is incoherent with the riskTable/changedLines it was answered against (`"light"` when not every file is low risk or lines >= 50; or the reverse — eligible with no `scopeAnswer` stamped at all). There is no `agentFlags` field to stamp any more, and the waist hard-rejects one if present — the orchestrator's only scope job is producing `riskTable` and echoing `scopeAnswer` when asked.
 
 **Omit optional fields you have no value for — never stamp an explicit `null`.** The waist tolerates an explicit `null` as equivalent to absent for `reviewConfig`, `exclusionPatterns`, `reviewMd`, `exclusionsText`, `delivery`, and `checkpoints`, but omitting is the norm: a live run once stamped `reviewConfig: null` and paid a 21.3s round trip re-deriving it before dispatch. Two fields are the opposite case — `null` there is a meaningful value, not a stand-in for absent, so do not "fix" it away: `reviewConfigPath: null` (no REVIEW.md found — pure provenance) and `limits.deliveryCap: null` (uncapped delivery — an explicit choice, not an oversight).
 
@@ -332,7 +327,8 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   mode: "interactive" | "headless",
   repoRoot, outputDir, headShaShort, nonce, generatedAt,
   diffPath, changedFilesPath, reviewConfigPath,
-  agentFlags: { ...scope-gating flags: {} for full scope, { deep: false } for light... },
+  riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
+  scopeAnswer: "light" | "full",  // ONLY when the 2e trivial-scope gate asked; omit otherwise
   policy: { tier, subagentModel, provider },
   limits: { deliveryCap },  // pass ONLY genuine overrides — a REVIEW.md-set value, or the
                              // env-threaded deliveryCap — never the full table:
@@ -391,7 +387,12 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
 
 Invoke the workflow in **one** `Workflow` tool call. This single call runs the eight review stages — Summarize → Discover → Merge → Verify → Validate → Filter → Challenge → Report — and persists artifacts. Read `references/phase3-dispatch.md` for the internal stage map and the executor/writer agent roles.
 
-**Pre-dispatch check:** if the Phase 2d scope decision was **light**, confirm `args.agentFlags` is exactly `{ "deep": false }` before invoking — if it is `{}`, the assembly step dropped the decision; fix the args, do not dispatch a 7-agent review the user declined.
+No pre-dispatch scope check is needed here: `deriveAgentFlags` (`workflows/src/args.js` /
+`workflows/src/stages.js`) computes the dimension flags from `riskTable`/`changedLines`/
+`scopeAnswer` inside the workflow itself, and `validateArgs` refuses an incoherent waist (a
+`scopeAnswer: "light"` the riskTable doesn't support, or a light-eligible waist with no
+`scopeAnswer`) before any agent is dispatched — there is no longer a second, prompt-level
+place the decision could silently drop.
 
 ```
 Workflow(
