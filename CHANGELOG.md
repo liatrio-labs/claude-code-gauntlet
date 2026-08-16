@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.11.0 (2026-08-16)
+
+### Bug Fixes
+
+- **pipeline**: Stale scope-derivation comment, SKILL.md null-tolerance list, resumed-run scope test
+  ([#195](https://github.com/liatrio-labs/claude-code-gauntlet/pull/195),
+  [`c94fd7a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c94fd7a4f21569d4380efb31043a45ed37931cce))
+
+### Documentation
+
+- **code-gauntlet**: Retire the agentFlags derivation rule from SKILL.md/phase docs (#24 req 4)
+  ([#195](https://github.com/liatrio-labs/claude-code-gauntlet/pull/195),
+  [`c94fd7a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c94fd7a4f21569d4380efb31043a45ed37931cce))
+
+### Features
+
+- **args**: Derive agentFlags deterministically from riskTable/scopeAnswer (#24 req 1-5)
+  ([#195](https://github.com/liatrio-labs/claude-code-gauntlet/pull/195),
+  [`c94fd7a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c94fd7a4f21569d4380efb31043a45ed37931cce))
+
+- **args**: Deterministic agentFlags derivation from riskTable/scopeAnswer (#24 sub-PR 3)
+  ([#195](https://github.com/liatrio-labs/claude-code-gauntlet/pull/195),
+  [`c94fd7a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c94fd7a4f21569d4380efb31043a45ed37931cce))
+
+
 ## v3.10.0 (2026-08-16)
 
 ### Bug Fixes
