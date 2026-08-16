@@ -3345,7 +3345,7 @@ async function verifyStage(ctx, input) {
   const fanoutGaps = slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD
     ? [`verify_fanout: verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
       + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
-      + 'executor dispatches at VERIFY_ATTEMPTS_PER_SLICE retries per slice. Raise verifySliceSize to reduce fan-out, '
+      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. Raise verifySliceSize to reduce fan-out, `
       + 'or keep it small deliberately if this run is mitigating a transcription-fidelity failure (issue #25).']
     : [];
 
