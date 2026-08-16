@@ -21,7 +21,7 @@ import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
-import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE } from './args.js';
+import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS } from './args.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -1448,11 +1448,13 @@ const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 const effectiveChallengeCap = (L, findings) =>
   Math.max(0, L.challengeCap != null ? L.challengeCap : findings);
 
-// Mirror each stage's own absent/zero-size default EXACTLY (summarize: bucket 20;
-// verify/validate: ONE slice/batch over all findings) so the guard arithmetic can
-// never go NaN (Math.max(1, undefined) is NaN — a NaN worst case silently disables
-// the coarsening loop) and never counts a different fan-out than the stage dispatches.
-const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || 20);
+// Mirror each stage's own absent/zero-size default EXACTLY (summarize: bucket
+// LIMIT_DEFAULTS.summarizeBucketSize; verify/validate: ONE slice/batch over all findings) so the
+// guard arithmetic can never go NaN (Math.max(1, undefined) is NaN — a NaN worst case silently
+// disables the coarsening loop) and never counts a different fan-out than the stage dispatches.
+// The four LIMIT_DEFAULTS numbers live in exactly one place (workflows/src/args.js); these
+// helpers read it rather than restating a literal.
+const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
 
