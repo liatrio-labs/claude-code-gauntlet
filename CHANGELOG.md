@@ -2,6 +2,51 @@
 
 <!-- version list -->
 
+## v3.9.0 (2026-08-16)
+
+### Bug Fixes
+
+- **limits**: Apply adversarial-review fixes for the limits waist
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+- **stages**: Interpolate VERIFY_ATTEMPTS_PER_SLICE value in the verify_fanout gap (PR #193 review)
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+### Chores
+
+- **pipeline**: Rebuild bundle for the limits-waist changes
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+### Documentation
+
+- **code-gauntlet**: Stop restating LIMIT_DEFAULTS numbers in skill docs (#24 req 7)
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+### Features
+
+- **args**: Canonical LIMIT_DEFAULTS at the args waist (#24 req 7)
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+- **args**: Canonical limits defaults and validation at the args waist (#24 sub-PR 1, closes #72)
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+- **stages**: Disclose verify fan-out instead of flooring verifySliceSize
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+### Refactoring
+
+- **stages**: Unify limit fallbacks behind the effective* helpers (#24 req 7)
+  ([#193](https://github.com/liatrio-labs/claude-code-gauntlet/pull/193),
+  [`4483326`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/448332685a6c04b6ec15189a22d5ea756671f313))
+
+
 ## v3.8.2 (2026-08-16)
 
 ### Bug Fixes
