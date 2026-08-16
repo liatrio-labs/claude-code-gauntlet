@@ -28,8 +28,8 @@ from scripts.filter_findings import (
     _CONTESTATION_DROP_THRESHOLD,
     _SINGLETON_PENALTY,
     DEFAULT_CONFIDENCE_THRESHOLD,
+    DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
-    DEFAULT_SEVERITY_THRESHOLD,
     _count_words,
     _dedup_test_analyzer,
     _is_test_correctness_finding,
@@ -138,9 +138,13 @@ class TestParseReviewMd(unittest.TestCase):
             os.unlink(path)
 
     def test_missing_file_returns_defaults(self):
+        """issue #94 F7: absent keys are OMITTED from the returned dict, not
+        pre-filled with DEFAULT_CONFIDENCE_THRESHOLD/DEFAULT_SEVERITY_THRESHOLD --
+        callers (apply_threshold_filter) apply their own config-absent fallback."""
         config = parse_review_md("/nonexistent/path/REVIEW.md")
-        self.assertEqual(config["confidence_threshold"], DEFAULT_CONFIDENCE_THRESHOLD)
-        self.assertEqual(config["severity_threshold"], DEFAULT_SEVERITY_THRESHOLD)
+        self.assertNotIn("confidence_threshold", config)
+        self.assertNotIn("severity_threshold", config)
+        self.assertNotIn("security_min_confidence", config)
         self.assertEqual(config["ignore"], [])
 
     def test_empty_file_returns_defaults(self):
@@ -149,9 +153,7 @@ class TestParseReviewMd(unittest.TestCase):
             path = f.name
         try:
             config = parse_review_md(path)
-            self.assertEqual(
-                config["confidence_threshold"], DEFAULT_CONFIDENCE_THRESHOLD
-            )
+            self.assertNotIn("confidence_threshold", config)
         finally:
             os.unlink(path)
 
@@ -169,11 +171,63 @@ class TestParseReviewMd(unittest.TestCase):
         try:
             config = parse_review_md(path)
             # confidence_threshold regex requires \d+, so "notanumber" won't match
-            self.assertEqual(
-                config["confidence_threshold"], DEFAULT_CONFIDENCE_THRESHOLD
-            )
+            # -- the key is absent, not defaulted (issue #94 F7).
+            self.assertNotIn("confidence_threshold", config)
             # severity_threshold should still parse
             self.assertEqual(config["severity_threshold"], "medium")
+        finally:
+            os.unlink(path)
+
+    def test_commented_key_is_not_parsed(self):
+        """issue #94 F1: a `#`-prefixed example line inside the config block must
+        not be picked up as live config -- the key regexes are anchored to line
+        start (ignoring leading whitespace only, never past a `#`)."""
+        content = (
+            "```yaml\n"
+            "# code-gauntlet\n"
+            "# confidence_threshold: 70\n"
+            "# security_min_confidence: 70\n"
+            "# severity_threshold: medium\n"
+            "```\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            path = f.name
+        try:
+            config = parse_review_md(path)
+            self.assertNotIn("confidence_threshold", config)
+            self.assertNotIn("security_min_confidence", config)
+            self.assertNotIn("severity_threshold", config)
+            self.assertEqual(config["ignore"], [])
+        finally:
+            os.unlink(path)
+
+    def test_quoted_ignore_entry_has_quotes_stripped(self):
+        """issue #94 F2: an ignore entry written with surrounding quotes (the
+        documented style) is stored WITHOUT the quote characters, so it matches
+        the unquoted finding text applyExclusions compares it against."""
+        content = (
+            "```yaml\n"
+            "# code-gauntlet\n"
+            "ignore:\n"
+            '  - "console.log in development mode"\n'
+            "  - unquoted pattern\n"
+            "  - 'single quoted pattern'\n"
+            "```\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            path = f.name
+        try:
+            config = parse_review_md(path)
+            self.assertEqual(
+                config["ignore"],
+                [
+                    "console.log in development mode",
+                    "unquoted pattern",
+                    "single quoted pattern",
+                ],
+            )
         finally:
             os.unlink(path)
 
@@ -1881,13 +1935,40 @@ class TestNormalizeFieldNames(unittest.TestCase):
 
 class TestDefaultConstants(unittest.TestCase):
     def test_default_confidence_threshold_is_70(self):
+        """apply_threshold_filter's SECURITY-branch config-absent fallback (issue
+        #94 F7: parse_review_md no longer pre-fills this into its returned dict --
+        see TestParseReviewMd.test_missing_file_returns_defaults -- this constant
+        now only backs the .get() fallback callers apply themselves)."""
         self.assertEqual(DEFAULT_CONFIDENCE_THRESHOLD, 70)
+
+    def test_default_nonsecurity_confidence_threshold_is_55(self):
+        """apply_threshold_filter's config-absent fallback for non-security
+        dimensions (issue #94: aligned with the JS twin's
+        DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD)."""
+        self.assertEqual(DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD, 55)
 
     def test_default_security_min_confidence_is_70(self):
         self.assertEqual(DEFAULT_SECURITY_MIN_CONFIDENCE, 70)
 
     def test_contestation_drop_threshold_is_25(self):
         self.assertEqual(_CONTESTATION_DROP_THRESHOLD, 25)
+
+    def test_config_absent_threshold_split_by_dimension(self):
+        """apply_threshold_filter given a config with no confidence_threshold
+        key at all (the shape the skill hands the pipeline when REVIEW.md never
+        sets confidence_threshold) applies 55 to non-security dimensions and 70
+        to security — matching tests/fixtures/parity/filter_findings/threshold/
+        config_absent_split, which pins the same behavior for the JS twin."""
+        findings = [
+            _make_finding(
+                id="ca1", dimension="security", confidence=65, severity="low"
+            ),
+            _make_finding(id="ca2", dimension="bug", confidence=65, severity="low"),
+            _make_finding(id="ca3", dimension="bug", confidence=50, severity="low"),
+        ]
+        passed, eliminated, _ = apply_threshold_filter(findings, {})
+        self.assertEqual({f["id"] for f in passed}, {"ca2"})
+        self.assertEqual({f["id"] for f in eliminated}, {"ca1", "ca3"})
 
     def test_output_flag_leaves_stdout_empty(self):
         import io

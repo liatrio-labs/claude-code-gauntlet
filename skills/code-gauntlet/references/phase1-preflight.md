@@ -321,4 +321,4 @@ AskUserQuestion(
 )
 ```
 
-Skipped when REVIEW.md sets `focus`. In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.
+There is no REVIEW.md key that skips this question — dimension selection is not REVIEW.md-configurable (`references/review-md-spec.md` → "Rules and other prose"). In light mode, triage announcement shows `Review dimensions: bugs, security (light review mode)`.

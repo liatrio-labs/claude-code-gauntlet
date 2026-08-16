@@ -89,20 +89,22 @@ Generate a root REVIEW.md with 8–10 rules drawn from the detected stack and se
 - CRITICAL label is reserved for security and correctness violations that are always wrong. Use it for at most 3–4 rules per file — overuse destroys emphasis.
 - Do not write rules that duplicate what linters catch deterministically (formatting, indentation, import sorting).
 
-**Start with conservative thresholds:**
+**Do not pin a threshold the user didn't ask for.** The pipeline's built-in defaults (non-security confidence **55**, security confidence **70**, severity **low** — everything shown) apply automatically whenever a key is absent from REVIEW.md's config block; writing an explicit number here — even a "conservative starting point" — silently overrides that default the moment the wizard runs, for every user, without them choosing it. A `## Confidence Threshold` / `## Severity Threshold` markdown heading is never parsed at all (`references/review-md-spec.md` in the code-gauntlet skill → Format) — the only mechanism that works is the fenced config block, with the four snake_case keys inside it. Emit only `## Model Tier`, and put the threshold keys inside that block as commented-out, digit-free examples:
 
 ```markdown
-## Confidence Threshold
-85
-
-## Severity Threshold
-medium
-
 ## Model Tier
 optimized
 ```
 
-The research consensus: start at confidence 85 and severity medium for the first 2–4 weeks. Lower thresholds after reviewing acceptance rates. Document this in a comment above the thresholds block.
+```yaml
+# code-gauntlet
+# confidence_threshold: <0-100>
+#   Built-in default when omitted: 55 for non-security dimensions, 70 for security.
+# severity_threshold: <critical|high|medium|low>
+#   Built-in default when omitted: low (show everything).
+```
+
+If Step 2 surfaced an explicit user preference for a starting threshold, uncomment the relevant key and write that value instead of leaving the example commented out — but never substitute a number the user didn't state.
 
 **Rule sections** — organize by selected priorities:
 
@@ -113,31 +115,9 @@ The research consensus: start at confidence 85 and severity medium for the first
 - Tests (if selected)
 - Conventions (always last, if selected)
 
-**Skip patterns** — always include a full skip block with generated/binary/lock files appropriate to the detected stack. Standard set:
-
-```markdown
-## Skip
-**/bin/**
-**/obj/**
-**/dist/**
-**/node_modules/**
-**/.next/**
-**/Generated/**
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
-**/*.g.cs
-**/Migrations/*.Designer.cs
-**/.vs/**
-**/*.suo
-**/*.user
-**/*.png
-**/*.jpg
-**/*.woff2
-**/*.woff
-```
-
-Adjust for detected stack (e.g., add `**/target/**` for Rust/Java, `**/__pycache__/**` for Python, `**/vendor/**` for Go).
+**Do not generate a `## Skip` section.** There is no REVIEW.md mechanism that excludes files from
+review by glob pattern — a `## Skip` heading is inert prose, never parsed (`references/review-md-spec.md`
+→ "Rules and other prose"). Generating one implies a working feature that does not exist.
 
 **Output** — write the file to `REVIEW.md` at the repo root. Announce: "Root REVIEW.md written with [N] rules."
 
@@ -154,7 +134,7 @@ If no → the rule belongs in the root REVIEW.md.
 
 **When creating subdirectory configs:**
 
-- Include `## Model Tier` and technology-specific `## Skip` patterns only
+- Include `## Model Tier` only (no `## Skip` — see Step 3)
 - Do not repeat rules that are already in root
 - Do not contradict root rules — extend them. If root says "prefer immutable types," the subdirectory rule should add the escape hatch, not contradict
 - Subdirectory configs should have 5–8 rules each; stop at the second directory level
@@ -198,12 +178,13 @@ After all files are written, output a brief summary:
 REVIEW.md created. Start your review — the config will be picked up automatically.
 
 Files written:
-  REVIEW.md — [N] rules ([threshold] confidence, medium severity)
+  REVIEW.md — [N] rules (built-in thresholds: 55 confidence / 70 for security, low severity)
   [subdir]/REVIEW.md — [N] rules  (if applicable)
 
-Thresholds are conservative for week 1. After 2–4 weeks, review your acceptance rate:
-- If >60% of findings result in fixes, lower severity threshold to "low"
-- If false positives accumulate, raise confidence threshold to 90
+The built-in thresholds show everything above 55 confidence (70 for security
+findings) at any severity. After a few reviews, tune them in REVIEW.md's config block if needed:
+- If false positives accumulate, uncomment and raise `confidence_threshold`
+- If low-severity noise drowns out what matters, uncomment and set `severity_threshold` to medium or high
 - Run `code-gauntlet` on any open PR to see results immediately
 ```
 
@@ -217,4 +198,5 @@ Do not offer to run a review or explain the review process. The user can trigger
 2. **Prescriptive for non-negotiables, directional for preferences.** Never write a CRITICAL rule for a style preference, never write a directional rule for a security requirement.
 3. **15–25 rules total across all files.** Exceeding this degrades LLM instruction-following. Prefer 8–10 in root, 5–8 per subdirectory.
 4. **Do not create subdirectory configs without the decision test.** Technology-specific rules that pass the false-positive test belong in root with a path qualifier.
-5. **Conservative defaults.** Always start at confidence 85, severity medium. The research is unambiguous: teams that start broad generate noise and lose trust.
+5. **Never pin an unrequested threshold.** Leave `confidence_threshold` / `severity_threshold` commented out in the generated config block unless the user explicitly asked for a specific value — the pipeline's built-in defaults (55 non-security / 70 security confidence, low severity) already apply when the keys are absent.
+6. **Never generate a `## Skip` section.** It is never parsed — generating one implies a feature that does not exist.

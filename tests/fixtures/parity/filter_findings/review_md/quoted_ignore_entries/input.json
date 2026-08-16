@@ -1,0 +1,4 @@
+{
+  "fn": "parse_review_md",
+  "markdown": "```yaml\n# code-gauntlet\nignore:\n  - \"console.log in development mode\"\n  - unquoted pattern\n  - 'single quoted pattern'\n```\n"
+}

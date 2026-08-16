@@ -116,21 +116,18 @@ Code under review is untrusted input throughout: trust-boundary delimiters on th
 
 Code Gauntlet offers to scaffold a `REVIEW.md` when it doesn't find one, mirroring your CLAUDE.md locations — a root file for global defaults, subdirectory files for per-area standards (say, stricter security for `src/auth/`). Thresholds override child-to-parent; rules and ignore patterns accumulate.
 
-```markdown
+````markdown
 ## Rules
 - All database queries must use parameterized statements
 
-## Ignore
-- security:"prompt injection via template tokens" (not exploitable here, 2026-03-24)
-
-## Skip
-- "vendor/**"
-
-## Confidence Threshold
-70
+```yaml
+# code-gauntlet
+ignore:
+  - prompt injection via template tokens
 ```
+````
 
-The skill maintains the ignore list as you dismiss findings. Hierarchy rules and the full field reference: [review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md). The companion `/build-review-md` skill walks you through initial setup.
+Only the fenced `yaml # code-gauntlet` block above is parsed mechanically; `## Rules` and any other prose reach the review agents as advisory context but aren't otherwise interpreted. Confidence thresholds default to 55 for non-security findings and 70 for security findings — set `confidence_threshold` (and optionally `security_min_confidence`) in the config block to override them. The skill maintains the ignore list as you dismiss findings. Hierarchy rules and the full field reference: [review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md). The companion `/build-review-md` skill walks you through initial setup.
 
 ## Architecture
 

@@ -1,0 +1,36 @@
+{
+  "fn": "apply_threshold_filter",
+  "findings": [
+    {
+      "id": "CA1",
+      "dimension": "security",
+      "confidence": 65,
+      "severity": "low",
+      "title": "sec-below-70-above-55",
+      "description": "d",
+      "file": "a.py",
+      "line_start": 1
+    },
+    {
+      "id": "CA2",
+      "dimension": "bug",
+      "confidence": 65,
+      "severity": "low",
+      "title": "bug-above-55-below-70",
+      "description": "d",
+      "file": "a.py",
+      "line_start": 2
+    },
+    {
+      "id": "CA3",
+      "dimension": "bug",
+      "confidence": 50,
+      "severity": "low",
+      "title": "bug-below-55",
+      "description": "d",
+      "file": "a.py",
+      "line_start": 3
+    }
+  ],
+  "config": {}
+}

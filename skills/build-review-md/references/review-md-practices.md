@@ -80,19 +80,28 @@ rules, not just the new ones.
 
 ## Default Thresholds for New Repositories
 
-Start here. Loosen only after reviewing acceptance rate data.
+**Do not pin a threshold the user hasn't asked for.** code-gauntlet's built-in defaults —
+confidence **55** for non-security dimensions, **70** for security, severity **low** (show
+everything) — already apply automatically whenever `confidence_threshold` / `severity_threshold`
+are absent from REVIEW.md (`references/review-md-spec.md` in the code-gauntlet skill). Writing an
+explicit number into a generated file overrides that default for every user of the wizard, whether
+they asked for it or not.
 
-| Setting | Day-one value | Rationale |
-|---------|--------------|-----------|
-| Confidence Threshold | 85 | Above default 70 — surfaces only high-conviction findings while calibrating |
-| Severity Threshold | medium | Avoids the firehose of low-severity noise during week 1 |
-| Model Tier | optimized | The single benchmarked policy (Sonnet discovery, Opus for security) |
+| Setting | Generated value | Rationale |
+|---------|-----------------|-----------|
+| Confidence Threshold | omit (built-in 55 / 70) unless the user states a starting number | Calibrating on the built-in defaults surfaces more candidates during the first review; the maintainer raises the bar once they've seen what noise looks like |
+| Severity Threshold | omit (built-in low) unless the user states a starting severity | Same reasoning — start from the built-in, not a guess |
+| Model Tier | optimized | The single benchmarked policy (Sonnet discovery, Opus for security); this one is safe to write explicitly since it is the only valid value |
 
-Add this comment block above the thresholds in the generated REVIEW.md:
+If the user does ask for a conservative starting point during Step 2, a reasonable one to suggest
+is confidence 85 / severity medium — high-conviction findings only while the team is still
+calibrating trust in the tool. Write it only when they choose it, and note the built-in defaults in
+the same comment so it's clear what changes if they later remove the line:
 
 ```markdown
-<!-- Week 1-2: confidence 85, severity medium. Lower after reviewing acceptance rates.
-     Target: >50% of findings result in code changes. See review-md-practices.md. -->
+<!-- Explicit starting point (requested): confidence 85, severity medium. Built-in
+     defaults if these keys are removed: 55 non-security / 70 security confidence, low
+     severity. Lower after reviewing acceptance rates. See review-md-practices.md. -->
 ```
 
 ---
@@ -104,13 +113,14 @@ Add this comment block above the thresholds in the generated REVIEW.md:
 - Root: 8–10 rules — security (3), architecture (2), git conventions (2), error handling (2)
 - Backend subdirectory: 5–7 rules — async patterns (3), data access (2), DI lifetime (1)
 - Frontend subdirectory: 5–7 rules — TypeScript strictness (2), framework hooks (2), data fetching (2)
-- Confidence: 85, Severity: medium
-- Skip patterns: full set from day one
+- Confidence/severity: leave unset (built-in 55/70 confidence, low severity), or an explicit
+  85/medium only if the team asked to start conservative
 
 **Week 4:** Expand only if acceptance rate supports it.
 
-- Lower severity to **low** if medium-severity acceptance rate exceeds 60%
-- Lower confidence to **70** (default)
+- If an explicit threshold was set at rollout, raise severity back toward **low** once
+  medium-severity acceptance rate exceeds 60%, and lower confidence back toward the built-in
+  55/70 split
 - Add testing convention rules
 - Add validation library rules (Zod for TypeScript, Pydantic for Python)
 
@@ -142,8 +152,9 @@ Run this audit when acceptance rate drops below 50%, or at minimum every quarter
 4. **Contradiction audit:** Read all REVIEW.md files in sequence. Do accumulated rules
    conflict? Root says "prefer X" while subdirectory implies "avoid X"?
 
-5. **Ignore pattern review:** Check each date-stamped ignore pattern. Is the suppressed
-   framework pattern still in use? Remove stale ignores.
+5. **Ignore pattern review:** Check each ignore pattern's commit history for why it was added
+   (`references/review-md-spec.md` → Ignore — reasons live in commit/PR history, not the pattern
+   itself). Is the suppressed framework pattern still in use? Remove stale ignores.
 
 6. **Rule count check:** Count total rules across all files. If exceeding 50 total
    (root + all subdirectories), prune ruthlessly. Each rule beyond the ceiling dilutes all
@@ -165,30 +176,8 @@ Run this audit when acceptance rate drops below 50%, or at minimum every quarter
 Root `REVIEW.md`:
 
 ```markdown
-<!-- Week 1-2: confidence 85, severity medium. Lower after reviewing acceptance rates. -->
-
-## Confidence Threshold
-85
-
-## Severity Threshold
-medium
-
 ## Model Tier
 optimized
-
-## Skip
-**/node_modules/**
-**/dist/**
-**/.next/**
-**/build/**
-**/coverage/**
-package-lock.json
-pnpm-lock.yaml
-yarn.lock
-**/*.png
-**/*.jpg
-**/*.svg
-**/*.woff2
 
 ## Rules
 
@@ -218,14 +207,9 @@ yarn.lock
 
 Frontend subdirectory `src/REVIEW.md` (or `frontend/REVIEW.md`):
 
-```markdown
+````markdown
 ## Model Tier
 optimized
-
-## Skip
-**/__mocks__/**/*.json
-**/generated/**
-**/public/assets/**
 
 ## Rules
 
@@ -251,10 +235,13 @@ optimized
 - Define Zod schemas as the single source of truth and infer TypeScript types with
   z.infer<typeof Schema>. Dual interface + schema definitions drift apart silently.
 
-## Ignore
-simplification:"optional chaining" for Zod schema definitions
-conventions:"file length" for RTK Query API slice definitions
+```yaml
+# code-gauntlet
+ignore:
+  - optional chaining
+  - file length
 ```
+````
 
 ---
 
@@ -263,28 +250,8 @@ conventions:"file length" for RTK Query API slice definitions
 Root `REVIEW.md`:
 
 ```markdown
-<!-- Week 1-2: confidence 85, severity medium. Lower after reviewing acceptance rates. -->
-
-## Confidence Threshold
-85
-
-## Severity Threshold
-medium
-
 ## Model Tier
 optimized
-
-## Skip
-**/__pycache__/**
-**/*.pyc
-**/*.pyo
-**/migrations/*.py
-**/.venv/**
-**/venv/**
-**/dist/**
-**/build/**
-**/*.egg-info/**
-**/.pytest_cache/**
 
 ## Rules
 
@@ -315,13 +282,9 @@ optimized
 
 Backend subdirectory `backend/REVIEW.md`:
 
-```markdown
+````markdown
 ## Model Tier
 optimized
-
-## Skip
-**/fixtures/**/*.json
-**/snapshots/**
 
 ## Rules
 
@@ -351,10 +314,13 @@ optimized
 - Use pytest fixtures for shared setup. Django TestCase class methods (setUp/tearDown)
   are acceptable only when transaction isolation is required.
 
-## Ignore
-conventions:"file naming" for Django migration files
-types:"missing return type" for Django view functions using class-based views
+```yaml
+# code-gauntlet
+ignore:
+  - file naming
+  - missing return type
 ```
+````
 
 ---
 
@@ -362,25 +328,9 @@ types:"missing return type" for Django view functions using class-based views
 
 Root `REVIEW.md`:
 
-```markdown
-<!-- Week 1-2: confidence 85, severity medium. Lower after reviewing acceptance rates. -->
-
-## Confidence Threshold
-85
-
-## Severity Threshold
-medium
-
+````markdown
 ## Model Tier
 optimized
-
-## Skip
-**/vendor/**
-**/bin/**
-**/*.pb.go
-**/*_gen.go
-**/*_mock.go
-**/mocks/**
 
 ## Rules
 
@@ -419,9 +369,12 @@ optimized
 - Interface names use the -er suffix for single-method interfaces (Reader, Writer,
   Handler). Multi-method interfaces describe the abstraction, not the implementation.
 
-## Ignore
-conventions:"error message capitalization" for third-party library error wrapping
+```yaml
+# code-gauntlet
+ignore:
+  - error message capitalization
 ```
+````
 
 ---
 
@@ -429,26 +382,9 @@ conventions:"error message capitalization" for third-party library error wrappin
 
 Root `REVIEW.md`:
 
-```markdown
-<!-- Week 1-2: confidence 85, severity medium. Lower after reviewing acceptance rates. -->
-
-## Confidence Threshold
-85
-
-## Severity Threshold
-medium
-
+````markdown
 ## Model Tier
 optimized
-
-## Skip
-**/target/**
-**/*.class
-**/build/**
-**/generated-sources/**
-**/*.iml
-**/.idea/**
-**/bin/**
 
 ## Rules
 
@@ -482,19 +418,18 @@ optimized
 - REST endpoints follow noun-based URL conventions (/users, /orders/{id}) with HTTP
   method semantics. Verb-based URLs (/getUser, /createOrder) violate REST conventions.
 
-## Ignore
-conventions:"wildcard imports" for Spring Boot auto-configuration classes
+```yaml
+# code-gauntlet
+ignore:
+  - wildcard imports
 ```
+````
 
 Backend subdirectory (e.g., `src/main/java/REVIEW.md`):
 
-```markdown
+````markdown
 ## Model Tier
 optimized
-
-## Skip
-**/test/**/*.sql
-**/resources/db/migration/**
 
 ## Rules
 
@@ -522,39 +457,62 @@ optimized
 - Each test method verifies one behavior. Tests with multiple unrelated assertions make
   failure diagnosis difficult.
 
-## Ignore
-conventions:"method length" for Spring Data JPA specification classes
-types:"unchecked cast" for Spring generic type erasure patterns
+```yaml
+# code-gauntlet
+ignore:
+  - method length
+  - unchecked cast
 ```
+````
 
 ---
 
 ## Ignore Pattern Guidelines
 
-Ignore patterns suppress known false positives. Format: `dimension:"pattern" for context`.
+Ignore patterns suppress known false positives. They live in the `ignore:` list inside the
+```` ```yaml # code-gauntlet ```` config block (`references/review-md-spec.md` in the code-gauntlet
+skill) — a plain list of substrings matched against a finding's title + description, not scoped by
+dimension. A bare `## Ignore` markdown heading with bullet items is never parsed; do not generate
+one.
 
-**Target the middle ground** — describe the pattern category, not the instance:
+**Target the middle ground** — describe the pattern category, not the instance. Note the parser
+only reads *consecutive* `-` lines under `ignore:`; a comment line between entries breaks the list
+(`references/review-md-spec.md` → Ignore), so these three cases are shown as separate blocks, not
+as comments interleaved in one list:
 
+```yaml
+# Good: category-level suppression (EF Core migration files / test assertion helpers)
+ignore:
+  - file naming
+  - nullable reference
 ```
-# Good: category-level suppression
-conventions:"file naming" for EF Core migration files
-types:"nullable reference" for test assertion helpers
 
+```yaml
 # Too narrow: breaks when code moves
-bugs:"null reference in UserService.GetCoach line 47"
-
-# Too broad: suppresses genuine findings
-bugs:"null reference"
+ignore:
+  - null reference in UserService.GetCoach line 47
 ```
 
-**Date-stamp every ignore pattern:**
+```yaml
+# Too broad: suppresses genuine findings
+ignore:
+  - null reference
+```
 
-```markdown
-## Ignore
-# 2026-03-30: EF Core migrations are generated, naming conventions don't apply
-conventions:"file naming" for migration files
-# 2026-03-30: Test helpers intentionally use nullable without guards
-types:"nullable reference" for test assertion helpers
+**Never append a reason or date to the pattern itself.** `ignore` entries match literally against
+unquoted finding text (`references/review-md-spec.md` → Ignore) — `file naming` matches any finding
+whose title/description contains those words, but `file naming (EF Core migrations are generated,
+2026-03-30)` only matches a finding that contains that entire sentence, which essentially never
+happens. A pattern padded with a reason silently suppresses nothing. Since the parser also breaks on
+a comment line between `-` entries, there is no in-file way to attach a per-entry note that both
+parses correctly and doesn't corrupt the match — track *why* a pattern was added in the commit that
+added it, not in REVIEW.md:
+
+```yaml
+# code-gauntlet
+ignore:
+  - file naming
+  - nullable reference
 ```
 
 **Soft cap:** 10–15 ignore patterns per file. Exceeding this signals either over-sensitive
