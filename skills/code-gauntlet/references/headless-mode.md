@@ -21,7 +21,7 @@ Read once at Phase 1 entry. Every value is echoed in a `Headless config:` block 
 | `CODE_GAUNTLET_DRAFT_POLICY` | `review`\|`skip` (`review`) | draft-PR gate |
 | `CODE_GAUNTLET_REVIEWED_POLICY` | `incremental`\|`full`\|`skip` (`full`) | previously-reviewed gate, every branch |
 | `CODE_GAUNTLET_PR_NOT_FOUND_POLICY` | `local`\|`error` (`error`) | resolution-failure gate |
-| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light`\|`full` (`full`) | trivial-PR scope gate — `light` stamps `agentFlags: { deep: false }` (Discover runs bugs+security only), `full` stamps `{}` (all dimensions) |
+| `CODE_GAUNTLET_TRIVIAL_SCOPE` | `light`\|`full` (`full`) | trivial-PR scope gate — stamped verbatim into `args.scopeAnswer`; the workflow derives dimension flags from it plus `riskTable`/`changedLines` (`light` -> Discover runs bugs+security only, `full` -> all dimensions) |
 
 ---
 
@@ -82,7 +82,7 @@ Every interactive gate in the pipeline maps to a deterministic headless outcome.
 | Closed / merged PR (eligibility) | Proceed — do not stop. Review the pinned head as resolved; posting still obeys `CODE_GAUNTLET_POST_MODE` and delivery follows `CODE_GAUNTLET_DELIVERY`. (Interactive mode stops here; headless does not.) |
 | Draft PR | `CODE_GAUNTLET_DRAFT_POLICY`: `review` proceeds; `skip` stops the run. |
 | Previously reviewed (Phase 2 2b-post step 3, after checkout) | `CODE_GAUNTLET_REVIEWED_POLICY`: `incremental` scopes the diff to new commits only when `detect_prior_review.py`'s `incremental_safe` is true; when the head has not advanced, the recorded SHA is unresolvable, history was rewritten (rebase, squash, or a backward force-push — the reviewed commit is no longer an ancestor of the head), or detection errored, it degrades to `full` and the degradation is disclosed in the methodology. `full` always reviews from scratch. `skip` stops the run only when `previously_reviewed` is true AND `sha_is_ancestor` is true — on rewritten history the tree is effectively unreviewed, mirroring the interactive gate's neither-template branch, so `skip` never stops the run there; it proceeds as a full review with the degradation disclosed. Detection is a read-only script call that exits 0 for every outcome, so it is safe under `CODE_GAUNTLET_POST_MODE=dry-run` and can never fail the run. |
-| Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE`: `light` stamps `agentFlags: { deep: false }` → Discover runs bugs+security only (2 agents); `full` stamps `{}` → all dimensions. |
+| Trivial / light-scope (all low-risk, <50 lines) | `CODE_GAUNTLET_TRIVIAL_SCOPE`, stamped verbatim into `args.scopeAnswer`: `light` -> Discover runs bugs+security only (2 agents); `full` -> all dimensions. The workflow derives the dimension flags itself (`deriveAgentFlags`) from `scopeAnswer` plus `riskTable`/`changedLines`. |
 | REVIEW.md detection (root setup + subdirectory offer) | Skip; root config applies; never invoke `build-review-md`. |
 | Phase 8 Stage 1 (PR comment selection) | Post `artifactPaths.postReview` verbatim — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all`) plus rank + cap `CODE_GAUNTLET_PR_COMMENT_CAP` (via `limits.deliveryCap`); the walkthrough is unavailable. Posting obeys `CODE_GAUNTLET_POST_MODE`. |
 | Phase 8 Stage 2 (task board) | Skipped. |

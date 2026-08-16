@@ -1961,7 +1961,7 @@ const ARGS_VERSION = 1;
 // REQUIRED so the skill's `git rev-parse --show-toplevel` stamp remains in the persisted
 // waist for forensics, not because any stage consumes it. changedFilesPath is on-disk
 // provenance the workflow never opens.
-const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'agentFlags', 'policy', 'limits'];
+const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits'];
 
 // The nonce is interpolated into the verify executor command argv (the verify stage
 // derives one per slice as `${nonce}.${i}`), so it must be a single AST-safe,
@@ -2010,7 +2010,19 @@ const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
 // nullToleranceGap): degraded-but-disclosed, the contract this pipeline uses everywhere else.
 // A drop that validateArgs would have accepted anyway (`checkpoints`) tolerated nothing and
 // is deliberately NOT disclosed — see nullToleranceRejectedKeys.
-const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist'];
+const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
+
+// Issue #24 req 1/4 (PR3): the scope decision itself. 'light'/'full' mirror the
+// $CODE_GAUNTLET_TRIVIAL_SCOPE / interactive Light-review-vs-Full-review answer verbatim — the
+// orchestrator's only scope job is to produce riskTable (below) and echo whichever answer the
+// gate asked for, when it asked. Absent means the gate was never asked (not every-file-low-risk-
+// and-<50-lines) and 'full' is not a value the orchestrator needs to fabricate for that case.
+const SCOPE_ANSWERS = ['light', 'full'];
+
+// Issue #24 req 1/2 (PR3): the risk classification a plain string. Matches the three-tier
+// scale documented in skills/code-gauntlet/references/phase2-triage.md 2e — that table is now
+// the single contract for these literals; riskTable values must stay in lockstep with it.
+const RISK_LEVELS = ['low', 'medium', 'high'];
 
 // Issue #24 req 7: the ONE place the four benchmarked-default limits live. Every stage that
 // used to hand-roll `Math.max(1, limits.X || <literal>)` (stages.js summarize/verify/
@@ -2030,6 +2042,21 @@ const LIMIT_DEFAULTS = {
   verifySliceSize: 200,
 };
 
+// computeLightEligible(riskTable, changedLines) -> boolean (issue #24 req 5, PR3).
+// The ONE place the light-scope eligibility rule lives — behavior-preserving copy of the
+// prose rule SKILL.md used to state at assembly time (phase2-triage.md 2e "Light Review for
+// Trivial PRs"): every riskTable entry classified 'low' AND total changedLines < 50. Exported
+// so validateArgs (below, for the pre-dispatch coherence guard) and stages.js's
+// deriveAgentFlags (the actual flag derivation) call the SAME rule rather than each carrying
+// its own copy that could drift. Pure — no host globals.
+function computeLightEligible(riskTable, changedLines) {
+  if (!Array.isArray(riskTable)) return false;
+  if (typeof changedLines !== 'number' || !(changedLines < 50)) return false;
+  // .every on an empty array is vacuously true — a PR with zero changed files/lines is
+  // trivially "every file is low risk" and is eligible for light scope, same as one file.
+  return riskTable.every((entry) => entry && entry.risk === 'low');
+}
+
 // What the operator actually loses when a stamped null is treated as absent, per key. Used
 // only to word the disclosure gap — no control flow reads it.
 const NULL_TOLERANCE_CONSEQUENCE = {
@@ -2042,6 +2069,7 @@ const NULL_TOLERANCE_CONSEQUENCE = {
   'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
   checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
   persist: 'the artifact-writer takes the legacy full by-value persist path',
+  scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
 };
 
 // nullToleranceGap(key) -> the operator-actionable gap line for one dropped null. Names the
@@ -2446,20 +2474,77 @@ function validateArgs(args) {
       errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
     }
   }
-  // agentFlags is the scope-gating map consumed by agentActive (stages.js): OPT-OUT, so an
-  // empty/absent-keyed map leaves every dimension on and only an explicit `false` disables a
-  // gated dimension (e.g. light scope stamps { deep: false }). It is a REQUIRED waist field
-  // (the skill always stamps it, {} for full scope), but shape-guard it so a malformed map
-  // cannot silently gate dimensions: it must be a plain object and every value a boolean —
-  // a non-boolean (a truthy "0"/"no" string, say) would slip past the strict `!== false`
-  // check and read as ON, hiding an operator's intent to disable.
+  // Single authority (issue #24 req 4, PR3): the orchestrator-stamped `agentFlags` path is
+  // RETIRED, not left as a second half-authority alongside riskTable/scopeAnswer. A caller
+  // that still stamps agentFlags is a stale producer (an un-migrated skill build, a bench
+  // fixture) — refuse loud rather than silently honour or silently ignore its scope intent.
   if (args.agentFlags !== undefined) {
-    if (args.agentFlags === null || typeof args.agentFlags !== 'object' || Array.isArray(args.agentFlags)) {
-      errors.push('agentFlags must be an object of the form { <flag>: boolean } when present');
+    errors.push('agentFlags is no longer accepted — the pipeline derives dimension flags itself from riskTable/scopeAnswer (issue #24). Stamp riskTable (the Phase 2e per-file risk classification) and, only when the light/full gate asked, scopeAnswer; do not stamp agentFlags.');
+  }
+  // riskTable is the orchestrator's Phase 2e per-file risk classification, REQUIRED (see
+  // REQUIRED above) so deriveAgentFlags (stages.js) has a deterministic input instead of a
+  // hand-stamped agentFlags map. Malformed or missing NEVER silently resolves to full scope —
+  // it refuses the run (req 2). The path set must equal changedFiles' set EXACTLY: a missing
+  // path means a file was reviewed with no risk classification (silently under-scoped), an
+  // extra path means the table describes a file that was not in the diff (stale/wrong table).
+  if (args.riskTable !== undefined) {
+    if (!Array.isArray(args.riskTable)) {
+      errors.push('riskTable must be an array of {path, risk} objects');
     } else {
-      for (const [k, v] of Object.entries(args.agentFlags)) {
-        if (typeof v !== 'boolean') errors.push(`invalid agentFlags.${k}: must be a boolean (got ${typeof v})`);
+      const seenPaths = new Set();
+      for (let i = 0; i < args.riskTable.length; i++) {
+        const entry = args.riskTable[i];
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+          errors.push(`riskTable[${i}] must be an object of the form {path, risk}`);
+          continue;
+        }
+        const keys = Object.keys(entry).sort();
+        const extra = keys.filter((k) => k !== 'path' && k !== 'risk');
+        if (extra.length > 0) {
+          errors.push(`riskTable[${i}] has unexpected key(s): ${extra.join(', ')} (only path and risk are allowed)`);
+        }
+        if (typeof entry.path !== 'string' || entry.path === '') {
+          errors.push(`riskTable[${i}].path must be a non-empty string`);
+        } else {
+          seenPaths.add(entry.path);
+        }
+        if (!RISK_LEVELS.includes(entry.risk)) {
+          errors.push(`riskTable[${i}].risk must be one of ${RISK_LEVELS.join(', ')} (got ${JSON.stringify(entry.risk)})`);
+        }
       }
+      if (Array.isArray(args.changedFiles)) {
+        const changedSet = new Set(args.changedFiles);
+        const missing = args.changedFiles.filter((p) => !seenPaths.has(p));
+        const extraPaths = [...seenPaths].filter((p) => !changedSet.has(p));
+        if (missing.length > 0) {
+          errors.push(`riskTable is missing risk classification for changed file(s): ${missing.join(', ')}`);
+        }
+        if (extraPaths.length > 0) {
+          errors.push(`riskTable classifies file(s) not present in changedFiles: ${extraPaths.join(', ')}`);
+        }
+      }
+    }
+  }
+  // scopeAnswer: the light/full answer, echoed ONLY when the trivial-scope gate actually
+  // asked (absent otherwise — see NULL_TOLERANCE_CONSEQUENCE above for why a stamped null is
+  // treated the same as absent here).
+  if (args.scopeAnswer !== undefined && !SCOPE_ANSWERS.includes(args.scopeAnswer)) {
+    errors.push(`invalid scopeAnswer: ${args.scopeAnswer} (expected one of ${SCOPE_ANSWERS.join(', ')})`);
+  }
+  // Fail-loud coherence (issue #24 req 4/5, PR3): scopeAnswer and riskTable/changedLines must
+  // agree BEFORE dispatch, not merely be individually well-shaped. Both arms only evaluate once
+  // riskTable/changedLines/scopeAnswer are themselves well-formed (the errors pushed above would
+  // otherwise be duplicated by a garbage-in eligibility computation here).
+  const riskTableWellFormed = Array.isArray(args.riskTable)
+    && args.riskTable.every((e) => e && typeof e === 'object' && RISK_LEVELS.includes(e.risk) && typeof e.path === 'string' && e.path !== '');
+  const scopeAnswerWellFormed = args.scopeAnswer === undefined || SCOPE_ANSWERS.includes(args.scopeAnswer);
+  if (riskTableWellFormed && scopeAnswerWellFormed && typeof args.changedLines === 'number') {
+    const lightEligible = computeLightEligible(args.riskTable, args.changedLines);
+    if (args.scopeAnswer === 'light' && !lightEligible) {
+      errors.push('scopeAnswer is "light" but the riskTable/changedLines are not light-eligible (not every file is low risk, or changedLines >= 50) — the orchestrator answered a light/full question the gate never asked');
+    }
+    if (lightEligible && args.scopeAnswer === undefined) {
+      errors.push('riskTable/changedLines are light-eligible but scopeAnswer is missing — the light/full gate must have asked, and its answer must be stamped as scopeAnswer');
     }
   }
   // policy.provider drives which arm of registry.js's model resolution runs (full-ID pin
@@ -3057,6 +3142,23 @@ function agentSpecs() {
 function agentActive(spec, agentFlags) {
   const flags = agentFlags || {};
   return spec.conditionalFlags.some((flag) => flag === null || flag === undefined || flags[flag] !== false);
+}
+
+// deriveAgentFlags(riskTable, changedLines, scopeAnswer) -> { deep: false } | {} (issue #24
+// req 1/4/5, PR3). The pipeline's OWN, tested derivation of the scope-gating map agentActive
+// consumes — replaces the orchestrator's SKILL.md-prose "stamp agentFlags at assembly time"
+// rule with deterministic JS. Behavior-preserving: the eligibility test is byte-identical to
+// the rule phase2-triage.md 2e documented (computeLightEligible, args.js — the ONE place it
+// lives, shared with validateArgs's pre-dispatch coherence guard so the two can never drift).
+//
+// validateArgs already refused an incoherent waist before runWith ever calls this (scopeAnswer
+// 'light' while not eligible, or eligible with no scopeAnswer) — see its "Fail-loud coherence"
+// block. So by the time this runs, only two coherent cases can produce `{ deep: false }`:
+// lightEligible with scopeAnswer 'light'. Every other coherent combination (not eligible,
+// eligible-but-full, not-eligible-with-no-answer) is full scope.
+function deriveAgentFlags(riskTable, changedLines, scopeAnswer) {
+  const lightEligible = computeLightEligible(riskTable, changedLines);
+  return (lightEligible && scopeAnswer === 'light') ? { deep: false } : {};
 }
 
 // allActiveDimensionsDegraded(dispatched, degraded) -> boolean (issue #178).
@@ -6261,8 +6363,8 @@ async function runWith(ctx, rawArgs) {
   };
 
   // Summarize and Discover have NO data dependency: summarize's output is first read at
-  // reportInput, and discover's input is built only from A.agentFlags / limits / policy /
-  // contextPath — `limits` being coarsenLimits(A.limits, nChangedFiles, 0), computed above,
+  // reportInput, and discover's input is built only from the derived scope flags / limits /
+  // policy / contextPath — `limits` being coarsenLimits(A.limits, nChangedFiles, 0), computed above,
   // before either. So both are STARTED here and awaited in order below. Four properties are
   // load-bearing and each is pinned by a test in stages_latency.test.js:
   //   1. Checkpoint semantics: a phase whose checkpoint is present must NOT dispatch, so the
@@ -6282,8 +6384,13 @@ async function runWith(ctx, rawArgs) {
     const summarizeSettled = replay('summarize') ? null : settle(summarize(c, {
       changedFiles: A.changedFiles || [], changedLines: A.changedLines || 0, limits, policy, contextLine,
     }));
+    // Issue #24 req 1/4/5 (PR3): the scope-gating map is DERIVED here, deterministically,
+    // from the waist's riskTable/changedLines/scopeAnswer — never read from a caller-stamped
+    // agentFlags (validateArgs above hard-rejects one). Single call, echoed below in
+    // stats.scope so the resolved decision is verifiable post-hoc.
+    const derivedAgentFlags = deriveAgentFlags(A.riskTable, A.changedLines, A.scopeAnswer);
     const discoverSettled = replay('discover') ? null : settle(discover(c, {
-      agentFlags: A.agentFlags || {}, limits, policy, contextLine,
+      agentFlags: derivedAgentFlags, limits, policy, contextLine,
     }));
 
     const summaryOut = await runPhase('summarize', async () => (await summarizeSettled)());
@@ -6536,6 +6643,15 @@ async function runWith(ctx, rawArgs) {
         reviewConfigSource: resolvedReview.reviewConfigSource,
         exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
+        // Compact scope-decision echo (issue #24 req 3, PR3): names/bools only, so adherence
+        // to the derived scope decision is verifiable post-hoc without re-deriving it from
+        // riskTable. scopeAnswer is null (never omitted) when the gate was not asked, mirroring
+        // how riskTable/reviewConfigSource echo "no signal" as an explicit value, not a hole.
+        scope: {
+          lightEligible: computeLightEligible(A.riskTable, A.changedLines),
+          scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,
+          deep: derivedAgentFlags.deep !== false,
+        },
         challenge: challengeOut.stats,
       },
       artifactPaths: writeOut.artifactPaths,

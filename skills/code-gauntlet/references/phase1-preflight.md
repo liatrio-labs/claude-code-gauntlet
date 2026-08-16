@@ -301,7 +301,7 @@ Store the delivery selection and the delivery tier (`args.delivery.tier`, defaul
 
 > **Note:** This template is triggered during Phase 2d (risk classification). It lives here because it is a pre-flight UX decision — the user's answer affects what review dimensions run, so it is collected alongside the other pre-flight gates.
 
-> A `light` answer stamps `args.agentFlags = { deep: false }`, which the Discover stage honours by dispatching only the two core agents (`bug-detector`, `security-reviewer`); `full` stamps `{}` and runs all seven. Announce the actual dimensions that will run.
+> The answer is stamped verbatim into `args.scopeAnswer` (`"light"` or `"full"`) — the workflow derives the dimension flags itself from `scopeAnswer` plus the Phase 2e `riskTable`/`changedLines` (`deriveAgentFlags`, `workflows/src/stages.js`): `light` dispatches only the two core agents (`bug-detector`, `security-reviewer`); `full` runs all seven. Announce the actual dimensions that will run.
 
 Used when ALL files are low-risk AND total lines <50:
 

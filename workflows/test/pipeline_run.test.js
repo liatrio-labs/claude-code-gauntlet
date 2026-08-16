@@ -23,7 +23,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   runWith, summarize, reportStage, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
-  coarsenLimits, plannedArtifactPaths,
+  coarsenLimits, plannedArtifactPaths, deriveAgentFlags,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
@@ -1056,4 +1056,91 @@ test('happy path: discoverOut.dispatched/degraded reach the final Review Dimensi
     otherRows.every((r) => r[2] === '0' && r[3] === 'Clean — no findings returned'),
     `every other dispatched agent must read Clean/0: ${JSON.stringify(otherRows)}`,
   );
+});
+
+// --- Issue #24 req 1/3/4/5 (PR3): deterministic agentFlags derivation ------------------
+
+// deriveAgentFlags itself (stages.js): the ONE call site that turns riskTable/changedLines/
+// scopeAnswer into the scope-gating map agentActive consumes.
+test('deriveAgentFlags: light-eligible + scopeAnswer "light" -> { deep: false }', () => {
+  assert.deepEqual(
+    deriveAgentFlags([{ path: 'a.js', risk: 'low' }], 10, 'light'),
+    { deep: false },
+  );
+});
+test('deriveAgentFlags: light-eligible + scopeAnswer "full" -> {}', () => {
+  assert.deepEqual(deriveAgentFlags([{ path: 'a.js', risk: 'low' }], 10, 'full'), {});
+});
+test('deriveAgentFlags: any medium/high entry -> {} regardless of scopeAnswer', () => {
+  assert.deepEqual(
+    deriveAgentFlags([{ path: 'a.js', risk: 'low' }, { path: 'b.js', risk: 'medium' }], 10, 'light'),
+    {},
+  );
+});
+test('deriveAgentFlags: changedLines >= 50 -> {} even with an all-low table and "light" answer', () => {
+  assert.deepEqual(deriveAgentFlags([{ path: 'a.js', risk: 'low' }], 50, 'light'), {});
+});
+test('deriveAgentFlags: not eligible + no scopeAnswer -> {} (the common full-scope case)', () => {
+  assert.deepEqual(deriveAgentFlags([{ path: 'a.js', risk: 'medium' }], 10, undefined), {});
+});
+
+// runWith-level: the derived flags actually gate discover()'s dispatch, and the resolved
+// decision is echoed in stats.scope.
+test('runWith: a light-eligible waist with scopeAnswer "light" dispatches only bug-detector + security-reviewer', async () => {
+  const args = validArgs({
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    changedLines: 10,
+    scopeAnswer: 'light',
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.stats.scope, { lightEligible: true, scopeAnswer: 'light', deep: false });
+  // Exactly 2 discovery agents dispatched (the two UNGATEABLE core dimensions).
+  const dispatchedAgentLabels = new Set(ctx.calls.map((c) => c.label).filter((l) => AGENTS.includes(l)));
+  assert.deepEqual([...dispatchedAgentLabels].sort(), ['code-gauntlet:bug-detector', 'code-gauntlet:security-reviewer']);
+});
+test('runWith: a full-scope waist (not eligible) dispatches all 7 discovery agents and echoes stats.scope', async () => {
+  const args = validArgs(); // default fixture riskTable is 'medium' -> not eligible
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.stats.scope, { lightEligible: false, scopeAnswer: null, deep: true });
+  const dispatchedAgentLabels = new Set(ctx.calls.map((c) => c.label).filter((l) => AGENTS.includes(l)));
+  assert.deepEqual([...dispatchedAgentLabels].sort(), [...AGENTS].sort());
+});
+test('runWith: an eligible waist answered "full" still runs all 7 agents and echoes lightEligible true', async () => {
+  const args = validArgs({
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    changedLines: 10,
+    scopeAnswer: 'full',
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.stats.scope, { lightEligible: true, scopeAnswer: 'full', deep: true });
+});
+test('runWith: a stale caller-stamped agentFlags is refused loud, never silently honoured or ignored', async () => {
+  const args = { ...validArgs(), agentFlags: { deep: false } };
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, false);
+  assert.match(out.error, /agentFlags is no longer accepted/);
+});
+// F4 (PR3 review): deriveAgentFlags is computed from the args waist's riskTable/changedLines/
+// scopeAnswer directly, OUTSIDE the replay('discover') ternary — so a resumed run whose discover
+// phase is replayed from a checkpoint still echoes a truthful stats.scope, not a fabricated one.
+test('runWith: a resumed run (discover replayed from checkpoint) still echoes the true stats.scope', async () => {
+  const discoverCheckpoint = { findings: [], gaps: [], degraded: [] };
+  const args = validArgs({
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    changedLines: 10,
+    scopeAnswer: 'light',
+    checkpoints: { discover: discoverCheckpoint },
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.ok(!ctx.calls.some((c) => c.label.startsWith('code-gauntlet:')), 'discover was replayed, not dispatched');
+  assert.deepEqual(out.stats.scope, { lightEligible: true, scopeAnswer: 'light', deep: false });
 });
