@@ -2005,6 +2005,24 @@ const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
 // is deliberately NOT disclosed — see nullToleranceRejectedKeys.
 const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'delivery', 'checkpoints', 'persist'];
 
+// Issue #24 req 7: the ONE place the four benchmarked-default limits live. Every stage that
+// used to hand-roll `Math.max(1, limits.X || <literal>)` (stages.js summarize/verify/
+// validate/challenge) and the worstCaseAgentCount/coarsenLimits helpers now read a limits
+// object normalizeArgs has already filled from this constant — the literal default exists
+// in exactly one place, not triplicated across stage bodies, helpers, and prose tables.
+//
+// deliveryCap and discoveryCap are DELIBERATELY ABSENT from this table: their null/absent
+// state is meaningful DATA (uncapped delivery / no per-agent discovery ceiling), not a
+// value waiting on a default — see the "meaningful nulls" note above (limits.deliveryCap:
+// null means "uncapped"). Defaulting either here would silently cap a caller who asked for
+// none.
+const LIMIT_DEFAULTS = {
+  summarizeBucketSize: 20,
+  validateBatch: 25,
+  challengeCap: 40,
+  verifySliceSize: 200,
+};
+
 // What the operator actually loses when a stamped null is treated as absent, per key. Used
 // only to word the disclosure gap — no control flow reads it.
 const NULL_TOLERANCE_CONSEQUENCE = {
@@ -2079,6 +2097,18 @@ function stripNullOptionalsReport(args) {
     if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
     if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
     out.delivery = delivery;
+  }
+  // Fill ONLY absent LIMIT_DEFAULTS keys — never overwrite a caller-provided value, and
+  // never fill deliveryCap/discoveryCap (both absent from LIMIT_DEFAULTS on purpose; see
+  // its comment). A provided `challengeCap: 0` is a real cap of zero and must survive
+  // untouched, which `=== undefined` (not falsy) guarantees. A non-object `limits` (or one
+  // missing entirely) is left for validateArgs to reject — this step does not repair shape.
+  if (out.limits && typeof out.limits === 'object' && !Array.isArray(out.limits)) {
+    const limits = { ...out.limits };
+    for (const [k, v] of Object.entries(LIMIT_DEFAULTS)) {
+      if (limits[k] === undefined) limits[k] = v;
+    }
+    out.limits = limits;
   }
   return { args: out, dropped };
 }
@@ -2563,6 +2593,49 @@ function validateArgs(args) {
       }
     }
   }
+  // limits (REQUIRED — see REQUIRED above; the skill always stamps {} at worst, and
+  // normalizeArgs fills the four LIMIT_DEFAULTS keys before validateArgs ever runs on a
+  // real waist). Every OTHER key is a hard error: issue #24's motivating incident was a
+  // silent typo (`verifySclieSize: 50`) that never reached the stage it was meant to size
+  // and just as silently fell back to a different default — this closes that class by
+  // refusing any key this waist does not know about, rather than ignoring it.
+  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap'];
+  if (args.limits !== undefined) {
+    if (args.limits === null || typeof args.limits !== 'object' || Array.isArray(args.limits)) {
+      errors.push('limits must be an object when present');
+    } else {
+      for (const k of Object.keys(args.limits)) {
+        if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
+      }
+      // summarizeBucketSize / validateBatch / verifySliceSize: positive safe integers — a
+      // zero or negative bucket/batch/slice size would divide the work into an infinite (or
+      // negative-length) number of dispatches.
+      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize']) {
+        const v = args.limits[k];
+        if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
+          errors.push(`limits.${k} must be a positive safe integer when present`);
+        }
+      }
+      // challengeCap: non-negative safe integer — 0 is a real, legal cap ("challenge
+      // nothing"; effectiveChallengeCap/challengeStage both honor it).
+      if (args.limits.challengeCap !== undefined
+        && (!Number.isSafeInteger(args.limits.challengeCap) || args.limits.challengeCap < 0)) {
+        errors.push('limits.challengeCap must be a non-negative safe integer when present');
+      }
+      // deliveryCap: absent, null (uncapped — a meaningful value, not a default-pending
+      // hole; see LIMIT_DEFAULTS above), or a non-negative safe integer.
+      if (args.limits.deliveryCap !== undefined && args.limits.deliveryCap !== null
+        && (!Number.isSafeInteger(args.limits.deliveryCap) || args.limits.deliveryCap < 0)) {
+        errors.push('limits.deliveryCap must be null, absent, or a non-negative safe integer when present');
+      }
+      // discoveryCap: absent or a positive safe integer (no null form — unlike
+      // deliveryCap, discoveryCap's absence alone already means "no per-agent ceiling").
+      if (args.limits.discoveryCap !== undefined
+        && (!Number.isSafeInteger(args.limits.discoveryCap) || args.limits.discoveryCap <= 0)) {
+        errors.push('limits.discoveryCap must be a positive safe integer when present');
+      }
+    }
+  }
   return { ok: errors.length === 0, errors };
 }
 
@@ -2757,7 +2830,7 @@ async function summarize(ctx, input) {
   const changedLines = inp.changedLines || 0;
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const bucketSize = Math.max(1, limits.summarizeBucketSize || 20);
+  const bucketSize = effectiveBucketSize(limits);
   const model = modelFor('code-gauntlet:change-summarizer', policy);
 
   const bucketed = changedLines > 500 && changedFiles.length > bucketSize;
@@ -3190,6 +3263,18 @@ const VERIFY_SCHEMA = {
 // dispatch-count test fails instead of the guard silently over-counting.
 const VERIFY_ATTEMPTS_PER_SLICE = 2;
 
+// Issue #72: verifySliceSize is deliberately NOT floored. A very small slice is the
+// legitimate mitigation for a transcription-fidelity failure (#25 req 1 — a smaller slice
+// means less content per executor round trip, less to transcribe faithfully, less to
+// mismatch), so clamping it upward here would remove the exact knob an operator reaches for
+// under that failure mode. Instead: degrade-and-disclose. When a configured verifySliceSize
+// produces MORE than VERIFY_FANOUT_DISCLOSE_THRESHOLD slices, verifyStage pushes a gap
+// naming the configured size, the resulting slice count, and the dispatch ceiling
+// (slices * VERIFY_ATTEMPTS_PER_SLICE) — an operator who set verifySliceSize:1 on a
+// 500-finding run sees the cost of that choice instead of discovering it from a slow run or
+// a worstCaseAgentCount rejection.
+const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
+
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
 // Slices findings into limits.verifySliceSize chunks and dispatches an `executor` agent
 // per slice — one call, plus at most one retry (below) — SEQUENTIALLY (not parallel())
@@ -3238,7 +3323,7 @@ async function verifyStage(ctx, input) {
   const policy = inp.policy || {};
   const nonce = inp.nonce;
   const headShaShort = inp.headShaShort;
-  const sliceSize = Math.max(1, limits.verifySliceSize || findings.length || 1);
+  const sliceSize = effectiveSliceSize(limits, findings.length);
 
   // Empty set: nothing to verify, trivially trusted (no executor dispatched). The
   // counters are still emitted, zero-populated: a consumer that has to distinguish
@@ -3252,6 +3337,18 @@ async function verifyStage(ctx, input) {
   const slices = [];
   for (let i = 0; i < findings.length; i += sliceSize) slices.push(findings.slice(i, i + sliceSize));
 
+  // Degrade-and-disclose (issue #72), not abort: a small verifySliceSize is a legitimate
+  // transcription-fidelity mitigation, not a mistake to reject, but its dispatch cost is
+  // real and otherwise invisible until the run runs long or worstCaseAgentCount rejects it
+  // outright. Collected here rather than pushed straight into `gaps` so it lands ahead of
+  // any per-slice degrade gap, in the order this stage discovers information.
+  const fanoutGaps = slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD
+    ? [`verify_fanout: verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
+      + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
+      + 'executor dispatches at VERIFY_ATTEMPTS_PER_SLICE retries per slice. Raise verifySliceSize to reduce fan-out, '
+      + 'or keep it small deliberately if this run is mitigating a transcription-fidelity failure (issue #25).']
+    : [];
+
   // Materialize each slice's --input JSON on disk BEFORE the executor loop. The
   // executor reads ${inputPathBase}.slice{i}.json, but the workflow script has no disk
   // access and the merged findings exist only mid-workflow (the skill CANNOT pre-write
@@ -3262,7 +3359,7 @@ async function verifyStage(ctx, input) {
   const materialized = await materializeVerifySlices(c, inp, slices, policy);
 
   const out = [];
-  const gaps = [];
+  const gaps = [...fanoutGaps];
   let degradedSlices = 0;
   const inputProof = { ...emptyInputProof(), slices: slices.length };
 
@@ -3970,6 +4067,17 @@ const CHALLENGE_CAP_FLOOR = 5;    // never challenge fewer than this many findin
 
 const ceilDiv = (n, d) => Math.ceil(Math.max(0, n) / Math.max(1, d));
 
+// Issue #24 req 7 (C): the SINGLE accessor path for a stage's effective limit — summarize,
+// verifyStage, validateStage, and challengeStage all call these directly rather than
+// re-deriving their own fallback, so worstCaseAgentCount/coarsenLimits can never count a
+// different fan-out than the stage actually dispatches. normalizeArgs (args.js
+// LIMIT_DEFAULTS) fills summarizeBucketSize/validateBatch/verifySliceSize/challengeCap on
+// every real waist before a stage ever sees `limits`, so the `|| <literal>` fallbacks below
+// are now the DEFENSIVE case (a caller that built `limits` by hand, a test, or a bare
+// `coarsenLimits({}, …)` call) rather than the common one. Keep them anyway: a literal
+// default here still has to agree with LIMIT_DEFAULTS, but that agreement is not load-
+// bearing for a normalized waist.
+//
 // Mirror challengeStage's cap semantics EXACTLY: an absent/null challengeCap means
 // "challenge every finding" (the stage defaults to findings.length), while 0 is a real
 // cap of zero. The guard math must never undercount the stage's actual fan-out.
@@ -4096,7 +4204,7 @@ async function validateStage(ctx, input) {
   const findings = inp.findings || [];
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const batchSize = Math.max(1, limits.validateBatch || findings.length || 1);
+  const batchSize = effectiveBatchSize(limits, findings.length);
 
   if (findings.length === 0) {
     return { findings: [], gaps: [], stats: { batches_dispatched: 0, batches_completed: 0, validated: 0, skipped: 0, adjusted: 0 } };
@@ -4260,7 +4368,7 @@ async function challengeStage(ctx, input) {
   const findings = inp.findings || [];
   const limits = inp.limits || {};
   const policy = inp.policy || {};
-  const cap = Math.max(0, limits.challengeCap != null ? limits.challengeCap : findings.length);
+  const cap = effectiveChallengeCap(limits, findings.length);
 
   if (findings.length === 0) {
     return {
