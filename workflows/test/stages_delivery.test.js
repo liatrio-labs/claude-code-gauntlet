@@ -295,3 +295,29 @@ test('runWith without args.reviewMd reports reviewConfigSource "none" (no config
   assert.equal(out.stats.reviewConfigSource, 'none');
   assert.equal(out.stats.reviewMdEntryCount, 0);
 });
+
+test('runWith with legacy args.reviewConfig (no args.reviewMd) threads it into the filter stage and echoes "preParsed"', async () => {
+  // Req 8 backward compat, at the runWith level: an older caller (or a bench child) that
+  // still stamps the pre-parsed reviewConfig/exclusionPatterns pair directly — never
+  // reviewMd — must see its config applied exactly as before, with provenance reflecting
+  // that no raw REVIEW.md discovery happened.
+  const args = validArgs({
+    reviewConfig: { confidence_threshold: 90, ignore: [] },
+    checkpoints: {
+      validate: {
+        findings: [
+          makeFinding('KEEP', { confidence: 95 }),
+          makeFinding('DROP', { confidence: 65 }),
+        ],
+        stats: { batches_dispatched: 0, batches_completed: 0, validated: 2, skipped: 0, adjusted: 0 },
+      },
+      challenge: challengeCheckpoint(),
+    },
+  });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.equal(out.stats.reviewConfigSource, 'preParsed');
+  assert.equal(out.stats.reviewMdEntryCount, 0);
+  assert.equal(out.stats.filter.total, 2);
+  assert.equal(out.stats.filter.passed_threshold, 1);
+});
