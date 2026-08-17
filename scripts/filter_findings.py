@@ -1049,8 +1049,8 @@ def group_by_proximity(findings, line_proximity=5):
     Returns a dict mapping (file, line_bucket) -> list[finding].
 
     This utility is shared between consolidate_cross_agent and apply_challenges.py,
-    which re-runs that dedup after challenge scoring. (Challenge results are
-    matched to findings by id, not by proximity.)
+    which re-runs that consolidation after challenge scoring. (Challenge results
+    are matched to findings by id, not by proximity.)
     """
 
     def _bucket(line, proximity):
@@ -1152,7 +1152,7 @@ def _line_bucket_proximity(line, proximity):
 def tag_findings(findings):
     """
     Tag each finding as "main" (main report) or "suggestion" (improvement suggestions)
-    and apply cross-agent dedup.
+    and apply cross-agent consolidation.
 
     Step 1 — Cross-agent consolidation: findings from 2+ different agents on
     the same file within 5 lines are stamped (never dropped) with a shared
