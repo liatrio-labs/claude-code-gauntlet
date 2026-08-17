@@ -768,12 +768,20 @@ class TestDetectDisagreement(unittest.TestCase):
 
     def test_degraded_finding_gets_no_boost_from_verified_neighbor(self):
         a = _make_finding(
-            id="A", file="a.py", line_start=10, agent="bug-detector",
-            confidence=75, origin="unknown",
+            id="A",
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+            confidence=75,
+            origin="unknown",
         )
         b = _make_finding(
-            id="B", file="a.py", line_start=11, agent="security-reviewer",
-            confidence=80, origin="verified",
+            id="B",
+            file="a.py",
+            line_start=11,
+            agent="security-reviewer",
+            confidence=80,
+            origin="verified",
         )
         active, _, _ = detect_disagreement([a, b])
         by_id = {f["id"]: f for f in active}
@@ -785,12 +793,20 @@ class TestDetectDisagreement(unittest.TestCase):
     def test_all_verified_run_unaffected_by_degraded_key_extension(self):
         """#73 req 2 regression pin, captured against pre-#22 behavior."""
         v1 = _make_finding(
-            id="V1", file="a.py", line_start=10, agent="bug-detector",
-            confidence=70, origin="verified",
+            id="V1",
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+            confidence=70,
+            origin="verified",
         )
         v2 = _make_finding(
-            id="V2", file="a.py", line_start=11, agent="security-reviewer",
-            confidence=60, origin="verified",
+            id="V2",
+            file="a.py",
+            line_start=11,
+            agent="security-reviewer",
+            confidence=60,
+            origin="verified",
         )
         active, _, boosted = detect_disagreement([v1, v2])
         by_id = {f["id"]: f for f in active}
@@ -802,12 +818,20 @@ class TestDetectDisagreement(unittest.TestCase):
     def test_all_degraded_run_unaffected_by_degraded_key_extension(self):
         """#73 req 2 regression pin, captured against pre-#22 behavior."""
         d1 = _make_finding(
-            id="D1", file="a.py", line_start=10, agent="bug-detector",
-            confidence=70, origin="unknown",
+            id="D1",
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+            confidence=70,
+            origin="unknown",
         )
         d2 = _make_finding(
-            id="D2", file="a.py", line_start=11, agent="security-reviewer",
-            confidence=60, origin="unknown",
+            id="D2",
+            file="a.py",
+            line_start=11,
+            agent="security-reviewer",
+            confidence=60,
+            origin="unknown",
         )
         active, _, boosted = detect_disagreement([d1, d2])
         by_id = {f["id"]: f for f in active}
@@ -1168,7 +1192,11 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         self.assertEqual(len(findings), 3, "nothing is ever dropped")
         self.assertEqual(count, 3)
         self.assertEqual(
-            {bug1["consolidation_key"], bug2["consolidation_key"], test1["consolidation_key"]},
+            {
+                bug1["consolidation_key"],
+                bug2["consolidation_key"],
+                test1["consolidation_key"],
+            },
             {bug1["consolidation_key"]},
         )
         self.assertTrue(bug1["consolidation_primary"], "Winner bug-1 is the primary")
@@ -1321,6 +1349,7 @@ class TestConsolidateCrossAgent(unittest.TestCase):
             import os
 
             os.unlink(tmppath)
+
 
 # ---------------------------------------------------------------------------
 # load_exclusions / apply_exclusions

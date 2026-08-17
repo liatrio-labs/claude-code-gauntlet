@@ -152,7 +152,10 @@ class TestFilterFindingsParity(unittest.TestCase):
                         inp["findings"]
                     )
                     self.assertEqual(
-                        {"findings": findings, "consolidated_count": consolidated_count},
+                        {
+                            "findings": findings,
+                            "consolidated_count": consolidated_count,
+                        },
                         expected,
                     )
                 elif fn == "tag_findings":

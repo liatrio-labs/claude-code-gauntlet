@@ -2729,7 +2729,13 @@ class TestConsolidateDelivery(unittest.TestCase):
 
 class TestRenderGroupBody(unittest.TestCase):
     def test_no_corroborators_is_byte_identical_to_render_comment_body(self):
-        finding = {"file": "foo.py", "line": 2, "severity": "high", "title": "A", "body": "Body A"}
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+        }
         self.assertEqual(render_group_body(finding, []), render_comment_body(finding))
 
     def test_corroborator_section_includes_agent_dimension_confidence_title(self):
@@ -2752,8 +2758,20 @@ class TestRenderGroupBody(unittest.TestCase):
 
     def test_multiple_corroborators_each_rendered(self):
         primary = {"severity": "high", "title": "A", "body": "Body A"}
-        c1 = {"agent": "x", "dimension": "d1", "confidence": 1, "title": "B", "body": "Body B"}
-        c2 = {"agent": "y", "dimension": "d2", "confidence": 2, "title": "C", "body": "Body C"}
+        c1 = {
+            "agent": "x",
+            "dimension": "d1",
+            "confidence": 1,
+            "title": "B",
+            "body": "Body B",
+        }
+        c2 = {
+            "agent": "y",
+            "dimension": "d2",
+            "confidence": 2,
+            "title": "C",
+            "body": "Body C",
+        }
         rendered = render_group_body(primary, [c1, c2])
         self.assertIn("x (d1, confidence 1)", rendered)
         self.assertIn("y (d2, confidence 2)", rendered)

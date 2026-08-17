@@ -628,12 +628,22 @@ class TestCrossAgentConsolidationIntegration(unittest.TestCase):
         from scripts.filter_findings import consolidate_cross_agent
 
         bug = _make_finding(
-            id="bug-1", file="a.py", line_start=10, agent="bug-detector",
-            dimension="bug", confidence=95, severity="high",
+            id="bug-1",
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+            dimension="bug",
+            confidence=95,
+            severity="high",
         )
         test1 = _make_finding(
-            id="test-1", file="a.py", line_start=12, agent="test-analyzer",
-            dimension="test_coverage", confidence=60, severity="high",
+            id="test-1",
+            file="a.py",
+            line_start=12,
+            agent="test-analyzer",
+            dimension="test_coverage",
+            confidence=60,
+            severity="high",
         )
         # Simulate the filter stage's earlier stamping pass.
         consolidate_cross_agent([bug, test1])
@@ -649,7 +659,9 @@ class TestCrossAgentConsolidationIntegration(unittest.TestCase):
         survivor = active[0]
         self.assertEqual(survivor["id"], "test-1")
         self.assertNotIn("consolidation_key", survivor, "stale stamp must be cleared")
-        self.assertNotIn("consolidation_primary", survivor, "stale stamp must be cleared")
+        self.assertNotIn(
+            "consolidation_primary", survivor, "stale stamp must be cleared"
+        )
 
 
 # ---------------------------------------------------------------------------
