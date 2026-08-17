@@ -597,10 +597,11 @@ const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimi
 //
 // `agent` is not declarable here because no finding is echoed at all any more — the
 // withholding that used to depend on leaving one property out of a finding schema is now
-// structural. joinVerifyDeltas strips it from the findings it emits, and a test fails if a
-// joined finding is ever filter-visibly tagged (V3.1 item 4 was reverted for exactly this:
-// deterministic agent identity past verify moved mini-subset A's dedup eliminations
-// 7 -> 33 and same-6 recall 20/30 -> 13/30; it re-lands only with #22's redesign).
+// structural. `agent` re-lands with #22's redesign: joinVerifyDeltas no longer strips it
+// (consolidateCrossAgent never drops a finding, so a deterministic `agent` past verify no
+// longer costs recall the way the old drop-one-winner dedupCrossAgent did — V3.1 item 4's
+// prior attempt moved mini-subset A's dedup eliminations 7 -> 33 and same-6 recall
+// 20/30 -> 13/30 under that eliminator).
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
@@ -1036,12 +1037,15 @@ const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 // dispatchVerifySlice (immediately after its trustSlice call) and the golden-fixture test
 // calls it; keep it that way.
 //
-// `agent` is stripped here — the one place where the withholding #25 requirement 1
-// mandates is enforced. It used to happen by omission (the echo schema simply did not
-// declare `agent`, so StructuredOutput dropped it... most of the time — measured surviving
-// on 2 of 6 PRs). Joining onto findings this stage holds would have made it deterministic,
-// which is the measured dedup recall-collapse mechanism, so the withholding had to become
-// explicit. It re-lands only with the cross-dimension consolidation redesign (#22).
+// `agent` used to be stripped here — the one place where the withholding #25
+// requirement 1 mandated was enforced. It used to happen by omission (the echo schema
+// simply did not declare `agent`, so StructuredOutput dropped it... most of the time —
+// measured surviving on 2 of 6 PRs). Joining onto findings this stage holds would have
+// made it deterministic, which was the measured dedup recall-collapse mechanism (the old
+// drop-one-winner `dedupCrossAgent` silently discarded whichever agent's finding lost),
+// so the withholding had to become explicit. It re-lands now (#22): `consolidateCrossAgent`
+// eliminates nothing, so a deterministic `agent` on the trusted path no longer costs
+// recall, and both this path and `degradedSlice` emit `agent` identically again.
 export function joinVerifyDeltas(slice, deltas) {
   const byId = new Map();
   for (const d of Array.isArray(deltas) ? deltas : []) {
@@ -1056,7 +1060,6 @@ export function joinVerifyDeltas(slice, deltas) {
     // carried real numbers, and a leaked "85" makes the filter's consensus boost
     // string-concatenate ("85" + 10 -> "8510").
     const joined = pinNumericFields(f);
-    delete joined.agent;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     out.push(joined);
   }
@@ -1791,7 +1794,7 @@ export async function challengeStage(ctx, input) {
       stats: {
         total_input: 0, dispatched: 0, completed: 0, skipped: 0,
         challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
-        challenge_survived: 0, unchallenged: 0, dedup_dropped: 0, final_count: 0,
+        challenge_survived: 0, unchallenged: 0, cross_agent_consolidated: 0, final_count: 0,
       },
       generated_at: inp.generatedAt,
     };
@@ -1863,7 +1866,7 @@ export async function challengeStage(ctx, input) {
       challenge_contested: applied.stats.challenge_contested,
       challenge_survived: applied.stats.challenge_survived,
       unchallenged: applied.stats.unchallenged,
-      dedup_dropped: applied.stats.dedup_dropped,
+      cross_agent_consolidated: applied.stats.cross_agent_consolidated,
       final_count: applied.stats.final_count,
     },
     generated_at: inp.generatedAt,

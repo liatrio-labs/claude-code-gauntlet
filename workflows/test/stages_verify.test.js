@@ -522,11 +522,12 @@ test('(m4) verify echo item schema is exactly the six delta scalars — no per-d
 // The by-value design left `agent` undeclared in the echo schema and observed its
 // survival as stochastic (item 4's original PASS-THROUGH pin). Under the delta echo the
 // executor never receives or returns a finding at all — only a per-id decision — so
-// joinVerifyDeltas is the one place `agent` can be threaded onward, and it unconditionally
-// deletes it (issue #25 requirement 1: a filter-visible `agent` past verify is a defect,
-// not a stochastic outcome). This test now pins the opposite of what it used to: `agent`
-// is stripped, always, regardless of what (if anything) the delta says about that id.
-test('(m5) `agent` never survives verify: a dispatched finding carrying it comes out stripped', async () => {
+// joinVerifyDeltas is the one place `agent` used to be threaded away. Issue #22's
+// cross-dimension consolidation redesign (`consolidateCrossAgent` never drops a finding)
+// removed the recall cost that made stripping necessary, so `agent` now survives the join
+// deterministically on both the trusted and degraded paths (issue #25 requirement 1's
+// stripping requirement is superseded by #22).
+test('(m5) `agent` survives verify deterministically: a dispatched finding carrying it comes out unchanged', async () => {
   const findings = [
     { id: 'F1', file: 'a.js', line_start: 1, origin: 'new', dimension: 'bug', agent: 'bug-detector', cross_file_refs: [] },
     { id: 'F2', file: 'a.js', line_start: 2, origin: 'new', dimension: 'convention', agent: 'conventions-and-intent', cross_file_refs: [] },
@@ -535,7 +536,7 @@ test('(m5) `agent` never survives verify: a dispatched finding carrying it comes
   const ctx = verifyCtx((_t, i) => okEnvelope(findings, { nonce: `n-1.${i}` }));
   const out = await verifyStage(ctx, input);
   assert.equal(out.verified, true);
-  assert.ok(out.findings.every((f) => !('agent' in f)), 'agent must be stripped from every joined finding');
+  assert.deepEqual(out.findings.map((f) => f.agent), ['bug-detector', 'conventions-and-intent'], 'agent must survive the join deterministically');
 });
 
 // --- Item 5: slice-input writer write-proof ---------------------------------

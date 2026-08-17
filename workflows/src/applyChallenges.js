@@ -5,7 +5,7 @@
 // layer -- not ported here, matching filterFindings.js's applyFilterPipeline
 // (config/exclusions passed in already-parsed, no disk access).
 
-import { dedupCrossAgent, SEVERITY_ORDER } from './filterFindings.js';
+import { consolidateCrossAgent, SEVERITY_ORDER } from './filterFindings.js';
 import { pyIntStrict } from './applyValidations.js';
 
 // SEVERITY_ORDER is imported from filterFindings.js (its single owner) — see the
@@ -32,7 +32,7 @@ export function downgradeSeverity(severity) {
   return SEVERITY_ORDER[idx + 1];
 }
 
-// Port of _rank_key. Single 3-tuple (sevIdx, -confidence, tertiary):
+// Port of _rank_key. 4-tuple (sevIdx, degraded, -confidence, tertiary):
 // tertiary is -risk_level when risk_level is present, non-null, and
 // numeric (Number.isFinite(Number(rl))) -- the explicit `rl !== null` guard
 // matters because Number(null) === 0 is finite, which would otherwise
@@ -41,27 +41,36 @@ export function downgradeSeverity(severity) {
 // rank_risk_level_absent_falls_back_to_description_length fixture, which
 // pins this exact null-vs-zero distinction against the authoritative
 // Python: `if risk_level is not None: ... else: tertiary = -len(description)`).
+//
+// `degraded` (origin === 'unknown' -> 1, else 0) sits right after severity
+// (#22 D3b): within a severity tier, a finding the pipeline actually
+// verified always outranks one it could not verify. On a UNIFORM-origin run
+// (every finding verified, or every finding degraded) this component is
+// constant across the whole set, so ranking order is unchanged from before
+// this extension.
 export function rankKey(finding) {
   const sev = (finding.severity ?? 'low').toLowerCase();
   let sevIdx = SEVERITY_ORDER.indexOf(sev);
   if (sevIdx < 0) sevIdx = SEVERITY_ORDER.length;
+  const degraded = finding.origin === 'unknown' ? 1 : 0;
   const conf = finding.confidence ?? 0;
   let tertiary;
   const rl = finding.risk_level;
   if (rl !== undefined && rl !== null && Number.isFinite(Number(rl))) tertiary = -Number(rl);
   else tertiary = -((finding.description ?? '').length);
-  return [sevIdx, -conf, tertiary];
+  return [sevIdx, degraded, -conf, tertiary];
 }
 
 // Port of rank_findings. ONE composite comparator built from rankKey's
-// 3-tuple -- not chained `.sort()` calls -- so severity, confidence, and
-// risk_level/description-length are decided together in a single stable
-// pass (see the rank_by_severity_then_confidence_then_risk_level fixture).
+// 4-tuple -- not chained `.sort()` calls -- so severity, verification
+// status, confidence, and risk_level/description-length are decided
+// together in a single stable pass (see the
+// rank_by_severity_then_confidence_then_risk_level fixture).
 export function rankFindings(findings) {
   return [...findings].sort((a, b) => {
     const ka = rankKey(a);
     const kb = rankKey(b);
-    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
 
@@ -205,16 +214,17 @@ export function applyChallenges(findings, challenges) {
 
   const totalInput = findings.length;
 
-  // Cross-agent dedup re-run (filterFindings' dedupCrossAgent, reused not
-  // reimplemented) + rank -- mirrors main()'s post-challenge composition.
-  const { kept: dedupedActive, dropped: dedupDropped } = dedupCrossAgent(active);
-  const ranked = rankFindings(dedupedActive);
-
-  const allEliminated = [...eliminated, ...dedupDropped];
+  // Cross-agent consolidation re-run (filterFindings' consolidateCrossAgent,
+  // reused not reimplemented) + rank -- mirrors main()'s post-challenge
+  // composition. Nothing is dropped here (#22 D1); it re-stamps the
+  // surviving active set now that challenge scoring may have changed which
+  // findings are co-located and eligible.
+  const { findings: consolidatedActive, consolidatedCount } = consolidateCrossAgent(active);
+  const ranked = rankFindings(consolidatedActive);
 
   return {
     findings: ranked,
-    eliminated: allEliminated,
+    eliminated,
     stats: {
       total_input: totalInput,
       challenge_removed: stats.challenge_removed,
@@ -222,7 +232,7 @@ export function applyChallenges(findings, challenges) {
       challenge_contested: stats.challenge_contested,
       challenge_survived: stats.challenge_survived,
       unchallenged: stats.unchallenged,
-      dedup_dropped: dedupDropped.length,
+      cross_agent_consolidated: consolidatedCount,
       final_count: ranked.length,
     },
   };
