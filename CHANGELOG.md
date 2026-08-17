@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.11.4 (2026-08-17)
+
+### Bug Fixes
+
+- **workflows**: Bound implausible discovery-agent line spans at intake
+  ([#205](https://github.com/liatrio-labs/claude-code-gauntlet/pull/205),
+  [`65c4b3c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/65c4b3c5e79713575112e3afccf44321f88faf1e))
+
+### Testing
+
+- **workflows**: Pin the span-0 keep boundary; correct the maxLineSpan-0 comment
+  ([#205](https://github.com/liatrio-labs/claude-code-gauntlet/pull/205),
+  [`65c4b3c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/65c4b3c5e79713575112e3afccf44321f88faf1e))
+
+
 ## v3.11.3 (2026-08-17)
 
 ### Bug Fixes
