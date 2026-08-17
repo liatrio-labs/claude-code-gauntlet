@@ -91,7 +91,6 @@ they asked for it or not.
 |---------|-----------------|-----------|
 | Confidence Threshold | omit (built-in 55 / 70) unless the user states a starting number | Calibrating on the built-in defaults surfaces more candidates during the first review; the maintainer raises the bar once they've seen what noise looks like |
 | Severity Threshold | omit (built-in low) unless the user states a starting severity | Same reasoning — start from the built-in, not a guess |
-| Model Tier | optimized | The single benchmarked policy (Sonnet discovery, Opus for security); this one is safe to write explicitly since it is the only valid value |
 
 If the user does ask for a conservative starting point during Step 2, a reasonable one to suggest
 is confidence 85 / severity medium — high-conviction findings only while the team is still
@@ -176,9 +175,6 @@ Run this audit when acceptance rate drops below 50%, or at minimum every quarter
 Root `REVIEW.md`:
 
 ```markdown
-## Model Tier
-optimized
-
 ## Rules
 
 ### Security
@@ -208,9 +204,6 @@ optimized
 Frontend subdirectory `src/REVIEW.md` (or `frontend/REVIEW.md`):
 
 ````markdown
-## Model Tier
-optimized
-
 ## Rules
 
 ### TypeScript strictness
@@ -250,9 +243,6 @@ ignore:
 Root `REVIEW.md`:
 
 ```markdown
-## Model Tier
-optimized
-
 ## Rules
 
 ### Security
@@ -283,9 +273,6 @@ optimized
 Backend subdirectory `backend/REVIEW.md`:
 
 ````markdown
-## Model Tier
-optimized
-
 ## Rules
 
 ### Django ORM
@@ -329,9 +316,6 @@ ignore:
 Root `REVIEW.md`:
 
 ````markdown
-## Model Tier
-optimized
-
 ## Rules
 
 ### Security
@@ -383,9 +367,6 @@ ignore:
 Root `REVIEW.md`:
 
 ````markdown
-## Model Tier
-optimized
-
 ## Rules
 
 ### Security
@@ -428,9 +409,6 @@ ignore:
 Backend subdirectory (e.g., `src/main/java/REVIEW.md`):
 
 ````markdown
-## Model Tier
-optimized
-
 ## Rules
 
 ### JPA and Hibernate

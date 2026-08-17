@@ -43,14 +43,18 @@ Scan the repository to understand what you are configuring. Do this silently —
 **Existing REVIEW.md** — check whether a root REVIEW.md already exists. If it does, announce what you found and ask:
 
 ```
-AskUserQuestion({
-  "question": "A REVIEW.md already exists at the repo root. What would you like to do?",
-  "options": [
-    "Start fresh — replace it with a new one",
-    "Extend it — add rules to what's already there",
-    "Cancel — keep what I have"
-  ]
-})
+AskUserQuestion(
+  questions: [{
+    question: "A REVIEW.md already exists at the repo root. What would you like to do?",
+    header: "REVIEW.md",
+    multiSelect: false,
+    options: [
+      { label: "Extend it (Recommended)", description: "Add rules to what's already there, keeping existing settings" },
+      { label: "Start fresh", description: "Replace it with a newly generated REVIEW.md" },
+      { label: "Cancel", description: "Keep the existing file unchanged and exit" }
+    ]
+  }]
+)
 ```
 
 If "Cancel", exit immediately with the message: "Your existing REVIEW.md is unchanged."
@@ -62,15 +66,19 @@ If "Cancel", exit immediately with the message: "Your existing REVIEW.md is unch
 Announce your detection findings in one sentence (e.g., "I found a TypeScript/React frontend and a .NET backend in separate directories."), then ask:
 
 ```
-AskUserQuestion({
-  "question": "What matters most for this review configuration?",
-  "options": [
-    "Security & Correctness — catch secrets, auth gaps, bugs, async errors, type misuse",
-    "Code Quality & Performance — complexity, duplication, naming, N+1 queries, resource leaks",
-    "Test Coverage & Conventions — flag missing tests, enforce commit messages, PR size, naming patterns",
-    "All of the above"
-  ]
-})
+AskUserQuestion(
+  questions: [{
+    question: "What matters most for this review configuration?",
+    header: "Priorities",
+    multiSelect: false,
+    options: [
+      { label: "All of the above (Recommended)", description: "Security, correctness, quality, performance, tests, and conventions" },
+      { label: "Security & Correctness", description: "Secrets, auth gaps, bugs, async errors, type misuse" },
+      { label: "Code Quality & Performance", description: "Complexity, duplication, naming, N+1 queries, resource leaks" },
+      { label: "Tests & Conventions", description: "Missing tests, commit messages, PR size, naming patterns" }
+    ]
+  }]
+)
 ```
 
 Record the selected priorities. Security and Correctness always produce **prescriptive rules** ("MUST", "NEVER", "CRITICAL") because violations are always wrong. Code quality, performance, test coverage, and conventions produce **directional rules** ("prefer", "consider", "flag when") that allow judgment.
@@ -89,12 +97,14 @@ Generate a root REVIEW.md with 8–10 rules drawn from the detected stack and se
 - CRITICAL label is reserved for security and correctness violations that are always wrong. Use it for at most 3–4 rules per file — overuse destroys emphasis.
 - Do not write rules that duplicate what linters catch deterministically (formatting, indentation, import sorting).
 
-**Do not pin a threshold the user didn't ask for.** The pipeline's built-in defaults (non-security confidence **55**, security confidence **70**, severity **low** — everything shown) apply automatically whenever a key is absent from REVIEW.md's config block; writing an explicit number here — even a "conservative starting point" — silently overrides that default the moment the wizard runs, for every user, without them choosing it. A `## Confidence Threshold` / `## Severity Threshold` markdown heading is never parsed at all (`references/review-md-spec.md` in the code-gauntlet skill → Format) — the only mechanism that works is the fenced config block, with the four snake_case keys inside it. Emit only `## Model Tier`, and put the threshold keys inside that block as commented-out, digit-free examples:
-
-```markdown
-## Model Tier
-optimized
-```
+**Do not pin a threshold the user didn't ask for.** The pipeline's built-in defaults (non-security
+confidence **55**, security confidence **70**, severity **low** — everything shown) apply automatically
+whenever a key is absent from REVIEW.md's config block; writing an explicit number here — even a
+"conservative starting point" — silently overrides that default the moment the wizard runs, for every
+user, without them choosing it. A `## Confidence Threshold` / `## Severity Threshold` markdown heading is
+never parsed at all (`references/review-md-spec.md` in the code-gauntlet skill → Format) — the only
+mechanism that works is the fenced config block, with the four snake_case keys inside it. Emit the block
+with the threshold keys commented out as digit-free examples:
 
 ```yaml
 # code-gauntlet
@@ -104,7 +114,13 @@ optimized
 #   Built-in default when omitted: low (show everything).
 ```
 
-If Step 2 surfaced an explicit user preference for a starting threshold, uncomment the relevant key and write that value instead of leaving the example commented out — but never substitute a number the user didn't state.
+If Step 2 surfaced an explicit user preference for a starting threshold, uncomment the relevant key and
+write that value instead of leaving the example commented out — but never substitute a number the user
+didn't state.
+
+**Do not emit a `## Model Tier` section.** Nothing reads it (issue #153): the model policy is fixed to the
+single benchmarked configuration, and the only remaining pin is the fail-loud `CODE_GAUNTLET_MODEL_TIER`
+env knob. Emitting the heading advertises a knob that does not exist.
 
 **Rule sections** — organize by selected priorities:
 
@@ -134,7 +150,7 @@ If no → the rule belongs in the root REVIEW.md.
 
 **When creating subdirectory configs:**
 
-- Include `## Model Tier` only (no `## Skip` — see Step 3)
+- Emit `## Rules` and, if needed, a config block — no `## Model Tier` and no `## Skip` (see Step 3)
 - Do not repeat rules that are already in root
 - Do not contradict root rules — extend them. If root says "prefer immutable types," the subdirectory rule should add the escape hatch, not contradict
 - Subdirectory configs should have 5–8 rules each; stop at the second directory level
@@ -200,3 +216,4 @@ Do not offer to run a review or explain the review process. The user can trigger
 4. **Do not create subdirectory configs without the decision test.** Technology-specific rules that pass the false-positive test belong in root with a path qualifier.
 5. **Never pin an unrequested threshold.** Leave `confidence_threshold` / `severity_threshold` commented out in the generated config block unless the user explicitly asked for a specific value — the pipeline's built-in defaults (55 non-security / 70 security confidence, low severity) already apply when the keys are absent.
 6. **Never generate a `## Skip` section.** It is never parsed — generating one implies a feature that does not exist.
+7. **Never emit a `## Model Tier` section.** Nothing reads it (issue #153) — emitting it advertises a knob that does not exist.
