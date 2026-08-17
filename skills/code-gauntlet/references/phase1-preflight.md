@@ -8,10 +8,10 @@ Workflow-tool availability check, review target resolution, eligibility logic, t
 
 ## Workflow-Tool Availability Check (run first)
 
-v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-session fallback — the break from v2's inline subagent dispatch is a locked decision. Before any other work, confirm the **`Workflow` tool is present in this session's available tools** — by **passive self-inspection of your own tool definitions only**. No tool call verifies this, and **`ToolSearch` must never be used as the probe**: it searches deferred tools only, so a `Workflow` tool defined top-level returns zero hits and reads as a false "absent" (recorded false abort 2026-08-17, issue #201 — same wrong-instrument class as the plugin-root `find` ban in SKILL.md).
+v3 orchestration is a single `Workflow` tool call (Phase 3). There is no in-session fallback — the break from v2's inline subagent dispatch is a locked decision. Before any other work, confirm the **`Workflow` tool is present in this session's tool definitions** by passive self-inspection only — never via `ToolSearch`, which searches deferred tools only and returns a false "absent" for a top-level `Workflow`.
 
 - **Present in your tool definitions** → continue with target resolution.
-- **Absent from your tool definitions** (not merely absent from a ToolSearch result) → print exactly the message below and STOP. Do not emulate the pipeline by dispatching agents inline.
+- **Absent from your tool definitions** → print exactly the message below and STOP. Do not emulate the pipeline by dispatching agents inline.
 
 ```
 code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
