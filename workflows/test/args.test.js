@@ -16,7 +16,10 @@ const good = {
   // scopeAnswer needed) the same way it always was ({} agentFlags == full scope).
   reviewConfigPath: null, riskTable: [{ path: 'a.js', risk: 'medium' }],
   policy: { tier: 'optimized', subagentModel: null },
-  limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 },
+  limits: {
+    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
+    maxLineSpan: 100,
+  },
 };
 
 test('normalizeArgs parses a JSON string (session tool-call form)', () => {
@@ -655,9 +658,10 @@ test('validateArgs accepts an absolute repoRoot (POSIX /-prefix)', () => {
 
 // --- Issue #24 req 7: LIMIT_DEFAULTS at the args waist ----------------------------------
 
-test('LIMIT_DEFAULTS covers exactly the four benchmarked keys, never deliveryCap/discoveryCap', () => {
+test('LIMIT_DEFAULTS covers exactly the five benchmarked/bound keys, never deliveryCap/discoveryCap', () => {
   assert.deepEqual(LIMIT_DEFAULTS, {
     summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
+    maxLineSpan: 100,
   });
 });
 
@@ -672,7 +676,7 @@ test('normalizeArgs fills only the MISSING limits keys, leaving every provided v
   const out = normalizeArgs(raw);
   assert.deepEqual(out.limits, {
     summarizeBucketSize: 7, deliveryCap: 3,
-    validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
+    validateBatch: 25, challengeCap: 40, verifySliceSize: 200, maxLineSpan: 100,
   });
 });
 
@@ -714,6 +718,11 @@ test('validateArgs accepts a positive limits.discoveryCap', () => {
   assert.deepEqual(r, { ok: true, errors: [] });
 });
 
+test('validateArgs accepts a positive limits.maxLineSpan (issue #204)', () => {
+  const r = validateArgs({ ...good, limits: { ...good.limits, maxLineSpan: 250 } });
+  assert.deepEqual(r, { ok: true, errors: [] });
+});
+
 test('validateArgs rejects a non-object limits', () => {
   for (const bad of [null, 'x', 5, [], []]) {
     const r = validateArgs({ ...good, limits: bad });
@@ -727,8 +736,8 @@ test('validateArgs rejects an unknown limits key — the silent-typo case (issue
   assert.match(r.errors.join(' '), /unknown limits key: verifySclieSize/);
 });
 
-test('validateArgs rejects zero/negative/non-integer summarizeBucketSize, validateBatch, verifySliceSize', () => {
-  for (const key of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize']) {
+test('validateArgs rejects zero/negative/non-integer summarizeBucketSize, validateBatch, verifySliceSize, maxLineSpan', () => {
+  for (const key of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
     for (const bad of [0, -1, 1.5, 'x', NaN]) {
       const r = validateArgs({ ...good, limits: { ...good.limits, [key]: bad } });
       assert.equal(r.ok, false, `limits.${key}=${bad} should be rejected`);

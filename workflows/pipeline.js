@@ -2024,7 +2024,7 @@ const SCOPE_ANSWERS = ['light', 'full'];
 // the single contract for these literals; riskTable values must stay in lockstep with it.
 const RISK_LEVELS = ['low', 'medium', 'high'];
 
-// Issue #24 req 7: the ONE place the four benchmarked-default limits live. Every stage that
+// Issue #24 req 7: the ONE place the benchmarked-default limits live. Every stage that
 // used to hand-roll `Math.max(1, limits.X || <literal>)` (stages.js summarize/verify/
 // validate/challenge) and the worstCaseAgentCount/coarsenLimits helpers now read a limits
 // object normalizeArgs has already filled from this constant — the literal default exists
@@ -2040,6 +2040,7 @@ const LIMIT_DEFAULTS = {
   validateBatch: 25,
   challengeCap: 40,
   verifySliceSize: 200,
+  maxLineSpan: 100,
 };
 
 // computeLightEligible(riskTable, changedLines) -> boolean (issue #24 req 5, PR3).
@@ -2746,12 +2747,12 @@ function validateArgs(args) {
     }
   }
   // limits (REQUIRED — see REQUIRED above; the skill always stamps {} at worst, and
-  // normalizeArgs fills the four LIMIT_DEFAULTS keys before validateArgs ever runs on a
+  // normalizeArgs fills the LIMIT_DEFAULTS keys before validateArgs ever runs on a
   // real waist). Every OTHER key is a hard error: issue #24's motivating incident was a
   // silent typo (`verifySclieSize: 50`) that never reached the stage it was meant to size
   // and just as silently fell back to a different default — this closes that class by
   // refusing any key this waist does not know about, rather than ignoring it.
-  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap'];
+  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap', 'maxLineSpan'];
   if (args.limits !== undefined) {
     if (args.limits === null || typeof args.limits !== 'object' || Array.isArray(args.limits)) {
       errors.push('limits must be an object when present');
@@ -2759,10 +2760,13 @@ function validateArgs(args) {
       for (const k of Object.keys(args.limits)) {
         if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
       }
-      // summarizeBucketSize / validateBatch / verifySliceSize: positive safe integers — a
-      // zero or negative bucket/batch/slice size would divide the work into an infinite (or
-      // negative-length) number of dispatches.
-      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize']) {
+      // summarizeBucketSize / validateBatch / verifySliceSize / maxLineSpan: positive safe
+      // integers — a zero or negative bucket/batch/slice size would divide the work into an
+      // infinite (or negative-length) number of dispatches. maxLineSpan (issue #204): the
+      // effective-limit accessor's `||` fallback treats a falsy 0 as absent and silently
+      // substitutes the default, so an unvalidated 0 would be confusingly overridden rather
+      // than honored — refuse it here instead.
+      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
         const v = args.limits[k];
         if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
           errors.push(`limits.${k} must be a positive safe integer when present`);
@@ -3319,6 +3323,33 @@ async function discover(ctx, input) {
       gaps.push(`${spec.agentType}: possibly incomplete (complete=${res.complete === false ? 'false' : 'true'}, total_seen=${res.total_seen}) — dimensions ${spec.dimensions.join('/')}`);
     }
   });
+
+  // Issue #204: bound an implausible discovery-agent line_end at intake, before anything
+  // reaches mergeStage. A 2026-08-17 live run had an agent emit line_start=68,
+  // line_end=940 (an ~872-line span crossing hunks) — post_review.py's delivery-side fix
+  // (PR #200) now falls back to a single-line comment rather than 422ing the whole
+  // review, but the emission-side bound belongs HERE too: a span this implausible is
+  // agent noise, not a real multi-line finding, and letting it through just makes every
+  // downstream stage (and the delivery fallback) carry dead weight. DROP `line_end`
+  // rather than clamp it — a clamped value is a fabricated line number nobody reported;
+  // the finding survives, anchored at its (still-valid) line_start, same as a finding
+  // that never had an end line. maxLineSpan is a caller-tunable limit (LIMIT_DEFAULTS),
+  // not a hardcoded literal, so a codebase with legitimately large multi-line findings
+  // can raise it.
+  const maxLineSpan = effectiveMaxLineSpan(limits);
+  let droppedLineSpans = 0;
+  for (const f of findings) {
+    const lineEnd = f.line_end;
+    if (lineEnd === undefined || lineEnd === null) continue;
+    const span = lineEnd - f.line_start;
+    if (!Number.isInteger(lineEnd) || span < 0 || span > maxLineSpan) {
+      delete f.line_end;
+      droppedLineSpans += 1;
+    }
+  }
+  if (droppedLineSpans > 0) {
+    gaps.push(`discover: ${droppedLineSpans} finding(s) had an implausible line_end (non-integer, before line_start, or spanning more than maxLineSpan=${maxLineSpan} lines) — line_end dropped, finding kept anchored at line_start`);
+  }
 
   // Each dimension belongs to a single agent so no overlap is possible today; the Set
   // keeps degraded deduplicated and insertion-ordered should that ever change.
@@ -4327,6 +4358,11 @@ const effectiveChallengeCap = (L, findings) =>
 const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
+
+// Issue #204: the discovery-intake line-span bound (see its call site in discover()).
+// Same accessor pattern as its siblings above — read the ONE LIMIT_DEFAULTS constant
+// rather than restating the literal here.
+const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.maxLineSpan);
 
 // worstCaseAgentCount(limits, nFiles, nFindings) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate

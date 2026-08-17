@@ -411,6 +411,72 @@ test('discovery finding schema declares confidence NUMBER + reconciled schemaExt
   assert.equal(cfItem.affected_consumers.items.type, 'string');
 });
 
+// --- Issue #204: intake bound on an implausible discovery-agent line_end -----------------
+// A 2026-08-17 live run had an agent emit line_start=68, line_end=940 — an ~872-line span
+// crossing hunks — which post_review.py turned into a 422 that lost the whole review.
+// discover() now drops (never clamps) an implausible line_end before mergeStage ever sees
+// it; the finding survives, anchored at line_start.
+
+function findingWith(overrides) {
+  return {
+    id: 'f1', file: 'a.js', line_start: 68, title: 't', description: 'd',
+    severity: 'medium', confidence: 80, dimension: 'bug',
+    ...overrides,
+  };
+}
+
+async function discoverOne(finding, limits = {}) {
+  const ctx = fakeCtx({ byAgent: { 'code-gauntlet:bug-detector': { findings: [finding], complete: true, total_seen: 1 } } });
+  return discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits, policy: {} });
+}
+
+test('discover: line_end spanning more than maxLineSpan is dropped, finding kept', async () => {
+  const out = await discoverOne(findingWith({ line_end: 940 })); // span 872 > default 100
+  assert.equal(out.findings.length, 1);
+  assert.equal(out.findings[0].line_end, undefined, 'line_end must be gone, not clamped');
+  assert.equal(out.findings[0].line_start, 68, 'the finding survives anchored at line_start');
+  assert.ok(out.gaps.some((g) => g.includes('1 finding(s) had an implausible line_end')));
+});
+
+test('discover: line_end before line_start is dropped', async () => {
+  const out = await discoverOne(findingWith({ line_start: 100, line_end: 50 }));
+  assert.equal(out.findings[0].line_end, undefined);
+  assert.equal(out.findings[0].line_start, 100);
+});
+
+test('discover: a non-integer line_end is dropped', async () => {
+  const out = await discoverOne(findingWith({ line_end: 70.5 }));
+  assert.equal(out.findings[0].line_end, undefined);
+});
+
+test('discover: line_end equal to line_start (span 0) is kept', async () => {
+  const out = await discoverOne(findingWith({ line_end: 68 })); // span 0 — explicit single-line
+  assert.equal(out.findings[0].line_end, 68);
+  assert.equal(out.gaps.length, 0);
+});
+
+test('discover: line_end exactly AT maxLineSpan is kept', async () => {
+  const out = await discoverOne(findingWith({ line_end: 168 })); // span == default 100
+  assert.equal(out.findings[0].line_end, 168);
+  assert.equal(out.gaps.length, 0);
+});
+
+test('discover: a finding with no line_end is untouched, no gap', async () => {
+  const out = await discoverOne(findingWith({}));
+  assert.equal('line_end' in out.findings[0], false);
+  assert.equal(out.gaps.length, 0);
+});
+
+test('discover: a custom limits.maxLineSpan is honored (both directions)', async () => {
+  // A span of 10 is within the default (100) but over a caller-narrowed limit of 5.
+  const narrowed = await discoverOne(findingWith({ line_end: 78 }), { maxLineSpan: 5 });
+  assert.equal(narrowed.findings[0].line_end, undefined, 'a narrower caller limit must be honored, not the default');
+
+  // A span that would be dropped under the default (100) survives under a widened limit.
+  const widened = await discoverOne(findingWith({ line_end: 940 }), { maxLineSpan: 1000 });
+  assert.equal(widened.findings[0].line_end, 940, 'a caller-widened limit must be honored, not the default');
+});
+
 // --- Supplementary: summarize (single vs bucketed) + mergeStage envelope ------
 
 function summarizeCtx({ agentImpl, parallelImpl } = {}) {
