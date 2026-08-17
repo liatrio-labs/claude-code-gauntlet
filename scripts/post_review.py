@@ -485,6 +485,19 @@ def valid_lines_for_file(valid_lines, filepath):
     return lines[:10]
 
 
+def _range_is_valid(valid_lines, filepath, start, end):
+    """True when every line in [start, end] is a valid diff line for *filepath*.
+
+    A contiguous run of valid lines implies a single hunk, which is what GitHub
+    requires for a multi-line comment. Short-circuits on the first miss, so a
+    bogus huge *end* (e.g. an ``end_line`` copied from the wrong file) costs at
+    most one failing lookup rather than iterating the whole span.
+    """
+    if valid_lines is None:
+        return True  # validation skipped — pass the range through unchanged
+    return all(is_line_valid(valid_lines, filepath, n) for n in range(start, end + 1))
+
+
 def is_new_file(new_files, filepath):
     """Return True when *filepath* was newly added in the diff.
 
@@ -923,10 +936,15 @@ def post_github(data, valid_lines):
     check_tool("gh")
 
     comments = []
-    skipped = []
+    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
     for f in findings:
+        line = f.get("line")
+        if line is None:
+            warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
+            skipped_entries.append((f.get("file", "?"), None, f))
+            continue
+
         filepath = f["file"]
-        line = f["line"]
         if not is_line_valid(valid_lines, filepath, line):
             diag = ""
             vl = valid_lines_for_file(valid_lines, filepath)
@@ -936,7 +954,7 @@ def post_github(data, valid_lines):
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped.append(f)
+            skipped_entries.append((filepath, line, f))
             continue
 
         comment = {
@@ -945,9 +963,17 @@ def post_github(data, valid_lines):
             "side": "RIGHT",
             "body": render_comment_body(f),
         }
-        # Add start_line for multi-line comments
+        # Add start_line for multi-line comments, but only when the whole range
+        # sits inside one hunk — GitHub rejects the ENTIRE review POST (losing every
+        # finding, not just this one) with a 422 "Line could not be resolved" if
+        # end_line falls outside every hunk, even though `line` alone was valid.
         end_line = f.get("end_line")
-        if end_line and end_line != line:
+        if (
+            isinstance(end_line, int)
+            and end_line >= line
+            and end_line != line
+            and _range_is_valid(valid_lines, filepath, line, end_line)
+        ):
             comment["start_line"] = line
             comment["start_side"] = "RIGHT"
             comment["line"] = end_line
@@ -961,9 +987,7 @@ def post_github(data, valid_lines):
     # prose footer or the summary marker (only suggestion/claude_md_rule/spec_text are
     # sanitized), and build_footer's own-signal dedup would read that forgery as
     # already-present and omit the real one.
-    skipped_section = build_skipped_section(
-        [(f["file"], f["line"], f) for f in skipped], len(comments)
-    )
+    skipped_section = build_skipped_section(skipped_entries, len(comments))
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
     footer = build_footer(len(findings), sha, body=review_body)
@@ -993,9 +1017,9 @@ def post_github(data, valid_lines):
         url = resp.get("html_url", resp.get("id", "posted"))
         print(f"Review posted: {url}")
         print(f"  {len(comments)} inline comment(s) posted.")
-    if skipped:
+    if skipped_entries:
         print(
-            f"  {len(skipped)} finding(s) skipped inline (lines not in diff) — "
+            f"  {len(skipped_entries)} finding(s) skipped inline (lines not in diff) — "
             "appended to review body."
         )
     return 0
