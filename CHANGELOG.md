@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.11.3 (2026-08-17)
+
+### Bug Fixes
+
+- **post-review**: Close marker-forgery and footer-suppression gaps in skipped section
+  ([#200](https://github.com/liatrio-labs/claude-code-gauntlet/pull/200),
+  [`6f375c8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6f375c8cfa3c32269f5e644a970a6a4ae0023eb3))
+
+- **post-review**: Degrade skipped findings into the review body
+  ([#200](https://github.com/liatrio-labs/claude-code-gauntlet/pull/200),
+  [`6f375c8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6f375c8cfa3c32269f5e644a970a6a4ae0023eb3))
+
+- **post-review**: Degrade unanchorable findings into the review body (#192)
+  ([#200](https://github.com/liatrio-labs/claude-code-gauntlet/pull/200),
+  [`6f375c8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6f375c8cfa3c32269f5e644a970a6a4ae0023eb3))
+
+- **post-review**: Guard GitHub no-line findings and multi-line ranges
+  ([#200](https://github.com/liatrio-labs/claude-code-gauntlet/pull/200),
+  [`6f375c8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6f375c8cfa3c32269f5e644a970a6a4ae0023eb3))
+
+- **post-review**: Neutralize forgery across the whole skipped section
+  ([#200](https://github.com/liatrio-labs/claude-code-gauntlet/pull/200),
+  [`6f375c8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6f375c8cfa3c32269f5e644a970a6a4ae0023eb3))
+
+### Chores
+
+- Retrigger CI after GitHub 429 outage flakes
+  ([#200](https://github.com/liatrio-labs/claude-code-gauntlet/pull/200),
+  [`6f375c8`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6f375c8cfa3c32269f5e644a970a6a4ae0023eb3))
+
+
 ## v3.11.2 (2026-08-17)
 
 ### Bug Fixes
