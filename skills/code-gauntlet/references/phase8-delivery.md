@@ -1,12 +1,13 @@
 # Phase 8 Delivery Reference
 
-Full UX orchestration flow for Phase 8: report delivery, PR comment selection, task board, and dismissed findings.
+Full UX orchestration flow for Phase 8: report delivery, PR comment posting, and the task board — the two
+questions of the run.
 
 ---
 
 ## Stage 0: Collect Artifacts (from the workflow return)
 
-> **The workflow already generated the report.** The Report stage rendered `report.md`; the main session puts it on disk (RETURN channel) or collects what the artifact-writer persisted, and in neither case re-generates it. You may output a brief summary to chat, but the full report is delivered per the method(s) selected in Phase 1.
+> **The workflow already generated the report.** The Report stage rendered `report.md`; the main session puts it on disk (RETURN channel) or collects what the artifact-writer persisted, and in neither case re-generates it. You may output a brief summary to chat, but the full report is delivered per the Phase 8 delivery question (Stage 1 below).
 
 The Phase 3 `Workflow` call returned a compact object that always includes a `checkpoints` field alongside `artifactPaths`:
 
@@ -24,7 +25,7 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 **On `ok: true` (writer succeeded):** read the artifacts — they are the source of truth for delivery. Do not reconstruct, re-filter, or re-rank findings from the return value or from memory.
 
 - `artifactPaths.postReview` — the pipeline's **pre-selected delivery payload**: the challenge-survivors chosen by the delivery tier (`args.delivery.tier` — `all` (default) keeps every survivor, `main_only` keeps main-tagged only), ranked by `selectDelivery` and truncated to `limits.deliveryCap`, each carrying its `report_tag`. Same **union schema** as the findings file, so `post_review.py` consumes it unchanged. This is the PR-comment set — post every entry as a comment, verbatim; the live agent never re-selects.
-- `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. The interactive "Let me pick" walkthrough selects from `artifactPaths.postReview` (deselection from the pipeline's delivery set), not from this full file — Step B.1 replaces the postReview wrapper's `findings` with a strict subset of that wrapper's entries.
+- `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. Delivery never selects from this full file: the posted set is `artifactPaths.postReview`, posted verbatim.
 - `artifactPaths.report` — the rendered report markdown (already includes the severity-grouped findings, surfaced section, improvement suggestions, per-dimension summary, and Review Methodology).
 - The return's own `checkpoints` is just `{ completed: [...] }` (phase names). A **slim** resume checkpoint (`{ phases, completed, phaseReached, counts }` — full output only for the resume-consumed `challenge` phase, plus a per-phase `counts` map for every phase including `filter`) is persisted at `artifactPaths.checkpoints`. Read that file if a later re-run needs to resume a successful-but-superseded run: it reuses the delivered `challenge` findings verbatim and re-runs the upstream phases (discover/verify/validate/**filter**/report) — `filter` is deliberately not persisted: it is a pure, agent-free JS function, so re-running it on resume costs nothing (issue #38, P1). The fast full-skip resume map still rides back **in-memory** on the failure path below.
 
@@ -33,7 +34,8 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 1. Inspect `return.checkpoints`.
    - Has a `.phases` map → re-invoke the same `Workflow(scriptPath, args)` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
    - Is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~1M-char return budget, so the workflow withheld the findings bulk) → there is no phase map and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`) and note the truncation in the methodology.
-2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists via chat and report the `gaps`.
+2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists markdown-only —
+   report the path plus a short chat summary — and report the `gaps`.
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
 
@@ -58,42 +60,68 @@ Always use the full 40-character SHA from `git rev-parse HEAD`.
 
 ## Stage 1: Deliver the Report
 
-**Re-check eligibility** — verify the PR is still open. If closed/merged: deliver via chat/markdown only.
+**Re-check eligibility** — verify the PR is still open. If closed/merged: deliver markdown-only — report the
+path of `artifactPaths.report` plus a short chat summary, and skip posting.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivers per `CODE_GAUNTLET_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `CODE_GAUNTLET_POST_MODE`. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivers per `CODE_GAUNTLET_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `CODE_GAUNTLET_POST_MODE`. See `references/headless-mode.md`.
 
-Deliver using the method(s) selected in Phase 1, in this order:
+**Question 1 of 2 — Delivery.** The report already exists on disk; the only open question is whether the
+findings also post to the PR. Ask once, after materialization, before anything is posted:
 
-**Step A. Chat** — if selected, output the full report per `references/report-format.md`. **If Chat was NOT selected, cap chat output to a short completion summary** (finding counts, artifact paths, methodology pointer) — do not print the full report into the conversation; the user chose where the results go, and a full-report chat dump on a "PR comments"-only selection ignores that choice (observed live, PR-310 run).
-
-**Step B. PR comments** — if selected, run the PR comment selection flow before posting.
-
-The delivery set is the pipeline's pre-selected `artifactPaths.postReview` payload — the survivors already chosen per the Phase 1 delivery tier (`args.delivery.tier`: `all` (default) keeps every survivor, `main_only` keeps main-tagged only), then ranked and capped at `limits.deliveryCap`. **Every finding in that payload posts as a PR comment** — suggestions are not a separate delivery destination; the `report_tag` affects only where a finding renders in the report ("Improvement Suggestions" section) and, under `main_only`, whether the pipeline already withheld it. Never re-filter by tag, re-rank, or re-apply the cap to this payload.
-
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not present this `AskUserQuestion`. Post the `artifactPaths.postReview` payload **verbatim** — the workflow already applied the delivery tier (`$CODE_GAUNTLET_DELIVERY_TIER`, default `all`) plus rank + cap `$CODE_GAUNTLET_PR_COMMENT_CAP`. The "Let me pick" walkthrough is unavailable. Posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` ⇒ `post_review.py --dry-run`). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): do not present this `AskUserQuestion`. Deliver per
+> `CODE_GAUNTLET_DELIVERY` and post `artifactPaths.postReview` **verbatim** — the workflow already applied
+> the delivery tier (`$CODE_GAUNTLET_DELIVERY_TIER`, default `all`) plus rank + cap
+> `$CODE_GAUNTLET_PR_COMMENT_CAP`. Posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` ⇒
+> `post_review.py --dry-run`). See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
   questions: [{
-    question: "Which findings should I post as PR comments?",
-    header: "PR Comments",
+    question: "The review is done and the report is saved. Post the {postReview_count} selected findings to PR #{pr_number} as inline comments?",
+    header: "Delivery",
     multiSelect: false,
     options: [
-      { label: "Default — the pipeline's selected set ({postReview_count})", description: "Post the pre-selected postReview payload (the Phase 1 tier's survivors, ranked and capped) verbatim" },
-      { label: "Let me pick", description: "Walk through each finding and choose" }
+      { label: "Post to PR (Recommended)", description: "Post the pipeline's selected set as inline comments, batched into one review event" },
+      { label: "Markdown only", description: "Skip posting — I'll give you the path to the saved report" }
     ]
   }]
 )
 ```
 
-- **"Default"** → post the `artifactPaths.postReview` payload verbatim (the tier's survivors, already ranked and capped at `limits.deliveryCap`). Do not re-select.
-- **"Let me pick"** → run the **interactive finding walkthrough** (see below) over the `artifactPaths.postReview` payload. Includes any Improvement Suggestions the pipeline already kept in that set. The user hand-selects a strict subset; all selected findings posted — no additional cap. This is user-driven deselection from the pipeline's delivery set, not agent re-filtering and not a second pass over the uncapped `artifactPaths.findings` file.
+For a GitLab target, say `MR !{pr_number}` in the question and `Post to MR (Recommended)` in the label.
+**When the PR is closed or merged, or the target is a local diff, do not ask** — there is nothing to post
+to; deliver markdown-only and say so. That is the same closed/merged rule as before, now expressed by
+skipping the question instead of narrowing its options.
 
-Track which findings were selected (**pr_comment_set**) for Stage 2 shortcut.
+- **"Post to PR"** → post `artifactPaths.postReview` **verbatim**. This is the pipeline's pre-selected
+  set: the survivors chosen by `args.delivery.tier`, ranked by `selectDelivery`, capped at
+  `limits.deliveryCap`. There is no per-finding walkthrough and no deselection UI — the user's choice is
+  post or don't. Never re-filter by tag, re-rank, or re-apply the cap.
+- **"Markdown only"** → post nothing and **do not write a new file**. The full report is already
+  persisted at `artifactPaths.report` (e.g. `{output_dir}/code-gauntlet-report-{head_sha_short}.md`). Tell
+  the user that absolute path in chat — that is the delivery. The only allowed write outside
+  `{output_dir}` is when the user explicitly names a destination path; then copy/write the report there.
+  Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside
+  `{output_dir}`).
 
-**Step B.1. Write findings JSON and run post_review.py**
+Either way, print a short completion summary to chat: finding counts by severity, the report path, and the
+methodology pointer. Never dump the full report into the conversation unprompted.
 
-Write the selected findings to a JSON file in the findings format specified in `references/delivery-guide.md`, then invoke the delivery script. **When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) — consume it directly: optionally set `review_body` to the composed summary (it persists as `""`), keep its `sha` field (it pins the marker to the commit the review ran against), and for the **default** selection pass the file to `post_review.py` unchanged. For **"Let me pick"** the user's deselections apply to the wrapper too: replace the wrapper's `findings` array with the user's chosen subset (a strict subset of the wrapper's entries, order preserved — deselection only, never re-ranking or re-filtering), keep every other wrapper field, then post. Only when the artifact is the legacy bare findings array (no prIdentity — e.g. a local-diff review that later gains a PR target) do you hand-wrap: for the **default** selection the "selected findings" are the `artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only wrap them with `review_body`, `owner`, `repo`, `pr_number`, and `sha` (the full head SHA the review ran against, from Phase 2 — omitting it leaves `post_review.py` to fall back to `git rev-parse HEAD`, which may not be the commit reviewed). For "Let me pick", they are the user's chosen subset.
+**Post via post_review.py — only on a "Post to PR/MR" answer.** A "Markdown only" answer ends Stage 1 at
+the completion summary above: skip this whole posting step, run nothing, and go straight to Stage 2. (A
+headless run reaches this step only when `CODE_GAUNTLET_DELIVERY` includes `pr_comments`, and its posting
+obeys `CODE_GAUNTLET_POST_MODE`.)
+
+**When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file
+already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) —
+consume it directly: optionally set `review_body` to the composed summary (it persists as `""`), keep its
+`sha` field (it pins the marker to the commit the review ran against), and pass the file to
+`post_review.py` unchanged. Only when the artifact is the legacy bare findings array (no `prIdentity` —
+e.g. a local-diff review that later gains a PR target) do you hand-wrap: the findings are the
+`artifactPaths.postReview` entries **verbatim** — do not drop, reorder, or cap them; only add
+`review_body`, `owner`, `repo`, `pr_number`, and `sha` (the full head SHA the review ran against, from
+Phase 2 — omitting it leaves `post_review.py` to fall back to `git rev-parse HEAD`, which may not be the
+commit reviewed).
 
 Use the Python json.dumps pattern — it handles all escaping and avoids Write tool "file not read" failures. Pass `suggestion` and `claude_md_rule`/`spec_text` straight through from the finding when present: `post_review.py` renders them as the comment's **Suggested fix:** block and **Cited rule:** heading plus blockquote (one `>` line per source line; capped at 500 chars), and a finding that carries them loses the reviewer-facing half of itself if the hand-built wrapper drops them. `claude_md_rule` and `spec_text` are alternatives for the cited-rule section (`claude_md_rule` is preferred when both *survive sanitize* — a comment-only rule falls through to `spec_text`) — a finding typically carries one, not both. (`suggested_fix_code` below is caller-supplied only — no review-pipeline agent emits it; omit it unless you are hand-constructing this JSON yourself.)
 
@@ -135,121 +163,36 @@ python3 {plugin_root}/scripts/post_review.py "{output_dir}/code-gauntlet-post-re
 
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
-**Step C. Markdown file** — if selected, **do not write a new file**. The full report is already persisted at `artifactPaths.report` (e.g. `{output_dir}/code-gauntlet-report-{head_sha_short}.md`). Tell the user that absolute path in chat — that is the delivery. The only allowed write outside `{output_dir}` is when the user explicitly names a destination path; then copy/write the report there. Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside `{output_dir}`).
-
 ---
 
 ## Stage 2: Task Board
 
-The user decides whether to create tasks — always ask before finishing.
+**Question 2 of 2 — and the last question of the run.** One call, Yes/No shaped. Never a per-finding loop.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped — present neither `AskUserQuestion` below and create no tasks. See `references/headless-mode.md`.
-
-**If pr_comment_set exists:**
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped — present no
+> `AskUserQuestion` and create no tasks. See `references/headless-mode.md`.
 
 ```
 AskUserQuestion(
   questions: [{
-    question: "Would you like to add any findings to the task board?",
+    question: "Create fix tasks on the task board from these findings?",
     header: "Task Board",
     multiSelect: false,
     options: [
-      { label: "Yes — from my PR comments", description: "Create a task for each finding I posted as a PR comment (F-01, F-02, ...)" },
-      { label: "Yes — let me pick from all findings", description: "Walk through the full list using the summary table and choose" },
-      { label: "No — done", description: "Finish the review" }
+      { label: "Yes — create tasks", description: "One FIX task per delivered finding (F-01, F-02, ...)" },
+      { label: "No — done", description: "Finish the review without creating tasks" }
     ]
   }]
 )
 ```
 
-**If no pr_comment_set:**
+"Yes" creates a FIX task for every finding in the delivered set — the `artifactPaths.postReview` entries
+when the user chose "Post to PR", otherwise the same payload's entries as listed in the report. There is
+no third "let me pick" option: hand-selection was the unbounded question loop this issue removed. A user
+who wants a subset says so in chat and you create that subset.
 
-```
-AskUserQuestion(
-  questions: [{
-    question: "Would you like to add any findings to the task board?",
-    header: "Task Board",
-    multiSelect: false,
-    options: [
-      { label: "Yes — walk me through them", description: "Use the summary table above to select findings for the task board" },
-      { label: "No — done", description: "Finish the review" }
-    ]
-  }]
-)
-```
+Create the tasks using the task-creation flow in `references/delivery-guide.md` (metadata per
+`references/fix-task-metadata.md`). After creating: "Created N tasks from review findings."
 
-When walking through findings for task creation, use the same summary table from the Interactive Finding Walkthrough (already shown to the user). Reference findings by their IDs (F-01, F-02, etc.) when describing which tasks will be created.
-
-Create FIX tasks for all included findings using the task creation flow in `references/delivery-guide.md` (metadata per `references/fix-task-metadata.md`). After creating: "Created N tasks from review findings."
-
----
-
-## Stage 3: Dismissed Findings
-
-**Only run this stage if dismissed_set is non-empty** — i.e., the user explicitly skipped one or more findings during the Interactive Finding Walkthrough.
-
-If dismissed_set is non-empty, ask whether to suppress those findings in future reviews. Pre-populate the proposed entries list from dismissed_set (the findings the user skipped), so the user does not have to re-identify them.
-
-See `references/delivery-guide.md` for the full dismissed findings flow (AskUserQuestion template, proposed entries preview, REVIEW.md write logic).
-
-**Stage 3 self-check:** After delivery and task board, verify Stage 3 (dismissed findings -> REVIEW.md suppression offer) was offered to the user. If dismissed_set is non-empty and you did not present the suppression prompt, go back and present it now before finishing the review.
-
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): Stage 3 is unreachable — selection=`default` means no walkthrough runs, so dismissed_set is always empty. Skip the self-check and never write REVIEW.md (read-only in headless mode). See `references/headless-mode.md`.
-
----
-
-## Interactive Finding Walkthrough
-
-Reusable selection pattern for both PR comment selection (Stage 1 Step B) and task board selection (Stage 2).
-
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the walkthrough is unreachable — Stage 1 uses selection=`default` and Stage 2 (task board) is skipped, so neither caller invokes it. The per-finding `AskUserQuestion` below is never presented and dismissed_set stays empty. See `references/headless-mode.md`.
-
-### Step 1: Show Summary Table
-
-Before prompting for any selection, output the findings table grouped by severity — **the rows are the `artifactPaths.postReview` entries**, not the uncapped `artifactPaths.findings` file:
-
-```
-| # | Severity | Title | Confidence | File |
-|---|----------|-------|------------|------|
-| F-01 | 🔴 Critical | SQL injection in query builder | 94% | src/db.py:42 |
-| F-02 | 🟠 High | Missing auth check on admin endpoint | 88% | src/routes.py:117 |
-| F-03 | 🟡 Medium | Unhandled null in user lookup | 76% | src/users.py:33 |
-| F-04 | 💡 Low | Deprecated API usage | 65% | src/legacy.py:8 |
-```
-
-List every entry from the postReview payload (including Improvement Suggestions the pipeline kept under the delivery tier). Group rows by severity: Critical first, then High, Medium, Low. Use finding IDs that match the report (e.g. F-01, F-02 or S-01, S-02 for surfaced).
-
-### Step 2: Walk Through Each Severity Group
-
-After showing the table, walk through each severity group one finding at a time.
-
-For each finding, show:
-
-```
-AskUserQuestion(
-  questions: [{
-    question: "{emoji} {id}: {title}\n{file}:{lines} | Confidence: {N}%\n\n{one-sentence description}",
-    header: "{emoji} {Severity} — finding {M} of {N}",
-    multiSelect: false,
-    options: [
-      { label: "Include as PR comment", description: "Post this finding as an inline comment on the PR" },
-      { label: "Skip this finding", description: "Remove from delivery, won't be posted" },
-      { label: "Include all remaining {Severity}", description: "Auto-include all remaining {severity} findings without prompting" },
-      { label: "Done — keep what I've selected", description: "Stop selection and deliver findings chosen so far" }
-    ]
-  }]
-)
-```
-
-Emojis: critical=🔴, high=🟠, medium=🟡, low=💡.
-
-**Option behavior:**
-
-- **"Include as PR comment"** — add to selection set, advance to next finding
-- **"Skip this finding"** — exclude from selection set, add to dismissed_set, advance to next finding
-- **"Include all remaining {Severity}"** — auto-include all unreviewed findings in the current severity group, then advance to the next severity group
-- **"Done — keep what I've selected"** — stop walkthrough immediately; deliver findings chosen so far
-
-When all findings in a severity group are exhausted, advance automatically to the next severity group. When all severity groups are done, end the walkthrough.
-
-Track skipped findings in **dismissed_set** for Stage 3 integration.
+The `ignore:` list is user-edited by hand per the #94 contract (`references/review-md-spec.md` →
+Ignore); no Phase 8 write path exists.

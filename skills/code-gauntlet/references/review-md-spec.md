@@ -5,7 +5,7 @@ A `REVIEW.md` file lets project maintainers customize how code-gauntlet behaves.
 ## Contents
 
 - **Format** — Section overview, all sections optional
-- **Section Details** — Rules and other prose, Severity/Confidence Thresholds, Model Tier, Default Delivery, Ignore
+- **Section Details** — Rules and other prose, Severity/Confidence Thresholds, Default Delivery, Ignore
 - **Hierarchy** — Root + subdirectory configs, merge rules, discovery prompts
 - **Rule-Writing Principles** — Prescriptive vs directional, 15-25 rules per file
 - **Scaffolding Templates** — Root template, subdirectory template
@@ -54,10 +54,14 @@ The config block can go anywhere in the file — the parser searches for it inde
 heading. It is shown here after `## Rules` only because that's how the scaffolding templates below
 lay a file out.
 
-Two more settings are read, but through a separate mechanism: Phase 1 quick-checks the root
-REVIEW.md text directly for `## Model Tier` and `## Default Delivery` headings (not the config
-block above, and not the Filter stage's `parseReviewMd`/`parse_review_md`). See their own sections
-below.
+One more setting is read through a separate mechanism: the root REVIEW.md text is checked directly for a
+`## Default Delivery` heading (not the config block above, and not the Filter stage's
+`parseReviewMd`/`parse_review_md`), and only in headless mode, where it feeds `CODE_GAUNTLET_DELIVERY`
+precedence. A `## Model Tier` heading is **no longer read anywhere** (issue #153): the model policy is
+fixed to the single benchmarked configuration, and the only remaining pin is the fail-loud
+`CODE_GAUNTLET_MODEL_TIER` env knob documented in `references/headless-mode.md`. An existing
+`## Model Tier` section in a repo's REVIEW.md is inert prose — harmless, and no longer worth removing or
+warning about.
 
 **Legacy forms.** `parseReviewMd`/`parse_review_md` also still recognize the pre-rename block
 forms — a fenced ```` ```deep-review ```` block and an `<!-- deep-review-config -->` comment block
@@ -118,12 +122,6 @@ Per-dimension confidence thresholds (a `bugs: 75` / `security: 70` / ... key:val
 supported. `confidence_threshold` applies uniformly to every non-security dimension; there is no
 way to give `conventions` a different bar than `bugs`.
 
-### Model Tier
-
-Records the model policy the review runs under. One value is supported:
-
-- `optimized` (default and only valid value) — Sonnet for most agents, Opus for security-reviewer. This is the exact configuration the benchmark numbers were measured under. Any other value in REVIEW.md (legacy v2-era files say `frontier`) **self-heals to `optimized`** with a loud methodology warning — never a question, never an abort. Alternate model modes are roadmap work (issue #17) and land under the ratcheted measurement policy in `bench/MEASUREMENT.md` (owner-triggered paired mini-subset when a change plausibly moves recall/noise — not a default gate for every behavior change).
-
 ### Default Delivery
 
 Controls how review results are delivered. A comma-separated list of delivery methods:
@@ -132,7 +130,7 @@ Controls how review results are delivered. A comma-separated list of delivery me
 - `pr_comments` — Post findings as inline PR/MR comments
 - `markdown` — Surface the path to the already-persisted report under the output directory (`artifactPaths.report`); no default new file
 
-When set in REVIEW.md, the delivery preference prompt is skipped during Phase 1. When not set, the user is prompted at the start of each review. Task creation is always offered separately after delivery, regardless of this setting.
+Read in **headless mode only**, where it sits between the `CODE_GAUNTLET_DELIVERY` env pin and the headless default. Interactive runs ignore it and ask once at the end of the run instead (`references/phase8-delivery.md` Stage 1) — the report is on disk either way, so the decision costs nothing to defer.
 
 ```
 
@@ -195,7 +193,6 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 |---------|----------|-----------|
 | `confidence_threshold` | **Override** — subdirectory value replaces root | A module may need stricter or looser thresholds |
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
-| `model_tier` | **Override** — subdirectory value replaces root | Single valid value today (`optimized`), so effectively fixed; the override slot exists for future modes |
 | `default_delivery` | **Override** — subdirectory value replaces root | Unlikely to vary by directory, but supported for consistency |
 | `rules` (and other free prose) | **Accumulate** — subdirectory content adds to root content | Directory-specific conventions supplement project-wide ones |
 | `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |
@@ -247,45 +244,29 @@ finding no AGENTS.md/QODO.md never affects REVIEW.md discovery or precedence.
 
 #### Detection flow (Phase 2d)
 
-Walk the repo root + changed-file directories + their ancestors (the project-rules directory
-set), and check each for a matching REVIEW.md:
-
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip both REVIEW.md-setup `AskUserQuestion` prompts below — root config applies, `build-review-md` is never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is created. See `references/headless-mode.md`.
+Walk the repo root + changed-file directories + their ancestors (the project-rules directory set), and
+check each for a matching REVIEW.md. **Every outcome is a non-blocking notice — none of them is a
+question** (issue #35). Emit at most one notice per run, alongside the triage announcement:
 
 - **No REVIEW.md anywhere:**
 
-  ```
-  AskUserQuestion(
-    questions: [{
-      question: "No REVIEW.md found. REVIEW.md lets you customize review behavior — confidence thresholds, ignore patterns, project-specific rules. Would you like to create one?",
-      header: "REVIEW.md Setup",
-      multiSelect: false,
-      options: [
-        { label: "Yes — create at repo root", description: "Scaffold a REVIEW.md with sensible defaults" },
-        { label: "Not now — continue without it", description: "Use default settings for this review" }
-      ]
-    }]
-  )
+  ```text
+  No REVIEW.md found — reviewing with built-in defaults. Run `build-review-md` any time to configure
+  thresholds, ignore patterns, and project rules.
   ```
 
-  If yes, use the scaffolding template from the Templates section below.
-- **Root exists, subdirectory CLAUDE.md without matching REVIEW.md:**
+- **Root exists, a walked directory has none:**
 
-  ```
-  AskUserQuestion(
-    questions: [{
-      question: "Found REVIEW.md at repo root, but {directory} has a CLAUDE.md without a matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
-      header: "Subdirectory REVIEW.md",
-      multiSelect: false,
-      options: [
-        { label: "Yes — create it", description: "Inherits root settings, adds directory-specific rules" },
-        { label: "Not now — root config applies", description: "Use root REVIEW.md settings for all directories" }
-      ]
-    }]
-  )
+  ```text
+  Root REVIEW.md applies to every directory in this review. {directory} has no REVIEW.md of its own —
+  add one if that area needs different standards.
   ```
 
-- **All locations covered** → proceed
+- **All locations covered** → say nothing and proceed.
+
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): suppress both notices — root config applies,
+> `build-review-md` is never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no
+> REVIEW.md is created. See `references/headless-mode.md`.
 
 ---
 

@@ -1,6 +1,6 @@
 # Delivery Guide
 
-Implementation details for each delivery method in Phase 8.
+Implementation details for each delivery method in Phase 8, interactive and headless.
 
 ---
 
@@ -10,7 +10,7 @@ Implementation details for each delivery method in Phase 8.
 
 **Batch ALL inline comments into a single review event** — one GitHub notification instead of N separate ones. Notification fatigue causes teams to auto-dismiss AI review within ~10 days.
 
-**The inline comment set is the pipeline's, not yours.** When the user selects "Default — the pipeline's selected set," post the `artifactPaths.postReview` payload verbatim — `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. When the user selects "Let me pick" and chooses findings via the interactive walkthrough, post **the selected subset** as inline comments — deselection only, order preserved, no cap applies. The user made a deliberate selection; respect it.
+**The inline comment set is the pipeline's, not yours.** When the user answers "Post to PR/MR" at the Phase 8 delivery question, post the `artifactPaths.postReview` payload verbatim — `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. There is no per-finding selection pass: the choice is post or don't.
 
 ### Comment body format
 
@@ -170,7 +170,8 @@ The `findings` key is reserved/optional — present only when the caller supplie
 
 ## Task Creation
 
-**Always let the user choose which findings become tasks.** Do NOT create tasks automatically. The interactive walkthrough in SKILL.md Phase 8 handles the selection UX — this section covers what happens after the user has made their selections.
+**Never create tasks automatically.** The single Yes/No task-board question in Phase 8 Stage 2
+(`references/phase8-delivery.md`) is the consent gate; this section covers what happens after a "Yes".
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped (Phase 8 Stage 2), so no tasks are created and this section does not run. See `references/headless-mode.md`.
 
@@ -189,88 +190,13 @@ After creating: "Created N tasks from review findings."
 
 ## Markdown File
 
-Canonical behavior is Phase 8 **Step C** in `phase8-delivery.md`: surface the path to the already-persisted `artifactPaths.report` — no default write. A write outside `{output_dir}` happens only when the user names a destination.
+Canonical behavior is the "Markdown only" branch of Phase 8 Stage 1 in `phase8-delivery.md`: surface the path to the already-persisted `artifactPaths.report` — no default write. A write outside `{output_dir}` happens only when the user names a destination.
 
 ---
 
 ## Chat
 
-Print the full report in the conversation. For large reports, use collapsible sections for medium/low findings.
-
----
-
-## Dismissed Findings
-
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this entire flow is unreachable — no walkthrough runs, so dismissed_set is empty (Phase 8 Stage 3). Present neither `AskUserQuestion` below and never write REVIEW.md (read-only in headless mode). See `references/headless-mode.md`.
-
-After delivery, ask if findings should be suppressed in future reviews:
-
-```
-AskUserQuestion(
-  questions: [{
-    question: "Should any of these findings be ignored in future reviews? This adds them to REVIEW.md so they won't be flagged again.",
-    header: "Dismissed Findings",
-    multiSelect: false,
-    options: [
-      { label: "Yes — let me pick which ones to dismiss", description: "Choose specific findings to suppress in future reviews" },
-      { label: "No — all findings are valid", description: "Keep all findings active for future reviews" }
-    ]
-  }]
-)
-```
-
-If yes, show the same numbered list and let the user pick (same natural patterns as task selection). Ask for a brief reason — this reason is recorded in the chat response and, for a PR/MR target, the delivery comment thread; it is NOT written into REVIEW.md (see below).
-
-### Show proposed entries before writing
-
-```
-These entries would be added to REVIEW.md's ignore list:
-
-- prompt injection via template tokens (reason: not exploitable in current architecture)
-- DateTime.UtcNow testability (reason: tracked in ROADMAP.md as deferred item)
-```
-
-Each entry is the raw substring only — the parenthesized reason above is chat-facing context for the
-user's confirmation, never part of the string that gets written to REVIEW.md. `ignore` entries match
-literally against unquoted finding text (`references/review-md-spec.md` → Ignore): appending a reason
-or date to the pattern changes what it matches, and a pattern padded with prose essentially never
-matches anything again — the entry would silently suppress nothing. Write only `prompt injection via
-template tokens` and `DateTime.UtcNow testability` to the file; the reason stays in the conversation.
-`ignore` entries are not scoped by dimension either — do not prefix with `dimension:`.
-
-### Confirm via AskUserQuestion before writing
-
-```
-AskUserQuestion(
-  questions: [{
-    question: "Add these to REVIEW.md?",
-    header: "Save to REVIEW.md",
-    multiSelect: false,
-    options: [
-      { label: "Yes — add to REVIEW.md", description: "Write the dismissed findings to REVIEW.md now" },
-      { label: "No — skip", description: "Discard the dismissals; findings remain active" }
-    ]
-  }]
-)
-```
-
-If confirmed, the entries must land inside the parser's config block (`references/review-md-spec.md`
-→ Format) — a bare `## Ignore` heading with bullet items is never parsed, so writing there would
-silently produce dead configuration. **Check for an existing config block first, including a legacy
-one** — `parse_review_md`/`parseReviewMd` still recognize the pre-rename `` ```deep-review `` fenced
-form and `<!-- deep-review-config -->` comment form (`references/review-md-spec.md` → Format), and
-both block-pattern lists try the current `code-gauntlet` markers before the legacy ones. If a legacy
-block exists and a NEW `code-gauntlet` block were appended instead, the current-before-legacy match
-order means the new block would win — silently discarding whatever thresholds the legacy block set,
-not just failing to add the ignore entries:
-
-- If no REVIEW.md exists → create it using the scaffolding template from `references/review-md-spec.md`, with the config block's `ignore:` key uncommented and populated
-- If REVIEW.md has an existing `code-gauntlet` block (current markers) → edit that one
-- If REVIEW.md has only a legacy `deep-review` block (fenced or HTML-comment form) and no `code-gauntlet` block → edit the legacy block in place (add/extend its `ignore:` key); do not create a second, competing `code-gauntlet` block
-- If REVIEW.md exists with neither form → append a new ` ```yaml # code-gauntlet ` block at the end of the file with an `ignore:` list
-- If the target block exists without an `ignore:` key → add the key with the new entries as its list
-- If `ignore:` already has entries → append the new entries as additional `-` list lines directly under the existing ones (the parser only reads *consecutive* `-`-led lines under `ignore:`, so nothing else may be inserted between them)
-
-After writing: "Added N dismissed findings to REVIEW.md. These won't be flagged in future reviews."
-
-If declined, skip without modifying files.
+**Headless only** (`CODE_GAUNTLET_DELIVERY` includes `chat`): the full report body is included in the
+final response message (which already repeats the `Headless config:` block). Interactive runs have no
+chat delivery method — the Phase 8 delivery question offers Post to PR/MR or markdown-only, and chat gets
+only the short completion summary.

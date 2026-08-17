@@ -1097,20 +1097,20 @@ class TestDocContract(unittest.TestCase):
         )
 
     def test_markdown_delivery_is_path_surface_not_root_write(self):
-        """Issue #86 refined-A: Step C surfaces artifactPaths.report; no default
-        root-level code-gauntlet-{date}.md write instruction survives."""
+        """Issue #86 refined-A: the Markdown only branch surfaces artifactPaths.report;
+        no default root-level code-gauntlet-{date}.md write instruction survives."""
         phase8 = "skills/code-gauntlet/references/phase8-delivery.md"
         delivery = self.DELIVERY_GUIDE_REL
         phase8_text = _read(phase8)
         self.assertIn(
             "artifactPaths.report",
             phase8_text,
-            f"{phase8} Step C must name artifactPaths.report as the delivery source",
+            f"{phase8} the Markdown only branch must name artifactPaths.report as the delivery source",
         )
         self.assertIn(
             "do not write a new file",
             phase8_text.lower().replace("**", ""),
-            f"{phase8} Step C must forbid a fresh write",
+            f"{phase8} the Markdown only branch must forbid a fresh write",
         )
         # Forbid the old default root write as an instruction (mentions in "never"
         # sentences are OK only if they do not prescribe write-to-root).

@@ -76,7 +76,7 @@ gh pr diff {pr_number} --name-only
 
 On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
 
-Store: `output_dir` (section 1); the plugin-dir confirmation (section 2 — if any directory is missing, stop, `plugin_root` was resolved wrong); the PR's `state`/`isDraft` (section 3, feeds eligibility checks 1 and 2 below); the REVIEW.md root text or `NONE` (section 4, feeds the pre-flight configuration gate's quick-check); and the changed-file list (section 5, feeds eligibility check 4 below — the same primitive the recorded run got wrong by inventing `gh pr diff --stat`, which does not exist; see `references/phase1-preflight.md` eligibility check 4 for the worked command).
+Store: `output_dir` (section 1); the plugin-dir confirmation (section 2 — if any directory is missing, stop, `plugin_root` was resolved wrong); the PR's `state`/`isDraft` (section 3, feeds eligibility checks 1 and 2 below); the REVIEW.md root text or `NONE` (section 4, feeds the Phase 1 configuration resolution and the REVIEW.md-presence notice); and the changed-file list (section 5, feeds eligibility check 4 below — the same primitive the recorded run got wrong by inventing `gh pr diff --stat`, which does not exist; see `references/phase1-preflight.md` eligibility check 4 for the worked command).
 
 **Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
@@ -91,25 +91,52 @@ Reads from the composite above — no new Bash calls here.
 3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 3) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
 4. **Trivially simple?** (`changed_files` from the composite above) → If ONLY lockfile/generated/auto-formatted changes, stop.
 
-### Pre-flight configuration gate — MANDATORY GATE
+### Resolve configuration — no questions asked
 
-> **Headless branch (`CODE_GAUNTLET_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`, `post_mode`, `pr_comment_cap`, `delivery_tier`, `draft_policy`, `reviewed_policy`, `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and continue. Do NOT call `AskUserQuestion` anywhere in this run — every gate below resolves deterministically from the environment. An invalid value fails loud per the validation rule in that reference; it never falls back and never asks.
+Phase 1 asks the user nothing. Every knob that used to be a question is now resolved from state, and
+Phase 1 ends by printing a **resolved-config echo** that Phase 2 gates on.
 
-> **STOP: Complete this gate before Phase 2.** Never assume defaults from remembered preferences.
->
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this gate is satisfied by the headless resolution above — the printed `Headless config:` block stands in for the interactive answers; do not present `AskUserQuestion`.
+> **Headless branch (`CODE_GAUNTLET_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`,
+> `post_mode`, `pr_comment_cap`, `delivery_tier`, `draft_policy`, `reviewed_policy`,
+> `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence
+> env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and
+> continue. An invalid value fails loud per the validation rule in that reference; it never falls back.
 
-Check REVIEW.md for `model_tier` and `default_delivery` — read from the `review_md_root` section of the Phase 1 composite above; no new Bash call. Build a single `AskUserQuestion` containing the unresolved items (delivery preference, REVIEW.md setup if missing). The model policy is fixed: `policy.tier="optimized"` — the single benchmarked configuration (discovery on Sonnet with security-reviewer on Opus). A **REVIEW.md** `Model Tier` value other than `optimized` (e.g. a legacy v2-era `frontier`) **self-heals**: proceed with `optimized`, never ask and never abort on this field, and print a loud methodology warning (`REVIEW.md Model Tier '<value>' is not supported — reviewing under 'optimized', the single benchmarked policy; update REVIEW.md`) that also lands in the report methodology. The **env knob** `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. Alternate model modes are roadmap work (issue #17). If REVIEW.md pre-configures `default_delivery`, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 2 (args) and Phase 8 (delivery).
+**Interactive resolution.** `policy.tier` is always `"optimized"` — the single benchmarked configuration
+(discovery on Sonnet with security-reviewer on Opus); nothing in REVIEW.md is read for it and nothing
+asks. `delivery.tier` and `limits.deliveryCap` resolve in Phase 2 from their env pins
+(`CODE_GAUNTLET_DELIVERY_TIER`, `CODE_GAUNTLET_PR_COMMENT_CAP`), falling through to the pipeline defaults
+when unset. Where the review is *delivered* is decided at the end of the run, in Phase 8, once the report
+exists — not guessed at up front. REVIEW.md presence is not settled here — the Phase 1 composite's
+`review_md_root` covers the repo root only, not the full changed-file directory set; if the root quick-check
+finds none, the Phase 2d discovery walk emits the canonical non-blocking notice
+(`references/review-md-spec.md` → Discovery).
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` (which sets `policy.tier`; only `optimized` is valid) and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
+**Print the resolved-config echo.** Interactive runs end Phase 1 with this block on stdout. It is the
+Phase 2 entry gate's input — a receipt that configuration was resolved, not that a prompt was shown.
+The values below are an example — substitute the resolved ones:
+
+```text
+Resolved config:
+  model_tier=optimized (fixed)
+  delivery_tier=all (default)
+  pr_comment_cap=null (default)
+  review_md=absent (discovery)
+```
+
+One line per knob, `key=value (source)` where `source ∈ env|default|fixed|discovery`. `delivery_tier` and
+`pr_comment_cap` read `(env)` when their env pin is set. `review_md` is `present` or `absent` from the
+composite's `review_md_root` section. Emit all four lines every interactive run; a headless run emits
+`Headless config:` instead and never this block.
 
 ---
 
 ## Phase 2: Target, Triage & Args Preparation
 
-> **Entry check:** If no `AskUserQuestion` was presented during Phase 1, STOP — the configuration gate was missed. Return to Phase 1 and complete it before proceeding.
->
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this check passes if the `Headless config:` block was printed during Phase 1; no `AskUserQuestion` is expected, so do not return to the gate.
+> **Entry gate — resolved state, not prompt history:** proceed only when Phase 1 printed its
+> resolved-config echo — `Resolved config:` interactively, `Headless config:` headless. If neither was
+> printed, configuration was never resolved: return to Phase 1's "Resolve configuration" section and
+> print it. Never gate on whether a question was asked; the happy path asks none.
 
 Identify the review target, gather the git artifacts the workflow consumes, and assemble the args object. This is a fast pass in the main context — the review stages run later, inside the workflow. Read `references/phase2-triage.md` for the full sub-steps (VCS detection, checkout, risk classification, REVIEW.md parse) and the args-preparation walkthrough.
 
@@ -307,7 +334,7 @@ Stamp both values verbatim. Never estimate them, never carry them over from an e
 
 ### Assemble the args object and record environment overrides
 
-Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Thread the Phase 1 delivery-tier answer into `delivery.tier` (`"all"` default, or `"main_only"`; headless resolves it from `CODE_GAUNTLET_DELIVERY_TIER`) and `deliveryCap` (from `CODE_GAUNTLET_PR_COMMENT_CAP`) — the workflow can read neither env var, so these captures are the only path. For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full }` (from the resolved PR and `git rev-parse HEAD`) — the artifact-writer then persists the post-review artifact as the `post_review.py`-ready wrapper and Phase 8 posts it without hand-assembly. Omit `prIdentity` entirely for local-diff reviews.
+Read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment into `policy.subagentModel` (or `null`). Resolve `policy.provider` from the environment in the same Bash call — first match wins, and a flag counts as SET only when its value is truthy the way Claude Code itself parses it (`1`/`true`/`yes`/`on`, case-insensitive — `0`/`false`/empty leave the session first-party): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` alone does NOT change the provider: an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin (a gateway with non-standard names uses the `CLAUDE_CODE_SUBAGENT_MODEL` escape hatch). The workflow cannot read `process.env`, so this capture is the only path — on `firstParty` the pipeline pins full first-party model IDs (immune to session-variant cascade); on every other provider it dispatches bare aliases (`sonnet`/`opus`), the only spelling the provider's deployment mapping resolves (first-party IDs pass through unchecked on Bedrock/Vertex/Foundry and fail as invalid model identifiers). **If `CLAUDE_CODE_SUBAGENT_MODEL` is set, warn the user and record it** in the methodology — it silently overrides the entire per-stage model policy, and the workflow cannot read `process.env`, so this capture is the only place it is seen. Stamp `generatedAt` with the current wall-clock time as an ISO8601 string (the workflow never calls `new Date()` — this injected clock is what makes outputs deterministic). Generate a `nonce` matching `^[A-Za-z0-9._-]+$` (it is interpolated into the verify executor's argv per slice). Resolve `delivery.tier` here — there is no Phase 1 answer to thread any more (issue #35). Precedence is the same in both modes: `CODE_GAUNTLET_DELIVERY_TIER` env pin (`"all"` or `"main_only"`) > omit the field entirely, which the pipeline reads as `all`. REVIEW.md has no delivery-tier key, so its slot in the precedence chain is vacuous today; if one is ever added it sits between the env pin and the default. `deliveryCap` comes from `CODE_GAUNTLET_PR_COMMENT_CAP` on the same terms, and now applies interactively too. The workflow can read neither env var, so these captures are the only path. For a PR/MR target, also stamp `delivery.prIdentity = { owner, repo, pr_number, sha_full }` (from the resolved PR and `git rev-parse HEAD`) — the artifact-writer then persists the post-review artifact as the `post_review.py`-ready wrapper and Phase 8 posts it without hand-assembly. Omit `prIdentity` entirely for local-diff reviews.
 
 Stamp `riskTable` — the Phase 2e per-file risk classification, verbatim, as `[{ path, risk }]` covering EXACTLY the `changedFiles` set (the args waist refuses a missing or extra path). Stamp `scopeAnswer` only when the trivial-scope gate in 2e actually asked (2e's "Light Review for Trivial PRs" — every file LOW risk AND `changedLines < 50`); omit it otherwise. For a headless run, re-read the fresh env value at THIS step, never a remembered one (a live verification run recalled `full` here while its own Phase-1 echo said `light`):
 
@@ -453,7 +480,7 @@ The script counts the attempts, carries its own state forward, and prints the ne
 
 ## Phase 8: Report & Deliver
 
-Read the compact return, pick up the persisted artifacts, and run the delivery gates. Four stages: **generate/collect report**, **deliver report**, **offer task board**, **offer dismissed findings** — execute in order. Read `references/phase8-delivery.md` for the full flow.
+Read the compact return, pick up the persisted artifacts, and run the delivery gates. Three steps: **materialize/collect the report**, **deliver it** (question 1 of 2), **offer the task board** (question 2 of 2) — in that order. Read `references/phase8-delivery.md` for the full flow.
 
 ### Materialize the artifacts — FIRST, when the return carries `persistReturn`
 
@@ -488,26 +515,42 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 2. **On `ok: false`, or `ok: true` with a partial-artifacts gap** (writer failed): the derived documents were not produced, so the resume state rides back **in the return** as `checkpoints`. Offer **resume-from-checkpoint**:
    - If `checkpoints` has a `.phases` map → re-invoke the same `Workflow` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
    - If `checkpoints` is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~1M-char return budget, so the workflow did **not** ship the findings bulk back) → there is no phase map to resume from and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`), noting the truncation in the methodology.
-   - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) via chat and report the `gaps`.
-   - **A partial-artifacts run may still carry non-null `artifactPaths.findings`/`.report`.** Those are the primaries whose bytes the assemble script content-proved against the payload the writer was handed, named in the gap text; `postReview`/`checkpoints` are always null here because nothing derived them. Read and deliver them — they are as trustworthy as on a clean run, which is the whole point of the proof. This is not a successful persist: keep the gap, and never post PR comments from a salvaged `findings.json` without the pipeline's `postReview` selection (deliver via chat, or resume/re-run to get a real delivery payload).
+   - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) markdown-only — report the path plus a short chat summary — and report the `gaps`.
+   - **A partial-artifacts run may still carry non-null `artifactPaths.findings`/`.report`.** Those are the primaries whose bytes the assemble script content-proved against the payload the writer was handed, named in the gap text; `postReview`/`checkpoints` are always null here because nothing derived them. Read and deliver them — they are as trustworthy as on a clean run, which is the whole point of the proof. This is not a successful persist: keep the gap, and never post PR comments from a salvaged `findings.json` without the pipeline's `postReview` selection (deliver markdown-only, or resume/re-run to get a real delivery payload).
    - On any mid-run workflow **crash** (a thrown `error` with no return value, a killed background task, or a lost compact return), follow `references/crash-recovery.md` — **`resumeFromRunId` first** (replays completed agents from cache at zero re-billed cost), journal-first diagnosis (`failingPhase` names the stage that threw), and only then the checkpoint paths above.
 3. **Surface `gaps`** in the methodology regardless of `ok` — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 
-> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap (the interactive walkthrough is unavailable); posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
+> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap; posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
 
-> Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver via chat/markdown only).
+> Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver markdown-only — report the path plus a short chat summary).
 >
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
 
 ### Deliver
 
-Deliver using the method(s) selected in Phase 1. **PR-comment selection is now the pipeline's job, not yours:** the delivery set is `artifactPaths.postReview` — the survivors the pipeline already selected per the Phase 1 delivery tier (`args.delivery.tier`: `all` by default → every survivor including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS the post_review-ready wrapper (optionally fill its `review_body`, then pass the file unchanged); only a legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha` (always set it). The interactive "Let me pick" walkthrough applies on BOTH paths: user deselections replace the wrapper's (or array's) `findings` with the chosen strict subset — deselection only. Never re-filter by tag, re-rank, or re-apply the cap yourself. Every finding in that payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag` governs **report presentation** only (suggestions render in their own "Improvement Suggestions" section) and, under `main_only`, whether the pipeline already withheld them from the payload. The interactive "Let me pick" walkthrough (a user hand-selecting from the full list), pr_comment_set tracking, task-board offer, and dismissed-findings write-back to REVIEW.md are unchanged. Read `references/phase8-delivery.md`, `references/report-format.md`, and `references/delivery-guide.md` for the templates and posting mechanics.
+Deliver per the Phase 8 delivery question (`references/phase8-delivery.md` Stage 1). **Posting is gated on
+that answer:** run `post_review.py` only when the user chose "Post to PR/MR" (headless: only when
+`CODE_GAUNTLET_DELIVERY` includes `pr_comments`); a "Markdown only" answer posts nothing — report the
+saved report's path and move to Stage 2. **PR-comment
+selection is the pipeline's job, not yours:** the delivery set is `artifactPaths.postReview` — the
+survivors the pipeline already selected per `args.delivery.tier` (`all` by default → every survivor
+including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it
+to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS
+the post_review-ready wrapper (optionally fill its `review_body`, then pass the file unchanged); only a
+legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha`
+(always set it). Never re-filter by tag, re-rank, or re-apply the cap yourself. Every finding in that
+payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag`
+governs **report presentation** only (suggestions render in their own "Improvement Suggestions" section)
+and, under `main_only`, whether the pipeline already withheld them from the payload. Read
+`references/phase8-delivery.md`, `references/report-format.md`, and `references/delivery-guide.md` for the
+templates and posting mechanics.
 
-> **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting. The default PR-comment set is that payload verbatim; only the interactive "Let me pick" walkthrough (Stage 1 Step B in `references/phase8-delivery.md`) lets the user deselect from it.**
+> **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting.** The
+> PR-comment set is that payload verbatim on every path — there is no selection UI to narrow it.
 >
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): post `artifactPaths.postReview` verbatim; the walkthrough is unavailable and no `AskUserQuestion` is presented.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): identical, and no `AskUserQuestion` is presented.
 
-> **MANDATORY GATE: Do not finish without completing the task board offer (Stage 2) in `references/phase8-delivery.md`.**
+> **MANDATORY GATE: Do not finish without presenting the single task-board question (Stage 2) in `references/phase8-delivery.md`.**
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped; do not present the offer.
 
