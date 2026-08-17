@@ -6,17 +6,21 @@ Two boundaries, two field vocabularies:
   - verify_findings.py reads the CANONICAL names (file, line_start, line_end,
     description, origin, cross_file_refs, ...) — all via ``.get()`` with defaults,
     so it never errors on an absent field.
-  - post_review.py (the retained v2 poster) reads the V2 names: it INDEXES
-    ``f["file"]`` and ``f["line"]`` directly (KeyError if absent) and reads
-    ``body`` / ``end_line`` via ``.get()``.
+  - post_review.py (the retained v2 poster) reads the V2 names: a finding with a
+    ``line`` INDEXES ``f["file"]`` directly (KeyError if absent), reads ``line``
+    itself and ``body`` / ``end_line`` via ``.get()``. A finding with no ``line``
+    at all degrades into the trailing "could not be anchored inline" section
+    instead of indexing anything (issue #192) — it is never fatal.
 
 The parity contract is that the persisted findings envelope carries the UNION: the
 canonical fields for verify + downstream, plus the ``line`` / ``end_line`` / ``body``
-aliases the retained poster indexes. writeArtifacts applies these aliases at the
+aliases the retained poster reads. writeArtifacts applies these aliases at the
 persist boundary. This test drives REAL persisted pipeline output (produced by running
 the wired stages through the node recorder) through BOTH scripts — verify positionally,
 post_review --dry-run with the read-only CLI calls mocked — asserting neither errors,
-then documents why the aliases are load-bearing via a KeyError negative control.
+then documents why the ``file`` alias is load-bearing (for a finding that DOES have a
+line) via a KeyError negative control, and that a missing ``line`` alias degrades
+gracefully rather than aborting the run.
 """
 
 import json
@@ -349,13 +353,13 @@ class TestPostReviewBoundary(unittest.TestCase):
             if finding.get("failure_scenario"):
                 self.assertNotIn(finding["failure_scenario"], bodies)
 
-    def test_missing_v2_aliases_would_break_the_retained_poster(self):
-        # Documents why the aliases are load-bearing: strip them from the REAL findings
-        # and post_review's direct index f["line"] raises KeyError. This is the exact
-        # boundary the persisted-schema union (writeArtifacts aliasing) closes.
+    def test_missing_file_alias_would_break_the_retained_poster(self):
+        # Documents why the `file` alias is load-bearing for a finding that DOES carry
+        # a line: strip it from the REAL findings and post_review's direct index
+        # f["file"] raises KeyError. This is the exact boundary the persisted-schema
+        # union (writeArtifacts aliasing) closes.
         stripped = [
-            {k: v for k, v in f.items() if k not in ("line", "end_line", "body")}
-            for f in PERSISTED_FINDINGS
+            {k: v for k, v in f.items() if k != "file"} for f in PERSISTED_FINDINGS
         ]
         self._write(stripped)
         with (
@@ -369,6 +373,33 @@ class TestPostReviewBoundary(unittest.TestCase):
             self.assertRaises(KeyError),
         ):
             post_review.main()
+
+    def test_missing_line_alias_degrades_gracefully_not_a_crash(self):
+        # Issue #192: a finding with no `line` alias at all must NOT crash the whole
+        # poster — it degrades into the skipped section instead. Unlike the `file`
+        # alias above, `line`/`end_line`/`body` are no longer load-bearing for
+        # crash-avoidance; this pins that this stripped shape used to raise KeyError
+        # and now does not.
+        stripped = [
+            {k: v for k, v in f.items() if k not in ("line", "end_line", "body")}
+            for f in PERSISTED_FINDINGS
+        ]
+        self._write(stripped)
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=build_gh_diff(PERSISTED_FINDINGS)),
+            ),
+        ):
+            post_review.main()  # must not raise
+
+        with open(os.path.join(self.tmp, "post-review-payload.json")) as fh:
+            payload = json.load(fh)["payload"]
+        self.assertEqual(len(payload["comments"]), 0)
+        self.assertIn("could not be anchored inline", payload["body"])
 
 
 if __name__ == "__main__":

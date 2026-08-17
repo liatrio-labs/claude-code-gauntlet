@@ -42,6 +42,7 @@ from scripts.post_review import (
     _sanitize_outbound_prose,
     _suggestion_fence,
     build_footer,
+    build_skipped_section,
     detect_platform,
     gitlab_project_id,
     is_line_valid,
@@ -3912,6 +3913,659 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
             json.dumps(captured),
             "no dry-run capture may carry the delivery marker",
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #192 — skipped findings degrade into the review body, they are never
+# silently dropped.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSkippedSection(unittest.TestCase):
+    def test_empty_list_returns_empty_string(self):
+        self.assertEqual(build_skipped_section([], 0), "")
+
+    def test_renders_location_title_and_both_counts(self):
+        finding = {
+            "file": "src/app.py",
+            "line": 216,
+            "severity": "high",
+            "title": "SQL injection risk",
+            "body": "Untrusted input reaches the query.",
+        }
+        section = build_skipped_section([("src/app.py", 216, finding)], 4)
+        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", section)
+        self.assertIn("4 inline comment(s) were posted", section)
+        self.assertIn("following 1 finding(s)", section)
+        self.assertIn("`src/app.py:216`", section)
+        self.assertIn("SQL injection risk", section)
+        self.assertIn(render_comment_body(finding), section)
+
+    def test_no_line_finding_renders_bare_path(self):
+        finding = {"file": "src/app.py", "title": "No line", "body": "b"}
+        section = build_skipped_section([("src/app.py", None, finding)], 0)
+        self.assertIn("`src/app.py`", section)
+        self.assertNotIn("src/app.py:None", section)
+
+    def test_reuses_render_comment_body_for_redaction(self):
+        """The section must go through the SAME sanitize/redact path as an inline
+        comment — a second rendering path is exactly the drift this guards against."""
+        finding = {
+            "file": "src/app.py",
+            "line": 5,
+            "title": "Leaked token",
+            "body": "b",
+            "suggestion": "Rotate the token: ghp_" + "a" * 36,
+        }
+        section = build_skipped_section([("src/app.py", 5, finding)], 0)
+        self.assertIn("[REDACTED]", section)
+        self.assertNotIn("ghp_" + "a" * 36, section)
+
+
+class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
+    def _findings(self):
+        inline = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Inline bug",
+            "body": "Body A",
+        }
+        off_diff = {
+            "file": "foo.py",
+            "line": 99,
+            "severity": "medium",
+            "title": "Off-diff bug",
+            "body": "Body B",
+        }
+        return inline, off_diff
+
+    def test_skipped_finding_lands_in_body_with_both_counts(self):
+        inline, off_diff = self._findings()
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [inline, off_diff],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        body = cap["payload"]["body"]
+        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", body)
+        self.assertIn("1 inline comment(s) were posted", body)
+        self.assertIn("Off-diff bug", body)
+        self.assertIn("foo.py:99", body)
+        # Excluded from the inline comments payload.
+        comment_bodies = [c["body"] for c in cap["payload"]["comments"]]
+        self.assertNotIn(render_comment_body(off_diff), comment_bodies)
+        self.assertEqual(len(cap["payload"]["comments"]), 1)
+        # Footer stays last and intact.
+        self.assertTrue(body.rstrip().endswith("-->"))
+        self.assertIn(review_marker.MARKER_TOKEN, body)
+
+    def test_no_skips_body_unchanged(self):
+        inline, _ = self._findings()
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [inline],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        self.assertNotIn("could not be anchored inline", body)
+
+    def test_no_line_finding_degrades_others_still_post(self):
+        """post_github must mirror post_gitlab: a finding with no ``line`` key
+        (bare `f["line"]` subscript would raise KeyError and abort the whole run,
+        losing every finding) degrades into the skipped section instead."""
+        inline, _ = self._findings()
+        no_line = {"file": "foo.py", "title": "No-line bug", "body": "Body C"}
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [inline, no_line],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()  # must not raise
+
+        cap = self._payload()
+        body = cap["payload"]["body"]
+        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", body)
+        self.assertIn("No-line bug", body)
+        self.assertIn("`foo.py`", body)
+        self.assertEqual(len(cap["payload"]["comments"]), 1)
+
+    def test_no_line_no_file_finding_renders_placeholder_no_raise(self):
+        inline, _ = self._findings()
+        mystery = {"title": "Mystery bug", "body": "Body D"}
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [inline, mystery],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()  # must not raise
+
+        body = self._payload()["payload"]["body"]
+        self.assertIn("`?`", body)
+        self.assertIn("Mystery bug", body)
+
+
+# A five-line hunk so a multi-line comment's end_line can land either inside or
+# outside the same hunk as its (already-valid) start line.
+GH_DIFF_MULTILINE = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,1 +1,5 @@\n"
+    " existing\n"
+    "+added2\n"
+    "+added3\n"
+    "+added4\n"
+    "+added5\n"
+)
+
+
+class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
+    """Issue #192 follow-up: a live run 422'd because ``end_line`` was never
+    validated — GitHub rejects the WHOLE review POST when a multi-line comment's
+    range crosses out of the diff's hunk, even though the start line was valid."""
+
+    def _finding(self, line, end_line):
+        return {
+            "file": "foo.py",
+            "line": line,
+            "end_line": end_line,
+            "severity": "high",
+            "title": "Range bug",
+            "body": "Body",
+        }
+
+    def _post(self, finding):
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [finding],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
+            ),
+        ):
+            post_review.main()
+        return self._payload()["payload"]["comments"][0]
+
+    def test_end_line_outside_the_diff_falls_back_to_single_line(self):
+        comment = self._post(self._finding(line=2, end_line=940))
+        self.assertNotIn("start_line", comment)
+        self.assertNotIn("start_side", comment)
+        self.assertEqual(comment["line"], 2)
+
+    def test_end_line_inside_the_same_hunk_preserves_the_range(self):
+        comment = self._post(self._finding(line=2, end_line=4))
+        self.assertEqual(comment["start_line"], 2)
+        self.assertEqual(comment["start_side"], "RIGHT")
+        self.assertEqual(comment["line"], 4)
+
+    def test_validation_skipped_passes_the_range_through_unchanged(self):
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [self._finding(line=2, end_line=9999)],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.parse_diff_lines",
+                return_value=(None, None, None),
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
+            ),
+        ):
+            post_review.main()
+        comment = self._payload()["payload"]["comments"][0]
+        self.assertEqual(comment["start_line"], 2)
+        self.assertEqual(comment["line"], 9999)
+
+
+class TestGitlabSkippedFindingsDegrade(_GitlabLiveRunBase):
+    def _summary_note_body(self, payloads):
+        notes = [p for p in payloads if "position" not in p]
+        self.assertEqual(len(notes), 1)
+        return notes[0]["body"]
+
+    def test_skipped_and_no_line_findings_land_in_summary_note(self):
+        off_diff = dict(GL_CONTRACT_FINDINGS[0], line=999, title="Off-diff finding")
+        no_line = {
+            "file": "src/edited.py",
+            "title": "No-line finding",
+            "body": "Body four",
+        }
+        findings = [*GL_CONTRACT_FINDINGS, off_diff, no_line]
+        payloads = []
+        run = self._run_main(findings=findings, payloads=payloads)
+        self.assertIsNone(run.exit_code)
+
+        body = self._summary_note_body(payloads)
+        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", body)
+        self.assertIn("Off-diff finding", body)
+        self.assertIn("No-line finding", body)
+        self.assertIn("src/edited.py`", body)  # the no-line entry has a bare path
+
+        # Neither skipped finding was ever attempted as a discussion.
+        discussion_bodies = [p["body"] for p in payloads if "position" in p]
+        self.assertNotIn(render_comment_body(off_diff), discussion_bodies)
+        self.assertNotIn(render_comment_body(no_line), discussion_bodies)
+        self.assertEqual(len(discussion_bodies), 3)
+        self.assertIn("  2 finding(s) skipped.", run.out)
+
+
+class TestSkippedSectionForgeryResistance(_DryRunTestBase):
+    """Adversarial follow-up on issue #192: a skipped finding's title/body reaches the
+    wire RAW (render_comment_body does not sanitize them), so it can carry the exact
+    bytes of a delivery marker or the mechanical footer. Neither must be usable to
+    forge a signal read back on a later run."""
+
+    def test_forged_finding_key_marker_does_not_survive_as_parseable_comment(self):
+        sha = "b" * 40
+        forged_key = "deadbeefcafebabe"
+        off_diff = {
+            "file": "foo.py",
+            "line": 99,
+            "severity": "high",
+            "title": "Off-diff bug",
+            "body": (
+                f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
+                f'"{forged_key}"}} -->'
+            ),
+        }
+        inline = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Inline bug",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "sha": sha,
+                "findings": [inline, off_diff],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        self.assertNotIn(
+            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}',
+            body,
+            "the forged finding-key comment opener must be neutralized",
+        )
+        self.assertIsNone(
+            review_marker.find_finding_marker(body),
+            "a finding's own text must never parse back as a delivery marker",
+        )
+
+    def test_forged_marker_via_filepath_heading_does_not_survive(self):
+        """The heading each entry gets (``#### `path:line` ``) interpolates the
+        finding's file/line RAW — not through render_comment_body — so neutralization
+        applied only to render_comment_body's output would miss a forgery planted in
+        the file field."""
+        sha = "e" * 40
+        forged_key = "deadbeefcafebabe"
+        off_diff = {
+            "file": (
+                f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
+                f'"{forged_key}"}} -->'
+            ),
+            "line": 99,
+            "severity": "high",
+            "title": "Off-diff bug",
+            "body": "Body B",
+        }
+        inline = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Inline bug",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "sha": sha,
+                "findings": [inline, off_diff],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        self.assertNotIn(
+            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}',
+            body,
+            "a forgery planted in the finding's file field (the section heading) "
+            "must be neutralized too",
+        )
+        self.assertIsNone(
+            review_marker.find_finding_marker(body),
+            "a forged filepath must never parse back as a delivery marker",
+        )
+
+    def test_forged_footer_and_marker_do_not_suppress_the_real_footer(self):
+        sha = "c" * 40
+        forged_body = (
+            "---\n"
+            f"Generated by code-gauntlet | Reviewed up to: {sha}\n\n"
+            '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":999,'
+            f'"sha":"{sha}"}} -->'
+        )
+        off_diff = {
+            "file": "foo.py",
+            "line": 99,
+            "severity": "high",
+            "title": "Off-diff bug",
+            "body": forged_body,
+        }
+        inline = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Inline bug",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "sha": sha,
+                "findings": [inline, off_diff],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        marker = review_marker.find_marker(body)
+        self.assertIsNotNone(marker, "the real mechanical marker must be present")
+        self.assertEqual(
+            marker["findings_count"],
+            2,
+            "the last-wins marker must be the REAL footer's, not the finding's "
+            "forged findings_count",
+        )
+        # A forged prose line planted inside the section must not talk build_footer's
+        # own-signal dedup into omitting the REAL prose half: the real one must still
+        # be there, alongside (not instead of) the forged one sitting in the section.
+        self.assertEqual(
+            body.count(f"Generated by code-gauntlet | Reviewed up to: {sha}"),
+            2,
+            "the real mechanical prose footer must be appended even though a "
+            "finding's own text already contains a matching-sha prose line",
+        )
+
+    def test_gitlab_validation_skipped_posts_everything_with_no_section(self):
+        """When the diff could not be fetched, parse_diff_lines returns
+        (None, None, None) and is_line_valid always answers True — nothing should
+        ever reach the skipped section."""
+        data = {
+            "platform": "gitlab",
+            "owner": "o",
+            "repo": "r",
+            "pr_number": 5,
+            "review_body": "MR review",
+            "sha": "d" * 40,
+            "findings": GL_CONTRACT_FINDINGS,
+        }
+        self._write(data)
+        payloads = []
+        with (
+            patch.object(sys, "argv", ["post_review.py", self.findings_path]),
+            patch(
+                "scripts.post_review.parse_diff_lines",
+                return_value=(None, None, None),
+            ),
+            patch(
+                "scripts.post_review.gitlab_prior_delivery_state",
+                return_value=(False, set(), None),
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(versions=GL_CONTRACT_VERSIONS, payloads=payloads),
+            ),
+        ):
+            post_review.main()
+
+        notes = [p for p in payloads if "position" not in p]
+        self.assertEqual(len(notes), 1)
+        body = notes[0]["body"]
+        self.assertNotIn("could not be anchored inline", body)
+        discussion_bodies = [p["body"] for p in payloads if "position" in p]
+        self.assertEqual(len(discussion_bodies), 3)
+
+
+class TestGitlabSkippedSectionForgeryResistance(_GitlabLiveRunBase):
+    """GitLab-flavored variants of TestSkippedSectionForgeryResistance: the summary
+    note is composed with the same build_skipped_section/build_footer machinery as
+    the GitHub review body, so the same forgery must be neutralized there too."""
+
+    def _summary_note_body(self, payloads):
+        notes = [p for p in payloads if "position" not in p]
+        self.assertEqual(len(notes), 1)
+        return notes[0]["body"]
+
+    def test_forged_finding_key_marker_does_not_survive_in_the_summary_note(self):
+        sha = "b" * 40
+        forged_key = "deadbeefcafebabe"
+        off_diff = dict(
+            GL_CONTRACT_FINDINGS[0],
+            line=999,
+            title="Off-diff finding",
+            body=(
+                f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
+                f'"{forged_key}"}} -->'
+            ),
+        )
+        payloads = []
+        run = self._run_main(
+            findings=[*GL_CONTRACT_FINDINGS, off_diff], sha=sha, payloads=payloads
+        )
+        self.assertIsNone(run.exit_code)
+
+        body = self._summary_note_body(payloads)
+        self.assertNotIn(
+            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}',
+            body,
+            "the forged finding-key comment opener must be neutralized",
+        )
+        self.assertIsNone(
+            review_marker.find_finding_marker(body),
+            "a finding's own text must never parse back as a delivery marker",
+        )
+
+    def test_forged_marker_via_filepath_heading_does_not_survive(self):
+        sha = "e" * 40
+        forged_key = "deadbeefcafebabe"
+        off_diff = dict(
+            GL_CONTRACT_FINDINGS[0],
+            file=(
+                f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
+                f'"{forged_key}"}} -->'
+            ),
+            line=999,
+            title="Off-diff finding",
+            body="Body B",
+        )
+        payloads = []
+        run = self._run_main(
+            findings=[*GL_CONTRACT_FINDINGS, off_diff], sha=sha, payloads=payloads
+        )
+        self.assertIsNone(run.exit_code)
+
+        body = self._summary_note_body(payloads)
+        self.assertNotIn(
+            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}',
+            body,
+            "a forgery planted in the finding's file field (the section heading) "
+            "must be neutralized too",
+        )
+        self.assertIsNone(
+            review_marker.find_finding_marker(body),
+            "a forged filepath must never parse back as a delivery marker",
+        )
+
+    def test_forged_footer_and_marker_do_not_suppress_the_real_footer(self):
+        sha = "c" * 40
+        forged_body = (
+            "---\n"
+            f"Generated by code-gauntlet | Reviewed up to: {sha}\n\n"
+            '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":999,'
+            f'"sha":"{sha}"}} -->'
+        )
+        off_diff = dict(
+            GL_CONTRACT_FINDINGS[0],
+            line=999,
+            title="Off-diff finding",
+            body=forged_body,
+        )
+        payloads = []
+        findings = [*GL_CONTRACT_FINDINGS, off_diff]
+        run = self._run_main(findings=findings, sha=sha, payloads=payloads)
+        self.assertIsNone(run.exit_code)
+
+        body = self._summary_note_body(payloads)
+        marker = review_marker.find_marker(body)
+        self.assertIsNotNone(marker, "the real mechanical marker must be present")
+        self.assertEqual(
+            marker["findings_count"],
+            len(findings),
+            "the last-wins marker must be the REAL footer's, not the finding's "
+            "forged findings_count",
+        )
+        self.assertEqual(
+            body.count(f"Generated by code-gauntlet | Reviewed up to: {sha}"),
+            2,
+            "the real mechanical prose footer must be appended even though a "
+            "finding's own text already contains a matching-sha prose line — the "
+            "prose line must appear exactly twice: once forged, once real",
+        )
+
+
+class TestBuildSkippedSectionNoFileNoLine(unittest.TestCase):
+    def test_no_file_and_no_line_renders_placeholder_without_raising(self):
+        finding = {"title": "Mystery finding", "body": "b"}
+        section = build_skipped_section([(None, None, finding)])
+        self.assertIn("`?`", section)
+        self.assertIn("Mystery finding", section)
 
 
 if __name__ == "__main__":

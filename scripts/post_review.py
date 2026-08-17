@@ -66,8 +66,12 @@ GitLab path:
     only when nothing NEW was posted inline.
 
 Line validation:
-    Parses diff to validate each finding line is in the diff.
-    Skips findings with invalid lines with a warning.
+    Parses diff to validate each finding line is in the diff. A finding whose line
+    cannot be anchored inline (line not in the diff, or no line at all) is not
+    dropped: it degrades into a trailing "could not be anchored inline" section on
+    the review body / summary note (see build_skipped_section), so every finding
+    still reaches the PR/MR even when it cannot land as an inline comment. A
+    warning is still emitted per skipped finding.
 
 No external Python dependencies — stdlib only.
 """
@@ -481,6 +485,19 @@ def valid_lines_for_file(valid_lines, filepath):
     return lines[:10]
 
 
+def _range_is_valid(valid_lines, filepath, start, end):
+    """True when every line in [start, end] is a valid diff line for *filepath*.
+
+    A contiguous run of valid lines implies a single hunk, which is what GitHub
+    requires for a multi-line comment. Short-circuits on the first miss, so a
+    bogus huge *end* (e.g. an ``end_line`` copied from the wrong file) costs at
+    most one failing lookup rather than iterating the whole span.
+    """
+    if valid_lines is None:
+        return True  # validation skipped — pass the range through unchanged
+    return all(is_line_valid(valid_lines, filepath, n) for n in range(start, end + 1))
+
+
 def is_new_file(new_files, filepath):
     """Return True when *filepath* was newly added in the diff.
 
@@ -797,6 +814,62 @@ def render_comment_body(finding):
     return "\n".join(parts)
 
 
+def build_skipped_section(skipped, inline_count=None):
+    """Render the trailing section for findings that could not be anchored inline.
+
+    *skipped* is a list of ``(filepath, line, finding)`` tuples — the finding plus the
+    ``filepath``/``line`` it was to be anchored at (``line`` is ``None`` for a finding
+    that carried no line at all). *inline_count*, when given, is how many comments
+    landed — GitHub passes ``len(comments)`` because its one POST is atomic, so the
+    number is exact by the time this runs. GitLab passes nothing: its summary note
+    posts BEFORE the per-finding loop, so how many will actually land (some may still
+    fail, dedupe, or turn out malformed) is not yet known, and claiming a number here
+    would be a promise the loop below has not kept yet. Returns ``""`` for an empty
+    *skipped* list (issue #192).
+
+    Every finding's title/body reaches the wire RAW (only ``suggestion`` /
+    ``claude_md_rule`` / ``spec_text`` go through ``_sanitize_outbound_prose``), and
+    that applies to every field a finding can control here — not just the rendered
+    comment body but also its ``file``/``line``, which are interpolated raw into each
+    entry's ``#### `path:line` `` heading. So a finding can carry
+    ``<!-- code-gauntlet-finding-key: ... -->`` verbatim in ANY of those fields.
+    Unlike an inline discussion body — where the mechanical marker is APPENDED after
+    the comment and so always shadows a forged one (see review_marker.py) — nothing
+    mechanical follows a finding's rendered text here, so a forged marker would parse
+    as a real, currently-undelivered "already posted" signal on the next run. The
+    section legitimately contains no ``<!--`` anywhere of its own, so every ``<!--``
+    in the WHOLE composed section — headings included, not just each finding's
+    rendered body — is neutralized to ``&lt;!--`` in one pass at the end, closing
+    every field (present or future) by construction rather than per-field.
+    """
+    if not skipped:
+        return ""
+    n = len(skipped)
+    if inline_count is None:
+        intro = (
+            f"The following {n} finding(s) reference lines outside this diff and are "
+            "included here instead of as inline comments:"
+        )
+    else:
+        intro = (
+            f"{inline_count} inline comment(s) were posted; the following {n} "
+            "finding(s) reference lines outside this diff and are included here "
+            "instead:"
+        )
+    lines = [
+        "",
+        "---",
+        "",
+        f"### ⚠️ {n} finding(s) could not be anchored inline",
+        "",
+        intro,
+    ]
+    for filepath, line, finding in skipped:
+        location = f"{filepath}:{line}" if line is not None else str(filepath or "?")
+        lines += ["", f"#### `{location}`", "", render_comment_body(finding)]
+    return "\n".join(lines).replace("<!--", "&lt;!--")
+
+
 def finding_key(filepath, line, title, body):
     """Return the 16-hex delivery key recorded in a posted inline discussion's marker.
 
@@ -863,10 +936,15 @@ def post_github(data, valid_lines):
     check_tool("gh")
 
     comments = []
-    skipped = []
+    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
     for f in findings:
+        line = f.get("line")
+        if line is None:
+            warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
+            skipped_entries.append((f.get("file", "?"), None, f))
+            continue
+
         filepath = f["file"]
-        line = f["line"]
         if not is_line_valid(valid_lines, filepath, line):
             diag = ""
             vl = valid_lines_for_file(valid_lines, filepath)
@@ -876,7 +954,7 @@ def post_github(data, valid_lines):
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped.append(f)
+            skipped_entries.append((filepath, line, f))
             continue
 
         comment = {
@@ -885,18 +963,35 @@ def post_github(data, valid_lines):
             "side": "RIGHT",
             "body": render_comment_body(f),
         }
-        # Add start_line for multi-line comments
+        # Add start_line for multi-line comments, but only when the whole range
+        # sits inside one hunk — GitHub rejects the ENTIRE review POST (losing every
+        # finding, not just this one) with a 422 "Line could not be resolved" if
+        # end_line falls outside every hunk, even though `line` alone was valid.
         end_line = f.get("end_line")
-        if end_line and end_line != line:
+        if (
+            isinstance(end_line, int)
+            and end_line >= line
+            and end_line != line
+            and _range_is_valid(valid_lines, filepath, line, end_line)
+        ):
             comment["start_line"] = line
             comment["start_side"] = "RIGHT"
             comment["line"] = end_line
 
         comments.append(comment)
 
+    # The partition (comments vs skipped) is complete above — compose the section
+    # BEFORE the footer, which must stay last (it is the machine-parsed marker). The
+    # footer is computed against the ORIGINAL body, not the body plus the section: a
+    # skipped finding's raw title/body can plant text that looks like the mechanical
+    # prose footer or the summary marker (only suggestion/claude_md_rule/spec_text are
+    # sanitized), and build_footer's own-signal dedup would read that forgery as
+    # already-present and omit the real one.
+    skipped_section = build_skipped_section(skipped_entries, len(comments))
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    review_body += build_footer(len(findings), sha, body=review_body)
+    footer = build_footer(len(findings), sha, body=review_body)
+    review_body += skipped_section + footer
 
     payload = {
         "body": review_body,
@@ -922,8 +1017,11 @@ def post_github(data, valid_lines):
         url = resp.get("html_url", resp.get("id", "posted"))
         print(f"Review posted: {url}")
         print(f"  {len(comments)} inline comment(s) posted.")
-    if skipped:
-        print(f"  {len(skipped)} finding(s) skipped (lines not in diff).")
+    if skipped_entries:
+        print(
+            f"  {len(skipped_entries)} finding(s) skipped inline (lines not in diff) — "
+            "appended to review body."
+        )
     return 0
 
 
@@ -1021,9 +1119,47 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"rejected. Check that the MR has a version carrying all three SHAs."
             )
 
+    # Pre-partition the deterministic skips (no line number, or a line the diff never
+    # touched) BEFORE the summary note is composed — the note is posted first, so the
+    # skipped section must already be known. Both checks are pure functions of facts
+    # already fetched above (valid_lines, the finding's own file/line), so this is
+    # exactly the decision the inline loop below would make; it is just made early for
+    # the findings that will never reach that loop. `remaining` carries each finding's
+    # resolved filepath through to the loop so it is not re-derived.
+    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
+    remaining = []  # (filepath, finding) — findings that reach the inline loop
+    skipped = 0
+    for f in findings:
+        line = f.get("line")
+        if line is None:
+            warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
+            skipped_entries.append((f.get("file", "?"), None, f))
+            skipped += 1
+            continue
+
+        # Same spelling resolution the loop below applies — see its comment.
+        filepath = diff_path_spelling(valid_lines, f["file"], line)
+        if not is_line_valid(valid_lines, filepath, line):
+            diag = ""
+            vl = valid_lines_for_file(valid_lines, filepath)
+            if vl is not None:
+                diag = f" Valid lines for this file: {vl}"
+            warn_skip(
+                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+                f"— line not found in diff.{diag}"
+            )
+            skipped_entries.append((filepath, line, f))
+            skipped += 1
+            continue
+
+        remaining.append((filepath, f))
+
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    review_body += build_footer(len(findings), sha, body=review_body)
+    # Footer computed against the ORIGINAL body — see the matching comment in
+    # post_github for why a skipped finding's raw text must not be able to suppress it.
+    footer = build_footer(len(findings), sha, body=review_body)
+    review_body += build_skipped_section(skipped_entries) + footer
 
     # Post the review summary as a top-level MR note first
     summary_payload = {"body": review_body}
@@ -1054,37 +1190,17 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
 
     # Post each finding as an inline discussion. Every finding lands in exactly one of
     # the five counters below, so the outcome reported at the end is a partition of
-    # `findings` — a run cannot both under-report and claim success.
+    # `findings` — a run cannot both under-report and claim success. `skipped` was
+    # already counted in the pre-partition above (its decisions are identical to what
+    # this loop would make, made early so the skipped section can precede the note);
+    # `remaining` carries only what that pre-partition let through, filepath already
+    # resolved.
     posted = 0
-    skipped = 0
     already_present = 0
     invalid = 0
     failed = 0
-    for f in findings:
-        line = f.get("line")
-        if line is None:
-            warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
-            skipped += 1
-            continue
-
-        # The position must ship the spelling GitLab knows, which is the spelling the
-        # diff recorded: a `b/`-prefixed finding path against unprefixed keys resolves
-        # to the stripped form, while a real `a/`-rooted path that IS a diff key stays
-        # whole. Resolve once, here, and use it everywhere below. When validation was
-        # skipped there is no diff to consult and the finding's raw path travels as-is.
-        filepath = diff_path_spelling(valid_lines, f["file"], line)
-
-        if not is_line_valid(valid_lines, filepath, line):
-            diag = ""
-            vl = valid_lines_for_file(valid_lines, filepath)
-            if vl is not None:
-                diag = f" Valid lines for this file: {vl}"
-            warn_skip(
-                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
-                f"— line not found in diff.{diag}"
-            )
-            skipped += 1
-            continue
+    for filepath, f in remaining:
+        line = f["line"]
 
         comment_body = render_comment_body(f)
         key = finding_key(filepath, line, f.get("title", ""), comment_body)
