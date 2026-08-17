@@ -2,6 +2,78 @@
 
 <!-- version list -->
 
+## v3.11.1 (2026-08-17)
+
+### Bug Fixes
+
+- **skills**: Address PR #199 review comments — gate posting on the delivery answer, registry
+  analogy, offender aggregation
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Apply adversarial review round 1 findings
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Round 2 final items — restore headless-only Chat, fix scope wording
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **tests**: Guard against None from _HEADER.search in the fixture test
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+### Documentation
+
+- **skills**: Fix a leftover Phase 1 delivery-method reference
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Update headless index and hard rules for the two-question Phase 8 (#35, #153)
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+### Refactoring
+
+- **skills**: Delete Phase 1 question templates and model-tier read (#35, #153)
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Delete the dismissed-findings flow from delivery-guide.md
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Retire Phase 1 pre-flight configuration gate
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Rewrite Phase 8 to exactly two questions
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Single-source REVIEW.md notices and drop Model Tier (#35, #153)
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Stamp delivery.tier without a Phase 1 answer
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Stop emitting Model Tier and modernize build-review-md questions (#153, #35)
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+- **skills**: Zero upfront questions — two-question Phase 8, state-based config gate (#35, #153)
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+### Testing
+
+- **question-surface**: Register Resolved config: and pin the question surface
+  ([#199](https://github.com/liatrio-labs/claude-code-gauntlet/pull/199),
+  [`0c6e372`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0c6e372e709347b0706ce1991d8fa237e26477e1))
+
+
 ## v3.11.0 (2026-08-16)
 
 ### Bug Fixes
