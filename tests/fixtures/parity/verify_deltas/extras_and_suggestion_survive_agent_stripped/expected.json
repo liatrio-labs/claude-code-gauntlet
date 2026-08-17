@@ -11,6 +11,7 @@
   ],
   "joined": [
     {
+      "agent": "test-coverage-agent",
       "claude_md_rule": "Every new code path requires a corresponding test (CLAUDE.md > Tests).",
       "confidence": 60,
       "criticality": "high",

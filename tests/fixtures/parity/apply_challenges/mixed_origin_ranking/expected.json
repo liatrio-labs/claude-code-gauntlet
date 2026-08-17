@@ -1,0 +1,60 @@
+{
+  "eliminated": [],
+  "findings": [
+    {
+      "agent": "security-reviewer",
+      "challenge_contested": false,
+      "challenge_score": 80,
+      "confidence": 80,
+      "description": "d2",
+      "dimension": "security",
+      "file": "b.py",
+      "id": "B",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "verified",
+      "severity": "high",
+      "title": "t2"
+    },
+    {
+      "agent": "test-analyzer",
+      "challenge_contested": false,
+      "challenge_score": 80,
+      "confidence": 74,
+      "description": "d3",
+      "dimension": "test_coverage",
+      "file": "c.py",
+      "id": "C",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "verified",
+      "severity": "high",
+      "title": "t3"
+    },
+    {
+      "agent": "bug-detector",
+      "challenge_contested": false,
+      "challenge_score": 80,
+      "confidence": 75,
+      "description": "d1",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "A",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "unknown",
+      "severity": "high",
+      "title": "t1"
+    }
+  ],
+  "stats": {
+    "challenge_contested": 0,
+    "challenge_downgraded": 0,
+    "challenge_removed": 0,
+    "challenge_survived": 3,
+    "cross_agent_consolidated": 0,
+    "final_count": 3,
+    "total_input": 3,
+    "unchallenged": 0
+  }
+}

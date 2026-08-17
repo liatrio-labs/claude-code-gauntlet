@@ -1,0 +1,31 @@
+{
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 75,
+      "description": "d1",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "A",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "unknown",
+      "severity": "high",
+      "title": "t1"
+    },
+    {
+      "agent": "security-reviewer",
+      "confidence": 80,
+      "description": "d2",
+      "dimension": "security",
+      "file": "a.py",
+      "id": "B",
+      "line_end": 11,
+      "line_start": 11,
+      "origin": "verified",
+      "severity": "high",
+      "title": "t2"
+    }
+  ],
+  "fn": "detect_disagreement"
+}

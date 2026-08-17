@@ -100,16 +100,16 @@ def _filter_findings(inp):
     if fn == "_route_by_dimension":
         # Single-finding-in, route-out -- no list plumbing needed.
         return {"route": ff._route_by_dimension(inp["finding"])}
-    if fn == "dedup_cross_agent":
-        kept, dropped = ff.dedup_cross_agent(inp["findings"])
-        return {"kept": kept, "dropped": dropped}
+    if fn == "consolidate_cross_agent":
+        findings, consolidated_count = ff.consolidate_cross_agent(inp["findings"])
+        return {"findings": findings, "consolidated_count": consolidated_count}
     if fn == "tag_findings":
-        tagged, dedup_dropped, main_count, suggestion_count = ff.tag_findings(
+        tagged, consolidated_count, main_count, suggestion_count = ff.tag_findings(
             inp["findings"]
         )
         return {
             "tagged": tagged,
-            "dedup_dropped": dedup_dropped,
+            "consolidated_count": consolidated_count,
             "main_count": main_count,
             "suggestion_count": suggestion_count,
         }
@@ -132,15 +132,16 @@ def _apply_validations(inp):
 
 # The script's own audit trail (blame_metadata / factual_verification / diff_validation
 # -- see verify_findings.py's "DELIBERATELY EXCLUDED" comment above its _DELTA_FIELDS
-# constant) plus the deliberately withheld `agent` identity (issue #25 requirement 1).
-# No workflow schema declares any of the first three, and joinVerifyDeltas (stages.js)
+# constant). No workflow schema declares any of these, and joinVerifyDeltas (stages.js)
 # only ever writes DELTA_VALUE_KEYS onto the finding it already holds -- it never carries
-# any of these four across the join either -- so a golden "joined" finding must not either.
+# any of these across the join either -- so a golden "joined" finding must not either.
+# `agent` is DELIBERATELY NOT in this drop list as of #22: the join now keeps it
+# deterministically on both the trusted and degraded paths (see stages.js
+# joinVerifyDeltas and its doc comment).
 _VERIFY_DELTA_DROP = (
     "blame_metadata",
     "factual_verification",
     "diff_validation",
-    "agent",
 )
 
 
@@ -184,14 +185,14 @@ def _verify_deltas(inp):
 
 def _apply_challenges(inp):
     # Mirrors apply_challenges.py main()'s bridge composition (:444-480) --
-    # apply_challenges() -> dedup_cross_agent() re-run -> rank_findings() --
+    # apply_challenges() -> consolidate_cross_agent() re-run -> rank_findings() --
     # minus the file I/O (load_filtered/load_challenges) and prior_eliminated
     # concatenation, which belong to the skill/stage layer, not this pure
     # transform. Matches the JS twin's applyChallenges() return shape.
     import copy
 
     from apply_challenges import apply_challenges, rank_findings
-    from filter_findings import dedup_cross_agent
+    from filter_findings import consolidate_cross_agent
 
     findings = copy.deepcopy(inp["findings"])
     challenges = inp["challenges"]
@@ -199,8 +200,7 @@ def _apply_challenges(inp):
     active, challenge_eliminated, challenge_stats = apply_challenges(
         findings, challenges
     )
-    active, dedup_dropped = dedup_cross_agent(active)
-    dedup_elim = list(dedup_dropped)
+    active, cross_agent_consolidated = consolidate_cross_agent(active)
     active = rank_findings(active)
     stats = {
         "total_input": total_input,
@@ -209,12 +209,12 @@ def _apply_challenges(inp):
         "challenge_contested": challenge_stats["challenge_contested"],
         "challenge_survived": challenge_stats["challenge_survived"],
         "unchallenged": challenge_stats["unchallenged"],
-        "dedup_dropped": len(dedup_elim),
+        "cross_agent_consolidated": cross_agent_consolidated,
         "final_count": len(active),
     }
     return {
         "findings": active,
-        "eliminated": challenge_eliminated + dedup_elim,
+        "eliminated": challenge_eliminated,
         "stats": stats,
     }
 

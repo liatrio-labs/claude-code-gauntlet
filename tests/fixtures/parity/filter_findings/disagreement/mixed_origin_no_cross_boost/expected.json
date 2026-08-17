@@ -1,0 +1,42 @@
+{
+  "active": [
+    {
+      "agent": "bug-detector",
+      "confidence": 75,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "d1",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "A",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "unknown",
+      "security_escalation": false,
+      "severity": "high",
+      "title": "t1"
+    },
+    {
+      "agent": "security-reviewer",
+      "confidence": 80,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "d2",
+      "dimension": "security",
+      "file": "a.py",
+      "id": "B",
+      "line_end": 11,
+      "line_start": 11,
+      "origin": "verified",
+      "security_escalation": false,
+      "severity": "high",
+      "title": "t2"
+    }
+  ],
+  "boosted_count": 0,
+  "suppressed": []
+}

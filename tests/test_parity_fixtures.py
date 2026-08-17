@@ -147,17 +147,22 @@ class TestFilterFindingsParity(unittest.TestCase):
                     self.assertEqual(
                         {"route": ff._route_by_dimension(inp["finding"])}, expected
                     )
-                elif fn == "dedup_cross_agent":
-                    kept, dropped = ff.dedup_cross_agent(inp["findings"])
-                    self.assertEqual({"kept": kept, "dropped": dropped}, expected)
+                elif fn == "consolidate_cross_agent":
+                    findings, consolidated_count = ff.consolidate_cross_agent(
+                        inp["findings"]
+                    )
+                    self.assertEqual(
+                        {"findings": findings, "consolidated_count": consolidated_count},
+                        expected,
+                    )
                 elif fn == "tag_findings":
-                    tagged, dedup_dropped, main_count, suggestion_count = (
+                    tagged, consolidated_count, main_count, suggestion_count = (
                         ff.tag_findings(inp["findings"])
                     )
                     self.assertEqual(
                         {
                             "tagged": tagged,
-                            "dedup_dropped": dedup_dropped,
+                            "consolidated_count": consolidated_count,
                             "main_count": main_count,
                             "suggestion_count": suggestion_count,
                         },
@@ -195,7 +200,7 @@ class TestApplyChallengesParity(unittest.TestCase):
         import copy
 
         from apply_challenges import apply_challenges, rank_findings
-        from filter_findings import dedup_cross_agent
+        from filter_findings import consolidate_cross_agent
 
         for case_dir in sorted((FIXTURES / "apply_challenges").iterdir()):
             if not case_dir.is_dir():
@@ -220,8 +225,7 @@ class TestApplyChallengesParity(unittest.TestCase):
                 if snapshot is not None:
                     self.assertEqual(findings, snapshot)
 
-                active, dedup_dropped = dedup_cross_agent(active)
-                dedup_elim = list(dedup_dropped)
+                active, cross_agent_consolidated = consolidate_cross_agent(active)
                 active = rank_findings(active)
                 stats = {
                     "total_input": total_input,
@@ -230,12 +234,12 @@ class TestApplyChallengesParity(unittest.TestCase):
                     "challenge_contested": challenge_stats["challenge_contested"],
                     "challenge_survived": challenge_stats["challenge_survived"],
                     "unchallenged": challenge_stats["unchallenged"],
-                    "dedup_dropped": len(dedup_elim),
+                    "cross_agent_consolidated": cross_agent_consolidated,
                     "final_count": len(active),
                 }
                 got = {
                     "findings": active,
-                    "eliminated": challenge_eliminated + dedup_elim,
+                    "eliminated": challenge_eliminated,
                     "stats": stats,
                 }
                 self.assertEqual(got, expected)
@@ -243,10 +247,11 @@ class TestApplyChallengesParity(unittest.TestCase):
 
 # The script's own audit trail (blame_metadata / factual_verification / diff_validation --
 # see verify_findings.py's "DELIBERATELY EXCLUDED" comment above its _DELTA_FIELDS
-# constant) plus the deliberately withheld `agent` identity (issue #25 requirement 1). No
-# workflow schema declares any of the first three, and joinVerifyDeltas (stages.js) only
-# ever writes DELTA_VALUE_KEYS onto the finding it already holds -- it never carries any
-# of these four across the join either -- so a golden "joined" finding must not either.
+# constant). No workflow schema declares any of these, and joinVerifyDeltas (stages.js)
+# only ever writes DELTA_VALUE_KEYS onto the finding it already holds -- it never carries
+# any of these across the join either -- so a golden "joined" finding must not either.
+# `agent` is DELIBERATELY NOT in this drop list as of #22: the join now keeps it
+# deterministically on both the trusted and degraded paths.
 # Duplicated from record_parity.py's own _VERIFY_DELTA_DROP/_project_verify_delta rather
 # than imported, matching this file's existing convention of re-deriving each recorder's
 # computation independently (e.g. TestApplyChallengesParity re-composes apply_challenges'
@@ -256,7 +261,6 @@ _VERIFY_DELTA_DROP = (
     "blame_metadata",
     "factual_verification",
     "diff_validation",
-    "agent",
 )
 
 

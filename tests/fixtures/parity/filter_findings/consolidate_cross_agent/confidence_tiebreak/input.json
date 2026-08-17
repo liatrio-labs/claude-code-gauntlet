@@ -1,27 +1,27 @@
 {
-  "fn": "dedup_cross_agent",
   "findings": [
     {
-      "id": "C3",
       "agent": "test-analyzer",
+      "confidence": 50,
+      "description": "d",
       "dimension": "test_coverage",
       "file": "g.py",
+      "id": "C3",
       "line_start": 20,
       "severity": "low",
-      "confidence": 50,
-      "title": "t3",
-      "description": "d"
+      "title": "t3"
     },
     {
-      "id": "C4",
       "agent": "code-simplifier",
+      "confidence": 80,
+      "description": "d2",
       "dimension": "convention",
       "file": "g.py",
+      "id": "C4",
       "line_start": 21,
       "severity": "low",
-      "confidence": 80,
-      "title": "t4",
-      "description": "d2"
+      "title": "t4"
     }
-  ]
+  ],
+  "fn": "consolidate_cross_agent"
 }
