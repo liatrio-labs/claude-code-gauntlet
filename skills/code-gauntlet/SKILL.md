@@ -22,7 +22,7 @@ Inline checks before any workflow run — no subagent dispatch. Read `references
 
 ### Workflow-tool availability check — MANDATORY, FIRST
 
-Before anything else, confirm the **`Workflow` tool is present in this session's available tools**. v3 orchestration is a single `Workflow` invocation; there is no in-session fallback. If `Workflow` is not available, print exactly:
+Before anything else, confirm the **`Workflow` tool is present in this session's tool definitions**. This is passive self-inspection — no tool call verifies it. Never probe with `ToolSearch`: it searches deferred tools only and returns zero hits for a top-level `Workflow`, which reads as a false "absent". v3 orchestration is a single `Workflow` invocation; there is no in-session fallback. If `Workflow` is absent from your tool definitions, print exactly:
 
 ```
 code-gauntlet v3 requires Claude Code >= 2.1.154 with dynamic workflows. Install the pre-rename deep-review v2.x for older CLIs.
