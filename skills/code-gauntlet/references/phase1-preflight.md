@@ -188,7 +188,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
 | `delivery.tier` | Stamped in Phase 2: `CODE_GAUNTLET_DELIVERY_TIER` env pin > omit (pipeline default `all` — every challenge-survivor is delivered). |
 | `limits.deliveryCap` | Stamped in Phase 2 from `CODE_GAUNTLET_PR_COMMENT_CAP`; absent/`null` means uncapped, which is a meaningful value, not a hole. |
 | Delivery destination | Not resolved here. Phase 8 asks once, after the report exists (`references/phase8-delivery.md` Stage 1). |
-| REVIEW.md presence | A **non-blocking notice**, never a question. When none is found, say so once and continue with built-in defaults. |
+| REVIEW.md presence | Not settled here — the Phase 2d discovery walk emits the canonical non-blocking notice (`references/review-md-spec.md` → Discovery). |
 
 **Resolved-config echo.** Interactive Phase 1 ends by printing the block below to stdout; Phase 2 gates on
 its presence (SKILL.md → "Entry gate"). Keep it byte-identical to SKILL.md's copy. The values below are an

@@ -1,6 +1,6 @@
 # Delivery Guide
 
-Implementation details for each delivery method in Phase 8.
+Implementation details for each delivery method in Phase 8, interactive and headless.
 
 ---
 
@@ -191,3 +191,12 @@ After creating: "Created N tasks from review findings."
 ## Markdown File
 
 Canonical behavior is the "Markdown only" branch of Phase 8 Stage 1 in `phase8-delivery.md`: surface the path to the already-persisted `artifactPaths.report` — no default write. A write outside `{output_dir}` happens only when the user names a destination.
+
+---
+
+## Chat
+
+**Headless only** (`CODE_GAUNTLET_DELIVERY` includes `chat`): the full report body is included in the
+final response message (which already repeats the `Headless config:` block). Interactive runs have no
+chat delivery method — the Phase 8 delivery question offers Post to PR/MR or markdown-only, and chat gets
+only the short completion summary.
