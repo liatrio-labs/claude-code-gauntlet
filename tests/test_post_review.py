@@ -42,6 +42,7 @@ from scripts.post_review import (
     _sanitize_outbound_prose,
     _suggestion_fence,
     build_footer,
+    build_skipped_section,
     detect_platform,
     gitlab_project_id,
     is_line_valid,
@@ -3912,6 +3913,167 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
             json.dumps(captured),
             "no dry-run capture may carry the delivery marker",
         )
+
+
+# ---------------------------------------------------------------------------
+# Issue #192 — skipped findings degrade into the review body, they are never
+# silently dropped.
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSkippedSection(unittest.TestCase):
+    def test_empty_list_returns_empty_string(self):
+        self.assertEqual(build_skipped_section([], 0), "")
+
+    def test_renders_location_title_and_both_counts(self):
+        finding = {
+            "file": "src/app.py",
+            "line": 216,
+            "severity": "high",
+            "title": "SQL injection risk",
+            "body": "Untrusted input reaches the query.",
+        }
+        section = build_skipped_section([("src/app.py", 216, finding)], 4)
+        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", section)
+        self.assertIn("4 inline comment(s) were posted", section)
+        self.assertIn("following 1 finding(s)", section)
+        self.assertIn("`src/app.py:216`", section)
+        self.assertIn("SQL injection risk", section)
+        self.assertIn(render_comment_body(finding), section)
+
+    def test_no_line_finding_renders_bare_path(self):
+        finding = {"file": "src/app.py", "title": "No line", "body": "b"}
+        section = build_skipped_section([("src/app.py", None, finding)], 0)
+        self.assertIn("`src/app.py`", section)
+        self.assertNotIn("src/app.py:None", section)
+
+    def test_reuses_render_comment_body_for_redaction(self):
+        """The section must go through the SAME sanitize/redact path as an inline
+        comment — a second rendering path is exactly the drift this guards against."""
+        finding = {
+            "file": "src/app.py",
+            "line": 5,
+            "title": "Leaked token",
+            "body": "b",
+            "suggestion": "Rotate the token: ghp_" + "a" * 36,
+        }
+        section = build_skipped_section([("src/app.py", 5, finding)], 0)
+        self.assertIn("[REDACTED]", section)
+        self.assertNotIn("ghp_" + "a" * 36, section)
+
+
+class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
+    def _findings(self):
+        inline = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Inline bug",
+            "body": "Body A",
+        }
+        off_diff = {
+            "file": "foo.py",
+            "line": 99,
+            "severity": "medium",
+            "title": "Off-diff bug",
+            "body": "Body B",
+        }
+        return inline, off_diff
+
+    def test_skipped_finding_lands_in_body_with_both_counts(self):
+        inline, off_diff = self._findings()
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [inline, off_diff],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        body = cap["payload"]["body"]
+        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", body)
+        self.assertIn("1 inline comment(s) were posted", body)
+        self.assertIn("Off-diff bug", body)
+        self.assertIn("foo.py:99", body)
+        # Excluded from the inline comments payload.
+        comment_bodies = [c["body"] for c in cap["payload"]["comments"]]
+        self.assertNotIn(render_comment_body(off_diff), comment_bodies)
+        self.assertEqual(len(cap["payload"]["comments"]), 1)
+        # Footer stays last and intact.
+        self.assertTrue(body.rstrip().endswith("-->"))
+        self.assertIn(review_marker.MARKER_TOKEN, body)
+
+    def test_no_skips_body_unchanged(self):
+        inline, _ = self._findings()
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [inline],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        self.assertNotIn("could not be anchored inline", body)
+
+
+class TestGitlabSkippedFindingsDegrade(_GitlabLiveRunBase):
+    def _summary_note_body(self, payloads):
+        notes = [p for p in payloads if "position" not in p]
+        self.assertEqual(len(notes), 1)
+        return notes[0]["body"]
+
+    def test_skipped_and_no_line_findings_land_in_summary_note(self):
+        off_diff = dict(GL_CONTRACT_FINDINGS[0], line=999, title="Off-diff finding")
+        no_line = {
+            "file": "src/edited.py",
+            "title": "No-line finding",
+            "body": "Body four",
+        }
+        findings = [*GL_CONTRACT_FINDINGS, off_diff, no_line]
+        payloads = []
+        run = self._run_main(findings=findings, payloads=payloads)
+        self.assertIsNone(run.exit_code)
+
+        body = self._summary_note_body(payloads)
+        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", body)
+        self.assertIn("Off-diff finding", body)
+        self.assertIn("No-line finding", body)
+        self.assertIn("src/edited.py`", body)  # the no-line entry has a bare path
+
+        # Neither skipped finding was ever attempted as a discussion.
+        discussion_bodies = [p["body"] for p in payloads if "position" in p]
+        self.assertNotIn(render_comment_body(off_diff), discussion_bodies)
+        self.assertNotIn(render_comment_body(no_line), discussion_bodies)
+        self.assertEqual(len(discussion_bodies), 3)
+        self.assertIn("  2 finding(s) skipped.", run.out)
 
 
 if __name__ == "__main__":
