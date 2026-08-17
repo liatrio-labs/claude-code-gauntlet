@@ -91,25 +91,54 @@ Reads from the composite above — no new Bash calls here.
 3. **Previously reviewed?** → Deferred to Phase 2 (after checkout, `phase2-triage.md` 2b-post step 3) — the gate needs the PR's tree to compare commits. Runs `detect_prior_review.py`; gates incremental vs full vs skip on `incremental_safe` (templates and degradations in `references/phase1-preflight.md` → "Previously-Reviewed Gate").
 4. **Trivially simple?** (`changed_files` from the composite above) → If ONLY lockfile/generated/auto-formatted changes, stop.
 
-### Pre-flight configuration gate — MANDATORY GATE
+### Resolve configuration — no questions asked
 
-> **Headless branch (`CODE_GAUNTLET_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`, `post_mode`, `pr_comment_cap`, `delivery_tier`, `draft_policy`, `reviewed_policy`, `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and continue. Do NOT call `AskUserQuestion` anywhere in this run — every gate below resolves deterministically from the environment. An invalid value fails loud per the validation rule in that reference; it never falls back and never asks.
+Phase 1 asks the user nothing. Every knob that used to be a question is now resolved from state, and
+Phase 1 ends by printing a **resolved-config echo** that Phase 2 gates on.
 
-> **STOP: Complete this gate before Phase 2.** Never assume defaults from remembered preferences.
->
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this gate is satisfied by the headless resolution above — the printed `Headless config:` block stands in for the interactive answers; do not present `AskUserQuestion`.
+> **Headless branch (`CODE_GAUNTLET_HEADLESS=1`):** resolve every knob (`model_tier`, `delivery`,
+> `post_mode`, `pr_comment_cap`, `delivery_tier`, `draft_policy`, `reviewed_policy`,
+> `pr_not_found_policy`, `trivial_scope`) per `references/headless-mode.md` using precedence
+> env > REVIEW.md explicit > headless default, print the `Headless config:` block to stdout, and
+> continue. An invalid value fails loud per the validation rule in that reference; it never falls back.
 
-Check REVIEW.md for `model_tier` and `default_delivery` — read from the `review_md_root` section of the Phase 1 composite above; no new Bash call. Build a single `AskUserQuestion` containing the unresolved items (delivery preference, REVIEW.md setup if missing). The model policy is fixed: `policy.tier="optimized"` — the single benchmarked configuration (discovery on Sonnet with security-reviewer on Opus). A **REVIEW.md** `Model Tier` value other than `optimized` (e.g. a legacy v2-era `frontier`) **self-heals**: proceed with `optimized`, never ask and never abort on this field, and print a loud methodology warning (`REVIEW.md Model Tier '<value>' is not supported — reviewing under 'optimized', the single benchmarked policy; update REVIEW.md`) that also lands in the report methodology. The **env knob** `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. Alternate model modes are roadmap work (issue #17). If REVIEW.md pre-configures `default_delivery`, present a single confirmation question — never skip AskUserQuestion entirely. See `references/phase1-preflight.md` for resolution logic, question templates, and the confirmation-only template. Store selections for Phase 2 (args) and Phase 8 (delivery).
+**Interactive resolution.** `policy.tier` is always `"optimized"` — the single benchmarked configuration
+(discovery on Sonnet with security-reviewer on Opus); nothing in REVIEW.md is read for it and nothing
+asks. `delivery.tier` and `limits.deliveryCap` resolve in Phase 2 from their env pins
+(`CODE_GAUNTLET_DELIVERY_TIER`, `CODE_GAUNTLET_PR_COMMENT_CAP`), falling through to the pipeline defaults
+when unset. Where the review is *delivered* is decided at the end of the run, in Phase 8, once the report
+exists — not guessed at up front. If no REVIEW.md was found (`review_md_root` is `NONE` in the Phase 1
+composite), state it once as a non-blocking notice and continue:
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip this `AskUserQuestion` — `model_tier` (which sets `policy.tier`; only `optimized` is valid) and `delivery` are resolved from the environment (env > REVIEW.md explicit > headless default) per `references/headless-mode.md`, and no REVIEW.md-setup question is presented.
+```text
+No REVIEW.md found — reviewing with built-in defaults. Run `build-review-md` any time to configure
+thresholds, ignore patterns, and project rules.
+```
+
+**Print the resolved-config echo.** Interactive runs end Phase 1 with this block on stdout. It is the
+Phase 2 entry gate's input — a receipt that configuration was resolved, not that a prompt was shown:
+
+```text
+Resolved config:
+  model_tier=optimized (fixed)
+  delivery_tier=all (default)
+  pr_comment_cap=null (default)
+  review_md=absent (discovery)
+```
+
+One line per knob, `key=value (source)` where `source ∈ env|default|fixed|discovery`. `delivery_tier` and
+`pr_comment_cap` read `(env)` when their env pin is set. `review_md` is `present` or `absent` from the
+composite's `review_md_root` section. Emit all four lines every interactive run; a headless run emits
+`Headless config:` instead and never this block.
 
 ---
 
 ## Phase 2: Target, Triage & Args Preparation
 
-> **Entry check:** If no `AskUserQuestion` was presented during Phase 1, STOP — the configuration gate was missed. Return to Phase 1 and complete it before proceeding.
->
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): this check passes if the `Headless config:` block was printed during Phase 1; no `AskUserQuestion` is expected, so do not return to the gate.
+> **Entry gate — resolved state, not prompt history:** proceed only when Phase 1 printed its
+> resolved-config echo — `Resolved config:` interactively, `Headless config:` headless. If neither was
+> printed, configuration was never resolved: return to Phase 1's "Resolve configuration" section and
+> print it. Never gate on whether a question was asked; the happy path asks none.
 
 Identify the review target, gather the git artifacts the workflow consumes, and assemble the args object. This is a fast pass in the main context — the review stages run later, inside the workflow. Read `references/phase2-triage.md` for the full sub-steps (VCS detection, checkout, risk classification, REVIEW.md parse) and the args-preparation walkthrough.
 
