@@ -833,6 +833,17 @@ function groupByProximity(findings, lineProximity = 5) {
 function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
 
+  // Clear any stamps from a prior pass first: a re-run (applyChallenges, after
+  // a group's primary is eliminated) must not leave survivors carrying a
+  // consolidation_key/consolidation_primary from a group that no longer
+  // qualifies.
+  for (const f of findings) {
+    if (f && typeof f === 'object') {
+      delete f.consolidation_key;
+      delete f.consolidation_primary;
+    }
+  }
+
   const winnerKey = (f) => {
     const dim = pyGet(f, 'dimension', '').toLowerCase();
     const isCore = CORE_DIMENSIONS.has(dim) ? 1 : 0;

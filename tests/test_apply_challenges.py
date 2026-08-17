@@ -620,6 +620,37 @@ class TestCrossAgentConsolidationIntegration(unittest.TestCase):
         self.assertIn("test-1", consolidated_ids, "nothing is ever dropped")
         self.assertEqual(count, 2)
 
+    def test_stale_stamps_cleared_when_primary_eliminated(self):
+        """A group that no longer qualifies after its primary is eliminated by
+        a challenge must lose its stamps on the surviving member, not carry a
+        consolidation_key pointing at a vanished primary."""
+        from scripts.apply_challenges import apply_challenges
+        from scripts.filter_findings import consolidate_cross_agent
+
+        bug = _make_finding(
+            id="bug-1", file="a.py", line_start=10, agent="bug-detector",
+            dimension="bug", confidence=95, severity="high",
+        )
+        test1 = _make_finding(
+            id="test-1", file="a.py", line_start=12, agent="test-analyzer",
+            dimension="test_coverage", confidence=60, severity="high",
+        )
+        # Simulate the filter stage's earlier stamping pass.
+        consolidate_cross_agent([bug, test1])
+        self.assertTrue(bug["consolidation_primary"])
+        self.assertEqual(test1["consolidation_key"], bug["consolidation_key"])
+
+        challenges = [_make_challenge("bug-1", 10), _make_challenge("test-1", 90)]
+        active, _, _ = apply_challenges([bug, test1], challenges)
+        self.assertEqual(len(active), 1)
+        # main() re-runs consolidate_cross_agent on the post-challenge active
+        # set; do the same here to exercise the stale-stamp-clearing path.
+        active, _ = consolidate_cross_agent(active)
+        survivor = active[0]
+        self.assertEqual(survivor["id"], "test-1")
+        self.assertNotIn("consolidation_key", survivor, "stale stamp must be cleared")
+        self.assertNotIn("consolidation_primary", survivor, "stale stamp must be cleared")
+
 
 # ---------------------------------------------------------------------------
 # main() CLI integration

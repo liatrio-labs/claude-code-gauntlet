@@ -1095,6 +1095,15 @@ def consolidate_cross_agent(findings):
     """
     LINE_PROXIMITY = 5
 
+    # Clear any stamps from a prior pass first: a re-run (apply_challenges.py,
+    # after a group's primary is eliminated) must not leave survivors
+    # carrying a consolidation_key/consolidation_primary from a group that no
+    # longer qualifies.
+    for f in findings:
+        if isinstance(f, dict):
+            f.pop("consolidation_key", None)
+            f.pop("consolidation_primary", None)
+
     def _winner_key(f):
         """Higher key value = better priority (sort descending)."""
         dim = f.get("dimension", "").lower()

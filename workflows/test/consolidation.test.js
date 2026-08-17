@@ -125,3 +125,25 @@ test('applyChallenges: zero eliminated_by dedup:cross-agent; consolidation stamp
   assert.equal(byId['bug-1'].consolidation_key, byId['test-1'].consolidation_key);
   assert.equal(stats.cross_agent_consolidated, 2);
 });
+
+// --- stale stamp clearing: a re-run must not leave orphaned stamps ----------
+
+test('a group that no longer qualifies after its primary is eliminated loses its stamps on survivors', () => {
+  const bug = f({ id: 'bug-1', file: 'a.py', line_start: 10, agent: 'bug-detector', dimension: 'bug', confidence: 95, severity: 'high' });
+  const test1 = f({ id: 'test-1', file: 'a.py', line_start: 12, agent: 'test-analyzer', dimension: 'test_coverage', confidence: 60, severity: 'high' });
+  // Simulate the filter stage's earlier stamping pass.
+  consolidateCrossAgent([bug, test1]);
+  assert.equal(bug.consolidation_primary, true);
+  assert.equal(test1.consolidation_key, bug.consolidation_key);
+
+  // Challenge eliminates the primary (bug-1); test-1 survives alone -> the
+  // group no longer has 2+ distinct agents, so the re-run must clear test-1's
+  // stale stamps rather than leave it pointing at a vanished primary.
+  const challenges = [{ id: 'bug-1', score: 10 }, { id: 'test-1', score: 90 }];
+  const { findings } = applyChallenges([bug, test1], challenges);
+  assert.equal(findings.length, 1);
+  const survivor = findings[0];
+  assert.equal(survivor.id, 'test-1');
+  assert.equal('consolidation_key' in survivor, false, 'stale stamp must be cleared');
+  assert.equal('consolidation_primary' in survivor, false, 'stale stamp must be cleared');
+});
