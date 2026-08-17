@@ -814,6 +814,85 @@ def render_comment_body(finding):
     return "\n".join(parts)
 
 
+def consolidate_delivery(findings):
+    """Group *findings* for the posted delivery payload (#22 D2).
+
+    Findings stay distinct in the caller's array — this only groups them for
+    rendering. A finding carrying a truthy ``consolidation_key`` joins the group
+    for that key; ``consolidation_primary: true`` marks which member anchors the
+    group's single posted comment. A finding with no (or falsy) key becomes its
+    own single-member group — this is what keeps output byte-identical to today
+    for findings without stamps (older artifacts, degraded pipelines).
+
+    Returns a list of ``{"primary": finding, "corroborators": [finding, ...]}``
+    dicts, one per group, in the order each group's FIRST member appears in
+    *findings* — deterministic regardless of which member within a group is
+    the primary.
+    """
+    groups = []
+    key_to_group = {}
+    for f in findings:
+        key = f.get("consolidation_key") if isinstance(f, dict) else None
+        if not key:
+            groups.append({"primary": f, "corroborators": []})
+            continue
+        group = key_to_group.get(key)
+        if group is None:
+            group = {"primary": None, "corroborators": []}
+            key_to_group[key] = group
+            groups.append(group)
+        if f.get("consolidation_primary"):
+            group["primary"] = f
+        else:
+            group["corroborators"].append(f)
+    # Defensive only: every stamped group is expected to carry exactly one
+    # consolidation_primary member (filter_findings.py / filterFindings.js
+    # invariant). If a caller's data violates that, don't drop the group's
+    # first-seen member — treat it as the primary rather than surface `None`.
+    for group in groups:
+        if group["primary"] is None and group["corroborators"]:
+            group["primary"] = group["corroborators"].pop(0)
+    return groups
+
+
+def _render_corroboration(finding):
+    """Render one non-primary group member as a corroborating section."""
+    agent = finding.get("agent", "unknown")
+    dimension = finding.get("dimension", "unknown")
+    confidence = finding.get("confidence")
+    conf_text = str(confidence) if confidence is not None else "?"
+    title = finding.get("title", "Finding")
+    body = finding.get("body", "")
+    parts = [
+        f"**Corroborating finding — {agent} ({dimension}, confidence {conf_text}):**",
+        "",
+        f"**{title}**",
+    ]
+    if body:
+        parts += ["", body]
+    return "\n".join(parts)
+
+
+def render_group_body(primary, corroborators):
+    """Build the markdown comment body for one consolidation group.
+
+    Renders *primary* exactly as ``render_comment_body`` always has — with no
+    *corroborators* this is byte-identical to today, which is what keeps
+    unstamped findings (older artifacts, degraded pipelines) unaffected.
+    Each corroborator is appended as its own section; that appended text is
+    finding-controlled, so it is run through the same ``<!--`` neutralization
+    ``build_skipped_section`` applies (see its docstring) — the primary's own
+    render is deliberately left alone, matching its existing raw-on-the-wire
+    behavior.
+    """
+    body = render_comment_body(primary)
+    if not corroborators:
+        return body
+    section = "\n\n".join(_render_corroboration(c) for c in corroborators)
+    section = section.replace("<!--", "&lt;!--")
+    return f"{body}\n\n---\n\n{section}"
+
+
 def build_skipped_section(skipped, inline_count=None):
     """Render the trailing section for findings that could not be anchored inline.
 
@@ -937,37 +1016,50 @@ def post_github(data, valid_lines):
 
     comments = []
     skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
-    for f in findings:
-        line = f.get("line")
+    # One posted comment per consolidation group (#22 D2): findings without a stamp
+    # are each their own single-member group, so this loop is unchanged for them.
+    for group in consolidate_delivery(findings):
+        primary = group["primary"]
+        corroborators = group["corroborators"]
+        line = primary.get("line")
         if line is None:
-            warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
-            skipped_entries.append((f.get("file", "?"), None, f))
+            warn_skip(
+                f"Finding '{primary.get('title', '?')}' has no line number — skipping."
+            )
+            skipped_entries.append((primary.get("file", "?"), None, primary))
+            # The primary can't anchor, so the whole group degrades into the
+            # skipped section as individual entries — the corroborators never
+            # merged into a comment that itself never gets posted.
+            for c in corroborators:
+                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
             continue
 
-        filepath = f["file"]
+        filepath = primary["file"]
         if not is_line_valid(valid_lines, filepath, line):
             diag = ""
             vl = valid_lines_for_file(valid_lines, filepath)
             if vl is not None:
                 diag = f" Valid lines for this file: {vl}"
             warn_skip(
-                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+                f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append((filepath, line, f))
+            skipped_entries.append((filepath, line, primary))
+            for c in corroborators:
+                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
             continue
 
         comment = {
             "path": filepath,
             "line": line,
             "side": "RIGHT",
-            "body": render_comment_body(f),
+            "body": render_group_body(primary, corroborators),
         }
         # Add start_line for multi-line comments, but only when the whole range
         # sits inside one hunk — GitHub rejects the ENTIRE review POST (losing every
         # finding, not just this one) with a 422 "Line could not be resolved" if
         # end_line falls outside every hunk, even though `line` alone was valid.
-        end_line = f.get("end_line")
+        end_line = primary.get("end_line")
         if (
             isinstance(end_line, int)
             and end_line >= line
@@ -1127,32 +1219,47 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     # the findings that will never reach that loop. `remaining` carries each finding's
     # resolved filepath through to the loop so it is not re-derived.
     skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
-    remaining = []  # (filepath, finding) — findings that reach the inline loop
+    remaining = []  # (filepath, group) — groups that reach the inline loop
     skipped = 0
-    for f in findings:
-        line = f.get("line")
+    # One posted discussion per consolidation group (#22 D2): findings without a
+    # stamp are each their own single-member group, so this loop is unchanged
+    # for them.
+    for group in consolidate_delivery(findings):
+        primary = group["primary"]
+        corroborators = group["corroborators"]
+        line = primary.get("line")
         if line is None:
-            warn_skip(f"Finding '{f.get('title', '?')}' has no line number — skipping.")
-            skipped_entries.append((f.get("file", "?"), None, f))
+            warn_skip(
+                f"Finding '{primary.get('title', '?')}' has no line number — skipping."
+            )
+            skipped_entries.append((primary.get("file", "?"), None, primary))
             skipped += 1
+            # The primary can't anchor, so the whole group degrades into the
+            # skipped section as individual entries.
+            for c in corroborators:
+                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
+                skipped += 1
             continue
 
         # Same spelling resolution the loop below applies — see its comment.
-        filepath = diff_path_spelling(valid_lines, f["file"], line)
+        filepath = diff_path_spelling(valid_lines, primary["file"], line)
         if not is_line_valid(valid_lines, filepath, line):
             diag = ""
             vl = valid_lines_for_file(valid_lines, filepath)
             if vl is not None:
                 diag = f" Valid lines for this file: {vl}"
             warn_skip(
-                f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+                f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append((filepath, line, f))
+            skipped_entries.append((filepath, line, primary))
             skipped += 1
+            for c in corroborators:
+                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
+                skipped += 1
             continue
 
-        remaining.append((filepath, f))
+        remaining.append((filepath, group))
 
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
@@ -1199,10 +1306,12 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     already_present = 0
     invalid = 0
     failed = 0
-    for filepath, f in remaining:
+    for filepath, group in remaining:
+        f = group["primary"]
+        corroborators = group["corroborators"]
         line = f["line"]
 
-        comment_body = render_comment_body(f)
+        comment_body = render_group_body(f, corroborators)
         key = finding_key(filepath, line, f.get("title", ""), comment_body)
         if key in delivered_keys:
             # An earlier run already delivered this exact discussion for this sha.
