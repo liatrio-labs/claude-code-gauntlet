@@ -815,14 +815,19 @@ def build_skipped_section(skipped, inline_count=None):
     *skipped* list (issue #192).
 
     Every finding's title/body reaches the wire RAW (only ``suggestion`` /
-    ``claude_md_rule`` / ``spec_text`` go through ``_sanitize_outbound_prose``), so a
-    finding can carry ``<!-- code-gauntlet-finding-key: ... -->`` verbatim in its own
-    text. Unlike an inline discussion body — where the mechanical marker is APPENDED
-    after the comment and so always shadows a forged one (see review_marker.py) —
-    nothing mechanical follows a finding's rendered text here, so a forged marker
-    would parse as a real, currently-undelivered "already posted" signal on the next
-    run. Every ``<!--`` in the rendered text is neutralized to ``&lt;!--`` so it can
-    never open a parseable HTML comment.
+    ``claude_md_rule`` / ``spec_text`` go through ``_sanitize_outbound_prose``), and
+    that applies to every field a finding can control here — not just the rendered
+    comment body but also its ``file``/``line``, which are interpolated raw into each
+    entry's ``#### `path:line` `` heading. So a finding can carry
+    ``<!-- code-gauntlet-finding-key: ... -->`` verbatim in ANY of those fields.
+    Unlike an inline discussion body — where the mechanical marker is APPENDED after
+    the comment and so always shadows a forged one (see review_marker.py) — nothing
+    mechanical follows a finding's rendered text here, so a forged marker would parse
+    as a real, currently-undelivered "already posted" signal on the next run. The
+    section legitimately contains no ``<!--`` anywhere of its own, so every ``<!--``
+    in the WHOLE composed section — headings included, not just each finding's
+    rendered body — is neutralized to ``&lt;!--`` in one pass at the end, closing
+    every field (present or future) by construction rather than per-field.
     """
     if not skipped:
         return ""
@@ -848,9 +853,8 @@ def build_skipped_section(skipped, inline_count=None):
     ]
     for filepath, line, finding in skipped:
         location = f"{filepath}:{line}" if line is not None else str(filepath or "?")
-        rendered = render_comment_body(finding).replace("<!--", "&lt;!--")
-        lines += ["", f"#### `{location}`", "", rendered]
-    return "\n".join(lines)
+        lines += ["", f"#### `{location}`", "", render_comment_body(finding)]
+    return "\n".join(lines).replace("<!--", "&lt;!--")
 
 
 def finding_key(filepath, line, title, body):

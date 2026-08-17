@@ -4135,6 +4135,64 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
             "a finding's own text must never parse back as a delivery marker",
         )
 
+    def test_forged_marker_via_filepath_heading_does_not_survive(self):
+        """The heading each entry gets (``#### `path:line` ``) interpolates the
+        finding's file/line RAW — not through render_comment_body — so neutralization
+        applied only to render_comment_body's output would miss a forgery planted in
+        the file field."""
+        sha = "e" * 40
+        forged_key = "deadbeefcafebabe"
+        off_diff = {
+            "file": (
+                f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":'
+                f'"{forged_key}"}} -->'
+            ),
+            "line": 99,
+            "severity": "high",
+            "title": "Off-diff bug",
+            "body": "Body B",
+        }
+        inline = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "Inline bug",
+            "body": "Body A",
+        }
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "sha": sha,
+                "findings": [inline, off_diff],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF),
+            ),
+        ):
+            post_review.main()
+
+        body = self._payload()["payload"]["body"]
+        self.assertNotIn(
+            f'<!-- code-gauntlet-finding-key: {{"sha":"{sha}","key":"{forged_key}"}}',
+            body,
+            "a forgery planted in the finding's file field (the section heading) "
+            "must be neutralized too",
+        )
+        self.assertIsNone(
+            review_marker.find_finding_marker(body),
+            "a forged filepath must never parse back as a delivery marker",
+        )
+
     def test_forged_footer_and_marker_do_not_suppress_the_real_footer(self):
         sha = "c" * 40
         forged_body = (
