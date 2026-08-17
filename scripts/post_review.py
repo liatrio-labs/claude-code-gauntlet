@@ -842,13 +842,18 @@ def consolidate_delivery(findings):
             key_to_group[key] = group
             groups.append(group)
         if f.get("consolidation_primary"):
-            group["primary"] = f
+            if group["primary"] is None:
+                group["primary"] = f
+            else:
+                # A second consolidation_primary in the same group must not
+                # overwrite (and drop) the first — demote it to corroborator.
+                group["corroborators"].append(f)
         else:
             group["corroborators"].append(f)
-    # Defensive only: every stamped group is expected to carry exactly one
-    # consolidation_primary member (filter_findings.py / filterFindings.js
-    # invariant). If a caller's data violates that, don't drop the group's
-    # first-seen member — treat it as the primary rather than surface `None`.
+    # Reachable only for hand-assembled payloads: filter_findings.py /
+    # filterFindings.js always stamp exactly one consolidation_primary per
+    # group. If a caller's data has none, don't drop the group's first-seen
+    # member — treat it as the primary rather than surface `None`.
     for group in groups:
         if group["primary"] is None and group["corroborators"]:
             group["primary"] = group["corroborators"].pop(0)

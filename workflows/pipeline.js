@@ -4896,14 +4896,17 @@ function consolidateForReport(findings) {
       keyToGroup.set(key, group);
       groups.push(group);
     }
-    if (f.consolidation_primary) group.primary = f;
-    else group.corroborators.push(f);
+    if (f.consolidation_primary) {
+      if (!group.primary) group.primary = f;
+      // A second consolidation_primary in the same group must not overwrite
+      // (and drop) the first — demote it to corroborator.
+      else group.corroborators.push(f);
+    } else group.corroborators.push(f);
   }
   return groups.map((group) => {
-    // Defensive only: a stamped group is expected to carry exactly one
-    // consolidation_primary member (the filterFindings.js invariant); if a
-    // caller's data violates that, fall back to the first-seen member rather
-    // than surfacing `null`.
+    // Reachable only for hand-assembled payloads: filterFindings.js always
+    // stamps exactly one consolidation_primary per group. If a caller's data
+    // has none, fall back to the first-seen member rather than surfacing `null`.
     const primary = group.primary || group.corroborators.shift();
     if (!group.corroborators.length) return primary;
     return {

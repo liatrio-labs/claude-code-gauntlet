@@ -2715,6 +2715,17 @@ class TestConsolidateDelivery(unittest.TestCase):
         groups = consolidate_delivery([a, b])
         self.assertEqual(len(groups), 2)
 
+    def test_second_primary_in_a_group_is_demoted_not_dropped(self):
+        p1 = {"title": "A", "consolidation_key": "k", "consolidation_primary": True}
+        c1 = {"title": "B", "consolidation_key": "k", "consolidation_primary": False}
+        p2 = {"title": "C", "consolidation_key": "k", "consolidation_primary": True}
+        groups = consolidate_delivery([p1, c1, p2])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["primary"], p1)
+        self.assertEqual(groups[0]["corroborators"], [c1, p2])
+        all_findings = [groups[0]["primary"]] + groups[0]["corroborators"]
+        self.assertEqual(len(all_findings), 3)
+
 
 class TestRenderGroupBody(unittest.TestCase):
     def test_no_corroborators_is_byte_identical_to_render_comment_body(self):

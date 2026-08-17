@@ -287,6 +287,25 @@ test('reportStage: a consolidation group folds the non-primary member into `corr
   assert.deepEqual(renderedUnrelated, unrelated, 'an unstamped finding passes through byte-identical');
 });
 
+test('reportStage: a second consolidation_primary in a group is demoted to a corroborator, not dropped', async () => {
+  let capturedPrompt = null;
+  const ctx = {
+    agent: async (prompt) => { capturedPrompt = prompt; return { report: '# r' }; },
+    parallel: async () => [],
+  };
+  const p1 = makeFinding('P1', { dimension: 'bug', severity: 'high', consolidation_key: 'f.js:0', consolidation_primary: true });
+  const c1 = makeFinding('C1', { dimension: 'security', severity: 'medium', agent: 'security-reviewer', confidence: 70, consolidation_key: 'f.js:0', consolidation_primary: false });
+  const p2 = makeFinding('P2', { dimension: 'test', severity: 'low', agent: 'test-analyzer', confidence: 60, consolidation_key: 'f.js:0', consolidation_primary: true });
+  const findings = [p1, c1, p2];
+  await reportStage(ctx, { findings, unverified: [], stats: {}, dimensions: { dispatched: AGENTS, degraded: [] } });
+
+  const body = resultsBody(capturedPrompt);
+  assert.equal(body.findings.length, 1, 'all three findings fold into one group, not two');
+  const renderedPrimary = body.findings[0];
+  assert.equal(renderedPrimary.id, 'P1', 'the first-seen primary wins the anchor');
+  assert.deepEqual(renderedPrimary.corroborations.map((c) => c.title), [c1.title, p2.title], 'both the corroborator and the demoted second primary are present');
+});
+
 test('reportStage: the dimensions table counts RAW findings, unaffected by report-list consolidation', async () => {
   let capturedPrompt = null;
   const ctx = {
