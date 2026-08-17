@@ -467,6 +467,33 @@ export async function discover(ctx, input) {
     }
   });
 
+  // Issue #204: bound an implausible discovery-agent line_end at intake, before anything
+  // reaches mergeStage. A 2026-08-17 live run had an agent emit line_start=68,
+  // line_end=940 (an ~872-line span crossing hunks) — post_review.py's delivery-side fix
+  // (PR #200) now falls back to a single-line comment rather than 422ing the whole
+  // review, but the emission-side bound belongs HERE too: a span this implausible is
+  // agent noise, not a real multi-line finding, and letting it through just makes every
+  // downstream stage (and the delivery fallback) carry dead weight. DROP `line_end`
+  // rather than clamp it — a clamped value is a fabricated line number nobody reported;
+  // the finding survives, anchored at its (still-valid) line_start, same as a finding
+  // that never had an end line. maxLineSpan is a caller-tunable limit (LIMIT_DEFAULTS),
+  // not a hardcoded literal, so a codebase with legitimately large multi-line findings
+  // can raise it.
+  const maxLineSpan = effectiveMaxLineSpan(limits);
+  let droppedLineSpans = 0;
+  for (const f of findings) {
+    const lineEnd = f.line_end;
+    if (lineEnd === undefined || lineEnd === null) continue;
+    const span = lineEnd - f.line_start;
+    if (!Number.isInteger(lineEnd) || span < 0 || span > maxLineSpan) {
+      delete f.line_end;
+      droppedLineSpans += 1;
+    }
+  }
+  if (droppedLineSpans > 0) {
+    gaps.push(`discover: ${droppedLineSpans} finding(s) had an implausible line_end (non-integer, before line_start, or spanning more than maxLineSpan=${maxLineSpan} lines) — line_end dropped, finding kept anchored at line_start`);
+  }
+
   // Each dimension belongs to a single agent so no overlap is possible today; the Set
   // keeps degraded deduplicated and insertion-ordered should that ever change.
   return {
@@ -1474,6 +1501,11 @@ const effectiveChallengeCap = (L, findings) =>
 const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DEFAULTS.summarizeBucketSize);
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
+
+// Issue #204: the discovery-intake line-span bound (see its call site in discover()).
+// Same accessor pattern as its siblings above — read the ONE LIMIT_DEFAULTS constant
+// rather than restating the literal here.
+const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.maxLineSpan);
 
 // worstCaseAgentCount(limits, nFiles, nFindings) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate

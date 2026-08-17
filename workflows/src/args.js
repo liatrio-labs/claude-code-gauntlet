@@ -87,7 +87,7 @@ const SCOPE_ANSWERS = ['light', 'full'];
 // the single contract for these literals; riskTable values must stay in lockstep with it.
 const RISK_LEVELS = ['low', 'medium', 'high'];
 
-// Issue #24 req 7: the ONE place the four benchmarked-default limits live. Every stage that
+// Issue #24 req 7: the ONE place the benchmarked-default limits live. Every stage that
 // used to hand-roll `Math.max(1, limits.X || <literal>)` (stages.js summarize/verify/
 // validate/challenge) and the worstCaseAgentCount/coarsenLimits helpers now read a limits
 // object normalizeArgs has already filled from this constant — the literal default exists
@@ -103,6 +103,7 @@ export const LIMIT_DEFAULTS = {
   validateBatch: 25,
   challengeCap: 40,
   verifySliceSize: 200,
+  maxLineSpan: 100,
 };
 
 // computeLightEligible(riskTable, changedLines) -> boolean (issue #24 req 5, PR3).
@@ -809,12 +810,12 @@ export function validateArgs(args) {
     }
   }
   // limits (REQUIRED — see REQUIRED above; the skill always stamps {} at worst, and
-  // normalizeArgs fills the four LIMIT_DEFAULTS keys before validateArgs ever runs on a
+  // normalizeArgs fills the LIMIT_DEFAULTS keys before validateArgs ever runs on a
   // real waist). Every OTHER key is a hard error: issue #24's motivating incident was a
   // silent typo (`verifySclieSize: 50`) that never reached the stage it was meant to size
   // and just as silently fell back to a different default — this closes that class by
   // refusing any key this waist does not know about, rather than ignoring it.
-  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap'];
+  const LIMIT_KEYS = ['summarizeBucketSize', 'validateBatch', 'challengeCap', 'verifySliceSize', 'deliveryCap', 'discoveryCap', 'maxLineSpan'];
   if (args.limits !== undefined) {
     if (args.limits === null || typeof args.limits !== 'object' || Array.isArray(args.limits)) {
       errors.push('limits must be an object when present');
@@ -822,10 +823,12 @@ export function validateArgs(args) {
       for (const k of Object.keys(args.limits)) {
         if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
       }
-      // summarizeBucketSize / validateBatch / verifySliceSize: positive safe integers — a
-      // zero or negative bucket/batch/slice size would divide the work into an infinite (or
-      // negative-length) number of dispatches.
-      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize']) {
+      // summarizeBucketSize / validateBatch / verifySliceSize / maxLineSpan: positive safe
+      // integers — a zero or negative bucket/batch/slice/span size would divide the work
+      // into an infinite (or negative-length) number of dispatches, or reject every finding
+      // with a line span (issue #204: 0 would drop every end_line, defeating the point of
+      // an opt-out-able bound).
+      for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
         const v = args.limits[k];
         if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
           errors.push(`limits.${k} must be a positive safe integer when present`);
