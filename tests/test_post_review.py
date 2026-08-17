@@ -3871,6 +3871,46 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         self.assertIn("  1 inline discussion(s) posted.", run.out)
         self.assertIn("  1 finding(s) had a malformed position", run.out)
 
+    def test_malformed_position_loss_counts_the_whole_group_not_just_the_primary(self):
+        """A consolidation group's loss counters must reflect every finding in the
+        group, not just the primary that anchors the position — posted + skipped +
+        invalid + failed + already_present must sum to the total finding count."""
+        primary = dict(
+            GL_CONTRACT_FINDINGS[0],
+            line=61.0,  # malformed -> validate_position rejects
+            consolidation_key="src/edited.py:60",
+            consolidation_primary=True,
+        )
+        corroborator_a = {
+            "file": "src/edited.py",
+            "line": 61,
+            "severity": "medium",
+            "title": "Corroborator A",
+            "body": "Body corr A",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "src/edited.py:60",
+            "consolidation_primary": False,
+        }
+        corroborator_b = {
+            "file": "src/edited.py",
+            "line": 61,
+            "severity": "low",
+            "title": "Corroborator B",
+            "body": "Body corr B",
+            "agent": "test-analyzer",
+            "dimension": "test_coverage",
+            "confidence": 60,
+            "consolidation_key": "src/edited.py:60",
+            "consolidation_primary": False,
+        }
+        run = self._run_main(
+            dry_run=True, findings=[primary, corroborator_a, corroborator_b]
+        )
+        self.assertEqual(run.exit_code, 1)
+        self.assertIn("  3 finding(s) had a malformed position", run.out)
+
     def test_live_all_malformed_exits_one_with_nothing_posted(self):
         findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]
         run = self._run_main(findings=findings)

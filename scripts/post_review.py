@@ -1316,12 +1316,16 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         corroborators = group["corroborators"]
         line = f["line"]
 
+        group_size = 1 + len(corroborators)
+
         comment_body = render_group_body(f, corroborators)
         key = finding_key(filepath, line, f.get("title", ""), comment_body)
         if key in delivered_keys:
             # An earlier run already delivered this exact discussion for this sha.
             # Reposting it is the duplication issue #132 reports, not a failure.
-            already_present += 1
+            # The whole group rides one discussion, so all of its findings —
+            # primary and corroborators alike — count toward the total.
+            already_present += group_size
             continue
 
         position = {
@@ -1363,7 +1367,9 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— malformed GitLab position: {'; '.join(problems)}."
             )
-            invalid += 1
+            # The whole group rides one discussion, so all of its findings —
+            # primary and corroborators alike — count toward the total.
+            invalid += group_size
             continue
 
         # The delivery marker goes on the LIVE wire only. The benchmark harness pins
@@ -1395,9 +1401,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— GitLab rejected the inline discussion.\n{error}"
             )
-            failed += 1
+            # The whole group rides one discussion, so all of its findings —
+            # primary and corroborators alike — count toward the total.
+            failed += group_size
             continue
-        posted += 1
+        posted += group_size
 
     if DRY_RUN:
         print(f"  {posted} inline discussion(s) captured.")
@@ -1435,7 +1443,7 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             # already placed are neither successes of this one nor part of the total,
             # and a malformed position never reached the wire to be "attempted".
             die(
-                f"all {failed} inline discussion(s) attempted this run were rejected by "
+                f"all {failed} finding(s) attempted this run were rejected by "
                 f"GitLab — nothing new was posted inline.{standing} The MR summary note "
                 f"is on the MR; rerunning retries the inline comments without "
                 f"duplicating what is already there."
