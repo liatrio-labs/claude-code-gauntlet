@@ -449,6 +449,12 @@ test('discover: a non-integer line_end is dropped', async () => {
   assert.equal(out.findings[0].line_end, undefined);
 });
 
+test('discover: line_end equal to line_start (span 0) is kept', async () => {
+  const out = await discoverOne(findingWith({ line_end: 68 })); // span 0 — explicit single-line
+  assert.equal(out.findings[0].line_end, 68);
+  assert.equal(out.gaps.length, 0);
+});
+
 test('discover: line_end exactly AT maxLineSpan is kept', async () => {
   const out = await discoverOne(findingWith({ line_end: 168 })); // span == default 100
   assert.equal(out.findings[0].line_end, 168);

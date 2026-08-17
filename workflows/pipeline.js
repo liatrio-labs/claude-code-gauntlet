@@ -2761,10 +2761,11 @@ function validateArgs(args) {
         if (!LIMIT_KEYS.includes(k)) errors.push(`unknown limits key: ${k} (expected one of ${LIMIT_KEYS.join(', ')})`);
       }
       // summarizeBucketSize / validateBatch / verifySliceSize / maxLineSpan: positive safe
-      // integers — a zero or negative bucket/batch/slice/span size would divide the work
-      // into an infinite (or negative-length) number of dispatches, or reject every finding
-      // with a line span (issue #204: 0 would drop every end_line, defeating the point of
-      // an opt-out-able bound).
+      // integers — a zero or negative bucket/batch/slice size would divide the work into an
+      // infinite (or negative-length) number of dispatches. maxLineSpan (issue #204): the
+      // effective-limit accessor's `||` fallback treats a falsy 0 as absent and silently
+      // substitutes the default, so an unvalidated 0 would be confusingly overridden rather
+      // than honored — refuse it here instead.
       for (const k of ['summarizeBucketSize', 'validateBatch', 'verifySliceSize', 'maxLineSpan']) {
         const v = args.limits[k];
         if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
