@@ -10,7 +10,7 @@ Implementation details for each delivery method in Phase 8.
 
 **Batch ALL inline comments into a single review event** — one GitHub notification instead of N separate ones. Notification fatigue causes teams to auto-dismiss AI review within ~10 days.
 
-**The inline comment set is the pipeline's, not yours.** When the user answers "Post to PR" at the Phase 8 delivery question, post the `artifactPaths.postReview` payload verbatim — `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. There is no per-finding selection pass: the choice is post or don't.
+**The inline comment set is the pipeline's, not yours.** When the user answers "Post to PR/MR" at the Phase 8 delivery question, post the `artifactPaths.postReview` payload verbatim — `selectDelivery` already applied the delivery tier, ranked the survivors, and capped them at `limits.deliveryCap`. Do not re-rank, re-filter, or re-apply the cap. There is no per-finding selection pass: the choice is post or don't.
 
 ### Comment body format
 
@@ -190,10 +190,4 @@ After creating: "Created N tasks from review findings."
 
 ## Markdown File
 
-Canonical behavior is Phase 8 **Step C** in `phase8-delivery.md`: surface the path to the already-persisted `artifactPaths.report` — no default write. A write outside `{output_dir}` happens only when the user names a destination.
-
----
-
-## Chat
-
-Print the full report in the conversation. For large reports, use collapsible sections for medium/low findings.
+Canonical behavior is the "Markdown only" branch of Phase 8 Stage 1 in `phase8-delivery.md`: surface the path to the already-persisted `artifactPaths.report` — no default write. A write outside `{output_dir}` happens only when the user names a destination.

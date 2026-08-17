@@ -26,10 +26,6 @@ ignore: []
 
 low
 
-## Model Tier
-
-optimized
-
 ## Skip
 
 Generated, vendored, or byte-exact-by-design files. Reviewing these produces findings about
@@ -74,7 +70,7 @@ obvious from the diff alone; the full engineering rules live in `AGENTS.md`.
 
 ## Ignore
 
-None recorded. Entries are appended here when findings are dismissed during delivery.
+None recorded. Entries are edited by hand to suppress a finding in future reviews.
 
 Note: entries must be a bare substring of the finding title or description. The
 `dimension:"pattern"` form shown in the spec does not match anything (issue #95).

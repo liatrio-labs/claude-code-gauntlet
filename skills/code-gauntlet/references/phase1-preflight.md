@@ -44,7 +44,6 @@ AskUserQuestion(
     multiSelect: false,
     options: [
       { label: "Proceed as local review", description: "Review the branch diff without PR integration (no PR comments)" },
-      { label: "Try a different number", description: "I'll provide the correct PR number" },
       { label: "Cancel", description: "Stop the review" }
     ]
   }]
@@ -141,7 +140,7 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
       header: "Reviewed",
       multiSelect: false,
       options: [
-        { label: "Incremental — only changes since last review", description: "Review new commits only" },
+        { label: "Incremental", description: "Review new commits only" },
         { label: "Full — review entire PR from scratch", description: "Start fresh" },
         { label: "Skip — don't review again", description: "No review needed — the working tree stays checked out on this PR; nothing is reverted" }
       ]
@@ -192,7 +191,8 @@ When nothing is found, `previously_reviewed` is `false` with `signal`/`source`/`
 | REVIEW.md presence | A **non-blocking notice**, never a question. When none is found, say so once and continue with built-in defaults. |
 
 **Resolved-config echo.** Interactive Phase 1 ends by printing the block below to stdout; Phase 2 gates on
-its presence (SKILL.md → "Entry gate"). Keep it byte-identical to SKILL.md's copy:
+its presence (SKILL.md → "Entry gate"). Keep it byte-identical to SKILL.md's copy. The values below are an
+example — substitute the resolved ones:
 
 ```text
 Resolved config:

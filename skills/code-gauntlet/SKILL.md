@@ -76,7 +76,7 @@ gh pr diff {pr_number} --name-only
 
 On success, stdout is one absolute path line — store it as `{output_dir}` / `args.outputDir`. Ignore establishment (including `.git/info/exclude` append when needed) is owned by `ensure_output_dir.py` in this call; Phase 2 does not re-run it.
 
-Store: `output_dir` (section 1); the plugin-dir confirmation (section 2 — if any directory is missing, stop, `plugin_root` was resolved wrong); the PR's `state`/`isDraft` (section 3, feeds eligibility checks 1 and 2 below); the REVIEW.md root text or `NONE` (section 4, feeds the pre-flight configuration gate's quick-check); and the changed-file list (section 5, feeds eligibility check 4 below — the same primitive the recorded run got wrong by inventing `gh pr diff --stat`, which does not exist; see `references/phase1-preflight.md` eligibility check 4 for the worked command).
+Store: `output_dir` (section 1); the plugin-dir confirmation (section 2 — if any directory is missing, stop, `plugin_root` was resolved wrong); the PR's `state`/`isDraft` (section 3, feeds eligibility checks 1 and 2 below); the REVIEW.md root text or `NONE` (section 4, feeds the Phase 1 configuration resolution and the REVIEW.md-presence notice); and the changed-file list (section 5, feeds eligibility check 4 below — the same primitive the recorded run got wrong by inventing `gh pr diff --stat`, which does not exist; see `references/phase1-preflight.md` eligibility check 4 for the worked command).
 
 **Do not resolve the head SHA yet** — it is computed after PR checkout in Phase 2 so the SHA reflects the actual PR HEAD, not whatever branch was checked out when the session started.
 
@@ -107,16 +107,14 @@ Phase 1 ends by printing a **resolved-config echo** that Phase 2 gates on.
 asks. `delivery.tier` and `limits.deliveryCap` resolve in Phase 2 from their env pins
 (`CODE_GAUNTLET_DELIVERY_TIER`, `CODE_GAUNTLET_PR_COMMENT_CAP`), falling through to the pipeline defaults
 when unset. Where the review is *delivered* is decided at the end of the run, in Phase 8, once the report
-exists — not guessed at up front. If no REVIEW.md was found (`review_md_root` is `NONE` in the Phase 1
-composite), state it once as a non-blocking notice and continue:
-
-```text
-No REVIEW.md found — reviewing with built-in defaults. Run `build-review-md` any time to configure
-thresholds, ignore patterns, and project rules.
-```
+exists — not guessed at up front. REVIEW.md presence is not settled here — the Phase 1 composite's
+`review_md_root` covers the repo root only, not the full changed-file directory set; if the root quick-check
+finds none, the Phase 2d discovery walk emits the canonical non-blocking notice
+(`references/review-md-spec.md` → Discovery).
 
 **Print the resolved-config echo.** Interactive runs end Phase 1 with this block on stdout. It is the
-Phase 2 entry gate's input — a receipt that configuration was resolved, not that a prompt was shown:
+Phase 2 entry gate's input — a receipt that configuration was resolved, not that a prompt was shown.
+The values below are an example — substitute the resolved ones:
 
 ```text
 Resolved config:
@@ -517,16 +515,16 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 2. **On `ok: false`, or `ok: true` with a partial-artifacts gap** (writer failed): the derived documents were not produced, so the resume state rides back **in the return** as `checkpoints`. Offer **resume-from-checkpoint**:
    - If `checkpoints` has a `.phases` map → re-invoke the same `Workflow` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
    - If `checkpoints` is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~1M-char return budget, so the workflow did **not** ship the findings bulk back) → there is no phase map to resume from and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`), noting the truncation in the methodology.
-   - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) via chat and report the `gaps`.
-   - **A partial-artifacts run may still carry non-null `artifactPaths.findings`/`.report`.** Those are the primaries whose bytes the assemble script content-proved against the payload the writer was handed, named in the gap text; `postReview`/`checkpoints` are always null here because nothing derived them. Read and deliver them — they are as trustworthy as on a clean run, which is the whole point of the proof. This is not a successful persist: keep the gap, and never post PR comments from a salvaged `findings.json` without the pipeline's `postReview` selection (deliver via chat, or resume/re-run to get a real delivery payload).
+   - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) markdown-only — report the path plus a short chat summary — and report the `gaps`.
+   - **A partial-artifacts run may still carry non-null `artifactPaths.findings`/`.report`.** Those are the primaries whose bytes the assemble script content-proved against the payload the writer was handed, named in the gap text; `postReview`/`checkpoints` are always null here because nothing derived them. Read and deliver them — they are as trustworthy as on a clean run, which is the whole point of the proof. This is not a successful persist: keep the gap, and never post PR comments from a salvaged `findings.json` without the pipeline's `postReview` selection (deliver markdown-only, or resume/re-run to get a real delivery payload).
    - On any mid-run workflow **crash** (a thrown `error` with no return value, a killed background task, or a lost compact return), follow `references/crash-recovery.md` — **`resumeFromRunId` first** (replays completed agents from cache at zero re-billed cost), journal-first diagnosis (`failingPhase` names the stage that threw), and only then the checkpoint paths above.
 3. **Surface `gaps`** in the methodology regardless of `ok` — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 
 > **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap; posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
 
-> Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver via chat/markdown only).
+> Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver markdown-only — report the path plus a short chat summary).
 >
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
 
 ### Deliver
 

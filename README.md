@@ -110,11 +110,11 @@ Every discovery agent sees the full diff with cross-file context rather than a s
 
 Findings are then triaged by origin as well as by content. Git blame separates issues in code you wrote from pre-existing issues your changes merely exposed; surfaced findings are downgraded and grouped separately so they do not drown out the new ones. Re-reviewing a PR after new commits offers to review only the delta since the last review.
 
-Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and on the way out delivery filters `title` and `description` for injection patterns while [`scripts/post_review.py`](scripts/post_review.py) sanitizes echoed fields and redacts known token prefixes. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, chat, a task board, or any combination, with user-controlled finding selection for task creation.
+Code under review is untrusted input throughout: trust-boundary delimiters on the way in, and on the way out delivery filters `title` and `description` for injection patterns while [`scripts/post_review.py`](scripts/post_review.py) sanitizes echoed fields and redacts known token prefixes. The platform — GitHub or GitLab — is auto-detected from the git remote, and results can go to PR/MR comments, a markdown file, or a task board, in any combination.
 
 ## Configuration: REVIEW.md
 
-Code Gauntlet offers to scaffold a `REVIEW.md` when it doesn't find one, mirroring your CLAUDE.md locations — a root file for global defaults, subdirectory files for per-area standards (say, stricter security for `src/auth/`). Thresholds override child-to-parent; rules and ignore patterns accumulate.
+Code Gauntlet tells you when it doesn't find a `REVIEW.md` — a non-blocking notice, not an offer — and you can scaffold one any time with `/build-review-md`, mirroring your CLAUDE.md locations: a root file for global defaults, subdirectory files for per-area standards (say, stricter security for `src/auth/`). Thresholds override child-to-parent; rules and ignore patterns accumulate.
 
 ````markdown
 ## Rules
@@ -127,13 +127,13 @@ ignore:
 ```
 ````
 
-Only the fenced `yaml # code-gauntlet` block above is parsed mechanically; `## Rules` and any other prose reach the review agents as advisory context but aren't otherwise interpreted. Confidence thresholds default to 55 for non-security findings and 70 for security findings — set `confidence_threshold` (and optionally `security_min_confidence`) in the config block to override them. The skill maintains the ignore list as you dismiss findings. Hierarchy rules and the full field reference: [review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md). The companion `/build-review-md` skill walks you through initial setup.
+Only the fenced `yaml # code-gauntlet` block above is parsed mechanically; `## Rules` and any other prose reach the review agents as advisory context but aren't otherwise interpreted. Confidence thresholds default to 55 for non-security findings and 70 for security findings — set `confidence_threshold` (and optionally `security_min_confidence`) in the config block to override them. You maintain the ignore list by hand — there's no auto-maintenance. Hierarchy rules and the full field reference: [review-md-spec.md](skills/code-gauntlet/references/review-md-spec.md). The companion `/build-review-md` skill walks you through initial setup.
 
 ## Architecture
 
 A review runs in eight phases. Phases 1–2 happen in your session; phases 3–8 are the internal stages of **one deterministic program** — the skill makes a single `Workflow` tool invocation and `workflows/pipeline.js` takes it from there:
 
-1. **Pre-flight** — eligibility (closed/merged, draft, trivially-scoped change), configuration gate
+1. **Pre-flight** — eligibility (closed/merged, draft, trivially-scoped change), configuration resolution
 2. **Target & triage** — platform detection, PR checkout, head-SHA resolution, prior-review gate, diff fetch, risk classification, test discovery, CLAUDE.md/REVIEW.md context, shared context file
 3. **Summarize & discover** — change summary, then the parallel discovery agents (schema-enforced structured output)
 4. **Merge & verify** — gauntlet stages 1–2

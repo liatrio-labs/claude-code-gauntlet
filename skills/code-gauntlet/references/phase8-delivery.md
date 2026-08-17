@@ -34,7 +34,8 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 1. Inspect `return.checkpoints`.
    - Has a `.phases` map → re-invoke the same `Workflow(scriptPath, args)` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
    - Is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~1M-char return budget, so the workflow withheld the findings bulk) → there is no phase map and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`) and note the truncation in the methodology.
-2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists via chat and report the `gaps`.
+2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists markdown-only —
+   report the path plus a short chat summary — and report the `gaps`.
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
 
@@ -59,9 +60,10 @@ Always use the full 40-character SHA from `git rev-parse HEAD`.
 
 ## Stage 1: Deliver the Report
 
-**Re-check eligibility** — verify the PR is still open. If closed/merged: deliver via chat/markdown only.
+**Re-check eligibility** — verify the PR is still open. If closed/merged: deliver markdown-only — report the
+path of `artifactPaths.report` plus a short chat summary, and skip posting.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged chat/markdown-only restriction does not apply — headless delivers per `CODE_GAUNTLET_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `CODE_GAUNTLET_POST_MODE`. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivers per `CODE_GAUNTLET_DELIVERY` regardless of PR state (a merged PR is still delivered via `pr_comments`, which in `dry-run` captures the payload without posting). Posting obeys `CODE_GAUNTLET_POST_MODE`. See `references/headless-mode.md`.
 
 **Question 1 of 2 — Delivery.** The report already exists on disk; the only open question is whether the
 findings also post to the PR. Ask once, after materialization, before anything is posted:
@@ -95,12 +97,17 @@ skipping the question instead of narrowing its options.
   set: the survivors chosen by `args.delivery.tier`, ranked by `selectDelivery`, capped at
   `limits.deliveryCap`. There is no per-finding walkthrough and no deselection UI — the user's choice is
   post or don't. Never re-filter by tag, re-rank, or re-apply the cap.
-- **"Markdown only"** → post nothing. Report the absolute path of `artifactPaths.report`.
+- **"Markdown only"** → post nothing and **do not write a new file**. The full report is already
+  persisted at `artifactPaths.report` (e.g. `{output_dir}/code-gauntlet-report-{head_sha_short}.md`). Tell
+  the user that absolute path in chat — that is the delivery. The only allowed write outside
+  `{output_dir}` is when the user explicitly names a destination path; then copy/write the report there.
+  Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside
+  `{output_dir}`).
 
 Either way, print a short completion summary to chat: finding counts by severity, the report path, and the
 methodology pointer. Never dump the full report into the conversation unprompted.
 
-**Step B.1. Post via post_review.py**
+**Step 2 — Post via post_review.py**
 
 **When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file
 already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) —
@@ -153,8 +160,6 @@ python3 {plugin_root}/scripts/post_review.py "{output_dir}/code-gauntlet-post-re
 
 See `references/delivery-guide.md` for the findings JSON schema and validation details.
 
-**Step C. Markdown file** — if selected, **do not write a new file**. The full report is already persisted at `artifactPaths.report` (e.g. `{output_dir}/code-gauntlet-report-{head_sha_short}.md`). Tell the user that absolute path in chat — that is the delivery. The only allowed write outside `{output_dir}` is when the user explicitly names a destination path; then copy/write the report there. Never invent a root-level `./code-gauntlet-{date}.md` (or any other default path outside `{output_dir}`).
-
 ---
 
 ## Stage 2: Task Board
@@ -186,8 +191,5 @@ who wants a subset says so in chat and you create that subset.
 Create the tasks using the task-creation flow in `references/delivery-guide.md` (metadata per
 `references/fix-task-metadata.md`). After creating: "Created N tasks from review findings."
 
-**Behavior decision recorded here:** this removes the Phase-8 write-back path that appended dismissed
-findings to REVIEW.md's `ignore:` list. That is deliberate under the zero-friction direction — the
-walkthrough that produced `dismissed_set` is gone, so the flow had no input left. The `ignore:` list
-remains fully user-editable by hand per the #94 contract (`references/review-md-spec.md` → Ignore), and
-`build-review-md` still scaffolds it.
+The `ignore:` list is user-edited by hand per the #94 contract (`references/review-md-spec.md` →
+Ignore); no Phase 8 write path exists.
