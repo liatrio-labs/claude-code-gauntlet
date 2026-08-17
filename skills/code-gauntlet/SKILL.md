@@ -482,7 +482,7 @@ The script counts the attempts, carries its own state forward, and prints the ne
 
 ## Phase 8: Report & Deliver
 
-Read the compact return, pick up the persisted artifacts, and run the delivery gates. Four stages: **generate/collect report**, **deliver report**, **offer task board**, **offer dismissed findings** — execute in order. Read `references/phase8-delivery.md` for the full flow.
+Read the compact return, pick up the persisted artifacts, and run the delivery gates. Three steps: **materialize/collect the report**, **deliver it** (question 1 of 2), **offer the task board** (question 2 of 2) — in that order. Read `references/phase8-delivery.md` for the full flow.
 
 ### Materialize the artifacts — FIRST, when the return carries `persistReturn`
 
@@ -522,7 +522,7 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
    - On any mid-run workflow **crash** (a thrown `error` with no return value, a killed background task, or a lost compact return), follow `references/crash-recovery.md` — **`resumeFromRunId` first** (replays completed agents from cache at zero re-billed cost), journal-first diagnosis (`failingPhase` names the stage that threw), and only then the checkpoint paths above.
 3. **Surface `gaps`** in the methodology regardless of `ok` — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, minimal report, partial artifacts).
 
-> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap (the interactive walkthrough is unavailable); posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped; dismissed findings (Stage 3) is unreachable and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
+> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap; posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
 
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver via chat/markdown only).
 >
@@ -530,13 +530,26 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 
 ### Deliver
 
-Deliver using the method(s) selected in Phase 1. **PR-comment selection is now the pipeline's job, not yours:** the delivery set is `artifactPaths.postReview` — the survivors the pipeline already selected per the Phase 1 delivery tier (`args.delivery.tier`: `all` by default → every survivor including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS the post_review-ready wrapper (optionally fill its `review_body`, then pass the file unchanged); only a legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha` (always set it). The interactive "Let me pick" walkthrough applies on BOTH paths: user deselections replace the wrapper's (or array's) `findings` with the chosen strict subset — deselection only. Never re-filter by tag, re-rank, or re-apply the cap yourself. Every finding in that payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag` governs **report presentation** only (suggestions render in their own "Improvement Suggestions" section) and, under `main_only`, whether the pipeline already withheld them from the payload. The interactive "Let me pick" walkthrough (a user hand-selecting from the full list), pr_comment_set tracking, task-board offer, and dismissed-findings write-back to REVIEW.md are unchanged. Read `references/phase8-delivery.md`, `references/report-format.md`, and `references/delivery-guide.md` for the templates and posting mechanics.
+Deliver per the Phase 8 delivery question (`references/phase8-delivery.md` Stage 1). **PR-comment
+selection is the pipeline's job, not yours:** the delivery set is `artifactPaths.postReview` — the
+survivors the pipeline already selected per `args.delivery.tier` (`all` by default → every survivor
+including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it
+to `post_review.py` **verbatim** — when `delivery.prIdentity` was stamped, the persisted file already IS
+the post_review-ready wrapper (optionally fill its `review_body`, then pass the file unchanged); only a
+legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha`
+(always set it). Never re-filter by tag, re-rank, or re-apply the cap yourself. Every finding in that
+payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag`
+governs **report presentation** only (suggestions render in their own "Improvement Suggestions" section)
+and, under `main_only`, whether the pipeline already withheld them from the payload. Read
+`references/phase8-delivery.md`, `references/report-format.md`, and `references/delivery-guide.md` for the
+templates and posting mechanics.
 
-> **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting. The default PR-comment set is that payload verbatim; only the interactive "Let me pick" walkthrough (Stage 1 Step B in `references/phase8-delivery.md`) lets the user deselect from it.**
+> **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting.** The
+> PR-comment set is that payload verbatim on every path — there is no selection UI to narrow it.
 >
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): post `artifactPaths.postReview` verbatim; the walkthrough is unavailable and no `AskUserQuestion` is presented.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): identical, and no `AskUserQuestion` is presented.
 
-> **MANDATORY GATE: Do not finish without completing the task board offer (Stage 2) in `references/phase8-delivery.md`.**
+> **MANDATORY GATE: Do not finish without presenting the single task-board question (Stage 2) in `references/phase8-delivery.md`.**
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped; do not present the offer.
 

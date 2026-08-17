@@ -188,7 +188,7 @@ Severity has been downgraded one level from the original classification (see the
 
 ## Improvement Suggestions
 
-{Findings from test-analyzer, conventions-and-intent comment accuracy pass, and code-simplifier. These render in this dedicated section rather than the severity-grouped totals above (the `report_tag` governs report presentation). Whether they are ALSO posted as PR comments depends on the Phase 1 delivery tier (`args.delivery.tier`): under `all` (the default) the pipeline's `selectDelivery` includes every challenge-survivor regardless of tag, so suggestions post as PR inline comments alongside main findings (subject to `limits.deliveryCap`); under `main_only` they stay in this report section and are not posted. The report always lists them either way.}
+{Findings from test-analyzer, conventions-and-intent comment accuracy pass, and code-simplifier. These render in this dedicated section rather than the severity-grouped totals above (the `report_tag` governs report presentation). Whether they are ALSO posted as PR comments depends on the delivery tier (`args.delivery.tier`, resolved from `CODE_GAUNTLET_DELIVERY_TIER`): under `all` (the default) the pipeline's `selectDelivery` includes every challenge-survivor regardless of tag, so suggestions post as PR inline comments alongside main findings (subject to `limits.deliveryCap`); under `main_only` they stay in this report section and are not posted. The report always lists them either way.}
 
 ### Test Coverage
 
