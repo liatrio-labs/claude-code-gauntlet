@@ -155,38 +155,20 @@ Never use `find` from Bash for locating these files.
 
 ### REVIEW.md Detection
 
-Complete this check before proceeding to 2e. REVIEW.md settings cascade to all thresholds, rules, and ignore patterns for the entire review.
+Complete this check before proceeding to 2e. REVIEW.md settings cascade to all thresholds, rules, and
+ignore patterns for the entire review.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): skip both REVIEW.md-setup prompts below (the "No REVIEW.md found" build-review-md suggestion and the subdirectory-REVIEW.md `AskUserQuestion`). Root config applies to all directories; never invoke `build-review-md`. REVIEW.md is read-only in headless mode — the hierarchical parse still runs, but no REVIEW.md is created. See `references/headless-mode.md`.
+Walk the repo root + changed-file directories + their ancestors (the project-rules directory set) and
+check each for a matching REVIEW.md. **Discovery never blocks and never asks** (issue #35) — report what
+you found as part of the triage announcement and continue. `references/review-md-spec.md` → Discovery is
+the canonical owner of the notice wording; do not restate it here.
 
-Walk the repo root + changed-file directories + their ancestors (the project-rules directory
-set), and check each for a matching REVIEW.md:
+Merge configs hierarchically — settings override, rules and patterns accumulate — via the raw
+`args.reviewMd` handoff described in SKILL.md, never by hand-parsing here.
 
-- **No REVIEW.md anywhere:**
-
-  ```
-  No REVIEW.md found. For a guided setup, run build-review-md first, then restart the review. Or continue without one.
-  ```
-
-- **Root exists but a walked directory has no matching REVIEW.md:**
-
-  ```
-  AskUserQuestion(
-    questions: [{
-      question: "Found REVIEW.md at repo root, but {directory} (in the walked set) has no matching REVIEW.md. A subdirectory REVIEW.md lets you set different review standards for this area. Create one?",
-      header: "Subdirectory REVIEW.md",
-      multiSelect: false,
-      options: [
-        { label: "Yes — create it", description: "Inherits root settings, adds directory-specific rules" },
-        { label: "Not now — root config applies", description: "Use root REVIEW.md settings for all directories" }
-      ]
-    }]
-  )
-  ```
-
-- **All locations covered** → proceed.
-
-See `references/review-md-spec.md` section Discovery for the full prompts and scaffolding templates. Merge configs hierarchically: settings override, rules and patterns accumulate.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): identical behavior, minus the notice — REVIEW.md is
+> read-only headless and `build-review-md` is never invoked. The hierarchical parse still runs. See
+> `references/headless-mode.md`.
 
 ---
 
@@ -386,7 +368,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 
 **`policy` (model policy the workflow runs under):**
 
-- `tier` — always `"optimized"`, the single benchmarked policy (recorded from the `model_tier` knob). A REVIEW.md `Model Tier` value other than `optimized` self-heals to `optimized` with a loud methodology warning (never a question, never an abort); the env knob `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. See Phase 1 for the exact resolution split. Alternate model modes are roadmap work (issue #17).
+- `tier` — always `"optimized"`, the single benchmarked policy. Not read from REVIEW.md in either mode (issue #153); the env knob `CODE_GAUNTLET_MODEL_TIER` keeps its fail-loud contract unchanged. Alternate model modes are roadmap work (issue #17).
 - `subagentModel` — read `CLAUDE_CODE_SUBAGENT_MODEL` from the environment (or `null`). **The workflow cannot read `process.env`**, so this capture is the only path for it. If set, warn the user and record it in the methodology — it silently overrides the entire per-stage model policy.
 - `provider` — which API provider the session runs on, resolved from the environment (first match wins; a flag counts only when truthy per Claude Code's own parsing — `1`/`true`/`yes`/`on`, case-insensitive): `CLAUDE_CODE_USE_BEDROCK` → `"bedrock"`, `CLAUDE_CODE_USE_VERTEX` → `"vertex"`, `CLAUDE_CODE_USE_FOUNDRY` → `"foundry"`, else `"firstParty"`. `ANTHROPIC_BASE_URL` does not change the provider — an LLM gateway proxies the Anthropic API and expects standard Claude model names, so gateway sessions keep the first-party pin. Same capture-only path as `subagentModel`. On `firstParty` the workflow pins full first-party model IDs; on any other value it dispatches bare aliases (`sonnet`/`opus`) because third-party providers use deployment-specific model IDs and pass first-party names through unchecked, failing every agent dispatch as an invalid model identifier. Any other spelling is rejected at the waist (`invalid policy.provider`).
 
