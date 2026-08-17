@@ -145,7 +145,10 @@ class TestQuestionSurface(unittest.TestCase):
         self.assertEqual(len(blocks), 1)
         segs = question_segments(blocks[0])
         self.assertEqual(len(segs), 1)
-        self.assertEqual(_HEADER.search(segs[0]).group(1), "Head")
+        header_match = _HEADER.search(segs[0])
+        self.assertIsNotNone(header_match)
+        assert header_match is not None  # narrows for static analysis (pyright)
+        self.assertEqual(header_match.group(1), "Head")
         self.assertEqual(_OPTION.findall(segs[0]), [("A", "first"), ("B", "second")])
 
     def test_site_count_is_pinned(self):
