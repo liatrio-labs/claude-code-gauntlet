@@ -164,20 +164,23 @@ class TestQuestionSurface(unittest.TestCase):
         offenders = {}
         for s in sites():
             key = f"{s['path']}:{s['header']}"
+            msgs = offenders.setdefault(key, [])
             if not s["question"]:
-                offenders[key] = "no question string"
+                msgs.append("no question string")
             if not s["header"]:
-                offenders[key] = "no header"
+                msgs.append("no header")
             elif len(s["header"]) > MAX_HEADER_CHARS:
-                offenders[key] = f"header {len(s['header'])} chars > {MAX_HEADER_CHARS}"
+                msgs.append(f"header {len(s['header'])} chars > {MAX_HEADER_CHARS}")
             if s["multiSelect"] is None:
-                offenders[key + " multiSelect"] = "not stated explicitly"
+                msgs.append("multiSelect not stated explicitly")
             n = len(s["options"])
             if not MIN_OPTIONS <= n <= MAX_OPTIONS:
-                offenders[key + " options"] = f"{n} options"
+                msgs.append(f"{n} options")
             for label, description in s["options"]:
                 if not label.strip() or not description.strip():
-                    offenders[key + " option"] = "empty label or description"
+                    msgs.append("empty label or description")
+            if not msgs:
+                del offenders[key]
         self.assertEqual(offenders, {}, f"schema failures: {offenders}")
 
     def test_no_two_sites_share_a_question_string(self):

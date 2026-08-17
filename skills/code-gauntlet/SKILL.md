@@ -528,7 +528,10 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 
 ### Deliver
 
-Deliver per the Phase 8 delivery question (`references/phase8-delivery.md` Stage 1). **PR-comment
+Deliver per the Phase 8 delivery question (`references/phase8-delivery.md` Stage 1). **Posting is gated on
+that answer:** run `post_review.py` only when the user chose "Post to PR/MR" (headless: only when
+`CODE_GAUNTLET_DELIVERY` includes `pr_comments`); a "Markdown only" answer posts nothing — report the
+saved report's path and move to Stage 2. **PR-comment
 selection is the pipeline's job, not yours:** the delivery set is `artifactPaths.postReview` — the
 survivors the pipeline already selected per `args.delivery.tier` (`all` by default → every survivor
 including suggestions; `main_only` → main-tagged only), ranked and capped at `limits.deliveryCap`. Feed it

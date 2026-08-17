@@ -107,7 +107,10 @@ skipping the question instead of narrowing its options.
 Either way, print a short completion summary to chat: finding counts by severity, the report path, and the
 methodology pointer. Never dump the full report into the conversation unprompted.
 
-**Step 2 — Post via post_review.py**
+**Post via post_review.py — only on a "Post to PR/MR" answer.** A "Markdown only" answer ends Stage 1 at
+the completion summary above: skip this whole posting step, run nothing, and go straight to Stage 2. (A
+headless run reaches this step only when `CODE_GAUNTLET_DELIVERY` includes `pr_comments`, and its posting
+obeys `CODE_GAUNTLET_POST_MODE`.)
 
 **When `delivery.prIdentity` was set in the args waist, the persisted `artifactPaths.postReview` file
 already IS the post_review-ready wrapper** (`{ owner, repo, pr_number, sha, review_body, findings }`) —
