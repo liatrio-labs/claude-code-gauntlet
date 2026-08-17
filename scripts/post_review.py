@@ -66,8 +66,12 @@ GitLab path:
     only when nothing NEW was posted inline.
 
 Line validation:
-    Parses diff to validate each finding line is in the diff.
-    Skips findings with invalid lines with a warning.
+    Parses diff to validate each finding line is in the diff. A finding whose line
+    cannot be anchored inline (line not in the diff, or no line at all) is not
+    dropped: it degrades into a trailing "could not be anchored inline" section on
+    the review body / summary note (see build_skipped_section), so every finding
+    still reaches the PR/MR even when it cannot land as an inline comment. A
+    warning is still emitted per skipped finding.
 
 No external Python dependencies — stdlib only.
 """
@@ -797,33 +801,55 @@ def render_comment_body(finding):
     return "\n".join(parts)
 
 
-def build_skipped_section(skipped, inline_count):
+def build_skipped_section(skipped, inline_count=None):
     """Render the trailing section for findings that could not be anchored inline.
 
     *skipped* is a list of ``(filepath, line, finding)`` tuples — the finding plus the
     ``filepath``/``line`` it was to be anchored at (``line`` is ``None`` for a finding
-    that carried no line at all). *inline_count* is how many comments landed (GitHub)
-    or were queued to be posted (GitLab, where the note precedes the inline loop) —
-    the section states both counts so the body's stated total matches actual delivery.
-    Reuses :func:`render_comment_body` so severity emoji / sanitize / redact treatment
-    is identical to an inline comment — this must stay the ONLY rendering path outbound
-    prose goes through. Returns ``""`` for an empty list (issue #192).
+    that carried no line at all). *inline_count*, when given, is how many comments
+    landed — GitHub passes ``len(comments)`` because its one POST is atomic, so the
+    number is exact by the time this runs. GitLab passes nothing: its summary note
+    posts BEFORE the per-finding loop, so how many will actually land (some may still
+    fail, dedupe, or turn out malformed) is not yet known, and claiming a number here
+    would be a promise the loop below has not kept yet. Returns ``""`` for an empty
+    *skipped* list (issue #192).
+
+    Every finding's title/body reaches the wire RAW (only ``suggestion`` /
+    ``claude_md_rule`` / ``spec_text`` go through ``_sanitize_outbound_prose``), so a
+    finding can carry ``<!-- code-gauntlet-finding-key: ... -->`` verbatim in its own
+    text. Unlike an inline discussion body — where the mechanical marker is APPENDED
+    after the comment and so always shadows a forged one (see review_marker.py) —
+    nothing mechanical follows a finding's rendered text here, so a forged marker
+    would parse as a real, currently-undelivered "already posted" signal on the next
+    run. Every ``<!--`` in the rendered text is neutralized to ``&lt;!--`` so it can
+    never open a parseable HTML comment.
     """
     if not skipped:
         return ""
     n = len(skipped)
+    if inline_count is None:
+        intro = (
+            f"The following {n} finding(s) reference lines outside this diff and are "
+            "included here instead of as inline comments:"
+        )
+    else:
+        intro = (
+            f"{inline_count} inline comment(s) were posted; the following {n} "
+            "finding(s) reference lines outside this diff and are included here "
+            "instead:"
+        )
     lines = [
         "",
         "---",
         "",
         f"### ⚠️ {n} finding(s) could not be anchored inline",
         "",
-        f"{inline_count} inline comment(s) were posted; the following {n} finding(s) "
-        "reference lines outside this diff and are included here instead:",
+        intro,
     ]
     for filepath, line, finding in skipped:
-        location = f"{filepath}:{line}" if line is not None else str(filepath)
-        lines += ["", f"#### `{location}`", "", render_comment_body(finding)]
+        location = f"{filepath}:{line}" if line is not None else str(filepath or "?")
+        rendered = render_comment_body(finding).replace("<!--", "&lt;!--")
+        lines += ["", f"#### `{location}`", "", rendered]
     return "\n".join(lines)
 
 
@@ -925,14 +951,19 @@ def post_github(data, valid_lines):
         comments.append(comment)
 
     # The partition (comments vs skipped) is complete above — compose the section
-    # BEFORE the footer, which must stay last (it is the machine-parsed marker).
+    # BEFORE the footer, which must stay last (it is the machine-parsed marker). The
+    # footer is computed against the ORIGINAL body, not the body plus the section: a
+    # skipped finding's raw title/body can plant text that looks like the mechanical
+    # prose footer or the summary marker (only suggestion/claude_md_rule/spec_text are
+    # sanitized), and build_footer's own-signal dedup would read that forgery as
+    # already-present and omit the real one.
     skipped_section = build_skipped_section(
         [(f["file"], f["line"], f) for f in skipped], len(comments)
     )
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    review_body += skipped_section
-    review_body += build_footer(len(findings), sha, body=review_body)
+    footer = build_footer(len(findings), sha, body=review_body)
+    review_body += skipped_section + footer
 
     payload = {
         "body": review_body,
@@ -1097,8 +1128,10 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
 
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
-    review_body += build_skipped_section(skipped_entries, len(remaining))
-    review_body += build_footer(len(findings), sha, body=review_body)
+    # Footer computed against the ORIGINAL body — see the matching comment in
+    # post_github for why a skipped finding's raw text must not be able to suppress it.
+    footer = build_footer(len(findings), sha, body=review_body)
+    review_body += build_skipped_section(skipped_entries) + footer
 
     # Post the review summary as a top-level MR note first
     summary_payload = {"body": review_body}

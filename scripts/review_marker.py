@@ -55,6 +55,17 @@ body reach the wire RAW (only ``suggestion``/``claude_md_rule``/``spec_text``
 are sanitized), so a marker spelled inside a finding's own text is hostile input
 that must never be collected as a delivery record.
 
+The shadowing this relies on ("the mechanical marker is APPENDED, so it always
+wins last-wins parsing over anything a forged one said earlier") holds for a
+posted inline discussion, where nothing but the marker follows the rendered
+finding. It does NOT hold inside ``post_review.py``'s degraded-findings section
+(``build_skipped_section``, issue #192): a skipped finding's rendered text sits
+inside the review body / GitLab summary note, and nothing mechanical is
+guaranteed to follow it there before the NEXT finding's text or the end of the
+body. That section instead neutralizes every ``<!--`` in a finding's rendered
+text to ``&lt;!--`` before insertion, so no finding-key (or summary-marker)
+syntax can ever open a real HTML comment from inside it.
+
 No external Python dependencies — stdlib only.
 """
 
