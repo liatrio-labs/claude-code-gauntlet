@@ -261,3 +261,61 @@ test('reportStage: when parallel() null-isolates segment 0, the outer minimal-re
   assert.match(parts[1], /## Review Dimensions Summary/, 'segment 1 (index 0, null-isolated) falls back to the minimal report and carries the table');
   assert.ok(!/## Review Dimensions Summary/.test(parts[2]), 'segment 2 (index 1) must not carry the table');
 });
+
+// --- reportStage delivery consolidation (#22 D2) ---------------------------
+
+test('reportStage: a consolidation group folds the non-primary member into `corroborations` on the primary; findings without a key pass through unchanged', async () => {
+  let capturedPrompt = null;
+  const ctx = {
+    agent: async (prompt) => { capturedPrompt = prompt; return { report: '# r' }; },
+    parallel: async () => [],
+  };
+  const primary = makeFinding('P', { dimension: 'bug', severity: 'high', consolidation_key: 'f.js:0', consolidation_primary: true });
+  const corroborator = makeFinding('C', { dimension: 'security', severity: 'medium', agent: 'security-reviewer', confidence: 70, consolidation_key: 'f.js:0', consolidation_primary: false });
+  const unrelated = makeFinding('U', { dimension: 'bug', severity: 'low' });
+  const findings = [primary, corroborator, unrelated];
+  await reportStage(ctx, { findings, unverified: [], stats: {}, dimensions: { dispatched: AGENTS, degraded: [] } });
+
+  const body = resultsBody(capturedPrompt);
+  assert.equal(body.findings.length, 2, 'the corroborator is folded in, not listed as a separate finding');
+  const renderedPrimary = body.findings.find((f) => f.id === 'P');
+  assert.ok(renderedPrimary, 'the primary is present');
+  assert.deepEqual(renderedPrimary.corroborations, [
+    { agent: 'security-reviewer', dimension: 'security', confidence: 70, title: corroborator.title, description: corroborator.description },
+  ]);
+  const renderedUnrelated = body.findings.find((f) => f.id === 'U');
+  assert.deepEqual(renderedUnrelated, unrelated, 'an unstamped finding passes through byte-identical');
+});
+
+test('reportStage: the dimensions table counts RAW findings, unaffected by report-list consolidation', async () => {
+  let capturedPrompt = null;
+  const ctx = {
+    agent: async (prompt) => { capturedPrompt = prompt; return { report: '# r' }; },
+    parallel: async () => [],
+  };
+  const primary = makeFinding('P', { dimension: 'bug', severity: 'high', consolidation_key: 'f.js:0', consolidation_primary: true });
+  const corroborator = makeFinding('C', { dimension: 'security', severity: 'medium', consolidation_key: 'f.js:0', consolidation_primary: false });
+  const findings = [primary, corroborator];
+  const dims = { dispatched: AGENTS, degraded: [] };
+  await reportStage(ctx, { findings, unverified: [], stats: {}, dimensions: dims });
+
+  const expectedTable = dimensionsSummaryTable({ ...dims, findings, unverified: [] });
+  const body = resultsBody(capturedPrompt);
+  assert.equal(body.dimensionsTable, expectedTable, 'the table must still count both findings by their own dimension, not the post-grouping list of 1');
+});
+
+test('reportStage: a writer throw degrades to the minimal report, which renders the corroboration nested under its primary', async () => {
+  const ctx = {
+    agent: async () => { throw new Error('boom'); },
+    parallel: async () => [],
+  };
+  const primary = makeFinding('P', { dimension: 'bug', severity: 'high', consolidation_key: 'f.js:0', consolidation_primary: true });
+  const corroborator = makeFinding('C', { dimension: 'security', severity: 'medium', agent: 'security-reviewer', confidence: 70, consolidation_key: 'f.js:0', consolidation_primary: false });
+  const out = await reportStage(ctx, { findings: [primary, corroborator], unverified: [], stats: {}, dimensions: { dispatched: AGENTS, degraded: [] } });
+
+  const lines = out.report.split('\n');
+  const primaryIdx = lines.findIndex((l) => l.includes(primary.title));
+  assert.ok(primaryIdx >= 0, 'the primary is rendered as a top-level bullet');
+  assert.match(lines[primaryIdx + 1], /Corroborating: security-reviewer \(security, confidence 70\)/);
+  assert.ok(!out.report.includes(`- [MEDIUM] ${corroborator.title}`), 'the corroborator is not rendered as its own top-level bullet');
+});

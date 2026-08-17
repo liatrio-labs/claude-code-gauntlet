@@ -4872,6 +4872,53 @@ function dimensionsSummaryTable(input) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 
+// Groups findings by `consolidation_key` before they reach the report writer
+// (or the minimalReport fallback) — #22 D2, same grouping rule
+// `consolidate_delivery` applies to the posted comment payload, applied here to
+// the report's findings list instead: non-primary group members are folded
+// into the primary's `corroborations` array rather than listed as separate
+// top-level findings. A finding with no (falsy) `consolidation_key` passes
+// through unchanged — older artifacts / pre-consolidation findings render
+// exactly as before.
+function consolidateForReport(findings) {
+  const list = findings || [];
+  const groups = [];
+  const keyToGroup = new Map();
+  for (const f of list) {
+    const key = f && f.consolidation_key;
+    if (!key) {
+      groups.push({ primary: f, corroborators: [] });
+      continue;
+    }
+    let group = keyToGroup.get(key);
+    if (!group) {
+      group = { primary: null, corroborators: [] };
+      keyToGroup.set(key, group);
+      groups.push(group);
+    }
+    if (f.consolidation_primary) group.primary = f;
+    else group.corroborators.push(f);
+  }
+  return groups.map((group) => {
+    // Defensive only: a stamped group is expected to carry exactly one
+    // consolidation_primary member (the filterFindings.js invariant); if a
+    // caller's data violates that, fall back to the first-seen member rather
+    // than surfacing `null`.
+    const primary = group.primary || group.corroborators.shift();
+    if (!group.corroborators.length) return primary;
+    return {
+      ...primary,
+      corroborations: group.corroborators.map((c) => ({
+        agent: c.agent,
+        dimension: c.dimension,
+        confidence: c.confidence,
+        title: c.title,
+        description: c.description,
+      })),
+    };
+  });
+}
+
 // reportStage(ctx, input) -> { report, gaps }
 // Dispatches the report-writer agent to render the review markdown from the
 // high-confidence + unverified buckets (carried BY VALUE in the prompt — the
@@ -4896,12 +4943,16 @@ async function reportStage(ctx, input) {
   const policy = inp.policy || {};
   const model = modelFor('code-gauntlet:report-writer', policy);
 
-  const findings = inp.findings || [];
-  // Computed once over the WHOLE run (not per-chunk) so the table's counts are never
-  // scoped to one segment's slice of findings; threaded to segment 0 only (below).
+  const rawFindings = inp.findings || [];
+  // Computed once over the WHOLE run (not per-chunk), and over the RAW (pre-
+  // consolidation) findings so per-dimension counts are unaffected by grouping —
+  // threaded to segment 0 only (below).
   const dimensionsTable = dimensionsSummaryTable({
-    ...(inp.dimensions || {}), findings, unverified: inp.unverified || [],
+    ...(inp.dimensions || {}), findings: rawFindings, unverified: inp.unverified || [],
   });
+  // Grouped for the rendered findings list itself (#22 D2) — see
+  // consolidateForReport. Findings without a consolidation_key are unaffected.
+  const findings = consolidateForReport(rawFindings);
   const oversized = JSON.stringify(findings).length > PROMPT_SEGMENT_CHAR_BUDGET;
   if (!oversized) {
     return dispatchReportSegment(c, model, inp, findings, null, dimensionsTable);
@@ -5016,6 +5067,14 @@ function minimalReport(inp) {
     lines.push('', '## Findings');
     for (const f of findings) {
       lines.push(`- [${(f.severity || 'unknown').toUpperCase()}] ${f.title || f.id || 'finding'} (${f.file || '?'}:${f.line_start != null ? f.line_start : '?'})`);
+      // Non-primary consolidation-group members (#22 D2) — folded in by
+      // consolidateForReport as `corroborations` rather than listed as
+      // separate top-level findings.
+      if (Array.isArray(f.corroborations)) {
+        for (const c of f.corroborations) {
+          lines.push(`  - Corroborating: ${c.agent || 'unknown'} (${c.dimension || 'unknown'}, confidence ${c.confidence != null ? c.confidence : '?'}) — ${c.title || 'finding'}`);
+        }
+      }
     }
   }
   // Present only when the caller scoped it in (segment 0 / unsegmented dispatch — see
