@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.11.2 (2026-08-17)
+
+### Bug Fixes
+
+- **skills**: Pin the Workflow availability check to passive self-inspection
+  ([#202](https://github.com/liatrio-labs/claude-code-gauntlet/pull/202),
+  [`72239e3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72239e332ea88163f8d55d0221e4e3aa5e1fd9ac))
+
+- **skills**: Pin Workflow availability check to passive self-inspection (#201)
+  ([#202](https://github.com/liatrio-labs/claude-code-gauntlet/pull/202),
+  [`72239e3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72239e332ea88163f8d55d0221e4e3aa5e1fd9ac))
+
+### Refactoring
+
+- **skills**: Drop incident citations from the Workflow check — rule only
+  ([#202](https://github.com/liatrio-labs/claude-code-gauntlet/pull/202),
+  [`72239e3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/72239e332ea88163f8d55d0221e4e3aa5e1fd9ac))
+
+
 ## v3.11.1 (2026-08-17)
 
 ### Bug Fixes
