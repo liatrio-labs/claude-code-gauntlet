@@ -4,7 +4,7 @@ apply_challenges.py — Phase 7→8 bridge for code-gauntlet.
 
 Reads Phase 6 output (filter_findings.py) from disk, applies blind-challenge
 scores to each finding, re-routes and culls according to the challenge
-thresholds, re-runs cross-agent dedup, ranks the final set, then
+thresholds, re-runs cross-agent consolidation, ranks the final set, then
 writes delivery-ready JSON to disk.
 
 Usage:
@@ -39,8 +39,9 @@ score >= 75  survive     finding kept as-is.
 Surfaced findings (origin="surfaced") with score < 50 are additionally
 re-routed to suggestion regardless of their existing report_destination.
 
-Cross-agent dedup is re-run after challenge processing by calling
-dedup_cross_agent, imported from filter_findings.py.
+Cross-agent consolidation is re-run after challenge processing by calling
+consolidate_cross_agent, imported from filter_findings.py. Nothing is
+dropped by this step (#22 D1) — it only re-stamps the surviving active set.
 
 Output JSON:
     {
@@ -54,7 +55,7 @@ Output JSON:
             "challenge_contested":  N,  # score 50-74, flagged but kept
             "challenge_survived":   N,  # score >= 75, fully passed
             "unchallenged":         N,  # findings with no challenge score
-            "dedup_dropped":        N,  # dropped by cross-agent dedup
+            "cross_agent_consolidated": N,  # stamped (never dropped) by cross-agent consolidation
             "final_count":          N   # len(findings)
         },
         "generated_at": "..."
@@ -70,9 +71,9 @@ import os
 import sys
 from datetime import datetime, timezone
 
-# Import shared dedup utility from filter_findings (stdlib only, same package)
+# Import shared consolidation utility from filter_findings (stdlib only, same package)
 sys.path.insert(0, os.path.dirname(__file__))
-from filter_findings import dedup_cross_agent
+from filter_findings import consolidate_cross_agent
 from script_io import write_result
 
 # ---------------------------------------------------------------------------
@@ -110,18 +111,25 @@ def _downgrade_severity(severity):
 
 def _rank_key(finding):
     """
-    Sort key for ranking findings by severity, confidence, and description length.
+    Sort key for ranking findings by severity, verification status,
+    confidence, and description length.
 
-    Primary:   severity (critical first, low last)
-    Secondary: confidence (higher first)
-    Tertiary:  risk_level when present (higher first), else description length
-               (longer first — proxy for information density)
+    Primary:    severity (critical first, low last)
+    Secondary:  degraded (origin == "unknown") — verified findings outrank
+                degraded ones within the same severity tier (#22 D3b). On a
+                UNIFORM-origin run (every finding verified, or every finding
+                degraded) this component is constant, so ranking order is
+                unchanged from before this extension.
+    Tertiary:   confidence (higher first)
+    Quaternary: risk_level when present (higher first), else description
+                length (longer first — proxy for information density)
     """
     sev = finding.get("severity", "low").lower()
     try:
         sev_idx = SEVERITY_ORDER.index(sev)
     except ValueError:
         sev_idx = len(SEVERITY_ORDER)
+    degraded = 1 if finding.get("origin") == "unknown" else 0
     conf = finding.get("confidence", 0)
     risk_level = finding.get("risk_level")
     if risk_level is not None:
@@ -133,7 +141,7 @@ def _rank_key(finding):
         tertiary = -len(finding.get("description", ""))
     # Lower sev_idx is better; negate conf and tertiary so sorted() (ascending)
     # produces the desired order.
-    return (sev_idx, -conf, tertiary)
+    return (sev_idx, degraded, -conf, tertiary)
 
 
 # ---------------------------------------------------------------------------
@@ -456,12 +464,12 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # Cross-agent dedup (re-run after challenge processing)
+    # Cross-agent consolidation (re-run after challenge processing).
+    # Nothing is dropped here (#22 D1); it re-stamps the surviving active
+    # set now that challenge scoring may have changed which findings are
+    # co-located and eligible.
     # ------------------------------------------------------------------
-    active, dedup_dropped = dedup_cross_agent(active)
-    dedup_elim = list(
-        dedup_dropped
-    )  # dedup already sets eliminated_by="dedup:cross-agent"
+    active, cross_agent_consolidated = consolidate_cross_agent(active)
 
     # ------------------------------------------------------------------
     # Rank
@@ -471,7 +479,7 @@ def main():
     # ------------------------------------------------------------------
     # Compose output
     # ------------------------------------------------------------------
-    all_eliminated = list(prior_eliminated) + challenge_eliminated + dedup_elim
+    all_eliminated = list(prior_eliminated) + challenge_eliminated
 
     stats = {
         "total_input": total_input,
@@ -480,7 +488,7 @@ def main():
         "challenge_contested": challenge_stats["challenge_contested"],
         "challenge_survived": challenge_stats["challenge_survived"],
         "unchallenged": challenge_stats["unchallenged"],
-        "dedup_dropped": len(dedup_elim),
+        "cross_agent_consolidated": cross_agent_consolidated,
         "final_count": len(active),
     }
 

@@ -41,8 +41,7 @@ Output JSON schema:
             "consensus_boosted":       N,   # confidence boosted for co-location (same file + 10-line bucket, any agent)
             "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
             "dimension_routed":        N,   # findings routed to suggestion by dimension (BF-15a)
-            "cross_agent_deduped":      N,   # cross-agent duplicates dropped (winner by priority)
-            "test_analyzer_deduped":   N,   # backward-compatible alias for cross_agent_deduped
+            "cross_agent_consolidated": N,   # cross-agent findings stamped (never dropped) with consolidation_key
             "test_analyzer_promoted":  N,   # test-analyzer findings promoted to main report
             "tagged_main":             N,   # tagged for main report
             "tagged_suggestion":       N    # tagged as improvement suggestions
@@ -766,13 +765,21 @@ def detect_disagreement(findings):
     active = [f for f in findings if f.get("id", id(f)) not in suppressed_ids]
 
     # -----------------------------------------------------------------------
-    # Phase 3: Consensus grouping (file + line_bucket)
+    # Phase 3: Consensus grouping (file + line_bucket + degraded)
     # -----------------------------------------------------------------------
+    # `degraded` (origin == "unknown") is folded into the grouping key so a
+    # degraded (verify-echo-unavailable) finding only corroborates other
+    # degraded findings, and a verified finding only corroborates other
+    # verified findings -- never across (#73 D3a). On a UNIFORM-origin run
+    # (all-verified or all-degraded), `degraded` is constant across every
+    # finding, so it changes no group membership and the boosted output is
+    # byte-identical to before this extension (#73 req 2 regression pin).
     consensus_groups = {}
     for finding in active:
         file_ = finding.get("file", "")
         line = _line_bucket(finding.get("line_start", 0))
-        group_key = (file_, line)
+        degraded = finding.get("origin", "") == "unknown"
+        group_key = (file_, line, degraded)
         consensus_groups.setdefault(group_key, []).append(finding)
 
     boosted_count = 0
@@ -1041,7 +1048,7 @@ def group_by_proximity(findings, line_proximity=5):
 
     Returns a dict mapping (file, line_bucket) -> list[finding].
 
-    This utility is shared between dedup_cross_agent and apply_challenges.py,
+    This utility is shared between consolidate_cross_agent and apply_challenges.py,
     which re-runs that dedup after challenge scoring. (Challenge results are
     matched to findings by id, not by proximity.)
     """
@@ -1061,33 +1068,32 @@ def group_by_proximity(findings, line_proximity=5):
     return groups
 
 
-def dedup_cross_agent(findings):
+def consolidate_cross_agent(findings):
     """
-    Generalized cross-agent dedup: when two or more findings from *different*
-    agents reference the same file and are within 5 lines of each other, keep
-    only the best finding and eliminate the rest.
+    Generalized cross-agent consolidation (#22 D1): when two or more findings
+    from *different* agents reference the same file and are within 5 lines of
+    each other, NOTHING is dropped -- every member with a truthy "id" is
+    stamped with a shared ``consolidation_key`` and exactly one is stamped
+    ``consolidation_primary=True`` (the rest ``False``). A finding without a
+    truthy "id" is immune -- it passes through completely unstamped.
 
-    Winner selection priority (highest priority first):
+    Primary selection priority (highest priority first) -- deliberately
+    ORIGIN-BLIND (#22 D3): since nothing is dropped, origin cannot cost
+    delivery here, unlike rank_findings/detect_disagreement which do gate on
+    origin.
       1. Core dimension beats non-core.
          Core dimensions: ``bug``, ``security``, ``cross_file_impact``, ``intent``.
       2. Higher ``confidence`` value wins (after the above).
       3. Longer ``description`` string wins (tie-break).
 
-    Losers receive ``eliminated_by="dedup:cross-agent"`` and an
-    ``elimination_reason`` explaining why the winner was chosen.
+    Groups where all findings come from the *same* agent, and singleton
+    groups, are left entirely unstamped.
 
-    Groups where all findings come from the *same* agent are left intact so
-    that within-agent findings are not incorrectly deduplicated.
-
-    Returns (deduplicated_findings, dropped_duplicates).
+    Returns (findings, consolidated_count) -- ``findings`` is the SAME list
+    object passed in (members mutated in place), ``consolidated_count`` is
+    the number of findings stamped with a consolidation_key.
     """
     LINE_PROXIMITY = 5
-
-    def _safe_int_line(f):
-        try:
-            return int(f.get("line_start", 0))
-        except (TypeError, ValueError):
-            return 0
 
     def _winner_key(f):
         """Higher key value = better priority (sort descending)."""
@@ -1099,71 +1105,39 @@ def dedup_cross_agent(findings):
 
     groups = group_by_proximity(findings, line_proximity=LINE_PROXIMITY)
 
-    kept_finding_ids = set()  # tracks finding["id"] values, not Python id()
-    dropped = []
+    consolidated_count = 0
 
     for group in groups.values():
-        # Only apply cross-agent dedup when 2+ *different* agents appear
+        # Only consolidate when 2+ *different* agents appear
         agents_in_group = {f.get("agent", "").lower() for f in group}
         if len(group) < 2 or len(agents_in_group) < 2:
-            for f in group:
-                fid = f.get("id", "")
-                if fid:
-                    kept_finding_ids.add(fid)
-            continue
+            continue  # no stamps
 
-        # Sort by priority (best first)
+        fpath = group[0].get("file", "")
+        bucket = _line_bucket_proximity(group[0].get("line_start", 0), LINE_PROXIMITY)
+        consolidation_key = f"{fpath}:{bucket}"
+
         ranked = sorted(group, key=_winner_key, reverse=True)
-        winner = ranked[0]
-        winner_agent = winner.get("agent", "").lower()
-        winner_id = winner.get("id", "")
-        if winner_id:
-            kept_finding_ids.add(winner_id)
+        primary = next((f for f in ranked if f.get("id", "")), None)
 
-        for loser in ranked[1:]:
-            loser_agent = loser.get("agent", "").lower()
-            loser_id = loser.get("id", "")
-            # Keep same-agent siblings of the winner — only drop different-agent findings
-            if loser_agent == winner_agent:
-                if loser_id:
-                    kept_finding_ids.add(loser_id)
-                continue
-            loser_line = _safe_int_line(loser)
-            winner_line = _safe_int_line(winner)
-            dup = dict(loser)
-            dup["eliminated_by"] = "dedup:cross-agent"
-            dup["elimination_reason"] = (
-                f"cross-agent dedup: finding at "
-                f"{loser.get('file', '?')}:{loser_line} "
-                f"(agent={loser.get('agent', '?')!r}, "
-                f"dim={loser.get('dimension', '?')!r}, "
-                f"conf={loser.get('confidence', '?')}) "
-                f"lost to agent={winner.get('agent', '?')!r} "
-                f"at line {winner_line} within {LINE_PROXIMITY} lines"
-            )
-            dropped.append(dup)
-            warn(
-                f"[dedup] Dropped finding {loser.get('id', '?')!r} "
-                f"(agent={loser.get('agent', '?')!r}) at "
-                f"{loser.get('file', '?')}:{loser_line} "
-                f"— lost to {winner.get('agent', '?')!r} (cross-agent dedup)"
-            )
+        for f in group:
+            if not f.get("id", ""):
+                continue  # id-less findings stay unstamped
+            f["consolidation_key"] = consolidation_key
+            f["consolidation_primary"] = f is primary
+            consolidated_count += 1
 
-    # Findings without an "id" field pass through (they can't be tracked for dedup)
-    kept = [
-        f for f in findings if f.get("id", "") in kept_finding_ids or not f.get("id")
-    ]
-    return kept, dropped
+    return findings, consolidated_count
 
 
-def _dedup_test_analyzer(findings):
-    """
-    Backward-compatible wrapper: delegates to dedup_cross_agent.
-
-    Retained so tests and external callers that import _dedup_test_analyzer
-    directly continue to work. New code should call dedup_cross_agent instead.
-    """
-    return dedup_cross_agent(findings)
+def _line_bucket_proximity(line, proximity):
+    """Shared bucket helper -- same rounding rule group_by_proximity uses
+    internally, exposed so consolidate_cross_agent can spell an identical
+    consolidation_key without re-grouping."""
+    try:
+        return round(int(line) / proximity) * proximity
+    except (TypeError, ValueError):
+        return 0
 
 
 def tag_findings(findings):
@@ -1171,9 +1145,10 @@ def tag_findings(findings):
     Tag each finding as "main" (main report) or "suggestion" (improvement suggestions)
     and apply cross-agent dedup.
 
-    Step 1 — Cross-agent dedup: findings from 2+ different agents on the same file
-    within 5 lines are collapsed to one winner, chosen by core-dimension, then
-    confidence, then description length (see dedup_cross_agent).
+    Step 1 — Cross-agent consolidation: findings from 2+ different agents on
+    the same file within 5 lines are stamped (never dropped) with a shared
+    consolidation_key and one consolidation_primary, chosen by core-dimension,
+    then confidence, then description length (see consolidate_cross_agent).
 
     Step 2 — Dimension-based routing (BF-15a): Check the finding's dimension field
     first. Dimensions like bug/security/cross_file_impact/intent always route to main.
@@ -1208,10 +1183,10 @@ def tag_findings(findings):
     Each finding gains a "report_destination" field ("main" | "suggestion").
     The legacy "report_tag" alias is also written for backward compatibility.
 
-    Returns (tagged_findings, eliminated_duplicates, main_count, suggestion_count).
+    Returns (tagged_findings, consolidated_count, main_count, suggestion_count).
     """
-    # Step 1: Cross-agent dedup (generalizes old test-analyzer-only dedup)
-    findings, dedup_dropped = dedup_cross_agent(findings)
+    # Step 1: Cross-agent consolidation (stamps, never drops -- #22 D1)
+    findings, consolidated_count = consolidate_cross_agent(findings)
 
     # Step 2 & 3: Dimension-based routing, then agent-based fallback
     main_count = 0
@@ -1269,7 +1244,7 @@ def tag_findings(findings):
         else:
             suggestion_count += 1
 
-    return findings, dedup_dropped, main_count, suggestion_count
+    return findings, consolidated_count, main_count, suggestion_count
 
 
 # ---------------------------------------------------------------------------
@@ -1455,9 +1430,10 @@ def main():
     findings, elim_suppressed, consensus_boosted = detect_disagreement(findings)
     all_eliminated.extend(elim_suppressed)
 
-    # Step 5: tag for output routing (also applies test-analyzer dedup)
-    findings, elim_dedup, tagged_main, tagged_suggestion = tag_findings(findings)
-    all_eliminated.extend(elim_dedup)
+    # Step 5: tag for output routing (also applies cross-agent consolidation)
+    findings, cross_agent_consolidated, tagged_main, tagged_suggestion = tag_findings(
+        findings
+    )
 
     # Count promotions (test-analyzer findings promoted to main report)
     promoted_count = sum(
@@ -1484,8 +1460,7 @@ def main():
             "consensus_boosted": consensus_boosted,
             "singleton_penalized": singleton_penalized,
             "dimension_routed": dimension_routed,
-            "cross_agent_deduped": len(elim_dedup),
-            "test_analyzer_deduped": len(elim_dedup),  # backward-compat alias
+            "cross_agent_consolidated": cross_agent_consolidated,
             "test_analyzer_promoted": promoted_count,
             "tagged_main": tagged_main,
             "tagged_suggestion": tagged_suggestion,
