@@ -2871,6 +2871,43 @@ class TestGitHubDeliveryConsolidation(_DryRunTestBase):
         self.assertIn("Body A", body)
         self.assertIn("Body B", body)
 
+    def test_no_line_primary_degrades_whole_group_into_skipped_section(self):
+        """The primary carries no line at all (distinct from a line the diff
+        doesn't touch) — the same whole-group degrade must fire on this branch
+        too, not just the invalid-line branch."""
+        primary, corroborator = self._findings()
+        del primary["line"]
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        self.assertEqual(cap["payload"]["comments"], [])
+        body = cap["payload"]["body"]
+        self.assertIn("A", body)
+        self.assertIn("B", body)
+        self.assertIn("Body A", body)
+        self.assertIn(
+            "Body B", body, "the corroborator must fan out into the skipped section too"
+        )
+
 
 class TestGitLabDeliveryConsolidation(_DryRunTestBase):
     def _findings(self):
@@ -2966,6 +3003,41 @@ class TestGitLabDeliveryConsolidation(_DryRunTestBase):
         self.assertIn("could not be anchored inline", body)
         self.assertIn("Body A", body)
         self.assertIn("Body B", body)
+
+    def test_no_line_primary_degrades_whole_group_into_skipped_section(self):
+        """The primary carries no line at all (distinct from a line the diff
+        doesn't touch) — the same whole-group degrade must fire on this branch
+        too, not just the invalid-line branch."""
+        primary, corroborator = self._findings()
+        del primary["line"]
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        self.assertEqual(cap["discussions"], [])
+        body = cap["summary"]["body"]
+        self.assertIn("Body A", body)
+        self.assertIn(
+            "Body B", body, "the corroborator must fan out into the skipped section too"
+        )
 
 
 class TestLivePathUnchanged(_DryRunTestBase):
