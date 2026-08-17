@@ -903,7 +903,11 @@ def build_skipped_section(skipped, inline_count=None):
 
     *skipped* is a list of ``(filepath, line, finding)`` tuples — the finding plus the
     ``filepath``/``line`` it was to be anchored at (``line`` is ``None`` for a finding
-    that carried no line at all). *inline_count*, when given, is how many comments
+    that carried no line at all). A member is not always here for its OWN reason: a
+    consolidation group whose primary could not be anchored (no line, or a line the
+    diff doesn't touch) degrades as a whole (#22 D2) — a corroborator can appear here
+    with a perfectly valid line of its own, because its group's primary is what
+    failed. *inline_count*, when given, is how many comments
     landed — GitHub passes ``len(comments)`` because its one POST is atomic, so the
     number is exact by the time this runs. GitLab passes nothing: its summary note
     posts BEFORE the per-finding loop, so how many will actually land (some may still
@@ -929,16 +933,21 @@ def build_skipped_section(skipped, inline_count=None):
     if not skipped:
         return ""
     n = len(skipped)
+    group_note = (
+        " A finding listed here may not have an anchoring problem of its own — a "
+        "consolidation group whose primary could not be anchored inline is listed "
+        "here in full, corroborators included."
+    )
     if inline_count is None:
         intro = (
             f"The following {n} finding(s) reference lines outside this diff and are "
-            "included here instead of as inline comments:"
+            f"included here instead of as inline comments:{group_note}"
         )
     else:
         intro = (
             f"{inline_count} inline comment(s) were posted; the following {n} "
             "finding(s) reference lines outside this diff and are included here "
-            "instead:"
+            f"instead:{group_note}"
         )
     lines = [
         "",
