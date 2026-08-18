@@ -559,8 +559,9 @@ def apply_injection_filter(findings):
         # A present suggestion that is not a string (possible via the retained
         # Python CLI's unvalidated --input and checkpoint resume; the JS
         # dispatch boundary's JSON schema pins string-only) is inert to the
-        # scan below and would otherwise reach post_review's str() coercion
-        # verbatim -- strip it exactly like a payload match (#62).
+        # scan below; a dict/list/number would reach post_review's str()
+        # coercion verbatim, and a None (rendered as absent downstream) is
+        # stripped too so presence + non-string type is the whole trigger (#62).
         if "suggestion" in finding and not isinstance(finding["suggestion"], str):
             kept = dict(finding)
             del kept["suggestion"]
