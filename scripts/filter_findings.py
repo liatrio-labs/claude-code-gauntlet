@@ -38,6 +38,7 @@ Output JSON schema:
             "passed_threshold":        N,   # passed confidence + severity threshold
             "contested_count":         N,   # findings that bypassed threshold via validator contestation
             "injections_removed":      N,   # removed by injection filter
+            "suggestions_removed":     N,   # kept findings whose suggestion field was stripped by injection scan
             "consensus_boosted":       N,   # confidence boosted for co-location (same file + 10-line bucket, any agent)
             "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
             "dimension_routed":        N,   # findings routed to suggestion by dimension (BF-15a)
@@ -51,6 +52,10 @@ Output JSON schema:
 Each filtered finding includes:
     "report_destination":  "main" | "suggestion"  # routing destination for Phase 8
     "report_tag":          "main" | "suggestion"  # backward-compatible alias for report_destination
+    "suggestion_removed_by":     "injection"  # present only when the suggestion field was stripped
+    "suggestion_removal_reason": "..."        # present only when suggestion_removed_by is present
+    # "suggestion" itself may be absent after filtering -- it is deleted, not
+    # nulled, whenever suggestion_removed_by is present.
 
 REVIEW.md parsing:
     Looks for a fenced code block or YAML-style section containing:
@@ -489,7 +494,8 @@ def apply_injection_filter(findings):
     """
     Remove findings that appear to be prompt-injection artifacts or hallucinations.
 
-    Detection heuristics (from false-positive-exclusions.md § Prompt Injection Artifacts):
+    Detection heuristics (from false-positive-exclusions.md § Prompt Injection Artifacts),
+    scanned across title/description only:
       1. Body or title contains shell commands (rm -rf, curl, wget, git push, gh api)
       2. Body contains URLs to visit or encoded payloads (base64, hex)
       3. Body instructs the user to bypass controls, skip review, or auto-approve
@@ -500,6 +506,11 @@ def apply_injection_filter(findings):
       8. Body contains XML-like injection markers
       9. File path is empty or contains template markers
       10. Duplicate signature (title+file+line)
+
+    A finding that survives all ten heuristics then has its `suggestion` field
+    (if any) scanned separately against the shell/url/encoded/bypass/
+    instructional/vuln-intro/body-marker sets; a match strips the field rather
+    than eliminating the finding (#62) — see `_strip_suggestion_if_injected`.
 
     Eliminated findings are logged via stderr for the methodology section.
 
@@ -528,6 +539,47 @@ def apply_injection_filter(findings):
             if rx.search(text):
                 return rx.pattern
         return None
+
+    # suggestion is rendered into posted PR/MR comments and reports, so
+    # payload-bearing advice must not reach a human — but a benign finding
+    # must not die for its advice (imperative security advice like "Never
+    # disable TLS verification" legitimately resembles these patterns), so a
+    # match strips the field instead of eliminating the finding (#62).
+    _SUGGESTION_SETS = (
+        ("contains shell command pattern", shell_re),
+        ("contains visit-URL pattern", url_re),
+        ("contains encoded payload pattern", encoded_re),
+        ("contains bypass/auto-approve instruction", bypass_re),
+        ("uses instructional tone", instruct_re),
+        ("recommends introducing vulnerability", vuln_re),
+        ("matches injection marker", body_marker_re),
+    )
+
+    def _strip_suggestion_if_injected(finding):
+        # A present suggestion that is not a string (possible via the retained
+        # Python CLI's unvalidated --input and checkpoint resume; the JS
+        # dispatch boundary's JSON schema pins string-only) is inert to the
+        # scan below; a dict/list/number would reach post_review's str()
+        # coercion verbatim, and a None (rendered as absent downstream) is
+        # stripped too so presence + non-string type is the whole trigger (#62).
+        if "suggestion" in finding and not isinstance(finding["suggestion"], str):
+            kept = dict(finding)
+            del kept["suggestion"]
+            kept["suggestion_removed_by"] = "injection"
+            kept["suggestion_removal_reason"] = "suggestion is not a string"
+            return kept
+        suggestion = finding.get("suggestion", "")
+        if not suggestion:
+            return finding
+        for phrase, patterns in _SUGGESTION_SETS:
+            m = _first_match(patterns, suggestion)
+            if m:
+                kept = dict(finding)
+                del kept["suggestion"]
+                kept["suggestion_removed_by"] = "injection"
+                kept["suggestion_removal_reason"] = f"suggestion {phrase}: {m!r}"
+                return kept
+        return finding
 
     for finding in findings:
         title = finding.get("title", "")
@@ -613,7 +665,7 @@ def apply_injection_filter(findings):
                 + reasons[0]
             )
         else:
-            passed.append(finding)
+            passed.append(_strip_suggestion_if_injected(finding))
 
     return passed, eliminated
 
@@ -1294,7 +1346,10 @@ def load_exclusions(path):
 
 def apply_exclusions(findings, exclusion_patterns):
     """
-    Remove findings whose title or description matches an exclusion pattern.
+    Remove findings whose title, description, or suggestion matches an exclusion
+    pattern. suggestion is included because it is rendered into posted PR/MR
+    comments same as description — user-authored ignore patterns are the user's
+    kill-switch over everything that gets rendered (#62).
 
     Returns (passed, eliminated) lists. Each eliminated finding gains
     "eliminated_by" = "exclusion".
@@ -1308,7 +1363,9 @@ def apply_exclusions(findings, exclusion_patterns):
     for finding in findings:
         title = finding.get("title", "")
         description = finding.get("description", "")
-        combined = f"{title}\n{description}"
+        raw_suggestion = finding.get("suggestion")
+        suggestion = raw_suggestion if isinstance(raw_suggestion, str) else ""
+        combined = f"{title}\n{description}\n{suggestion}"
 
         matched_pattern = None
         for pattern in exclusion_patterns:
@@ -1425,6 +1482,9 @@ def main():
     findings, elim_injection = apply_injection_filter(findings)
     all_eliminated.extend(elim_injection)
     injections_removed = len(elim_injection)
+    suggestions_removed = sum(
+        1 for f in findings if f.get("suggestion_removed_by") == "injection"
+    )
 
     # Step 4: disagreement detection (returns active findings, suppressed, boosted_count)
     findings, elim_suppressed, consensus_boosted = detect_disagreement(findings)
@@ -1457,6 +1517,7 @@ def main():
             "passed_threshold": passed_threshold,
             "contested_count": contested_count,
             "injections_removed": injections_removed,
+            "suggestions_removed": suggestions_removed,
             "consensus_boosted": consensus_boosted,
             "singleton_penalized": singleton_penalized,
             "dimension_routed": dimension_routed,

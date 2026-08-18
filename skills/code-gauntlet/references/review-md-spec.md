@@ -143,9 +143,9 @@ chat,pr_comments
 ### Ignore
 
 The `ignore` key in the config block: a plain list of substrings matched case-insensitively against
-each finding's title and description combined (`title + "\n" + description`), first match wins. It
-is not scoped by dimension — an entry suppresses any finding whose text contains it, regardless of
-which agent raised it.
+each finding's title, description, and suggestion combined (`title + "\n" + description + "\n" +
+suggestion`), first match wins. It is not scoped by dimension — an entry suppresses any finding
+whose text contains it, regardless of which agent raised it.
 
 This is useful when a project has intentional patterns that agents consistently flag incorrectly.
 
@@ -154,8 +154,9 @@ the pattern itself.** Quotes are optional (the parser strips one matching pair i
 `"pattern"` and `pattern` behave identically), but a reason or date tacked onto the end changes what
 the entry matches: `ignore` compares the pattern as a literal substring against unquoted finding
 text, so `"file naming (EF Core migrations are generated, 2026-03-25)"` only matches a finding whose
-title or description happens to contain that entire sentence — which essentially never happens — and
-silently suppresses nothing. Keep the pattern to just the words that actually appear in the finding:
+title, description, or suggestion happens to contain that entire sentence — which essentially never
+happens — and silently suppresses nothing. Keep the pattern to just the words that actually appear
+in the finding:
 
 ```yaml
 # code-gauntlet
@@ -371,8 +372,8 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
 #   out critical issues.
 # ignore:
 #   Suppress known false positives. Each entry is a substring matched
-#   case-insensitively against a finding's title + description, first match
-#   wins — not scoped by dimension. The pattern is the substring ONLY, never a
+#   case-insensitively against a finding's title + description + suggestion,
+#   first match wins — not scoped by dimension. The pattern is the substring ONLY, never a
 #   reason or date appended to it (that changes what it matches); track why an
 #   entry was added in the commit/PR that added it instead. E.g.:
 #   ignore:

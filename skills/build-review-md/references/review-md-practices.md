@@ -449,8 +449,8 @@ ignore:
 
 Ignore patterns suppress known false positives. They live in the `ignore:` list inside the
 ```` ```yaml # code-gauntlet ```` config block (`references/review-md-spec.md` in the code-gauntlet
-skill) — a plain list of substrings matched against a finding's title + description, not scoped by
-dimension. A bare `## Ignore` markdown heading with bullet items is never parsed; do not generate
+skill) — a plain list of substrings matched against a finding's title + description + suggestion,
+not scoped by dimension. A bare `## Ignore` markdown heading with bullet items is never parsed; do not generate
 one.
 
 **Target the middle ground** — describe the pattern category, not the instance. Note the parser

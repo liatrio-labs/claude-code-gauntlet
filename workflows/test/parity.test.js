@@ -134,6 +134,36 @@ for (const c of loadCases('filter_findings')) {
       assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
       // Free-text join format is not load-bearing (per the brief) — only presence matters.
       for (const e of eliminated) assert.ok(e.elimination_reason && e.elimination_reason.length > 0);
+      // suggestion_removal_reason is MOSTLY free text (Python !r vs JS
+      // pattern-source quoting differ), but the "suggestion <noun phrase>: "
+      // prefix up to and including the ": " separator is identical across
+      // runtimes by construction (both read it from the same SUGGESTION_SETS
+      // phrase strings) -- compare that prefix byte-exactly so renaming any of
+      // the 7 set labels goes red here, and leave only the pattern-spelling
+      // tail (after the ": ") presence-only. The non-string-suggestion reason
+      // ("suggestion is not a string") carries no pattern tail and no colon
+      // separator, so it gets its own byte-exact branch instead.
+      kept.forEach((got, i) => {
+        const exp = c.expected.kept[i];
+        if ('suggestion_removal_reason' in exp) {
+          const expReason = exp.suggestion_removal_reason;
+          const gotReason = got.suggestion_removal_reason;
+          assert.ok(gotReason && gotReason.length > 0);
+          if (expReason === 'suggestion is not a string') {
+            assert.equal(gotReason, expReason);
+          } else {
+            const sepIdx = expReason.indexOf(': ');
+            assert.ok(sepIdx !== -1, `golden reason missing ': ' separator: ${expReason}`);
+            const expPrefix = expReason.slice(0, sepIdx + 2);
+            assert.equal(gotReason.slice(0, expPrefix.length), expPrefix);
+          }
+          const { suggestion_removal_reason: _g, ...gotRest } = got;
+          const { suggestion_removal_reason: _e, ...expRest } = exp;
+          assert.deepEqual(gotRest, expRest);
+        } else {
+          assert.deepEqual(got, exp);
+        }
+      });
       return;
     }
     if (fn === 'apply_exclusions') {

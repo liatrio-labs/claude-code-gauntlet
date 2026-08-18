@@ -318,11 +318,59 @@ function firstMatch(patterns, text) {
   return null;
 }
 
+// suggestion is rendered into posted PR/MR comments and reports, so
+// payload-bearing advice must not reach a human -- but a benign finding must
+// not die for its advice (imperative security advice like "Never disable TLS
+// verification" legitimately resembles these patterns), so a match strips
+// the field instead of eliminating the finding (#62).
+const SUGGESTION_SETS = [
+  ['contains shell command pattern', INJECTION_SHELL_PATTERNS],
+  ['contains visit-URL pattern', INJECTION_URL_PATTERNS],
+  ['contains encoded payload pattern', INJECTION_ENCODED_PATTERNS],
+  ['contains bypass/auto-approve instruction', INJECTION_BYPASS_PATTERNS],
+  ['uses instructional tone', INJECTION_INSTRUCTIONAL_PATTERNS],
+  ['recommends introducing vulnerability', INJECTION_VULN_INTRO_PATTERNS],
+  ['matches injection marker', INJECTION_BODY_PATTERNS],
+];
+
+// Port of _strip_suggestion_if_injected. Only called for a finding that
+// already survived all ten title/description heuristics below.
+function stripSuggestionIfInjected(finding) {
+  // A present suggestion that is not a string (possible via the retained
+  // Python CLI's unvalidated --input and checkpoint resume; the JS dispatch
+  // boundary's JSON schema pins string-only) is inert to the scan below; a
+  // dict/list/number would reach post_review's str() coercion verbatim, and a
+  // null (rendered as absent downstream) is stripped too so presence +
+  // non-string type is the whole trigger (#62).
+  if ('suggestion' in finding && typeof finding.suggestion !== 'string') {
+    const kept = { ...finding };
+    delete kept.suggestion;
+    kept.suggestion_removed_by = 'injection';
+    kept.suggestion_removal_reason = 'suggestion is not a string';
+    return kept;
+  }
+  const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
+  if (!suggestion) return finding;
+  for (const [phrase, patterns] of SUGGESTION_SETS) {
+    const m = firstMatch(patterns, suggestion);
+    if (m) {
+      const kept = { ...finding };
+      delete kept.suggestion;
+      kept.suggestion_removed_by = 'injection';
+      kept.suggestion_removal_reason = `suggestion ${phrase}: ${JSON.stringify(m)}`;
+      return kept;
+    }
+  }
+  return finding;
+}
+
 // Port of apply_injection_filter. All 10 heuristics, in the same order as the
 // Python original so `reasons[0]` (used in the stderr-equivalent warning, not
 // asserted here) lines up. Heuristic #10 (duplicate signature) is STATEFUL
 // across the input list — the FIRST (title,file,line_start) occurrence
 // survives, later ones are flagged — so caller input order is load-bearing.
+// Scans only title + description; a finding that passes then has its
+// suggestion (if any) scanned separately by stripSuggestionIfInjected (#62).
 export function applyInjectionFilter(findings) {
   const kept = [];
   const eliminated = [];
@@ -383,7 +431,7 @@ export function applyInjectionFilter(findings) {
     if (reasons.length) {
       eliminated.push({ ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') });
     } else {
-      kept.push(finding);
+      kept.push(stripSuggestionIfInjected(finding));
     }
   }
 
@@ -942,6 +990,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
+  const suggestionsRemoved = afterInjection.filter((f) => f.suggestion_removed_by === 'injection').length;
 
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
@@ -960,6 +1009,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
       passed_threshold: passedThreshold,
       contested_count: contestedCount,
       injections_removed: injectionsRemoved,
+      suggestions_removed: suggestionsRemoved,
       consensus_boosted: consensusBoosted,
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,
@@ -973,7 +1023,10 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
 }
 
 // Port of apply_exclusions. First pattern (in list order) whose literal,
-// case-insensitive substring appears in "title\ndescription" wins.
+// case-insensitive substring appears in "title\ndescription\nsuggestion" wins.
+// suggestion is included because it is rendered into posted PR/MR comments same
+// as description -- user-authored ignore patterns are the user's kill-switch
+// over everything that gets rendered (#62).
 export function applyExclusions(findings, exclusionPatterns) {
   if (!exclusionPatterns || !exclusionPatterns.length) return { kept: findings, eliminated: [] };
 
@@ -983,7 +1036,8 @@ export function applyExclusions(findings, exclusionPatterns) {
   for (const finding of findings) {
     const title = finding.title || '';
     const description = finding.description || '';
-    const combined = `${title}\n${description}`;
+    const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
+    const combined = `${title}\n${description}\n${suggestion}`;
 
     let matchedPattern = null;
     for (const pattern of exclusionPatterns) {
