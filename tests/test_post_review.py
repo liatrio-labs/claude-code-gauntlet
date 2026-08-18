@@ -2362,6 +2362,35 @@ GL_CONTRACT_FINDINGS = [
     },
 ]
 
+_GL_CONSOLIDATION_KEY = "src/edited.py:60"
+
+
+def _gl_primary(line=61):
+    """The stamped primary of a consolidation group over the contract diff."""
+    return dict(
+        GL_CONTRACT_FINDINGS[0],
+        line=line,
+        consolidation_key=_GL_CONSOLIDATION_KEY,
+        consolidation_primary=True,
+    )
+
+
+def _gl_corroborator(tag, line):
+    """A stamped non-primary member of the same group as ``_gl_primary``."""
+    return {
+        "file": "src/edited.py",
+        "line": line,
+        "severity": "medium",
+        "title": f"Corroborator {tag}",
+        "body": f"Body corr {tag}",
+        "agent": "bug-detector",
+        "dimension": "correctness",
+        "confidence": 70,
+        "consolidation_key": _GL_CONSOLIDATION_KEY,
+        "consolidation_primary": False,
+    }
+
+
 # Verbatim from the issue #127 report — the warning-content test asserts against what an
 # operator really sees, not a paraphrase.
 GLAB_400_STDERR = (
@@ -3964,42 +3993,112 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
     def test_malformed_position_loss_counts_the_whole_group_not_just_the_primary(self):
         """A consolidation group's loss counters must reflect every finding in the
         group, not just the primary that anchors the position — posted + skipped +
-        invalid + failed + already_present must sum to the total finding count."""
-        primary = dict(
-            GL_CONTRACT_FINDINGS[0],
-            line=61.0,  # malformed -> validate_position rejects
-            consolidation_key="src/edited.py:60",
-            consolidation_primary=True,
-        )
-        corroborator_a = {
-            "file": "src/edited.py",
-            "line": 61,
-            "severity": "medium",
-            "title": "Corroborator A",
-            "body": "Body corr A",
-            "agent": "bug-detector",
-            "dimension": "correctness",
-            "confidence": 70,
-            "consolidation_key": "src/edited.py:60",
-            "consolidation_primary": False,
-        }
-        corroborator_b = {
-            "file": "src/edited.py",
-            "line": 61,
-            "severity": "low",
-            "title": "Corroborator B",
-            "body": "Body corr B",
-            "agent": "test-analyzer",
-            "dimension": "test_coverage",
-            "confidence": 60,
-            "consolidation_key": "src/edited.py:60",
-            "consolidation_primary": False,
-        }
+        invalid + failed + already_present must sum to the total finding count.
+
+        The primary's loss is its own (1 invalid); each corroborator then falls
+        back to its own individual discussion and is counted on its own merits.
+        """
+        primary = _gl_primary(line=61.0)  # malformed -> validate_position rejects
         run = self._run_main(
-            dry_run=True, findings=[primary, corroborator_a, corroborator_b]
+            dry_run=True,
+            findings=[primary, _gl_corroborator("A", 61), _gl_corroborator("B", 61)],
+        )
+        # Dry-run reports a malformed position as a non-zero exit (pinned above);
+        # what changed is the COUNT — only the primary is lost to it.
+        self.assertEqual(run.exit_code, 1)
+        self.assertIn("  1 finding(s) had a malformed position", run.out)
+        self.assertIn("  2 inline discussion(s) captured.", run.out)
+
+    def test_group_fallback_partial_position_failure(self):
+        """A malformed primary position must not take its validated corroborators
+        down with it — they fall back to their own individual discussions."""
+        run = self._run_main(
+            findings=[
+                _gl_primary(line=61.0),
+                _gl_corroborator("A", 61),
+                _gl_corroborator("B", 62),
+            ]
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 finding(s) had a malformed position", run.out)
+        posts = _discussion_posts(run.mock_run)
+        self.assertEqual(len(posts), 2, "one individual discussion per corroborator")
+
+    def test_group_fallback_partial_post_failure(self):
+        """A rejected GROUP discussion falls back to one individual discussion per
+        corroborator: the primary counts 1 failed, the corroborators post on their
+        own."""
+        payloads = []
+        run = self._run_main(
+            findings=[
+                _gl_primary(),
+                _gl_corroborator("A", 61),
+                _gl_corroborator("B", 62),
+            ],
+            discussion_rcs=[1, 0, 0],
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+        posts = _discussion_posts(run.mock_run)
+        self.assertEqual(
+            len(posts), 3, "one rejected group attempt + one POST per corroborator"
+        )
+        bodies = [p["body"] for p in payloads if "position" in p]
+        self.assertEqual(len(bodies), 3)
+        # The two fallback discussions each carry ONE finding, rendered by the
+        # single-finding renderer — not the group body.
+        self.assertIn("Corroborating finding", bodies[0])
+        self.assertNotIn("Corroborating finding", bodies[1])
+        self.assertNotIn("Corroborating finding", bodies[2])
+        self.assertIn("Corroborator A", bodies[1])
+        self.assertIn("Corroborator B", bodies[2])
+
+    def test_group_fallback_total_failure(self):
+        """When the primary AND every corroborator lose on their own merits, the
+        losses still sum to the group size — nothing vanishes."""
+        run = self._run_main(
+            findings=[
+                _gl_primary(line=61.0),  # invalid
+                _gl_corroborator("A", 61),  # rejected below -> failed
+                _gl_corroborator("B", 999),  # not in the diff -> invalid
+            ],
+            discussion_rcs=[1],
         )
         self.assertEqual(run.exit_code, 1)
-        self.assertIn("  3 finding(s) had a malformed position", run.out)
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("  2 finding(s) had a malformed position", run.out)
+        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+
+    def test_group_success_counts_every_member_as_posted(self):
+        """One discussion carries the whole group, so the posted counter reports the
+        group size, not 1."""
+        run = self._run_main(findings=[_gl_primary(), _gl_corroborator("A", 61)])
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 1)
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+
+    def test_group_already_delivered_counts_every_member(self):
+        """A group whose single discussion is already on the MR counts all of its
+        findings as already-present — one discussion, group_size findings."""
+        primary = _gl_primary()
+        corroborator = _gl_corroborator("A", 61)
+        key = post_review.finding_key(
+            "src/edited.py",
+            61,
+            primary["title"],
+            post_review.render_group_body(primary, [corroborator]),
+        )
+        run = self._run_main(
+            findings=[primary, corroborator], prior=(True, {key}, None)
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn(
+            "  2 inline discussion(s) already on the MR from an earlier run", run.out
+        )
 
     def test_live_all_malformed_exits_one_with_nothing_posted(self):
         findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]

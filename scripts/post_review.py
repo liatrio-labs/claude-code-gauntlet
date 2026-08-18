@@ -1316,26 +1316,19 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     # this loop would make, made early so the skipped section can precede the note);
     # `remaining` carries only what that pre-partition let through, filepath already
     # resolved.
-    posted = 0
-    already_present = 0
-    invalid = 0
-    failed = 0
-    for filepath, group in remaining:
-        f = group["primary"]
-        corroborators = group["corroborators"]
-        line = f["line"]
+    def deliver(f, filepath, line, comment_body):
+        """Post ONE discussion and return its outcome counter name.
 
-        group_size = 1 + len(corroborators)
-
-        comment_body = render_group_body(f, corroborators)
+        The group's single discussion and each fallback per-corroborator
+        discussion go through this same validate → POST → dedup → count path,
+        so a corroborator that is posted on its own is accounted for exactly
+        like any never-grouped finding.
+        """
         key = finding_key(filepath, line, f.get("title", ""), comment_body)
         if key in delivered_keys:
             # An earlier run already delivered this exact discussion for this sha.
             # Reposting it is the duplication issue #132 reports, not a failure.
-            # The whole group rides one discussion, so all of its findings —
-            # primary and corroborators alike — count toward the total.
-            already_present += group_size
-            continue
+            return "already_present"
 
         position = {
             "position_type": "text",
@@ -1376,10 +1369,7 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— malformed GitLab position: {'; '.join(problems)}."
             )
-            # The whole group rides one discussion, so all of its findings —
-            # primary and corroborators alike — count toward the total.
-            invalid += group_size
-            continue
+            return "invalid"
 
         # The delivery marker goes on the LIVE wire only. The benchmark harness pins
         # dry-run and scores the captured bodies as candidate text, so a marker in a
@@ -1410,11 +1400,62 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
                 f"— GitLab rejected the inline discussion.\n{error}"
             )
-            # The whole group rides one discussion, so all of its findings —
-            # primary and corroborators alike — count toward the total.
-            failed += group_size
-            continue
-        posted += group_size
+            return "failed"
+        return "posted"
+
+    def deliver_corroborator(c):
+        """Fall back to a corroborator's OWN individual discussion.
+
+        Reached only when the group's discussion is lost late (malformed
+        primary position, or a rejected POST). The corroborator was never
+        anchored on its own before that point, so its file/line are resolved
+        and gated here exactly as the pre-partition gates a primary's.
+        """
+        line = c.get("line")
+        title = c.get("title", "?")
+        if line is None:
+            warn_skip(
+                f"Skipping corroborating finding '{title}' — no line number to "
+                f"anchor its own discussion on."
+            )
+            return "invalid"
+        filepath = diff_path_spelling(valid_lines, c.get("file", "?"), line)
+        if not is_line_valid(valid_lines, filepath, line):
+            warn_skip(
+                f"Skipping corroborating finding '{title}' at {filepath}:{line} "
+                f"— line not found in diff."
+            )
+            return "invalid"
+        return deliver(c, filepath, line, render_comment_body(c))
+
+    counters = {
+        "posted": 0,
+        "already_present": 0,
+        "invalid": 0,
+        "failed": 0,
+    }
+    for filepath, group in remaining:
+        f = group["primary"]
+        corroborators = group["corroborators"]
+        outcome = deliver(f, filepath, f["line"], render_group_body(f, corroborators))
+        if outcome in ("invalid", "failed"):
+            # The group's single discussion is lost, but its corroborators were
+            # never given a chance of their own — post each as its own
+            # discussion rather than dropping validated findings. The primary
+            # still counts 1 toward its own loss; each corroborator is counted
+            # on its own merits.
+            counters[outcome] += 1
+            for c in corroborators:
+                counters[deliver_corroborator(c)] += 1
+        else:
+            # One discussion carries the whole group, so every member shares
+            # its outcome.
+            counters[outcome] += 1 + len(corroborators)
+
+    posted = counters["posted"]
+    already_present = counters["already_present"]
+    invalid = counters["invalid"]
+    failed = counters["failed"]
 
     if DRY_RUN:
         print(f"  {posted} inline discussion(s) captured.")
