@@ -104,7 +104,7 @@ The stage ranks findings, blind-challenges the top `min(n, limits.challengeCap)`
 - **50–74** → `challenge_contested: true`; surfaced re-routed to `"suggestion"`
 - **≥ 75** → survives unchanged
 
-After thresholds it re-runs cross-agent dedup and ranks; that ranked set is the **high-confidence bucket**. Every UNCHALLENGED finding — challengeCap overflow OR a null/unscored member — is marked `challenge='skipped'` and routed to the **unverified** bucket (pipeline-degraded); it never enters the high-confidence set. Both buckets flow to the Report stage.
+After thresholds it re-runs cross-agent consolidation (re-stamps `consolidation_key`/`consolidation_primary` on the surviving set; nothing is dropped) and ranks; that ranked set is the **high-confidence bucket**. Every UNCHALLENGED finding — challengeCap overflow OR a null/unscored member — is marked `challenge='skipped'` and routed to the **unverified** bucket (pipeline-degraded); it never enters the high-confidence set. Both buckets flow to the Report stage.
 
 ---
 

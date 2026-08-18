@@ -32,7 +32,7 @@ Discovery only produces candidates. Each candidate then runs the gauntlet:
 1. **Merge** — finding-ID deduplication across channels, schema validation, agent attribution
 2. **Verify** — deterministic git-blame classification (new vs. surfaced code) and factual verification against the actual source, trusted only through a nonce + SHA + count receipt
 3. **Validate** — an independent validator attempts to disprove each finding with its full content and codebase access, adjusting confidence either way
-4. **Filter** — confidence and severity thresholds, prompt-injection filtering, cross-agent semantic dedup, consensus boosts, disagreement suppression, routing to the main report or improvement suggestions
+4. **Filter** — confidence and severity thresholds, prompt-injection filtering, cross-agent consolidation (co-located findings from different agents are grouped for one combined comment rather than dropped), consensus boosts, disagreement suppression, routing to the main report or improvement suggestions
 5. **Blind challenge** — a fresh agent attempts to disprove each finding *without the original reasoning or evidence*; claims it cannot verify from the code are removed
 6. **Deliver** — deterministic ranking and selection, posted verbatim
 
@@ -52,7 +52,7 @@ Development is gated by a judged benchmark ([`bench/`](bench/README.md)). The go
 | Claude CLI review (anchor) | gate subset | 15 | 0.339 | 0.481 (not comparable&dagger;) | — |
 | claude-code review (anchor) | gate subset | 15 | 0.271 | 0.542 (not comparable&dagger;) | — |
 
-The gate subset and the holdout are separate PR sets; anchors exist only for the gate subset, where every row above is the same 15 PRs under the same judge. The most recent measurement is smaller: a 6-PR paired mini of v3.1 (`custom-20260723-102149-381e9ff`, 2026-07-23) came in at 0.633 recall / 0.223 noise, under the pre-registered 0.24 noise ceiling — at that size one finding moves recall by 3.3 points, so it reads as a consistency check rather than a comparison.
+The gate subset and the holdout are separate PR sets; anchors exist only for the gate subset, where every row above is the same 15 PRs under the same judge. The most recent measurement is smaller: a 6-PR paired mini of v3.12 (`mini-20260818-120540-b423885` + single-PR completion leg `custom-20260818-142206-b423885`, 2026-08-18, vs the v3.1 baseline `custom-20260723-102149-381e9ff`) came in at 0.667 recall / 0.106 noise against the baseline's 0.633 / 0.223, under the pre-registered 0.24 noise ceiling — at that size one finding moves recall by 3.3 points, so the recall side reads as a consistency check; the halved noise reflects v3.12's delivery consolidation folding co-located cross-agent findings into single comments.
 <!-- bench-results:end -->
 
 Releases since ship behind the always-on deterministic test suites; the heavier measurement tiers are owner-triggered (cadence and method in [`bench/MEASUREMENT.md`](bench/MEASUREMENT.md)).
