@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.12.2 (2026-08-18)
+
+### Bug Fixes
+
+- **filter**: Deterministic content gates for the suggestion field (#62)
+  ([#210](https://github.com/liatrio-labs/claude-code-gauntlet/pull/210),
+  [`c5b4d6b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c5b4d6b7cee97ac24fdef9e7f849cc8d7187cb76))
+
+### Documentation
+
+- **bench**: Record v3.12 paired mini-subset A result; consolidation wording
+  ([#209](https://github.com/liatrio-labs/claude-code-gauntlet/pull/209),
+  [`67cf5b1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/67cf5b1cf02781eb357d960f869b0b32886cf9b5))
+
+
 ## v3.12.1 (2026-08-18)
 
 ### Bug Fixes
