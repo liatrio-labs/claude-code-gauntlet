@@ -18,6 +18,16 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CARRIER = os.path.join(REPO_ROOT, "docs", "style", "session-context.md")
 
 
+def strip_banner(text):
+    """Drop the leading GENERATED banner: it instructs a maintainer, not the session."""
+    lines = text.split("\n")
+    if lines and lines[0].startswith("<!--"):
+        del lines[0]
+        if lines and lines[0] == "":
+            del lines[0]
+    return "\n".join(lines)
+
+
 def main(argv=None):
     if not os.path.isfile(CARRIER):
         return 0
@@ -26,7 +36,7 @@ def main(argv=None):
     payload = {
         "hookSpecificOutput": {
             "hookEventName": "SessionStart",
-            "additionalContext": contents,
+            "additionalContext": strip_banner(contents),
         }
     }
     print(json.dumps(payload))

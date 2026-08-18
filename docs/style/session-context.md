@@ -8,7 +8,7 @@ These rules govern Claude's session output in this repository.
 
 - Cut em dashes from your own output, replacing each with a comma, a period, or "and" or "but".
 - Describe what a thing does, and never assert that it is important, critical, or a milestone.
-- Avoid comprehensive, robust, seamless, crucial, vital, key, powerful, significant, deep, enhanced, and "leverage" as a verb.
+- Avoid comprehensive, robust, seamless, crucial, vital, key, powerful, significant, deep, and enhanced as boosters, and "leverage" as a verb.
 - Write a bullet as a full sentence, never as a bolded label followed by a colon and a fragment.
 - List exactly the items that exist, and write one or two items as prose instead of a list.
 - Keep every sentence under 25 words and give each sentence one idea.

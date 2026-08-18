@@ -11,6 +11,7 @@ code blocks are skipped, and the emitter produces the exact hook payload shape.
 """
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -112,43 +113,113 @@ class TestSourceSelfCompliance(unittest.TestCase):
         # A RULE: line whose sentence spans multiple physical lines would never match
         # the `line.startswith("RULE: ")` extraction test at all -- so the real risk is
         # a rule that got wrapped and silently lost everything past the first line.
-        # Every extracted line must end with terminal punctuation to prove it is whole.
-        for line in self._all_rule_lines():
-            with self.subTest(line=line):
-                self.assertTrue(
-                    line.rstrip().endswith((".", '."')),
-                    f"rule does not end in terminal punctuation, possibly wrapped: {line!r}",
-                )
+        # Every extracted line must end with terminal punctuation to prove it is whole,
+        # and the physical line right after it must be blank -- a wrapped rule leaves
+        # its continuation there instead.
+        for source in (WORDING_SOURCE, CADENCE_SOURCE):
+            lines = source.read_text(encoding="utf-8").splitlines()
+            for i, line in enumerate(lines):
+                if not line.startswith(RULE_PREFIX):
+                    continue
+                with self.subTest(source=source.name, line=line):
+                    rule = line[len(RULE_PREFIX) :]
+                    self.assertTrue(
+                        rule.rstrip().endswith((".", '."')),
+                        f"rule does not end in terminal punctuation, possibly wrapped: {rule!r}",
+                    )
+                    self.assertEqual(
+                        lines[i + 1],
+                        "",
+                        f"line after RULE: is not blank, possibly a wrapped continuation: {lines[i + 1]!r}",
+                    )
 
     def test_sources_yield_at_least_one_rule_each(self):
         self.assertTrue(extract_rule_lines(WORDING_SOURCE.read_text(encoding="utf-8")))
         self.assertTrue(extract_rule_lines(CADENCE_SOURCE.read_text(encoding="utf-8")))
 
+    def test_each_section_has_exactly_one_rule_and_one_check_line(self):
+        heading_re = re.compile(r"^## ")
+        check_re = re.compile(r"^\*\*(Check|Self-check):\*\*")
+        for source in (WORDING_SOURCE, CADENCE_SOURCE):
+            lines = source.read_text(encoding="utf-8").splitlines()
+            # Partition into sections starting at each `##` heading (source has no
+            # fenced headings, so no fence-tracking is needed here).
+            starts = [i for i, line in enumerate(lines) if heading_re.match(line)]
+            bounds = list(zip(starts, [*starts[1:], len(lines)], strict=True))
+            for start, end in bounds:
+                section = lines[start:end]
+                with self.subTest(source=source.name, heading=section[0]):
+                    rule_count = sum(
+                        1 for line in section if line.startswith(RULE_PREFIX)
+                    )
+                    check_count = sum(1 for line in section if check_re.match(line))
+                    self.assertEqual(
+                        rule_count, 1, f"{section[0]}: {rule_count} RULE: lines"
+                    )
+                    self.assertEqual(
+                        check_count,
+                        1,
+                        f"{section[0]}: {check_count} Check/Self-check lines",
+                    )
+
+
+def raw_heading_count_outside_fences(text):
+    """`^## ` headings outside fences, via a fresh scan -- independent of the module."""
+    count = 0
+    in_fence = False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if re.match(r"^## ", line):
+            count += 1
+    return count
+
+
+def raw_rule_texts(text):
+    """RULE: line texts via a plain regex over raw lines, not the generator's function."""
+    return re.findall(r"^RULE: (.+)$", text, re.MULTILINE)
+
 
 class TestCarrierIntegrity(unittest.TestCase):
+    """Every check here is against an oracle independent of extract_rules.
+
+    Heading count is the real invariant the generator enforces (one RULE: line per `##`
+    section) -- checking bullet count against a reimplementation of the module's own
+    extraction would prove only that two copies of the same logic agree.
+    """
+
     def test_banner_is_line_one_and_an_html_comment(self):
         text = CARRIER.read_text(encoding="utf-8")
         first_line = text.splitlines()[0]
         self.assertTrue(first_line.startswith("<!--"))
         self.assertIn("GENERATED from docs/style/wording-rules.md", first_line)
 
-    def test_every_source_rule_appears_verbatim_as_a_bullet(self):
+    def test_heading_count_matches_bullet_count_per_source_section(self):
+        carrier_text = CARRIER.read_text(encoding="utf-8")
+        wording_section, cadence_section = _split_carrier_sections(carrier_text)
+        cases = (
+            (WORDING_SOURCE, wording_section),
+            (CADENCE_SOURCE, cadence_section),
+        )
+        for source, section in cases:
+            with self.subTest(source=source.name):
+                headings = raw_heading_count_outside_fences(
+                    source.read_text(encoding="utf-8")
+                )
+                bullets = sum(
+                    1 for line in section.splitlines() if line.startswith("- ")
+                )
+                self.assertEqual(headings, bullets)
+
+    def test_every_source_rule_text_appears_verbatim_in_the_carrier(self):
         carrier_text = CARRIER.read_text(encoding="utf-8")
         for source in (WORDING_SOURCE, CADENCE_SOURCE):
-            for rule in extract_rule_lines(source.read_text(encoding="utf-8")):
-                with self.subTest(rule=rule):
-                    self.assertIn(f"- {rule}", carrier_text)
-
-    def test_bullet_count_matches_source_rule_count(self):
-        carrier_text = CARRIER.read_text(encoding="utf-8")
-        bullet_count = sum(
-            1 for line in carrier_text.splitlines() if line.startswith("- ")
-        )
-        source_count = sum(
-            len(extract_rule_lines(source.read_text(encoding="utf-8")))
-            for source in (WORDING_SOURCE, CADENCE_SOURCE)
-        )
-        self.assertEqual(bullet_count, source_count)
+            for rule_text in raw_rule_texts(source.read_text(encoding="utf-8")):
+                with self.subTest(rule=rule_text):
+                    self.assertIn(f"- {rule_text}", carrier_text)
 
     def test_carrier_contains_no_em_dash(self):
         self.assertNotIn("—", CARRIER.read_text(encoding="utf-8"))
@@ -159,21 +230,77 @@ class TestCarrierIntegrity(unittest.TestCase):
         self.assertFalse(raw.endswith(b"\n\n"))
 
 
+def _split_carrier_sections(carrier_text):
+    """The carrier's `## Wording` and `## Cadence` bullet blocks, as raw text."""
+    wording_start = carrier_text.index("## Wording")
+    cadence_start = carrier_text.index("## Cadence")
+    return carrier_text[wording_start:cadence_start], carrier_text[cadence_start:]
+
+
 class TestFencedBlockSafety(unittest.TestCase):
     def test_rule_line_inside_a_fence_is_not_extracted(self):
         with _fixture_tree() as tmp:
             wording = tmp / "docs" / "style" / "wording-rules.md"
             wording.write_text(
                 wording.read_text(encoding="utf-8")
-                + "\n```text\nRULE: this is inside a fence and must never be extracted.\n```\n",
+                + "\n## Fenced example\n\n"
+                + "```text\nRULE: this is inside a fence and must never be extracted.\n```\n",
                 encoding="utf-8",
             )
+            # A heading with no live RULE: line (the real one is fenced) trips heading
+            # parity, which is the correct failure -- proves the fence really hid it
+            # from extraction rather than merely from some other check.
             result = run_build(["--repo-root", str(tmp)])
-            self.assertEqual(result.returncode, 0, result.stderr)
-            carrier_text = (tmp / "docs" / "style" / "session-context.md").read_text(
-                encoding="utf-8"
-            )
-            self.assertNotIn("this is inside a fence", carrier_text)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("sections", result.stderr)
+
+    def test_unbalanced_fence_is_a_hard_error(self):
+        with _fixture_tree() as tmp:
+            wording = tmp / "docs" / "style" / "wording-rules.md"
+            lines = wording.read_text(encoding="utf-8").split("\n")
+            lines.insert(len(lines) // 2, "```")
+            wording.write_text("\n".join(lines), encoding="utf-8")
+
+            result = run_build(["--repo-root", str(tmp)])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("unbalanced", result.stderr)
+            self.assertIn("wording-rules.md", result.stderr)
+
+            check_result = run_build(["--check", "--repo-root", str(tmp)])
+            self.assertEqual(check_result.returncode, 1)
+            self.assertIn("unbalanced", check_result.stderr)
+
+    def test_reproduction_stray_fence_errors_instead_of_dropping_rules(self):
+        """The exact failure mode from review: a stray fence must not silently drop
+        rules past it -- it must fail the build instead of returning a partial carrier.
+        """
+        with _fixture_tree() as tmp:
+            wording = tmp / "docs" / "style" / "wording-rules.md"
+            lines = wording.read_text(encoding="utf-8").split("\n")
+            lines.insert(59, "```")
+            wording.write_text("\n".join(lines), encoding="utf-8")
+
+            result = run_build(["--repo-root", str(tmp)])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("unbalanced", result.stderr)
+
+
+class TestHeadingParity(unittest.TestCase):
+    def test_missing_rule_line_in_a_section_fails_the_build(self):
+        with _fixture_tree() as tmp:
+            wording = tmp / "docs" / "style" / "wording-rules.md"
+            text = wording.read_text(encoding="utf-8")
+            # Drop exactly one RULE: line, leaving its `##` section headerless of a rule.
+            lines = text.splitlines()
+            for i, line in enumerate(lines):
+                if line.startswith("RULE: "):
+                    del lines[i]
+                    break
+            wording.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            result = run_build(["--repo-root", str(tmp)])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("sections", result.stderr)
 
 
 class TestGeneratorErrorPaths(unittest.TestCase):
@@ -202,9 +329,12 @@ class TestEmitter(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["hookSpecificOutput"]["hookEventName"], "SessionStart")
-        self.assertEqual(
-            payload["hookSpecificOutput"]["additionalContext"],
-            CARRIER.read_text(encoding="utf-8"),
+
+        carrier_text = CARRIER.read_text(encoding="utf-8")
+        banner, _, rest = carrier_text.partition("\n\n")
+        self.assertEqual(payload["hookSpecificOutput"]["additionalContext"], rest)
+        self.assertNotIn(
+            "GENERATED", payload["hookSpecificOutput"]["additionalContext"]
         )
 
     def test_missing_carrier_exits_zero_with_empty_stdout(self):

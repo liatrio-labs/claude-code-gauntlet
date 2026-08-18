@@ -9,6 +9,7 @@ Each `RULE:` line is the complete rule and is extracted verbatim by
 `scripts/build_style_artifacts.py`. Generated carriers receive that line and nothing else, so the
 line must stand alone. The prose beneath each rule is expansion for a human maintainer and is never
 extracted. Negative examples live in fenced blocks so a tightening pass cannot quietly repair them.
+The carrier ships only the `RULE:` line, so any scoping the rule needs must live in that line itself.
 
 Sentence construction cannot reach any of this. A session made of individually clean sentences is
 still unreadable when every step is announced, every correction is narrated, and the close restates
@@ -18,7 +19,7 @@ the process.
 
 RULE: Answer a one-fact question in one or two sentences, with no preamble and no restatement of the question.
 
-**Check:** a reply to a single-fact question is at most three sentences.
+**Self-check:** a reply to a single-fact question is at most three sentences.
 
 Before:
 
@@ -34,7 +35,7 @@ After: `stages.js` owns the retry.
 
 RULE: Give the conclusion and the reasoning that changes it, and hold the full trace until someone asks.
 
-**Check:** the reply names no file that was read only to rule something out.
+**Self-check:** the reply names no file that was read only to rule something out.
 
 The reader wants the answer plus enough to trust it. A file-by-file account of what you read
 belongs in the transcript, not the reply. If the detail would change what the reader does next,
@@ -53,7 +54,7 @@ does, because the reader is about to watch a run of tool calls and wants to know
 
 RULE: Describe the goal in one sentence rather than narrating the sequence of steps you plan to take.
 
-**Check:** no sentence before a tool call enumerates two or more planned steps.
+**Self-check:** no sentence before a tool call enumerates two or more planned steps.
 
 Before:
 
@@ -68,7 +69,7 @@ After: I want to find where the provider field gets its default.
 
 RULE: Speak between tool calls only when you found something load-bearing or changed direction.
 
-**Check:** no message between tool calls restates what the previous tool call did.
+**Self-check:** no message between tool calls restates what the previous tool call did.
 
 A running commentary of completed steps duplicates what the transcript already shows. A note that
 the retry is in a different module than expected changes what the reader should watch for, so it
@@ -78,7 +79,7 @@ earns its line.
 
 RULE: End the turn with what happened or what you found, not with a recap of the process that produced it.
 
-**Check:** the closing paragraph contains no process verb such as searched, checked, or confirmed.
+**Self-check:** the closing paragraph does not restate steps the transcript already showed; a verification outcome stated once is fine.
 
 Before:
 
@@ -94,7 +95,7 @@ After: The retry lives in the writer stage. It fires once on a partial write, th
 
 RULE: Correct your own mistake without narrating it, unless the mistake changes a decision the reader has already made.
 
-**Check:** the output contains no apology or correction of a step the reader never saw.
+**Self-check:** the output contains no apology or correction of a step the reader never saw.
 
 A wrong path guessed and corrected inside one turn is noise. A wrong assumption that the reader
 acted on is a finding, and it gets a plain sentence saying what changed and what to do about it.

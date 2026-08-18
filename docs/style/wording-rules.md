@@ -8,6 +8,7 @@ Each `RULE:` line is the complete rule and is extracted verbatim by
 `scripts/build_style_artifacts.py`. Generated carriers receive that line and nothing else, so the
 line must stand alone. The prose beneath each rule is expansion for a human maintainer and is never
 extracted. Negative examples live in fenced blocks so a tightening pass cannot quietly repair them.
+The carrier ships only the `RULE:` line, so any scoping the rule needs must live in that line itself.
 
 ## No em dashes
 
@@ -32,7 +33,7 @@ even when every field is identical.
 
 RULE: Describe what a thing does, and never assert that it is important, critical, or a milestone.
 
-**Check:** the words important, critical, major, and milestone do not describe your own work.
+**Self-check:** the words important, critical, major, and milestone do not describe your own work.
 
 Significance is the reader's call, made from the facts. Asserting it spends words and asks for
 trust that the sentence has not yet earned.
@@ -48,7 +49,7 @@ After: The pipeline now retries a partial write once before reporting a gap.
 
 ## No filler adjectives
 
-RULE: Avoid comprehensive, robust, seamless, crucial, vital, key, powerful, significant, deep, enhanced, and "leverage" as a verb.
+RULE: Avoid comprehensive, robust, seamless, crucial, vital, key, powerful, significant, deep, and enhanced as boosters, and "leverage" as a verb.
 
 **Check:** none of the listed words appears in the output, in any inflected form.
 
@@ -84,7 +85,7 @@ one.
 
 RULE: List exactly the items that exist, and write one or two items as prose instead of a list.
 
-**Check:** every item in a list names something that exists in the code or the change under
+**Self-check:** every item in a list names something that exists in the code or the change under
 discussion.
 
 Lists attract a third item that was invented to fill the shape. If you have two real points,
@@ -146,7 +147,7 @@ word is also shorter, which helps the sentence stay under the cap.
 
 RULE: Explain connected reasoning in prose, and use bullets only for genuinely parallel items.
 
-**Check:** every bulleted list holds items of the same grammatical shape.
+**Self-check:** every bulleted list holds items of the same grammatical shape.
 
 Most "be concise" instructions demand bullets, which trades one unreadability for another.
 A bulleted causal chain has had its connectives stripped, so the reader reassembles the argument
@@ -158,7 +159,7 @@ retry fires is not.
 
 RULE: Stop at the last fact, adding no summary of what was already said and no offer of next steps.
 
-**Check:** the final paragraph states a fact not already stated earlier in the reply.
+**Self-check:** the final paragraph states a fact not already stated earlier in the reply.
 
 A closing restatement of the process is the single most common source of unread text. If the last
 paragraph would survive deletion without losing a fact, delete it.
@@ -182,7 +183,7 @@ After: I did not check the GitLab path.
 
 RULE: Define an unfamiliar term the first time you use it, then use it bare for the rest of the reply.
 
-**Check:** each term's parenthetical or appositive gloss appears at most once per reply.
+**Self-check:** each term's parenthetical or appositive gloss appears at most once per reply.
 
 Repeating the gloss treats the reader as someone who did not read the previous paragraph. Omitting
 it entirely leaves a term nobody can look up.

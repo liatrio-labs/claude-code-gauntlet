@@ -32,8 +32,15 @@ RULE_PREFIX = "RULE: "
 
 
 def extract_rules(text, source_name):
-    """Every line starting `RULE: `, verbatim, skipping fenced code blocks."""
+    """Every line starting `RULE: `, verbatim, skipping fenced code blocks.
+
+    Each rule lives in its own `##` section, so a stray or missing fence delimiter that
+    would silently swallow later rules is caught two ways: an unclosed fence at end of
+    file is a hard error, and the rule count is cross-checked against the number of `##`
+    headings outside any fence.
+    """
     rules = []
+    headings = 0
     in_fence = False
     for line in text.splitlines():
         stripped = line.strip()
@@ -42,10 +49,19 @@ def extract_rules(text, source_name):
             continue
         if in_fence:
             continue
+        if line.startswith("## "):
+            headings += 1
         if line.startswith(RULE_PREFIX):
             rules.append(line[len(RULE_PREFIX) :])
+    if in_fence:
+        raise ValueError(f"unbalanced code fence in {source_name}")
     if not rules:
         raise ValueError(f"{source_name} yields zero RULE: lines")
+    if headings != len(rules):
+        raise ValueError(
+            f"{source_name} has {headings} '##' sections but {len(rules)} RULE: lines; "
+            "every section must carry exactly one RULE: line"
+        )
     return rules
 
 
