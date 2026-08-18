@@ -154,6 +154,4 @@ after a merge:
 
 ## Session output style
 
-Canonical rules live in `docs/style/wording-rules.md` and `docs/style/cadence-rules.md`.
-`scripts/build_style_artifacts.py` regenerates `docs/style/session-context.md`, which a
-SessionStart hook injects into every session.
+Canonical rules and the regeneration mechanism are documented in `scripts/build_style_artifacts.py`.

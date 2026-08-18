@@ -1,12 +1,4 @@
 {
-  "env": {
-    "CLAUDE_CODE_TASK_LIST_ID": "claude-deep-review"
-  },
-  "permissions": {
-    "allow": [
-      "Edit(hooks/**)"
-    ]
-  },
   "hooks": {
     "SessionStart": [
       {

@@ -35,12 +35,16 @@ def extract_rules(text, source_name):
     """Every line starting `RULE: `, verbatim, skipping fenced code blocks.
 
     Each rule lives in its own `##` section, so a stray or missing fence delimiter that
-    would silently swallow later rules is caught two ways: an unclosed fence at end of
-    file is a hard error, and the rule count is cross-checked against the number of `##`
-    headings outside any fence.
+    would silently swallow later rules is caught by per-section attribution: every
+    section outside a fence must carry exactly one RULE: line, and a violation names both
+    the source and the offending section heading. An aggregate count comparison would pass
+    when one section has zero RULE: lines and another has two; this does not. Preamble
+    text before the first `## ` heading is exempt and may carry zero rules. An unclosed
+    fence at end of file is a separate hard error.
     """
     rules = []
-    headings = 0
+    current_heading = None
+    section_count = 0
     in_fence = False
     for line in text.splitlines():
         stripped = line.strip()
@@ -50,18 +54,26 @@ def extract_rules(text, source_name):
         if in_fence:
             continue
         if line.startswith("## "):
-            headings += 1
+            if current_heading is not None and section_count != 1:
+                raise ValueError(
+                    f"{source_name} section {current_heading!r} has {section_count} "
+                    "RULE: lines; all sections must carry exactly one"
+                )
+            current_heading = line
+            section_count = 0
+            continue
         if line.startswith(RULE_PREFIX):
             rules.append(line[len(RULE_PREFIX) :])
+            section_count += 1
     if in_fence:
         raise ValueError(f"unbalanced code fence in {source_name}")
+    if current_heading is not None and section_count != 1:
+        raise ValueError(
+            f"{source_name} section {current_heading!r} has {section_count} "
+            "RULE: lines; all sections must carry exactly one"
+        )
     if not rules:
         raise ValueError(f"{source_name} yields zero RULE: lines")
-    if headings != len(rules):
-        raise ValueError(
-            f"{source_name} has {headings} '##' sections but {len(rules)} RULE: lines; "
-            "every section must carry exactly one RULE: line"
-        )
     return rules
 
 
@@ -136,13 +148,11 @@ def main(argv=None):
         return 0
     if args.check:
         sys.stderr.write(
-            f"stale generated carrier: {os.path.relpath(os.path.join(args.repo_root, CARRIER), args.repo_root)}\n"
+            f"stale generated carrier: {CARRIER}\n"
             "run: python3 scripts/build_style_artifacts.py\n"
         )
         return 1
-    print(
-        f"regenerated: {os.path.relpath(os.path.join(args.repo_root, CARRIER), args.repo_root)}"
-    )
+    print(f"regenerated: {CARRIER}")
     return 0
 
 

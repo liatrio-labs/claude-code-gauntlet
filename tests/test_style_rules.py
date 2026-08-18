@@ -179,8 +179,22 @@ def raw_heading_count_outside_fences(text):
 
 
 def raw_rule_texts(text):
-    """RULE: line texts via a plain regex over raw lines, not the generator's function."""
-    return re.findall(r"^RULE: (.+)$", text, re.MULTILINE)
+    """RULE: line texts, skipping fenced blocks -- its own parity toggle, independent of
+    the generator's extract_rules. Without fence-awareness a fenced negative example that
+    starts with `RULE: ` would poison this oracle into expecting carrier text that must
+    never appear there.
+    """
+    texts = []
+    in_fence = False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.startswith("RULE: "):
+            texts.append(line[len("RULE: ") :])
+    return texts
 
 
 class TestCarrierIntegrity(unittest.TestCase):
@@ -223,6 +237,38 @@ class TestCarrierIntegrity(unittest.TestCase):
 
     def test_carrier_contains_no_em_dash(self):
         self.assertNotIn("—", CARRIER.read_text(encoding="utf-8"))
+
+    def test_fenced_rule_line_is_neither_in_the_carrier_nor_fails_integrity(self):
+        """A fenced negative example starting with `RULE: ` inside an existing section
+        must not appear in the carrier, and must not trip the oracle above -- proving
+        raw_rule_texts is fence-aware rather than trusting the generator's own skip.
+        """
+        with _fixture_tree() as tmp:
+            wording = tmp / "docs" / "style" / "wording-rules.md"
+            text = wording.read_text(encoding="utf-8")
+            poison = (
+                "\n```text\nRULE: this fenced line must never reach the carrier.\n```\n"
+            )
+            # Insert right after the first RULE: line's blank-line successor, still
+            # inside that same `##` section, so heading parity is untouched.
+            lines = text.splitlines()
+            insert_at = next(
+                i + 2 for i, line in enumerate(lines) if line.startswith("RULE: ")
+            )
+            lines[insert_at:insert_at] = poison.splitlines()
+            wording.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            result = run_build(["--repo-root", str(tmp)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            carrier_text = (tmp / "docs" / "style" / "session-context.md").read_text(
+                encoding="utf-8"
+            )
+            self.assertNotIn(
+                "this fenced line must never reach the carrier", carrier_text
+            )
+            for rule_text in raw_rule_texts(text):
+                self.assertIn(f"- {rule_text}", carrier_text)
 
     def test_carrier_ends_with_a_single_trailing_newline(self):
         raw = CARRIER.read_bytes()
@@ -292,8 +338,13 @@ class TestHeadingParity(unittest.TestCase):
             text = wording.read_text(encoding="utf-8")
             # Drop exactly one RULE: line, leaving its `##` section headerless of a rule.
             lines = text.splitlines()
+            heading = None
             for i, line in enumerate(lines):
                 if line.startswith("RULE: "):
+                    for j in range(i, -1, -1):
+                        if lines[j].startswith("## "):
+                            heading = lines[j]
+                            break
                     del lines[i]
                     break
             wording.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -301,6 +352,56 @@ class TestHeadingParity(unittest.TestCase):
             result = run_build(["--repo-root", str(tmp)])
             self.assertEqual(result.returncode, 1)
             self.assertIn("sections", result.stderr)
+            self.assertIn(heading, result.stderr)
+
+    def test_zero_rule_lines_in_a_section_names_that_section(self):
+        """A section with zero RULE: lines raises naming that specific heading, not an
+        aggregate mismatch -- the per-section attribution the aggregate check missed.
+        """
+        with _fixture_tree() as tmp:
+            wording = tmp / "docs" / "style" / "wording-rules.md"
+            text = wording.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            heading = None
+            for i, line in enumerate(lines):
+                if line.startswith("RULE: "):
+                    for j in range(i, -1, -1):
+                        if lines[j].startswith("## "):
+                            heading = lines[j]
+                            break
+                    del lines[i]
+                    break
+            wording.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            result = run_build(["--repo-root", str(tmp)])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("0 RULE", result.stderr)
+            self.assertIn(heading, result.stderr)
+
+    def test_two_rule_lines_in_a_section_names_that_section(self):
+        """A section with two RULE: lines raises naming that specific heading -- the
+        aggregate heading-count vs rule-count check this replaced would pass this case
+        outright whenever some other section happened to be short by one.
+        """
+        with _fixture_tree() as tmp:
+            wording = tmp / "docs" / "style" / "wording-rules.md"
+            text = wording.read_text(encoding="utf-8")
+            lines = text.splitlines()
+            heading = None
+            for i, line in enumerate(lines):
+                if line.startswith("RULE: "):
+                    for j in range(i, -1, -1):
+                        if lines[j].startswith("## "):
+                            heading = lines[j]
+                            break
+                    lines.insert(i, line)
+                    break
+            wording.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            result = run_build(["--repo-root", str(tmp)])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("2 RULE", result.stderr)
+            self.assertIn(heading, result.stderr)
 
 
 class TestGeneratorErrorPaths(unittest.TestCase):
@@ -335,6 +436,22 @@ class TestEmitter(unittest.TestCase):
         self.assertEqual(payload["hookSpecificOutput"]["additionalContext"], rest)
         self.assertNotIn(
             "GENERATED", payload["hookSpecificOutput"]["additionalContext"]
+        )
+
+    def test_additional_context_starts_with_the_style_banner(self):
+        """Pins the emitter's single-line banner strip: partition("\\n\\n") only removes
+        the GENERATED comment because it is exactly one line. A future multi-line banner
+        would leave stray banner text ahead of the real heading without this failing.
+        """
+        result = subprocess.run(
+            [sys.executable, str(EMIT_SCRIPT)], capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(
+            payload["hookSpecificOutput"]["additionalContext"].startswith(
+                "# Session output style"
+            )
         )
 
     def test_missing_carrier_exits_zero_with_empty_stdout(self):
