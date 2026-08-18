@@ -1116,14 +1116,15 @@ def consolidate_cross_agent(findings):
 
     consolidated_count = 0
 
-    for group in groups.values():
+    # The group's own key IS (file, bucket) — reuse it rather than recomputing
+    # the bucket here, so group_by_proximity stays the single definition of the
+    # bucketing formula.
+    for (fpath, bucket), group in groups.items():
         # Only consolidate when 2+ *different* agents appear
         agents_in_group = {f.get("agent", "").lower() for f in group}
         if len(group) < 2 or len(agents_in_group) < 2:
             continue  # no stamps
 
-        fpath = group[0].get("file", "")
-        bucket = _line_bucket_proximity(group[0].get("line_start", 0), LINE_PROXIMITY)
         consolidation_key = f"{fpath}:{bucket}"
 
         ranked = sorted(group, key=_winner_key, reverse=True)
@@ -1137,16 +1138,6 @@ def consolidate_cross_agent(findings):
             consolidated_count += 1
 
     return findings, consolidated_count
-
-
-def _line_bucket_proximity(line, proximity):
-    """Shared bucket helper -- same rounding rule group_by_proximity uses
-    internally, exposed so consolidate_cross_agent can spell an identical
-    consolidation_key without re-grouping."""
-    try:
-        return round(int(line) / proximity) * proximity
-    except (TypeError, ValueError):
-        return 0
 
 
 def tag_findings(findings):

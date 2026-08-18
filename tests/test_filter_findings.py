@@ -1258,8 +1258,15 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         self.assertNotIn("consolidation_key", f)
 
     def test_no_truthy_id_passes_through_unstamped(self):
+        """The id-less member outranks the id-carrying one (core dimension AND
+        higher confidence), so the primary walk has to step PAST it — an
+        id-less finding cannot carry the stamp."""
         no_id = _make_finding(
-            file="a.py", line_start=10, agent="bug-detector", dimension="bug"
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+            dimension="bug",
+            confidence=95,
         )
         del no_id["id"]
         has_id = _make_finding(
@@ -1268,12 +1275,15 @@ class TestConsolidateCrossAgent(unittest.TestCase):
             line_start=11,
             agent="test-analyzer",
             dimension="test_coverage",
+            confidence=50,
         )
         findings, count = consolidate_cross_agent([no_id, has_id])
         self.assertEqual(len(findings), 2)
         self.assertEqual(count, 1)
         self.assertNotIn("consolidation_key", no_id)
+        self.assertNotIn("consolidation_primary", no_id)
         self.assertIn("consolidation_key", has_id)
+        self.assertTrue(has_id["consolidation_primary"])
 
     def test_stats_field_cross_agent_consolidated(self):
         # tag_findings routes through consolidate_cross_agent; stats must include

@@ -104,12 +104,17 @@ test('singleton gets no stamps', () => {
   assert.equal('consolidation_key' in only, false);
 });
 
+// The id-less member outranks the id-carrying one (core dimension AND higher
+// confidence), so the primary walk has to step PAST it -- an id-less finding
+// cannot carry the stamp.
 test('findings without a truthy id pass through unstamped', () => {
-  const noId = f({ id: undefined, file: 'a.py', line_start: 10, agent: 'bug-detector' });
-  const withId = f({ id: 'has-id', file: 'a.py', line_start: 11, agent: 'test-analyzer' });
+  const noId = f({ id: undefined, file: 'a.py', line_start: 10, agent: 'bug-detector', dimension: 'bug', confidence: 95 });
+  const withId = f({ id: 'has-id', file: 'a.py', line_start: 11, agent: 'test-analyzer', dimension: 'test_coverage', confidence: 50 });
   const { consolidatedCount } = consolidateCrossAgent([noId, withId]);
   assert.equal('consolidation_key' in noId, false);
+  assert.equal('consolidation_primary' in noId, false);
   assert.equal(withId.consolidation_key, 'a.py:10');
+  assert.equal(withId.consolidation_primary, true);
   assert.equal(consolidatedCount, 1);
 });
 
