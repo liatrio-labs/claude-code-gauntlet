@@ -1170,12 +1170,16 @@ def fetch_gitlab_shas(project_id, mr_iid):
 
 
 def gitlab_prior_delivery(owner, repo, mr_iid, sha):
-    """Return ``(summary_posted, finding_keys)`` — what THIS sha's review already left.
+    """Return ``(summary_posted, finding_keys, legacy_group_keys)`` — what THIS sha's
+    review already left.
 
-    Makes a rerun after a partial delivery retry-safe in both halves: the summary note is
-    not stacked a second time (issue #127 D4) and the inline discussions that did land
-    are not reposted (issue #132). ONE fetch serves both, in detect_prior_review.py — the
-    only reader of the signals — so this module stays write-only.
+    Makes a rerun after a partial delivery retry-safe in three ways: the summary note is
+    not stacked a second time (issue #127 D4), the inline discussions that did land are
+    not reposted (issue #132), and a pre-#208 group body that rendered a corroborator's
+    content without ever keying it is recognized as already carrying that member too (see
+    :func:`detect_prior_review.legacy_group_keys_for_sha`) rather than posted a second
+    time. ONE fetch serves all three, in detect_prior_review.py — the only reader of the
+    signals — so this module stays write-only.
 
     Never blocks delivery. Dry-run does not fetch AT ALL: dry-run's invariant is that it
     issues no WRITE calls (reads do happen under dry-run — `glab mr diff` and the
@@ -1187,15 +1191,17 @@ def gitlab_prior_delivery(owner, repo, mr_iid, sha):
     everything — a possible duplicate beats a silently dropped review.
     """
     if DRY_RUN or not is_sha_shaped(sha):
-        return False, frozenset()
-    summary_posted, keys, error = gitlab_prior_delivery_state(owner, repo, mr_iid, sha)
+        return False, frozenset(), frozenset()
+    summary_posted, keys, legacy_group_keys, error = gitlab_prior_delivery_state(
+        owner, repo, mr_iid, sha
+    )
     if error:
         warn(
             f"could not check for an existing summary note or already-delivered inline "
             f"discussions ({error}); posting them."
         )
-        return False, frozenset()
-    return summary_posted, keys
+        return False, frozenset(), frozenset()
+    return summary_posted, keys, legacy_group_keys
 
 
 def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
@@ -1293,7 +1299,9 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         "Content-Type: application/json",
         f"projects/{project_id}/merge_requests/{mr_iid}/notes",
     ]
-    summary_posted, delivered_keys = gitlab_prior_delivery(owner, repo, mr_iid, sha)
+    summary_posted, delivered_keys, legacy_group_keys = gitlab_prior_delivery(
+        owner, repo, mr_iid, sha
+    )
     # Same predicate that makes gitlab_prior_delivery skip the fetch: a marker built
     # from a non-SHA-shaped sha (get_head_sha's "unknown" fallback) is one
     # find_finding_marker is guaranteed to reject, so appending it would leave an
@@ -1420,6 +1428,58 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             return "failed"
         return "posted"
 
+    def member_key_for(m, anchor):
+        """Return the delivery key for ONE group member, anchored or not.
+
+        An anchorable member's key is `member_key` at its own resolved
+        position — the same key its individual fallback discussion would
+        carry. A member with no anchor (no line, or a line outside the diff)
+        can only ever be delivered inside its group's body, so it has no
+        resolved position to key on; it is keyed on its own raw, unresolved
+        `file`/`line` instead. That is deterministic and is exactly what the
+        group body's marker for this member must also use — the round-trip
+        `deliver()` relies on for every member key.
+        """
+        if anchor:
+            return member_key(m, *anchor)
+        return member_key(m, m.get("file", "?"), m.get("line"))
+
+    def deliver_unanchored(c, key):
+        """Post an unanchorable corroborator's content as a position-less MR note.
+
+        Reached only when *c* has no line to anchor an inline discussion on
+        (or its line is outside the diff) AND the group's single discussion
+        already delivered its anchored siblings on an earlier run — the group
+        body cannot be reposted without duplicating those siblings, so this is
+        the only delivery vehicle left. Mirrors the summary note's own
+        position-less POST to the same `/notes` endpoint, with the same
+        per-finding marker `deliver()` appends to an inline discussion, so a
+        later rerun recognizes this exactly as it would an inline one.
+        """
+        body = render_comment_body(c)
+        payload = {
+            "body": body
+            if DRY_RUN or not sha_is_markable
+            else f"{body}\n\n{build_finding_marker(sha, key)}"
+        }
+        cmd_prefix = [
+            "glab",
+            "api",
+            "--method",
+            "POST",
+            "--header",
+            "Content-Type: application/json",
+            f"projects/{project_id}/merge_requests/{mr_iid}/notes",
+        ]
+        _response, error = try_post_json(cmd_prefix, payload)
+        if error is not None:
+            warn_skip(
+                f"Skipping corroborating finding '{c.get('title', '?')}' — GitLab "
+                f"rejected the position-less note.\n{error}"
+            )
+            return "failed"
+        return "posted"
+
     def corroborator_anchor(c):
         """Return ``(filepath, line)`` a corroborator can be anchored at on its own.
 
@@ -1472,20 +1532,37 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         f = group["primary"]
         corroborators = group["corroborators"]
         primary_key = member_key(f, filepath, f["line"])
-        # A corroborator with no anchor of its own has no key: it can only ever be
-        # delivered by its group's body, so it is neither matchable on a rerun nor
-        # separable from the group here.
+        # Every member gets a key — even one with no anchor of its own, which can
+        # only ever be delivered by its group's body (see member_key_for). Without
+        # this, an unanchorable corroborator's key was simply absent, so the
+        # all-keys-present check below could never see it as missing: the group
+        # was declared already_present while that member's content had never
+        # landed anywhere (unanchored corroborators lost on rerun).
         anchors = {id(c): corroborator_anchor(c) for c in corroborators}
-        member_keys = [primary_key] + [
-            member_key(c, *anchors[id(c)]) for c in corroborators if anchors[id(c)]
-        ]
+        corroborator_keys = {
+            id(c): member_key_for(c, anchors[id(c)]) for c in corroborators
+        }
+        member_keys = [primary_key] + [corroborator_keys[id(c)] for c in corroborators]
+        if primary_key in legacy_group_keys:
+            # This group's primary key was found on a pre-#208 group body that
+            # rendered a corroborator's content without ever giving it a key of
+            # its own (see legacy_group_keys_for_sha). That body IS this group's
+            # whole delivery — every member it renders is provably already on
+            # the MR, missing keys included — so treat the whole group as
+            # already_present rather than let the "some but not all" branch
+            # below post the missing member a second time.
+            counters["already_present"] += len(member_keys)
+            continue
         if any(k in delivered_keys for k in member_keys) and not all(
             k in delivered_keys for k in member_keys
         ):
             # An earlier run delivered SOME of this group — its fallback posted
             # individual discussions for part of it. Posting the group now would put
             # that content on the MR twice (issue #132), so deliver only what is
-            # missing, each on its own.
+            # missing, each on its own. A missing member without an anchor cannot
+            # get its own inline discussion (deliver_corroborator requires a line),
+            # so it is posted as a position-less note instead — the group body it
+            # would otherwise ride in was already delivered by the earlier run.
             counters[
                 "already_present"
                 if primary_key in delivered_keys
@@ -1495,11 +1572,13 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             ] += 1
             for c in corroborators:
                 anchor = anchors[id(c)]
-                counters[
-                    "already_present"
-                    if anchor and member_key(c, *anchor) in delivered_keys
-                    else deliver_corroborator(c)
-                ] += 1
+                key = corroborator_keys[id(c)]
+                if key in delivered_keys:
+                    counters["already_present"] += 1
+                elif anchor:
+                    counters[deliver_corroborator(c)] += 1
+                else:
+                    counters[deliver_unanchored(c, key)] += 1
             continue
         outcome = deliver(
             f, filepath, f["line"], render_group_body(f, corroborators), member_keys
@@ -1509,7 +1588,12 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             # never given a chance of their own — post each as its own
             # discussion rather than dropping validated findings. The primary
             # still counts 1 toward its own loss; each corroborator is counted
-            # on its own merits.
+            # on its own merits. (Unlike the partial-prior-delivery branch
+            # above, nothing from this group has landed on the MR yet, so
+            # `deliver_corroborator`'s own no-line/off-diff diagnostics are
+            # the right report here — not the position-less note fallback,
+            # which exists only to reach a member whose group body already
+            # went out without it.)
             counters[outcome] += 1
             for c in corroborators:
                 counters[deliver_corroborator(c)] += 1

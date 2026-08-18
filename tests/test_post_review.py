@@ -1636,7 +1636,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
     # from a unit test.
     @patch(
         "scripts.post_review.gitlab_prior_delivery_state",
-        return_value=(False, set(), None),
+        return_value=(False, set(), frozenset(), None),
     )
     @patch("scripts.post_review.warn")
     def test_gitlab_skip_includes_valid_lines(
@@ -2066,7 +2066,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
             # reach a real forge from a unit test.
             patch(
                 "scripts.post_review.gitlab_prior_delivery_state",
-                return_value=(False, set(), None),
+                return_value=(False, set(), frozenset(), None),
             ),
         ):
             post_gitlab(data, valid_lines, new_files)
@@ -2483,6 +2483,19 @@ def _gitlab_posts(mock_run, suffix):
         for c in mock_run.call_args_list
         if "--method" in c.args[0] and any(t.endswith(suffix) for t in c.args[0])
     ]
+
+
+def _normalize_prior(prior):
+    """Pad a legacy 3-tuple ``(summary_posted, keys, error)`` ``prior`` fixture to the
+    current 4-tuple ``gitlab_prior_delivery_state`` contract — ``(summary_posted, keys,
+    legacy_group_keys, error)`` — so the many existing fixtures that predate legacy-group
+    -body detection don't all need rewriting. A 4-tuple (a test that DOES want to steer
+    legacy_group_keys) passes through unchanged.
+    """
+    if len(prior) == 4:
+        return prior
+    summary_posted, keys, error = prior
+    return summary_posted, keys, frozenset(), error
 
 
 def _discussion_posts(mock_run):
@@ -3908,7 +3921,9 @@ class _GitlabLiveRunBase(_DryRunTestBase):
             # steers it to exercise the dedup gate.
             patch(
                 "scripts.post_review.gitlab_prior_delivery_state",
-                return_value=(False, set(), None) if prior is None else prior,
+                return_value=(False, set(), frozenset(), None)
+                if prior is None
+                else _normalize_prior(prior),
             ) as mock_prior,
             patch(
                 "scripts.post_review.subprocess.run",
@@ -4165,6 +4180,119 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 f"missing marker for {member['title']}",
             )
 
+    def test_group_body_carries_a_marker_for_unanchorable_corroborator_too(self):
+        """A corroborator with no line of its own can only ever be delivered inside
+        the group body — its marker must be there too, or a rerun can never
+        recognize it as delivered (unanchored corroborators lost on rerun)."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        payloads = []
+        run = self._run_main(findings=[primary, unanchored], payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        body = next(p["body"] for p in payloads if "position" in p)
+        self.assertIn(
+            post_review.build_finding_marker("a" * 40, _member_key(unanchored)),
+            body,
+            "the unanchorable corroborator's marker must round-trip through the "
+            "group body",
+        )
+
+    def test_rerun_recognizes_unanchorable_corroborator_from_group_body(self):
+        """Given the round-trip above, a rerun that sees both markers on the MR
+        must treat the WHOLE group — unanchorable member included — as already
+        delivered, and post nothing new."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        keys = {_member_key(primary), _member_key(unanchored)}
+        run = self._run_main(findings=[primary, unanchored], prior=(True, keys, None))
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn(
+            "  2 inline discussion(s) already on the MR from an earlier run",
+            run.out,
+        )
+
+    def test_unanchorable_corroborator_delivered_when_siblings_already_posted(self):
+        """The primary was delivered individually by an earlier fallback run; the
+        unanchorable corroborator was not (it has no anchor of its own, so it
+        never got its own fallback discussion). It must still reach the MR —
+        as a position-less note — and count toward delivery rather than being
+        silently dropped as `already_present`."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        payloads = []
+        run = self._run_main(
+            findings=[primary, unanchored],
+            prior=(True, {_member_key(primary)}, None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        note_bodies = [p["body"] for p in payloads if "position" not in p]
+        self.assertTrue(
+            any("Corroborator A" in b for b in note_bodies),
+            "the unanchorable corroborator's content must land on the MR "
+            "somewhere, not vanish",
+        )
+        self.assertIn(
+            post_review.build_finding_marker("a" * 40, _member_key(unanchored)),
+            "".join(note_bodies),
+        )
+        self.assertIn("  1 inline discussion(s) already on the MR", run.out)
+        self.assertIn("  1 inline discussion(s) posted.", run.out)
+
+    def test_legacy_group_body_rerun_posts_nothing_and_counts_the_whole_group(self):
+        """A pre-#208 group body already carries the unanchorable corroborator's
+        CONTENT (rendered into its corroboration section) even though it never
+        carried that corroborator's KEY. A rerun must recognize the primary's
+        key landing in such a body as proof the whole group is delivered — not
+        attempt to `deliver_unanchored` a duplicate (Bugbot: rerun duplicates
+        prior group content)."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        payloads = []
+        run = self._run_main(
+            findings=[primary, unanchored],
+            # legacy_group_keys carries the primary's key: detect_prior_review
+            # decided this is a legacy under-marked group body. delivered_keys
+            # carries ONLY the primary's key too — the unanchorable member's
+            # key was never written by the pre-fix code that posted this note.
+            prior=(True, {_member_key(primary)}, {_member_key(primary)}, None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        note_bodies = [p["body"] for p in payloads if "position" not in p]
+        self.assertFalse(
+            any("Corroborator A" in b for b in note_bodies),
+            "the legacy group body already carries this content — posting it "
+            "again would duplicate it on the MR",
+        )
+        self.assertIn(
+            "  2 inline discussion(s) already on the MR from an earlier run",
+            run.out,
+        )
+
+    def test_non_legacy_partial_delivery_still_delivers_the_missing_member(self):
+        """Pin that legacy-group detection does NOT over-fire: an ordinary
+        partial delivery (anchored siblings posted individually, no legacy
+        group body involved) must still deliver the member that was left
+        behind, exactly as before."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        payloads = []
+        run = self._run_main(
+            findings=[primary, unanchored],
+            prior=(True, {_member_key(primary)}, set(), None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        note_bodies = [p["body"] for p in payloads if "position" not in p]
+        self.assertTrue(
+            any("Corroborator A" in b for b in note_bodies),
+            "with no legacy group body on the MR, the missing member must "
+            "still be delivered",
+        )
+
     def test_live_all_malformed_exits_one_with_nothing_posted(self):
         findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]
         run = self._run_main(findings=findings)
@@ -4272,7 +4400,8 @@ class TestGitlabSummaryIdempotency(_DryRunTestBase):
             patch.object(sys, "argv", argv),
             patch.dict(os.environ, {}, clear=False),
             patch(
-                "scripts.post_review.gitlab_prior_delivery_state", return_value=prior
+                "scripts.post_review.gitlab_prior_delivery_state",
+                return_value=_normalize_prior(prior),
             ) as mock_prior,
             patch(
                 "scripts.post_review.subprocess.run",
@@ -5062,7 +5191,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
             ),
             patch(
                 "scripts.post_review.gitlab_prior_delivery_state",
-                return_value=(False, set(), None),
+                return_value=(False, set(), frozenset(), None),
             ),
             patch(
                 "scripts.post_review.subprocess.run",

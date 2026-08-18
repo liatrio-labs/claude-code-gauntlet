@@ -378,7 +378,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
                 "created_at": "2026-08-03T00:00:00Z",
             }
         ]
-        summary_posted, keys, error = self._state(notes, FULL_SHA, calls=calls)
+        summary_posted, keys, _legacy, error = self._state(notes, FULL_SHA, calls=calls)
         self.assertTrue(summary_posted)
         self.assertEqual(keys, set())
         self.assertIsNone(error)
@@ -394,7 +394,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
                 "created_at": "2026-08-03T00:00:00Z",
             }
         ]
-        summary_posted, _keys, error = self._state(notes, FULL_SHA)
+        summary_posted, _keys, _legacy, error = self._state(notes, FULL_SHA)
         self.assertFalse(summary_posted)
         self.assertIsNone(error)
 
@@ -403,7 +403,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
             {"id": 1, "body": "Nice work", "created_at": "2026-08-03T00:00:00Z"},
             {"id": 2, "body": "LGTM", "created_at": "2026-08-03T00:01:00Z"},
         ]
-        summary_posted, keys, error = self._state(notes, FULL_SHA)
+        summary_posted, keys, _legacy, error = self._state(notes, FULL_SHA)
         self.assertFalse(summary_posted)
         self.assertEqual(keys, set())
         self.assertIsNone(error)
@@ -418,12 +418,14 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
                 "created_at": "2026-08-03T00:00:00Z",
             }
         ]
-        summary_posted, _keys, error = self._state(notes, FULL_SHA)
+        summary_posted, _keys, _legacy, error = self._state(notes, FULL_SHA)
         self.assertTrue(summary_posted)
         self.assertIsNone(error)
 
     def test_fetch_failure_returns_the_error_and_not_a_false_negative(self):
-        summary_posted, keys, error = self._state([], FULL_SHA, rc=1, stderr="boom")
+        summary_posted, keys, _legacy, error = self._state(
+            [], FULL_SHA, rc=1, stderr="boom"
+        )
         self.assertFalse(summary_posted)
         self.assertEqual(keys, set())
         self.assertTrue(error)
@@ -442,7 +444,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
             self._discussion_note(FINDING_KEY, note_id=2),
             self._discussion_note(OTHER_FINDING_KEY, note_id=3),
         ]
-        summary_posted, keys, error = self._state(notes, FULL_SHA, calls=calls)
+        summary_posted, keys, _legacy, error = self._state(notes, FULL_SHA, calls=calls)
         self.assertTrue(summary_posted)
         self.assertEqual(keys, {FINDING_KEY, OTHER_FINDING_KEY})
         self.assertIsNone(error)
@@ -453,7 +455,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
         """A discussion from a review of a DIFFERENT commit must not suppress this
         run's finding — the comment is anchored to a diff that has since moved."""
         notes = [self._discussion_note(FINDING_KEY, sha="b" * 40)]
-        _summary, keys, _error = self._state(notes, FULL_SHA)
+        _summary, keys, _legacy, _error = self._state(notes, FULL_SHA)
         self.assertEqual(keys, set())
 
     def test_notes_endpoint_is_what_is_fetched_not_discussions(self):
@@ -470,7 +472,9 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
                 "notes": [self._discussion_note(FINDING_KEY, note_id=2)],
             }
         ]
-        _summary, keys, error = self._state(discussions_shape, FULL_SHA, calls=calls)
+        _summary, keys, _legacy, error = self._state(
+            discussions_shape, FULL_SHA, calls=calls
+        )
         self.assertIsNone(error)
         self.assertEqual(
             keys,
@@ -494,7 +498,7 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
                 "created_at": "2026-08-03T00:00:00Z",
             }
         ]
-        _summary, keys, error = self._state(notes, FULL_SHA)
+        _summary, keys, _legacy, error = self._state(notes, FULL_SHA)
         self.assertEqual(keys, set())
         self.assertIsNone(error)
 
@@ -542,6 +546,100 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
         self.assertEqual(
             detect_prior_review.finding_keys_for_sha(entries, FULL_SHA), {FINDING_KEY}
         )
+
+
+# ---------------------------------------------------------------------------
+# legacy_group_keys_for_sha — recognizing a pre-#208 group body that rendered a
+# corroborator's content without ever giving it its own key (unanchored
+# corroborators lost on rerun).
+# ---------------------------------------------------------------------------
+
+
+def _legacy_group_note(primary_key, corroborator_titles, sha=FULL_SHA, note_id=1):
+    """A group discussion exactly as PRE-#208 ``post_gitlab`` would have posted one:
+    the primary's render, one ``"Corroborating finding — "`` section per corroborator
+    (``render_group_body``'s shape), but a marker for the primary ONLY — the bug
+    being pinned is that the old code never keyed an unanchorable corroborator, even
+    though it fully rendered that corroborator's content into its own section here.
+    """
+    sections = "\n\n".join(
+        f"**Corroborating finding — bug-detector (correctness, confidence 70):**\n\n"
+        f"**{title}**\n\nBody {title}"
+        for title in corroborator_titles
+    )
+    body = (
+        "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n---\n\n"
+        + sections
+        + "\n\n"
+        + review_marker.build_finding_marker(sha, primary_key)
+    )
+    return {"id": note_id, "body": body, "created_at": "2026-08-03T00:02:00Z"}
+
+
+class TestLegacyGroupKeysForSha(unittest.TestCase):
+    """Pins the detection ``gitlab_prior_delivery_state`` uses to recognize a
+    pre-#208 group body as already carrying every member it renders."""
+
+    def test_undermarked_group_body_yields_the_primary_key(self):
+        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
+        self.assertEqual(
+            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA),
+            {FINDING_KEY},
+        )
+
+    def test_fully_marked_group_body_is_not_flagged_legacy(self):
+        """A group body carrying a marker for every member it renders (the #208
+        fix's own shape) must NOT be treated as legacy — it is already exactly
+        accounted for by ``finding_keys_for_sha``, so flagging it here too would
+        just be redundant, not wrong, but the shape check must not over-fire."""
+        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
+        note["body"] += "\n" + review_marker.build_finding_marker(
+            FULL_SHA, OTHER_FINDING_KEY
+        )
+        self.assertEqual(
+            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA), set()
+        )
+
+    def test_individually_posted_primary_is_not_flagged_legacy(self):
+        """The OTHER degraded group shape — a corroborator's own fallback
+        discussion never carries a corroboration header at all — must not
+        false-positive as an under-marked group body."""
+        note = self._discussion_note(FINDING_KEY)
+        self.assertEqual(
+            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA), set()
+        )
+
+    @staticmethod
+    def _discussion_note(key, sha=FULL_SHA, note_id=1):
+        return {
+            "id": note_id,
+            "body": "**🟡 [MEDIUM] Finding**\n\nDetail.\n\n"
+            + review_marker.build_finding_marker(sha, key),
+            "created_at": "2026-08-03T00:02:00Z",
+        }
+
+    def test_ignores_a_different_shas_marker(self):
+        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"], sha="b" * 40)
+        self.assertEqual(
+            detect_prior_review.legacy_group_keys_for_sha([note], FULL_SHA), set()
+        )
+
+    def test_gitlab_prior_delivery_state_surfaces_legacy_group_keys(self):
+        """The one fetch that answers summary/keys questions answers this one too."""
+        note = _legacy_group_note(FINDING_KEY, ["Corroborator A"])
+        with patch(
+            "scripts.detect_prior_review.subprocess.run",
+            side_effect=lambda cmd, *a, **k: SimpleNamespace(
+                stdout=json.dumps([note]), stderr="", returncode=0
+            ),
+        ):
+            summary_posted, keys, legacy_group_keys, error = (
+                detect_prior_review.gitlab_prior_delivery_state("o", "r", 5, FULL_SHA)
+            )
+        self.assertFalse(summary_posted)
+        self.assertEqual(keys, {FINDING_KEY})
+        self.assertEqual(legacy_group_keys, {FINDING_KEY})
+        self.assertIsNone(error)
 
 
 # ---------------------------------------------------------------------------

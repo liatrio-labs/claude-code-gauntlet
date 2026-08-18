@@ -255,14 +255,17 @@ def fetch_entries_gitlab(owner, repo, number):
 
 
 def gitlab_prior_delivery_state(owner, repo, number, sha):
-    """Return ``(summary_posted, finding_keys, error)`` — what *sha*'s review left here.
+    """Return ``(summary_posted, finding_keys, legacy_group_keys, error)`` — what *sha*'s
+    review left here.
 
-    ``post_review.post_gitlab`` asks both questions before delivering: is my summary
-    note already on the MR (issue #127), and which of my inline discussions did a
-    partially-failed delivery already place (issue #132). ONE fetch answers both — a
-    second round trip would also be a second, possibly inconsistent view of the MR. The
-    read lives here because this module is the only reader; post_review.py writes the
-    signal and never parses it.
+    ``post_review.post_gitlab`` asks three questions before delivering: is my summary
+    note already on the MR (issue #127), which of my inline discussions did a
+    partially-failed delivery already place (issue #132), and — of those — which stand
+    for a WHOLE consolidation group because they are a pre-#208 group body that rendered
+    a corroborator without ever giving it its own key (issue: unanchored corroborators
+    lost on rerun). ONE fetch answers all three — a second round trip would also be a
+    second, possibly inconsistent view of the MR. The read lives here because this
+    module is the only reader; post_review.py writes the signal and never parses it.
 
     Goes through :func:`fetch_entries_gitlab`, so the ``--paginate`` requirement
     documented there applies unchanged, and so does its endpoint: the flat
@@ -276,8 +279,13 @@ def gitlab_prior_delivery_state(owner, repo, number, sha):
     """
     entries, errors = fetch_entries_gitlab(owner, repo, number)
     if errors:
-        return False, set(), errors[0]
-    return entries_carry_sha(entries, sha), finding_keys_for_sha(entries, sha), None
+        return False, set(), set(), errors[0]
+    return (
+        entries_carry_sha(entries, sha),
+        finding_keys_for_sha(entries, sha),
+        legacy_group_keys_for_sha(entries, sha),
+        None,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +387,57 @@ def finding_keys_for_sha(entries, sha):
         for marker in find_finding_markers(entry.get("body")):
             if marker["sha"] == sha:
                 keys.add(marker["key"])
+    return keys
+
+
+# A consolidation group's body renders one of these per corroborator, verbatim from
+# post_review._render_corroboration — the only place this string is emitted.
+_CORROBORATION_HEADER = "Corroborating finding — "
+
+
+def _is_legacy_undermarked_group_body(body, matched_marker_count):
+    """True when *body* renders more consolidation-group members than it carries keys for.
+
+    Before issue #208's fix, ``post_gitlab`` never gave an unanchorable corroborator (no
+    line, or a line outside the diff) a delivery key — even though it fully rendered that
+    member's content into the body's ``"Corroborating finding — "`` section. Such a body
+    is proof BY CONSTRUCTION that every member it renders already reached the MR, even
+    the one(s) whose key is missing: the body is the finding's only delivery vehicle, and
+    it is right there in the text.
+
+    Detected narrowly, by shape, not by a version field (no marker in this pipeline ever
+    carried one for this): a group body carries one corroboration header per corroborator
+    and, pre-fix, a marker only for the primary and the anchorable ones — so a legacy
+    group short a member's key has fewer matched markers than ``1 (primary) +
+    len(corroborators)``. A fixed-format group body always carries exactly that many, so
+    it never matches. Neither does an individually-posted primary's own fallback
+    discussion (the group's OTHER degraded shape): it carries no corroboration header at
+    all, so ``section_count`` is 0 and the check short-circuits before ever looking at
+    the (deliberately mismatched, single-finding) marker count.
+    """
+    if not isinstance(body, str):
+        return False
+    section_count = body.count(_CORROBORATION_HEADER)
+    return section_count > 0 and matched_marker_count < 1 + section_count
+
+
+def legacy_group_keys_for_sha(entries, sha):
+    """Return delivery keys found in *sha*'s legacy under-marked group bodies.
+
+    A subset of :func:`finding_keys_for_sha`'s result (every key here is a real,
+    found marker) — callers use this to recognize when a GROUP's primary key, if
+    present, stands for the whole group's delivery, including a member whose own
+    key this sha's markers do not carry (see
+    :func:`_is_legacy_undermarked_group_body`).
+    """
+    keys = set()
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        body = entry.get("body")
+        matched = [m["key"] for m in find_finding_markers(body) if m["sha"] == sha]
+        if matched and _is_legacy_undermarked_group_body(body, len(matched)):
+            keys.update(matched)
     return keys
 
 
