@@ -1170,12 +1170,16 @@ def fetch_gitlab_shas(project_id, mr_iid):
 
 
 def gitlab_prior_delivery(owner, repo, mr_iid, sha):
-    """Return ``(summary_posted, finding_keys)`` — what THIS sha's review already left.
+    """Return ``(summary_posted, finding_keys, legacy_group_keys)`` — what THIS sha's
+    review already left.
 
-    Makes a rerun after a partial delivery retry-safe in both halves: the summary note is
-    not stacked a second time (issue #127 D4) and the inline discussions that did land
-    are not reposted (issue #132). ONE fetch serves both, in detect_prior_review.py — the
-    only reader of the signals — so this module stays write-only.
+    Makes a rerun after a partial delivery retry-safe in three ways: the summary note is
+    not stacked a second time (issue #127 D4), the inline discussions that did land are
+    not reposted (issue #132), and a pre-#208 group body that rendered a corroborator's
+    content without ever keying it is recognized as already carrying that member too (see
+    :func:`detect_prior_review.legacy_group_keys_for_sha`) rather than posted a second
+    time. ONE fetch serves all three, in detect_prior_review.py — the only reader of the
+    signals — so this module stays write-only.
 
     Never blocks delivery. Dry-run does not fetch AT ALL: dry-run's invariant is that it
     issues no WRITE calls (reads do happen under dry-run — `glab mr diff` and the
@@ -1187,15 +1191,17 @@ def gitlab_prior_delivery(owner, repo, mr_iid, sha):
     everything — a possible duplicate beats a silently dropped review.
     """
     if DRY_RUN or not is_sha_shaped(sha):
-        return False, frozenset()
-    summary_posted, keys, error = gitlab_prior_delivery_state(owner, repo, mr_iid, sha)
+        return False, frozenset(), frozenset()
+    summary_posted, keys, legacy_group_keys, error = gitlab_prior_delivery_state(
+        owner, repo, mr_iid, sha
+    )
     if error:
         warn(
             f"could not check for an existing summary note or already-delivered inline "
             f"discussions ({error}); posting them."
         )
-        return False, frozenset()
-    return summary_posted, keys
+        return False, frozenset(), frozenset()
+    return summary_posted, keys, legacy_group_keys
 
 
 def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
@@ -1293,7 +1299,9 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         "Content-Type: application/json",
         f"projects/{project_id}/merge_requests/{mr_iid}/notes",
     ]
-    summary_posted, delivered_keys = gitlab_prior_delivery(owner, repo, mr_iid, sha)
+    summary_posted, delivered_keys, legacy_group_keys = gitlab_prior_delivery(
+        owner, repo, mr_iid, sha
+    )
     # Same predicate that makes gitlab_prior_delivery skip the fetch: a marker built
     # from a non-SHA-shaped sha (get_head_sha's "unknown" fallback) is one
     # find_finding_marker is guaranteed to reject, so appending it would leave an
@@ -1535,6 +1543,16 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             id(c): member_key_for(c, anchors[id(c)]) for c in corroborators
         }
         member_keys = [primary_key] + [corroborator_keys[id(c)] for c in corroborators]
+        if primary_key in legacy_group_keys:
+            # This group's primary key was found on a pre-#208 group body that
+            # rendered a corroborator's content without ever giving it a key of
+            # its own (see legacy_group_keys_for_sha). That body IS this group's
+            # whole delivery — every member it renders is provably already on
+            # the MR, missing keys included — so treat the whole group as
+            # already_present rather than let the "some but not all" branch
+            # below post the missing member a second time.
+            counters["already_present"] += len(member_keys)
+            continue
         if any(k in delivered_keys for k in member_keys) and not all(
             k in delivered_keys for k in member_keys
         ):
