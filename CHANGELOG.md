@@ -2,6 +2,100 @@
 
 <!-- version list -->
 
+## v3.12.0 (2026-08-18)
+
+### Bug Fixes
+
+- **consolidation**: Clear stale consolidation stamps on re-run
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **post-review**: Fan out corroborators when a group discussion is lost
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **post-review**: GitLab loss counters count findings, not groups
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **post-review**: Key GitLab dedup per group member, not per discussion
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **report**: Document corroborations field and fix two-primary group drop
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+### Chores
+
+- **deps**: Bump the actions group with 2 updates
+  ([#203](https://github.com/liatrio-labs/claude-code-gauntlet/pull/203),
+  [`26977ae`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/26977ae78c113f7333aae67c864e1073652eedc7))
+
+- **workflows**: Update stale build.js concat-order comment for consolidateCrossAgent
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+### Code Style
+
+- Apply ruff-format to touched test files
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+### Documentation
+
+- Agent survives verify join; skipped section notes group-degraded members
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- Fix stale dedup wording and fixture path after consolidation rename
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **apply-challenges**: Describe the re-run as consolidation, not dedup
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+### Features
+
+- Consensus consolidation — boost-never-drop, agent-identity re-land, origin-aware ranking, payload
+  consolidation (#22, #73, #84)
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **post-review**: Consolidate delivery payload per group (#22 D2)
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **scripts**: Python twins mirror consolidate_cross_agent + origin-aware ranking (#22 D1, D3)
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **workflows**: Consolidate report findings list by group (#22 D2)
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **workflows**: JS core -- consolidateCrossAgent + origin-aware consensus/ranking (#22 D1, D3)
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+### Refactoring
+
+- **filter**: One definition of the proximity bucket formula
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+### Testing
+
+- **parity**: Reshape golden fixtures for consolidate_cross_agent + origin-aware ranking (#22 D6)
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+- **post-review**: Pin the line-is-None whole-group degrade fan-out
+  ([#206](https://github.com/liatrio-labs/claude-code-gauntlet/pull/206),
+  [`46c91e1`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/46c91e1adb8e003df87cced28215faac96c796ba))
+
+
 ## v3.11.4 (2026-08-17)
 
 ### Bug Fixes
