@@ -1,0 +1,38 @@
+{
+  "eliminated": [
+    {
+      "confidence": 60,
+      "description": "This handler issues a fresh database query inside a loop instead of batching the lookups together.",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'caching layer'",
+      "file": "src/db/loop.py",
+      "id": "E3",
+      "line_start": 15,
+      "severity": "low",
+      "suggestion": "Consider adding a caching layer to reduce these repeated database round trips.",
+      "title": "Repeated database query in loop"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 60,
+      "description": "This finding does not match any exclusion pattern at all and should pass through untouched.",
+      "file": "src/misc/other.py",
+      "id": "E4",
+      "line_start": 22,
+      "severity": "low",
+      "suggestion": "Extract this block into a named helper for readability.",
+      "title": "Unrelated finding"
+    },
+    {
+      "confidence": 60,
+      "description": "This finding carries no suggestion text and must not crash or falsely match any exclusion pattern.",
+      "file": "src/misc/nullsug.py",
+      "id": "E5",
+      "line_start": 33,
+      "severity": "low",
+      "suggestion": null,
+      "title": "Suggestion-absent control finding"
+    }
+  ]
+}

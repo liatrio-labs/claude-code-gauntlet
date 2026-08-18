@@ -56,7 +56,7 @@ repo tree (an in-tree data file trips the bench plugin-mutation guard):
 
 ```bash
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-  --cov=scripts --cov=.github --cov-fail-under=91.8
+  --cov=scripts --cov=.github --cov-fail-under=92.1
 
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
   --cov=bench --cov-fail-under=87
@@ -65,18 +65,18 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   --test-coverage-include='workflows/src/*.js' \
   --test-coverage-include='workflows/build.js' \
   --test-coverage-lines=98 \
-  --test-coverage-branches=83.3 \
-  --test-coverage-functions=97.2 \
+  --test-coverage-branches=85.7 \
+  --test-coverage-functions=97.4 \
   --test-reporter=spec --test-reporter-destination=stdout \
   --test-reporter=lcov --test-reporter-destination="$LCOV" \
   workflows/test/*.test.js \
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 91.8 / 87 (scripts raised 2026-08-10 from PR #171 3.12 CI:
-92.77; bench pinned 2026-08-03: 87.96); JS 98 / 83.3 / 97.2 (lines pinned
-2026-08-03 from first green CI: 98.61; branches/functions raised 2026-08-10
-from PR #171 CI: 84.23/98.18). Policy: a floor sits no more than 1.0 pp below the CI
+Floors: Python 92.1 / 87 (scripts raised 2026-08-18 from the #62 PR measurement:
+93.1; bench pinned 2026-08-03: 87.96); JS 98 / 85.7 / 97.4 (lines pinned
+2026-08-03 from first green CI: 98.61; branches/functions raised 2026-08-18
+from the #62 PR measurement: 86.7/98.4). Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop,
 reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
 multi-point JS drop usually means a deleted fixture group or an unloaded
