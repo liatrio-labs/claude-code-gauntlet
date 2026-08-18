@@ -520,6 +520,18 @@ class TestGitlabPriorDeliveryState(unittest.TestCase):
         ]
         self.assertTrue(detect_prior_review.entries_carry_sha(entries, FULL_SHA))
 
+    def test_finding_keys_for_sha_collects_every_key_in_one_body(self):
+        """One discussion can deliver a whole consolidation group, carrying a marker
+        per member. Collecting only the last one would leave the rest looking
+        undelivered, and the next run would repost them (issue #132)."""
+        other = "d" * 16
+        entry = self._discussion_note(FINDING_KEY)
+        entry["body"] += "\n" + review_marker.build_finding_marker(FULL_SHA, other)
+        self.assertEqual(
+            detect_prior_review.finding_keys_for_sha([entry], FULL_SHA),
+            {FINDING_KEY, other},
+        )
+
     def test_finding_keys_for_sha_ignores_non_dict_and_body_less_entries(self):
         entries = [
             None,

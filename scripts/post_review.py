@@ -1316,18 +1316,32 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     # this loop would make, made early so the skipped section can precede the note);
     # `remaining` carries only what that pre-partition let through, filepath already
     # resolved.
-    def deliver(f, filepath, line, comment_body):
+    def member_key(m, filepath, line):
+        """Return the delivery key for ONE finding, independent of what posts it.
+
+        Always derived from the member's own anchor and its SINGLE-finding render,
+        never from the group body it may happen to ride in. That is what makes the
+        two delivery shapes interchangeable for dedup: a corroborator posted on its
+        own by one run is recognized by the group discussion of the next, and vice
+        versa (issue #132).
+        """
+        return finding_key(filepath, line, m.get("title", ""), render_comment_body(m))
+
+    def deliver(f, filepath, line, comment_body, keys):
         """Post ONE discussion and return its outcome counter name.
 
         The group's single discussion and each fallback per-corroborator
         discussion go through this same validate → POST → dedup → count path,
         so a corroborator that is posted on its own is accounted for exactly
-        like any never-grouped finding.
+        like any never-grouped finding. *keys* is the delivery key of every
+        finding this one discussion carries — the caller owns the mapping,
+        because only it knows which findings share a body.
         """
-        key = finding_key(filepath, line, f.get("title", ""), comment_body)
-        if key in delivered_keys:
-            # An earlier run already delivered this exact discussion for this sha.
-            # Reposting it is the duplication issue #132 reports, not a failure.
+        if keys and all(k in delivered_keys for k in keys):
+            # An earlier run already delivered every finding in this discussion for
+            # this sha. Reposting it is the duplication issue #132 reports, not a
+            # failure. A PARTIAL match never reaches here: post_gitlab splits such a
+            # group into its missing members before calling.
             return "already_present"
 
         position = {
@@ -1375,10 +1389,13 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         # dry-run and scores the captured bodies as candidate text, so a marker in a
         # capture would change what is scored; the live path is the only place a rerun
         # has to recognize what it already posted.
+        # ONE marker per finding carried, so a rerun's key scan registers every
+        # member of a group as delivered — not just the finding that anchored it.
+        markers = "\n".join(build_finding_marker(sha, k) for k in keys)
         payload = {
             "body": comment_body
             if DRY_RUN or not sha_is_markable
-            else f"{comment_body}\n\n{build_finding_marker(sha, key)}",
+            else f"{comment_body}\n\n{markers}",
             "position": position,
         }
 
@@ -1403,13 +1420,28 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             return "failed"
         return "posted"
 
+    def corroborator_anchor(c):
+        """Return ``(filepath, line)`` a corroborator can be anchored at on its own.
+
+        ``None`` when it cannot be — no line, or a line the diff does not touch.
+        Silent: this is the predicate, and :func:`deliver_corroborator` is the
+        delivery that reports the same losses to the operator.
+        """
+        line = c.get("line")
+        if line is None:
+            return None
+        filepath = diff_path_spelling(valid_lines, c.get("file", "?"), line)
+        if not is_line_valid(valid_lines, filepath, line):
+            return None
+        return filepath, line
+
     def deliver_corroborator(c):
         """Fall back to a corroborator's OWN individual discussion.
 
-        Reached only when the group's discussion is lost late (malformed
-        primary position, or a rejected POST). The corroborator was never
-        anchored on its own before that point, so its file/line are resolved
-        and gated here exactly as the pre-partition gates a primary's.
+        Reached when the group's discussion is lost late (malformed primary
+        position, or a rejected POST), and when a partially-delivered group is
+        split into the members an earlier run did not deliver. Its file/line are
+        resolved and gated here exactly as the pre-partition gates a primary's.
         """
         line = c.get("line")
         title = c.get("title", "?")
@@ -1426,7 +1458,9 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"— line not found in diff."
             )
             return "invalid"
-        return deliver(c, filepath, line, render_comment_body(c))
+        return deliver(
+            c, filepath, line, render_comment_body(c), [member_key(c, filepath, line)]
+        )
 
     counters = {
         "posted": 0,
@@ -1437,7 +1471,39 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
     for filepath, group in remaining:
         f = group["primary"]
         corroborators = group["corroborators"]
-        outcome = deliver(f, filepath, f["line"], render_group_body(f, corroborators))
+        primary_key = member_key(f, filepath, f["line"])
+        # A corroborator with no anchor of its own has no key: it can only ever be
+        # delivered by its group's body, so it is neither matchable on a rerun nor
+        # separable from the group here.
+        anchors = {id(c): corroborator_anchor(c) for c in corroborators}
+        member_keys = [primary_key] + [
+            member_key(c, *anchors[id(c)]) for c in corroborators if anchors[id(c)]
+        ]
+        if any(k in delivered_keys for k in member_keys) and not all(
+            k in delivered_keys for k in member_keys
+        ):
+            # An earlier run delivered SOME of this group — its fallback posted
+            # individual discussions for part of it. Posting the group now would put
+            # that content on the MR twice (issue #132), so deliver only what is
+            # missing, each on its own.
+            counters[
+                "already_present"
+                if primary_key in delivered_keys
+                else deliver(
+                    f, filepath, f["line"], render_comment_body(f), [primary_key]
+                )
+            ] += 1
+            for c in corroborators:
+                anchor = anchors[id(c)]
+                counters[
+                    "already_present"
+                    if anchor and member_key(c, *anchor) in delivered_keys
+                    else deliver_corroborator(c)
+                ] += 1
+            continue
+        outcome = deliver(
+            f, filepath, f["line"], render_group_body(f, corroborators), member_keys
+        )
         if outcome in ("invalid", "failed"):
             # The group's single discussion is lost, but its corroborators were
             # never given a chance of their own — post each as its own

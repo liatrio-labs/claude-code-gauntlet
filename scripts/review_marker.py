@@ -319,13 +319,12 @@ def find_marker(text):
         return None
 
 
-def find_finding_marker(text):
-    """Return ``{"sha", "key"}`` from the LAST valid finding marker in *text*, else None.
+def find_finding_markers(text):
+    """Return every valid ``{"sha", "key"}`` finding marker in *text*, last one first.
 
-    Last-wins for the reason :func:`find_marker` is: ``post_review.py`` APPENDS its
-    marker, so the mechanical one always follows anything a finding's own unsanitized
-    prose spelled earlier in the same body — such a forgery can be shadowed, never
-    shadow.
+    A body carries one marker per finding it delivers: a consolidation group's single
+    discussion stands for all of its members, so all of their keys must come back or a
+    rerun would re-post the members whose key it could not see.
 
     Both fields are validated before a payload is accepted: ``key`` must be 16
     lowercase hex characters and ``sha`` SHA-shaped. A payload of the right syntax but
@@ -333,11 +332,18 @@ def find_finding_marker(text):
     collects keys into a set, and an unhashable one would abort a delivery mid-loop.
     Only those two fields come back: nothing downstream echoes this payload, so it
     carries no forward-compatibility slot to preserve. Never raises.
+
+    Capped at ``_MAX_MARKER_SCANS`` candidates counting back from the end, the same
+    bound and reason as :func:`find_marker`: a body carrying dozens is hostile input,
+    and the appended real markers are the ones at the end.
     """
     if not isinstance(text, str) or not text:
-        return None
+        return []
+    found = []
     try:
-        for candidate in reversed(_FINDING_MARKER_RE.findall(text)):
+        for candidate in reversed(
+            _FINDING_MARKER_RE.findall(text)[-_MAX_MARKER_SCANS:]
+        ):
             try:
                 payload = json.loads(candidate)
             except (ValueError, RecursionError):
@@ -349,10 +355,22 @@ def find_finding_marker(text):
                 continue
             if not is_sha_shaped(payload.get("sha")):
                 continue
-            return {"sha": payload["sha"].strip(), "key": key}
-        return None
+            found.append({"sha": payload["sha"].strip(), "key": key})
+        return found
     except Exception:  # noqa: BLE001  # pragma: no cover - a reader never raises
-        return None
+        return found
+
+
+def find_finding_marker(text):
+    """Return ``{"sha", "key"}`` from the LAST valid finding marker in *text*, else None.
+
+    Last-wins for the reason :func:`find_marker` is: ``post_review.py`` APPENDS its
+    markers, so the mechanical ones always follow anything a finding's own unsanitized
+    prose spelled earlier in the same body — such a forgery can be shadowed, never
+    shadow.
+    """
+    markers = find_finding_markers(text)
+    return markers[0] if markers else None
 
 
 def has_prose_footer(text):

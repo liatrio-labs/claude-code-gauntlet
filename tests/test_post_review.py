@@ -2391,6 +2391,21 @@ def _gl_corroborator(tag, line):
     }
 
 
+def _member_key(member):
+    """The delivery key one group member carries, whatever shape delivers it.
+
+    Derived from the member's OWN anchor and single-finding render — the same
+    inputs the individual-discussion path uses — which is what makes a group
+    discussion and an individual one interchangeable for rerun dedup.
+    """
+    return post_review.finding_key(
+        member["file"],
+        member["line"],
+        member["title"],
+        post_review.render_comment_body(member),
+    )
+
+
 # Verbatim from the issue #127 report — the warning-content test asserts against what an
 # operator really sees, not a paraphrase.
 GLAB_400_STDERR = (
@@ -4085,20 +4100,70 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         findings as already-present — one discussion, group_size findings."""
         primary = _gl_primary()
         corroborator = _gl_corroborator("A", 61)
-        key = post_review.finding_key(
-            "src/edited.py",
-            61,
-            primary["title"],
-            post_review.render_group_body(primary, [corroborator]),
-        )
         run = self._run_main(
-            findings=[primary, corroborator], prior=(True, {key}, None)
+            findings=[primary, corroborator],
+            prior=(True, {_member_key(primary), _member_key(corroborator)}, None),
         )
         self.assertIsNone(run.exit_code)
         self.assertEqual(_discussion_posts(run.mock_run), [])
         self.assertIn(
             "  2 inline discussion(s) already on the MR from an earlier run", run.out
         )
+
+    def test_group_rerun_after_full_delivery_posts_nothing(self):
+        """Every member's key is what a delivered group leaves behind, so a rerun
+        recognizes all of them and issues no discussion POST at all."""
+        primary = _gl_primary()
+        corrs = [_gl_corroborator("A", 61), _gl_corroborator("B", 62)]
+        keys = {_member_key(m) for m in [primary, *corrs]}
+        run = self._run_main(findings=[primary, *corrs], prior=(True, keys, None))
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 0)
+        self.assertIn(
+            "  3 inline discussion(s) already on the MR from an earlier run", run.out
+        )
+
+    def test_group_partial_prior_delivery_posts_only_missing_members(self):
+        """A prior run's fallback landed the corroborators individually. Reposting the
+        GROUP would duplicate them, so only the missing primary is delivered — on its
+        own, with the single-finding body."""
+        primary = _gl_primary()
+        corrs = [_gl_corroborator("A", 61), _gl_corroborator("B", 62)]
+        payloads = []
+        run = self._run_main(
+            findings=[primary, *corrs],
+            prior=(True, {_member_key(c) for c in corrs}, None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        posts = _discussion_posts(run.mock_run)
+        self.assertEqual(len(posts), 1, "only the undelivered primary may be posted")
+        self.assertIn("  1 inline discussion(s) posted.", run.out)
+        self.assertIn(
+            "  2 inline discussion(s) already on the MR from an earlier run", run.out
+        )
+        body = next(p["body"] for p in payloads if "position" in p)
+        self.assertNotIn("Corroborating finding", body)
+        self.assertIn(
+            post_review.build_finding_marker("a" * 40, _member_key(primary)), body
+        )
+
+    def test_group_body_carries_a_marker_for_every_member(self):
+        """The group's single discussion is the delivery record for all of its
+        findings, so it carries one finding-key marker per member — a later rerun
+        matches each member individually, whatever shape delivered it."""
+        primary = _gl_primary()
+        corrs = [_gl_corroborator("A", 61), _gl_corroborator("B", 62)]
+        payloads = []
+        run = self._run_main(findings=[primary, *corrs], payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        body = next(p["body"] for p in payloads if "position" in p)
+        for member in [primary, *corrs]:
+            self.assertIn(
+                post_review.build_finding_marker("a" * 40, _member_key(member)),
+                body,
+                f"missing marker for {member['title']}",
+            )
 
     def test_live_all_malformed_exits_one_with_nothing_posted(self):
         findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]
