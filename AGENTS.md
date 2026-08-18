@@ -151,3 +151,9 @@ after a merge:
 - Labels must exist before a form can apply one; GitHub drops unknown labels silently. Sync with
   `python3 .github/labels_diff.py --commands --repo <owner>/<repo>`, confirm with `--live -`. See
   `docs/maintainer-issues.md`.
+
+## Session output style
+
+Canonical rules live in `docs/style/wording-rules.md` and `docs/style/cadence-rules.md`.
+`scripts/build_style_artifacts.py` regenerates `docs/style/session-context.md`, which a
+SessionStart hook injects into every session.
