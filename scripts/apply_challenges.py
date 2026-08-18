@@ -428,7 +428,8 @@ def main():
         description=(
             "Phase 7→8 bridge for code-gauntlet. "
             "Applies blind-challenge scores to Phase 6 findings, re-runs "
-            "cross-agent dedup, ranks the final set, and writes "
+            "cross-agent consolidation (nothing dropped), ranks the final "
+            "set, and writes "
             "delivery-ready JSON."
         )
     )
