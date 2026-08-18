@@ -114,7 +114,13 @@ CODEX_CAP_BYTES = 32_768
 # Raised 20_420 -> 20_436 (2026-08-18, #62): the coverage-floor ratchet (Python 92.1,
 # JS branches 85.7 / functions 97.4) grew AGENTS.md's floors-and-provenance paragraph —
 # the exact gate values Claude must pass are operational policy, not decoration.
-AGENTS_SET_BUDGET_BYTES = 20_436
+# Raised 20_436 -> 20_685 (2026-08-18): the "Session output style" section points at the
+# canonical rule sources and the generator that regenerates the SessionStart carrier —
+# no code site states where those rules live or how the carrier gets refreshed.
+# Lowered 20_685 -> 20_563 (2026-08-18, PR #216 review fix): "Session output style"
+# shrunk to a heading plus a single pointer at scripts/build_style_artifacts.py, whose
+# own docstring already states the mechanics the section had restated.
+AGENTS_SET_BUDGET_BYTES = 20_563
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

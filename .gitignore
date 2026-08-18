@@ -27,8 +27,9 @@ __pycache__/
 coverage.xml
 htmlcov/
 
-# Claude Code local settings
-.claude/
+# Claude Code local settings (shared project settings.json is tracked)
+.claude/*
+!.claude/settings.json
 
 # Internal development artifacts (not shipped)
 docs/specs/

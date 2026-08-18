@@ -151,3 +151,7 @@ after a merge:
 - Labels must exist before a form can apply one; GitHub drops unknown labels silently. Sync with
   `python3 .github/labels_diff.py --commands --repo <owner>/<repo>`, confirm with `--live -`. See
   `docs/maintainer-issues.md`.
+
+## Session output style
+
+Canonical rules and the regeneration mechanism are documented in `scripts/build_style_artifacts.py`.

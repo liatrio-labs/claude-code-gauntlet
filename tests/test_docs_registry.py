@@ -44,6 +44,9 @@ DOCS_ALLOW = {
     "docs/machine-parsed-strings.md",  # living registry, required by #37 (PR #119)
     "docs/maintainer-issues.md",  # maintainer work-queue standard
     "docs/v3-residue-audit-2026-07.md",  # point-in-time audit artifact, required by #37 (PR #119)
+    "docs/style/wording-rules.md",  # canonical output-style rule source
+    "docs/style/cadence-rules.md",  # canonical output-style rule source
+    "docs/style/session-context.md",  # generated session-output carrier
 }
 
 # Subtrees under docs/ with their own curated index; markdown only inside.
