@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v3.12.1 (2026-08-18)
+
+### Bug Fixes
+
+- **post-review**: Recognize legacy group bodies to avoid duplicating corroborator content on rerun
+  ([#208](https://github.com/liatrio-labs/claude-code-gauntlet/pull/208),
+  [`3b9e52a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3b9e52a465f46dec59042601e92e5478c76bb8d4))
+
+- **post-review**: Unanchored corroborators participate in rerun dedup and delivery
+  ([#208](https://github.com/liatrio-labs/claude-code-gauntlet/pull/208),
+  [`3b9e52a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/3b9e52a465f46dec59042601e92e5478c76bb8d4))
+
+
 ## v3.12.0 (2026-08-18)
 
 ### Bug Fixes
