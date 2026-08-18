@@ -1,23 +1,24 @@
 {
-  "dropped": [
+  "consolidated_count": 2,
+  "findings": [
     {
       "agent": "test-analyzer",
       "confidence": 50,
+      "consolidation_key": "g.py:20",
+      "consolidation_primary": false,
       "description": "d",
       "dimension": "test_coverage",
-      "eliminated_by": "dedup:cross-agent",
-      "elimination_reason": "cross-agent dedup: finding at g.py:20 (agent='test-analyzer', dim='test_coverage', conf=50) lost to agent='code-simplifier' at line 21 within 5 lines",
       "file": "g.py",
       "id": "C3",
       "line_start": 20,
       "severity": "low",
       "title": "t3"
-    }
-  ],
-  "kept": [
+    },
     {
       "agent": "code-simplifier",
       "confidence": 80,
+      "consolidation_key": "g.py:20",
+      "consolidation_primary": true,
       "description": "d2",
       "dimension": "convention",
       "file": "g.py",

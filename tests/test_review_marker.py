@@ -60,6 +60,7 @@ from scripts.review_marker import (
     build_prose_footer,
     detect_signal,
     find_finding_marker,
+    find_finding_markers,
     find_marker,
     has_prose_footer,
     parse_prose_footer,
@@ -548,6 +549,18 @@ class TestFindingMarker(unittest.TestCase):
         forged = build_finding_marker(SHA_40, OTHER_KEY_16)
         real = build_finding_marker(SHA_40, KEY_16)
         self.assertEqual(find_finding_marker(f"{forged}\n\n{real}")["key"], KEY_16)
+
+    def test_every_marker_in_one_body_is_returned(self):
+        """A consolidation group's single discussion is the delivery record for all of
+        its members, so its body carries one marker per member and the reader must
+        surface all of them — a key it cannot see is a finding the next run reposts."""
+        text = (
+            f"Body\n\n{build_finding_marker(SHA_40, KEY_16)}\n"
+            f"{build_finding_marker(SHA_40, OTHER_KEY_16)}"
+        )
+        self.assertEqual(
+            {m["key"] for m in find_finding_markers(text)}, {KEY_16, OTHER_KEY_16}
+        )
 
     def test_malformed_payloads_are_ignored_and_never_raise(self):
         """An unhashable key would abort post_review's delivery loop mid-flight, so a

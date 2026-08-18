@@ -1,0 +1,57 @@
+{
+  "challenges": [
+    {
+      "id": "A",
+      "score": 80
+    },
+    {
+      "id": "B",
+      "score": 80
+    },
+    {
+      "id": "C",
+      "score": 80
+    }
+  ],
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 75,
+      "description": "d1",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "A",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "unknown",
+      "severity": "high",
+      "title": "t1"
+    },
+    {
+      "agent": "security-reviewer",
+      "confidence": 80,
+      "description": "d2",
+      "dimension": "security",
+      "file": "b.py",
+      "id": "B",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "verified",
+      "severity": "high",
+      "title": "t2"
+    },
+    {
+      "agent": "test-analyzer",
+      "confidence": 74,
+      "description": "d3",
+      "dimension": "test_coverage",
+      "file": "c.py",
+      "id": "C",
+      "line_end": 10,
+      "line_start": 10,
+      "origin": "verified",
+      "severity": "high",
+      "title": "t3"
+    }
+  ]
+}

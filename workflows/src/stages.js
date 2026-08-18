@@ -597,10 +597,11 @@ const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimi
 //
 // `agent` is not declarable here because no finding is echoed at all any more — the
 // withholding that used to depend on leaving one property out of a finding schema is now
-// structural. joinVerifyDeltas strips it from the findings it emits, and a test fails if a
-// joined finding is ever filter-visibly tagged (V3.1 item 4 was reverted for exactly this:
-// deterministic agent identity past verify moved mini-subset A's dedup eliminations
-// 7 -> 33 and same-6 recall 20/30 -> 13/30; it re-lands only with #22's redesign).
+// structural. `agent` re-lands with #22's redesign: joinVerifyDeltas no longer strips it
+// (consolidateCrossAgent never drops a finding, so a deterministic `agent` past verify no
+// longer costs recall the way the old drop-one-winner dedupCrossAgent did — V3.1 item 4's
+// prior attempt moved mini-subset A's dedup eliminations 7 -> 33 and same-6 recall
+// 20/30 -> 13/30 under that eliminator).
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
@@ -1036,12 +1037,15 @@ const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 // dispatchVerifySlice (immediately after its trustSlice call) and the golden-fixture test
 // calls it; keep it that way.
 //
-// `agent` is stripped here — the one place where the withholding #25 requirement 1
-// mandates is enforced. It used to happen by omission (the echo schema simply did not
-// declare `agent`, so StructuredOutput dropped it... most of the time — measured surviving
-// on 2 of 6 PRs). Joining onto findings this stage holds would have made it deterministic,
-// which is the measured dedup recall-collapse mechanism, so the withholding had to become
-// explicit. It re-lands only with the cross-dimension consolidation redesign (#22).
+// `agent` used to be stripped here — the one place where the withholding #25
+// requirement 1 mandated was enforced. It used to happen by omission (the echo schema
+// simply did not declare `agent`, so StructuredOutput dropped it... most of the time —
+// measured surviving on 2 of 6 PRs). Joining onto findings this stage holds would have
+// made it deterministic, which was the measured dedup recall-collapse mechanism (the old
+// drop-one-winner `dedupCrossAgent` silently discarded whichever agent's finding lost),
+// so the withholding had to become explicit. It re-lands now (#22): `consolidateCrossAgent`
+// eliminates nothing, so a deterministic `agent` on the trusted path no longer costs
+// recall, and both this path and `degradedSlice` emit `agent` identically again.
 export function joinVerifyDeltas(slice, deltas) {
   const byId = new Map();
   for (const d of Array.isArray(deltas) ? deltas : []) {
@@ -1056,7 +1060,6 @@ export function joinVerifyDeltas(slice, deltas) {
     // carried real numbers, and a leaked "85" makes the filter's consensus boost
     // string-concatenate ("85" + 10 -> "8510").
     const joined = pinNumericFields(f);
-    delete joined.agent;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     out.push(joined);
   }
@@ -1791,7 +1794,7 @@ export async function challengeStage(ctx, input) {
       stats: {
         total_input: 0, dispatched: 0, completed: 0, skipped: 0,
         challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
-        challenge_survived: 0, unchallenged: 0, dedup_dropped: 0, final_count: 0,
+        challenge_survived: 0, unchallenged: 0, cross_agent_consolidated: 0, final_count: 0,
       },
       generated_at: inp.generatedAt,
     };
@@ -1863,7 +1866,7 @@ export async function challengeStage(ctx, input) {
       challenge_contested: applied.stats.challenge_contested,
       challenge_survived: applied.stats.challenge_survived,
       unchallenged: applied.stats.unchallenged,
-      dedup_dropped: applied.stats.dedup_dropped,
+      cross_agent_consolidated: applied.stats.cross_agent_consolidated,
       final_count: applied.stats.final_count,
     },
     generated_at: inp.generatedAt,
@@ -2011,6 +2014,56 @@ export function dimensionsSummaryTable(input) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 
+// Groups findings by `consolidation_key` before they reach the report writer
+// (or the minimalReport fallback) — #22 D2, same grouping rule
+// `consolidate_delivery` applies to the posted comment payload, applied here to
+// the report's findings list instead: non-primary group members are folded
+// into the primary's `corroborations` array rather than listed as separate
+// top-level findings. A finding with no (falsy) `consolidation_key` passes
+// through unchanged — older artifacts / pre-consolidation findings render
+// exactly as before.
+function consolidateForReport(findings) {
+  const list = findings || [];
+  const groups = [];
+  const keyToGroup = new Map();
+  for (const f of list) {
+    const key = f && f.consolidation_key;
+    if (!key) {
+      groups.push({ primary: f, corroborators: [] });
+      continue;
+    }
+    let group = keyToGroup.get(key);
+    if (!group) {
+      group = { primary: null, corroborators: [] };
+      keyToGroup.set(key, group);
+      groups.push(group);
+    }
+    if (f.consolidation_primary) {
+      if (!group.primary) group.primary = f;
+      // A second consolidation_primary in the same group must not overwrite
+      // (and drop) the first — demote it to corroborator.
+      else group.corroborators.push(f);
+    } else group.corroborators.push(f);
+  }
+  return groups.map((group) => {
+    // Reachable only for hand-assembled payloads: filterFindings.js always
+    // stamps exactly one consolidation_primary per group. If a caller's data
+    // has none, fall back to the first-seen member rather than surfacing `null`.
+    const primary = group.primary || group.corroborators.shift();
+    if (!group.corroborators.length) return primary;
+    return {
+      ...primary,
+      corroborations: group.corroborators.map((c) => ({
+        agent: c.agent,
+        dimension: c.dimension,
+        confidence: c.confidence,
+        title: c.title,
+        description: c.description,
+      })),
+    };
+  });
+}
+
 // reportStage(ctx, input) -> { report, gaps }
 // Dispatches the report-writer agent to render the review markdown from the
 // high-confidence + unverified buckets (carried BY VALUE in the prompt — the
@@ -2035,12 +2088,16 @@ export async function reportStage(ctx, input) {
   const policy = inp.policy || {};
   const model = modelFor('code-gauntlet:report-writer', policy);
 
-  const findings = inp.findings || [];
-  // Computed once over the WHOLE run (not per-chunk) so the table's counts are never
-  // scoped to one segment's slice of findings; threaded to segment 0 only (below).
+  const rawFindings = inp.findings || [];
+  // Computed once over the WHOLE run (not per-chunk), and over the RAW (pre-
+  // consolidation) findings so per-dimension counts are unaffected by grouping —
+  // threaded to segment 0 only (below).
   const dimensionsTable = dimensionsSummaryTable({
-    ...(inp.dimensions || {}), findings, unverified: inp.unverified || [],
+    ...(inp.dimensions || {}), findings: rawFindings, unverified: inp.unverified || [],
   });
+  // Grouped for the rendered findings list itself (#22 D2) — see
+  // consolidateForReport. Findings without a consolidation_key are unaffected.
+  const findings = consolidateForReport(rawFindings);
   const oversized = JSON.stringify(findings).length > PROMPT_SEGMENT_CHAR_BUDGET;
   if (!oversized) {
     return dispatchReportSegment(c, model, inp, findings, null, dimensionsTable);
@@ -2155,6 +2212,14 @@ function minimalReport(inp) {
     lines.push('', '## Findings');
     for (const f of findings) {
       lines.push(`- [${(f.severity || 'unknown').toUpperCase()}] ${f.title || f.id || 'finding'} (${f.file || '?'}:${f.line_start != null ? f.line_start : '?'})`);
+      // Non-primary consolidation-group members (#22 D2) — folded in by
+      // consolidateForReport as `corroborations` rather than listed as
+      // separate top-level findings.
+      if (Array.isArray(f.corroborations)) {
+        for (const c of f.corroborations) {
+          lines.push(`  - Corroborating: ${c.agent || 'unknown'} (${c.dimension || 'unknown'}, confidence ${c.confidence != null ? c.confidence : '?'}) — ${c.title || 'finding'}`);
+        }
+      }
     }
   }
   // Present only when the caller scoped it in (segment 0 / unsegmented dispatch — see

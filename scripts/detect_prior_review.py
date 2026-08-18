@@ -75,7 +75,7 @@ import sys
 # `scripts.detect_prior_review`, without swallowing real ImportErrors.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from review_marker import detect_signal, find_finding_marker, select_latest
+from review_marker import detect_signal, find_finding_markers, select_latest
 
 FETCH_TIMEOUT_SECONDS = 30
 GIT_TIMEOUT_SECONDS = 10
@@ -376,9 +376,9 @@ def finding_keys_for_sha(entries, sha):
     for entry in entries or []:
         if not isinstance(entry, dict):
             continue
-        marker = find_finding_marker(entry.get("body"))
-        if marker and marker["sha"] == sha:
-            keys.add(marker["key"])
+        for marker in find_finding_markers(entry.get("body")):
+            if marker["sha"] == sha:
+                keys.add(marker["key"])
     return keys
 
 

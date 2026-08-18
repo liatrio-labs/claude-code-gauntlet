@@ -1,27 +1,27 @@
 {
-  "fn": "dedup_cross_agent",
   "findings": [
     {
-      "id": "C1",
       "agent": "bug-detector",
+      "confidence": 60,
+      "description": "short bug desc",
       "dimension": "bug",
       "file": "f.py",
+      "id": "C1",
       "line_start": 10,
       "severity": "medium",
-      "confidence": 60,
-      "title": "t1",
-      "description": "short bug desc"
+      "title": "t1"
     },
     {
-      "id": "C2",
       "agent": "code-simplifier",
+      "confidence": 95,
+      "description": "a much longer description explaining the simplification opportunity in detail",
       "dimension": "convention",
       "file": "f.py",
+      "id": "C2",
       "line_start": 12,
       "severity": "low",
-      "confidence": 95,
-      "title": "t2",
-      "description": "a much longer description explaining the simplification opportunity in detail"
+      "title": "t2"
     }
-  ]
+  ],
+  "fn": "consolidate_cross_agent"
 }

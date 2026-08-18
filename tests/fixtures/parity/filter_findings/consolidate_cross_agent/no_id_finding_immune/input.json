@@ -1,26 +1,26 @@
 {
-  "fn": "dedup_cross_agent",
   "findings": [
     {
-      "id": "C10",
       "agent": "bug-detector",
+      "confidence": 90,
+      "description": "d1",
       "dimension": "bug",
       "file": "j.py",
+      "id": "C10",
       "line_start": 50,
       "severity": "high",
-      "confidence": 90,
-      "title": "t10",
-      "description": "d1"
+      "title": "t10"
     },
     {
       "agent": "code-simplifier",
+      "confidence": 95,
+      "description": "a description with no id field present at all for immunity test",
       "dimension": "convention",
       "file": "j.py",
       "line_start": 51,
       "severity": "low",
-      "confidence": 95,
-      "title": "t11",
-      "description": "a description with no id field present at all for immunity test"
+      "title": "t11"
     }
-  ]
+  ],
+  "fn": "consolidate_cross_agent"
 }

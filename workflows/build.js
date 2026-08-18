@@ -18,7 +18,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = join(HERE, 'src');
 const OUT = join(HERE, 'pipeline.js');
 
-// Pinned concat order. dedupCrossAgent (filterFindings) must precede applyChallenges.
+// Pinned concat order. consolidateCrossAgent (filterFindings) must precede applyChallenges.
 // pipeline_entry.js is emitted LAST (its run() references everything above).
 const ORDER = [
   'findingDedup.js', 'filterFindings.js', 'mergeFindings.js',

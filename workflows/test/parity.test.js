@@ -15,7 +15,7 @@ import {
   applyExclusions,
   detectDisagreement,
   routeByDimension,
-  dedupCrossAgent,
+  consolidateCrossAgent,
   tagFindings,
 } from '../src/filterFindings.js';
 import { applyChallenges } from '../src/applyChallenges.js';
@@ -157,22 +157,18 @@ for (const c of loadCases('filter_findings')) {
       assert.equal(routeByDimension(c.input.finding), c.expected.route);
       return;
     }
-    if (fn === 'dedup_cross_agent') {
-      const { kept, dropped } = dedupCrossAgent(c.input.findings);
-      // `kept` has no elimination_reason field -- full equality. `dropped`'s
-      // elimination_reason interpolates JSON.stringify (double quotes) where
-      // Python interpolates !r (single quotes) -- cosmetic only, per the same
-      // "free-text join format not load-bearing" rule as the injection filter.
-      assert.deepEqual(kept, c.expected.kept);
-      assert.deepEqual(idsOf(dropped), idsOf(c.expected.dropped));
-      for (const d of dropped) assert.ok(d.elimination_reason && d.elimination_reason.length > 0);
+    if (fn === 'consolidate_cross_agent') {
+      const { findings, consolidatedCount } = consolidateCrossAgent(c.input.findings);
+      // Nothing is dropped (#22 D1) -- full structural equality, including the
+      // stamped consolidation_key/consolidation_primary fields.
+      assert.deepEqual(findings, c.expected.findings);
+      assert.equal(consolidatedCount, c.expected.consolidated_count);
       return;
     }
     if (fn === 'tag_findings') {
-      const { tagged, dedupDropped, mainCount, suggestionCount } = tagFindings(c.input.findings);
+      const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(c.input.findings);
       assert.deepEqual(tagged, c.expected.tagged);
-      assert.deepEqual(idsOf(dedupDropped), idsOf(c.expected.dedup_dropped));
-      for (const d of dedupDropped) assert.ok(d.elimination_reason && d.elimination_reason.length > 0);
+      assert.equal(consolidatedCount, c.expected.consolidated_count);
       assert.equal(mainCount, c.expected.main_count);
       assert.equal(suggestionCount, c.expected.suggestion_count);
       return;
@@ -196,11 +192,11 @@ for (const c of loadCases('apply_challenges')) {
 
     if (inputSnapshot) assert.deepEqual(c.input.findings, inputSnapshot);
 
-    // `findings` (post-dedup, post-rank, ranked order matters) and `stats`
-    // are fully structural -- no free-text fields. `eliminated` carries
-    // elimination_reason (free text, e.g. dedup_cross_agent's JSON.stringify
-    // vs Python's !r quoting) -- compared by id + eliminated_by only, same
-    // convention as dedupCrossAgent's own parity test above.
+    // `findings` (post-consolidation, post-rank, ranked order and the
+    // stamped consolidation fields matter) and `stats` are fully structural
+    // -- no free-text fields. `eliminated` carries elimination_reason
+    // (free text, e.g. injection/threshold reasons) -- compared by
+    // id + eliminated_by only.
     assert.deepEqual(findings, c.expected.findings);
     assert.deepEqual(
       eliminated.map((f) => ({ id: f.id, eliminated_by: f.eliminated_by })),
@@ -221,9 +217,9 @@ for (const c of loadCases('apply_challenges')) {
 for (const c of loadCases('verify_deltas')) {
   test(`verify_deltas parity: ${c.name}`, () => {
     // (1) THE join reproduces, for every field any downstream stage consumes, what
-    // verify_findings.py itself left on the finding (minus its own audit trail and the
-    // withheld `agent` -- the recorder's project() drops exactly those four). This is
-    // the equivalence claim itself, not a proxy for it.
+    // verify_findings.py itself left on the finding (minus its own audit trail -- the
+    // recorder's project() drops exactly those three; `agent` is no longer among them,
+    // #22). This is the equivalence claim itself, not a proxy for it.
     const joined = joinVerifyDeltas(c.input.dispatched, c.expected.deltas);
     assert.deepEqual(joined, c.expected.joined);
 
@@ -235,10 +231,12 @@ for (const c of loadCases('verify_deltas')) {
     const ids = c.input.dispatched.map((f) => f.id);
     assert.equal(deltaContentProof(ids, c.expected.deltas), c.expected.checksum);
 
-    // (3) The #25 requirement-1 withholding constraint, pinned on the golden path: no
-    // finding joinVerifyDeltas emits may carry `agent`, even though the script's own
-    // output (and the dispatched finding, in the extras-survive fixture) may have one.
-    for (const f of joined) assert.ok(!Object.hasOwn(f, 'agent'));
+    // (3) #22 re-lands deterministic `agent` on the trusted path: every dispatched
+    // finding that carried an `agent` still carries the SAME `agent` after the join.
+    const agentById = new Map(c.input.dispatched.map((f) => [f.id, f.agent]));
+    for (const f of joined) {
+      if (agentById.get(f.id) !== undefined) assert.equal(f.agent, agentById.get(f.id));
+    }
   });
 }
 

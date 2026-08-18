@@ -1,14 +1,15 @@
 {
-  "eliminated": [
+  "eliminated": [],
+  "findings": [
     {
       "agent": "test-analyzer",
       "challenge_contested": false,
       "challenge_score": 80,
       "confidence": 90,
+      "consolidation_key": "a.py:10",
+      "consolidation_primary": false,
       "description": "This loop boundary is not covered by any existing test case.",
       "dimension": "test_coverage",
-      "eliminated_by": "dedup:cross-agent",
-      "elimination_reason": "cross-agent dedup: finding at a.py:12 (agent='test-analyzer', dim='test_coverage', conf=90) lost to agent='bug-detector' at line 10 within 5 lines",
       "file": "a.py",
       "id": "test-1",
       "line_end": 12,
@@ -18,14 +19,14 @@
       "report_tag": "main",
       "severity": "high",
       "title": "Missing test coverage"
-    }
-  ],
-  "findings": [
+    },
     {
       "agent": "bug-detector",
       "challenge_contested": false,
       "challenge_score": 80,
       "confidence": 80,
+      "consolidation_key": "a.py:10",
+      "consolidation_primary": true,
       "description": "The loop index is off by one and skips the last element.",
       "dimension": "bug",
       "file": "a.py",
@@ -44,8 +45,8 @@
     "challenge_downgraded": 0,
     "challenge_removed": 0,
     "challenge_survived": 2,
-    "dedup_dropped": 1,
-    "final_count": 1,
+    "cross_agent_consolidated": 2,
+    "final_count": 2,
     "total_input": 2,
     "unchallenged": 0
   }

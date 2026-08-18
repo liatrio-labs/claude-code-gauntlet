@@ -1,0 +1,44 @@
+{
+  "consolidated_count": 3,
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 90,
+      "consolidation_key": "i.py:40",
+      "consolidation_primary": true,
+      "description": "d1",
+      "dimension": "bug",
+      "file": "i.py",
+      "id": "C7",
+      "line_start": 40,
+      "severity": "high",
+      "title": "t7"
+    },
+    {
+      "agent": "bug-detector",
+      "confidence": 60,
+      "consolidation_key": "i.py:40",
+      "consolidation_primary": false,
+      "description": "d2",
+      "dimension": "bug",
+      "file": "i.py",
+      "id": "C8",
+      "line_start": 41,
+      "severity": "medium",
+      "title": "t8"
+    },
+    {
+      "agent": "code-simplifier",
+      "confidence": 95,
+      "consolidation_key": "i.py:40",
+      "consolidation_primary": false,
+      "description": "a very long description here for tiebreak purposes maybe",
+      "dimension": "convention",
+      "file": "i.py",
+      "id": "C9",
+      "line_start": 42,
+      "severity": "low",
+      "title": "t9"
+    }
+  ]
+}

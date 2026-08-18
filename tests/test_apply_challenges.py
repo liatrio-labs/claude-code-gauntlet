@@ -12,7 +12,7 @@ Covers:
     unchallenged pass-through, missing id in challenge, missing score,
     non-integer score, justification copied
   - rank_findings: severity order, confidence tiebreak, description-length tiebreak
-  - dedup_cross_agent reuse: cross-agent dedup runs post-challenge
+  - consolidate_cross_agent reuse: cross-agent consolidation (never drops) runs post-challenge
   - main() CLI integration: stdout output, --output file,
     prior eliminated passed through, stats fields
 """
@@ -554,19 +554,42 @@ class TestRankFindings(unittest.TestCase):
         f = _make_finding()
         self.assertEqual(rank_findings([f]), [f])
 
+    # --- #22 D3b: origin-aware ranking (verified outranks degraded) ---
+
+    def test_verified_outranks_degraded_within_same_severity(self):
+        """#73 evidence block: severity high for all three; B verified 80,
+        C verified 74, A degraded 75 -> order B > C > A."""
+        a = _make_finding(id="A", severity="high", confidence=75, origin="unknown")
+        b = _make_finding(id="B", severity="high", confidence=80, origin="verified")
+        c = _make_finding(id="C", severity="high", confidence=74, origin="verified")
+        ranked = rank_findings([a, b, c])
+        self.assertEqual([f["id"] for f in ranked], ["B", "C", "A"])
+
+    def test_uniform_origin_run_unaffected_by_degraded_component(self):
+        """#73 req 2 regression pin: when every finding shares the same origin,
+        the degraded rank component is constant and ranking is unchanged."""
+        findings = [
+            _make_finding(id="H1", severity="high", confidence=60, origin="verified"),
+            _make_finding(id="H2", severity="high", confidence=90, origin="verified"),
+            _make_finding(id="M1", severity="medium", confidence=99, origin="verified"),
+        ]
+        ranked = rank_findings(findings)
+        self.assertEqual([f["id"] for f in ranked], ["H2", "H1", "M1"])
+
 
 # ---------------------------------------------------------------------------
 # Cross-agent dedup integration (via apply_challenges module)
 # ---------------------------------------------------------------------------
 
 
-class TestCrossAgentDedupIntegration(unittest.TestCase):
-    """Verify that dedup_cross_agent is applied after challenge processing."""
+class TestCrossAgentConsolidationIntegration(unittest.TestCase):
+    """Verify that consolidate_cross_agent is applied after challenge processing."""
 
-    def test_dedup_runs_post_challenge(self):
-        """Two different agents at same location: core dimension wins."""
+    def test_consolidation_runs_post_challenge(self):
+        """Two different agents at same location: both survive, core dimension
+        wins the primary stamp."""
         from scripts.apply_challenges import apply_challenges
-        from scripts.filter_findings import dedup_cross_agent
+        from scripts.filter_findings import consolidate_cross_agent
 
         findings = [
             _make_finding(
@@ -590,12 +613,55 @@ class TestCrossAgentDedupIntegration(unittest.TestCase):
         challenges = [_make_challenge("bug-1", 80), _make_challenge("test-1", 80)]
         active, _, _ = apply_challenges(findings, challenges)
 
-        # Now run dedup (as main() would)
-        deduped, dropped = dedup_cross_agent(active)
-        deduped_ids = [f["id"] for f in deduped]
-        self.assertIn("bug-1", deduped_ids)
-        self.assertNotIn("test-1", deduped_ids)
-        self.assertEqual(len(dropped), 1)
+        # Now run consolidation (as main() would)
+        consolidated, count = consolidate_cross_agent(active)
+        consolidated_ids = [f["id"] for f in consolidated]
+        self.assertIn("bug-1", consolidated_ids)
+        self.assertIn("test-1", consolidated_ids, "nothing is ever dropped")
+        self.assertEqual(count, 2)
+
+    def test_stale_stamps_cleared_when_primary_eliminated(self):
+        """A group that no longer qualifies after its primary is eliminated by
+        a challenge must lose its stamps on the surviving member, not carry a
+        consolidation_key pointing at a vanished primary."""
+        from scripts.apply_challenges import apply_challenges
+        from scripts.filter_findings import consolidate_cross_agent
+
+        bug = _make_finding(
+            id="bug-1",
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+            dimension="bug",
+            confidence=95,
+            severity="high",
+        )
+        test1 = _make_finding(
+            id="test-1",
+            file="a.py",
+            line_start=12,
+            agent="test-analyzer",
+            dimension="test_coverage",
+            confidence=60,
+            severity="high",
+        )
+        # Simulate the filter stage's earlier stamping pass.
+        consolidate_cross_agent([bug, test1])
+        self.assertTrue(bug["consolidation_primary"])
+        self.assertEqual(test1["consolidation_key"], bug["consolidation_key"])
+
+        challenges = [_make_challenge("bug-1", 10), _make_challenge("test-1", 90)]
+        active, _, _ = apply_challenges([bug, test1], challenges)
+        self.assertEqual(len(active), 1)
+        # main() re-runs consolidate_cross_agent on the post-challenge active
+        # set; do the same here to exercise the stale-stamp-clearing path.
+        active, _ = consolidate_cross_agent(active)
+        survivor = active[0]
+        self.assertEqual(survivor["id"], "test-1")
+        self.assertNotIn("consolidation_key", survivor, "stale stamp must be cleared")
+        self.assertNotIn(
+            "consolidation_primary", survivor, "stale stamp must be cleared"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +732,7 @@ class TestMainCLI(unittest.TestCase):
             "challenge_contested",
             "challenge_survived",
             "unchallenged",
-            "dedup_dropped",
+            "cross_agent_consolidated",
             "final_count",
         ]:
             self.assertIn(field, stats, f"Missing stats field: {field}")
@@ -701,8 +767,8 @@ class TestMainCLI(unittest.TestCase):
             if os.path.exists(out_path):
                 os.unlink(out_path)
 
-    def test_dedup_through_main_cli(self):
-        """CLI integration: cross-agent dedup runs within main() pipeline."""
+    def test_consolidation_through_main_cli(self):
+        """CLI integration: cross-agent consolidation runs within main() pipeline."""
         findings = [
             _make_finding(
                 id="bug-1",
@@ -726,11 +792,11 @@ class TestMainCLI(unittest.TestCase):
             _make_challenge("conv-1", 85),
         ]
         result = self._run_main(findings, challenges)
-        # bug-1 wins (core dimension), conv-1 deduped
+        # Both survive (core dimension wins the primary stamp, nothing is dropped)
         result_ids = [f["id"] for f in result["findings"]]
         self.assertIn("bug-1", result_ids)
-        self.assertNotIn("conv-1", result_ids)
-        self.assertGreater(result["stats"]["dedup_dropped"], 0)
+        self.assertIn("conv-1", result_ids)
+        self.assertGreater(result["stats"]["cross_agent_consolidated"], 0)
 
     def test_stdout_output(self):
         """When --output is omitted, JSON is written to stdout."""

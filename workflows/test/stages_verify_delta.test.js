@@ -13,11 +13,12 @@
 //   2. CONTENT PROOF. A shape that passes (1) can still carry drifted VALUES — a flipped
 //      origin, a shifted confidence, a plausible elimination. The script checksums its own
 //      deltas and the workflow recomputes; an executor that transcribes cannot recompute.
-//   3. THE JOIN. The findings on the trusted path are the DISPATCHED ones, enriched. Which
-//      means: nothing the script did not touch can be lost in transcription, and `agent`
-//      is stripped exactly once, here (issue #25 requirement 1 — deterministic agent
-//      identity past verify is the measured dedup recall-collapse mechanism, and it
-//      re-lands only with the cross-dimension consolidation redesign, issue #22).
+//   3. THE JOIN. The findings on the trusted path are the DISPATCHED ones, enriched.
+//      Nothing the script did not touch can be lost in transcription. `agent` re-lands
+//      here with issue #22's cross-dimension consolidation redesign: since
+//      `consolidateCrossAgent` never drops a finding, deterministic agent identity past
+//      verify no longer costs recall, so both the trusted and degraded paths emit `agent`
+//      identically.
 //
 // The harness is deliberately local rather than shared with stages_verify.test.js: these
 // tests drive MALFORMED envelopes, and a helper that made malformed answers convenient
@@ -385,28 +386,25 @@ test('a slice with duplicate ids degrades without dispatching', async () => {
   assert.match(unverifiedGap(out.gaps), /duplicate finding id/);
 });
 
-// --- 5. The join: equivalence, and the agent-withholding constraint ----------
+// --- 5. The join: equivalence, and agent identity ----------------------------
 
-// Issue #25 requirement 1's constraint, stated as a test because a regression here is
-// invisible in every other signal: deterministic merge-injected `agent` reaching the
-// filter is the MEASURED recall-collapse mechanism (mini-subset A: dedupCrossAgent
-// eliminations 7 -> 33, same-6 recall 20/30 -> 13/30). It re-lands only together with the
-// cross-dimension consolidation redesign (#22) — they are one design problem.
-test('the join strips `agent` from every finding it emits', async () => {
+// Issue #22 re-lands deterministic merge-injected `agent` on the trusted path.
+// `consolidateCrossAgent` never drops a finding (D1), so `agent` reaching the filter no
+// longer costs recall the way the old drop-one-winner `dedupCrossAgent` did (mini-subset A:
+// eliminations 7 -> 33, same-6 recall 20/30 -> 13/30 under that eliminator). Both paths now
+// emit `agent` identically — see the degraded-path test right below, which was already
+// unmodified and is now symmetric rather than an intentionally-documented asymmetry.
+test('the join keeps `agent` on every finding it emits', async () => {
   const findings = makeFindings(3);
   assert.ok(findings.every((f) => f.agent), 'the fixture dispatches findings that DO carry agent');
   const ctx = ctxFor((i, attempt, nonce) => deltaEnvelope(findings, { nonce }));
   const out = await verifyStage(ctx, baseInput(findings));
   assert.equal(out.verified, true);
   for (const f of out.findings) {
-    assert.equal('agent' in f, false, `finding ${f.id} must not carry a filter-visible agent identity`);
+    assert.equal(f.agent, 'bug-detector', `finding ${f.id} must keep its merge-injected agent identity`);
   }
 });
 
-// The DEGRADED path is deliberately untouched by #25 PR2: it re-emits the stage's own
-// input, `agent` included, exactly as PR1 left it. Stripping there would be a
-// findings-content change on a path this PR does not measure — recorded as an adjacent
-// inconsistency rather than fixed in passing.
 test('the degraded path is unchanged — it re-emits the dispatched findings as they were', async () => {
   const findings = makeFindings(2);
   const ctx = ctxFor((i, attempt, nonce) => ({ status: 'failed', exitCode: 1, stderr: 'boom' }));

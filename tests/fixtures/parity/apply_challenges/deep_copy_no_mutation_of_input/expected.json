@@ -27,7 +27,7 @@
     "challenge_downgraded": 1,
     "challenge_removed": 0,
     "challenge_survived": 0,
-    "dedup_dropped": 0,
+    "cross_agent_consolidated": 0,
     "final_count": 1,
     "total_input": 1,
     "unchallenged": 0

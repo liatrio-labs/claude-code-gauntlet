@@ -126,7 +126,7 @@ Five deterministic transforms (`mergeFindings`, `findingDedup`, `filterFindings`
 They are held at parity by frozen golden fixtures at
 `tests/fixtures/parity/<script>/[<group>/]<case>/{input,expected}.json`, which both runtimes replay. Four of the
 five scripts keep their cases directly under `<script>/`; `filter_findings` groups every one of its cases a level
-deeper (for example `tests/fixtures/parity/filter_findings/dedup_cross_agent/core_wins/`), which is why the
+deeper (for example `tests/fixtures/parity/filter_findings/consolidate_cross_agent/core_wins/`), which is why the
 recorder walks the whole tree instead of listing a single level.
 
 Never hand-edit a fixture to make a test pass — a fixture that no longer matches recorded behavior is exactly the

@@ -1,0 +1,29 @@
+{
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 60,
+      "description": "short",
+      "dimension": "bug",
+      "file": "f.py",
+      "id": "D1",
+      "line_start": 10,
+      "origin": "unknown",
+      "severity": "medium",
+      "title": "t1"
+    },
+    {
+      "agent": "test-analyzer",
+      "confidence": 95,
+      "description": "a much longer description explaining the gap in detail",
+      "dimension": "test_coverage",
+      "file": "f.py",
+      "id": "V1",
+      "line_start": 12,
+      "origin": "verified",
+      "severity": "low",
+      "title": "t2"
+    }
+  ],
+  "fn": "consolidate_cross_agent"
+}

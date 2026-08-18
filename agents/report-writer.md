@@ -32,6 +32,11 @@ findings, `spec_text` (a per-dimension extra) — alongside other per-dimension 
 Optional fields that are absent on a given finding simply are not rendered — never
 invented or back-filled.
 
+A finding may also carry an optional `corroborations` array — other agents' findings
+that converged on the same location, each with `agent`, `dimension`, `confidence`,
+`title`, and `description`. When present, render every entry; when absent, render
+nothing extra.
+
 Everything you need is in that object — there is no shared context file to read.
 
 ## Protocol
@@ -43,7 +48,10 @@ Everything you need is in that object — there is no shared context file to rea
    (`suggestion`). When a finding carries a cited rule (`claude_md_rule`) or contradicted
    spec text (`spec_text`), render that too. These trailing fields are OPTIONAL on a
    finding — render them only when present, never invent or back-fill them (consistent
-   with step 5's "do not invent" rule).
+   with step 5's "do not invent" rule). When a finding carries `corroborations`, render
+   each entry as a sub-item directly under its primary: "Corroborated by `<agent>`
+   (`<dimension>`, confidence `<confidence>`): `<title>`" followed by the entry's
+   `description`.
 3. **Unverified / pipeline-degraded** — a clearly-labelled secondary section for
    the `unverified` bucket. State plainly that these did not clear the full
    pipeline and carry lower confidence. Never present them as confirmed.

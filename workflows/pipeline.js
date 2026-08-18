@@ -29,7 +29,7 @@ function dedupById(ndjsonFindings, textFindings) {
 // --- filterFindings.js ---
 // filterFindings.js — JS twin of scripts/filter_findings.py (Phase 6 filtering).
 // Part 1: normalize / thresholds / injection / exclusions / REVIEW.md parsing.
-// Part 2: disagreement detection, tagging, dedupCrossAgent, applyFilterPipeline —
+// Part 2: disagreement detection, tagging, consolidateCrossAgent, applyFilterPipeline —
 // appended to this same file.
 
 // --- Field normalization (BF-14) --------------------------------------------
@@ -614,10 +614,18 @@ function detectDisagreement(findings) {
 
   const active = findings.filter((f) => !suppressedIds.has(idKey(f)));
 
-  // Phase 3: consensus grouping (file + line_bucket(10)) over the active set.
+  // Phase 3: consensus grouping (file + line_bucket(10) + degraded) over the
+  // active set. `degraded` (origin === 'unknown') is folded into the grouping
+  // key so a degraded (verify-echo-unavailable) finding only corroborates
+  // other degraded findings, and a verified finding only corroborates other
+  // verified findings -- never across (#73 D3a). On a UNIFORM-origin run
+  // (all-verified or all-degraded), `degraded` is a constant across every
+  // finding, so it changes no group membership and the boosted output is
+  // byte-identical to before this extension (#73 req 2 regression pin).
   const consensusGroups = new Map();
   for (const finding of active) {
-    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), 10)]);
+    const degraded = pyGet(finding, 'origin', '') === 'unknown';
+    const key = JSON.stringify([pyGet(finding, 'file', ''), lineBucket(pyGet(finding, 'line_start', 0), 10), degraded]);
     if (!consensusGroups.has(key)) consensusGroups.set(key, []);
     consensusGroups.get(key).push(finding);
   }
@@ -787,7 +795,7 @@ function isTestCorrectnessFinding(finding) {
 
 // Port of group_by_proximity. Returns a Map keyed by JSON.stringify([file,
 // bucket]) -- an internal grouping key with no Python equivalent string
-// form; only dedupCrossAgent (and, later, applyChallenges per the brief)
+// form; only consolidateCrossAgent (and, later, applyChallenges per the brief)
 // consume the grouping, never its literal key shape.
 function groupByProximity(findings, lineProximity = 5) {
   const groups = new Map();
@@ -799,24 +807,42 @@ function groupByProximity(findings, lineProximity = 5) {
   return groups;
 }
 
-// Port of dedup_cross_agent. Only dedups groups with 2+ findings from 2+
-// DIFFERENT agents; same-agent siblings of the winner are always kept;
-// findings without an "id" are immune (pass through unconditionally).
-// Winner priority: (isCore, confidence, description.length), all DESCENDING
-// via one stable composite comparator -- matches Python's
-// `sorted(group, key=_winner_key, reverse=True)`, which for tied keys
-// preserves original relative order (Python sort stability + reverse=True
-// keeps ties in forward order, not reversed) -- V8's sort is equally stable,
-// so a single multi-key comparator reproduces this without a second pass.
-// EXPORTED for reuse by applyChallenges — keep this a standalone
-// plain function with no closure over filterFindings-only state.
-function dedupCrossAgent(findings) {
+// Port of consolidate_cross_agent (#22 D1 -- replaces the old dedup_cross_agent
+// eliminator). NOTHING is dropped: for each proximity group (same file, same
+// 5-line bucket) that has 2+ findings from 2+ DIFFERENT agents, every member
+// with a truthy "id" is stamped with a shared `consolidation_key` and exactly
+// one of them gets `consolidation_primary: true` (the rest get `false`).
+// Same-agent-only groups and singletons get no stamps at all. A finding
+// without a truthy "id" is immune -- it passes through completely unstamped,
+// mirroring the old eliminator's "no id, no dedup" immunity.
+//
+// Primary selection reuses the OLD winner key (isCore, confidence,
+// description.length), all DESCENDING via one stable composite comparator --
+// this is deliberately origin-blind (#22 D3): since consolidation never drops
+// anything, origin cannot cost delivery here, unlike rankKey/detectDisagreement
+// which do gate on origin. Matches Python's `sorted(group, key=_winner_key,
+// reverse=True)`, which for tied keys preserves original relative order
+// (Python sort stability + reverse=True keeps ties in forward order, not
+// reversed) -- V8's sort is equally stable, so a single multi-key comparator
+// reproduces this without a second pass. The primary is the first RANKED
+// member that actually has a truthy id (an id-less top-ranked member cannot
+// carry the stamp, so ranking is walked until one does).
+//
+// EXPORTED for reuse by applyChallenges — keep this a standalone plain
+// function with no closure over filterFindings-only state.
+function consolidateCrossAgent(findings) {
   const LINE_PROXIMITY = 5;
 
-  const safeIntLine = (f) => {
-    const n = pyIntOrNull(pyGet(f, 'line_start', 0));
-    return n === null ? 0 : n;
-  };
+  // Clear any stamps from a prior pass first: a re-run (applyChallenges, after
+  // a group's primary is eliminated) must not leave survivors carrying a
+  // consolidation_key/consolidation_primary from a group that no longer
+  // qualifies.
+  for (const f of findings) {
+    if (f && typeof f === 'object') {
+      delete f.consolidation_key;
+      delete f.consolidation_primary;
+    }
+  }
 
   const winnerKey = (f) => {
     const dim = pyGet(f, 'dimension', '').toLowerCase();
@@ -837,50 +863,28 @@ function dedupCrossAgent(findings) {
 
   const groups = groupByProximity(findings, LINE_PROXIMITY);
 
-  const keptFindingIds = new Set();
-  const dropped = [];
+  let consolidatedCount = 0;
 
   for (const group of groups.values()) {
     const agentsInGroup = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
-    if (group.length < 2 || agentsInGroup.size < 2) {
-      for (const f of group) {
-        const fid = pyGet(f, 'id', '');
-        if (fid) keptFindingIds.add(fid);
-      }
-      continue;
-    }
+    if (group.length < 2 || agentsInGroup.size < 2) continue; // no stamps
+
+    const file = pyGet(group[0], 'file', '');
+    const bucket = lineBucket(pyGet(group[0], 'line_start', 0), LINE_PROXIMITY);
+    const consolidationKey = `${file}:${bucket}`;
 
     const ranked = [...group].sort(compareWinnerDesc);
-    const winner = ranked[0];
-    const winnerAgent = pyGet(winner, 'agent', '').toLowerCase();
-    const winnerId = pyGet(winner, 'id', '');
-    if (winnerId) keptFindingIds.add(winnerId);
+    const primary = ranked.find((f) => pyGet(f, 'id', ''));
 
-    for (const loser of ranked.slice(1)) {
-      const loserAgent = pyGet(loser, 'agent', '').toLowerCase();
-      const loserId = pyGet(loser, 'id', '');
-      if (loserAgent === winnerAgent) {
-        if (loserId) keptFindingIds.add(loserId);
-        continue;
-      }
-      const loserLine = safeIntLine(loser);
-      const winnerLine = safeIntLine(winner);
-      dropped.push({
-        ...loser,
-        eliminated_by: 'dedup:cross-agent',
-        elimination_reason:
-          `cross-agent dedup: finding at ${pyGet(loser, 'file', '?')}:${loserLine} ` +
-          `(agent=${JSON.stringify(pyGet(loser, 'agent', '?'))}, dim=${JSON.stringify(pyGet(loser, 'dimension', '?'))}, ` +
-          `conf=${pyGet(loser, 'confidence', '?')}) lost to agent=${JSON.stringify(pyGet(winner, 'agent', '?'))} ` +
-          `at line ${winnerLine} within ${LINE_PROXIMITY} lines`,
-      });
+    for (const f of group) {
+      if (!pyGet(f, 'id', '')) continue; // id-less findings stay unstamped
+      f.consolidation_key = consolidationKey;
+      f.consolidation_primary = f === primary;
+      consolidatedCount += 1;
     }
   }
 
-  // Findings without a truthy "id" pass through unconditionally (mirrors
-  // Python's `f.get("id", "") in kept_finding_ids or not f.get("id")`).
-  const kept = findings.filter((f) => keptFindingIds.has(pyGet(f, 'id', '')) || !pyGet(f, 'id', undefined));
-  return { kept, dropped };
+  return { findings, consolidatedCount };
 }
 
 // --- Tagging -----------------------------------------------------------
@@ -890,11 +894,11 @@ const SUGGESTION_AGENTS = new Set(['test-analyzer', 'code-simplifier']);
 const CONVENTIONS_AGENT = 'conventions-and-intent';
 const COMMENT_ACCURACY_DIMENSIONS = new Set(['comment-accuracy', 'documentation', 'doc-accuracy']);
 
-// Port of tag_findings. Step 1 (dedup) -> per-finding routeByDimension ->
-// agent-based fallback. Returns { tagged, dedupDropped, mainCount,
-// suggestionCount }.
+// Port of tag_findings. Step 1 (cross-agent consolidation, D1 -- stamps,
+// never drops) -> per-finding routeByDimension -> agent-based fallback.
+// Returns { tagged, consolidatedCount, mainCount, suggestionCount }.
 function tagFindings(findings) {
-  const { kept: tagged, dropped: dedupDropped } = dedupCrossAgent(findings);
+  const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
 
   let mainCount = 0;
   let suggestionCount = 0;
@@ -937,7 +941,7 @@ function tagFindings(findings) {
     else suggestionCount += 1;
   }
 
-  return { tagged, dedupDropped, mainCount, suggestionCount };
+  return { tagged, consolidatedCount, mainCount, suggestionCount };
 }
 
 // --- Pipeline composition ----------------------------------------------
@@ -971,8 +975,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
 
-  const { tagged, dedupDropped, mainCount, suggestionCount } = tagFindings(active);
-  allEliminated.push(...dedupDropped);
+  const { tagged, consolidatedCount, mainCount, suggestionCount } = tagFindings(active);
 
   const promotedCount = tagged.filter((f) => f.promoted_from === 'test-analyzer').length;
   const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
@@ -989,8 +992,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
       consensus_boosted: consensusBoosted,
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,
-      cross_agent_deduped: dedupDropped.length,
-      test_analyzer_deduped: dedupDropped.length, // backward-compat alias
+      cross_agent_consolidated: consolidatedCount,
       test_analyzer_promoted: promotedCount,
       tagged_main: mainCount,
       tagged_suggestion: suggestionCount,
@@ -1544,7 +1546,7 @@ function downgradeSeverity(severity) {
   return SEVERITY_ORDER[idx + 1];
 }
 
-// Port of _rank_key. Single 3-tuple (sevIdx, -confidence, tertiary):
+// Port of _rank_key. 4-tuple (sevIdx, degraded, -confidence, tertiary):
 // tertiary is -risk_level when risk_level is present, non-null, and
 // numeric (Number.isFinite(Number(rl))) -- the explicit `rl !== null` guard
 // matters because Number(null) === 0 is finite, which would otherwise
@@ -1553,27 +1555,36 @@ function downgradeSeverity(severity) {
 // rank_risk_level_absent_falls_back_to_description_length fixture, which
 // pins this exact null-vs-zero distinction against the authoritative
 // Python: `if risk_level is not None: ... else: tertiary = -len(description)`).
+//
+// `degraded` (origin === 'unknown' -> 1, else 0) sits right after severity
+// (#22 D3b): within a severity tier, a finding the pipeline actually
+// verified always outranks one it could not verify. On a UNIFORM-origin run
+// (every finding verified, or every finding degraded) this component is
+// constant across the whole set, so ranking order is unchanged from before
+// this extension.
 function rankKey(finding) {
   const sev = (finding.severity ?? 'low').toLowerCase();
   let sevIdx = SEVERITY_ORDER.indexOf(sev);
   if (sevIdx < 0) sevIdx = SEVERITY_ORDER.length;
+  const degraded = finding.origin === 'unknown' ? 1 : 0;
   const conf = finding.confidence ?? 0;
   let tertiary;
   const rl = finding.risk_level;
   if (rl !== undefined && rl !== null && Number.isFinite(Number(rl))) tertiary = -Number(rl);
   else tertiary = -((finding.description ?? '').length);
-  return [sevIdx, -conf, tertiary];
+  return [sevIdx, degraded, -conf, tertiary];
 }
 
 // Port of rank_findings. ONE composite comparator built from rankKey's
-// 3-tuple -- not chained `.sort()` calls -- so severity, confidence, and
-// risk_level/description-length are decided together in a single stable
-// pass (see the rank_by_severity_then_confidence_then_risk_level fixture).
+// 4-tuple -- not chained `.sort()` calls -- so severity, verification
+// status, confidence, and risk_level/description-length are decided
+// together in a single stable pass (see the
+// rank_by_severity_then_confidence_then_risk_level fixture).
 function rankFindings(findings) {
   return [...findings].sort((a, b) => {
     const ka = rankKey(a);
     const kb = rankKey(b);
-    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+    return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || ka[3] - kb[3];
   });
 }
 
@@ -1717,16 +1728,17 @@ function applyChallenges(findings, challenges) {
 
   const totalInput = findings.length;
 
-  // Cross-agent dedup re-run (filterFindings' dedupCrossAgent, reused not
-  // reimplemented) + rank -- mirrors main()'s post-challenge composition.
-  const { kept: dedupedActive, dropped: dedupDropped } = dedupCrossAgent(active);
-  const ranked = rankFindings(dedupedActive);
-
-  const allEliminated = [...eliminated, ...dedupDropped];
+  // Cross-agent consolidation re-run (filterFindings' consolidateCrossAgent,
+  // reused not reimplemented) + rank -- mirrors main()'s post-challenge
+  // composition. Nothing is dropped here (#22 D1); it re-stamps the
+  // surviving active set now that challenge scoring may have changed which
+  // findings are co-located and eligible.
+  const { findings: consolidatedActive, consolidatedCount } = consolidateCrossAgent(active);
+  const ranked = rankFindings(consolidatedActive);
 
   return {
     findings: ranked,
-    eliminated: allEliminated,
+    eliminated,
     stats: {
       total_input: totalInput,
       challenge_removed: stats.challenge_removed,
@@ -1734,7 +1746,7 @@ function applyChallenges(findings, challenges) {
       challenge_contested: stats.challenge_contested,
       challenge_survived: stats.challenge_survived,
       unchallenged: stats.unchallenged,
-      dedup_dropped: dedupDropped.length,
+      cross_agent_consolidated: consolidatedCount,
       final_count: ranked.length,
     },
   };
@@ -3454,10 +3466,11 @@ const DELTA_KEYS = ['id', 'verified', 'origin', 'severity', 'confidence', 'elimi
 //
 // `agent` is not declarable here because no finding is echoed at all any more — the
 // withholding that used to depend on leaving one property out of a finding schema is now
-// structural. joinVerifyDeltas strips it from the findings it emits, and a test fails if a
-// joined finding is ever filter-visibly tagged (V3.1 item 4 was reverted for exactly this:
-// deterministic agent identity past verify moved mini-subset A's dedup eliminations
-// 7 -> 33 and same-6 recall 20/30 -> 13/30; it re-lands only with #22's redesign).
+// structural. `agent` re-lands with #22's redesign: joinVerifyDeltas no longer strips it
+// (consolidateCrossAgent never drops a finding, so a deterministic `agent` past verify no
+// longer costs recall the way the old drop-one-winner dedupCrossAgent did — V3.1 item 4's
+// prior attempt moved mini-subset A's dedup eliminations 7 -> 33 and same-6 recall
+// 20/30 -> 13/30 under that eliminator).
 const VERIFY_SCHEMA = {
   type: 'object',
   properties: {
@@ -3893,12 +3906,15 @@ const deltaHas = (d, k) => d[k] !== undefined && d[k] !== null;
 // dispatchVerifySlice (immediately after its trustSlice call) and the golden-fixture test
 // calls it; keep it that way.
 //
-// `agent` is stripped here — the one place where the withholding #25 requirement 1
-// mandates is enforced. It used to happen by omission (the echo schema simply did not
-// declare `agent`, so StructuredOutput dropped it... most of the time — measured surviving
-// on 2 of 6 PRs). Joining onto findings this stage holds would have made it deterministic,
-// which is the measured dedup recall-collapse mechanism, so the withholding had to become
-// explicit. It re-lands only with the cross-dimension consolidation redesign (#22).
+// `agent` used to be stripped here — the one place where the withholding #25
+// requirement 1 mandated was enforced. It used to happen by omission (the echo schema
+// simply did not declare `agent`, so StructuredOutput dropped it... most of the time —
+// measured surviving on 2 of 6 PRs). Joining onto findings this stage holds would have
+// made it deterministic, which was the measured dedup recall-collapse mechanism (the old
+// drop-one-winner `dedupCrossAgent` silently discarded whichever agent's finding lost),
+// so the withholding had to become explicit. It re-lands now (#22): `consolidateCrossAgent`
+// eliminates nothing, so a deterministic `agent` on the trusted path no longer costs
+// recall, and both this path and `degradedSlice` emit `agent` identically again.
 function joinVerifyDeltas(slice, deltas) {
   const byId = new Map();
   for (const d of Array.isArray(deltas) ? deltas : []) {
@@ -3913,7 +3929,6 @@ function joinVerifyDeltas(slice, deltas) {
     // carried real numbers, and a leaked "85" makes the filter's consensus boost
     // string-concatenate ("85" + 10 -> "8510").
     const joined = pinNumericFields(f);
-    delete joined.agent;
     for (const k of DELTA_VALUE_KEYS) if (deltaHas(delta, k)) joined[k] = delta[k];
     out.push(joined);
   }
@@ -4648,7 +4663,7 @@ async function challengeStage(ctx, input) {
       stats: {
         total_input: 0, dispatched: 0, completed: 0, skipped: 0,
         challenge_removed: 0, challenge_downgraded: 0, challenge_contested: 0,
-        challenge_survived: 0, unchallenged: 0, dedup_dropped: 0, final_count: 0,
+        challenge_survived: 0, unchallenged: 0, cross_agent_consolidated: 0, final_count: 0,
       },
       generated_at: inp.generatedAt,
     };
@@ -4720,7 +4735,7 @@ async function challengeStage(ctx, input) {
       challenge_contested: applied.stats.challenge_contested,
       challenge_survived: applied.stats.challenge_survived,
       unchallenged: applied.stats.unchallenged,
-      dedup_dropped: applied.stats.dedup_dropped,
+      cross_agent_consolidated: applied.stats.cross_agent_consolidated,
       final_count: applied.stats.final_count,
     },
     generated_at: inp.generatedAt,
@@ -4868,6 +4883,56 @@ function dimensionsSummaryTable(input) {
   return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
 }
 
+// Groups findings by `consolidation_key` before they reach the report writer
+// (or the minimalReport fallback) — #22 D2, same grouping rule
+// `consolidate_delivery` applies to the posted comment payload, applied here to
+// the report's findings list instead: non-primary group members are folded
+// into the primary's `corroborations` array rather than listed as separate
+// top-level findings. A finding with no (falsy) `consolidation_key` passes
+// through unchanged — older artifacts / pre-consolidation findings render
+// exactly as before.
+function consolidateForReport(findings) {
+  const list = findings || [];
+  const groups = [];
+  const keyToGroup = new Map();
+  for (const f of list) {
+    const key = f && f.consolidation_key;
+    if (!key) {
+      groups.push({ primary: f, corroborators: [] });
+      continue;
+    }
+    let group = keyToGroup.get(key);
+    if (!group) {
+      group = { primary: null, corroborators: [] };
+      keyToGroup.set(key, group);
+      groups.push(group);
+    }
+    if (f.consolidation_primary) {
+      if (!group.primary) group.primary = f;
+      // A second consolidation_primary in the same group must not overwrite
+      // (and drop) the first — demote it to corroborator.
+      else group.corroborators.push(f);
+    } else group.corroborators.push(f);
+  }
+  return groups.map((group) => {
+    // Reachable only for hand-assembled payloads: filterFindings.js always
+    // stamps exactly one consolidation_primary per group. If a caller's data
+    // has none, fall back to the first-seen member rather than surfacing `null`.
+    const primary = group.primary || group.corroborators.shift();
+    if (!group.corroborators.length) return primary;
+    return {
+      ...primary,
+      corroborations: group.corroborators.map((c) => ({
+        agent: c.agent,
+        dimension: c.dimension,
+        confidence: c.confidence,
+        title: c.title,
+        description: c.description,
+      })),
+    };
+  });
+}
+
 // reportStage(ctx, input) -> { report, gaps }
 // Dispatches the report-writer agent to render the review markdown from the
 // high-confidence + unverified buckets (carried BY VALUE in the prompt — the
@@ -4892,12 +4957,16 @@ async function reportStage(ctx, input) {
   const policy = inp.policy || {};
   const model = modelFor('code-gauntlet:report-writer', policy);
 
-  const findings = inp.findings || [];
-  // Computed once over the WHOLE run (not per-chunk) so the table's counts are never
-  // scoped to one segment's slice of findings; threaded to segment 0 only (below).
+  const rawFindings = inp.findings || [];
+  // Computed once over the WHOLE run (not per-chunk), and over the RAW (pre-
+  // consolidation) findings so per-dimension counts are unaffected by grouping —
+  // threaded to segment 0 only (below).
   const dimensionsTable = dimensionsSummaryTable({
-    ...(inp.dimensions || {}), findings, unverified: inp.unverified || [],
+    ...(inp.dimensions || {}), findings: rawFindings, unverified: inp.unverified || [],
   });
+  // Grouped for the rendered findings list itself (#22 D2) — see
+  // consolidateForReport. Findings without a consolidation_key are unaffected.
+  const findings = consolidateForReport(rawFindings);
   const oversized = JSON.stringify(findings).length > PROMPT_SEGMENT_CHAR_BUDGET;
   if (!oversized) {
     return dispatchReportSegment(c, model, inp, findings, null, dimensionsTable);
@@ -5012,6 +5081,14 @@ function minimalReport(inp) {
     lines.push('', '## Findings');
     for (const f of findings) {
       lines.push(`- [${(f.severity || 'unknown').toUpperCase()}] ${f.title || f.id || 'finding'} (${f.file || '?'}:${f.line_start != null ? f.line_start : '?'})`);
+      // Non-primary consolidation-group members (#22 D2) — folded in by
+      // consolidateForReport as `corroborations` rather than listed as
+      // separate top-level findings.
+      if (Array.isArray(f.corroborations)) {
+        for (const c of f.corroborations) {
+          lines.push(`  - Corroborating: ${c.agent || 'unknown'} (${c.dimension || 'unknown'}, confidence ${c.confidence != null ? c.confidence : '?'}) — ${c.title || 'finding'}`);
+        }
+      }
     }
   }
   // Present only when the caller scoped it in (segment 0 / unsegmented dispatch — see

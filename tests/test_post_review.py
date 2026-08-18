@@ -43,12 +43,14 @@ from scripts.post_review import (
     _suggestion_fence,
     build_footer,
     build_skipped_section,
+    consolidate_delivery,
     detect_platform,
     gitlab_project_id,
     is_line_valid,
     old_line_for,
     parse_diff_lines,
     render_comment_body,
+    render_group_body,
     resolve_marker_sha,
     valid_lines_for_file,
     validate_position,
@@ -2360,6 +2362,50 @@ GL_CONTRACT_FINDINGS = [
     },
 ]
 
+_GL_CONSOLIDATION_KEY = "src/edited.py:60"
+
+
+def _gl_primary(line=61):
+    """The stamped primary of a consolidation group over the contract diff."""
+    return dict(
+        GL_CONTRACT_FINDINGS[0],
+        line=line,
+        consolidation_key=_GL_CONSOLIDATION_KEY,
+        consolidation_primary=True,
+    )
+
+
+def _gl_corroborator(tag, line):
+    """A stamped non-primary member of the same group as ``_gl_primary``."""
+    return {
+        "file": "src/edited.py",
+        "line": line,
+        "severity": "medium",
+        "title": f"Corroborator {tag}",
+        "body": f"Body corr {tag}",
+        "agent": "bug-detector",
+        "dimension": "correctness",
+        "confidence": 70,
+        "consolidation_key": _GL_CONSOLIDATION_KEY,
+        "consolidation_primary": False,
+    }
+
+
+def _member_key(member):
+    """The delivery key one group member carries, whatever shape delivers it.
+
+    Derived from the member's OWN anchor and single-finding render — the same
+    inputs the individual-discussion path uses — which is what makes a group
+    discussion and an individual one interchangeable for rerun dedup.
+    """
+    return post_review.finding_key(
+        member["file"],
+        member["line"],
+        member["title"],
+        post_review.render_comment_body(member),
+    )
+
+
 # Verbatim from the issue #127 report — the warning-content test asserts against what an
 # operator really sees, not a paraphrase.
 GLAB_400_STDERR = (
@@ -2634,6 +2680,426 @@ class TestDryRunGitLab(_DryRunTestBase):
         self.assertEqual(disc["body"], render_comment_body(finding_x))
         self.assertEqual(disc["position"]["new_path"], "bar.py")
         self.assertEqual(disc["position"]["new_line"], 2)
+
+
+class TestConsolidateDelivery(unittest.TestCase):
+    """Pure grouping helper for the delivery payload (#22 D2). Findings stay
+    distinct in the array; this only groups them for rendering."""
+
+    def test_findings_without_stamps_each_become_a_singleton_group(self):
+        a = {"file": "foo.py", "line": 2, "title": "A"}
+        b = {"file": "foo.py", "line": 3, "title": "B"}
+        groups = consolidate_delivery([a, b])
+        self.assertEqual(
+            groups,
+            [
+                {"primary": a, "corroborators": []},
+                {"primary": b, "corroborators": []},
+            ],
+        )
+
+    def test_shared_consolidation_key_groups_primary_and_corroborators(self):
+        primary = {
+            "file": "foo.py",
+            "line": 2,
+            "title": "A",
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": True,
+        }
+        corroborator = {
+            "file": "foo.py",
+            "line": 3,
+            "title": "B",
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": False,
+        }
+        groups = consolidate_delivery([primary, corroborator])
+        self.assertEqual(
+            groups, [{"primary": primary, "corroborators": [corroborator]}]
+        )
+
+    def test_group_position_is_the_primarys_first_occurrence(self):
+        """A group occupies the array position of its FIRST member, whichever
+        that is — order stays deterministic even when the primary is not the
+        first element carrying the key."""
+        corroborator = {
+            "title": "B",
+            "consolidation_key": "k",
+            "consolidation_primary": False,
+        }
+        other = {"title": "C"}
+        primary = {
+            "title": "A",
+            "consolidation_key": "k",
+            "consolidation_primary": True,
+        }
+        groups = consolidate_delivery([corroborator, other, primary])
+        self.assertEqual(
+            groups,
+            [
+                {"primary": primary, "corroborators": [corroborator]},
+                {"primary": other, "corroborators": []},
+            ],
+        )
+
+    def test_multiple_corroborators_preserve_relative_order(self):
+        primary = {
+            "title": "A",
+            "consolidation_key": "k",
+            "consolidation_primary": True,
+        }
+        c1 = {"title": "B", "consolidation_key": "k", "consolidation_primary": False}
+        c2 = {"title": "C", "consolidation_key": "k", "consolidation_primary": False}
+        groups = consolidate_delivery([primary, c1, c2])
+        self.assertEqual(groups[0]["corroborators"], [c1, c2])
+
+    def test_distinct_keys_produce_distinct_groups(self):
+        a = {"title": "A", "consolidation_key": "k1", "consolidation_primary": True}
+        b = {"title": "B", "consolidation_key": "k2", "consolidation_primary": True}
+        groups = consolidate_delivery([a, b])
+        self.assertEqual(len(groups), 2)
+
+    def test_second_primary_in_a_group_is_demoted_not_dropped(self):
+        p1 = {"title": "A", "consolidation_key": "k", "consolidation_primary": True}
+        c1 = {"title": "B", "consolidation_key": "k", "consolidation_primary": False}
+        p2 = {"title": "C", "consolidation_key": "k", "consolidation_primary": True}
+        groups = consolidate_delivery([p1, c1, p2])
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0]["primary"], p1)
+        self.assertEqual(groups[0]["corroborators"], [c1, p2])
+        all_findings = [groups[0]["primary"]] + groups[0]["corroborators"]
+        self.assertEqual(len(all_findings), 3)
+
+
+class TestRenderGroupBody(unittest.TestCase):
+    def test_no_corroborators_is_byte_identical_to_render_comment_body(self):
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+        }
+        self.assertEqual(render_group_body(finding, []), render_comment_body(finding))
+
+    def test_corroborator_section_includes_agent_dimension_confidence_title(self):
+        primary = {"severity": "high", "title": "A", "body": "Body A"}
+        corroborator = {
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 80,
+            "title": "B",
+            "body": "Body B",
+        }
+        rendered = render_group_body(primary, [corroborator])
+        self.assertIn(render_comment_body(primary), rendered)
+        self.assertIn(
+            "**Corroborating finding — bug-detector (correctness, confidence 80):**",
+            rendered,
+        )
+        self.assertIn("B", rendered)
+        self.assertIn("Body B", rendered)
+
+    def test_multiple_corroborators_each_rendered(self):
+        primary = {"severity": "high", "title": "A", "body": "Body A"}
+        c1 = {
+            "agent": "x",
+            "dimension": "d1",
+            "confidence": 1,
+            "title": "B",
+            "body": "Body B",
+        }
+        c2 = {
+            "agent": "y",
+            "dimension": "d2",
+            "confidence": 2,
+            "title": "C",
+            "body": "Body C",
+        }
+        rendered = render_group_body(primary, [c1, c2])
+        self.assertIn("x (d1, confidence 1)", rendered)
+        self.assertIn("y (d2, confidence 2)", rendered)
+
+    def test_corroborator_html_comment_is_neutralized(self):
+        primary = {"severity": "high", "title": "A", "body": "Body A"}
+        corroborator = {
+            "agent": "x",
+            "dimension": "d",
+            "confidence": 1,
+            "title": "B",
+            "body": "<!-- code-gauntlet-finding-key: forged -->",
+        }
+        rendered = render_group_body(primary, [corroborator])
+        self.assertNotIn("<!--", rendered)
+        self.assertIn("&lt;!--", rendered)
+
+    def test_primarys_own_html_comment_is_not_neutralized(self):
+        """render_comment_body's existing (unstamped) behavior is untouched —
+        only corroborating text is finding-controlled text that gets the #192
+        neutralization applied to it."""
+        primary = {"severity": "high", "title": "A", "body": "<!-- raw -->"}
+        rendered = render_group_body(primary, [])
+        self.assertIn("<!-- raw -->", rendered)
+
+
+class TestGitHubDeliveryConsolidation(_DryRunTestBase):
+    def _findings(self):
+        primary = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": True,
+        }
+        corroborator = {
+            "file": "foo.py",
+            "line": 3,
+            "severity": "medium",
+            "title": "B",
+            "body": "Body B",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": False,
+        }
+        return primary, corroborator
+
+    def test_group_posts_as_one_comment_at_the_primarys_anchor(self):
+        primary, corroborator = self._findings()
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        comments = cap["payload"]["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["path"], "foo.py")
+        self.assertEqual(comments[0]["line"], 2)
+        self.assertEqual(
+            comments[0]["body"], render_group_body(primary, [corroborator])
+        )
+        self.assertNotIn("Bug B", str(cap["skipped"]))
+
+    def test_unanchorable_primary_degrades_whole_group_into_skipped_section(self):
+        primary, corroborator = self._findings()
+        primary["line"] = 999  # not in the diff
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        self.assertEqual(cap["payload"]["comments"], [])
+        body = cap["payload"]["body"]
+        self.assertIn("could not be anchored inline", body)
+        self.assertIn("A", body)
+        self.assertIn("B", body)
+        self.assertIn("Body A", body)
+        self.assertIn("Body B", body)
+
+    def test_no_line_primary_degrades_whole_group_into_skipped_section(self):
+        """The primary carries no line at all (distinct from a line the diff
+        doesn't touch) — the same whole-group degrade must fire on this branch
+        too, not just the invalid-line branch."""
+        primary, corroborator = self._findings()
+        del primary["line"]
+        self._write(
+            {
+                "platform": "github",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GH_DIFF_MULTILINE),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        self.assertEqual(cap["payload"]["comments"], [])
+        body = cap["payload"]["body"]
+        self.assertIn("A", body)
+        self.assertIn("B", body)
+        self.assertIn("Body A", body)
+        self.assertIn(
+            "Body B", body, "the corroborator must fan out into the skipped section too"
+        )
+
+
+class TestGitLabDeliveryConsolidation(_DryRunTestBase):
+    def _findings(self):
+        primary = {
+            "file": "bar.py",
+            "line": 1,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+            "consolidation_key": "bar.py:0",
+            "consolidation_primary": True,
+        }
+        corroborator = {
+            "file": "bar.py",
+            "line": 2,
+            "severity": "medium",
+            "title": "B",
+            "body": "Body B",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "bar.py:0",
+            "consolidation_primary": False,
+        }
+        return primary, corroborator
+
+    def _versions(self):
+        return [
+            {
+                "base_commit_sha": "base1",
+                "head_commit_sha": "head1",
+                "start_commit_sha": "start1",
+            }
+        ]
+
+    def test_group_posts_as_one_discussion_at_the_primarys_anchor(self):
+        primary, corroborator = self._findings()
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        self.assertEqual(len(cap["discussions"]), 1)
+        disc = cap["discussions"][0]
+        self.assertEqual(disc["body"], render_group_body(primary, [corroborator]))
+        self.assertEqual(disc["position"]["new_path"], "bar.py")
+        self.assertEqual(disc["position"]["new_line"], 1)
+
+    def test_unanchorable_primary_degrades_whole_group_into_skipped_section(self):
+        primary, corroborator = self._findings()
+        primary["line"] = 999  # not in the diff
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        self.assertEqual(cap["discussions"], [])
+        body = cap["summary"]["body"]
+        self.assertIn("could not be anchored inline", body)
+        self.assertIn("Body A", body)
+        self.assertIn("Body B", body)
+
+    def test_no_line_primary_degrades_whole_group_into_skipped_section(self):
+        """The primary carries no line at all (distinct from a line the diff
+        doesn't touch) — the same whole-group degrade must fire on this branch
+        too, not just the invalid-line branch."""
+        primary, corroborator = self._findings()
+        del primary["line"]
+        self._write(
+            {
+                "platform": "gitlab",
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "MR review",
+                "findings": [primary, corroborator],
+            }
+        )
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=GL_DIFF, versions=self._versions()),
+            ),
+        ):
+            post_review.main()
+
+        cap = self._payload()
+        self.assertEqual(cap["discussions"], [])
+        body = cap["summary"]["body"]
+        self.assertIn("Body A", body)
+        self.assertIn(
+            "Body B", body, "the corroborator must fan out into the skipped section too"
+        )
 
 
 class TestLivePathUnchanged(_DryRunTestBase):
@@ -3538,6 +4004,166 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
         self.assertEqual(len(posts), 1, "only the sound position may be posted")
         self.assertIn("  1 inline discussion(s) posted.", run.out)
         self.assertIn("  1 finding(s) had a malformed position", run.out)
+
+    def test_malformed_position_loss_counts_the_whole_group_not_just_the_primary(self):
+        """A consolidation group's loss counters must reflect every finding in the
+        group, not just the primary that anchors the position — posted + skipped +
+        invalid + failed + already_present must sum to the total finding count.
+
+        The primary's loss is its own (1 invalid); each corroborator then falls
+        back to its own individual discussion and is counted on its own merits.
+        """
+        primary = _gl_primary(line=61.0)  # malformed -> validate_position rejects
+        run = self._run_main(
+            dry_run=True,
+            findings=[primary, _gl_corroborator("A", 61), _gl_corroborator("B", 61)],
+        )
+        # Dry-run reports a malformed position as a non-zero exit (pinned above);
+        # what changed is the COUNT — only the primary is lost to it.
+        self.assertEqual(run.exit_code, 1)
+        self.assertIn("  1 finding(s) had a malformed position", run.out)
+        self.assertIn("  2 inline discussion(s) captured.", run.out)
+
+    def test_group_fallback_partial_position_failure(self):
+        """A malformed primary position must not take its validated corroborators
+        down with it — they fall back to their own individual discussions."""
+        run = self._run_main(
+            findings=[
+                _gl_primary(line=61.0),
+                _gl_corroborator("A", 61),
+                _gl_corroborator("B", 62),
+            ]
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 finding(s) had a malformed position", run.out)
+        posts = _discussion_posts(run.mock_run)
+        self.assertEqual(len(posts), 2, "one individual discussion per corroborator")
+
+    def test_group_fallback_partial_post_failure(self):
+        """A rejected GROUP discussion falls back to one individual discussion per
+        corroborator: the primary counts 1 failed, the corroborators post on their
+        own."""
+        payloads = []
+        run = self._run_main(
+            findings=[
+                _gl_primary(),
+                _gl_corroborator("A", 61),
+                _gl_corroborator("B", 62),
+            ],
+            discussion_rcs=[1, 0, 0],
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+        posts = _discussion_posts(run.mock_run)
+        self.assertEqual(
+            len(posts), 3, "one rejected group attempt + one POST per corroborator"
+        )
+        bodies = [p["body"] for p in payloads if "position" in p]
+        self.assertEqual(len(bodies), 3)
+        # The two fallback discussions each carry ONE finding, rendered by the
+        # single-finding renderer — not the group body.
+        self.assertIn("Corroborating finding", bodies[0])
+        self.assertNotIn("Corroborating finding", bodies[1])
+        self.assertNotIn("Corroborating finding", bodies[2])
+        self.assertIn("Corroborator A", bodies[1])
+        self.assertIn("Corroborator B", bodies[2])
+
+    def test_group_fallback_total_failure(self):
+        """When the primary AND every corroborator lose on their own merits, the
+        losses still sum to the group size — nothing vanishes."""
+        run = self._run_main(
+            findings=[
+                _gl_primary(line=61.0),  # invalid
+                _gl_corroborator("A", 61),  # rejected below -> failed
+                _gl_corroborator("B", 999),  # not in the diff -> invalid
+            ],
+            discussion_rcs=[1],
+        )
+        self.assertEqual(run.exit_code, 1)
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("  2 finding(s) had a malformed position", run.out)
+        self.assertIn("  1 inline discussion(s) rejected by GitLab", run.out)
+
+    def test_group_success_counts_every_member_as_posted(self):
+        """One discussion carries the whole group, so the posted counter reports the
+        group size, not 1."""
+        run = self._run_main(findings=[_gl_primary(), _gl_corroborator("A", 61)])
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 1)
+        self.assertIn("  2 inline discussion(s) posted.", run.out)
+
+    def test_group_already_delivered_counts_every_member(self):
+        """A group whose single discussion is already on the MR counts all of its
+        findings as already-present — one discussion, group_size findings."""
+        primary = _gl_primary()
+        corroborator = _gl_corroborator("A", 61)
+        run = self._run_main(
+            findings=[primary, corroborator],
+            prior=(True, {_member_key(primary), _member_key(corroborator)}, None),
+        )
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn(
+            "  2 inline discussion(s) already on the MR from an earlier run", run.out
+        )
+
+    def test_group_rerun_after_full_delivery_posts_nothing(self):
+        """Every member's key is what a delivered group leaves behind, so a rerun
+        recognizes all of them and issues no discussion POST at all."""
+        primary = _gl_primary()
+        corrs = [_gl_corroborator("A", 61), _gl_corroborator("B", 62)]
+        keys = {_member_key(m) for m in [primary, *corrs]}
+        run = self._run_main(findings=[primary, *corrs], prior=(True, keys, None))
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(len(_discussion_posts(run.mock_run)), 0)
+        self.assertIn(
+            "  3 inline discussion(s) already on the MR from an earlier run", run.out
+        )
+
+    def test_group_partial_prior_delivery_posts_only_missing_members(self):
+        """A prior run's fallback landed the corroborators individually. Reposting the
+        GROUP would duplicate them, so only the missing primary is delivered — on its
+        own, with the single-finding body."""
+        primary = _gl_primary()
+        corrs = [_gl_corroborator("A", 61), _gl_corroborator("B", 62)]
+        payloads = []
+        run = self._run_main(
+            findings=[primary, *corrs],
+            prior=(True, {_member_key(c) for c in corrs}, None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        posts = _discussion_posts(run.mock_run)
+        self.assertEqual(len(posts), 1, "only the undelivered primary may be posted")
+        self.assertIn("  1 inline discussion(s) posted.", run.out)
+        self.assertIn(
+            "  2 inline discussion(s) already on the MR from an earlier run", run.out
+        )
+        body = next(p["body"] for p in payloads if "position" in p)
+        self.assertNotIn("Corroborating finding", body)
+        self.assertIn(
+            post_review.build_finding_marker("a" * 40, _member_key(primary)), body
+        )
+
+    def test_group_body_carries_a_marker_for_every_member(self):
+        """The group's single discussion is the delivery record for all of its
+        findings, so it carries one finding-key marker per member — a later rerun
+        matches each member individually, whatever shape delivered it."""
+        primary = _gl_primary()
+        corrs = [_gl_corroborator("A", 61), _gl_corroborator("B", 62)]
+        payloads = []
+        run = self._run_main(findings=[primary, *corrs], payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        body = next(p["body"] for p in payloads if "position" in p)
+        for member in [primary, *corrs]:
+            self.assertIn(
+                post_review.build_finding_marker("a" * 40, _member_key(member)),
+                body,
+                f"missing marker for {member['title']}",
+            )
 
     def test_live_all_malformed_exits_one_with_nothing_posted(self):
         findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]

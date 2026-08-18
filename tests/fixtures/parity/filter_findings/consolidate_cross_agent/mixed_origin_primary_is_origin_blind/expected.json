@@ -1,0 +1,33 @@
+{
+  "consolidated_count": 2,
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 60,
+      "consolidation_key": "f.py:10",
+      "consolidation_primary": true,
+      "description": "short",
+      "dimension": "bug",
+      "file": "f.py",
+      "id": "D1",
+      "line_start": 10,
+      "origin": "unknown",
+      "severity": "medium",
+      "title": "t1"
+    },
+    {
+      "agent": "test-analyzer",
+      "confidence": 95,
+      "consolidation_key": "f.py:10",
+      "consolidation_primary": false,
+      "description": "a much longer description explaining the gap in detail",
+      "dimension": "test_coverage",
+      "file": "f.py",
+      "id": "V1",
+      "line_start": 12,
+      "origin": "verified",
+      "severity": "low",
+      "title": "t2"
+    }
+  ]
+}
