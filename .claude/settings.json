@@ -1,0 +1,23 @@
+{
+  "env": {
+    "CLAUDE_CODE_TASK_LIST_ID": "claude-deep-review"
+  },
+  "permissions": {
+    "allow": [
+      "Edit(hooks/**)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/scripts/emit_style_context.py"
+          }
+        ]
+      }
+    ]
+  }
+}
