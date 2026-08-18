@@ -4165,6 +4165,66 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
                 f"missing marker for {member['title']}",
             )
 
+    def test_group_body_carries_a_marker_for_unanchorable_corroborator_too(self):
+        """A corroborator with no line of its own can only ever be delivered inside
+        the group body — its marker must be there too, or a rerun can never
+        recognize it as delivered (unanchored corroborators lost on rerun)."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        payloads = []
+        run = self._run_main(findings=[primary, unanchored], payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        body = next(p["body"] for p in payloads if "position" in p)
+        self.assertIn(
+            post_review.build_finding_marker("a" * 40, _member_key(unanchored)),
+            body,
+            "the unanchorable corroborator's marker must round-trip through the "
+            "group body",
+        )
+
+    def test_rerun_recognizes_unanchorable_corroborator_from_group_body(self):
+        """Given the round-trip above, a rerun that sees both markers on the MR
+        must treat the WHOLE group — unanchorable member included — as already
+        delivered, and post nothing new."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        keys = {_member_key(primary), _member_key(unanchored)}
+        run = self._run_main(findings=[primary, unanchored], prior=(True, keys, None))
+        self.assertIsNone(run.exit_code)
+        self.assertEqual(_discussion_posts(run.mock_run), [])
+        self.assertIn(
+            "  2 inline discussion(s) already on the MR from an earlier run",
+            run.out,
+        )
+
+    def test_unanchorable_corroborator_delivered_when_siblings_already_posted(self):
+        """The primary was delivered individually by an earlier fallback run; the
+        unanchorable corroborator was not (it has no anchor of its own, so it
+        never got its own fallback discussion). It must still reach the MR —
+        as a position-less note — and count toward delivery rather than being
+        silently dropped as `already_present`."""
+        primary = _gl_primary()
+        unanchored = _gl_corroborator("A", None)
+        payloads = []
+        run = self._run_main(
+            findings=[primary, unanchored],
+            prior=(True, {_member_key(primary)}, None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        note_bodies = [p["body"] for p in payloads if "position" not in p]
+        self.assertTrue(
+            any("Corroborator A" in b for b in note_bodies),
+            "the unanchorable corroborator's content must land on the MR "
+            "somewhere, not vanish",
+        )
+        self.assertIn(
+            post_review.build_finding_marker("a" * 40, _member_key(unanchored)),
+            "".join(note_bodies),
+        )
+        self.assertIn("  1 inline discussion(s) already on the MR", run.out)
+        self.assertIn("  1 inline discussion(s) posted.", run.out)
+
     def test_live_all_malformed_exits_one_with_nothing_posted(self):
         findings = [dict(f, line=float(f["line"])) for f in GL_CONTRACT_FINDINGS]
         run = self._run_main(findings=findings)
