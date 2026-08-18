@@ -2,6 +2,37 @@
 
 <!-- version list -->
 
+## v3.13.0 (2026-08-18)
+
+### Bug Fixes
+
+- **style**: Omit undefined empty matcher in SessionStart hook
+  ([#216](https://github.com/liatrio-labs/claude-code-gauntlet/pull/216),
+  [`ec19b3a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ec19b3aaef4d30e1ac4ff4e15b572d7f7264312f))
+
+- **style**: Review fixes for output-discipline mechanism
+  ([#216](https://github.com/liatrio-labs/claude-code-gauntlet/pull/216),
+  [`ec19b3a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ec19b3aaef4d30e1ac4ff4e15b572d7f7264312f))
+
+- **style**: Second-round review fixes
+  ([#216](https://github.com/liatrio-labs/claude-code-gauntlet/pull/216),
+  [`ec19b3a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ec19b3aaef4d30e1ac4ff4e15b572d7f7264312f))
+
+### Features
+
+- **style**: Check in SessionStart hook activation
+  ([#216](https://github.com/liatrio-labs/claude-code-gauntlet/pull/216),
+  [`ec19b3a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ec19b3aaef4d30e1ac4ff4e15b572d7f7264312f))
+
+- **style**: Output-discipline rule sources, generator, and session carrier
+  ([#216](https://github.com/liatrio-labs/claude-code-gauntlet/pull/216),
+  [`ec19b3a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ec19b3aaef4d30e1ac4ff4e15b572d7f7264312f))
+
+- **style**: Output-discipline rules, generator, and SessionStart carrier
+  ([#216](https://github.com/liatrio-labs/claude-code-gauntlet/pull/216),
+  [`ec19b3a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ec19b3aaef4d30e1ac4ff4e15b572d7f7264312f))
+
+
 ## v3.12.2 (2026-08-18)
 
 ### Bug Fixes
