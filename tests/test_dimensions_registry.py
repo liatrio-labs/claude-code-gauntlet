@@ -846,8 +846,8 @@ class TestReportFormatFieldTables(unittest.TestCase):
     moves.
     """
 
-    def test_the_section_holds_exactly_the_three_known_tables(self):
-        # An adversarial pass walked straight through this guard: a FOURTH table
+    def test_the_section_holds_exactly_the_two_known_tables(self):
+        # An adversarial pass walked straight through this guard: a THIRD table
         # ("### Experimental fields") documenting a fabricated required field was added to the
         # section and every test below stayed green — because each one looks its own table up
         # by heading keyword and never asks what else is in the section. Counting the tables,
@@ -855,27 +855,24 @@ class TestReportFormatFieldTables(unittest.TestCase):
         # rather than a quiet addition to the doc.
         tables = report_format_tables()
         self.assertEqual(
-            3,
+            2,
             len(tables),
-            "the Finding Fields Reference section must hold exactly the canonical, "
-            f"per-dimension and delivery-side tables — found {list(tables)}",
+            "the Finding Fields Reference section must hold exactly the canonical and "
+            f"per-dimension tables — found {list(tables)}",
         )
 
     def test_every_field_row_in_the_section_is_a_field_the_code_knows(self):
         # Heading-agnostic backstop for the same hole: whatever the tables are called, the union
-        # of every field they name must be exactly what the registry declares plus the one
-        # documented delivery-side field. A row for a field nothing carries is the
-        # `suggestion`-marked-required defect all over again.
+        # of every field they name must be exactly what the registry declares. A row for a field
+        # nothing carries is the `suggestion`-marked-required defect all over again — issue
+        # #63 closed the delivery-side carve-out that used to widen this set by one.
         tables = report_format_tables()
         documented = {field for rows in tables.values() for field, _ in rows}
-        expected = (
-            set(registry()["propTypes"]) | set(all_extras()) | {"suggested_fix_code"}
-        )
+        expected = set(registry()["propTypes"]) | set(all_extras())
         self.assertEqual(
             expected,
             documented,
-            "report-format.md documents a field set that is not "
-            "registry \u222a {suggested_fix_code}",
+            "report-format.md documents a field set that does not match the registry",
         )
 
     def test_canonical_table_matches_registry(self):
@@ -949,23 +946,6 @@ class TestReportFormatFieldTables(unittest.TestCase):
                 cells[0],
                 f"report-format.md types {field} as {cells[0]!r}, "
                 f"registry.js declares {declared_type[field]!r}",
-            )
-
-    def test_delivery_side_table_holds_only_undeclared_fields(self):
-        # suggested_fix_code is real on the delivery side (post_review.py renders it) but no
-        # agent emits it and no schema declares it. Documenting it inside the pipeline tables
-        # is what made it look shipped; documenting it here is the honest place — and this
-        # test fails if it ever quietly becomes a declared field without the docs moving.
-        rows = table_named(report_format_tables(), "Delivery-side")
-        self.assertEqual({"suggested_fix_code"}, {f for f, _ in rows})
-        declared = set(registry()["propTypes"]) | set(all_extras())
-        for field, _ in rows:
-            self.assertNotIn(
-                field,
-                declared,
-                f"{field} is documented as delivery-side-only but the registry "
-                "now declares it — move it into the canonical or per-dimension "
-                "table and instruct it in the agent contracts",
             )
 
 

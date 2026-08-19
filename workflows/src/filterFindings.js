@@ -333,8 +333,33 @@ const SUGGESTION_SETS = [
   ['matches injection marker', INJECTION_BODY_PATTERNS],
 ];
 
+// Delivery bound on suggested_fix_code content (#63/D8) -- the SAME two
+// numbers bound the field at render time in scripts/post_review.py
+// (`_FIX_MAX_LINES` / `_FIX_MAX_CHARS`) and in the Python filter twin
+// (scripts/filter_findings.py); change all three together. tests/test_filter_findings.py's
+// lockstep test (#63 round-1 F8) regex-parses all three assignments and asserts they agree.
+//
+// Both bound checks below measure the SAME normalized text the render-time gate does
+// (post_review.py's dedicated fence normalizer, #63 round-1 F2/F5-B): strip exactly ONE
+// trailing "\n" (the terminator) and nothing else, then lines = split("\n") elements,
+// chars = CODE POINTS of that normalized text -- .length counts UTF-16 units, which
+// disagrees with Python's len() (code points) for any astral character, so the twin uses
+// [...code].length instead (#63 round-1 F6).
+const FIX_MAX_LINES = 100;
+const FIX_MAX_CHARS = 8000;
+
+// Mirrors scripts/filter_findings.py's _normalize_fix_code_for_bound.
+function normalizeFixCodeForBound(code) {
+  return code.endsWith('\n') ? code.slice(0, -1) : code;
+}
+
 // Port of _strip_suggestion_if_injected. Only called for a finding that
-// already survived all ten title/description heuristics below.
+// already survived all ten title/description heuristics below. Returns
+// [keptFinding, phrase]: `phrase` is the SUGGESTION_SETS label that matched,
+// or null when suggestion was untouched OR stripped for a reason that is not
+// a pattern match (absent, empty, non-string) -- stripSuggestedFixCodeIfNeeded
+// below only propagates a strip on an actual injection match (#63/D8c), not
+// on a type violation.
 function stripSuggestionIfInjected(finding) {
   // A present suggestion that is not a string (possible via the retained
   // Python CLI's unvalidated --input and checkpoint resume; the JS dispatch
@@ -347,10 +372,10 @@ function stripSuggestionIfInjected(finding) {
     delete kept.suggestion;
     kept.suggestion_removed_by = 'injection';
     kept.suggestion_removal_reason = 'suggestion is not a string';
-    return kept;
+    return [kept, null];
   }
   const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
-  if (!suggestion) return finding;
+  if (!suggestion) return [finding, null];
   for (const [phrase, patterns] of SUGGESTION_SETS) {
     const m = firstMatch(patterns, suggestion);
     if (m) {
@@ -358,8 +383,49 @@ function stripSuggestionIfInjected(finding) {
       delete kept.suggestion;
       kept.suggestion_removed_by = 'injection';
       kept.suggestion_removal_reason = `suggestion ${phrase}: ${JSON.stringify(m)}`;
-      return kept;
+      return [kept, phrase];
     }
+  }
+  return [finding, null];
+}
+
+// Port of _strip_suggested_fix_code_if_needed (#63/D8). Mirrors
+// stripSuggestionIfInjected's shape for suggested_fix_code: non-string strip
+// first, then oversize, then propagation-on-suggestion-strip. Independent of
+// whether suggestion is even present -- the first two checks fire on their
+// own regardless of suggestionPhrase.
+//
+// Deliberately NO pattern scan of the code content itself: #62 measured
+// content-pattern sets killing legitimate fixes, and code trips them harder
+// than prose does.
+function stripSuggestedFixCodeIfNeeded(finding, suggestionPhrase) {
+  if (!('suggested_fix_code' in finding)) return finding;
+  const code = finding.suggested_fix_code;
+  if (typeof code !== 'string') {
+    const kept = { ...finding };
+    delete kept.suggested_fix_code;
+    kept.suggested_fix_code_removed_by = 'injection';
+    kept.suggested_fix_code_removal_reason = 'suggested_fix_code is not a string';
+    return kept;
+  }
+  const normalized = normalizeFixCodeForBound(code);
+  if (normalized.split('\n').length > FIX_MAX_LINES || [...normalized].length > FIX_MAX_CHARS) {
+    const kept = { ...finding };
+    delete kept.suggested_fix_code;
+    kept.suggested_fix_code_removed_by = 'injection';
+    kept.suggested_fix_code_removal_reason = 'suggested_fix_code exceeds the delivery bound';
+    return kept;
+  }
+  if (suggestionPhrase !== null) {
+    // A patch whose accompanying prose was flagged as injection must not
+    // survive as a one-click apply -- pattern-free and byte-identical to the
+    // Python twin's reason (the parity test only prefix-compares
+    // suggestion_removal_reason, not this key).
+    const kept = { ...finding };
+    delete kept.suggested_fix_code;
+    kept.suggested_fix_code_removed_by = 'injection';
+    kept.suggested_fix_code_removal_reason = `suggestion carried ${suggestionPhrase}`;
+    return kept;
   }
   return finding;
 }
@@ -431,7 +497,8 @@ export function applyInjectionFilter(findings) {
     if (reasons.length) {
       eliminated.push({ ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') });
     } else {
-      kept.push(stripSuggestionIfInjected(finding));
+      const [strippedSuggestion, phrase] = stripSuggestionIfInjected(finding);
+      kept.push(stripSuggestedFixCodeIfNeeded(strippedSuggestion, phrase));
     }
   }
 
@@ -991,6 +1058,9 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
   const suggestionsRemoved = afterInjection.filter((f) => f.suggestion_removed_by === 'injection').length;
+  const suggestedFixCodesRemoved = afterInjection.filter(
+    (f) => f.suggested_fix_code_removed_by === 'injection',
+  ).length;
 
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
@@ -1010,6 +1080,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
       contested_count: contestedCount,
       injections_removed: injectionsRemoved,
       suggestions_removed: suggestionsRemoved,
+      suggested_fix_codes_removed: suggestedFixCodesRemoved,
       consensus_boosted: consensusBoosted,
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,

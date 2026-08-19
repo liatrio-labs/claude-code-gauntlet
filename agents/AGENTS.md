@@ -16,7 +16,7 @@ Subagent contracts. Each `.md` is a system prompt with enforced YAML frontmatter
   contract emits a field unconditionally (no OMIT branch); a multi-dimension agent requires it
   only when every sibling dimension does too.
 - `dimension` — short name from agent output: `"bug"`, `"security"`, `"cross_file_impact"`, `"test_coverage"`, `"convention"`, `"intent"`, `"comment_accuracy"`, `"type_design"`, `"simplification"`. Never the agent name. `agent` is injected by the orchestrator at merge; agents do not emit it.
-- **Canonical fields** — every dispatch schema declares exactly these: `id`, `file`, `line_start`, `line_end`, `title`, `description`, `severity`, `confidence`, `dimension`, `origin`, `evidence`, `suggestion`, `claude_md_rule`, `cross_file_refs`.
+- **Canonical fields** — every dispatch schema declares exactly these: `id`, `file`, `line_start`, `line_end`, `title`, `description`, `severity`, `confidence`, `dimension`, `origin`, `evidence`, `suggestion`, `claude_md_rule`, `cross_file_refs`, `suggested_fix_code`.
 - **Per-dimension extras** — one entry on the owning registry row: `hidden_errors` (bug), `attack_vector` (security), `affected_consumers` (cross_file_impact), `criticality` + `failure_scenario` (test_coverage), `spec_text` (intent), `invalid_state_example` (type_design), `behavior_preserved` (simplification).
 - **The false-positive exclusion list and the complete-read contract are intentionally duplicated**
   into every agent that needs them, so the guarantee survives a failed file read. Each copy carries

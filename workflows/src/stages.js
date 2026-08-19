@@ -541,17 +541,48 @@ export async function discover(ctx, input) {
   // can raise it.
   const maxLineSpan = effectiveMaxLineSpan(limits);
   let droppedLineSpans = 0;
+  let droppedNoLineEnd = 0;
+  let droppedFixForImplausibleSpan = 0;
   for (const f of findings) {
     const lineEnd = f.line_end;
-    if (lineEnd === undefined || lineEnd === null) continue;
+    if (lineEnd === undefined || lineEnd === null) {
+      // Round-1 #63 fix (F4): a finding that never emitted line_end has no stated
+      // replacement range for suggested_fix_code to apply against — six stages later
+      // that's a guaranteed missing_end_line downgrade at delivery, so the field is
+      // dead payload from here on. Drop it now rather than carry it through every
+      // downstream stage; the finding itself survives, anchored at line_start, same
+      // as before.
+      if ('suggested_fix_code' in f) {
+        delete f.suggested_fix_code;
+        droppedNoLineEnd += 1;
+      }
+      continue;
+    }
     const span = lineEnd - f.line_start;
     if (!Number.isInteger(lineEnd) || span < 0 || span > maxLineSpan) {
       delete f.line_end;
+      // Issue #63: suggested_fix_code states its replacement range as line_start..line_end.
+      // Dropping line_end just destroyed that stated range, so a fence built from it would
+      // mis-apply at whatever single-line anchor line_start now resolves to — delete it in
+      // the same breath rather than let a now-unanchored patch survive to delivery. Count it
+      // too (only when it was actually present) — the sibling missing-line_end branch counts
+      // its drop and says so in its own gap; a silent discard here left the same class of
+      // loss unreported and unmeasured.
+      if ('suggested_fix_code' in f) {
+        delete f.suggested_fix_code;
+        droppedFixForImplausibleSpan += 1;
+      }
       droppedLineSpans += 1;
     }
   }
   if (droppedLineSpans > 0) {
-    gaps.push(`discover: ${droppedLineSpans} finding(s) had an implausible line_end (non-integer, before line_start, or spanning more than maxLineSpan=${maxLineSpan} lines) — line_end dropped, finding kept anchored at line_start`);
+    const fixClause = droppedFixForImplausibleSpan > 0
+      ? ` — ${droppedFixForImplausibleSpan} of those also carried suggested_fix_code: patch field(s) dropped along with the range`
+      : '';
+    gaps.push(`discover: ${droppedLineSpans} finding(s) had an implausible line_end (non-integer, before line_start, or spanning more than maxLineSpan=${maxLineSpan} lines) — line_end dropped, finding kept anchored at line_start${fixClause}`);
+  }
+  if (droppedNoLineEnd > 0) {
+    gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
 
   // Each dimension belongs to a single agent so no overlap is possible today; the Set

@@ -26,9 +26,14 @@ Input JSON schema:
                 "suggestion": "...",         # optional — **Suggested fix:**; sanitized + redacted; uncapped
                 "claude_md_rule": "...",     # optional — **Cited rule:** (wins over spec_text); sanitized, redacted, capped at 500, blockquoted
                 "spec_text": "...",          # optional — **Cited rule:** when no claude_md_rule; same treatment
-                "suggested_fix_code": "..."  # optional — suggestion fence. Caller-supplied only.
-                                             #            Secret-redacted; outer fence lengthened; payload
-                                             #            otherwise byte-exact (structural sanitize off).
+                "suggested_fix_code": "..."  # optional — the ```suggestion fence: a COMMITTABLE patch
+                                             #            replacing exactly lines [line, end_line]. Rendered
+                                             #            only when the deterministic apply-check passes
+                                             #            (see _suggested_fix_gate); a failing patch is
+                                             #            downgraded to the prose `suggestion` and the
+                                             #            reason recorded. Secret-redacted; outer fence
+                                             #            lengthened; payload otherwise byte-exact
+                                             #            (structural sanitize off).
             }
         ],
         "platform": "github",            # optional — auto-detected from git remote
@@ -237,7 +242,7 @@ def detect_platform():
 
 def parse_diff_lines(platform, owner, repo, pr_number):
     """
-    Return ``(valid_lines, new_files, old_paths)``:
+    Return ``(valid_lines, new_files, old_paths, line_texts)``:
 
     * ``valid_lines`` — mapping of ``(filepath, new_line)`` -> the SAME line's number on
       the OLD side, or ``None`` when the line exists only on the new side (an added
@@ -258,9 +263,18 @@ def parse_diff_lines(platform, owner, repo, pr_number):
       ``position.old_path`` (#130); for an unrenamed modified file the two coincide
       (harmless — the poster's fallback is the new path anyway). Absent for added files,
       whose old side is ``/dev/null``.
+    * ``line_texts`` — a PARALLEL mapping over the SAME keys as ``valid_lines``, holding
+      each line's NEW-SIDE TEXT with the diff's marker column removed. Parallel rather
+      than folded into ``valid_lines``'s value so every existing consumer of that mapping
+      reads exactly what it read before. The parser already read this text off each
+      ``+``/context line and discarded it; it is the content oracle the
+      ``suggested_fix_code`` apply-check needs, and by construction it is the content the
+      platform's anchor points at, at the same head SHA the position carries. ``git show``
+      is not an alternative: the local HEAD is usually the base branch, a shallow clone has
+      no object to show, and it desyncs from GitLab's versions-API head_sha.
 
-    Returns ``(None, None, None)`` when validation should be skipped (unknown platform
-    or CLI failure). Callers must handle the ``None`` case.
+    Returns ``(None, None, None, None)`` when validation should be skipped (unknown
+    platform or CLI failure). Callers must handle the ``None`` case.
 
     Header syntax is read PER PLATFORM (see the compiled pair below): ``gh pr diff``
     writes git's synthetic ``a/`` / ``b/`` prefixes, ``glab mr diff`` writes paths
@@ -295,14 +309,14 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         warn(
             "Unknown platform — skipping diff validation. All findings will be posted."
         )
-        return None, None, None
+        return None, None, None, None
 
     if rc != 0:
         warn(
             f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
             "Skipping line validation — all findings will be posted."
         )
-        return None, None, None
+        return None, None, None, None
 
     # File-header regexes, chosen ONCE by platform — the platform cannot change inside
     # the loop. `gh pr diff` emits git's synthetic prefixes (`a/` on the old side, `b/`
@@ -321,6 +335,7 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         new_header_re = re.compile(r"^\+\+\+ (.+)$")
 
     valid_lines = {}
+    line_texts = {}
     new_files = set()
     old_paths = {}
     pending_old_path = None
@@ -408,21 +423,28 @@ def parse_diff_lines(platform, owner, repo, pr_number):
             new_rem -= 1
             if current_file is not None:
                 valid_lines[(current_file, new_line)] = None
+                line_texts[(current_file, new_line)] = raw_line[1:]
             new_line += 1
         elif raw_line.startswith("-"):
             # Removed line — advances the OLD side only; not addressable by new_line.
             old_rem -= 1
             old_line += 1
         else:
-            # Context line (space- or zero-prefixed) — present on BOTH sides.
+            # Context line (space- or zero-prefixed) — present on BOTH sides. The
+            # marker column comes off only when it is really there: a blank context
+            # line is a lone space (content ""), but a zero-prefixed one is already
+            # bare and slicing it would eat its first character.
             old_rem -= 1
             new_rem -= 1
             if current_file is not None:
                 valid_lines[(current_file, new_line)] = old_line
+                line_texts[(current_file, new_line)] = (
+                    raw_line[1:] if raw_line.startswith(" ") else raw_line
+                )
             new_line += 1
             old_line += 1
 
-    return valid_lines, new_files, old_paths
+    return valid_lines, new_files, old_paths, line_texts
 
 
 def is_line_valid(valid_lines, filepath, line):
@@ -602,8 +624,11 @@ def _rendered_text(value):
     rather than crashing the renderer. LEADING and trailing newlines are both
     stripped: the sections below are joined with their own blank lines, so a value
     padded on either side puts a stray blank line into the comment. Only NEWLINES
-    are stripped, never spaces — ``suggested_fix_code`` runs through here too and
-    its first line's indentation is part of the replacement.
+    are stripped, never spaces.
+
+    PROSE fields only. ``suggested_fix_code`` has its own normalizer
+    (:func:`_fix_code_text`) because stripping edge newlines off a PATCH silently
+    changes what it replaces the span with.
     """
     if value is None:
         return None
@@ -612,6 +637,30 @@ def _rendered_text(value):
     if not value.strip():
         return None
     return value.strip("\n")
+
+
+def _fix_code_text(value):
+    """Normalize ``suggested_fix_code`` — the ONE normalizer for the patch.
+
+    The gate measures this text and the fence carries this text, so stated ==
+    checked == applied. Exactly ONE trailing ``"\\n"`` comes off — that is the
+    file's line terminator, which the fence supplies itself — and nothing else
+    does: a replacement stating a leading or a trailing BLANK line means it, and
+    a fence that silently dropped one would commit different bytes than the gate
+    approved.
+
+    Whitespace-only input is still absent (``None``), the #47 semantics: a patch
+    made of nothing but blanks is not representable and is not shipped. A
+    non-string value is coerced via ``str()`` so the renderer cannot crash on a
+    hand-assembled payload — the gate rejects it as ``non_string`` first.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    if not value.strip():
+        return None
+    return value[:-1] if value.endswith("\n") else value
 
 
 _RULE_TEXT_CAP = 500
@@ -765,6 +814,286 @@ def _suggestion_fence(payload):
     return f"{fence}suggestion", fence
 
 
+# ---------------------------------------------------------------------------
+# suggested_fix_code — the deterministic apply-check (issue #63)
+# ---------------------------------------------------------------------------
+# A ```suggestion fence is a COMMITTABLE patch: one click replaces the comment's
+# apply range with its bytes, unreviewed. So it renders if and only if that range
+# is EXACTLY the range the fence-owning finding states, at the specific render
+# site, and every content check passes. Everything else downgrades to the prose
+# `suggestion`, which a human reads before acting on — no finding is lost, only
+# its one-click affordance.
+
+_FIX_NON_STRING = "non_string"
+_FIX_EMPTY = "empty"
+_FIX_REDACTED = "redacted"
+_FIX_MISSING_END_LINE = "missing_end_line"
+_FIX_INVALID_RANGE = "invalid_range"
+_FIX_NO_ORACLE = "no_diff_oracle"
+_FIX_RANGE_NOT_IN_DIFF = "range_not_in_diff"
+_FIX_ANCHOR_MISMATCH = "anchor_mismatch"
+_FIX_NO_OP = "no_op_replacement"
+_FIX_INDENTATION = "indentation_mismatch"
+_FIX_TOO_LARGE = "replacement_too_large"
+_FIX_CARRIAGE_RETURN = "carriage_return"
+
+# The vocabulary is CLOSED: every downgrade names exactly one of these, in the
+# stable warning `suggested-fix downgraded: {file}:{line} ({reason})`. Adding a
+# reason is a deliberate act — a free-text reason would make the record
+# unreadable in aggregate.
+_FIX_REASONS = frozenset(
+    {
+        _FIX_NON_STRING,
+        _FIX_EMPTY,
+        _FIX_REDACTED,
+        _FIX_MISSING_END_LINE,
+        _FIX_INVALID_RANGE,
+        _FIX_NO_ORACLE,
+        _FIX_RANGE_NOT_IN_DIFF,
+        _FIX_ANCHOR_MISMATCH,
+        _FIX_NO_OP,
+        _FIX_INDENTATION,
+        _FIX_TOO_LARGE,
+        _FIX_CARRIAGE_RETURN,
+    }
+)
+
+# Delivery bound on fence content. `suggestion` prose is deliberately uncapped —
+# a human reads it — but a fence is committed by one click, so it is bounded here
+# unconditionally. The SAME two numbers bound the field upstream in the filter
+# twins (scripts/filter_findings.py and workflows/src/filterFindings.js); change
+# all three together.
+#
+# ONE definition of both measures, in all three homes: they are taken on the
+# NORMALIZED text (`_fix_code_text` — the single terminating newline removed).
+# Lines are the elements of that text's `split("\n")`; chars are its length in
+# CODE POINTS. Measuring the raw string instead makes a 100-line patch count 101.
+_FIX_MAX_LINES = 100
+_FIX_MAX_CHARS = 8000
+
+# Per-run patch-acceptance counters, reset by main() alongside _CAPTURED and
+# _SKIP_WARNINGS. n/(n+m) over these two is the acceptance rate, deterministic
+# and readable from any run's stdout at no cost.
+_FIX_COUNTS = {"kept": 0, "downgraded": 0}
+
+
+def _leading_whitespace_charset(lines):
+    """Return the characters used in the LEADING whitespace of *lines*.
+
+    A line with no leading whitespace contributes nothing: it says nothing about
+    how the surrounding code indents.
+    """
+    charset = set()
+    for line in lines:
+        charset.update(line[: len(line) - len(line.lstrip(" \t"))])
+    return charset
+
+
+def _span_texts(line_texts, path_lookup, start, end):
+    """Return the diff's new-side text for every line in ``[start, end]``.
+
+    ``None`` when there is no complete answer — some line of the span is not a
+    diff line. The content checks that consume this treat ``None`` as "no
+    oracle", never as "no difference". (A missing ``line_texts`` mapping never
+    reaches here: the gate fails the whole patch closed on it first.)
+    """
+    texts = []
+    for n in range(start, end + 1):
+        if (path_lookup, n) not in line_texts:
+            return None
+        texts.append(line_texts[(path_lookup, n)])
+    return texts
+
+
+def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_lookup):
+    """Return ``(ok, reason)`` for *finding*'s ``suggested_fix_code`` at ONE render site.
+
+    Pure — no I/O, no subprocess — so it runs identically under --dry-run and live.
+    That is ``validate_position``'s precedent: a check that runs only under
+    --dry-run cannot be the thing that makes --dry-run trustworthy, and a caller's
+    hand-assembled JSON goes through this same one path, not a lenient fork.
+
+    *apply_range* is the ``(start, end)`` this site's one-click apply really
+    replaces, or ``None`` where a fence can never apply at all (a position-less
+    note, the degraded body section). *path_lookup* is the finding's path in the
+    DIFF's own spelling (``diff_path_spelling``), so this gate and the anchor
+    validation consult the same keys and cannot disagree.
+
+    First failure wins, in the order written below; ``reason`` is always a member
+    of ``_FIX_REASONS``.
+
+    When diff validation was skipped (``valid_lines`` / ``line_texts`` are
+    ``None`` — an unknown platform, or a failed diff fetch) this FAILS CLOSED
+    with ``no_diff_oracle``, deliberately unlike the anchor. The anchor fails
+    open there because a wrong anchor costs a misplaced comment a human reads
+    and ignores; a patch cannot, because a wrong patch is committed by one click
+    and corrupts the file. The fallback is free: the prose ``suggestion`` still
+    carries the same content, so nothing is lost but the affordance.
+    """
+    if "suggested_fix_code" not in finding:
+        return True, None
+
+    raw = finding["suggested_fix_code"]
+    if not isinstance(raw, str):
+        return False, _FIX_NON_STRING
+    text = _fix_code_text(raw)
+    if text is None:
+        return False, _FIX_EMPTY
+    # CommonMark treats a lone \r (not just \r\n) as a line ending, so
+    # "foo\rbar\rbaz" renders as THREE fence lines and applies as three lines —
+    # but it is ONE element to this gate's `split("\n")`, which never checks for
+    # \r. That let a CR-joined patch dodge the no-op, indentation, and
+    # _FIX_MAX_LINES measurements entirely: none of them saw the document a
+    # one-click apply actually commits. Fail closed on any interior CR before
+    # those measurements run; the prose `suggestion` still carries the fix, and
+    # a genuinely CRLF-terminated patch is exactly the ambiguous case a
+    # one-click apply must not ship.
+    if "\r" in text:
+        return False, _FIX_CARRIAGE_RETURN
+    # Gate on the ORIGINAL bytes: a fence carrying a literal `[REDACTED]` would be
+    # committed by one click. Passing here means the render-time redaction is a
+    # guaranteed no-op, so the posted fence is byte-identical to what was checked.
+    if _redact_secrets(text) != text:
+        return False, _FIX_REDACTED
+
+    line = finding.get("line")
+    end_line = finding.get("end_line")
+    if end_line is None:
+        # A patch's stated range must be explicit. An absent end_line — including
+        # one #205 DELETED for exceeding maxLineSpan — is exactly how a multi-line
+        # replacement lands on a single-line anchor and corrupts the file.
+        return False, _FIX_MISSING_END_LINE
+    if (
+        isinstance(line, bool)
+        or not isinstance(line, int)
+        or isinstance(end_line, bool)
+        or not isinstance(end_line, int)
+        or line < 1
+        or end_line < line
+    ):
+        # `True` and `2.0` both hash equal to the integer key, so they survive every
+        # lookup — the trap validate_position documents.
+        return False, _FIX_INVALID_RANGE
+    if not isinstance(valid_lines, dict) or not isinstance(line_texts, dict):
+        # No diff was parsed, so every check below has nothing to consult. Both
+        # mappings are required: one alone answers only half of "is this range
+        # real" / "does this patch change anything".
+        return False, _FIX_NO_ORACLE
+    if not _range_is_valid(valid_lines, path_lookup, line, end_line):
+        return False, _FIX_RANGE_NOT_IN_DIFF
+    if apply_range != (line, end_line):
+        return False, _FIX_ANCHOR_MISMATCH
+
+    replacement = text.split("\n")
+    span = _span_texts(line_texts, path_lookup, line, end_line)
+    if span is None:
+        # _range_is_valid/is_line_valid tolerate a per-line mix of path-spelling
+        # variants (the exact diff key, or its a/ b/ -stripped form), but a span
+        # needs ONE spelling to hold for every line in it — so a mixed-spelling
+        # range makes this None even though every line individually validated.
+        # That is still "no oracle", not "no difference": treating it as the
+        # latter would silently skip the no-op/indentation checks below instead
+        # of failing the patch closed.
+        return False, _FIX_NO_ORACLE
+    # A trailing CR is transport (a CRLF diff carries one on every line), not
+    # content, and `_fix_code_text` already took the replacement's terminating
+    # newline off — so neither side's line terminators decide this. An EDGE
+    # BLANK LINE survives that normalization and is compared as content: a
+    # patch that only adds one is a change, not a no-op.
+    if [ln.rstrip("\r") for ln in replacement] == [ln.rstrip("\r") for ln in span]:
+        return False, _FIX_NO_OP
+    span_indent = _leading_whitespace_charset(span)
+    fix_indent = _leading_whitespace_charset(replacement)
+    # Deliberately weak, and language-agnostic: a legitimate re-indentation
+    # passes, and only a tab/space charset conflict — the one that silently
+    # corrupts a file whichever language it is written in — is caught.
+    if (span_indent == {" "} and "\t" in fix_indent) or (
+        span_indent == {"\t"} and " " in fix_indent
+    ):
+        return False, _FIX_INDENTATION
+    if len(replacement) > _FIX_MAX_LINES or len(text) > _FIX_MAX_CHARS:
+        return False, _FIX_TOO_LARGE
+    return True, None
+
+
+def _gated_finding(finding, apply_range, valid_lines, line_texts):
+    """Return the finding to RENDER at one site, gating its ``suggested_fix_code``.
+
+    A failure strips the field from a SHALLOW COPY — the copy is what gets
+    rendered, so ``render_comment_body`` itself is untouched (the benchmark calls
+    it directly and pins its bytes) and the prose ``suggestion`` carries the fix
+    instead. Each downgrade is recorded through ``warn_skip``, which both prints
+    and lands in the dry-run payload's existing ``skipped`` list, and counted for
+    the run's patch-acceptance readout.
+
+    Called at every site where a fence can actually render. A corroborator inside
+    a group body is not such a site — ``_render_corroboration`` renders no fence
+    (nor the prose suggestion) at all — so it is neither gated nor counted here.
+    """
+    if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
+        return finding
+    ok, reason = _suggested_fix_gate(
+        finding,
+        apply_range=apply_range,
+        line_texts=line_texts,
+        valid_lines=valid_lines,
+        path_lookup=diff_path_spelling(
+            valid_lines, finding.get("file", "?"), finding.get("line")
+        ),
+    )
+    if ok:
+        _FIX_COUNTS["kept"] += 1
+        return finding
+    _FIX_COUNTS["downgraded"] += 1
+    warn_skip(
+        f"suggested-fix downgraded: {finding.get('file', '?')}:"
+        f"{finding.get('line')} ({reason})"
+    )
+    stripped = dict(finding)
+    del stripped["suggested_fix_code"]
+    return stripped
+
+
+def _key_material_finding(finding):
+    """Return the copy whose render seeds a DELIVERY KEY.
+
+    ``suggested_fix_code`` comes off UNCONDITIONALLY — not gated — so a key does
+    not depend on the field at all: it is the same whether the finding ships
+    grouped or individually, the same whichever way the apply-check went, and
+    byte-equal to the key a pre-#63 run computed for the same finding.
+    Prior-delivery dedup (#132/#208) is retry-safe only while keys are stable
+    across runs and across delivery shapes; making the GATE deterministic would
+    not be enough, because the gate's inputs (the diff, the render site) are not.
+    """
+    if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
+        return finding
+    stripped = dict(finding)
+    del stripped["suggested_fix_code"]
+    return stripped
+
+
+def _print_fix_summary():
+    """Print the run's patch-acceptance readout, or nothing.
+
+    These two lines are the APPLY-CHECK's verdicts at this run's render sites,
+    and nothing else — they carry no delivery verb, and read identically live
+    and under --dry-run. Delivery is the per-platform count lines' business: a
+    GitLab rerun whose discussions are all already on the MR renders (and so
+    gates, and so counts) every fence while posting nothing, and "N fences
+    posted" was a false claim there. A run that renders nothing counts nothing
+    and prints nothing.
+
+    Both halves print together whenever ANY finding carried the field, so
+    n/(n+m) is readable from any run's stdout.
+    """
+    kept = _FIX_COUNTS["kept"]
+    downgraded = _FIX_COUNTS["downgraded"]
+    if not (kept or downgraded):
+        return
+    print(f"  {kept} suggested fix(es) passed the apply-check.")
+    print(f"  {downgraded} suggested fix(es) downgraded to prose.")
+
+
 def render_comment_body(finding):
     """Build the markdown comment body for a finding."""
     severity = finding.get("severity", "medium").lower()
@@ -778,7 +1107,7 @@ def render_comment_body(finding):
 
     title = finding.get("title", "Finding")
     body = finding.get("body", "")
-    suggested_fix = _rendered_text(finding.get("suggested_fix_code"))
+    suggested_fix = _fix_code_text(finding.get("suggested_fix_code"))
 
     parts = [f"**{emoji} [{severity.upper()}] {title}**", "", body]
 
@@ -802,14 +1131,22 @@ def render_comment_body(finding):
     # (issue #47) — they are scoped to the artifact/report consumers, not
     # this deterministic comment renderer. Do not "helpfully" add them here.
 
-    # suggested_fix_code: caller-supplied; secret-redacted; outer fence
-    # lengthened. Structural sanitize OFF so one-click apply stays byte-exact
-    # aside from credential redaction (deliberate exception).
+    # suggested_fix_code: secret-redacted; outer fence lengthened. Structural
+    # sanitize OFF so one-click apply stays byte-exact aside from credential
+    # redaction (deliberate exception). This renderer does NOT decide whether the
+    # patch may ship — `_suggested_fix_gate` does, at each render site, and hands
+    # this function a copy with the field already removed when it may not. Keeping
+    # the decision out of here is what lets one finding render with a fence inline
+    # and without one in the degraded body section of the same review.
+    #
+    # The fence carries `_fix_code_text`'s output — the SAME normalization the
+    # gate measured, applied ONCE. Re-normalizing after redaction would take a
+    # second trailing newline off, so the posted bytes would differ from the
+    # checked ones; redaction only ever substitutes a token, never empties.
     if suggested_fix:
-        suggested_fix = _rendered_text(_redact_secrets(suggested_fix))
-        if suggested_fix:
-            open_f, close_f = _suggestion_fence(suggested_fix)
-            parts += ["", open_f, suggested_fix, close_f]
+        suggested_fix = _redact_secrets(suggested_fix)
+        open_f, close_f = _suggestion_fence(suggested_fix)
+        parts += ["", open_f, suggested_fix, close_f]
 
     return "\n".join(parts)
 
@@ -1020,13 +1357,21 @@ def resolve_marker_sha(data):
 # ---------------------------------------------------------------------------
 
 
-def post_github(data, valid_lines):
+def post_github(data, valid_lines, line_texts):
+    # Both oracles are REQUIRED arguments, no defaults: `parse_diff_lines` returns
+    # them together or not at all, and a caller that omitted `line_texts` used to
+    # silently disable half the apply-check (every fence then downgrading for a
+    # reason the diff would have answered). Pass what the parser returned.
     owner = data["owner"]
     repo = data["repo"]
     pr_number = data["pr_number"]
     findings = data.get("findings", [])
 
     check_tool("gh")
+
+    def degraded(filepath, line, finding):
+        """One entry for the body section, which has no anchor to apply against."""
+        return filepath, line, _gated_finding(finding, None, valid_lines, line_texts)
 
     comments = []
     skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
@@ -1040,12 +1385,12 @@ def post_github(data, valid_lines):
             warn_skip(
                 f"Finding '{primary.get('title', '?')}' has no line number — skipping."
             )
-            skipped_entries.append((primary.get("file", "?"), None, primary))
+            skipped_entries.append(degraded(primary.get("file", "?"), None, primary))
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries — the corroborators never
             # merged into a comment that itself never gets posted.
             for c in corroborators:
-                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
             continue
 
         filepath = primary["file"]
@@ -1058,28 +1403,41 @@ def post_github(data, valid_lines):
                 f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append((filepath, line, primary))
+            skipped_entries.append(degraded(filepath, line, primary))
             for c in corroborators:
-                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
             continue
 
-        comment = {
-            "path": filepath,
-            "line": line,
-            "side": "RIGHT",
-            "body": render_group_body(primary, corroborators),
-        }
-        # Add start_line for multi-line comments, but only when the whole range
+        # The multi-line anchor decision is made HERE, ABOVE the body render, and
+        # the assembly below consumes these same locals — the decision moved, it is
+        # not duplicated. The apply-check has to see the range the comment will
+        # REALLY apply at, and that range is only known once this has run (#63 D2).
+        #
+        # start_line is added for multi-line comments, but only when the whole range
         # sits inside one hunk — GitHub rejects the ENTIRE review POST (losing every
         # finding, not just this one) with a 422 "Line could not be resolved" if
         # end_line falls outside every hunk, even though `line` alone was valid.
         end_line = primary.get("end_line")
-        if (
+        multiline = (
             isinstance(end_line, int)
             and end_line >= line
             and end_line != line
             and _range_is_valid(valid_lines, filepath, line, end_line)
-        ):
+        )
+        # A group comment anchors on the PRIMARY's range and only the primary's
+        # fence exists in the body (`_render_corroboration` emits none), so this is
+        # the apply range of every fence the comment can carry.
+        apply_range = (line, end_line) if multiline else (line, line)
+        comment = {
+            "path": filepath,
+            "line": line,
+            "side": "RIGHT",
+            "body": render_group_body(
+                _gated_finding(primary, apply_range, valid_lines, line_texts),
+                corroborators,
+            ),
+        }
+        if multiline:
             comment["start_line"] = line
             comment["start_side"] = "RIGHT"
             comment["line"] = end_line
@@ -1128,6 +1486,7 @@ def post_github(data, valid_lines):
             f"  {len(skipped_entries)} finding(s) skipped inline (lines not in diff) — "
             "appended to review body."
         )
+    _print_fix_summary()
     return 0
 
 
@@ -1204,7 +1563,9 @@ def gitlab_prior_delivery(owner, repo, mr_iid, sha):
     return summary_posted, keys, legacy_group_keys
 
 
-def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
+def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
+    # Every parsed-diff argument is REQUIRED — see post_github's note: defaults
+    # let a caller disable half the apply-check by omission.
     owner = data["owner"]
     repo = data["repo"]
     mr_iid = data["pr_number"]
@@ -1231,6 +1592,19 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"rejected. Check that the MR has a version carrying all three SHAs."
             )
 
+    def degraded(filepath, line, finding):
+        """One entry for the body section, which has no anchor to apply against."""
+        return filepath, line, _gated_finding(finding, None, valid_lines, line_texts)
+
+    def anchored(finding, line):
+        """Gate a finding for a GitLab inline body.
+
+        GitLab anchors are ALWAYS single-line and this script never emits the
+        ``suggestion:-m+n`` multi-line syntax (#63 D9), so one anchored line is the
+        whole apply range — a finding stating any wider span is downgraded.
+        """
+        return _gated_finding(finding, (line, line), valid_lines, line_texts)
+
     # Pre-partition the deterministic skips (no line number, or a line the diff never
     # touched) BEFORE the summary note is composed — the note is posted first, so the
     # skipped section must already be known. Both checks are pure functions of facts
@@ -1252,12 +1626,12 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             warn_skip(
                 f"Finding '{primary.get('title', '?')}' has no line number — skipping."
             )
-            skipped_entries.append((primary.get("file", "?"), None, primary))
+            skipped_entries.append(degraded(primary.get("file", "?"), None, primary))
             skipped += 1
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries.
             for c in corroborators:
-                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
                 skipped += 1
             continue
 
@@ -1272,10 +1646,10 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append((filepath, line, primary))
+            skipped_entries.append(degraded(filepath, line, primary))
             skipped += 1
             for c in corroborators:
-                skipped_entries.append((c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
                 skipped += 1
             continue
 
@@ -1332,8 +1706,17 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         two delivery shapes interchangeable for dedup: a corroborator posted on its
         own by one run is recognized by the group discussion of the next, and vice
         versa (issue #132).
+
+        The key render also drops ``suggested_fix_code`` UNCONDITIONALLY (see
+        :func:`_key_material_finding`), so a key is fence-independent: the apply-check
+        can strip a fence here and keep it there without ever moving a delivery key.
         """
-        return finding_key(filepath, line, m.get("title", ""), render_comment_body(m))
+        return finding_key(
+            filepath,
+            line,
+            m.get("title", ""),
+            render_comment_body(_key_material_finding(m)),
+        )
 
     def deliver(f, filepath, line, comment_body, keys):
         """Post ONE discussion and return its outcome counter name.
@@ -1455,8 +1838,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         position-less POST to the same `/notes` endpoint, with the same
         per-finding marker `deliver()` appends to an inline discussion, so a
         later rerun recognizes this exactly as it would an inline one.
+
+        A position-less note has no anchor at all, so no fence it carried could
+        ever be applied — the gate below strips one unconditionally here.
         """
-        body = render_comment_body(c)
+        body = render_comment_body(_gated_finding(c, None, valid_lines, line_texts))
         payload = {
             "body": body
             if DRY_RUN or not sha_is_markable
@@ -1519,7 +1905,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
             )
             return "invalid"
         return deliver(
-            c, filepath, line, render_comment_body(c), [member_key(c, filepath, line)]
+            c,
+            filepath,
+            line,
+            render_comment_body(anchored(c, line)),
+            [member_key(c, filepath, line)],
         )
 
     counters = {
@@ -1567,7 +1957,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                 "already_present"
                 if primary_key in delivered_keys
                 else deliver(
-                    f, filepath, f["line"], render_comment_body(f), [primary_key]
+                    f,
+                    filepath,
+                    f["line"],
+                    render_comment_body(anchored(f, f["line"])),
+                    [primary_key],
                 )
             ] += 1
             for c in corroborators:
@@ -1581,7 +1975,11 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
                     counters[deliver_unanchored(c, key)] += 1
             continue
         outcome = deliver(
-            f, filepath, f["line"], render_group_body(f, corroborators), member_keys
+            f,
+            filepath,
+            f["line"],
+            render_group_body(anchored(f, f["line"]), corroborators),
+            member_keys,
         )
         if outcome in ("invalid", "failed"):
             # The group's single discussion is lost, but its corroborators were
@@ -1620,6 +2018,7 @@ def post_gitlab(data, valid_lines, new_files=None, old_paths=None):
         )
     if invalid:
         print(f"  {invalid} finding(s) had a malformed position (see warnings above).")
+    _print_fix_summary()
 
     # Both "nothing new landed" exits below report the same outcome for two different
     # losses, so both owe the operator the same true statement about what is already
@@ -1753,6 +2152,7 @@ def main():
     DRY_RUN = args.dry_run or os.environ.get("CODE_GAUNTLET_POST_MODE") == "dry-run"
     _CAPTURED.clear()
     _SKIP_WARNINGS.clear()
+    _FIX_COUNTS.update(kept=0, downgraded=0)
 
     # Load input
     try:
@@ -1787,7 +2187,7 @@ def main():
         die(f"Unsupported platform: '{platform}'. Use 'github' or 'gitlab'.")
 
     # Validate diff lines
-    valid_lines, new_files, old_paths = parse_diff_lines(
+    valid_lines, new_files, old_paths, line_texts = parse_diff_lines(
         platform, data["owner"], data["repo"], data["pr_number"]
     )
 
@@ -1795,9 +2195,9 @@ def main():
     # it found cannot pre-empt the dry-run payload write below — that file is the artifact
     # an operator reads to see what the run would have sent.
     if platform == "github":
-        status = post_github(data, valid_lines)
+        status = post_github(data, valid_lines, line_texts)
     else:
-        status = post_gitlab(data, valid_lines, new_files, old_paths)
+        status = post_gitlab(data, valid_lines, new_files, old_paths, line_texts)
 
     if DRY_RUN:
         out_path = write_dry_run_payload(platform, args.findings_json)

@@ -19,6 +19,7 @@ Covers:
 """
 
 import contextlib
+import inspect
 import io
 import json
 import os
@@ -153,7 +154,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+added\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _ = parse_diff_lines("github", "myorg", "myrepo", 42)
+        valid_lines, new_files, _, _ = parse_diff_lines("github", "myorg", "myrepo", 42)
         self.assertIsNotNone(valid_lines)
         self.assertEqual(new_files, set())
         call_args = mock_run.call_args[0][0]
@@ -167,7 +168,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         # glab-faithful: an unconditional `---`/`+++` pair, paths verbatim, no `a/`/`b/`.
         diff = "--- bar.py\n+++ bar.py\n@@ -5,1 +5,2 @@\n ctx\n+new_line\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
         self.assertIsNotNone(valid_lines)
         call_args = mock_run.call_args[0][0]
         self.assertEqual(call_args[0], "glab")
@@ -197,7 +198,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+added\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("src/app.py", 1), valid_lines)
         self.assertIn(("src/app.py", 2), valid_lines)
         self.assertEqual(new_files, set())
@@ -220,7 +221,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+y\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, old_paths = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, _, old_paths, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertIn(("src/app.py", 1), valid_lines)
         self.assertEqual(old_paths, {"src/app.py": "src/app.py"})
         self.assertEqual({fp for fp, _ in valid_lines}, {"src/app.py"})
@@ -246,7 +247,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+++ b/empty_new.py\n"
         )
         mock_run.return_value = (diff, "", 0)
-        _, new_files, _ = parse_diff_lines("github", "o", "r", 1)
+        _, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"empty_new.py"})
 
     @patch("scripts.post_review.run_api")
@@ -260,7 +261,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- src/added.py\n+++ src/added.py\n@@ -0,0 +1,1 @@\n+content\n"
         mock_run.return_value = (diff, "", 0)
-        _, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        _, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/added.py"})
 
     @patch("scripts.post_review.run_api")
@@ -268,7 +269,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """The added file is the SECOND file in the diff, and the modified one that
         precedes it must not be swept into new_files with it."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        _, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        _, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(new_files, {"src/app/clients/api/__init__.py"})
 
     @patch("scripts.post_review.run_api")
@@ -280,7 +281,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- a/gone.py\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-line1\n-line2\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _ = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertIsInstance(valid_lines, dict)
         self.assertEqual(valid_lines, {})
         self.assertEqual(new_files, set())
@@ -298,7 +299,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- a/empty.py\n+++ b/empty.py\n@@ -0,0 +1,2 @@\n+first\n+second\n"
         mock_run.return_value = (diff, "", 0)
-        _, new_files, _ = parse_diff_lines("github", "o", "r", 1)
+        _, new_files, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"empty.py"})
 
     @patch("scripts.post_review.run_api")
@@ -313,7 +314,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """
         diff = "--- oneline.txt\n+++ oneline.txt\n@@ -0,0 +1 @@\n+only\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, new_files, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, new_files, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("oneline.txt", 1), valid_lines)
         self.assertIsNone(valid_lines[("oneline.txt", 1)])
         self.assertIn("oneline.txt", new_files)
@@ -344,7 +345,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+y\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _ = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(valid_lines[("next.py", 5)], 5)
         self.assertIsNone(valid_lines[("next.py", 6)])
         self.assertEqual([k for k in valid_lines if k[0] == "gone.py"], [])
@@ -360,7 +361,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         deleted path. Draining the old-side budget is the only thing that ends the body.
         """
         mock_run.return_value = (GL_DIFF_DELETED_THEN_MODIFIED, "", 0)
-        valid_lines, new_files, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, new_files, old_paths, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual([k for k in valid_lines if k[0] == "src/removed.py"], [])
         self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
         self.assertIsNone(valid_lines[("src/edited.py", 62)])
@@ -389,7 +390,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         # form feed (built in Python so the control character is explicit).
         diff = "--- ff.py\n+++ ff.py\n@@ -1,3 +1,3 @@\n p1\n \x0c\n-p2\n+p2X\n"
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("ff.py", 3), valid_lines)
         self.assertIsNone(valid_lines[("ff.py", 3)])
         self.assertEqual(valid_lines[("ff.py", 2)], 2)
@@ -416,7 +417,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             " );\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         # new 10 = old 10 (context), then the removal eats old 11 with no new number,
         # so new 11 must map to old 12 — not to 11.
         self.assertEqual(valid_lines[("db/schema.sql", 10)], 10)
@@ -439,7 +440,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             " use(i);\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/app.c", 20)], 20)
         self.assertIsNone(valid_lines[("src/app.c", 21)])
         # The context line after it still records under the original file, with the
@@ -457,7 +458,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "Binary files a/img.png and b/img.png differ\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _ = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual([k for k in valid_lines if k[0] == "img.png"], [])
 
     @patch("scripts.post_review.run_api")
@@ -473,7 +474,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         owns that arm of the same catch-all.
         """
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(
             sorted(valid_lines),
             [("src/app/clients/api/__init__.py", n) for n in range(1, 17)]
@@ -489,20 +490,20 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     @patch("scripts.post_review.run_api")
     def test_valid_lines_is_a_mapping_of_new_line_to_old_line(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIsInstance(valid_lines, dict)
 
     @patch("scripts.post_review.run_api")
     def test_context_line_maps_to_its_old_side_number(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
 
     @patch("scripts.post_review.run_api")
     def test_added_line_maps_to_none(self, mock_run):
         """An added line exists only on the new side — present as a key, valued None."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIn(("src/edited.py", 62), valid_lines)
         self.assertIsNone(valid_lines[("src/edited.py", 62)])
 
@@ -510,13 +511,13 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
     def test_removed_line_advances_the_old_side_only(self, mock_run):
         """52, not 51: the ``-removed`` line consumed an OLD number and no new one."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(valid_lines[("src/edited.py", 63)], 52)
 
     @patch("scripts.post_review.run_api")
     def test_old_side_counter_resets_between_files(self, mock_run):
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        valid_lines, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertIsNone(valid_lines[("src/app/clients/api/__init__.py", 1)])
         # The added file's `---`/`+++` headers sit between hunks. If the modified file's
         # budgets under-drain, the parser is still in its body zone when they arrive and
@@ -543,7 +544,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             " b\n"
         )
         mock_run.return_value = (diff, "", 0)
-        valid_lines, _, _ = parse_diff_lines("github", "o", "r", 1)
+        valid_lines, _, _, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(valid_lines[("f.py", 2)], 2)
 
     @patch("scripts.post_review.run_api")
@@ -558,7 +559,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         them.
         """
         mock_run.return_value = (GL_DIFF_RENAME, "", 0)
-        valid_lines, _, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+        valid_lines, _, old_paths, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(old_paths, {"new_name.py": "old_name.py"})
         self.assertEqual(valid_lines[("new_name.py", 3)], 3)
         # A BLANK context line is a lone space, and is addressable like any other.
@@ -576,7 +577,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
             "+content\n"
         )
         mock_run.return_value = (diff, "", 0)
-        _, new_files, old_paths = parse_diff_lines("github", "o", "r", 1)
+        _, new_files, old_paths, _ = parse_diff_lines("github", "o", "r", 1)
         self.assertEqual(new_files, {"added.py"})
         self.assertNotIn("added.py", old_paths)
 
@@ -585,14 +586,14 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         """For a plain modified file both sides name the same path — pin the coincide
         case, so the mapping is provably a no-op there rather than accidentally right."""
         mock_run.return_value = (GL_DIFF_CONTRACT, "", 0)
-        _, _, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+        _, _, old_paths, _ = parse_diff_lines("gitlab", "o", "r", 1)
         self.assertEqual(old_paths["src/edited.py"], "src/edited.py")
 
     @patch("scripts.post_review.run_api")
     def test_nonzero_rc_returns_none(self, mock_run):
         """A non-zero exit code from the CLI tool must return (None, None, None)."""
         mock_run.return_value = ("", "fatal: not a git repository", 128)
-        valid_lines, new_files, old_paths = parse_diff_lines(
+        valid_lines, new_files, old_paths, _ = parse_diff_lines(
             "github", "myorg", "myrepo", 1
         )
         self.assertIsNone(valid_lines)
@@ -601,7 +602,7 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
 
     def test_unknown_platform_returns_none(self):
         """An unknown platform must return (None, None, None) without calling run_api."""
-        valid_lines, new_files, old_paths = parse_diff_lines(
+        valid_lines, new_files, old_paths, _ = parse_diff_lines(
             "bitbucket", "myorg", "myrepo", 1
         )
         self.assertIsNone(valid_lines)
@@ -918,6 +919,28 @@ class TestRenderCommentBody(unittest.TestCase):
         body = render_comment_body(finding)
         self.assertIn("```suggestion", body)
         self.assertIn("line1\nline2\nline3", body)
+
+    def test_edge_blank_lines_survive_into_the_fence(self):
+        """A replacement's leading/trailing blank lines are CONTENT (#63): the
+        fence carries the stated bytes minus the one terminating newline, so
+        what the apply-check measured is what one click commits."""
+        finding = {
+            "severity": "medium",
+            "title": "Fix",
+            "body": "desc",
+            "suggested_fix_code": "\nline1\nline2\n\n",
+        }
+        body = render_comment_body(finding)
+        self.assertIn("```suggestion\n\nline1\nline2\n\n```", body)
+
+    def test_only_one_trailing_newline_comes_off(self):
+        finding = {
+            "severity": "medium",
+            "title": "Fix",
+            "body": "desc",
+            "suggested_fix_code": "line1\n",
+        }
+        self.assertIn("```suggestion\nline1\n```", render_comment_body(finding))
 
     # -- suggestion (issue #47) -------------------------------------------
 
@@ -1409,7 +1432,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "",
             "findings": [],
         }
-        post_review.post_github(data, {})
+        post_review.post_github(data, {}, {})
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
@@ -1426,7 +1449,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "## Summary\nSome pre-existing narrative text.\n",
             "findings": [],
         }
-        post_review.post_github(data, {})
+        post_review.post_github(data, {}, {})
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
@@ -1446,7 +1469,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "",
             "findings": [],
         }
-        post_review.post_gitlab(data, {})
+        post_review.post_gitlab(data, {}, set(), {}, {})
         # The summary note is posted before any per-finding discussion, so
         # with findings=[] it is also the only capture.
         body = post_review._CAPTURED[0]["payload"]["body"]
@@ -1468,7 +1491,7 @@ class TestReviewMarkerRoundTripThroughRealPoster(unittest.TestCase):
             "review_body": "## MR Review\nContext for the reviewer.\n",
             "findings": [],
         }
-        post_review.post_gitlab(data, {})
+        post_review.post_gitlab(data, {}, set(), {}, {})
         body = post_review._CAPTURED[0]["payload"]["body"]
         signal = review_marker.detect_signal(body)
         self.assertIsNotNone(signal, f"no signal recovered from posted body: {body!r}")
@@ -1556,7 +1579,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
             "pr_number": 1,
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
-        post_github(data, valid_lines)
+        post_github(data, valid_lines, {})
         mock_warn.assert_called_once()
         msg = mock_warn.call_args[0][0]
         self.assertIn("Valid lines for this file:", msg)
@@ -1584,7 +1607,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
         # Empty mapping: validation ran and found nothing for this line → skip + empty diag.
-        post_github(data, {})
+        post_github(data, {}, {})
         mock_warn.assert_called_once()
         msg = mock_warn.call_args[0][0]
         self.assertIn("line not found in diff.", msg)
@@ -1611,7 +1634,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
         # valid_lines=None: validation skipped → is_line_valid returns True → finding posts.
-        post_github(data, None)
+        post_github(data, None, None)
         mock_post.assert_called_once()
         payload = mock_post.call_args[0][1]
         self.assertEqual(len(payload["comments"]), 1)
@@ -1651,7 +1674,7 @@ class TestSkipWarningDiagnostics(unittest.TestCase):
             "pr_number": 1,
             "findings": [{"file": "src/app.py", "line": 99, "title": "Bug"}],
         }
-        post_gitlab(data, valid_lines)
+        post_gitlab(data, valid_lines, set(), {}, {})
         # First call is for the summary note, skip warning is the second call
         found_diag = False
         for call in mock_warn.call_args_list:
@@ -1875,7 +1898,7 @@ class TestValidatePosition(unittest.TestCase):
     def test_old_path_carries_the_post_rename_path(self):
         """The rename class: the post-rename path is a path the old side does not
         contain, and presence alone cannot tell it from the pre-rename one."""
-        valid_lines, new_files, old_paths = _parse_fixture(GL_DIFF_RENAME)
+        valid_lines, new_files, old_paths, _ = _parse_fixture(GL_DIFF_RENAME)
         position = _position(
             new_path="new_name.py",
             new_line=3,
@@ -1931,9 +1954,9 @@ class TestValidatePosition(unittest.TestCase):
 
     def test_legitimate_positions_report_nothing(self):
         """Every position kind the poster legitimately builds, against parser output."""
-        contract = _parse_fixture(GL_DIFF_CONTRACT)
-        rename = _parse_fixture(GL_DIFF_RENAME)
-        real_a_dir = _parse_fixture(GL_DIFF_REAL_A_DIR)
+        contract = _parse_fixture(GL_DIFF_CONTRACT)[:3]
+        rename = _parse_fixture(GL_DIFF_RENAME)[:3]
+        real_a_dir = _parse_fixture(GL_DIFF_REAL_A_DIR)[:3]
         cases = [
             (
                 "context line in a modified file",
@@ -2069,7 +2092,7 @@ class TestGitlabPositionPayload(unittest.TestCase):
                 return_value=(False, set(), frozenset(), None),
             ),
         ):
-            post_gitlab(data, valid_lines, new_files)
+            post_gitlab(data, valid_lines, new_files, {}, {})
 
         # First post_json call is the summary note; second is the discussion.
         self.assertGreaterEqual(
@@ -2397,12 +2420,18 @@ def _member_key(member):
     Derived from the member's OWN anchor and single-finding render — the same
     inputs the individual-discussion path uses — which is what makes a group
     discussion and an individual one interchangeable for rerun dedup.
+
+    ``suggested_fix_code`` is dropped before the render, unconditionally, because
+    a delivery key must not depend on the apply-check's verdict (#63 D2). Spelled
+    out here rather than borrowed from post_review so this helper cannot agree
+    with a broken implementation by construction.
     """
+    material = {k: v for k, v in member.items() if k != "suggested_fix_code"}
     return post_review.finding_key(
         member["file"],
         member["line"],
         member["title"],
-        post_review.render_comment_body(member),
+        post_review.render_comment_body(material),
     )
 
 
@@ -2420,6 +2449,7 @@ def _fake_run(
     remote="git@github.com:o/r.git\n",
     head_sha="deadbeefcafe\n",
     note_rc=0,
+    diff_rc=0,
     discussion_rcs=None,
     calls=None,
     payloads=None,
@@ -2434,8 +2464,11 @@ def _fake_run(
     The live GitLab POSTs are steerable so the fault-tolerance path is exercisable:
     *note_rc* is the summary note's exit code, and *discussion_rcs* is consumed one per
     inline-discussion POST (default 0 once exhausted). A non-zero discussion rc comes
-    back with the verbatim glab 400. *calls* collects every argv when given, and
-    *payloads* collects the JSON body of every live POST.
+    back with the verbatim glab 400. *diff_rc* is the diff fetch's exit code — a
+    non-zero one is the real "no diff oracle" condition (``parse_diff_lines`` then
+    returns all-``None``), not something a test can fake by passing an empty diff.
+    *calls* collects every argv when given, and *payloads* collects the JSON body of
+    every live POST.
     """
     rcs = iter(discussion_rcs or [])
 
@@ -2457,9 +2490,9 @@ def _fake_run(
             return res(out=remote)
         if cmd[:2] == ["git", "rev-parse"]:
             return res(out=head_sha)
-        if cmd[:3] == ["gh", "pr", "diff"]:
-            return res(out=diff)
-        if cmd[:3] == ["glab", "mr", "diff"]:
+        if cmd[:3] == ["gh", "pr", "diff"] or cmd[:3] == ["glab", "mr", "diff"]:
+            if diff_rc:
+                return res(err="fatal: could not read the diff", rc=diff_rc)
             return res(out=diff)
         if cmd[:2] == ["glab", "api"] and "--method" in cmd:
             if any(tok.endswith("/discussions") for tok in cmd):
@@ -2516,6 +2549,7 @@ class _DryRunTestBase(unittest.TestCase):
         post_review.DRY_RUN = False
         post_review._CAPTURED.clear()
         post_review._SKIP_WARNINGS.clear()
+        post_review._FIX_COUNTS.update(kept=0, downgraded=0)
 
     def _write(self, data):
         with open(self.findings_path, "w") as f:
@@ -3780,7 +3814,9 @@ class TestGitlabRealADirectoryPath(_DryRunTestBase):
         with patch(
             "scripts.post_review.run_api", return_value=(GL_DIFF_REAL_A_DIR, "", 0)
         ):
-            valid_lines, new_files, old_paths = parse_diff_lines("gitlab", "o", "r", 1)
+            valid_lines, new_files, old_paths, _ = parse_diff_lines(
+                "gitlab", "o", "r", 1
+            )
         self.assertIn(("a/foo.py", 1), valid_lines)
         self.assertEqual(new_files, set())
         self.assertEqual(old_paths, {"a/foo.py": "a/foo.py"})
@@ -4943,7 +4979,7 @@ class TestGitHubMultiLineRangeValidation(_DryRunTestBase):
             ),
             patch(
                 "scripts.post_review.parse_diff_lines",
-                return_value=(None, None, None),
+                return_value=(None, None, None, None),
             ),
             patch(
                 "scripts.post_review.subprocess.run",
@@ -5170,7 +5206,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
 
     def test_gitlab_validation_skipped_posts_everything_with_no_section(self):
         """When the diff could not be fetched, parse_diff_lines returns
-        (None, None, None) and is_line_valid always answers True — nothing should
+        all-None and is_line_valid always answers True — nothing should
         ever reach the skipped section."""
         data = {
             "platform": "gitlab",
@@ -5187,7 +5223,7 @@ class TestSkippedSectionForgeryResistance(_DryRunTestBase):
             patch.object(sys, "argv", ["post_review.py", self.findings_path]),
             patch(
                 "scripts.post_review.parse_diff_lines",
-                return_value=(None, None, None),
+                return_value=(None, None, None, None),
             ),
             patch(
                 "scripts.post_review.gitlab_prior_delivery_state",
@@ -5321,6 +5357,1111 @@ class TestBuildSkippedSectionNoFileNoLine(unittest.TestCase):
         section = build_skipped_section([(None, None, finding)])
         self.assertIn("`?`", section)
         self.assertIn("Mystery finding", section)
+
+
+# ---------------------------------------------------------------------------
+# Issue #63 — the deterministic suggested_fix_code apply-check
+# ---------------------------------------------------------------------------
+
+# A hunk whose body is INDENTED WITH SPACES, so an indentation-charset conflict
+# has real indentation to conflict with, and whose lines differ from any
+# replacement a test writes (so the no-op check is not tripped by accident).
+# foo.py: 1 = context `def f():`, 2 = added `    return 1`, 3 = added `    # tail`.
+GH_DIFF_INDENTED = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,1 +1,3 @@\n"
+    " def f():\n"
+    "+    return 1\n"
+    "+    # tail\n"
+)
+
+# The same hunk in plain `glab mr diff` shape — paths verbatim, no `a/` / `b/`.
+GL_DIFF_INDENTED = (
+    "--- foo.py\n+++ foo.py\n@@ -1,1 +1,3 @@\n def f():\n+    return 1\n+    # tail\n"
+)
+
+# The same hunk again, but the hunk BODY is CRLF-terminated (only the body — the
+# parser splits the whole stdout on "\n" only, so a body line ending "\r\n" leaves
+# a trailing "\r" in that line's parsed text; header lines stay plain "\n" so the
+# path keys this fixture produces are the ordinary, un-suffixed ones). This is what
+# a real CRLF-in-the-repo diff hands the parser: transport, not content.
+GH_DIFF_INDENTED_CRLF_BODY = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,1 +1,3 @@\n"
+    " def f():\n"
+    "+    return 1\r\n"
+    "+    # tail\r\n"
+)
+
+_FENCE = "```suggestion"
+
+
+class TestParseDiffLinesLineTexts(unittest.TestCase):
+    """``parse_diff_lines`` also returns each addressable line's NEW-SIDE TEXT.
+
+    The parser already read that text off every ``+``/context line and threw it
+    away. It is the only content oracle the apply-check can trust: by construction
+    it is the content the platform's anchor points at, at the same head SHA the
+    position carries. ``git show`` is not — the local HEAD is usually the base
+    branch, and a shallow clone has no object to show at all.
+    """
+
+    def _parse(self, diff, platform="gitlab"):
+        with patch("scripts.post_review.run_api", return_value=(diff, "", 0)):
+            return parse_diff_lines(platform, "o", "r", 1)
+
+    def test_line_texts_is_a_dict_parallel_to_valid_lines(self):
+        """A PARALLEL dict, not a richer ``valid_lines`` value: every existing
+        consumer of that mapping keeps reading exactly what it read before."""
+        valid_lines, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
+        self.assertIsInstance(line_texts, dict)
+        self.assertEqual(set(line_texts), set(valid_lines))
+        self.assertEqual(valid_lines[("src/edited.py", 61)], 50)
+
+    def test_context_line_text_drops_the_marker_column(self):
+        _, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
+        self.assertEqual(line_texts[("src/edited.py", 61)], "unchanged_ctx")
+
+    def test_added_line_text_drops_the_marker_column(self):
+        _, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
+        self.assertEqual(line_texts[("src/edited.py", 62)], "added")
+
+    def test_blank_context_line_records_the_empty_string(self):
+        """A unified diff spells a blank context line as a lone space — its
+        content is the empty string, not a space."""
+        _, _, _, line_texts = self._parse(GL_DIFF_RENAME)
+        self.assertEqual(line_texts[("new_name.py", 6)], "")
+
+    def test_leading_whitespace_is_preserved_verbatim(self):
+        """Indentation is the whole point of the content oracle — a fix that
+        re-indents a span is judged against the bytes the file really carries."""
+        _, _, _, line_texts = self._parse(GH_DIFF_INDENTED, platform="github")
+        self.assertEqual(line_texts[("foo.py", 2)], "    return 1")
+
+    def test_no_newline_marker_records_no_text(self):
+        """``\\ No newline at end of file`` belongs to neither side, so it must
+        not be recorded as a line's content."""
+        diff = (
+            "--- a/f.py\n"
+            "+++ b/f.py\n"
+            "@@ -1,2 +1,2 @@\n"
+            " a\n"
+            "\\ No newline at end of file\n"
+            " b\n"
+        )
+        _, _, _, line_texts = self._parse(diff, platform="github")
+        self.assertEqual(line_texts, {("f.py", 1): "a", ("f.py", 2): "b"})
+
+    def test_removed_line_text_is_not_recorded(self):
+        """A removed line has no new-side number — it must contribute no text."""
+        _, _, _, line_texts = self._parse(GL_DIFF_CONTRACT)
+        self.assertNotIn("removed", line_texts.values())
+
+    def test_deleted_file_records_no_text(self):
+        _, _, _, line_texts = self._parse(GL_DIFF_DELETED_THEN_MODIFIED)
+        self.assertEqual([k for k in line_texts if k[0] == "src/removed.py"], [])
+
+    def test_skipped_validation_returns_no_texts(self):
+        valid_lines, _, _, line_texts = parse_diff_lines("bitbucket", "o", "r", 1)
+        self.assertIsNone(valid_lines)
+        self.assertIsNone(line_texts)
+
+
+class TestSuggestedFixGate(unittest.TestCase):
+    """The pure gate helper: one case per reason in the closed vocabulary.
+
+    Ground truth comes from the REAL parser (``_parse_fixture``), not a
+    hand-written mapping — a gate checked against the answer the test wanted
+    would agree with a broken parser.
+    """
+
+    def setUp(self):
+        parsed = _parse_fixture(GH_DIFF_INDENTED, platform="github")
+        self.valid_lines, _, _, self.line_texts = parsed
+
+    def _finding(self, **over):
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "suggested_fix_code": "    return 2\n    # done",
+        }
+        finding.update(over)
+        return finding
+
+    def _gate(self, finding, apply_range=(2, 3), **over):
+        kwargs = {
+            "apply_range": apply_range,
+            "line_texts": self.line_texts,
+            "valid_lines": self.valid_lines,
+            "path_lookup": "foo.py",
+        }
+        kwargs.update(over)
+        return post_review._suggested_fix_gate(finding, **kwargs)
+
+    def _reason(self, finding, **over):
+        ok, reason = self._gate(finding, **over)
+        self.assertFalse(ok, f"expected a downgrade, got ok with reason {reason!r}")
+        self.assertIn(
+            reason,
+            post_review._FIX_REASONS,
+            "every downgrade must name a member of the closed vocabulary",
+        )
+        return reason
+
+    # -- the passing cases -------------------------------------------------
+
+    def test_absent_field_is_not_a_downgrade(self):
+        finding = self._finding()
+        del finding["suggested_fix_code"]
+        self.assertEqual(self._gate(finding), (True, None))
+
+    def test_sound_multi_line_fix_passes(self):
+        self.assertEqual(self._gate(self._finding()), (True, None))
+
+    def test_sound_single_line_fix_passes(self):
+        finding = self._finding(line=2, end_line=2, suggested_fix_code="    return 2")
+        self.assertEqual(self._gate(finding, apply_range=(2, 2)), (True, None))
+
+    def test_legitimate_reindentation_passes(self):
+        """The indentation check is deliberately weak: only a tab/space charset
+        conflict is caught, so re-indenting a span is not a downgrade."""
+        finding = self._finding(suggested_fix_code="        return 2\n        # done")
+        self.assertEqual(self._gate(finding), (True, None))
+
+    def test_a_partial_content_oracle_reads_as_no_oracle(self):
+        """A span the texts cannot fully answer is NO oracle, never "no
+        difference" — the latter would silently skip the content checks and
+        pass the fence through unchecked. The range oracle alone is not
+        enough: a patch is downgraded, not rendered, when the content oracle
+        cannot answer for every line of the stated span.
+        """
+        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
+        self.assertEqual(
+            self._gate(finding, line_texts={("foo.py", 2): "    return 1"}),
+            (False, "no_diff_oracle"),
+        )
+
+    def test_a_mixed_path_spelling_range_has_no_content_oracle(self):
+        """``_range_is_valid``/``is_line_valid`` tolerate a per-line mix of the
+        exact diff key and its ``a/``/``b/``-stripped form, so a mixed-spelling
+        range validates line-by-line. ``_span_texts`` demands ONE spelling for
+        every line, so the very same range makes the span ``None`` — no
+        content oracle, so this must downgrade rather than silently skip the
+        content checks.
+        """
+        valid_lines = {("b/x.py", 10): 10, ("x.py", 11): 11, ("x.py", 12): 12}
+        line_texts = {
+            ("b/x.py", 10): "line10",
+            ("x.py", 11): "line11",
+            ("x.py", 12): "line12",
+        }
+        finding = {
+            "file": "b/x.py",
+            "line": 10,
+            "end_line": 12,
+            "suggested_fix_code": "a\nb\nc",
+        }
+        self.assertEqual(
+            post_review._suggested_fix_gate(
+                finding,
+                apply_range=(10, 12),
+                line_texts=line_texts,
+                valid_lines=valid_lines,
+                path_lookup="b/x.py",
+            ),
+            (False, "no_diff_oracle"),
+        )
+
+    # -- 1. non_string -----------------------------------------------------
+
+    def test_non_string_fix(self):
+        self.assertEqual(
+            self._reason(self._finding(suggested_fix_code=42)), "non_string"
+        )
+
+    def test_null_fix_is_non_string(self):
+        """The contracts say OMIT, never null — a null that arrives anyway is
+        not a string and is downgraded, not rendered."""
+        self.assertEqual(
+            self._reason(self._finding(suggested_fix_code=None)), "non_string"
+        )
+
+    # -- 2. empty ----------------------------------------------------------
+
+    def test_whitespace_only_fix_is_empty(self):
+        self.assertEqual(
+            self._reason(self._finding(suggested_fix_code="  \n  ")), "empty"
+        )
+
+    # -- 3. carriage_return --------------------------------------------------
+
+    def test_an_interior_lone_cr_downgrades(self):
+        """CommonMark treats a lone ``\\r`` as a line ending — ``"foo\\rbar"`` is
+        ONE line to this gate's ``split("\\n")`` but TWO lines in the rendered
+        fence and the applied patch. That gap is evadable (it dodges the no-op,
+        indentation, and line-count checks entirely), so any interior ``\\r``
+        fails closed before those measurements run."""
+        finding = self._finding(suggested_fix_code="foo\rbar\rbaz")
+        self.assertEqual(self._reason(finding), "carriage_return")
+
+    def test_a_crlf_terminated_replacement_downgrades(self):
+        """A replacement whose lines end ``\\r\\n`` is exactly the ambiguous
+        CRLF-file case a one-click apply must not ship — the prose suggestion
+        still carries the fix."""
+        finding = self._finding(suggested_fix_code="    return 2\r\n    # done\r\n")
+        self.assertEqual(self._reason(finding), "carriage_return")
+
+    # -- 4. redacted -------------------------------------------------------
+
+    def test_a_fix_the_redactor_rewrites_is_never_shipped(self):
+        """One click would commit the literal ``[REDACTED]`` into the file."""
+        secret = "ghp_" + "A" * 24
+        finding = self._finding(suggested_fix_code=f"    token = '{secret}'")
+        self.assertEqual(self._reason(finding), "redacted")
+
+    # -- 5. missing_end_line -----------------------------------------------
+
+    def test_absent_end_line(self):
+        finding = self._finding()
+        del finding["end_line"]
+        self.assertEqual(self._reason(finding, apply_range=(2, 2)), "missing_end_line")
+
+    def test_null_end_line_is_absent(self):
+        """#205 DELETES ``line_end`` when a span exceeds ``maxLineSpan``; a null
+        left behind by anything else must read the same way."""
+        self.assertEqual(
+            self._reason(self._finding(end_line=None), apply_range=(2, 2)),
+            "missing_end_line",
+        )
+
+    # -- 6. invalid_range --------------------------------------------------
+
+    def test_end_line_before_line(self):
+        self.assertEqual(
+            self._reason(self._finding(line=3, end_line=2), apply_range=(3, 2)),
+            "invalid_range",
+        )
+
+    def test_non_integer_line(self):
+        self.assertEqual(
+            self._reason(self._finding(line=2.0), apply_range=(2.0, 3)),
+            "invalid_range",
+        )
+
+    def test_boolean_line_is_not_an_integer(self):
+        """``True`` is an ``int`` to ``isinstance`` and hashes equal to ``1`` —
+        the same trap ``validate_position`` documents."""
+        self.assertEqual(
+            self._reason(
+                self._finding(line=True, end_line=True), apply_range=(True, True)
+            ),
+            "invalid_range",
+        )
+
+    def test_line_below_one(self):
+        self.assertEqual(
+            self._reason(self._finding(line=0, end_line=1), apply_range=(0, 1)),
+            "invalid_range",
+        )
+
+    # -- 7. no_diff_oracle -------------------------------------------------
+
+    def test_a_missing_diff_fails_closed(self):
+        """A failed diff fetch leaves NO oracle, so the range and content checks
+        cannot run at all. The ANCHOR fails open there — a wrong anchor costs a
+        misplaced comment. A patch cannot: a wrong patch corrupts the file, and
+        the prose suggestion carries the same content at no risk.
+        """
+        self.assertEqual(
+            self._reason(self._finding(), valid_lines=None, line_texts=None),
+            "no_diff_oracle",
+        )
+
+    def test_valid_lines_alone_is_not_an_oracle(self):
+        self.assertEqual(
+            self._reason(self._finding(), line_texts=None), "no_diff_oracle"
+        )
+
+    def test_line_texts_alone_is_not_an_oracle(self):
+        self.assertEqual(
+            self._reason(self._finding(), valid_lines=None), "no_diff_oracle"
+        )
+
+    # -- 8. range_not_in_diff ----------------------------------------------
+
+    def test_end_line_outside_the_diff(self):
+        self.assertEqual(
+            self._reason(self._finding(end_line=940), apply_range=(2, 940)),
+            "range_not_in_diff",
+        )
+
+    def test_unknown_path(self):
+        self.assertEqual(
+            self._reason(self._finding(), path_lookup="other.py"),
+            "range_not_in_diff",
+        )
+
+    # -- 9. anchor_mismatch ------------------------------------------------
+
+    def test_apply_range_narrower_than_the_stated_range(self):
+        """The GitLab case: anchors there are ALWAYS single-line, so a two-line
+        replacement would overwrite one line and leave the other."""
+        self.assertEqual(
+            self._reason(self._finding(), apply_range=(2, 2)), "anchor_mismatch"
+        )
+
+    def test_no_apply_range_at_all(self):
+        """A position-less note and the degraded body section carry no anchor —
+        a fence there can never be applied."""
+        self.assertEqual(
+            self._reason(self._finding(), apply_range=None), "anchor_mismatch"
+        )
+
+    # -- 10. no_op_replacement ----------------------------------------------
+
+    def test_replacement_equal_to_the_span(self):
+        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
+        self.assertEqual(self._reason(finding), "no_op_replacement")
+
+    def test_no_op_ignores_a_transport_carriage_return(self):
+        """A CRLF diff leaves a trailing ``\\r`` on every parsed line's SPAN
+        text. That is transport, not content, so it must not make a no-op
+        look like a change. Parsed by the REAL parser (``_parse_fixture``),
+        not a hand-built dict — G1 now downgrades any REPLACEMENT carrying a
+        ``\\r`` before this check even runs, so a replacement-side ``\\r`` can
+        no longer pin this tolerance; only the span side can, which G1 leaves
+        untouched.
+        """
+        valid_lines, _, _, line_texts = _parse_fixture(
+            GH_DIFF_INDENTED_CRLF_BODY, platform="github"
+        )
+        self.assertEqual(line_texts[("foo.py", 2)], "    return 1\r")
+        self.assertEqual(line_texts[("foo.py", 3)], "    # tail\r")
+        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
+        ok, reason = self._gate(finding, valid_lines=valid_lines, line_texts=line_texts)
+        self.assertFalse(ok)
+        self.assertEqual(reason, "no_op_replacement")
+
+    # -- 11. indentation_mismatch ------------------------------------------
+
+    def test_tabs_into_a_space_indented_span(self):
+        finding = self._finding(suggested_fix_code="\treturn 2\n\t# done")
+        self.assertEqual(self._reason(finding), "indentation_mismatch")
+
+    def test_spaces_into_a_tab_indented_span(self):
+        """The symmetric case, against a tab-indented span."""
+        tabbed = (
+            "diff --git a/t.py b/t.py\n"
+            "--- a/t.py\n"
+            "+++ b/t.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " def f():\n"
+            "+\treturn 1\n"
+        )
+        valid_lines, _, _, line_texts = _parse_fixture(tabbed, platform="github")
+        finding = {
+            "file": "t.py",
+            "line": 2,
+            "end_line": 2,
+            "suggested_fix_code": "    return 2",
+        }
+        ok, reason = post_review._suggested_fix_gate(
+            finding,
+            apply_range=(2, 2),
+            line_texts=line_texts,
+            valid_lines=valid_lines,
+            path_lookup="t.py",
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "indentation_mismatch")
+
+    def test_an_unindented_span_conflicts_with_nothing(self):
+        """Lines without leading whitespace say nothing about the file's
+        indentation style, so they contribute nothing to the charset."""
+        valid_lines, _, _, line_texts = _parse_fixture(
+            GH_DIFF_MULTILINE, platform="github"
+        )
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "suggested_fix_code": "\tfixed2\n\tfixed3",
+        }
+        self.assertEqual(
+            post_review._suggested_fix_gate(
+                finding,
+                apply_range=(2, 3),
+                line_texts=line_texts,
+                valid_lines=valid_lines,
+                path_lookup="foo.py",
+            ),
+            (True, None),
+        )
+
+    # -- edge blank lines are content --------------------------------------
+
+    def test_a_leading_blank_line_is_content_not_padding(self):
+        """The fence normalizer takes the terminator off and NOTHING else, so a
+        stated leading blank line survives — which makes this a real change
+        against the same two lines, not a no-op."""
+        finding = self._finding(suggested_fix_code="\n    return 1\n    # tail")
+        self.assertEqual(self._gate(finding), (True, None))
+
+    def test_a_second_trailing_newline_is_content(self):
+        finding = self._finding(suggested_fix_code="    return 1\n    # tail\n\n")
+        self.assertEqual(self._gate(finding), (True, None))
+
+    def test_exactly_one_trailing_newline_is_the_terminator(self):
+        finding = self._finding(suggested_fix_code="    return 1\n    # tail\n")
+        self.assertEqual(self._reason(finding), "no_op_replacement")
+
+    # -- 12. replacement_too_large ----------------------------------------
+
+    def test_too_many_lines(self):
+        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES + 1))
+        self.assertEqual(
+            self._reason(self._finding(suggested_fix_code=body)),
+            "replacement_too_large",
+        )
+
+    def test_too_many_characters(self):
+        body = "    " + "x" * post_review._FIX_MAX_CHARS
+        self.assertEqual(
+            self._reason(self._finding(suggested_fix_code=body)),
+            "replacement_too_large",
+        )
+
+    def test_exactly_at_the_bounds_passes(self):
+        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES))
+        self.assertLessEqual(len(body), post_review._FIX_MAX_CHARS)
+        self.assertEqual(
+            self._gate(self._finding(suggested_fix_code=body)), (True, None)
+        )
+
+    def test_the_terminator_does_not_count_as_a_line(self):
+        """ONE definition of lines and chars everywhere (#63): both are measured
+        on the NORMALIZED text — ``split("\\n")`` elements, and ``len()`` in code
+        points. The terminating newline is not a 101st line."""
+        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES))
+        self.assertEqual(
+            self._gate(self._finding(suggested_fix_code=body + "\n")), (True, None)
+        )
+
+    def test_a_blank_line_past_the_terminator_does_count(self):
+        body = "\n".join(f"    line{n}" for n in range(post_review._FIX_MAX_LINES))
+        self.assertEqual(
+            self._reason(self._finding(suggested_fix_code=body + "\n\n")),
+            "replacement_too_large",
+        )
+
+    def test_the_terminator_does_not_count_toward_the_char_bound(self):
+        body = "    " + "x" * (post_review._FIX_MAX_CHARS - 4)
+        self.assertEqual(len(body), post_review._FIX_MAX_CHARS)
+        self.assertEqual(
+            self._gate(self._finding(suggested_fix_code=body + "\n")), (True, None)
+        )
+
+    # -- the vocabulary is closed -----------------------------------------
+
+    def test_every_reason_constant_is_in_the_closed_set(self):
+        self.assertEqual(
+            post_review._FIX_REASONS,
+            frozenset(
+                {
+                    "non_string",
+                    "empty",
+                    "carriage_return",
+                    "redacted",
+                    "missing_end_line",
+                    "invalid_range",
+                    "no_diff_oracle",
+                    "range_not_in_diff",
+                    "anchor_mismatch",
+                    "no_op_replacement",
+                    "indentation_mismatch",
+                    "replacement_too_large",
+                }
+            ),
+        )
+
+    def test_the_closed_vocabulary_has_twelve_members(self):
+        """Adding a reason is a deliberate act — this is the tripwire that says
+        so out loud."""
+        self.assertEqual(len(post_review._FIX_REASONS), 12)
+
+
+class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
+    """Neither poster may take a parsed-diff argument by default.
+
+    A default let a caller omit ``line_texts`` and silently disable half the
+    apply-check — the content oracle absent, every fence downgraded for a
+    reason the diff would have answered. ``parse_diff_lines`` returns all four
+    together or all four ``None``; the signature is what makes a caller say so.
+    """
+
+    def _defaults(self, func):
+        return {
+            name: p.default
+            for name, p in inspect.signature(func).parameters.items()
+            if p.default is not inspect.Parameter.empty
+        }
+
+    def test_post_github_has_no_defaulted_arguments(self):
+        self.assertEqual(self._defaults(post_review.post_github), {})
+
+    def test_post_gitlab_has_no_defaulted_arguments(self):
+        self.assertEqual(self._defaults(post_review.post_gitlab), {})
+
+
+class _FixGateRunBase(_DryRunTestBase):
+    """Drives the real ``main()`` over a diff and returns payload + streams."""
+
+    PLATFORM = "github"
+    DIFF = GH_DIFF_INDENTED
+
+    def _run(
+        self,
+        findings,
+        dry_run=True,
+        diff=None,
+        versions=None,
+        payloads=None,
+        prior=None,
+        **fake_run_kwargs,
+    ):
+        self._write(
+            {
+                "platform": self.PLATFORM,
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": "Summary",
+                "sha": "a" * 40,
+                "findings": findings,
+            }
+        )
+        argv = ["post_review.py", self.findings_path]
+        if dry_run:
+            argv.append("--dry-run")
+        stdout, stderr = io.StringIO(), io.StringIO()
+        exit_code = None
+        with (
+            patch.object(sys, "argv", argv),
+            patch.dict(os.environ, {}, clear=False),
+            patch(
+                "scripts.post_review.gitlab_prior_delivery_state",
+                return_value=(False, set(), frozenset(), None)
+                if prior is None
+                else prior,
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=self.DIFF if diff is None else diff,
+                    versions=versions,
+                    payloads=payloads,
+                    **fake_run_kwargs,
+                ),
+            ) as mock_run,
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+        ):
+            os.environ.pop("CODE_GAUNTLET_POST_MODE", None)
+            try:
+                post_review.main()
+            except SystemExit as exc:
+                exit_code = exc.code
+        return SimpleNamespace(
+            payload=self._payload() if dry_run else None,
+            out=stdout.getvalue(),
+            err=stderr.getvalue(),
+            mock_run=mock_run,
+            exit_code=exit_code,
+        )
+
+    def _finding(self, **over):
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "severity": "high",
+            "title": "Range bug",
+            "body": "Body",
+            "suggestion": "Return two instead.",
+            "suggested_fix_code": "    return 2\n    # done",
+        }
+        finding.update(over)
+        return finding
+
+    def _comment_body(self, run):
+        return run.payload["payload"]["comments"][0]["body"]
+
+    def _assert_downgraded(self, run, reason, where="foo.py:2"):
+        self.assertIn(
+            f"suggested-fix downgraded: {where} ({reason})", run.payload["skipped"]
+        )
+
+
+class TestGitHubSuggestedFixGate(_FixGateRunBase):
+    """The GitHub inline path: the fence survives only at the anchor it states."""
+
+    def test_multi_line_fix_is_kept_at_a_matching_multi_line_anchor(self):
+        run = self._run([self._finding()])
+        comment = run.payload["payload"]["comments"][0]
+        self.assertEqual(comment["start_line"], 2)
+        self.assertEqual(comment["line"], 3)
+        self.assertIn(_FENCE, comment["body"])
+        self.assertIn("    return 2\n    # done", comment["body"])
+        self.assertEqual(run.payload["skipped"], [])
+
+    def test_single_line_fix_is_kept_at_a_single_line_anchor(self):
+        run = self._run([self._finding(end_line=2, suggested_fix_code="    return 2")])
+        comment = run.payload["payload"]["comments"][0]
+        self.assertNotIn("start_line", comment)
+        self.assertIn(_FENCE, comment["body"])
+
+    def test_a_range_outside_the_diff_loses_the_fence_with_the_range(self):
+        """The anchor decision is made ABOVE the body render, so the gate sees the
+        range the comment really applies at. ``end_line`` outside the hunk degrades
+        the comment to single-line — and ``range_not_in_diff`` precedes
+        ``anchor_mismatch``, so the range failure is what the downgrade names.
+        """
+        run = self._run([self._finding(end_line=940)])
+        comment = run.payload["payload"]["comments"][0]
+        self.assertNotIn("start_line", comment)
+        self.assertEqual(comment["line"], 2)
+        self.assertNotIn(_FENCE, comment["body"])
+        self._assert_downgraded(run, "range_not_in_diff")
+
+    def test_the_gate_sees_the_anchor_the_comment_really_carries(self):
+        """Why the anchor decision is hoisted above the body render.
+
+        A gate that judged the STATED range instead would agree with the anchor
+        only by luck: here the second finding states 2..940 and the comment it
+        produces applies at line 2 alone.
+        """
+        seen = []
+        real = post_review._suggested_fix_gate
+
+        def spy(finding, **kwargs):
+            seen.append(kwargs["apply_range"])
+            return real(finding, **kwargs)
+
+        with patch("scripts.post_review._suggested_fix_gate", side_effect=spy):
+            run = self._run([self._finding(), self._finding(end_line=940)])
+        anchors = [
+            (c.get("start_line", c["line"]), c["line"])
+            for c in run.payload["payload"]["comments"]
+        ]
+        self.assertEqual(anchors, [(2, 3), (2, 2)])
+        self.assertEqual(seen, anchors)
+
+    def test_the_prose_suggestion_still_renders_after_a_downgrade(self):
+        run = self._run([self._finding(end_line=940)])
+        body = self._comment_body(run)
+        self.assertIn("**Suggested fix:**", body)
+        self.assertIn("Return two instead.", body)
+
+    def test_a_failed_diff_fetch_downgrades_the_fence(self):
+        """The diff IS the oracle. When the fetch fails there is nothing to
+        check the patch against, so the committable fence must not ship — the
+        prose suggestion carries the same content at no risk (#63)."""
+        run = self._run([self._finding()], diff_rc=1)
+        body = self._comment_body(run)
+        self.assertNotIn(_FENCE, body)
+        self.assertIn("Return two instead.", body)
+        self._assert_downgraded(run, "no_diff_oracle")
+
+    def test_edge_blank_lines_reach_the_fence_intact(self):
+        """Stated == checked == applied: the gate measured these bytes, so the
+        fence carries exactly them (less the one terminating newline)."""
+        code = "\n    return 2\n    # done\n\n"
+        run = self._run([self._finding(suggested_fix_code=code)])
+        self.assertEqual(run.payload["skipped"], [])
+        self.assertIn(
+            "```suggestion\n\n    return 2\n    # done\n\n```", self._comment_body(run)
+        )
+
+    def test_group_primary_keeps_its_fence_in_the_group_body(self):
+        """A group comment anchors on the PRIMARY's range, and only the primary's
+        fence exists in the body (`_render_corroboration` emits none)."""
+        primary = self._finding(
+            consolidation_key="foo.py:0", consolidation_primary=True
+        )
+        corroborator = {
+            "file": "foo.py",
+            "line": 3,
+            "severity": "medium",
+            "title": "B",
+            "body": "Body B",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": False,
+        }
+        run = self._run([primary, corroborator])
+        body = self._comment_body(run)
+        self.assertIn(_FENCE, body)
+        self.assertEqual(body.count(_FENCE), 1)
+        self.assertIn("Corroborating finding", body)
+
+    def test_body_section_entries_lose_the_fence(self):
+        """A corroborator with a perfectly valid range degrades into the review
+        body because its group's PRIMARY could not be anchored. Nothing in that
+        section is one-click-appliable, so its fence goes — and with every
+        earlier check passing, ``anchor_mismatch`` is what names it."""
+        primary = {
+            "file": "foo.py",
+            "line": 999,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": True,
+        }
+        corroborator = self._finding(
+            title="B",
+            consolidation_key="foo.py:0",
+            consolidation_primary=False,
+        )
+        run = self._run([primary, corroborator])
+        self.assertEqual(run.payload["payload"]["comments"], [])
+        body = run.payload["payload"]["body"]
+        self.assertIn("could not be anchored inline", body)
+        self.assertNotIn(_FENCE, body)
+        self._assert_downgraded(run, "anchor_mismatch")
+
+    # -- one integration case per remaining reason -------------------------
+
+    def test_reasons_reachable_through_the_delivery_path(self):
+        secret = "ghp_" + "A" * 24
+        cases = [
+            ("non_string", self._finding(suggested_fix_code=42)),
+            ("empty", self._finding(suggested_fix_code="   ")),
+            (
+                "redacted",
+                self._finding(suggested_fix_code=f"    token = '{secret}'"),
+            ),
+            ("missing_end_line", self._finding(end_line=None)),
+            ("invalid_range", self._finding(line=3, end_line=2)),
+            (
+                "no_op_replacement",
+                self._finding(suggested_fix_code="    return 1\n    # tail"),
+            ),
+            (
+                "indentation_mismatch",
+                self._finding(suggested_fix_code="\treturn 2\n\t# done"),
+            ),
+            (
+                "replacement_too_large",
+                self._finding(
+                    suggested_fix_code="\n".join(
+                        f"    line{n}" for n in range(post_review._FIX_MAX_LINES + 1)
+                    )
+                ),
+            ),
+        ]
+        for reason, finding in cases:
+            with self.subTest(reason=reason):
+                run = self._run([finding])
+                where = f"foo.py:{finding.get('line')}"
+                self.assertNotIn(_FENCE, self._comment_body(run))
+                self._assert_downgraded(run, reason, where=where)
+
+    # -- the apply-check readout -------------------------------------------
+
+    def test_stdout_reports_both_halves_of_the_acceptance_rate(self):
+        run = self._run([self._finding(), self._finding(end_line=940, line=2)])
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+        self.assertIn("  1 suggested fix(es) downgraded to prose.", run.out)
+
+    def test_the_readout_claims_no_delivery_in_either_mode(self):
+        """These two lines report the GATE's verdict, not an outcome on the
+        forge — so neither carries a delivery verb, and both read the same live
+        and dry-run. The per-platform count lines above own delivery."""
+        for dry_run in (True, False):
+            with self.subTest(dry_run=dry_run):
+                run = self._run([self._finding()], dry_run=dry_run)
+                self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+                self.assertNotIn("fence(s) posted", run.out)
+                self.assertNotIn("fence(s) captured", run.out)
+
+    def test_nothing_printed_when_no_finding_carried_the_field(self):
+        finding = self._finding()
+        del finding["suggested_fix_code"]
+        run = self._run([finding])
+        self.assertNotIn("apply-check", run.out)
+        self.assertNotIn("downgraded to prose", run.out)
+
+    def test_the_gate_is_identical_under_dry_run_and_live(self):
+        """``validate_position``'s precedent: a check that runs only under
+        --dry-run cannot be the thing that makes --dry-run trustworthy."""
+        findings = [self._finding(), self._finding(line=2, end_line=940)]
+        dry = self._run(findings)
+        payloads = []
+        live = self._run(findings, dry_run=False, payloads=payloads)
+        live_bodies = [c["body"] for c in payloads[0]["comments"]]
+        dry_bodies = [c["body"] for c in dry.payload["payload"]["comments"]]
+        self.assertEqual(live_bodies, dry_bodies)
+        self.assertIn("(range_not_in_diff)", live.err)
+
+    def test_caller_supplied_fences_go_through_the_same_gate(self):
+        """One path, no fork: a hand-assembled findings JSON is gated exactly as
+        an agent-emitted one (requirement 1 — previously unvalidated fences
+        posted straight through)."""
+        run = self._run([self._finding(suggested_fix_code="    return 1\n    # tail")])
+        self.assertNotIn(_FENCE, self._comment_body(run))
+        self._assert_downgraded(run, "no_op_replacement")
+
+
+class TestGitLabSuggestedFixGate(_FixGateRunBase):
+    """GitLab anchors are ALWAYS single-line, so a multi-line patch can never
+    apply there — the script never emits ``suggestion:-m+n`` (#63 D9)."""
+
+    PLATFORM = "gitlab"
+    DIFF = GL_DIFF_INDENTED
+
+    VERSIONS: ClassVar[list] = [
+        {
+            "base_commit_sha": "base1",
+            "head_commit_sha": "head1",
+            "start_commit_sha": "start1",
+        }
+    ]
+
+    def _run(self, findings, **kw):
+        kw.setdefault("versions", self.VERSIONS)
+        return super()._run(findings, **kw)
+
+    def test_single_line_fix_is_kept(self):
+        run = self._run([self._finding(end_line=2, suggested_fix_code="    return 2")])
+        self.assertIn(_FENCE, run.payload["discussions"][0]["body"])
+        self.assertEqual(run.payload["skipped"], [])
+
+    def test_multi_line_fix_is_downgraded(self):
+        run = self._run([self._finding()])
+        self.assertNotIn(_FENCE, run.payload["discussions"][0]["body"])
+        self._assert_downgraded(run, "anchor_mismatch")
+
+    def test_a_failed_diff_fetch_downgrades_the_fence(self):
+        """`glab mr diff` failing leaves no oracle at all — the discussion still
+        posts (the anchor fails open), but its fence does not (#63)."""
+        run = self._run(
+            [self._finding(end_line=2, suggested_fix_code="    return 2")], diff_rc=1
+        )
+        body = run.payload["discussions"][0]["body"]
+        self.assertNotIn(_FENCE, body)
+        self.assertIn("Return two instead.", body)
+        self._assert_downgraded(run, "no_diff_oracle")
+
+    def test_a_rerun_that_delivers_nothing_claims_no_delivery(self):
+        """The bug the readout's wording caused: every discussion is already on
+        the MR from an earlier run, so nothing is posted — but the body is still
+        rendered, so the gate still runs and still counts. Saying "posted" there
+        was a false claim."""
+        finding = self._finding(end_line=2, suggested_fix_code="    return 2")
+        key = post_review.finding_key(
+            "foo.py",
+            2,
+            finding["title"],
+            render_comment_body(post_review._key_material_finding(finding)),
+        )
+        run = self._run(
+            [finding], dry_run=False, prior=(True, {key}, frozenset(), None)
+        )
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+        self.assertNotIn("fence(s) posted", run.out)
+
+    def test_corroborator_is_gated_on_its_own_anchor(self):
+        """When the group's discussion is lost, each corroborator falls back to
+        its own discussion — anchored at its OWN line, so that is the range its
+        fence must state."""
+        primary = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": True,
+        }
+        keeps = {
+            "file": "foo.py",
+            "line": 3,
+            "end_line": 3,
+            "severity": "medium",
+            "title": "Keeps",
+            "body": "Body B",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": False,
+            "suggested_fix_code": "    # replaced",
+        }
+        payloads = []
+        run = self._run(
+            [primary, keeps],
+            dry_run=False,
+            payloads=payloads,
+            discussion_rcs=[1],
+        )
+        # The failed GROUP body renders the corroborator's title too, so the
+        # fallback is the one that is NOT a group body.
+        bodies = [p["body"] for p in payloads if "position" in p]
+        fallback = [
+            b for b in bodies if "Keeps" in b and "Corroborating finding" not in b
+        ]
+        self.assertEqual(len(fallback), 1)
+        self.assertIn(_FENCE, fallback[0])
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+
+    def test_corroborator_with_a_multi_line_range_is_downgraded(self):
+        primary = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": True,
+        }
+        spanning = {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "severity": "medium",
+            "title": "Spans",
+            "body": "Body B",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": False,
+            "suggested_fix_code": "    return 2\n    # done",
+        }
+        payloads = []
+        self._run(
+            [primary, spanning],
+            dry_run=False,
+            payloads=payloads,
+            discussion_rcs=[1],
+        )
+        bodies = [p["body"] for p in payloads if "position" in p]
+        fallback = [
+            b for b in bodies if "Spans" in b and "Corroborating finding" not in b
+        ]
+        self.assertEqual(len(fallback), 1)
+        self.assertNotIn(_FENCE, fallback[0])
+
+    def test_unanchored_note_never_carries_a_fence(self):
+        """A position-less ``/notes`` POST has nothing to apply against."""
+        primary = {
+            "file": "foo.py",
+            "line": 2,
+            "severity": "high",
+            "title": "A",
+            "body": "Body A",
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": True,
+        }
+        unanchored = {
+            "file": "foo.py",
+            "severity": "medium",
+            "title": "Unanchored",
+            "body": "Body B",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": False,
+            "suggested_fix_code": "    # replaced",
+        }
+        primary_key = post_review.finding_key(
+            "foo.py", 2, "A", render_comment_body(primary)
+        )
+        payloads = []
+        self._run(
+            [primary, unanchored],
+            dry_run=False,
+            payloads=payloads,
+            prior=(True, {primary_key}, frozenset(), None),
+        )
+        notes = [p["body"] for p in payloads if "position" not in p]
+        self.assertTrue(any("Unanchored" in b for b in notes))
+        self.assertNotIn(_FENCE, "".join(notes))
+
+    def test_body_section_entries_lose_the_fence(self):
+        run = self._run([self._finding(line=999, end_line=999)])
+        self.assertEqual(run.payload["discussions"], [])
+        self.assertNotIn(_FENCE, run.payload["summary"]["body"])
+        self._assert_downgraded(run, "range_not_in_diff", where="foo.py:999")
+
+
+class TestDeliveryKeysAreFenceIndependent(_GitlabLiveRunBase):
+    """Delivery keys must not depend on ``suggested_fix_code`` AT ALL (#63 D2).
+
+    Prior-delivery dedup (#132/#208) is retry-safe only while a finding's key is
+    the same across runs and across delivery shapes. Gating the field before the
+    key render would make the key depend on the gate's verdict; stripping it
+    unconditionally makes it depend on nothing.
+    """
+
+    def _keys(self, findings):
+        payloads = []
+        run = self._run_main(findings=findings, payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        markers = [
+            review_marker.find_finding_marker(p["body"])
+            for p in payloads
+            if "position" in p
+        ]
+        return [m["key"] for m in markers if m]
+
+    def test_key_is_byte_equal_with_and_without_the_field(self):
+        plain = dict(GL_CONTRACT_FINDINGS[0])
+        with_fix = dict(plain, end_line=61, suggested_fix_code="patched_ctx")
+        self.assertEqual(self._keys([with_fix]), self._keys([plain]))
+
+    def test_key_is_byte_equal_whether_the_gate_kept_or_stripped_the_fence(self):
+        plain = dict(GL_CONTRACT_FINDINGS[0])
+        kept = dict(plain, end_line=61, suggested_fix_code="patched_ctx")
+        stripped = dict(plain, end_line=62, suggested_fix_code="patched_ctx")
+        self.assertEqual(self._keys([kept]), self._keys([stripped]))
+
+    def test_key_is_byte_equal_grouped_and_individual(self):
+        """The #132 invariant: a member's key is its own single-finding render,
+        whichever shape ships it."""
+        member = dict(
+            GL_CONTRACT_FINDINGS[1],
+            end_line=62,
+            suggested_fix_code="patched_add",
+        )
+        individual = self._keys([member])
+        primary = dict(
+            GL_CONTRACT_FINDINGS[0],
+            consolidation_key="src/edited.py:60",
+            consolidation_primary=True,
+        )
+        grouped_member = dict(
+            member,
+            consolidation_key="src/edited.py:60",
+            consolidation_primary=False,
+        )
+        payloads = []
+        run = self._run_main(findings=[primary, grouped_member], payloads=payloads)
+        self.assertIsNone(run.exit_code)
+        group_body = next(p["body"] for p in payloads if "position" in p)
+        self.assertIn(
+            post_review.build_finding_marker("a" * 40, individual[0]), group_body
+        )
 
 
 if __name__ == "__main__":

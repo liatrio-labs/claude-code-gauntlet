@@ -362,8 +362,33 @@ const SUGGESTION_SETS = [
   ['matches injection marker', INJECTION_BODY_PATTERNS],
 ];
 
+// Delivery bound on suggested_fix_code content (#63/D8) -- the SAME two
+// numbers bound the field at render time in scripts/post_review.py
+// (`_FIX_MAX_LINES` / `_FIX_MAX_CHARS`) and in the Python filter twin
+// (scripts/filter_findings.py); change all three together. tests/test_filter_findings.py's
+// lockstep test (#63 round-1 F8) regex-parses all three assignments and asserts they agree.
+//
+// Both bound checks below measure the SAME normalized text the render-time gate does
+// (post_review.py's dedicated fence normalizer, #63 round-1 F2/F5-B): strip exactly ONE
+// trailing "\n" (the terminator) and nothing else, then lines = split("\n") elements,
+// chars = CODE POINTS of that normalized text -- .length counts UTF-16 units, which
+// disagrees with Python's len() (code points) for any astral character, so the twin uses
+// [...code].length instead (#63 round-1 F6).
+const FIX_MAX_LINES = 100;
+const FIX_MAX_CHARS = 8000;
+
+// Mirrors scripts/filter_findings.py's _normalize_fix_code_for_bound.
+function normalizeFixCodeForBound(code) {
+  return code.endsWith('\n') ? code.slice(0, -1) : code;
+}
+
 // Port of _strip_suggestion_if_injected. Only called for a finding that
-// already survived all ten title/description heuristics below.
+// already survived all ten title/description heuristics below. Returns
+// [keptFinding, phrase]: `phrase` is the SUGGESTION_SETS label that matched,
+// or null when suggestion was untouched OR stripped for a reason that is not
+// a pattern match (absent, empty, non-string) -- stripSuggestedFixCodeIfNeeded
+// below only propagates a strip on an actual injection match (#63/D8c), not
+// on a type violation.
 function stripSuggestionIfInjected(finding) {
   // A present suggestion that is not a string (possible via the retained
   // Python CLI's unvalidated --input and checkpoint resume; the JS dispatch
@@ -376,10 +401,10 @@ function stripSuggestionIfInjected(finding) {
     delete kept.suggestion;
     kept.suggestion_removed_by = 'injection';
     kept.suggestion_removal_reason = 'suggestion is not a string';
-    return kept;
+    return [kept, null];
   }
   const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
-  if (!suggestion) return finding;
+  if (!suggestion) return [finding, null];
   for (const [phrase, patterns] of SUGGESTION_SETS) {
     const m = firstMatch(patterns, suggestion);
     if (m) {
@@ -387,8 +412,49 @@ function stripSuggestionIfInjected(finding) {
       delete kept.suggestion;
       kept.suggestion_removed_by = 'injection';
       kept.suggestion_removal_reason = `suggestion ${phrase}: ${JSON.stringify(m)}`;
-      return kept;
+      return [kept, phrase];
     }
+  }
+  return [finding, null];
+}
+
+// Port of _strip_suggested_fix_code_if_needed (#63/D8). Mirrors
+// stripSuggestionIfInjected's shape for suggested_fix_code: non-string strip
+// first, then oversize, then propagation-on-suggestion-strip. Independent of
+// whether suggestion is even present -- the first two checks fire on their
+// own regardless of suggestionPhrase.
+//
+// Deliberately NO pattern scan of the code content itself: #62 measured
+// content-pattern sets killing legitimate fixes, and code trips them harder
+// than prose does.
+function stripSuggestedFixCodeIfNeeded(finding, suggestionPhrase) {
+  if (!('suggested_fix_code' in finding)) return finding;
+  const code = finding.suggested_fix_code;
+  if (typeof code !== 'string') {
+    const kept = { ...finding };
+    delete kept.suggested_fix_code;
+    kept.suggested_fix_code_removed_by = 'injection';
+    kept.suggested_fix_code_removal_reason = 'suggested_fix_code is not a string';
+    return kept;
+  }
+  const normalized = normalizeFixCodeForBound(code);
+  if (normalized.split('\n').length > FIX_MAX_LINES || [...normalized].length > FIX_MAX_CHARS) {
+    const kept = { ...finding };
+    delete kept.suggested_fix_code;
+    kept.suggested_fix_code_removed_by = 'injection';
+    kept.suggested_fix_code_removal_reason = 'suggested_fix_code exceeds the delivery bound';
+    return kept;
+  }
+  if (suggestionPhrase !== null) {
+    // A patch whose accompanying prose was flagged as injection must not
+    // survive as a one-click apply -- pattern-free and byte-identical to the
+    // Python twin's reason (the parity test only prefix-compares
+    // suggestion_removal_reason, not this key).
+    const kept = { ...finding };
+    delete kept.suggested_fix_code;
+    kept.suggested_fix_code_removed_by = 'injection';
+    kept.suggested_fix_code_removal_reason = `suggestion carried ${suggestionPhrase}`;
+    return kept;
   }
   return finding;
 }
@@ -460,7 +526,8 @@ function applyInjectionFilter(findings) {
     if (reasons.length) {
       eliminated.push({ ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') });
     } else {
-      kept.push(stripSuggestionIfInjected(finding));
+      const [strippedSuggestion, phrase] = stripSuggestionIfInjected(finding);
+      kept.push(stripSuggestedFixCodeIfNeeded(strippedSuggestion, phrase));
     }
   }
 
@@ -1020,6 +1087,9 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
   const suggestionsRemoved = afterInjection.filter((f) => f.suggestion_removed_by === 'injection').length;
+  const suggestedFixCodesRemoved = afterInjection.filter(
+    (f) => f.suggested_fix_code_removed_by === 'injection',
+  ).length;
 
   const { active, suppressed: elimSuppressed, boostedCount: consensusBoosted } = detectDisagreement(afterInjection);
   allEliminated.push(...elimSuppressed);
@@ -1039,6 +1109,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
       contested_count: contestedCount,
       injections_removed: injectionsRemoved,
       suggestions_removed: suggestionsRemoved,
+      suggested_fix_codes_removed: suggestedFixCodesRemoved,
       consensus_boosted: consensusBoosted,
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,
@@ -1871,6 +1942,14 @@ const FINDING_PROP_TYPES = {
   // FINDING_REQUIRED note below). Both are OPTIONAL here and NOT nullable: a not-applicable
   // value must be OMITTED, never emitted as null (see the nullability note under DIMENSIONS).
   suggestion: 'string', claude_md_rule: 'string',
+  // Instructed by all 7 discovery contracts (issue #63). OPTIONAL and NOT nullable, same
+  // OMIT-not-null discipline as suggestion/claude_md_rule above: a not-applicable value is
+  // omitted, never null. Declaring it here is only half the story — delivery
+  // (scripts/post_review.py) runs a deterministic apply-check before ever rendering it as a
+  // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
+  // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
+  // to delivery with this field set is not a guarantee the fence ships.
+  suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
 
@@ -3487,17 +3566,48 @@ async function discover(ctx, input) {
   // can raise it.
   const maxLineSpan = effectiveMaxLineSpan(limits);
   let droppedLineSpans = 0;
+  let droppedNoLineEnd = 0;
+  let droppedFixForImplausibleSpan = 0;
   for (const f of findings) {
     const lineEnd = f.line_end;
-    if (lineEnd === undefined || lineEnd === null) continue;
+    if (lineEnd === undefined || lineEnd === null) {
+      // Round-1 #63 fix (F4): a finding that never emitted line_end has no stated
+      // replacement range for suggested_fix_code to apply against — six stages later
+      // that's a guaranteed missing_end_line downgrade at delivery, so the field is
+      // dead payload from here on. Drop it now rather than carry it through every
+      // downstream stage; the finding itself survives, anchored at line_start, same
+      // as before.
+      if ('suggested_fix_code' in f) {
+        delete f.suggested_fix_code;
+        droppedNoLineEnd += 1;
+      }
+      continue;
+    }
     const span = lineEnd - f.line_start;
     if (!Number.isInteger(lineEnd) || span < 0 || span > maxLineSpan) {
       delete f.line_end;
+      // Issue #63: suggested_fix_code states its replacement range as line_start..line_end.
+      // Dropping line_end just destroyed that stated range, so a fence built from it would
+      // mis-apply at whatever single-line anchor line_start now resolves to — delete it in
+      // the same breath rather than let a now-unanchored patch survive to delivery. Count it
+      // too (only when it was actually present) — the sibling missing-line_end branch counts
+      // its drop and says so in its own gap; a silent discard here left the same class of
+      // loss unreported and unmeasured.
+      if ('suggested_fix_code' in f) {
+        delete f.suggested_fix_code;
+        droppedFixForImplausibleSpan += 1;
+      }
       droppedLineSpans += 1;
     }
   }
   if (droppedLineSpans > 0) {
-    gaps.push(`discover: ${droppedLineSpans} finding(s) had an implausible line_end (non-integer, before line_start, or spanning more than maxLineSpan=${maxLineSpan} lines) — line_end dropped, finding kept anchored at line_start`);
+    const fixClause = droppedFixForImplausibleSpan > 0
+      ? ` — ${droppedFixForImplausibleSpan} of those also carried suggested_fix_code: patch field(s) dropped along with the range`
+      : '';
+    gaps.push(`discover: ${droppedLineSpans} finding(s) had an implausible line_end (non-integer, before line_start, or spanning more than maxLineSpan=${maxLineSpan} lines) — line_end dropped, finding kept anchored at line_start${fixClause}`);
+  }
+  if (droppedNoLineEnd > 0) {
+    gaps.push(`discover: ${droppedNoLineEnd} finding(s) emitted suggested_fix_code without line_end — field dropped (a patch must state its range)`);
   }
 
   // Each dimension belongs to a single agent so no overlap is possible today; the Set

@@ -39,6 +39,7 @@ Output JSON schema:
             "contested_count":         N,   # findings that bypassed threshold via validator contestation
             "injections_removed":      N,   # removed by injection filter
             "suggestions_removed":     N,   # kept findings whose suggestion field was stripped by injection scan
+            "suggested_fix_codes_removed": N, # kept findings whose suggested_fix_code field was stripped by injection scan
             "consensus_boosted":       N,   # confidence boosted for co-location (same file + 10-line bucket, any agent)
             "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
             "dimension_routed":        N,   # findings routed to suggestion by dimension (BF-15a)
@@ -56,6 +57,11 @@ Each filtered finding includes:
     "suggestion_removal_reason": "..."        # present only when suggestion_removed_by is present
     # "suggestion" itself may be absent after filtering -- it is deleted, not
     # nulled, whenever suggestion_removed_by is present.
+    "suggested_fix_code_removed_by":     "injection"  # present only when suggested_fix_code was stripped
+    "suggested_fix_code_removal_reason": "..."        # present only when suggested_fix_code_removed_by is present
+    # "suggested_fix_code" itself may be absent after filtering -- it is
+    # deleted, not nulled, whenever suggested_fix_code_removed_by is present
+    # (#63/D8, mirrors the suggestion contract above).
 
 REVIEW.md parsing:
     Looks for a fenced code block or YAML-style section containing:
@@ -484,6 +490,33 @@ _INJECTION_VULN_INTRO_PATTERNS = [
 _MIN_BODY_WORDS = 10
 _HIGH_CONFIDENCE_THRESHOLD = 85
 
+# Delivery bound on suggested_fix_code content (#63/D8) -- the SAME two numbers
+# bound the field at render time in scripts/post_review.py (`_FIX_MAX_LINES` /
+# `_FIX_MAX_CHARS`) and in the JS twin (workflows/src/filterFindings.js);
+# change all three together. tests/test_filter_findings.py's lockstep test
+# (#63 round-1 F8) regex-parses all three assignments and asserts they agree.
+#
+# Both bound checks below measure the SAME normalized text the render-time gate
+# does (post_review.py's dedicated fence normalizer, #63 round-1 F2/F5-B): strip
+# exactly ONE trailing "\n" (the terminator) and nothing else, then lines =
+# split("\n") elements, chars = len() of that normalized text. Python's len()
+# already counts code points (not UTF-16 units), so no extra measure is needed
+# here -- that distinction only bites the JS twin (F6), which must use
+# [...code].length rather than .length for the same reason.
+_FIX_MAX_LINES = 100
+_FIX_MAX_CHARS = 8000
+
+
+def _normalize_fix_code_for_bound(code):
+    """Strip exactly one trailing "\\n" (the terminator) before measuring the
+    delivery bound -- mirrors scripts/post_review.py's dedicated fence
+    normalizer and workflows/src/filterFindings.js's JS twin (#63 round-1
+    F2/F5-B). An edge blank line stated by the replacement (a second, non-
+    terminator trailing "\\n") is content and must count toward the bound,
+    same as it counts toward the fence the gate later renders.
+    """
+    return code[:-1] if code.endswith("\n") else code
+
 
 def _count_words(text):
     """Return the number of words in text (whitespace-split)."""
@@ -556,6 +589,12 @@ def apply_injection_filter(findings):
     )
 
     def _strip_suggestion_if_injected(finding):
+        # Returns (kept_finding, phrase). `phrase` is the _SUGGESTION_SETS label
+        # that matched, or None when suggestion was untouched OR stripped for a
+        # reason that is not a pattern match (absent, empty, non-string) --
+        # `_strip_suggested_fix_code_if_needed` below only propagates a strip on
+        # an actual injection match (#63/D8c), not on a type violation.
+        #
         # A present suggestion that is not a string (possible via the retained
         # Python CLI's unvalidated --input and checkpoint resume; the JS
         # dispatch boundary's JSON schema pins string-only) is inert to the
@@ -567,10 +606,10 @@ def apply_injection_filter(findings):
             del kept["suggestion"]
             kept["suggestion_removed_by"] = "injection"
             kept["suggestion_removal_reason"] = "suggestion is not a string"
-            return kept
+            return kept, None
         suggestion = finding.get("suggestion", "")
         if not suggestion:
-            return finding
+            return finding, None
         for phrase, patterns in _SUGGESTION_SETS:
             m = _first_match(patterns, suggestion)
             if m:
@@ -578,7 +617,55 @@ def apply_injection_filter(findings):
                 del kept["suggestion"]
                 kept["suggestion_removed_by"] = "injection"
                 kept["suggestion_removal_reason"] = f"suggestion {phrase}: {m!r}"
-                return kept
+                return kept, phrase
+        return finding, None
+
+    def _strip_suggested_fix_code_if_needed(finding, suggestion_phrase):
+        """Mirrors `_strip_suggestion_if_injected`'s shape for
+        `suggested_fix_code` (#63/D8): non-string strip first, then oversize,
+        then propagation-on-suggestion-strip. Independent of whether
+        `suggestion` is even present -- the first two checks fire on their
+        own regardless of `suggestion_phrase`.
+
+        Deliberately NO pattern scan of the code content itself: #62 measured
+        content-pattern sets killing legitimate fixes, and code trips them
+        harder than prose does.
+        """
+        if "suggested_fix_code" not in finding:
+            return finding
+        code = finding["suggested_fix_code"]
+        if not isinstance(code, str):
+            kept = dict(finding)
+            del kept["suggested_fix_code"]
+            kept["suggested_fix_code_removed_by"] = "injection"
+            kept["suggested_fix_code_removal_reason"] = (
+                "suggested_fix_code is not a string"
+            )
+            return kept
+        normalized = _normalize_fix_code_for_bound(code)
+        if (
+            len(normalized.split("\n")) > _FIX_MAX_LINES
+            or len(normalized) > _FIX_MAX_CHARS
+        ):
+            kept = dict(finding)
+            del kept["suggested_fix_code"]
+            kept["suggested_fix_code_removed_by"] = "injection"
+            kept["suggested_fix_code_removal_reason"] = (
+                "suggested_fix_code exceeds the delivery bound"
+            )
+            return kept
+        if suggestion_phrase is not None:
+            # A patch whose accompanying prose was flagged as injection must
+            # not survive as a one-click apply -- pattern-free and byte-
+            # identical to the JS twin's reason (the parity test only
+            # prefix-compares `suggestion_removal_reason`, not this key).
+            kept = dict(finding)
+            del kept["suggested_fix_code"]
+            kept["suggested_fix_code_removed_by"] = "injection"
+            kept["suggested_fix_code_removal_reason"] = (
+                f"suggestion carried {suggestion_phrase}"
+            )
+            return kept
         return finding
 
     for finding in findings:
@@ -665,7 +752,8 @@ def apply_injection_filter(findings):
                 + reasons[0]
             )
         else:
-            passed.append(_strip_suggestion_if_injected(finding))
+            kept, phrase = _strip_suggestion_if_injected(finding)
+            passed.append(_strip_suggested_fix_code_if_needed(kept, phrase))
 
     return passed, eliminated
 
@@ -1485,6 +1573,9 @@ def main():
     suggestions_removed = sum(
         1 for f in findings if f.get("suggestion_removed_by") == "injection"
     )
+    suggested_fix_codes_removed = sum(
+        1 for f in findings if f.get("suggested_fix_code_removed_by") == "injection"
+    )
 
     # Step 4: disagreement detection (returns active findings, suppressed, boosted_count)
     findings, elim_suppressed, consensus_boosted = detect_disagreement(findings)
@@ -1518,6 +1609,7 @@ def main():
             "contested_count": contested_count,
             "injections_removed": injections_removed,
             "suggestions_removed": suggestions_removed,
+            "suggested_fix_codes_removed": suggested_fix_codes_removed,
             "consensus_boosted": consensus_boosted,
             "singleton_penalized": singleton_penalized,
             "dimension_routed": dimension_routed,

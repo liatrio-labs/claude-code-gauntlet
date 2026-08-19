@@ -120,7 +120,18 @@ CODEX_CAP_BYTES = 32_768
 # Lowered 20_685 -> 20_563 (2026-08-18, PR #216 review fix): "Session output style"
 # shrunk to a heading plus a single pointer at scripts/build_style_artifacts.py, whose
 # own docstring already states the mechanics the section had restated.
-AGENTS_SET_BUDGET_BYTES = 20_563
+# Raised 20_563 -> 20_578 (2026-08-19, #63): `suggested_fix_code` added to the Canonical
+# fields bullet. The bullet is the human index of registry.js FINDING_PROP_TYPES that
+# tests/test_dimensions_registry.py pins to the set of keys there, so a newly-declared
+# canonical field must appear on this line for that pin to keep holding true — no
+# registry.js comment states the human-readable enumeration this line exists to give a
+# reader who has not opened that file.
+# Raised 20_578 -> 20_579 (2026-08-19, #63 round-1 F9): the Python coverage floor ratchet
+# (92.1 -> 92.4) grew its provenance note by one digit ("93.1" -> "93.37", the #63 PR's
+# actual measurement) — the floor policy requires the note name the measurement it came
+# from, and a floor whose provenance doesn't match its value is the unverifiable claim
+# the repo's own rules prohibit.
+AGENTS_SET_BUDGET_BYTES = 20_579
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
