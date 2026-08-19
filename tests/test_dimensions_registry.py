@@ -205,7 +205,12 @@ def field_carries_omit_instruction(raw_block, field, source=None):
     if quoted:
         return "omit" in quoted.group(1).lower()
 
-    array_of_strings = re.match(r'\[\s*(?:"(?:[^"\\]|\\.)*"\s*,?\s*)*\]', rest)
+    # First-string-then-comma-separated-rest, not a single starred group with an optional
+    # comma: `(?:"…"\s*,?\s*)*` lets the engine partition inter-string whitespace ambiguously
+    # and backtrack exponentially on an unclosed array (CodeQL py/redos on PR #217).
+    array_of_strings = re.match(
+        r'\[\s*(?:"(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")*\s*)?\]', rest
+    )
     if array_of_strings:
         return "omit" in array_of_strings.group(0).lower()
 
