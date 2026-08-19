@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.15.0 (2026-08-19)
+
+### Features
+
+- **delivery**: Suggested_fix_code end-to-end, gated on a deterministic apply-check
+  ([#221](https://github.com/liatrio-labs/claude-code-gauntlet/pull/221),
+  [`67b4cc9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/67b4cc927885d38f271953b181ad4ceb30fd475a))
+
+
 ## v3.14.0 (2026-08-19)
 
 ### Bug Fixes
