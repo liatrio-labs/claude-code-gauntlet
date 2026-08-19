@@ -5895,6 +5895,28 @@ class TestSuggestedFixGate(unittest.TestCase):
         self.assertEqual(len(post_review._FIX_REASONS), 12)
 
 
+class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
+    """``_gated_finding`` consults ``_FIX_REASONS`` at every downgrade.
+
+    A typo'd reason string in a future edit to ``_suggested_fix_gate`` must
+    fail loudly at the FIRST downgrade it produces, not get silently recorded
+    into the stable warning line. This is what makes ``_FIX_REASONS`` more
+    than a comment other tests happen to pin.
+    """
+
+    def test_a_reason_outside_the_closed_vocabulary_raises(self):
+        finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
+        with (
+            patch(
+                "scripts.post_review._suggested_fix_gate",
+                return_value=(False, "bogus"),
+            ),
+            self.assertRaises(ValueError) as ctx,
+        ):
+            post_review._gated_finding(finding, (2, 2), {}, {})
+        self.assertIn("bogus", str(ctx.exception))
+
+
 class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
     """Neither poster may take a parsed-diff argument by default.
 

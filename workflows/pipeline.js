@@ -3482,6 +3482,15 @@ function findingSchema(spec) {
 // `dispatched` is the full fan-out list (every active agentType, whether it succeeded,
 // failed, or returned zero findings) — mergeStage() uses it so a zero-finding agent
 // stays distinguishable from one never dispatched at all (e.g. disabled via agentFlags).
+// Shared by both drop branches below: a dropped suggested_fix_code is always the
+// same operation (delete-and-report-whether-it-was-there), only the reason for
+// dropping it differs between the two call sites.
+function dropSuggestedFixCode(f) {
+  if (!('suggested_fix_code' in f)) return false;
+  delete f.suggested_fix_code;
+  return true;
+}
+
 // One parallel() call fanning out to every active AGENT. A null member -> gap AND
 // every dimension that agent covers is marked degraded: a null means the agent
 // terminally failed after the platform's schema retries (cap 5), so those dimensions
@@ -3577,10 +3586,7 @@ async function discover(ctx, input) {
       // dead payload from here on. Drop it now rather than carry it through every
       // downstream stage; the finding itself survives, anchored at line_start, same
       // as before.
-      if ('suggested_fix_code' in f) {
-        delete f.suggested_fix_code;
-        droppedNoLineEnd += 1;
-      }
+      if (dropSuggestedFixCode(f)) droppedNoLineEnd += 1;
       continue;
     }
     const span = lineEnd - f.line_start;
@@ -3593,10 +3599,7 @@ async function discover(ctx, input) {
       // too (only when it was actually present) — the sibling missing-line_end branch counts
       // its drop and says so in its own gap; a silent discard here left the same class of
       // loss unreported and unmeasured.
-      if ('suggested_fix_code' in f) {
-        delete f.suggested_fix_code;
-        droppedFixForImplausibleSpan += 1;
-      }
+      if (dropSuggestedFixCode(f)) droppedFixForImplausibleSpan += 1;
       droppedLineSpans += 1;
     }
   }

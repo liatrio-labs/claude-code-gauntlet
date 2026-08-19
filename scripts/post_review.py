@@ -1044,6 +1044,11 @@ def _gated_finding(finding, apply_range, valid_lines, line_texts):
     if ok:
         _FIX_COUNTS["kept"] += 1
         return finding
+    if reason not in _FIX_REASONS:
+        # A typo'd reason string in a future gate edit must fail loudly at the
+        # first downgrade, not silently record garbage in the stable warning
+        # line (whose readers rely on the vocabulary being closed).
+        raise ValueError(f"_suggested_fix_gate returned an unknown reason: {reason!r}")
     _FIX_COUNTS["downgraded"] += 1
     warn_skip(
         f"suggested-fix downgraded: {finding.get('file', '?')}:"
@@ -1052,6 +1057,16 @@ def _gated_finding(finding, apply_range, valid_lines, line_texts):
     stripped = dict(finding)
     del stripped["suggested_fix_code"]
     return stripped
+
+
+def _degraded_entry(filepath, line, finding, valid_lines, line_texts):
+    """One entry for the body section, which has no anchor to apply against.
+
+    Shared by both posters: a body-section entry never has an apply range, so
+    ``_gated_finding`` is always called with ``None`` here regardless of
+    platform.
+    """
+    return filepath, line, _gated_finding(finding, None, valid_lines, line_texts)
 
 
 def _key_material_finding(finding):
@@ -1369,10 +1384,6 @@ def post_github(data, valid_lines, line_texts):
 
     check_tool("gh")
 
-    def degraded(filepath, line, finding):
-        """One entry for the body section, which has no anchor to apply against."""
-        return filepath, line, _gated_finding(finding, None, valid_lines, line_texts)
-
     comments = []
     skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
     # One posted comment per consolidation group (#22 D2): findings without a stamp
@@ -1385,12 +1396,20 @@ def post_github(data, valid_lines, line_texts):
             warn_skip(
                 f"Finding '{primary.get('title', '?')}' has no line number — skipping."
             )
-            skipped_entries.append(degraded(primary.get("file", "?"), None, primary))
+            skipped_entries.append(
+                _degraded_entry(
+                    primary.get("file", "?"), None, primary, valid_lines, line_texts
+                )
+            )
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries — the corroborators never
             # merged into a comment that itself never gets posted.
             for c in corroborators:
-                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
+                    )
+                )
             continue
 
         filepath = primary["file"]
@@ -1403,9 +1422,15 @@ def post_github(data, valid_lines, line_texts):
                 f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append(degraded(filepath, line, primary))
+            skipped_entries.append(
+                _degraded_entry(filepath, line, primary, valid_lines, line_texts)
+            )
             for c in corroborators:
-                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
+                    )
+                )
             continue
 
         # The multi-line anchor decision is made HERE, ABOVE the body render, and
@@ -1592,10 +1617,6 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
                 f"rejected. Check that the MR has a version carrying all three SHAs."
             )
 
-    def degraded(filepath, line, finding):
-        """One entry for the body section, which has no anchor to apply against."""
-        return filepath, line, _gated_finding(finding, None, valid_lines, line_texts)
-
     def anchored(finding, line):
         """Gate a finding for a GitLab inline body.
 
@@ -1626,12 +1647,20 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             warn_skip(
                 f"Finding '{primary.get('title', '?')}' has no line number — skipping."
             )
-            skipped_entries.append(degraded(primary.get("file", "?"), None, primary))
+            skipped_entries.append(
+                _degraded_entry(
+                    primary.get("file", "?"), None, primary, valid_lines, line_texts
+                )
+            )
             skipped += 1
             # The primary can't anchor, so the whole group degrades into the
             # skipped section as individual entries.
             for c in corroborators:
-                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
+                    )
+                )
                 skipped += 1
             continue
 
@@ -1646,10 +1675,16 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
                 f"Skipping finding '{primary.get('title', '?')}' at {filepath}:{line} "
                 f"— line not found in diff.{diag}"
             )
-            skipped_entries.append(degraded(filepath, line, primary))
+            skipped_entries.append(
+                _degraded_entry(filepath, line, primary, valid_lines, line_texts)
+            )
             skipped += 1
             for c in corroborators:
-                skipped_entries.append(degraded(c.get("file", "?"), c.get("line"), c))
+                skipped_entries.append(
+                    _degraded_entry(
+                        c.get("file", "?"), c.get("line"), c, valid_lines, line_texts
+                    )
+                )
                 skipped += 1
             continue
 
