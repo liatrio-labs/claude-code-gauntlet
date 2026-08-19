@@ -438,6 +438,44 @@ test('discover: line_end spanning more than maxLineSpan is dropped, finding kept
   assert.ok(out.gaps.some((g) => g.includes('1 finding(s) had an implausible line_end')));
 });
 
+// Issue #63: a dropped line_end destroys the stated range suggested_fix_code claims to
+// replace (line_start..line_end) — the drop-site must delete the fence in the same breath,
+// not just the span, or a now-unanchored patch survives to delivery and mis-applies.
+test('discover: dropping an implausible line_end also deletes suggested_fix_code', async () => {
+  const out = await discoverOne(findingWith({ line_end: 940, suggested_fix_code: 'const x = 1;' }));
+  assert.equal(out.findings[0].line_end, undefined, 'line_end dropped');
+  assert.equal('suggested_fix_code' in out.findings[0], false, 'suggested_fix_code must be dropped alongside line_end');
+});
+
+// The sibling missing-line_end branch counts its dropped fences (droppedNoLineEnd) and says
+// so in its own gap. This branch must do the same: an implausible-span finding that carried
+// suggested_fix_code silently lost that patch too, and nothing counted or reported it.
+test('discover: an implausible span WITH suggested_fix_code states the patch drop in the gap', async () => {
+  const out = await discoverOne(findingWith({ line_end: 940, suggested_fix_code: 'const x = 1;' }));
+  assert.ok(
+    out.gaps.some((g) => /1 finding\(s\) had an implausible line_end/.test(g) && /1 of those also carried suggested_fix_code/.test(g) && /patch field\(s\)/.test(g)),
+    `expected the implausible-span gap to state 1 patch field dropped with the range, got: ${JSON.stringify(out.gaps)}`
+  );
+});
+
+test('discover: an implausible span WITHOUT suggested_fix_code makes no patch-drop claim', async () => {
+  const out = await discoverOne(findingWith({ line_end: 940 }));
+  assert.ok(
+    out.gaps.some((g) => /1 finding\(s\) had an implausible line_end/.test(g)),
+    'the implausible-span gap must still fire'
+  );
+  assert.ok(
+    out.gaps.every((g) => !/patch field\(s\)/.test(g)),
+    `no gap may claim a patch field was dropped when none was carried, got: ${JSON.stringify(out.gaps)}`
+  );
+});
+
+test('discover: a KEPT line_end (within maxLineSpan) leaves suggested_fix_code untouched', async () => {
+  const out = await discoverOne(findingWith({ line_end: 78, suggested_fix_code: 'const x = 1;' })); // span 10, within default 100
+  assert.equal(out.findings[0].line_end, 78, 'line_end kept');
+  assert.equal(out.findings[0].suggested_fix_code, 'const x = 1;', 'suggested_fix_code survives when its stated range is kept');
+});
+
 test('discover: line_end before line_start is dropped', async () => {
   const out = await discoverOne(findingWith({ line_start: 100, line_end: 50 }));
   assert.equal(out.findings[0].line_end, undefined);
@@ -465,6 +503,24 @@ test('discover: a finding with no line_end is untouched, no gap', async () => {
   const out = await discoverOne(findingWith({}));
   assert.equal('line_end' in out.findings[0], false);
   assert.equal(out.gaps.length, 0);
+});
+
+// Round-1 #63 fix (F4): a finding that never emitted line_end has no stated range for
+// suggested_fix_code to apply against — the field must be dropped at intake, not carried
+// dead through six stages into a guaranteed missing_end_line downgrade at delivery.
+test('discover: suggested_fix_code without line_end is dropped, with a distinct gap', async () => {
+  const out = await discoverOne(findingWith({ suggested_fix_code: 'const x = 1;' }));
+  assert.equal('line_end' in out.findings[0], false, 'line_end was never present');
+  assert.equal('suggested_fix_code' in out.findings[0], false, 'suggested_fix_code must be dropped');
+  assert.ok(
+    out.gaps.some((g) => /1 finding\(s\) emitted suggested_fix_code without line_end/.test(g)),
+    'a gap distinct from the dropped-span message names the missing-line_end case'
+  );
+});
+
+test('discover: a finding with no line_end and no suggested_fix_code stays gap-free', async () => {
+  const out = await discoverOne(findingWith({}));
+  assert.equal(out.gaps.length, 0, 'nothing to drop, nothing to report');
 });
 
 test('discover: a custom limits.maxLineSpan is honored (both directions)', async () => {

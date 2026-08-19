@@ -25,7 +25,7 @@ from bench.adapter.adapt import merge_candidates, payload_to_candidates  # noqa:
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "adapter"
 
-GITHUB_FIXTURE = FIXTURES / "github_3_comments_1_skipped.json"
+GITHUB_FIXTURE = FIXTURES / "github_4_comments_2_skipped.json"
 GITHUB_EMPTY_FIXTURE = FIXTURES / "github_empty.json"
 GITLAB_FIXTURE = FIXTURES / "gitlab_shape.json"
 
@@ -43,8 +43,16 @@ _GL_BASE = "ba5e0000000000000000000000000000000000ba"
 _GL_HEAD = "43ad0000000000000000000000000000000043ad"
 _GL_START = "57a27000000000000000000000000000000057a2"
 
-# Three findings become inline comments; the second is multi-line (end_line set)
+# Four findings become inline comments; the second is multi-line (end_line set)
 # so the emitted comment carries start_line and its ``line`` is the *end* line.
+# The fourth carries suggested_fix_code but NO end_line at all — the apply-check
+# (`_suggested_fix_gate`) fails this closed on `missing_end_line` before it ever
+# reaches the diff oracle, so `_gated_finding` strips the field and the rendered
+# comment falls back to the finding's prose `suggestion`. This is the mutation
+# target for the `_gated_finding` routing in `_github_comment` below: revert
+# that routing to `render_comment_body(f)` and this finding's comment keeps its
+# raw fence, which no longer matches the committed fixture (TestFixtureFidelity
+# goes red) and trips test_fourth_finding_downgrades_missing_end_line directly.
 GH_COMMENT_FINDINGS = [
     {
         "file": "src/auth/session.py",
@@ -73,8 +81,28 @@ GH_COMMENT_FINDINGS = [
         "severity": "critical",
         "title": "SQL injection via f-string",
         "body": "The user-supplied uid is interpolated straight into the SQL string.",
+        "end_line": 15,
         "suggested_fix_code": (
             'cursor.execute("SELECT * FROM users WHERE id = %s", (uid,))'
+        ),
+    },
+    {
+        "file": "src/api/routes.py",
+        "line": 21,
+        "severity": "high",
+        "title": "Missing pagination limit",
+        "body": (
+            "list_users() returns every row with no LIMIT clause; a large "
+            "table makes this endpoint OOM the request worker."
+        ),
+        "suggestion": (
+            "Add a LIMIT/OFFSET pair to the query and cap the page size server-side."
+        ),
+        # No end_line: this is the missing_end_line downgrade case, deliberately
+        # oracle-independent (the gate fails on this before it ever consults
+        # valid_lines/line_texts). The prose `suggestion` above is its fallback.
+        "suggested_fix_code": (
+            'cursor.execute("SELECT * FROM users LIMIT %s OFFSET %s", (limit, offset))'
         ),
     },
 ]
@@ -84,6 +112,34 @@ GH_SKIP_WARNINGS = [
         "Valid lines for this file: [3, 4, 5]"
     ),
 ]
+
+# The diff oracle a real ``post_github`` would have parsed for this hypothetical PR —
+# hand-built, not derived from an actual unified diff, because these findings are
+# synthetic fixture data with no diff of their own (unlike tests/test_post_review.py's
+# GH_DIFF_INDENTED, which backs real parsed-diff assertions). `valid_lines` covers
+# every line any finding above cites, matching `_range_is_valid`'s real multiline
+# check — including routes.py:21 (the fourth finding), present so its downgrade is
+# provably `missing_end_line` and not a `no_diff_oracle` in disguise; `line_texts`
+# only needs the one line a `suggested_fix_code` actually gates against on the
+# CONTENT checks (routes.py:15) — the OLD, vulnerable text the fence replaces. The
+# fourth finding's fence never reaches those checks (missing_end_line fails it
+# first), so it needs no `line_texts` entry of its own.
+_GH_VALID_LINES = {
+    ("src/auth/session.py", 42): 42,
+    ("src/auth/session.py", 88): 88,
+    ("src/auth/session.py", 89): 89,
+    ("src/auth/session.py", 90): 90,
+    ("src/auth/session.py", 91): 91,
+    ("src/auth/session.py", 92): 92,
+    ("src/api/routes.py", 15): 15,
+    ("src/api/routes.py", 21): 21,
+}
+_GH_LINE_TEXTS = {
+    (
+        "src/api/routes.py",
+        15,
+    ): '    cursor.execute(f"SELECT * FROM users WHERE id = {uid}")',
+}
 
 GL_FINDINGS = [
     {
@@ -102,6 +158,13 @@ GL_FINDINGS = [
     },
 ]
 
+# Neither GL_FINDINGS entry carries suggested_fix_code today, so _gated_finding
+# short-circuits before consulting either mapping — empty, not None, so the
+# builder still exercises the "a diff WAS parsed" path rather than the
+# validation-skipped one.
+_GL_VALID_LINES: dict[tuple[str, int], int] = {}
+_GL_LINE_TEXTS: dict[tuple[str, int], str] = {}
+
 
 def _reset_post_review():
     post_review.DRY_RUN = False
@@ -109,17 +172,36 @@ def _reset_post_review():
     post_review._SKIP_WARNINGS.clear()
 
 
-def _github_comment(f):
-    """Mirror post_github's per-finding comment construction exactly."""
-    comment = {
-        "path": f["file"],
-        "line": f["line"],
-        "side": "RIGHT",
-        "body": post_review.render_comment_body(f),
-    }
+def _github_comment(f, valid_lines=_GH_VALID_LINES, line_texts=_GH_LINE_TEXTS):
+    """Mirror post_github's per-finding comment construction exactly.
+
+    Including the apply-check: `apply_range` is computed by the SAME formula
+    `post_github` uses (issue #63 D2 — the multiline decision is made once,
+    above the body render, and consumed by it), and the finding is gated
+    through `_gated_finding` before `render_comment_body` ever sees it. A
+    finding whose `suggested_fix_code` this gate would downgrade must render
+    WITHOUT its fence here too, or this fixture is fiction the real poster
+    never produces.
+    """
+    line = f["line"]
+    filepath = f["file"]
     end_line = f.get("end_line")
-    if end_line and end_line != f["line"]:
-        comment["start_line"] = f["line"]
+    multiline = (
+        isinstance(end_line, int)
+        and end_line >= line
+        and end_line != line
+        and post_review._range_is_valid(valid_lines, filepath, line, end_line)
+    )
+    apply_range = (line, end_line) if multiline else (line, line)
+    gated = post_review._gated_finding(f, apply_range, valid_lines, line_texts)
+    comment = {
+        "path": filepath,
+        "line": line,
+        "side": "RIGHT",
+        "body": post_review.render_comment_body(gated),
+    }
+    if multiline:
+        comment["start_line"] = line
         comment["start_side"] = "RIGHT"
         comment["line"] = end_line
     return comment
@@ -132,11 +214,13 @@ def build_reference_github_payload(
     repo="astro",
     pr_number=1234,
     review_body="Automated review summary.",
+    valid_lines=_GH_VALID_LINES,
+    line_texts=_GH_LINE_TEXTS,
 ):
     """Build a GitHub dry-run payload via post_review's real capture path."""
     _reset_post_review()
     post_review.DRY_RUN = True
-    comments = [_github_comment(f) for f in comment_findings]
+    comments = [_github_comment(f, valid_lines, line_texts) for f in comment_findings]
     total = len(comment_findings) + len(skip_warnings)
     body = review_body + post_review.build_footer(total, _GH_SHA)
     payload = {"body": body, "event": "COMMENT", "comments": comments}
@@ -157,20 +241,30 @@ def build_reference_github_payload(
     return out
 
 
-def _gitlab_discussion(f, new_file=False):
+def _gitlab_discussion(
+    f, new_file=False, valid_lines=_GL_VALID_LINES, line_texts=_GL_LINE_TEXTS
+):
     """Mirror post_gitlab's per-finding discussion payload (sans ``old_line`` and
-    rename-aware ``old_path`` — the adapter reads neither)."""
+    rename-aware ``old_path`` — the adapter reads neither).
+
+    GitLab anchors are ALWAYS single-line (#63 D9 — this script never emits the
+    ``suggestion:-m+n`` multi-line syntax), so the apply range is always
+    ``(line, line)``, gated through `_gated_finding` exactly as `post_gitlab`'s
+    own `anchored` closure does.
+    """
+    line = f["line"]
+    gated = post_review._gated_finding(f, (line, line), valid_lines, line_texts)
     position = {
         "position_type": "text",
         "base_sha": _GL_BASE,
         "head_sha": _GL_HEAD,
         "start_sha": _GL_START,
         "new_path": f["file"],
-        "new_line": f["line"],
+        "new_line": line,
     }
     if not new_file:
         position["old_path"] = f["file"]
-    return {"body": post_review.render_comment_body(f), "position": position}
+    return {"body": post_review.render_comment_body(gated), "position": position}
 
 
 def build_reference_gitlab_payload(
@@ -179,6 +273,8 @@ def build_reference_gitlab_payload(
     project="gitlab-org/gitlab",
     mr_iid=999,
     review_body="Automated review summary.",
+    valid_lines=_GL_VALID_LINES,
+    line_texts=_GL_LINE_TEXTS,
 ):
     """Build a GitLab dry-run payload via post_review's real capture path."""
     _reset_post_review()
@@ -200,7 +296,10 @@ def build_reference_gitlab_payload(
         f"projects/{project}/merge_requests/{mr_iid}/discussions",
     ]
     for f in findings:
-        post_review.post_json(disc_cmd, _gitlab_discussion(f))
+        post_review.post_json(
+            disc_cmd,
+            _gitlab_discussion(f, valid_lines=valid_lines, line_texts=line_texts),
+        )
     for w in skip_warnings:
         post_review._SKIP_WARNINGS.append(w)
     out = post_review.build_dry_run_payload("gitlab")
@@ -219,13 +318,17 @@ def _load_fixture(path):
 
 
 class TestPayloadToCandidatesGitHub(unittest.TestCase):
-    def test_three_comments_one_skipped(self):
+    def test_four_comments_two_skipped(self):
+        # n_skipped is 2: the pre-existing "Docs typo" line-not-in-diff skip,
+        # plus the "suggested-fix downgraded" warning the apply-check emits for
+        # the fourth finding (missing_end_line) — both land in the fixture's
+        # top-level "skipped" list, which is what n_skipped counts.
         cands, stats = payload_to_candidates(str(GITHUB_FIXTURE), GOLDEN_A)
-        self.assertEqual(stats, {"n_candidates": 3, "n_skipped": 1})
+        self.assertEqual(stats, {"n_candidates": 4, "n_skipped": 2})
         self.assertIn(GOLDEN_A, cands)
         self.assertIn("deep-review", cands[GOLDEN_A])
         entries = cands[GOLDEN_A]["deep-review"]
-        self.assertEqual(len(entries), 3)
+        self.assertEqual(len(entries), 4)
         for e in entries:
             self.assertEqual(e["source"], "extracted")
             self.assertEqual(set(e), {"text", "path", "line", "source"})
@@ -265,7 +368,7 @@ class TestPayloadToCandidatesGitHub(unittest.TestCase):
 
     def test_accepts_path_object(self):
         cands, stats = payload_to_candidates(GITHUB_FIXTURE, GOLDEN_A)
-        self.assertEqual(stats["n_candidates"], 3)
+        self.assertEqual(stats["n_candidates"], 4)
 
     def test_empty_comments_yields_empty_list_not_missing_key(self):
         cands, stats = payload_to_candidates(str(GITHUB_EMPTY_FIXTURE), GOLDEN_A)
@@ -338,9 +441,9 @@ class TestMergeCandidates(unittest.TestCase):
 
         merged, stats = merge_candidates([f1, f2])
         self.assertEqual(set(merged), {GOLDEN_A, GOLDEN_B})
-        self.assertEqual(len(merged[GOLDEN_A]["deep-review"]), 3)
+        self.assertEqual(len(merged[GOLDEN_A]["deep-review"]), 4)
         self.assertEqual(len(merged[GOLDEN_B]["deep-review"]), 2)
-        self.assertEqual(stats["n_candidates"], 5)
+        self.assertEqual(stats["n_candidates"], 6)
         self.assertEqual(stats["n_skipped"], 0)
 
     def test_merge_accepts_dicts_directly(self):
@@ -348,7 +451,7 @@ class TestMergeCandidates(unittest.TestCase):
         c2, _ = payload_to_candidates(str(GITLAB_FIXTURE), GOLDEN_B)
         merged, stats = merge_candidates([c1, c2])
         self.assertEqual(set(merged), {GOLDEN_A, GOLDEN_B})
-        self.assertEqual(stats["n_candidates"], 5)
+        self.assertEqual(stats["n_candidates"], 6)
 
     def test_merge_preserves_candidate_order_within_pr(self):
         c1, _ = payload_to_candidates(str(GITHUB_FIXTURE), GOLDEN_A)
@@ -363,8 +466,8 @@ class TestMergeCandidates(unittest.TestCase):
         merged, stats = merge_candidates([c1, c2])
         # Same golden_url, same tool -> lists concatenated, no key collision loss.
         self.assertEqual(list(merged), [GOLDEN_A])
-        self.assertEqual(len(merged[GOLDEN_A]["deep-review"]), 3)
-        self.assertEqual(stats["n_candidates"], 3)
+        self.assertEqual(len(merged[GOLDEN_A]["deep-review"]), 4)
+        self.assertEqual(stats["n_candidates"], 4)
 
     def test_merge_empty_input(self):
         merged, stats = merge_candidates([])
@@ -386,6 +489,27 @@ class TestFixtureFidelity(unittest.TestCase):
     def test_github_fixture_matches_post_review(self):
         expected = build_reference_github_payload(GH_COMMENT_FINDINGS, GH_SKIP_WARNINGS)
         self.assertEqual(_load_fixture(GITHUB_FIXTURE), expected)
+
+    def test_fourth_finding_downgrades_missing_end_line(self):
+        """Direct regression for the `_gated_finding` routing in `_github_comment`.
+
+        The fourth GH_COMMENT_FINDINGS entry carries `suggested_fix_code` with
+        no `end_line`, so the apply-check fails it closed on `missing_end_line`
+        before ever consulting the diff oracle — deterministic, independent of
+        `_GH_VALID_LINES`/`_GH_LINE_TEXTS`. Unlike the byte-compare above (which
+        would also catch this if the fixture were regenerated through the same
+        unrouted path), this asserts the specific behavior by name: no fence,
+        prose fallback intact. Routing `_github_comment` through
+        `render_comment_body(f)` instead of `render_comment_body(gated)` makes
+        this fail.
+        """
+        comment = _github_comment(GH_COMMENT_FINDINGS[3])
+        self.assertNotIn("```suggestion", comment["body"])
+        self.assertIn("**Suggested fix:**", comment["body"])
+        self.assertIn(
+            "Add a LIMIT/OFFSET pair to the query and cap the page size server-side.",
+            comment["body"],
+        )
 
     def test_github_empty_fixture_matches_post_review(self):
         expected = build_reference_github_payload([], [])

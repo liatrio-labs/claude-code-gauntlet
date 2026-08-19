@@ -265,10 +265,13 @@ test('the fields issue #47 added are declared, on the right agents, with the rig
     assert.ok(!FINDING_REQUIRED.includes(field), `${field} must stay out of FINDING_REQUIRED — per-dimension promotion goes through requiredExtra, not here`);
   }
 
-  // suggested_fix_code is deliberately NOT implemented: post_review.py renders it if a caller
-  // supplies it, but no agent emits it and no schema declares it. report-format.md documents
-  // it under "Delivery-side fields" and tests/test_dimensions_registry.py fails if it ever
-  // becomes declared without the docs moving with it.
-  assert.ok(!('suggested_fix_code' in props('code-gauntlet:bug-detector')),
-    'suggested_fix_code must not be declared without implementing it end to end');
+  // Issue #63: suggested_fix_code is now a canonical field, instructed by all 7 discovery
+  // contracts and declared in FINDING_PROP_TYPES — post_review.py gates it behind a
+  // deterministic apply-check before ever rendering it as a committable fence, but the
+  // dispatch schema declares it unconditionally like suggestion/claude_md_rule above.
+  for (const spec of agentSpecs()) {
+    assert.equal(props(spec.agentType).suggested_fix_code.type, 'string', `${spec.agentType}: suggested_fix_code`);
+  }
+  assert.ok(!FINDING_REQUIRED.includes('suggested_fix_code'),
+    'suggested_fix_code must stay out of FINDING_REQUIRED — it is optional, OMIT-not-null');
 });

@@ -38,12 +38,17 @@ Every section after `{body}` is emitted only when its field is present — `null
 whitespace-only all count as absent and produce no heading.
 
 **`suggestion` always renders as prose; it never becomes a suggestion block.** Only
-`suggested_fix_code` produces the committable ```suggestion fence, and no review-pipeline agent
-emits that field. This used to be documented as a per-finding judgement call ("if `suggestion`
-looks like code, fence it"), which is precisely the wrong shape: a ```suggestion fence is a
-one-click APPLY button, so turning prose into one on a hunch writes the guess straight into the
-author's branch. The rule is now structural — a fence comes from a field that exists to be a
-patch, or it does not appear.
+`suggested_fix_code` produces the committable ```suggestion fence, and only after
+`post_review.py` runs it through a deterministic pre-render apply-check — the field must be a
+string, non-empty after redaction, ship a matching `end_line`, land inside a valid diff range,
+match this render site's actual apply range, differ from the current text, and stay within the
+size bound. Any failure strips the field before render and the finding falls back to the prose
+`suggestion`, with the reason recorded via `warn_skip`. This used to be documented as a
+per-finding judgement call ("if `suggestion` looks like code, fence it"), which is precisely the
+wrong shape: a ```suggestion fence is a one-click APPLY button, so turning prose into one on a
+hunch writes the guess straight into the author's branch. The rule is still structural — a fence
+comes from a field that exists to be a patch, or it does not appear — the apply-check is the
+mechanism that keeps that promise now that agents populate the field too.
 
 Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 
@@ -58,7 +63,11 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 
 **Findings JSON schema:**
 
-> `suggested_fix_code` below is caller-supplied only — no review-pipeline agent emits it and no dispatch schema declares it. `post_review.py` still renders it when present, for callers that construct their own post-review JSON.
+> `suggested_fix_code` below is optional and gated: every discovery agent may emit it, but
+> `post_review.py` only renders it as a `suggestion` fence when it passes the deterministic
+> apply-check (string, non-stale, matching range and anchor, within the size bound); otherwise
+> the finding falls back to the prose `suggestion`. Callers constructing their own post-review
+> JSON pass through the same gate.
 
 > `post_review.py` reads the **v2-aliased** field names (`body`, `line`, `end_line`).
 > The persist boundary adds these aliases alongside the canonical names
@@ -103,7 +112,7 @@ python3 {plugin_root}/scripts/post_review.py <findings_json_path>
   - `body` — explanation and context (delivery alias of canonical `description`; see boundary note above)
   - `suggestion` — optional prose fix advice, rendered under a **Suggested fix:** heading. Carried on every finding the pipeline produces (canonical schema), so the delivery JSON should pass it straight through.
   - `claude_md_rule` / `spec_text` — optional; whichever survives sanitize renders under a **Cited rule:** heading as a blockquote (`claude_md_rule` preferred when both survive). These are how a convention or intent finding shows the reviewer the rule it is measured against.
-  - `suggested_fix_code` — optional code block rendered as GitHub/GitLab suggestion; caller-supplied only, never populated by the review pipeline
+  - `suggested_fix_code` — optional code block, rendered as a committable GitHub/GitLab suggestion IF it passes `post_review.py`'s deterministic apply-check at the render site; otherwise stripped and the finding falls back to the prose `suggestion`. Emitted by discovery agents when the fix is a byte-exact drop-in replacement, or supplied directly by a caller's own post-review JSON — same gate either way.
   - Every optional field above treats `null`, `""` and whitespace-only identically to absent: no heading is emitted at all.
 - `owner` — repository owner (GitHub org/user or GitLab group)
 - `repo` — repository name

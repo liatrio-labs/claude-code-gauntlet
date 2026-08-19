@@ -54,6 +54,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | no | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
+| `suggested_fix_code` | string | no | Exact replacement source for `file:line_start-line_end`, emitted by discovery agents only when the fix is a byte-exact, drop-in replacement for exactly those lines. Delivery (`scripts/post_review.py`) runs a deterministic apply-check before ever rendering it as a committable GitHub/GitLab `suggestion` block (one-click apply) — non-string, stale, wrong-range, wrong-anchor, or oversized fails the check and the finding downgrades to the prose `suggestion` instead. |
 
 ### Per-dimension fields
 
@@ -69,12 +70,6 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `behavior_preserved` | string | simplification | yes | Why the simplification is behavior-preserving |
 
 A `yes` field is appended to that dimension's dispatch required list (FINDING_REQUIRED plus the row's `requiredExtra`, never the other way around — FINDING_REQUIRED itself never carries a per-dimension field): the platform rejects a finding missing it at the StructuredOutput boundary, and the agent retries. A `no` field is still contract-enforced by the agent's `.md` prose where its own dimension calls for it (e.g. `claude_md_rule` for convention findings), never by the schema — only a field the owning contract emits unconditionally (no OMIT branch) can be promoted to schema-required at all. Every per-dimension field is never nullable regardless: a not-applicable value is OMITTED, not emitted as null.
-
-### Delivery-side fields — not produced by the review pipeline
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `suggested_fix_code` | string | Exact replacement source for `file:line_start-line_end`; `scripts/post_review.py` renders it as a committable GitHub/GitLab `suggestion` block (one-click apply) IF a caller supplies it. No agent emits it and no schema declares it, so the review pipeline never populates it. It is retained as a delivery-side capability for callers that construct their own post-review JSON. Emitting it from agents was deliberately deferred because a one-click-apply patch generated with no deterministic check that it applies at the stated line range is worse than no patch. |
 
 ---
 
@@ -141,9 +136,16 @@ Example: "This PR adds JWT-based authentication to the API layer. The token vali
 against. `agents/report-writer.md` instructs the same:}
 **Cited rule:** {finding.claude_md_rule or finding.spec_text}
 
-{If a caller supplied suggested_fix_code — the review pipeline never does:}
-```suggestion
+{If finding.suggested_fix_code is present — informational only, this template does not run
+delivery's apply-check, so render it as a PLAIN fenced code block, never a ```suggestion
+fence: a suggestion fence pasted into a PR comment is a one-click apply button, and nothing
+on the report path has gated this content the way `post_review.py` gates the Inline PR
+Comment Format below.}
+Proposed replacement for {finding.file}:{finding.line_start}-{finding.line_end} (not apply-checked):
+```
+
 {finding.suggested_fix_code}
+
 ```
 
 ---
@@ -299,7 +301,8 @@ and whitespace-only all count as absent, and no heading is emitted at all.
 **Cited rule:**
 > {claude_md_rule, falling back to spec_text when there is no surviving rule — blockquoted, one `>` line per source line}
 
-[If a caller supplied suggested_fix_code — the review pipeline never does:]
+[If suggested_fix_code is present AND passes delivery's deterministic apply-check at this
+render site — see below:]
 ```suggestion
 {suggested_fix_code}
 ```
@@ -313,4 +316,4 @@ comments.
 
 ```
 
-**`suggested_fix_code` field:** Optional and delivery-side only. No agent emits it and no schema declares it, so the review pipeline never populates this field. `scripts/post_review.py` renders it as a GitHub `suggestion` block (one-click apply) or GitLab suggestion IF a caller supplying their own post-review JSON sets it. Absent that, only the prose `suggestion` field is shown. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.
+**`suggested_fix_code` field:** Optional canonical field — instructed by all 7 discovery contracts, emitted only when the fix is a byte-exact drop-in replacement for `line_start..line_end`. `scripts/post_review.py` runs a deterministic apply-check before ever rendering it as a GitHub or GitLab `suggestion` block (one-click apply): the field must be a string, non-empty after redaction, ship a matching `line_end`, match a valid diff range, land at this render site's actual apply range, differ from the current text, and stay within the size bound. Any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.

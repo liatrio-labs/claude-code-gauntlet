@@ -62,6 +62,14 @@ export const FINDING_PROP_TYPES = {
   // FINDING_REQUIRED note below). Both are OPTIONAL here and NOT nullable: a not-applicable
   // value must be OMITTED, never emitted as null (see the nullability note under DIMENSIONS).
   suggestion: 'string', claude_md_rule: 'string',
+  // Instructed by all 7 discovery contracts (issue #63). OPTIONAL and NOT nullable, same
+  // OMIT-not-null discipline as suggestion/claude_md_rule above: a not-applicable value is
+  // omitted, never null. Declaring it here is only half the story — delivery
+  // (scripts/post_review.py) runs a deterministic apply-check before ever rendering it as a
+  // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
+  // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
+  // to delivery with this field set is not a guarantee the fence ships.
+  suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
 
