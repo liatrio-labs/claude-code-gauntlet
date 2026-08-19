@@ -90,18 +90,32 @@ test('every declared field reaches the dispatch with the registry-declared type'
   }
 });
 
-test('required is the flat FINDING_REQUIRED — no per-dimension extra sneaks into it', async () => {
+test('required is FINDING_REQUIRED plus each dispatch\'s effective requiredExtra — exact per-agent table', async () => {
+  // issue #66: a field required by ALL dimensions sharing a dispatch is promoted into that
+  // dispatch's `required`; FINDING_REQUIRED itself stays the flat, per-dimension-free base
+  // every dispatch's required list is built from.
   const schemas = await discoverySchemas();
-  // A field required for ONE dimension cannot be marked required here: `required` is the one
-  // flat list shared by every agent's dispatch schema, so marking (say) criticality required
-  // would reject every non-test finding at its own dispatch.
-  const extras = new Set(DIMENSIONS.flatMap((d) => Object.keys(d.schemaExtra || {})));
+  const expectedExtras = {
+    'code-gauntlet:bug-detector': [],
+    'code-gauntlet:security-reviewer': ['attack_vector'],
+    'code-gauntlet:cross-file-impact': ['affected_consumers'],
+    'code-gauntlet:test-analyzer': ['criticality', 'failure_scenario'],
+    'code-gauntlet:conventions-and-intent': [],
+    'code-gauntlet:type-design-analyzer': [],
+    'code-gauntlet:code-simplifier': ['behavior_preserved'],
+  };
   for (const spec of agentSpecs()) {
     const { required } = schemas[spec.agentType].properties.findings.items;
-    assert.deepEqual(required, FINDING_REQUIRED, `${spec.agentType}: required list drifted`);
-    for (const field of required) {
-      assert.ok(!extras.has(field), `${field} is a per-dimension extra and must not be required`);
-    }
+    assert.deepEqual(
+      required.slice(0, FINDING_REQUIRED.length),
+      FINDING_REQUIRED,
+      `${spec.agentType}: FINDING_REQUIRED must be an exact prefix of the dispatched required list`,
+    );
+    assert.deepEqual(
+      required,
+      [...FINDING_REQUIRED, ...expectedExtras[spec.agentType]],
+      `${spec.agentType}: required list does not match FINDING_REQUIRED + expected requiredExtra`,
+    );
   }
 });
 
@@ -244,9 +258,11 @@ test('the fields issue #47 added are declared, on the right agents, with the rig
   const conventions = props('code-gauntlet:conventions-and-intent');
   assert.equal(conventions.spec_text.type, 'string', 'intent -> spec_text');
 
-  // None of the five may be required: required is flat across all dimensions.
+  // None of the five may enter the FLAT FINDING_REQUIRED list — criticality and
+  // failure_scenario ARE dispatch-required (issue #66), but through test_coverage's
+  // requiredExtra, never by touching this canonical, per-dimension-free base list.
   for (const field of ['suggestion', 'claude_md_rule', 'criticality', 'failure_scenario', 'spec_text']) {
-    assert.ok(!FINDING_REQUIRED.includes(field), `${field} must stay schema-optional`);
+    assert.ok(!FINDING_REQUIRED.includes(field), `${field} must stay out of FINDING_REQUIRED — per-dimension promotion goes through requiredExtra, not here`);
   }
 
   // suggested_fix_code is deliberately NOT implemented: post_review.py renders it if a caller

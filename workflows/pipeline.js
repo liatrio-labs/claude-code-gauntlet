@@ -1874,15 +1874,21 @@ const FINDING_PROP_TYPES = {
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
 
-// The subset findingItemSchema marks `required`. Deliberately NOT extended by this fix:
-// `required` is ONE flat list shared by every agent's dispatch schema (all nine dimensions —
-// a multi-dimension agent's findings arrive mixed in one dispatch), so a field that is
-// required for one dimension — claude_md_rule for convention, spec_text for intent,
-// criticality and failure_scenario for test_coverage — cannot be marked required here
-// without making it required for all nine. Those stay contract-required/schema-optional, enforced by the agent
-// .md prose, the same bucket hidden_errors and invalid_state_example already sit in. Adding a
-// per-dimension `requiredExtra` mechanism is tracked separately; do not fake it by appending
-// a single-dimension field to this array.
+// FINDING_REQUIRED stays the flat canonical list shared by every dispatch schema — it names
+// only fields every dimension emits, so it can never itself carry a single-dimension name.
+// Per-dimension requirements live one level down, on each DIMENSIONS row's `requiredExtra`
+// (issue #66): agentSpecs() intersects across a multi-dimension agent's rows, so a field
+// required for only ONE dimension of a shared dispatch (conventions-and-intent mixes
+// convention/intent/comment_accuracy in one schema) can never be enforced there — union
+// semantics would force fabrication on the sibling dimensions. Conditional schema enforcement
+// is not a provider-portable escape hatch: a TOP-LEVEL `oneOf`/`allOf`/`anyOf` in input_schema
+// is rejected outright (API 400, measured 2026-08-18); `if`/`then` nested inside `items` was
+// accepted AND enforced by the retry loop in that same measurement, but only on the first-party
+// API — unmeasured on Bedrock/Vertex, so this rule sticks to provider-portable constructs only.
+// So the promotion rule is narrow: only a field whose owning contract emits it UNCONDITIONALLY
+// (no "OMIT this field" branch) may be listed in requiredExtra; a genuinely conditional field
+// (claude_md_rule, spec_text, hidden_errors, invalid_state_example) stays contract-enforced,
+// the same retry-storm-avoidance class the OMIT-not-null rule already governs.
 const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 
 // `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema above —
@@ -1898,7 +1904,8 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 // simplification -> behavior_preserved. The pre-reconciliation declarations (type_design
 // encapsulation/invariants/enforcement/usefulness; simplification before/after) named fields
 // no agent ever emitted top-level and no code consumes — pure schema noise now removed.
-// Extras are OPTIONAL by construction (never in FINDING_REQUIRED) and NOT nullable: the
+// Extras are optional by default — a row promotes one to dispatch-required only through
+// `requiredExtra` below, never by touching FINDING_REQUIRED — and NOT nullable: the
 // platform schema contract pins `type` to a single string (no union types), so a
 // not-applicable extra must be OMITTED, never emitted as null — the agent contracts say
 // "OMIT this field", and a null here is the same retry-storm class as string confidence.
@@ -1906,25 +1913,41 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 // rows' extras (agentSpecs in stages.js), so scoping spec_text to the `intent` row still
 // makes it declarable on that agent's convention and comment_accuracy findings — the
 // per-dimension scoping is documentation of ownership, not an emission restriction.
+//
+// `requiredExtra` (issue #66) names the subset of a row's OWN `schemaExtra` — never a
+// canonical FINDING_PROP_TYPES field — that dimension's owning contract emits UNCONDITIONALLY —
+// no OMIT branch — so the schema can safely require them without ever rejecting a compliant
+// finding. Narrowed to schemaExtra deliberately: a canonical field, by definition, is one every
+// dimension emits unconditionally already, so its unconditional-ness belongs in
+// FINDING_REQUIRED directly, not re-declared piecemeal on a row-by-row requiredExtra — a
+// canonical promotion routed through here would be documented nowhere the Canonical fields
+// table's Required-column lockstep test looks. Populated by a full audit of
+// the seven contracts: security -> attack_vector, cross_file_impact -> affected_consumers,
+// test_coverage -> criticality + failure_scenario, simplification -> behavior_preserved. Every
+// other row is `[]`: bug's hidden_errors, conventions-and-intent's claude_md_rule/spec_text,
+// and type_design's invalid_state_example all carry an explicit OMIT branch in their contract
+// (conventions-and-intent additionally can't promote a single-dimension field at all — see the
+// agentSpecs comment in stages.js), so they stay contract-enforced. findingItemSchema
+// (stages.js) appends a spec's effective requiredExtra onto FINDING_REQUIRED per dispatch.
 const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, requiredExtra: ['attack_vector'], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, modelOverride: null, promptExtra: null },
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
     // criticality is a 1-10 IMPACT scale (agents/test-analyzer.md); bound it in the schema
     // fragment so StructuredOutput rejects 0/-5/999 the same way items is required on arrays.
     // confidence stays unbound here and is clamped later — validators adjust it at runtime.
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
-    modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    requiredExtra: ['criticality', 'failure_scenario'], modelOverride: null, promptExtra: null },
+  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
-    schemaExtra: { spec_text: 'string' }, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    schemaExtra: { spec_text: 'string' }, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { invalid_state_example: 'string' }, modelOverride: null, promptExtra: null },
+    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], modelOverride: null, promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
-    schemaExtra: { behavior_preserved: 'string' }, modelOverride: null, promptExtra: null },
+    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], modelOverride: null, promptExtra: null },
 ];
 
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
@@ -3183,24 +3206,69 @@ function summarizeMergePrompt(inp, partials) {
 
 // --- Phase 2: Discover ------------------------------------------------------
 
+// intersectRequiredExtra(rows) -> string[] (issue #66). The safe algebra for a multi-dimension
+// agent's effective requiredExtra: a field is dispatch-required only if EVERY row (dimension)
+// sharing that agent's one dispatch requires it. Union semantics would be unsafe — promoting a
+// single-dimension's required field (e.g. a hypothetical convention-only requirement) onto the
+// whole conventions-and-intent dispatch would reject every intent/comment_accuracy finding that
+// correctly omits it. Order-independent (sorted) so the result never depends on DIMENSIONS row
+// iteration order. Exported standalone so the intersection can be exercised with synthetic rows
+// without needing to mutate the module-level registry.
+//
+// registry.test.js's sibling-parity test ("rows sharing an agentType declare identical
+// requiredExtra sets") is the actual AUTHORITY that keeps this safe on the real registry: it
+// fails the build the moment a multi-dimension agent's rows disagree, so on a healthy tree this
+// intersection is an IDENTITY (every sibling already agrees, so nothing is ever actually
+// dropped). This function is not what makes divergence safe — that guard is. It is the
+// fail-safe ALGEBRA underneath: if a divergence somehow reached runtime anyway (a bypassed
+// guard, a registry built by different code some day), the intersection still degrades safely
+// — dropping the disputed field from `required` — instead of the union's failure mode, which
+// would force every compliant OMIT-ing finding on a sibling dimension to fabricate a value it
+// was correctly told to omit.
+function intersectRequiredExtra(rows) {
+  if (!rows || rows.length === 0) return [];
+  let acc = new Set(rows[0].requiredExtra || []);
+  for (const row of rows.slice(1)) {
+    const next = new Set(row.requiredExtra || []);
+    acc = new Set([...acc].filter((f) => next.has(f)));
+  }
+  return [...acc].sort();
+}
+
 // Group DIMENSIONS by agentType, unioning each agent's per-dimension schemaExtra into
 // one finding schema. One task per unique AGENT (7) — agents covering several
 // dimensions (conventions-and-intent -> convention/intent/comment_accuracy) dispatch once.
-function agentSpecs() {
+// `requiredExtra` on the returned spec is the INTERSECTION of that agent's rows' requiredExtra
+// (intersectRequiredExtra above), not a union like schemaExtra — see the registry.js note on
+// why a per-dimension required field cannot safely promote onto sibling dimensions.
+//
+// Takes `dims` (defaults to the module-level DIMENSIONS) so the intersection-through-grouping
+// seam can be exercised with synthetic rows in tests, independent of the real registry. Agent
+// order is derived from `dims` itself (`[...new Set(dims.map(d => d.agentType))]`), NOT from
+// the module-level AGENTS constant — mapping over AGENTS here would look up entries by an
+// agentType a synthetic `dims` never populated and return undefined specs. For the default
+// call this produces the byte-identical order AGENTS already pins (see registry.test.js).
+function agentSpecs(dims = DIMENSIONS) {
   const byAgent = new Map();
-  for (const d of DIMENSIONS) {
-    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null });
+  for (const d of dims) {
+    if (!byAgent.has(d.agentType)) byAgent.set(d.agentType, { agentType: d.agentType, dimensions: [], schemaExtra: {}, conditionalFlags: [], promptExtra: null, rows: [] });
     const spec = byAgent.get(d.agentType);
     spec.dimensions.push(d.dimension);
     Object.assign(spec.schemaExtra, d.schemaExtra || {});
     spec.conditionalFlags.push(d.conditionalFlag);
+    spec.rows.push(d);
     // promptExtra is scoped per AGENT, not per dimension — every DIMENSIONS row for a
     // multi-dimension agent is expected to carry the same value (see registry.js), so a
     // truthy value on any of an agent's rows sets it for the whole spec.
     if (d.promptExtra) spec.promptExtra = d.promptExtra;
   }
-  // Preserve AGENTS order (derived from DIMENSIONS) so dispatch order is deterministic.
-  return AGENTS.map((a) => byAgent.get(a));
+  const order = [...new Set(dims.map((d) => d.agentType))];
+  return order.map((a) => {
+    const spec = byAgent.get(a);
+    spec.requiredExtra = intersectRequiredExtra(spec.rows);
+    delete spec.rows;
+    return spec;
+  });
 }
 
 // An agent is active when at least one of its dimensions is enabled. A dimension is
@@ -3287,13 +3355,28 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
 // affected_consumers are declared); the shorthand keeps the common case terse while the
 // fragment form supports arrays the platform's schema validator requires `items` on.
 // schemaExtra wins on a key collision — a dimension may narrow a canonical field, never the
-// reverse — and `required` is always the flat FINDING_REQUIRED (see its note in registry.js).
-function findingItemSchema(schemaExtra) {
+// reverse. `required` is FINDING_REQUIRED plus the dispatch's effective `requiredExtra`
+// (issue #66, agentSpecs' intersection) — empty for bug-detector, conventions-and-intent and
+// type-design-analyzer, so those three dispatch the byte-identical flat list they always did.
+//
+// The promotion's blast radius (why registry.js's requiredExtra comment demands
+// contract-UNCONDITIONAL fields only): a `required` array is a hard StructuredOutput
+// constraint on every element of `findings`, so ONE finding omitting a required field makes
+// the whole `{ findings, complete, total_seen }` envelope a schema violation, not just that
+// one finding — the platform retries the WHOLE agent dispatch (cap 5) with the validation
+// error fed back. If retries exhaust, `parallel()` resolves that member to null and discover()
+// treats it as a terminal agent failure: EVERY dimension that agent owns degrades (see
+// discover's null-member handling below), not just the dimension whose field was missing.
+// A conditionally-omitted field (claude_md_rule, spec_text, hidden_errors,
+// invalid_state_example) promoted here would make that omission — which the contract itself
+// tells the model to do — a self-inflicted retry storm on every dimension the agent covers.
+function findingItemSchema(schemaExtra, requiredExtra) {
   const props = {};
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : t;
   }
-  return { type: 'object', properties: props, required: FINDING_REQUIRED, additionalProperties: false };
+  const required = requiredExtra && requiredExtra.length ? [...FINDING_REQUIRED, ...requiredExtra] : FINDING_REQUIRED;
+  return { type: 'object', properties: props, required, additionalProperties: false };
 }
 
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
@@ -3307,7 +3390,7 @@ function findingSchema(spec) {
     properties: {
       findings: {
         type: 'array',
-        items: findingItemSchema(spec.schemaExtra),
+        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra),
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },

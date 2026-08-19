@@ -180,6 +180,8 @@ Each finding is a JSON object with this shape:
 {"id": "test-<n>", "dimension": "test_coverage", "severity": "<critical|high|medium|low>", "criticality": <1-10>, "confidence": <0-100>, "file": "<path of the production file with the untested behavior>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary of the coverage gap>", "description": "<single-paragraph prose explaining what behavior is untested and why it matters — no code blocks, no multi-line snippets>", "evidence": "<specific code or context that shows the gap>", "suggestion": "<concrete test case or scenario to add, with example if helpful>", "failure_scenario": "<concrete example of a bug this test gap would fail to catch>", "claude_md_rule": "<the documented project rule this finding violates, quoted with its source file (CLAUDE.md/REVIEW.md/AGENTS.md). OMIT this field entirely when no documented rule applies — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "cross_file_refs": ["<test files or related files involved in this finding>"]}
 ```
 
+`criticality` and `failure_scenario` are required by the dispatch schema — a finding without either is rejected at the StructuredOutput boundary and retried, so both must always be present.
+
 **Example:**
 
 [investigation of missing error path test for processPayment()]

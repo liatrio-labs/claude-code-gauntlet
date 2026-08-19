@@ -16,9 +16,9 @@ Subagent contracts. Each `.md` is a system prompt with enforced YAML frontmatter
   fails the agent. `tests/test_dimensions_registry.py` fails the build when the two drift.
 - **Declared-but-optional fields are not nullable.** A not-applicable value is *omitted*, never
   `null`; the platform types each property to a single type and a null burns retries.
-- **`required` is one flat list shared by every dimension.** A field a contract calls required for
-  its own dimension is contract-enforced, not schema-enforced. Do not fake it by appending a
-  single-dimension field to `FINDING_REQUIRED`.
+- **`required` is `FINDING_REQUIRED` plus per-row `requiredExtra`.** Required only when the
+  contract emits a field unconditionally (no OMIT branch); a multi-dimension agent requires it
+  only when every sibling dimension does too.
 - `dimension` — short name from agent output: `"bug"`, `"security"`, `"cross_file_impact"`, `"test_coverage"`, `"convention"`, `"intent"`, `"comment_accuracy"`, `"type_design"`, `"simplification"`. Never the agent name. `agent` is injected by the orchestrator at merge; agents do not emit it.
 - **Canonical fields** — every dispatch schema declares exactly these: `id`, `file`, `line_start`, `line_end`, `title`, `description`, `severity`, `confidence`, `dimension`, `origin`, `evidence`, `suggestion`, `claude_md_rule`, `cross_file_refs`.
 - **Per-dimension extras** — one entry on the owning registry row: `hidden_errors` (bug), `attack_vector` (security), `affected_consumers` (cross_file_impact), `criticality` + `failure_scenario` (test_coverage), `spec_text` (intent), `invalid_state_example` (type_design), `behavior_preserved` (simplification).

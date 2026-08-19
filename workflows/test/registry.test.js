@@ -1,7 +1,8 @@
 // registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy } from '../src/registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, resolvePolicy } from '../src/registry.js';
+import { intersectRequiredExtra, agentSpecs } from '../src/stages.js';
 
 test('7 unique discovery agents', () => { assert.equal(AGENTS.length, 7); });
 test('conventions-and-intent covers 3 dimensions', () => {
@@ -110,4 +111,108 @@ test('promptExtra: security sweep on security-reviewer, typo/naming on bug + con
 // label — this is the guard that would.
 test('AGENT_LABELS key set is exactly AGENTS — a new agent needs a label too', () => {
   assert.deepEqual(Object.keys(AGENT_LABELS).sort(), [...AGENTS].sort());
+});
+
+// --- requiredExtra (issue #66) ----------------------------------------------------
+
+test('every DIMENSIONS row declares requiredExtra as an array of field-name strings', () => {
+  for (const d of DIMENSIONS) {
+    assert.ok(Array.isArray(d.requiredExtra), `${d.dimension}: requiredExtra must be an array`);
+    for (const field of d.requiredExtra) {
+      assert.equal(typeof field, 'string', `${d.dimension}: requiredExtra entries must be strings`);
+    }
+  }
+});
+
+test('every requiredExtra entry is a key of its own row\'s schemaExtra — never a canonical FINDING_PROP_TYPES field', () => {
+  // F9: narrowed deliberately. A canonical field is, by definition, already emitted
+  // unconditionally by every dimension — its promotion belongs in FINDING_REQUIRED directly,
+  // not smuggled in piecemeal through one row's requiredExtra, where the Canonical fields
+  // table's Required-column lockstep test would never see it.
+  for (const d of DIMENSIONS) {
+    const declared = new Set(Object.keys(d.schemaExtra || {}));
+    for (const field of d.requiredExtra) {
+      assert.ok(declared.has(field), `${d.dimension}: requiredExtra names "${field}", which is not a key of this row's own schemaExtra`);
+      assert.ok(!(field in FINDING_PROP_TYPES), `${d.dimension}: requiredExtra names "${field}", a canonical field — promote it via FINDING_REQUIRED, not requiredExtra`);
+    }
+  }
+});
+
+test('requiredExtra entries are disjoint from FINDING_REQUIRED', () => {
+  for (const d of DIMENSIONS) {
+    for (const field of d.requiredExtra) {
+      assert.ok(!FINDING_REQUIRED.includes(field), `${d.dimension}: "${field}" is already in FINDING_REQUIRED — do not duplicate it in requiredExtra`);
+    }
+  }
+});
+
+test('rows sharing an agentType declare identical requiredExtra sets — a silent per-row drop must fail the build', () => {
+  // agentSpecs() intersects, but the registry itself should never author a divergence in the
+  // first place: a row whose requiredExtra differs from its siblings would have that field
+  // silently dropped by the intersection, declared but unenforced with no signal anywhere.
+  const seen = new Map();
+  for (const d of DIMENSIONS) {
+    const key = [...d.requiredExtra].sort().join(',');
+    if (seen.has(d.agentType)) {
+      assert.equal(
+        key,
+        seen.get(d.agentType),
+        `${d.agentType}: rows disagree on requiredExtra (${d.dimension} says [${key}]) — the ` +
+          'intersection would silently drop the difference instead of failing loud',
+      );
+    } else {
+      seen.set(d.agentType, key);
+    }
+  }
+});
+
+test('intersectRequiredExtra: a field required by only one of an agent\'s rows is not enforced', () => {
+  assert.deepEqual(intersectRequiredExtra([{ requiredExtra: ['x'] }, { requiredExtra: [] }]), []);
+});
+
+test('intersectRequiredExtra: a field required by every row of an agent stays enforced', () => {
+  assert.deepEqual(intersectRequiredExtra([{ requiredExtra: ['x'] }, { requiredExtra: ['x'] }]), ['x']);
+});
+
+test('intersectRequiredExtra: empty rows list yields empty result', () => {
+  assert.deepEqual(intersectRequiredExtra([]), []);
+});
+
+// agentSpecs(dims) end-to-end (F2): the call site that actually threads intersectRequiredExtra
+// into a dispatch spec is worth testing directly — a regression that replaces
+// `intersectRequiredExtra(spec.rows)` with e.g. first-row-verbatim leaves every OTHER test in
+// this suite green today, because every real agentType's rows already agree (the sibling-parity
+// test above enforces that on the live registry, making the intersection an identity there).
+test('agentSpecs(dims) default call matches AGENTS order exactly', () => {
+  assert.deepEqual(agentSpecs().map((s) => s.agentType), AGENTS);
+});
+
+test('agentSpecs(dims): a field required by only one of two synthetic rows sharing an agentType is NOT in the spec\'s requiredExtra', () => {
+  const dims = [
+    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, schemaExtra: {}, requiredExtra: ['x'], promptExtra: null },
+    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, schemaExtra: {}, requiredExtra: [], promptExtra: null },
+  ];
+  const specs = agentSpecs(dims);
+  assert.equal(specs.length, 1);
+  assert.deepEqual(specs[0].requiredExtra, []);
+});
+
+test('agentSpecs(dims): a field required by every row sharing an agentType IS in the spec\'s requiredExtra', () => {
+  const dims = [
+    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, schemaExtra: {}, requiredExtra: ['x'], promptExtra: null },
+    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, schemaExtra: {}, requiredExtra: ['x'], promptExtra: null },
+  ];
+  const specs = agentSpecs(dims);
+  assert.equal(specs.length, 1);
+  assert.deepEqual(specs[0].requiredExtra, ['x']);
+});
+
+test('agentSpecs(dims): order is derived from dims itself, not the module-level AGENTS constant', () => {
+  // A synthetic agentType AGENTS never heard of must still produce a real spec (not
+  // undefined) — the bug F2 guards against: mapping over the module-level AGENTS here would
+  // look this agentType up and return undefined.
+  const dims = [{ agentType: 'synthetic:only-here', dimension: 'dim_z', conditionalFlag: null, schemaExtra: {}, requiredExtra: [], promptExtra: null }];
+  const specs = agentSpecs(dims);
+  assert.deepEqual(specs.map((s) => s.agentType), ['synthetic:only-here']);
+  assert.ok(specs[0], 'spec must be a real object, not undefined');
 });

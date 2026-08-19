@@ -38,6 +38,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -119,6 +120,7 @@ def registry():
             "  dimensions: m.DIMENSIONS.map(d => ({"
             "    dimension: d.dimension, agentType: d.agentType,"
             "    extras: Object.fromEntries(Object.entries(d.schemaExtra || {}).map(([k, v]) => [k, t(v)])),"
+            "    requiredExtra: d.requiredExtra || [],"
             "  })),"
             "})))"
         )
@@ -162,6 +164,94 @@ def all_extras():
         for field in row["extras"]:
             owner[field] = row["dimension"]
     return owner
+
+
+def all_required_extras():
+    """The set of per-dimension fields that are dispatch-required somewhere (issue #66).
+
+    Every field with a non-empty requiredExtra currently lives on a single-dimension agent
+    (security, cross_file_impact, test_coverage, simplification), so the row-level set and the
+    post-intersection agentSpecs()-effective set agree; this helper reads the row-level
+    declaration directly, which is what report-format.md's per-field table documents.
+    """
+    required = set()
+    for row in registry()["dimensions"]:
+        required |= set(row["requiredExtra"])
+    return required
+
+
+def field_carries_omit_instruction(raw_block, field, source=None):
+    """True if `field`'s own value inside one raw ```json contract block mentions OMIT.
+
+    Scoped to the field's OWN value (not the whole block) so an OMIT instruction on a
+    neighbouring field in the same block — e.g. claude_md_rule sitting beside attack_vector —
+    can never false-positive this guard. Recognizes every value shape a contract block
+    actually uses: a quoted string placeholder (`"field": "<...>"`), an array of quoted
+    strings (`"field": ["<...>"]`, the affected_consumers shape — issue #66 promoted an
+    ARRAY field and the original version of this guard only handled a scalar, silently
+    never inspecting it), an unquoted angle-bracket placeholder (`"field": <1-10>`), and a
+    bare JSON literal (`"field": 9`, the criticality worked example).
+
+    A field present in the block whose value matches NONE of those shapes raises, naming
+    `source` (the file) and `field`, rather than returning False — this file's own
+    convention (see the module docstring): a silent skip is the one failure mode that would
+    let this guard quietly stop guarding.
+    """
+    key_match = re.compile(r'"' + re.escape(field) + r'"\s*:\s*').search(raw_block)
+    if not key_match:
+        return False
+    rest = raw_block[key_match.end() :]
+
+    quoted = re.match(r'"((?:[^"\\]|\\.)*)"', rest)
+    if quoted:
+        return "omit" in quoted.group(1).lower()
+
+    # First-string-then-comma-separated-rest, not a single starred group with an optional
+    # comma: `(?:"…"\s*,?\s*)*` lets the engine partition inter-string whitespace ambiguously
+    # and backtrack exponentially on an unclosed array (CodeQL py/redos on PR #217).
+    array_of_strings = re.match(
+        r'\[\s*(?:"(?:[^"\\]|\\.)*"(?:\s*,\s*"(?:[^"\\]|\\.)*")*\s*)?\]', rest
+    )
+    if array_of_strings:
+        return "omit" in array_of_strings.group(0).lower()
+
+    angle_bracket = re.match(r"<[^>]*>", rest)
+    if angle_bracket:
+        return "omit" in angle_bracket.group(0).lower()
+
+    bare_literal = re.match(r"(?:-?\d+(?:\.\d+)?|true|false|null)\s*(?=[,}])", rest)
+    if bare_literal:
+        return False  # a bare number/bool/null cannot carry OMIT prose by construction
+
+    raise AssertionError(
+        f"field_carries_omit_instruction: {field!r} in "
+        f"{source or 'a contract block'} has a value shape this parser does not recognize "
+        "(not a quoted string, array-of-strings, angle-bracket placeholder, or bare "
+        f"literal) — extend the parser rather than silently return False: {rest[:80]!r}"
+    )
+
+
+# The exact canonical phrase every requiredExtra field's owning contract must use (F5, issue
+# #66) — pinned literally so a paraphrase silently stops matching this guard the same way a
+# grep for "suggestion" would (see the module docstring's warning against prose-frequency
+# checks). Matched per LINE, not per file, so the backticked field name(s) attributed to the
+# claim are exactly the ones sharing that sentence — a phrase on one line making no claim
+# about a field named three paragraphs away must not count as a claim about it.
+_DISPATCH_REQUIRED_PHRASE = "required by the dispatch schema"
+
+
+def dispatch_required_claims(name):
+    """Field names agents/<name>.md's prose claims are 'required by the dispatch schema'.
+
+    Scans line by line: a line containing the canonical phrase contributes every backticked
+    field name ON THAT LINE to the claimed set.
+    """
+    text = (REPO / "agents" / f"{name}.md").read_text()
+    claimed = set()
+    for line in text.splitlines():
+        if _DISPATCH_REQUIRED_PHRASE in line:
+            claimed |= set(_BACKTICKED_FIELD.findall(line))
+    return claimed
 
 
 def raw_contract_blocks(name):
@@ -329,6 +419,42 @@ class TestDimensionsRegistry(unittest.TestCase):
                 f"dimension {row['dimension']} names {row['agentType']}, "
                 f"but {path.relative_to(REPO)} does not exist",
             )
+
+    def test_required_extra_is_a_subset_of_the_rows_own_schema_extra(self):
+        # issue #66 / F9: a requiredExtra entry must be a key of THIS row's own schemaExtra —
+        # never a canonical FINDING_PROP_TYPES field. Narrowed deliberately: a canonical field
+        # is, by definition, already emitted unconditionally by every dimension, so promoting
+        # it belongs in FINDING_REQUIRED directly, where the Canonical fields table's
+        # Required-column lockstep test actually looks — routed through one row's
+        # requiredExtra instead, a canonical promotion would be documented nowhere.
+        prop_types = set(registry()["propTypes"])
+        for row in registry()["dimensions"]:
+            declared = set(row["extras"])
+            for field in row["requiredExtra"]:
+                self.assertIn(
+                    field,
+                    declared,
+                    f"{row['dimension']}: requiredExtra names {field!r}, which is not a key "
+                    "of this row's own schemaExtra",
+                )
+                self.assertNotIn(
+                    field,
+                    prop_types,
+                    f"{row['dimension']}: requiredExtra names {field!r}, a canonical "
+                    "FINDING_PROP_TYPES field — promote it via FINDING_REQUIRED, not "
+                    "requiredExtra",
+                )
+
+    def test_required_extra_is_disjoint_from_finding_required(self):
+        required = set(registry()["required"])
+        for row in registry()["dimensions"]:
+            for field in row["requiredExtra"]:
+                self.assertNotIn(
+                    field,
+                    required,
+                    f"{row['dimension']}: {field!r} is already in FINDING_REQUIRED — "
+                    "requiredExtra must not repeat it",
+                )
 
 
 class TestContractSchemaLockstep(unittest.TestCase):
@@ -547,6 +673,146 @@ class TestContractSchemaLockstep(unittest.TestCase):
             "criticality must be declared number, not string",
         )
 
+    def test_required_extra_fields_carry_no_omit_instruction(self):
+        # issue #66's promotion rule: a field may only enter requiredExtra when its owning
+        # contract emits it UNCONDITIONALLY. If the contract still tells the model to OMIT the
+        # field under some circumstance, the schema-required declaration and the contract
+        # prose directly contradict each other — the model would be told two different things
+        # about the same field, and whichever branch the OMIT applies to produces a schema
+        # violation that burns the platform's capped retries (5) and, on exhaustion, fails
+        # the agent terminally and degrades every dimension it owns.
+        offenders = []
+        for row in registry()["dimensions"]:
+            name = agent_name(row["agentType"])
+            for field in row["requiredExtra"]:
+                for raw in raw_contract_blocks(name):
+                    if field_carries_omit_instruction(
+                        raw, field, source=f"agents/{name}.md"
+                    ):
+                        offenders.append(f"{name}.{field} ({row['dimension']})")
+        self.assertEqual(
+            offenders,
+            [],
+            "these fields are declared requiredExtra in registry.js but their owning "
+            "contract still instructs an OMIT branch for them — either the field is not "
+            f"really unconditional (drop it from requiredExtra) or the contract prose is "
+            f"stale: {offenders}",
+        )
+
+    def test_field_carries_omit_instruction_parses_every_real_value_shape(self):
+        # Self-test for field_carries_omit_instruction's parser, synthetic and isolated from
+        # the live contracts so it pins the parser's behavior directly rather than through
+        # whatever shapes the current .md files happen to contain.
+        # Quoted-string value: OMIT text inside the string is detected.
+        self.assertTrue(
+            field_carries_omit_instruction(
+                '{"attack_vector": "<...>. OMIT this field entirely when N/A."}',
+                "attack_vector",
+            )
+        )
+        self.assertFalse(
+            field_carries_omit_instruction(
+                '{"attack_vector": "<always present>"}', "attack_vector"
+            )
+        )
+        # Array-of-strings value (the affected_consumers shape issue #66 promoted): the
+        # original version of this parser only matched a scalar and silently never
+        # inspected an array-valued field at all.
+        self.assertTrue(
+            field_carries_omit_instruction(
+                '{"affected_consumers": ["<...>. OMIT this field entirely when the impact '
+                'is local>"]}',
+                "affected_consumers",
+            )
+        )
+        self.assertFalse(
+            field_carries_omit_instruction(
+                '{"affected_consumers": ["<file paths>"]}', "affected_consumers"
+            )
+        )
+        # Unquoted angle-bracket placeholder (criticality's <1-10> template form).
+        self.assertFalse(
+            field_carries_omit_instruction('{"criticality": <1-10>}', "criticality")
+        )
+        self.assertTrue(
+            field_carries_omit_instruction(
+                '{"criticality": <1-10, OMIT if not applicable>}', "criticality"
+            )
+        )
+        # Bare JSON literal (criticality's worked-example form, "criticality":9) can never
+        # carry OMIT prose and must not raise.
+        self.assertFalse(
+            field_carries_omit_instruction(
+                '{"criticality":9,"confidence":90}', "criticality"
+            )
+        )
+        # A field absent from the block entirely is False, not an error.
+        self.assertFalse(
+            field_carries_omit_instruction('{"other_field": "x"}', "attack_vector")
+        )
+        # An unhandled value shape (a nested object, which no real contract emits) raises,
+        # naming the source and field, rather than silently returning False.
+        with self.assertRaises(AssertionError) as ctx:
+            field_carries_omit_instruction(
+                '{"weird_field": {"nested": "object"}}',
+                "weird_field",
+                source="agents/x.md",
+            )
+        self.assertIn("weird_field", str(ctx.exception))
+        self.assertIn("agents/x.md", str(ctx.exception))
+
+    def test_field_carries_omit_instruction_array_parse_is_linear_time(self):
+        # Regression for the CodeQL py/redos finding fixed on PR #217: the original
+        # array-of-strings pattern (`(?:"…"\s*,?\s*)*`) backtracked exponentially because
+        # the optional comma let a whitespace run split ambiguously between the two `\s*`s
+        # on every iteration. The trigger is therefore a long UNCLOSED array of strings
+        # separated by whitespace WITHOUT commas (comma-separated input parses one way and
+        # cannot distinguish the two regex forms). The shipped
+        # first-string-then-comma-separated-rest form gives up on that input immediately
+        # and falls to the loud unrecognized-shape arm; the vulnerable form hangs.
+        pathological = '{"affected_consumers": [' + '"a" ' * 200 + "x"
+        start = time.perf_counter()
+        with self.assertRaises(AssertionError):
+            field_carries_omit_instruction(pathological, "affected_consumers")
+        self.assertLess(
+            time.perf_counter() - start,
+            1.0,
+            "array-of-strings OMIT parsing took over a second on an unclosed "
+            "whitespace-separated array — the backtracking-prone regex form is back",
+        )
+
+    def test_dispatch_required_contract_sentences_match_requiredExtra_exactly(self):
+        # F5, issue #66: bidirectional lockstep between the registry's requiredExtra and the
+        # contract prose sentences claiming a field is dispatch-required.
+        #   forward — every requiredExtra field's owning contract claims it (a promotion in
+        #             registry.js with no matching sentence is undocumented to the model).
+        #   reverse — no OTHER per-dimension field on that row is claimed dispatch-required
+        #             (a stale or bogus claim would tell the model something the schema does
+        #             not enforce).
+        for row in registry()["dimensions"]:
+            name = agent_name(row["agentType"])
+            claimed = dispatch_required_claims(name)
+            required = set(row["requiredExtra"])
+            extras = set(row["extras"])
+
+            missing = required - claimed
+            self.assertEqual(
+                missing,
+                set(),
+                f"agents/{name}.md never says {sorted(missing)} is "
+                f"{_DISPATCH_REQUIRED_PHRASE!r} though registry.js's requiredExtra promotes "
+                "it — add the canonical contract sentence",
+            )
+
+            over_claimed = (claimed & extras) - required
+            self.assertEqual(
+                over_claimed,
+                set(),
+                f"agents/{name}.md claims {sorted(over_claimed)} is "
+                f"{_DISPATCH_REQUIRED_PHRASE!r} but registry.js's requiredExtra does not "
+                "promote it — stale contract prose",
+            )
+
 
 class TestClaudeMdFieldLists(unittest.TestCase):
     """agents/AGENTS.md's two field enumerations are the human index of the registry."""
@@ -640,6 +906,20 @@ class TestReportFormatFieldTables(unittest.TestCase):
                 cells[1].lower(),
                 f"report-format.md marks {field} required={cells[1]!r}; "
                 f"FINDING_REQUIRED says {expected}",
+            )
+
+    def test_per_dimension_table_required_column_matches_registry(self):
+        # Mirrors test_canonical_table_required_column_matches_registry above, one column
+        # index over: the per-dimension table's cells are (Type, Dimension, Required,
+        # Description), so the Required column is cells[2].
+        required = all_required_extras()
+        for field, cells in table_named(report_format_tables(), "Per-dimension"):
+            expected = "yes" if field in required else "no"
+            self.assertEqual(
+                expected,
+                cells[2].lower(),
+                f"report-format.md marks {field} required={cells[2]!r}; "
+                f"registry.js requiredExtra says {expected}",
             )
 
     def test_per_dimension_table_matches_registry(self):
