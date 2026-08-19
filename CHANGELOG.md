@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.14.0 (2026-08-19)
+
+### Bug Fixes
+
+- **tests**: Address PR #217 review comments on the OMIT parser
+  ([#217](https://github.com/liatrio-labs/claude-code-gauntlet/pull/217),
+  [`78f68bb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/78f68bbcf8faa981f62d217c54e8b12f63320fef))
+
+- **tests**: Remove exponential backtracking from the array-value OMIT parser
+  ([#217](https://github.com/liatrio-labs/claude-code-gauntlet/pull/217),
+  [`78f68bb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/78f68bbcf8faa981f62d217c54e8b12f63320fef))
+
+### Features
+
+- **workflows**: Per-dimension required mechanism in the finding schema
+  ([#217](https://github.com/liatrio-labs/claude-code-gauntlet/pull/217),
+  [`78f68bb`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/78f68bbcf8faa981f62d217c54e8b12f63320fef))
+
+
 ## v3.13.0 (2026-08-18)
 
 ### Bug Fixes
