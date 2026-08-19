@@ -57,18 +57,18 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 
 ### Per-dimension fields
 
-| Field | Type | Dimension | Description |
-|-------|------|-----------|-------------|
-| `hidden_errors` | string | bug | Errors the fix would surface that the visible code path hides |
-| `attack_vector` | string | security | How the issue is exploited |
-| `affected_consumers` | array | cross_file_impact | Other call sites/files impacted by the change |
-| `criticality` | number | test_coverage | A 1-10 IMPACT scale, distinct from `confidence`'s 0-100 certainty scale, emitted as a number and never quoted. |
-| `failure_scenario` | string | test_coverage | Concrete scenario the missing coverage would miss |
-| `spec_text` | string | intent | The spec/requirement text the code is checked against |
-| `invalid_state_example` | string | type_design | A concrete value the current types allow but shouldn't |
-| `behavior_preserved` | string | simplification | Why the simplification is behavior-preserving |
+| Field | Type | Dimension | Required | Description |
+|-------|------|-----------|----------|-------------|
+| `hidden_errors` | string | bug | no | Errors the fix would surface that the visible code path hides |
+| `attack_vector` | string | security | yes | How the issue is exploited |
+| `affected_consumers` | array | cross_file_impact | yes | Other call sites/files impacted by the change |
+| `criticality` | number | test_coverage | yes | A 1-10 IMPACT scale, distinct from `confidence`'s 0-100 certainty scale, emitted as a number and never quoted. |
+| `failure_scenario` | string | test_coverage | yes | Concrete scenario the missing coverage would miss |
+| `spec_text` | string | intent | no | The spec/requirement text the code is checked against |
+| `invalid_state_example` | string | type_design | no | A concrete value the current types allow but shouldn't |
+| `behavior_preserved` | string | simplification | yes | Why the simplification is behavior-preserving |
 
-Per-dimension fields are optional and never nullable (a not-applicable value is OMITTED). `required` is one flat list shared by all dimensions, so a field a contract calls required for its own dimension is enforced by the agent contract prose, not the schema.
+A `yes` field is appended to that dimension's dispatch required list (FINDING_REQUIRED plus the row's `requiredExtra`, never the other way around — FINDING_REQUIRED itself never carries a per-dimension field): the platform rejects a finding missing it at the StructuredOutput boundary, and the agent retries. A `no` field is still contract-enforced by the agent's `.md` prose where its own dimension calls for it (e.g. `claude_md_rule` for convention findings), never by the schema — only a field the owning contract emits unconditionally (no OMIT branch) can be promoted to schema-required at all. Every per-dimension field is never nullable regardless: a not-applicable value is OMITTED, not emitted as null.
 
 ### Delivery-side fields — not produced by the review pipeline
 

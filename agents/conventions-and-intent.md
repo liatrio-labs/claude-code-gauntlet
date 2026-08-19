@@ -269,9 +269,9 @@ Real violation — CLAUDE.md requires structured logging with error_id but handl
 [investigation of function naming convention — follows project pattern correctly]
 SKIP: function naming in utils.py — uses snake_case per CLAUDE.md section 3; no violation.
 
-For convention findings: the `claude_md_rule` field MUST be non-null and MUST quote the specific rule. Findings without a cited rule will be rejected — this is enforced by this contract, not by the dispatch schema (the schema's required list is shared by all dimensions), so omitting the field on the wrong dimension is correct while omitting it on this one is a contract violation.
+For convention findings: the `claude_md_rule` field MUST be non-null and MUST quote the specific rule. Findings without a cited rule will be rejected — this is enforced by this contract, not by the dispatch schema. This agent's dispatch mixes convention, intent, and comment_accuracy findings in ONE schema, so a per-dimension schema requirement is unsatisfiable here (a per-dimension `requiredExtra` mechanism exists, but only for single-dimension agents) — omitting the field on the wrong dimension is correct while omitting it on this one is a contract violation.
 
-For intent findings: the `spec_text` field MUST be non-null and MUST quote the specific spec text. Findings without a cited spec will be rejected — this is enforced by this contract, not by the dispatch schema (the schema's required list is shared by all dimensions), so omitting the field on the wrong dimension is correct while omitting it on this one is a contract violation.
+For intent findings: the `spec_text` field MUST be non-null and MUST quote the specific spec text. Findings without a cited spec will be rejected — this is enforced by this contract, not by the dispatch schema, for the same reason: this agent's mixed convention/intent/comment_accuracy dispatch can't schema-require a single-dimension field — omitting the field on the wrong dimension is correct while omitting it on this one is a contract violation.
 
 Only report findings with confidence >= 60. Be thorough but filter aggressively — quality over quantity. If you find no issues above the threshold, return an empty findings list.
 

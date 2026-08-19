@@ -199,6 +199,8 @@ Each finding is a JSON object with this shape:
 {"id": "simplify-<n>", "dimension": "simplification", "severity": "<high|medium|low>", "confidence": <0-100>, "file": "<path>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining why the current code is harder to read than it needs to be; inline single-line before/after illustrations OK, no fenced code blocks, no multi-line snippets>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete simplification — must include before and after code snippets>", "behavior_preserved": "<confirmation that the simplification does not change behavior, or 'uncertain' if you cannot confirm>", "claude_md_rule": "<the documented project rule this finding violates, quoted with its source file (CLAUDE.md/REVIEW.md/AGENTS.md). OMIT this field entirely when no documented rule applies — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
+`behavior_preserved` is required by the dispatch schema — a finding without it is rejected at the StructuredOutput boundary and retried, so it must always be present.
+
 **Example:**
 
 [investigation of nested ternary in renderStatus — readability issue]

@@ -196,6 +196,8 @@ Each finding is a JSON object with this shape:
 {"id": "cross-file-<n>", "dimension": "cross_file_impact", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path of the changed file causing the impact>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining what breaks and why — no code blocks, no multi-line snippets; affected files go in affected_consumers and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — update the caller, implementor, or dependent>", "affected_consumers": ["<file paths of callers, implementors, or consumers that break>"], "claude_md_rule": "<the documented project rule this finding violates, quoted with its source file (CLAUDE.md/REVIEW.md/AGENTS.md). OMIT this field entirely when no documented rule applies — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
+`affected_consumers` is required by the dispatch schema — a finding without it is rejected at the StructuredOutput boundary and retried, so it must always be present.
+
 **Example:**
 
 [investigation of changed return type on getUserById — tracing callers]
