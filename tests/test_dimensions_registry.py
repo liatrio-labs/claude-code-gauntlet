@@ -38,6 +38,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import unittest
 from pathlib import Path
 
@@ -678,7 +679,8 @@ class TestContractSchemaLockstep(unittest.TestCase):
         # field under some circumstance, the schema-required declaration and the contract
         # prose directly contradict each other — the model would be told two different things
         # about the same field, and whichever branch the OMIT applies to produces a schema
-        # violation the platform retries forever.
+        # violation that burns the platform's capped retries (5) and, on exhaustion, fails
+        # the agent terminally and degrades every dimension it owns.
         offenders = []
         for row in registry()["dimensions"]:
             name = agent_name(row["agentType"])
@@ -758,6 +760,26 @@ class TestContractSchemaLockstep(unittest.TestCase):
             )
         self.assertIn("weird_field", str(ctx.exception))
         self.assertIn("agents/x.md", str(ctx.exception))
+
+    def test_field_carries_omit_instruction_array_parse_is_linear_time(self):
+        # Regression for the CodeQL py/redos finding fixed on PR #217: the original
+        # array-of-strings pattern (`(?:"…"\s*,?\s*)*`) backtracked exponentially because
+        # the optional comma let a whitespace run split ambiguously between the two `\s*`s
+        # on every iteration. The trigger is therefore a long UNCLOSED array of strings
+        # separated by whitespace WITHOUT commas (comma-separated input parses one way and
+        # cannot distinguish the two regex forms). The shipped
+        # first-string-then-comma-separated-rest form gives up on that input immediately
+        # and falls to the loud unrecognized-shape arm; the vulnerable form hangs.
+        pathological = '{"affected_consumers": [' + '"a" ' * 200 + "x"
+        start = time.perf_counter()
+        with self.assertRaises(AssertionError):
+            field_carries_omit_instruction(pathological, "affected_consumers")
+        self.assertLess(
+            time.perf_counter() - start,
+            1.0,
+            "array-of-strings OMIT parsing took over a second on an unclosed "
+            "whitespace-separated array — the backtracking-prone regex form is back",
+        )
 
     def test_dispatch_required_contract_sentences_match_requiredExtra_exactly(self):
         # F5, issue #66: bidirectional lockstep between the registry's requiredExtra and the
