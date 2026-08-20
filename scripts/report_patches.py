@@ -383,6 +383,28 @@ def _emit_receipt(receipt):
     )
 
 
+def _pre_oracle_failure(out_path, errors):
+    """Emit the receipt for a failure before the oracle was ever attempted and
+    return the exit status. Both pre-oracle exits (path confinement, findings
+    load) report the same all-zero shape; only *errors* differs."""
+    _emit_receipt(
+        _receipt(
+            ok=False,
+            path=out_path,
+            oracle="unattempted",
+            candidates=0,
+            kept=0,
+            downgraded=0,
+            reasons={},
+            filtered_earlier=0,
+            findings=0,
+            warnings=[],
+            errors=errors,
+        )
+    )
+    return 1
+
+
 def main(argv=None):
     parser = build_parser()
     args = parser.parse_args(sys.argv[1:] if argv is None else argv)
@@ -413,41 +435,11 @@ def main(argv=None):
         if not _confined(path, output_root):
             errors.append(f"{label} path escapes --output-dir: {path}")
     if errors:
-        _emit_receipt(
-            _receipt(
-                ok=False,
-                path=out_path,
-                oracle="unattempted",
-                candidates=0,
-                kept=0,
-                downgraded=0,
-                reasons={},
-                filtered_earlier=0,
-                findings=0,
-                warnings=[],
-                errors=errors,
-            )
-        )
-        return 1
+        return _pre_oracle_failure(out_path, errors)
 
     findings = _load_findings(findings_path, errors)
     if findings is None:
-        _emit_receipt(
-            _receipt(
-                ok=False,
-                path=out_path,
-                oracle="unattempted",
-                candidates=0,
-                kept=0,
-                downgraded=0,
-                reasons={},
-                filtered_earlier=0,
-                findings=0,
-                warnings=[],
-                errors=errors,
-            )
-        )
-        return 1
+        return _pre_oracle_failure(out_path, errors)
 
     # Universal newlines (default text mode) and errors="replace" are
     # deliberate: the live apply-check oracle post_review.py drives is

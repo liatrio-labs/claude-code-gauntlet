@@ -370,6 +370,18 @@ test('stripReportExcludedFields: strips all three REPORT_EXCLUDED_FIELDS and lea
   assert.notEqual(out, f, 'a stripped finding must be a copy, never the mutated original');
 });
 
+test('stripReportExcludedFields: a stamps-only finding (the shape filterFindings leaves after it stripped the patch) is copied and both stamps are removed', () => {
+  // filterFindings.js always deletes suggested_fix_code when it writes the stamps, so
+  // the realistic report-path input carries the stamps WITHOUT the field.
+  const f = { id: 'x', title: 't', suggested_fix_code_removed_by: 'injection', suggested_fix_code_removal_reason: 'r' };
+  const [out] = stripReportExcludedFields([f]);
+  assert.notStrictEqual(out, f);
+  assert.ok(!('suggested_fix_code_removed_by' in out));
+  assert.ok(!('suggested_fix_code_removal_reason' in out));
+  assert.equal(out.title, 't');
+  assert.equal(f.suggested_fix_code_removed_by, 'injection');
+});
+
 test('stripReportExcludedFields: the two removal-stamp fields are stripped by NAME, not merely by list membership', () => {
   // Iterating REPORT_EXCLUDED_FIELDS (as the test above does) checks the
   // implementation against ITSELF: if the exported list ever shrinks back to

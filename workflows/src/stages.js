@@ -453,10 +453,10 @@ function findingSchema(spec) {
   };
 }
 
-// Shared by the two discover-side drop branches below and by
-// stripReportExcludedFields: a dropped suggested_fix_code is always the same
-// operation (delete-and-report-whether-it-was-there), only the reason for
-// dropping it differs between call sites.
+// Shared by the two discover-side drop branches below (and only those — the
+// report path's stripReportExcludedFields iterates its own field list): a dropped
+// suggested_fix_code is always the same operation (delete-and-report-whether-it-
+// was-there), only the reason for dropping it differs between call sites.
 function dropSuggestedFixCode(f) {
   if (!('suggested_fix_code' in f)) return false;
   delete f.suggested_fix_code;
