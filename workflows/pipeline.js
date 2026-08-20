@@ -1949,8 +1949,10 @@ const FINDING_PROP_TYPES = {
   // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
   // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
   // to delivery with this field set is not a guarantee the fence ships. The pipeline also
-  // strips the field from the report-writer's input (stripFixCode in stages.js), so delivery
-  // is the only surface it is ever rendered on.
+  // strips the field from the report-writer's input (stripReportExcludedFields in
+  // stages.js), so delivery is the only surface it is ever rendered on. The read-only
+  // report-side apply-check (scripts/report_patches.py) renders the KEPT patches into a
+  // sibling artifact instead — see report-format.md.
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };
@@ -3480,27 +3482,42 @@ function findingSchema(spec) {
   };
 }
 
-// Shared by the two discover-side drop branches below and by stripFixCode: a dropped
-// suggested_fix_code is always the same operation (delete-and-report-whether-it-was-there),
-// only the reason for dropping it differs between call sites.
+// Shared by the two discover-side drop branches below and by
+// stripReportExcludedFields: a dropped suggested_fix_code is always the same
+// operation (delete-and-report-whether-it-was-there), only the reason for
+// dropping it differs between call sites.
 function dropSuggestedFixCode(f) {
   if (!('suggested_fix_code' in f)) return false;
   delete f.suggested_fix_code;
   return true;
 }
 
-// stripFixCode(findings) -> new array, same finding objects EXCEPT a shallow copy
-// wherever suggested_fix_code was present (dropSuggestedFixCode does the one delete
-// operation, on the copy — never the original). Used ONLY on the report path
-// (reportStage): the report-writer is a sampled model and no apply-check oracle exists
-// at report time, so the field must never reach a report-path prompt. selectDelivery /
+// Fields the report path never sees. suggested_fix_code itself (no apply-check oracle
+// exists at report time, see stripReportExcludedFields below) plus the two stamps
+// filterFindings.js/filter_findings.py leave behind when IT stripped suggested_fix_code
+// earlier in the pipeline (suggested_fix_code_removed_by / _removal_reason) — dangling
+// metadata for a field the report-writer never sees either way (#220 review). A list,
+// not a single field check, so adding a future report-excluded field is a one-line edit
+// here rather than a second copy of stripReportExcludedFields's iteration.
+const REPORT_EXCLUDED_FIELDS = [
+  'suggested_fix_code',
+  'suggested_fix_code_removed_by',
+  'suggested_fix_code_removal_reason',
+];
+
+// stripReportExcludedFields(findings) -> new array, same finding objects EXCEPT a
+// shallow copy wherever any REPORT_EXCLUDED_FIELDS key was present. Used ONLY on the
+// report path (reportStage): the report-writer is a sampled model and no apply-check
+// oracle exists at report time, so suggested_fix_code must never reach a report-path
+// prompt, and its removal stamps are meaningless without it. selectDelivery /
 // writerPayload read the SAME finding objects reportStage was called with, unstripped —
-// delivery keeps the field for its own live-oracle apply-check (scripts/post_review.py).
-function stripFixCode(findings) {
+// delivery keeps every field for its own live-oracle apply-check (scripts/post_review.py).
+function stripReportExcludedFields(findings) {
   return (findings || []).map((f) => {
-    if (!f || typeof f !== 'object' || !('suggested_fix_code' in f)) return f;
+    if (!f || typeof f !== 'object') return f;
+    if (!REPORT_EXCLUDED_FIELDS.some((key) => key in f)) return f;
     const copy = { ...f };
-    dropSuggestedFixCode(copy);
+    for (const key of REPORT_EXCLUDED_FIELDS) delete copy[key];
     return copy;
   });
 }
@@ -5222,14 +5239,14 @@ function consolidateForReport(findings) {
 async function reportStage(ctx, input) {
   const c = ctx || defaultCtx();
   const parsed = typeof input === 'string' ? JSON.parse(input) : (input || {});
-  // Strip suggested_fix_code before ANY report-path consumer reads findings/unverified
+  // Strip REPORT_EXCLUDED_FIELDS before ANY report-path consumer reads findings/unverified
   // (dimensionsTable, consolidateForReport, the oversized-payload size check, chunking,
   // dispatchReportSegment's segInp, minimalReport, reportPrompt) — the report-writer is
   // a sampled model, so no apply-check oracle exists at report time to vet a rendered
-  // patch. stripFixCode copies; the caller's original finding objects (and therefore
-  // selectDelivery/writerPayload) are untouched and still carry the field for delivery's
-  // own live-oracle apply-check (issue #220).
-  const inp = { ...parsed, findings: stripFixCode(parsed.findings), unverified: stripFixCode(parsed.unverified) };
+  // patch. stripReportExcludedFields copies; the caller's original finding objects (and
+  // therefore selectDelivery/writerPayload) are untouched and still carry every field for
+  // delivery's own live-oracle apply-check (issue #220).
+  const inp = { ...parsed, findings: stripReportExcludedFields(parsed.findings), unverified: stripReportExcludedFields(parsed.unverified) };
   const policy = inp.policy || {};
   const model = modelFor('code-gauntlet:report-writer', policy);
 

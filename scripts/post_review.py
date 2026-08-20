@@ -243,6 +243,42 @@ def detect_platform():
 
 
 def parse_diff_lines(platform, owner, repo, pr_number):
+    """Fetch *platform*'s diff via the CLI and return ``parse_diff_text(platform,
+    stdout)`` — see that function for the return shape and the walk/behaviour notes.
+
+    Returns ``(None, None, None, None)`` when validation should be skipped (unknown
+    platform or CLI failure). Callers must handle the ``None`` case.
+    """
+    if platform == "github":
+        stdout, stderr, rc = run_api(
+            ["gh", "pr", "diff", str(pr_number), "--repo", f"{owner}/{repo}"]
+        )
+    elif platform == "gitlab":
+        # PLAIN `glab mr diff` — never `--raw`. Plain output is glab's OWN reconstruction
+        # from the MR versions API: `--- <old_path>` / `+++ <new_path>` with the path
+        # verbatim, and nothing else between hunks. `--raw` streams git's diff instead,
+        # which reintroduces `a/` / `b/` prefixes and `/dev/null` — the gitlab branch
+        # below keys on paths exactly as printed and reads the old-side header as a real
+        # path, both premised on their absence. tests/fixtures/glab_diff/ records the
+        # shape and where it comes from.
+        stdout, stderr, rc = run_api(["glab", "mr", "diff", str(pr_number)])
+    else:
+        warn(
+            "Unknown platform — skipping diff validation. All findings will be posted."
+        )
+        return None, None, None, None
+
+    if rc != 0:
+        warn(
+            f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
+            "Skipping line validation — all findings will be posted."
+        )
+        return None, None, None, None
+
+    return parse_diff_text(platform, stdout)
+
+
+def parse_diff_text(platform, diff_text):
     """
     Return ``(valid_lines, new_files, old_paths, line_texts)``:
 
@@ -275,9 +311,6 @@ def parse_diff_lines(platform, owner, repo, pr_number):
       is not an alternative: the local HEAD is usually the base branch, a shallow clone has
       no object to show, and it desyncs from GitLab's versions-API head_sha.
 
-    Returns ``(None, None, None, None)`` when validation should be skipped (unknown
-    platform or CLI failure). Callers must handle the ``None`` case.
-
     The unified-diff walk itself — header/hunk-body zone tracking, the old/new line
     advance, and the wire spelling of a header path — is ``diff_lines.walk_diff``; this
     function reads its events and keeps only what is local to this platform pair: which
@@ -303,32 +336,6 @@ def parse_diff_lines(platform, owner, repo, pr_number):
        apply-check a false oracle. ``walk_diff`` drops that trailing empty string instead
        of walking it.
     """
-    if platform == "github":
-        stdout, stderr, rc = run_api(
-            ["gh", "pr", "diff", str(pr_number), "--repo", f"{owner}/{repo}"]
-        )
-    elif platform == "gitlab":
-        # PLAIN `glab mr diff` — never `--raw`. Plain output is glab's OWN reconstruction
-        # from the MR versions API: `--- <old_path>` / `+++ <new_path>` with the path
-        # verbatim, and nothing else between hunks. `--raw` streams git's diff instead,
-        # which reintroduces `a/` / `b/` prefixes and `/dev/null` — the gitlab branch
-        # below keys on paths exactly as printed and reads the old-side header as a real
-        # path, both premised on their absence. tests/fixtures/glab_diff/ records the
-        # shape and where it comes from.
-        stdout, stderr, rc = run_api(["glab", "mr", "diff", str(pr_number)])
-    else:
-        warn(
-            "Unknown platform — skipping diff validation. All findings will be posted."
-        )
-        return None, None, None, None
-
-    if rc != 0:
-        warn(
-            f"Could not fetch diff (exit {rc}): {stderr.strip()}. "
-            "Skipping line validation — all findings will be posted."
-        )
-        return None, None, None, None
-
     valid_lines = {}
     line_texts = {}
     new_files = set()
@@ -337,7 +344,7 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     current_file = None
     current_file_is_new = False
 
-    for event in walk_diff(stdout):
+    for event in walk_diff(diff_text):
         if event.kind == "old_path":
             # `--- a/path` (gh, prefix stripped below), `--- path` (glab, kept
             # verbatim — there a leading `a/` is a REAL top-level directory, and
@@ -752,13 +759,27 @@ def _blockquote(text):
     return "\n".join(out)
 
 
+def _fence_run(payload):
+    """Return the backtick fence long enough to contain *payload* unbroken.
+
+    ``max(3, longest_backtick_run + 1)`` so CommonMark cannot close early. Per
+    clause: the longest-run+1, min-3 rule matches GitLab's own suggestion UI
+    (gitlab-org MR !172981); GitHub keeps Apply at 4+ backticks (confirmed);
+    GitLab documents four-backtick suggestion nesting.
+
+    Factored out of ``_suggestion_fence`` so a second renderer
+    (``scripts/report_patches.py``, the report-side read-only apply-check) computes
+    the identical length from the identical rule rather than a second copy of it.
+    """
+    runs = re.findall(r"`+", payload)
+    n = max(3, max((len(r) for r in runs), default=0) + 1)
+    return "`" * n
+
+
 def _suggestion_fence(payload, *, offsets=None):
     """Return ``(open, close)`` fence lines that contain ``payload``.
 
-    Length is ``max(3, longest_backtick_run + 1)`` so CommonMark cannot close
-    early. Per clause: the longest-run+1, min-3 rule matches GitLab's own
-    suggestion UI (gitlab-org MR !172981); GitHub keeps Apply at 4+ backticks
-    (confirmed); GitLab documents four-backtick suggestion nesting.
+    Length is ``_fence_run(payload)`` — see its docstring for the rule.
 
     *offsets* is GitLab's ``(above, below)`` pair: it makes the header
     ``suggestion:-m+n``, which widens what one click replaces to
@@ -769,9 +790,7 @@ def _suggestion_fence(payload, *, offsets=None):
     platform-blind: whether offsets are expressible at all is the poster's
     decision, made where the anchor is known.
     """
-    runs = re.findall(r"`+", payload)
-    n = max(3, max((len(r) for r in runs), default=0) + 1)
-    fence = "`" * n
+    fence = _fence_run(payload)
     header = "suggestion"
     if offsets not in (None, (0, 0)):
         header = f"suggestion:-{offsets[0]}+{offsets[1]}"
@@ -803,9 +822,11 @@ _FIX_TOO_LARGE = "replacement_too_large"
 _FIX_CARRIAGE_RETURN = "carriage_return"
 
 # The vocabulary is CLOSED: every downgrade names exactly one of these, in the
-# stable warning `suggested-fix downgraded: {file}:{line} ({reason})`. Adding a
-# reason is a deliberate act — a free-text reason would make the record
-# unreadable in aggregate.
+# stable warning `{warn_label} downgraded: {file}:{line} ({reason})` — the label
+# is the caller's (`suggested-fix` for delivery, `report-patch` for the report
+# path's read-only gate in scripts/report_patches.py); everything after it never
+# changes shape. Adding a reason is a deliberate act — a free-text reason would
+# make the record unreadable in aggregate.
 _FIX_REASONS = frozenset(
     {
         _FIX_NON_STRING,
@@ -846,10 +867,30 @@ _FIX_MAX_CHARS = 8000
 # this wide from reaching delivery at all unless a caller raises it.
 _GITLAB_SUGGESTION_OFFSET_CAP = 100
 
-# Per-run patch-acceptance counters, reset by main() alongside _CAPTURED and
-# _SKIP_WARNINGS. n/(n+m) over these two is the acceptance rate, deterministic
-# and readable from any run's stdout at no cost.
+# Per-run patch-acceptance counters, reset by reset_run_state() alongside
+# _CAPTURED and _SKIP_WARNINGS. n/(n+m) over these two is the acceptance rate,
+# deterministic and readable from any run's stdout at no cost.
 _FIX_COUNTS = {"kept": 0, "downgraded": 0}
+# Per-reason downgrade tally, reset alongside _FIX_COUNTS. Delivery's own
+# stdout readout (_print_fix_summary) does not consult this — it exists for a
+# second gate caller (scripts/report_patches.py, the report-side apply-check)
+# that renders a reason breakdown from it.
+_FIX_REASON_COUNTS: dict[str, int] = {}
+
+
+def reset_run_state():
+    """Clear every module-level counter/log a run accumulates.
+
+    One entry point for both gate callers: main() (delivery) calls this in
+    place of its old inline three-statement reset, and report_patches.py
+    (the report-side apply-check, which never calls main()) calls it too —
+    so a second caller of _gated_finding cannot start from state a prior
+    caller in the same process left behind.
+    """
+    _CAPTURED.clear()
+    _SKIP_WARNINGS.clear()
+    _FIX_COUNTS.update(kept=0, downgraded=0)
+    _FIX_REASON_COUNTS.clear()
 
 
 def _leading_whitespace_charset(lines):
@@ -994,6 +1035,7 @@ def _gated_finding(
     line_texts,
     *,
     mismatch_reason=_FIX_ANCHOR_MISMATCH,
+    warn_label="suggested-fix",
 ):
     """Return the finding to RENDER at one site, gating its ``suggested_fix_code``.
 
@@ -1002,7 +1044,8 @@ def _gated_finding(
     it directly and pins its bytes) and the prose ``suggestion`` carries the fix
     instead. Each downgrade is recorded through ``warn_skip``, which both prints
     and lands in the dry-run payload's existing ``skipped`` list, and counted for
-    the run's patch-acceptance readout.
+    the run's patch-acceptance readout (``_FIX_COUNTS``) and per-reason tally
+    (``_FIX_REASON_COUNTS``).
 
     Called at every site where a fence can actually render. A corroborator inside
     a group body is not such a site — ``_render_corroboration`` renders no fence
@@ -1013,6 +1056,12 @@ def _gated_finding(
     is the one such caller (#219). It renames one outcome, it does not add a
     check, and it cannot widen the vocabulary — an unknown name raises below
     exactly like a typo'd gate reason.
+
+    *warn_label* names the CALLER in the downgrade warning line (default
+    ``"suggested-fix"``, delivery's own spelling — unchanged bytes for every
+    existing reader). ``scripts/report_patches.py``, the report-side read-only
+    apply-check, passes ``"report-patch"`` so its downgrades stay distinguishable
+    from delivery's in a run's combined stderr.
     """
     if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
         return finding
@@ -1036,8 +1085,9 @@ def _gated_finding(
         # line (whose readers rely on the vocabulary being closed).
         raise ValueError(f"_suggested_fix_gate returned an unknown reason: {reason!r}")
     _FIX_COUNTS["downgraded"] += 1
+    _FIX_REASON_COUNTS[reason] = _FIX_REASON_COUNTS.get(reason, 0) + 1
     warn_skip(
-        f"suggested-fix downgraded: {finding.get('file', '?')}:"
+        f"{warn_label} downgraded: {finding.get('file', '?')}:"
         f"{finding.get('line')} ({reason})"
     )
     stripped = dict(finding)
@@ -2258,9 +2308,7 @@ def main():
     # headless Phase 8 invocation that omits --dry-run cannot live-post. The flag wins
     # when present; env "live" or unset changes nothing without the flag.
     DRY_RUN = args.dry_run or os.environ.get("CODE_GAUNTLET_POST_MODE") == "dry-run"
-    _CAPTURED.clear()
-    _SKIP_WARNINGS.clear()
-    _FIX_COUNTS.update(kept=0, downgraded=0)
+    reset_run_state()
 
     # Load input
     try:

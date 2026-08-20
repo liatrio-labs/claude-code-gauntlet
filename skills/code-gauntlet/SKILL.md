@@ -218,7 +218,7 @@ After this call: interpret `prior_review`'s JSON per `references/phase1-prefligh
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `prior_review` section still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). A `DEFERRED` truncation resolves the same way it does interactively: run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
 
-All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (AGENTS.md/QODO.md pointer resolution, `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` before it is written — see "Write the shared agent context file" below). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. The Phase 2 stale-file truncation glob (`code-gauntlet-*-{head_sha_short}.*`, see `stale_truncate` above) matches on the `*` between `code-gauntlet-` and `-{head_sha_short}`, so it already covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
+All workflow-facing files use `{output_dir}/code-gauntlet-{purpose}-{head_sha_short}.{ext}` naming. The skill writes: `context-*.md` (shared agent context), `diff-*.patch` (unified diff), `files-*.json` (changed-file list), `project-rules-*.md` (AGENTS.md/QODO.md pointer resolution, `scripts/collect_project_rules.py`'s `--out`, folded into `context-*.md` before it is written — see "Write the shared agent context file" below). The run's own artifacts are `findings-*.json`, `report-*.md`, `post-review-*.json`, `checkpoint-all-*.json`, `patches-*.md` (Phase 8, `report_patches.py`), plus `persist-plan-*.json` on either derived `persist` path (see "Assemble the args object" below). On the default RETURN channel **Phase 8 writes them** (`materialize_artifacts.py`); on the writer paths the workflow's artifact-writer does. The Phase 2 stale-file truncation glob (`code-gauntlet-*-{head_sha_short}.*`, see `stale_truncate` above) matches on the `*` between `code-gauntlet-` and `-{head_sha_short}`, so it already covers every purpose name in this list, including `persist-plan`, without needing an update per new artifact.
 
 ### Phase 2 Composite B — independent-gather (diff, changed-files, line count, misc)
 
@@ -480,7 +480,7 @@ The script counts the attempts, carries its own state forward, and prints the ne
 
 ## Phase 8: Report & Deliver
 
-Read the compact return, pick up the persisted artifacts, and run the delivery gates. Three steps: **materialize/collect the report**, **deliver it** (question 1 of 2), **offer the task board** (question 2 of 2) — in that order. Read `references/phase8-delivery.md` for the full flow.
+Read the compact return, pick up the persisted artifacts, and run the delivery gates. Four steps: **materialize/collect the report**, **render the apply-checked patches**, **deliver it** (question 1 of 2), **offer the task board** (question 2 of 2) — in that order. Read `references/phase8-delivery.md` for the full flow.
 
 ### Materialize the artifacts — FIRST, when the return carries `persistReturn`
 
@@ -525,6 +525,22 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver markdown-only — report the path plus a short chat summary).
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
+
+### Render apply-checked patches — whenever `artifactPaths.findings` is non-null
+
+```
+Bash(command: python3 "{plugin_root}/scripts/report_patches.py" --output-dir "{output_dir}" --head-sha {head_sha_short})
+```
+
+This runs the read-only, diff-only subset of delivery's apply-check against the pinned review diff and writes `{output_dir}/code-gauntlet-patches-{head_sha_short}.md`. It never edits the report and never posts anything, and it runs on every persist channel — including the partial-artifacts salvage branch — whenever `artifactPaths.findings` is non-null.
+
+Branch on the **exit code**, never on how the output reads:
+
+| exit | what it means | what you do |
+|---|---|---|
+| **0** | the patches artifact was written (even with 0 kept) | Name the patches path next to the report path in delivery — the chat summary and the methodology. |
+| **1** | something failed | Declare a `report-patches` gap quoting the receipt's `errors`, then deliver everything else unchanged. |
+| **2** | the command is malformed | Fix the command; not a run outcome. |
 
 ### Deliver
 

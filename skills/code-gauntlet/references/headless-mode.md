@@ -67,6 +67,7 @@ The **orchestrator** (the session running this skill and the workflow's own reas
 - **REVIEW.md setup and subdirectory notices = suppressed.** Neither is a question in either mode any more (issue #35); headless additionally suppresses the notice text, since no operator is reading it.
 - **`build-review-md` is never invoked.** Headless runs never launch the REVIEW.md configuration wizard.
 - **REVIEW.md is read-only.** Both remaining write paths (root scaffold, subdirectory scaffold) are disabled; the dismissed-findings append path no longer exists in either mode (issue #35). Reads run unchanged: the Phase 1 quick-check for `default_delivery`, the Phase 2d hierarchical parse, and the JS `filterStage`'s consumption of the parsed `reviewConfig`/`exclusionPatterns` (passed through the args waist).
+- **The apply-checked patches render step is unconditional.** It runs on every Phase 8 pass whenever `artifactPaths.findings` is non-null — the same rule as interactive mode, no headless carve-out. It is read-only and posts nothing; its artifact path is named alongside the report path wherever the report path is disclosed.
 
 ---
 

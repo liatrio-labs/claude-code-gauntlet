@@ -1059,10 +1059,10 @@ class TestFullReportTemplateRenderInstructions(unittest.TestCase):
 
     def test_full_report_template_never_instructs_a_suggested_fix_code_render(self):
         """Pins the docs to the #220 mechanism: the report path structurally strips
-        suggested_fix_code (stripFixCode in workflows/src/stages.js) before the
-        report-writer ever sees it, so no template instruction may ask for a render —
-        a reintroduced instruction here would tell a model to do something the field
-        can no longer supply.
+        suggested_fix_code (stripReportExcludedFields in workflows/src/stages.js)
+        before the report-writer ever sees it, so no template instruction may ask
+        for a render — a reintroduced instruction here would tell a model to do
+        something the field can no longer supply.
         """
         region = full_report_template_region(REPORT_FORMAT.read_text(encoding="utf-8"))
         self.assertNotIn(
@@ -1070,7 +1070,9 @@ class TestFullReportTemplateRenderInstructions(unittest.TestCase):
             region,
             "Full Report Template must not interpolate or reference suggested_fix_code "
             "— the field never reaches the report-writer's input (stripped by "
-            "stripFixCode before dispatch); delivery is the only rendered surface.",
+            "stripReportExcludedFields before dispatch); the read-only report-side "
+            "apply-check (scripts/report_patches.py) renders kept patches into a "
+            "sibling artifact instead.",
         )
         self.assertNotIn(
             "not apply-checked",

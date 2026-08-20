@@ -23,6 +23,8 @@ line) via a KeyError negative control, and that a missing ``line`` alias degrade
 gracefully rather than aborting the run.
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -38,6 +40,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
 
 import scripts.post_review as post_review  # noqa: E402
+import scripts.report_patches as report_patches  # noqa: E402
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 
@@ -400,6 +403,99 @@ class TestPostReviewBoundary(unittest.TestCase):
             payload = json.load(fh)["payload"]
         self.assertEqual(len(payload["comments"]), 0)
         self.assertIn("could not be anchored inline", payload["body"])
+
+
+class TestReportPatchesBoundary(unittest.TestCase):
+    """report_patches.py --output-dir/--head-sha (issue #226) consumes the SAME
+    persisted findings envelope post_review.py --dry-run consumes above, without
+    erroring on a missing/mismatched field. No diff file is needed here — the
+    receipt's ``findings`` count reports the whole persisted array regardless of
+    the (missing) diff oracle."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+        # bare "post_review" (report_patches.py's own import) and "scripts.post_review"
+        # (this test module's import) are two SEPARATE module objects with independent
+        # state — see ReportPatchesTestBase's docstring in tests/test_report_patches.py.
+        # This class's own gate-driving tests dirty the bare-imported one; other classes
+        # in this file dirty scripts.post_review directly. Both need resetting.
+        post_review.reset_run_state()
+        report_patches.reset_run_state()
+
+    def test_report_patches_consumes_pipeline_findings_without_error(self):
+        sha = "abc1234"
+        findings_path = os.path.join(self.tmp, f"code-gauntlet-findings-{sha}.json")
+        with open(findings_path, "w") as fh:
+            json.dump(PERSISTED_FINDINGS, fh)
+
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            exit_code = report_patches.main(
+                ["--output-dir", self.tmp, "--head-sha", sha]
+            )
+
+        self.assertEqual(
+            exit_code,
+            0,
+            f"report_patches.py errored on the persisted schema: {stdout_buf.getvalue()}",
+        )
+        receipt = json.loads(stdout_buf.getvalue().strip().splitlines()[-1])
+        self.assertEqual(receipt["findings"], len(PERSISTED_FINDINGS))
+
+    def _run_report_patches(self, findings, sha="abc1234", diff=None):
+        findings_path = os.path.join(self.tmp, f"code-gauntlet-findings-{sha}.json")
+        with open(findings_path, "w") as fh:
+            json.dump(findings, fh)
+        if diff is not None:
+            diff_path = os.path.join(self.tmp, f"code-gauntlet-diff-{sha}.patch")
+            with open(diff_path, "w") as fh:
+                fh.write(diff)
+
+        stdout_buf = io.StringIO()
+        with contextlib.redirect_stdout(stdout_buf):
+            exit_code = report_patches.main(
+                ["--output-dir", self.tmp, "--head-sha", sha]
+            )
+        self.assertEqual(exit_code, 0, stdout_buf.getvalue())
+        return json.loads(stdout_buf.getvalue().strip().splitlines()[-1])
+
+    def test_every_persisted_finding_with_a_patch_is_kept_against_a_matching_diff(
+        self,
+    ):
+        """Every REAL persisted finding, given a ``suggested_fix_code`` and a
+        diff built to make its (file, line) a real, DIFFERING anchor, passes
+        the SAME gate delivery runs — this drives the gate with the actual
+        pipeline schema rather than a hand-built fixture."""
+        patched = [
+            dict(f, suggested_fix_code="const patched = true;")
+            for f in PERSISTED_FINDINGS
+        ]
+        receipt = self._run_report_patches(
+            patched, diff=build_gh_diff(PERSISTED_FINDINGS)
+        )
+        self.assertEqual(receipt["kept"], len(patched))
+        self.assertEqual(receipt["reasons"], {})
+
+    def test_dropping_end_line_from_every_finding_downgrades_all_as_missing_end_line(
+        self,
+    ):
+        """RED against the alias-drop bug the module docstring names: an
+        ``end_line``-less v2 finding must downgrade with the gate's OWN
+        ``missing_end_line`` reason, not silently pass or fail some other way.
+        """
+        patched = []
+        for f in PERSISTED_FINDINGS:
+            copy = dict(f, suggested_fix_code="const patched = true;")
+            copy.pop("end_line", None)
+            patched.append(copy)
+        receipt = self._run_report_patches(
+            patched, diff=build_gh_diff(PERSISTED_FINDINGS)
+        )
+        self.assertEqual(receipt["kept"], 0)
+        self.assertEqual(receipt["reasons"], {"missing_end_line": len(patched)})
 
 
 if __name__ == "__main__":

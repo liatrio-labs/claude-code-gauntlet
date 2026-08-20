@@ -3,11 +3,11 @@
 // of the Phase 8 model. Unit tests call dimensionsSummaryTable directly with synthetic
 // inputs and assert exact rendered strings; the reportStage-level tests at the bottom
 // reuse the ctx-mock pattern from pipeline_run.test.js to check the plumbing
-// (reportPrompt / minimalReport) around it. Also covers stripFixCode and reportStage's
-// report-path suggested_fix_code strip (issue #220).
+// (reportPrompt / minimalReport) around it. Also covers stripReportExcludedFields and
+// reportStage's report-path field strip (issues #220, #226).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dimensionsSummaryTable, reportStage, stripFixCode } from '../src/stages.js';
+import { dimensionsSummaryTable, reportStage, stripReportExcludedFields, REPORT_EXCLUDED_FIELDS } from '../src/stages.js';
 import { AGENTS, AGENT_LABELS } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
@@ -340,50 +340,85 @@ test('reportStage: a writer throw degrades to the minimal report, which renders 
   assert.ok(!out.report.includes(`- [MEDIUM] ${corroborator.title}`), 'the corroborator is not rendered as its own top-level bullet');
 });
 
-// --- stripFixCode (issue #220) -----------------------------------------------
+// --- stripReportExcludedFields (issues #220, #226) ----------------------------
 //
 // The report-writer is a sampled model: no apply-check oracle exists at report time,
-// so suggested_fix_code must never reach the report path. stripFixCode is the copy-
-// based mechanism reportStage rebinds its input through before any consumer reads it.
+// so suggested_fix_code must never reach the report path — and its two removal
+// stamps are dangling metadata for a field the report-writer never sees either way.
+// stripReportExcludedFields is the copy-based mechanism reportStage rebinds its
+// input through before any consumer reads it, iterating REPORT_EXCLUDED_FIELDS so a
+// future report-excluded field is a one-line list edit, not a second copy operation.
 
-test('stripFixCode: strips suggested_fix_code from a finding that carries it', () => {
+test('stripReportExcludedFields: strips suggested_fix_code from a finding that carries it', () => {
   const f = makeFinding('F1', { suggested_fix_code: 'const x = 1;' });
-  const [out] = stripFixCode([f]);
+  const [out] = stripReportExcludedFields([f]);
   assert.equal(out.suggested_fix_code, undefined);
   assert.ok(!('suggested_fix_code' in out), 'the key itself must be gone, not just falsy');
 });
 
-test('stripFixCode: a finding without the field is returned as the SAME object (no copy made)', () => {
-  const f = makeFinding('F1');
-  const [out] = stripFixCode([f]);
-  assert.equal(out, f, 'no suggested_fix_code present -> identity passthrough, not a copy');
+test('stripReportExcludedFields: strips all three REPORT_EXCLUDED_FIELDS and leaves the caller\'s object untouched', () => {
+  const f = makeFinding('F1', {
+    suggested_fix_code: 'const x = 1;',
+    suggested_fix_code_removed_by: 'injection',
+    suggested_fix_code_removal_reason: 'suggested_fix_code is not a string',
+  });
+  const [out] = stripReportExcludedFields([f]);
+  for (const key of REPORT_EXCLUDED_FIELDS) {
+    assert.ok(!(key in out), `${key} must be gone from the copy`);
+    assert.ok(key in f, `${key} must survive on the caller's original object`);
+  }
+  assert.notEqual(out, f, 'a stripped finding must be a copy, never the mutated original');
 });
 
-test('stripFixCode: a finding carrying the field is copied — the original object is untouched', () => {
+test('stripReportExcludedFields: the two removal-stamp fields are stripped by NAME, not merely by list membership', () => {
+  // Iterating REPORT_EXCLUDED_FIELDS (as the test above does) checks the
+  // implementation against ITSELF: if the exported list ever shrinks back to
+  // just suggested_fix_code, that test's own loop would shrink with it and
+  // stay green. Pin the two removal-stamp field NAMES as string literals here
+  // so a shrunk REPORT_EXCLUDED_FIELDS list is caught independently of it.
+  const f = makeFinding('F1', {
+    suggested_fix_code: 'const x = 1;',
+    suggested_fix_code_removed_by: 'injection',
+    suggested_fix_code_removal_reason: 'suggested_fix_code is not a string',
+  });
+  const [out] = stripReportExcludedFields([f]);
+  assert.ok(!('suggested_fix_code_removed_by' in out), 'suggested_fix_code_removed_by must be gone from the copy');
+  assert.ok(!('suggested_fix_code_removal_reason' in out), 'suggested_fix_code_removal_reason must be gone from the copy');
+  assert.equal(f.suggested_fix_code_removed_by, 'injection', "the caller's original object keeps the stamp");
+  assert.equal(f.suggested_fix_code_removal_reason, 'suggested_fix_code is not a string', "the caller's original object keeps the stamp");
+});
+
+test('stripReportExcludedFields: a finding without any excluded field is returned as the SAME object (no copy made)', () => {
+  const f = makeFinding('F1');
+  const [out] = stripReportExcludedFields([f]);
+  assert.equal(out, f, 'no excluded field present -> identity passthrough, not a copy');
+});
+
+test('stripReportExcludedFields: a finding carrying the field is copied — the original object is untouched', () => {
   const f = makeFinding('F1', { suggested_fix_code: 'const x = 1;' });
-  const [out] = stripFixCode([f]);
+  const [out] = stripReportExcludedFields([f]);
   assert.notEqual(out, f, 'a stripped finding must be a copy, never the mutated original');
   assert.equal(f.suggested_fix_code, 'const x = 1;', 'the caller\'s original object keeps the field — delivery reads the same objects reportStage was called with');
 });
 
-test('stripFixCode: every other field survives untouched on the copy', () => {
+test('stripReportExcludedFields: every other field survives untouched on the copy', () => {
   const f = makeFinding('F1', { suggested_fix_code: 'const x = 1;', suggestion: 'do this instead' });
-  const [out] = stripFixCode([f]);
+  const [out] = stripReportExcludedFields([f]);
   assert.equal(out.id, 'F1');
   assert.equal(out.suggestion, 'do this instead');
   assert.equal(out.file, f.file);
   assert.equal(out.description, f.description);
 });
 
-test('stripFixCode: absent/empty input does not throw', () => {
-  assert.deepEqual(stripFixCode(undefined), []);
-  assert.deepEqual(stripFixCode([]), []);
+test('stripReportExcludedFields: absent/empty input does not throw', () => {
+  assert.deepEqual(stripReportExcludedFields(undefined), []);
+  assert.deepEqual(stripReportExcludedFields([]), []);
 });
 
-test('stripFixCode: primitive/null members pass through unchanged and do not throw', () => {
+test('stripReportExcludedFields: primitive/null members pass through unchanged and do not throw', () => {
   // 'x' in 'str' throws TypeError — a primitive element in a replayed checkpoint's
-  // findings must not turn stripFixCode's guard into an unhandled throw.
-  assert.deepEqual(stripFixCode([null, 'oops', 7]), [null, 'oops', 7]);
+  // findings must not turn stripReportExcludedFields's guard into an unhandled throw.
+  assert.deepEqual(stripReportExcludedFields([null, 'oops', 7]), [null, 'oops', 7]);
 });
 
 // --- reportStage strips suggested_fix_code before any consumer reads it (#220) ----
@@ -394,19 +429,28 @@ test('reportStage: the dispatched prompt carries no suggested_fix_code occurrenc
     agent: async (prompt) => { capturedPrompt = prompt; return { report: '# r' }; },
     parallel: async () => [],
   };
-  const findings = [makeFinding('B1', { dimension: 'bug', severity: 'high', suggested_fix_code: 'const patched = true;' })];
+  const findings = [makeFinding('B1', {
+    dimension: 'bug',
+    severity: 'high',
+    suggested_fix_code: 'const patched = true;',
+    suggested_fix_code_removed_by: 'injection',
+    suggested_fix_code_removal_reason: 'x',
+  })];
   const unverified = [makeFinding('B2', { dimension: 'bug', severity: 'low', suggested_fix_code: 'const alsoPatched = true;' })];
   await reportStage(ctx, { findings, unverified, stats: {}, dimensions: { dispatched: AGENTS, degraded: [] } });
 
   assert.equal(typeof capturedPrompt, 'string');
-  // A raw '!includes(\'suggested_fix_code\')' check over-pins: filterFindings legitimately
-  // stamps suggested_fix_code_removed_by / suggested_fix_code_removal_reason on findings,
-  // and those field NAMES can legitimately reach the prompt. What must never reach it is
-  // the stripped CODE PAYLOAD itself.
+  // R10: every REPORT_EXCLUDED_FIELDS key — suggested_fix_code itself (no apply-check
+  // oracle exists at report time) plus its two removal stamps (dangling metadata for a
+  // field the report-writer never sees either way) — is stripped before ANY report-path
+  // consumer reads a finding. A field-NAME check alone would pass even if the stripped
+  // CODE PAYLOAD leaked, so both are asserted below.
   assert.ok(!capturedPrompt.includes('const patched = true;'), 'the report-writer prompt must not contain the stripped fix-code payload');
   assert.ok(!capturedPrompt.includes('const alsoPatched = true;'), 'the report-writer prompt must not contain the stripped unverified fix-code payload');
   const body = resultsBody(capturedPrompt);
   assert.ok(!('suggested_fix_code' in body.findings[0]), 'the findings bucket in the parsed prompt body must not carry the field');
+  assert.ok(!('suggested_fix_code_removed_by' in body.findings[0]), 'the findings bucket must not carry the removal-stamp field name either');
+  assert.ok(!('suggested_fix_code_removal_reason' in body.findings[0]), 'the findings bucket must not carry the removal-reason field name either');
   assert.ok(!('suggested_fix_code' in body.unverified[0]), 'the unverified bucket in the parsed prompt body must not carry the field');
 });
 

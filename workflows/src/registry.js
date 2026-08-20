@@ -69,8 +69,10 @@ export const FINDING_PROP_TYPES = {
   // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
   // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
   // to delivery with this field set is not a guarantee the fence ships. The pipeline also
-  // strips the field from the report-writer's input (stripFixCode in stages.js), so delivery
-  // is the only surface it is ever rendered on.
+  // strips the field from the report-writer's input (stripReportExcludedFields in
+  // stages.js), so delivery is the only surface it is ever rendered on. The read-only
+  // report-side apply-check (scripts/report_patches.py) renders the KEPT patches into a
+  // sibling artifact instead — see report-format.md.
   suggested_fix_code: 'string',
   cross_file_refs: { type: 'array', items: { type: 'string' } },
 };

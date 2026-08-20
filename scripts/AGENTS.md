@@ -20,8 +20,8 @@ assume a language in the reviewed codebase.
   fixtures in `tests/fixtures/parity/`. Change one, change both, re-record the fixture.
 - **Numbers crossing to JS must be JS-reproducible.** Both runtimes refuse non-integer or
   out-of-safe-range values rather than write an artifact whose float spelling differs by language.
-- **Always emit exactly one receipt line.** `assemble_artifacts.py`'s and
-  `materialize_artifacts.py`'s `main()` fall back to a hand-built minimal receipt if the real one
+- **Always emit exactly one receipt line.** `assemble_artifacts.py`'s, `materialize_artifacts.py`'s
+  and `report_patches.py`'s `main()` fall back to a hand-built minimal receipt if the real one
   will not serialize: an empty stdout is indistinguishable from a dead executor.
 - **`materialize_artifacts.py` is what keeps a model out of the persist path.** It reads the
   workflow's own return out of `tasks/<task-id>.output` and writes the primaries itself. It must

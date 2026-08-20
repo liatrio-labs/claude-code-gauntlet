@@ -136,7 +136,14 @@ CODEX_CAP_BYTES = 32_768
 # #219 PR CI measurement (93.37 scripts, 88.29 bench) in place of the #63 one — the floor
 # policy requires the note name the measurement it came from, and a stale note is the
 # unverifiable claim the repo's own rules prohibit.
-AGENTS_SET_BUDGET_BYTES = 20_605
+# Raised 20_605 -> 20_628 (2026-08-20, #226): scripts/AGENTS.md's "Always emit exactly
+# one receipt line" bullet now names report_patches.py as the third script whose
+# main() falls back to a hand-built minimal receipt if the real one will not
+# serialize — a cross-script convention no single code site owns, so the rule an
+# author needs before adding a fourth receipt-line script is not otherwise stated
+# anywhere in the tree. (report_patches.py's own module docstring already states
+# what the script itself does, so no second bullet restates it here.)
+AGENTS_SET_BUDGET_BYTES = 20_628
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
