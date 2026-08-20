@@ -247,13 +247,14 @@ def _gitlab_discussion(
     """Mirror post_gitlab's per-finding discussion payload (sans ``old_line`` and
     rename-aware ``old_path`` — the adapter reads neither).
 
-    GitLab anchors are ALWAYS single-line (#63 D9 — this script never emits the
-    ``suggestion:-m+n`` multi-line syntax), so the apply range is always
-    ``(line, line)``, gated through `_gated_finding` exactly as `post_gitlab`'s
-    own `anchored` closure does.
+    A GitLab position is always single-line, but a ```suggestion:-m+n header
+    widens what one click replaces (#219). The apply range and the header's
+    offsets are both taken from `_gitlab_anchored` — post_gitlab's own decision,
+    called rather than copied, so this mirror cannot drift into fiction that
+    stays green.
     """
     line = f["line"]
-    gated = post_review._gated_finding(f, (line, line), valid_lines, line_texts)
+    gated, offsets = post_review._gitlab_anchored(f, line, valid_lines, line_texts)
     position = {
         "position_type": "text",
         "base_sha": _GL_BASE,
@@ -264,7 +265,10 @@ def _gitlab_discussion(
     }
     if not new_file:
         position["old_path"] = f["file"]
-    return {"body": post_review.render_comment_body(gated), "position": position}
+    return {
+        "body": post_review.render_comment_body(gated, fence_offsets=offsets),
+        "position": position,
+    }
 
 
 def build_reference_gitlab_payload(
@@ -510,6 +514,36 @@ class TestFixtureFidelity(unittest.TestCase):
             "Add a LIMIT/OFFSET pair to the query and cap the page size server-side.",
             comment["body"],
         )
+
+    def test_gitlab_discussion_states_the_offsets_the_poster_would(self):
+        """Direct regression for the `_gitlab_anchored` routing in
+        `_gitlab_discussion`.
+
+        A GitLab position is single-line, so a hard-coded ``(line, line)`` apply
+        range downgrades every multi-line patch — which the real poster stopped
+        doing at #219, when the ```suggestion:-m+n header became how the apply
+        range is widened. GL_FINDINGS carries no fence at all, so the byte
+        compare above cannot see this.
+        """
+        finding = {
+            "file": "app/models/user.rb",
+            "line": 27,
+            "end_line": 28,
+            "severity": "high",
+            "title": "N+1 query in loop",
+            "body": "Preload the association before iterating.",
+            "suggested_fix_code": "  posts = preload(:posts)\n  posts.each do |p|",
+        }
+        valid_lines = {("app/models/user.rb", 27): 27, ("app/models/user.rb", 28): 28}
+        line_texts = {
+            ("app/models/user.rb", 27): "  user.posts.each do |p|",
+            ("app/models/user.rb", 28): "    render p",
+        }
+        discussion = _gitlab_discussion(
+            finding, valid_lines=valid_lines, line_texts=line_texts
+        )
+        self.assertIn("```suggestion:-0+1", discussion["body"])
+        self.assertEqual(discussion["position"]["new_line"], 27)
 
     def test_github_empty_fixture_matches_post_review(self):
         expected = build_reference_github_payload([], [])

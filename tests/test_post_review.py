@@ -819,6 +819,32 @@ class TestOutboundSanitizeHelpers(unittest.TestCase):
         self.assertEqual(open_f, "`````suggestion")
         self.assertEqual(close_f, "`````")
 
+    def test_offsets_are_stated_in_the_header(self):
+        open_f, close_f = _suggestion_fence("return None", offsets=(0, 2))
+        self.assertEqual(open_f, "```suggestion:-0+2")
+        self.assertEqual(close_f, "```")
+
+    def test_both_offsets_are_stated_even_when_one_is_zero(self):
+        """GitLab's parser takes ``-m`` and ``+n`` independently, so either could
+        be omitted — emitting both makes the header state the whole range."""
+        open_f, _ = _suggestion_fence("x", offsets=(2, 0))
+        self.assertEqual(open_f, "```suggestion:-2+0")
+
+    def test_no_offsets_and_zero_offsets_are_the_plain_header(self):
+        """``suggestion:-0+0`` is an exact synonym for ``suggestion``, so the
+        single-line bytes every platform understands are what ships."""
+        for offsets in (None, (0, 0)):
+            with self.subTest(offsets=offsets):
+                open_f, _ = _suggestion_fence("x", offsets=offsets)
+                self.assertEqual(open_f, "```suggestion")
+
+    def test_offsets_compose_with_the_backtick_escalation(self):
+        """Fence length and header are independent — GitLab's parser is
+        fence-length blind, and its own docs show ````suggestion:-0+2."""
+        open_f, close_f = _suggestion_fence("line1\n```\nline3", offsets=(0, 2))
+        self.assertEqual(open_f, "````suggestion:-0+2")
+        self.assertEqual(close_f, "````")
+
 
 class TestRenderCommentBody(unittest.TestCase):
     def test_critical_severity_emoji(self):
@@ -5397,6 +5423,16 @@ GH_DIFF_INDENTED_CRLF_BODY = (
     "+    # tail\r\n"
 )
 
+# The same file, long enough for a finding to STATE a span wider than GitLab's
+# offset cap: every line 1..(cap + 3) is an added, addressable line, so
+# `range_not_in_diff` — which precedes the anchor check — cannot be what a
+# cap-exceeded span reports.
+_GL_LONG_LINE_COUNT = post_review._GITLAB_SUGGESTION_OFFSET_CAP + 3
+GL_DIFF_LONG = (
+    f"--- foo.py\n+++ foo.py\n@@ -0,0 +1,{_GL_LONG_LINE_COUNT} @@\n"
+    + "".join(f"+    line{n}\n" for n in range(1, _GL_LONG_LINE_COUNT + 1))
+)
+
 _FENCE = "```suggestion"
 
 
@@ -5709,8 +5745,11 @@ class TestSuggestedFixGate(unittest.TestCase):
     # -- 9. anchor_mismatch ------------------------------------------------
 
     def test_apply_range_narrower_than_the_stated_range(self):
-        """The GitLab case: anchors there are ALWAYS single-line, so a two-line
-        replacement would overwrite one line and leave the other."""
+        """The site's one click really replaces less than the patch states, so
+        applying it would overwrite one line and leave the other. Reached with a
+        wrong anchor, and wherever no wider apply range can be expressed at all —
+        a GitLab span past the platform offset cap renames THIS outcome
+        (``span_exceeds_platform_cap``) rather than adding a check."""
         self.assertEqual(
             self._reason(self._finding(), apply_range=(2, 2)), "anchor_mismatch"
         )
@@ -5882,6 +5921,7 @@ class TestSuggestedFixGate(unittest.TestCase):
                     "no_diff_oracle",
                     "range_not_in_diff",
                     "anchor_mismatch",
+                    "span_exceeds_platform_cap",
                     "no_op_replacement",
                     "indentation_mismatch",
                     "replacement_too_large",
@@ -5889,10 +5929,10 @@ class TestSuggestedFixGate(unittest.TestCase):
             ),
         )
 
-    def test_the_closed_vocabulary_has_twelve_members(self):
+    def test_the_closed_vocabulary_has_thirteen_members(self):
         """Adding a reason is a deliberate act — this is the tripwire that says
         so out loud."""
-        self.assertEqual(len(post_review._FIX_REASONS), 12)
+        self.assertEqual(len(post_review._FIX_REASONS), 13)
 
 
 class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
@@ -5915,6 +5955,136 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
         ):
             post_review._gated_finding(finding, (2, 2), {}, {})
         self.assertIn("bogus", str(ctx.exception))
+
+    def test_a_renamed_anchor_failure_is_checked_against_the_same_set(self):
+        """``mismatch_reason`` renames one gate outcome; it cannot widen the
+        vocabulary the warning line's readers rely on."""
+        finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
+        with (
+            patch(
+                "scripts.post_review._suggested_fix_gate",
+                return_value=(False, "anchor_mismatch"),
+            ),
+            self.assertRaises(ValueError) as ctx,
+        ):
+            post_review._gated_finding(finding, (2, 2), {}, {}, mismatch_reason="bogus")
+        self.assertIn("bogus", str(ctx.exception))
+
+
+class TestGitLabFenceOffsets(unittest.TestCase):
+    """``_gitlab_fence_offsets``: the one producer of GitLab's ``-m+n`` pair.
+
+    GitLab resolves the header against ``position.new_line``, so the pair is a
+    function of the ANCHOR and the stated range — never of the finding alone.
+    """
+
+    def test_a_single_line_range_needs_no_offsets(self):
+        self.assertEqual(post_review._gitlab_fence_offsets(2, 2, 2), ((0, 0), False))
+
+    def test_a_span_below_the_anchor(self):
+        self.assertEqual(post_review._gitlab_fence_offsets(2, 2, 4), ((0, 2), False))
+
+    def test_a_span_above_the_anchor(self):
+        """Unit-only: every delivery path anchors a finding at its own ``line``,
+        so ``m`` is 0 everywhere it is reachable today. The helper still answers
+        for an anchor inside the range, because the anchor is its input."""
+        self.assertEqual(post_review._gitlab_fence_offsets(4, 2, 4), ((2, 0), False))
+
+    def test_an_anchor_before_the_range_is_unrealizable(self):
+        self.assertEqual(post_review._gitlab_fence_offsets(1, 2, 4), (None, False))
+
+    def test_an_anchor_after_the_range_is_unrealizable(self):
+        self.assertEqual(post_review._gitlab_fence_offsets(5, 2, 4), (None, False))
+
+    def test_the_cap_is_inclusive(self):
+        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        self.assertEqual(
+            post_review._gitlab_fence_offsets(2, 2, 2 + cap), ((0, cap), False)
+        )
+
+    def test_one_line_past_the_cap_is_cap_exceeded_not_unrealizable(self):
+        """GitLab CLAMPS an offset above the cap instead of rejecting it, so a
+        header carrying one would apply a range it does not state. The second
+        return is what lets that failure be named."""
+        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        self.assertEqual(post_review._gitlab_fence_offsets(2, 2, 3 + cap), (None, True))
+
+    def test_an_above_offset_past_the_cap_is_cap_exceeded(self):
+        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        anchor = 2 + cap + 1
+        self.assertEqual(
+            post_review._gitlab_fence_offsets(anchor, 2, anchor), (None, True)
+        )
+
+    def test_a_non_integer_bound_is_not_a_cap_failure(self):
+        """A missing or non-integer bound is the gate's business
+        (``missing_end_line`` / ``invalid_range``); the helper only declines to
+        answer, which leaves the single anchored line as the apply range."""
+        for end_line in (None, "3", 3.0, True):
+            with self.subTest(end_line=end_line):
+                self.assertEqual(
+                    post_review._gitlab_fence_offsets(2, 2, end_line), (None, False)
+                )
+
+
+class TestGitLabAnchoredDecision(unittest.TestCase):
+    """``_gitlab_anchored`` — the whole GitLab render-site decision, once.
+
+    Both the poster and the benchmark's payload mirror call it, so the mirror
+    cannot drift into fiction that stays green.
+    """
+
+    def setUp(self):
+        parsed = _parse_fixture(GL_DIFF_INDENTED, platform="gitlab")
+        self.valid_lines, _, _, self.line_texts = parsed
+
+    def _finding(self, **over):
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "title": "T",
+            "body": "b",
+            "suggested_fix_code": "    return 2\n    # done",
+        }
+        finding.update(over)
+        return finding
+
+    def _anchored(self, finding, anchor=2):
+        return post_review._gitlab_anchored(
+            finding, anchor, self.valid_lines, self.line_texts
+        )
+
+    def test_a_kept_fence_comes_with_the_offsets_that_realize_its_range(self):
+        gated, offsets = self._anchored(self._finding())
+        self.assertIn("suggested_fix_code", gated)
+        self.assertEqual(offsets, (0, 1))
+
+    def test_it_never_mutates_the_finding_it_is_given(self):
+        """Offsets travel out of band. A key written onto the finding would move
+        every delivery key it seeds — `_key_material_finding` renders the
+        ORIGINAL dict, not this copy."""
+        finding = self._finding()
+        before = dict(finding)
+        self._anchored(finding)
+        self.assertEqual(finding, before)
+
+    def test_a_downgrade_leaves_the_input_untouched(self):
+        """The strip happens on a copy — the caller's dict still carries the
+        field, and the render-time offsets are moot once the fence is gone."""
+        finding = self._finding(suggested_fix_code="    return 1\n    # tail")
+        gated, offsets = self._anchored(finding)
+        self.assertNotIn("suggested_fix_code", gated)
+        self.assertIn("suggested_fix_code", finding)
+        self.assertEqual(offsets, (0, 1))
+
+    def test_an_unrealizable_span_falls_back_to_the_single_anchored_line(self):
+        """The anchor is outside the stated range (unreachable from the poster,
+        which anchors every finding at its own line), so no header expresses it:
+        the gate judges the one line the position really carries."""
+        gated, offsets = self._anchored(self._finding(), anchor=1)
+        self.assertNotIn("suggested_fix_code", gated)
+        self.assertIsNone(offsets)
 
 
 class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
@@ -6243,8 +6413,10 @@ class TestGitHubSuggestedFixGate(_FixGateRunBase):
 
 
 class TestGitLabSuggestedFixGate(_FixGateRunBase):
-    """GitLab anchors are ALWAYS single-line, so a multi-line patch can never
-    apply there — the script never emits ``suggestion:-m+n`` (#63 D9)."""
+    """A GitLab position is ALWAYS single-line; the fence header is what widens
+    the apply range. ``suggestion:-m+n`` replaces ``[anchor - m, anchor + n]``
+    (#219), so the offsets are derived from the anchor the discussion is posted
+    at and the gate judges the range they realize."""
 
     PLATFORM = "gitlab"
     DIFF = GL_DIFF_INDENTED
@@ -6266,10 +6438,115 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         self.assertIn(_FENCE, run.payload["discussions"][0]["body"])
         self.assertEqual(run.payload["skipped"], [])
 
-    def test_multi_line_fix_is_downgraded(self):
+    def test_multi_line_fix_ships_an_offset_header(self):
+        """The finding anchors at 2 and states 2..3, so one click must replace
+        both lines — which the HEADER says, not the position (#219)."""
         run = self._run([self._finding()])
+        self.assertIn(
+            "```suggestion:-0+1\n    return 2\n    # done\n```",
+            run.payload["discussions"][0]["body"],
+        )
+        self.assertEqual(run.payload["skipped"], [])
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+
+    def test_the_offset_header_leaves_the_position_alone(self):
+        """The widening lives entirely in the fence: GitLab resolves the header
+        against ``position.new_line``, so the position is byte-identical to the
+        single-line case — no ``line_range``, no new keys."""
+        multi = self._run([self._finding()])
+        single = self._run(
+            [self._finding(end_line=2, suggested_fix_code="    return 2")]
+        )
+        self.assertEqual(
+            multi.payload["discussions"][0]["position"],
+            single.payload["discussions"][0]["position"],
+        )
+
+    def test_every_emitted_header_is_centred_on_the_position_it_ships_with(self):
+        """The wire-level invariant behind the body factory: ``deliver`` renders
+        with the SAME line it writes into ``position.new_line``, so a header can
+        never state a range that anchor does not centre."""
+        findings = [
+            self._finding(),
+            self._finding(end_line=2, suggested_fix_code="    return 2"),
+        ]
+        run = self._run(findings)
+        headers = 0
+        for finding, discussion in zip(
+            findings, run.payload["discussions"], strict=True
+        ):
+            match = re.search(r"```suggestion:-(\d+)\+(\d+)", discussion["body"])
+            if match is None:
+                continue
+            anchor = discussion["position"]["new_line"]
+            self.assertEqual(anchor - int(match.group(1)), finding["line"])
+            self.assertEqual(anchor + int(match.group(2)), finding["end_line"])
+            headers += 1
+        self.assertEqual(headers, 1)
+
+    def test_the_offset_header_is_identical_under_dry_run_and_live(self):
+        """``validate_position``'s precedent, extended to the new path: the live
+        body is the dry-run body plus the delivery marker, nothing else."""
+        findings = [self._finding()]
+        dry_body = self._run(findings).payload["discussions"][0]["body"]
+        payloads = []
+        self._run(findings, dry_run=False, payloads=payloads)
+        live_body = next(p["body"] for p in payloads if "position" in p)
+        self.assertIn("```suggestion:-0+1", dry_body)
+        self.assertTrue(live_body.startswith(dry_body))
+
+    def test_a_span_past_the_platform_cap_is_downgraded_by_name(self):
+        """Hand-assembled: the pipeline's own ``maxLineSpan`` intake bound
+        (default 100) drops a span this wide upstream, so only caller-supplied
+        JSON reaches here. GitLab CLAMPS an offset above its cap rather than
+        rejecting it, so the header would apply a range it does not state."""
+        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        finding = self._finding(
+            end_line=2 + cap + 1, suggested_fix_code="    patched\n    also patched"
+        )
+        run = self._run([finding], diff=GL_DIFF_LONG)
         self.assertNotIn(_FENCE, run.payload["discussions"][0]["body"])
-        self._assert_downgraded(run, "anchor_mismatch")
+        self._assert_downgraded(run, "span_exceeds_platform_cap")
+
+    def test_no_emitted_header_ever_states_an_offset_past_the_cap(self):
+        """The render-level invariant the cap exists for, over a whole payload:
+        the span one line inside the cap ships, the one line outside it does
+        not, and nothing in between leaks a clamped offset."""
+        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        run = self._run(
+            [
+                self._finding(end_line=2 + cap, suggested_fix_code="    patched"),
+                self._finding(end_line=2 + cap + 1, suggested_fix_code="    patched"),
+            ],
+            diff=GL_DIFF_LONG,
+        )
+        self.assertEqual(
+            re.findall(r"suggestion:-(\d+)\+(\d+)", json.dumps(run.payload)),
+            [("0", str(cap))],
+        )
+
+    def test_an_out_of_diff_span_past_the_cap_still_reports_the_range(self):
+        """Check order is unchanged: the STATED range is judged against the diff
+        before the anchor, so a span that is both out-of-diff and past the cap
+        reports what it always reported."""
+        cap = post_review._GITLAB_SUGGESTION_OFFSET_CAP
+        run = self._run([self._finding(end_line=2 + cap + 1)])
+        self._assert_downgraded(run, "range_not_in_diff")
+
+    def test_a_forged_offsets_key_on_the_finding_changes_nothing(self):
+        """Offsets are derived from the anchor, never read from the findings
+        JSON — which is caller-supplied and flows in unfiltered. An in-band key
+        would let a hand-assembled payload widen a range the gate approved."""
+        fix = {"end_line": 2, "suggested_fix_code": "    return 2"}
+        honest = self._run([self._finding(**fix)])
+        forged = self._run(
+            [
+                self._finding(
+                    **fix, fence_offsets=[0, 40], _fence_offsets=[0, 40], above=9
+                )
+            ]
+        )
+        self.assertEqual(forged.payload["discussions"], honest.payload["discussions"])
 
     def test_a_failed_diff_fetch_downgrades_the_fence(self):
         """`glab mr diff` failing leaves no oracle at all — the discussion still
@@ -6345,7 +6622,57 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         self.assertIn(_FENCE, fallback[0])
         self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
 
-    def test_corroborator_with_a_multi_line_range_is_downgraded(self):
+    def test_a_group_body_carries_the_primarys_offset_header_once(self):
+        """One discussion carries the whole group, anchored on the PRIMARY — so
+        the primary's offsets are the body's, and a corroborator (which renders
+        no fence at all) adds none."""
+        primary = self._finding(
+            consolidation_key="foo.py:0", consolidation_primary=True
+        )
+        corroborator = {
+            "file": "foo.py",
+            "line": 3,
+            "end_line": 3,
+            "severity": "medium",
+            "title": "B",
+            "body": "Body B",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "foo.py:0",
+            "consolidation_primary": False,
+            "suggested_fix_code": "    # replaced",
+        }
+        body = self._run([primary, corroborator]).payload["discussions"][0]["body"]
+        self.assertEqual(body.count(_FENCE), 1)
+        self.assertIn("```suggestion:-0+1", body)
+        self.assertIn("Corroborating finding", body)
+
+    def test_a_fence_bearing_rerun_still_recognizes_its_own_delivery(self):
+        """A finding that ships an offset header today was keyed, before #219,
+        off a render that never carried a fence at all — `_key_material_finding`
+        strips the field unconditionally, so the standing marker still matches
+        and the discussion is not posted a second time (#132)."""
+        finding = self._finding()
+        key = post_review.finding_key(
+            "foo.py",
+            2,
+            finding["title"],
+            render_comment_body(post_review._key_material_finding(finding)),
+        )
+        run = self._run(
+            [finding], dry_run=False, prior=(True, {key}, frozenset(), None)
+        )
+        self.assertIn("  0 inline discussion(s) posted.", run.out)
+        self.assertIn("  1 inline discussion(s) already on the MR", run.out)
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+
+    def test_corroborator_with_a_multi_line_range_is_offset_at_its_own_anchor(self):
+        """The primary sits at line 2 and the corroborator's span at 5..6 — a
+        header measured from the PRIMARY's anchor (3, 4) would be a different,
+        unrealizable claim than one measured from the corroborator's own line
+        (0, 1). Sharing an anchor between the two would leave this unable to
+        tell which one the offsets actually came from."""
         primary = {
             "file": "foo.py",
             "line": 2,
@@ -6357,8 +6684,8 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         }
         spanning = {
             "file": "foo.py",
-            "line": 2,
-            "end_line": 3,
+            "line": 5,
+            "end_line": 6,
             "severity": "medium",
             "title": "Spans",
             "body": "Body B",
@@ -6373,6 +6700,7 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         self._run(
             [primary, spanning],
             dry_run=False,
+            diff=GL_DIFF_LONG,
             payloads=payloads,
             discussion_rcs=[1],
         )
@@ -6381,7 +6709,9 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
             b for b in bodies if "Spans" in b and "Corroborating finding" not in b
         ]
         self.assertEqual(len(fallback), 1)
-        self.assertNotIn(_FENCE, fallback[0])
+        # Its own fallback discussion anchors at its OWN line, so that is the
+        # anchor the header's offsets are measured from.
+        self.assertIn("```suggestion:-0+1", fallback[0])
 
     def test_unanchored_note_never_carries_a_fence(self):
         """A position-less ``/notes`` POST has nothing to apply against."""
@@ -6453,10 +6783,35 @@ class TestDeliveryKeysAreFenceIndependent(_GitlabLiveRunBase):
         self.assertEqual(self._keys([with_fix]), self._keys([plain]))
 
     def test_key_is_byte_equal_whether_the_gate_kept_or_stripped_the_fence(self):
+        # The stripped arm states a range the diff does not contain: since #219 a
+        # 61..62 span is KEPT on GitLab (the header widens the apply range), so a
+        # merely-wider range would leave both arms on the same side of the gate
+        # and say nothing.
         plain = dict(GL_CONTRACT_FINDINGS[0])
         kept = dict(plain, end_line=61, suggested_fix_code="patched_ctx")
-        stripped = dict(plain, end_line=62, suggested_fix_code="patched_ctx")
-        self.assertEqual(self._keys([kept]), self._keys([stripped]))
+        stripped = dict(plain, end_line=999, suggested_fix_code="patched_ctx")
+
+        def _keys_and_body(findings):
+            payloads = []
+            run = self._run_main(findings=findings, payloads=payloads)
+            self.assertIsNone(run.exit_code)
+            body = next(p["body"] for p in payloads if "position" in p)
+            markers = [
+                review_marker.find_finding_marker(p["body"])
+                for p in payloads
+                if "position" in p
+            ]
+            return [m["key"] for m in markers if m], body
+
+        kept_keys, kept_body = _keys_and_body([kept])
+        stripped_keys, stripped_body = _keys_and_body([stripped])
+        # The two arms must actually straddle the gate — a byte-equal key over
+        # two runs that landed on the SAME side of it would say nothing about
+        # the field being stripped from the key render before the gate's
+        # verdict is even known.
+        self.assertIn(_FENCE, kept_body)
+        self.assertNotIn(_FENCE, stripped_body)
+        self.assertEqual(kept_keys, stripped_keys)
 
     def test_key_is_byte_equal_grouped_and_individual(self):
         """The #132 invariant: a member's key is its own single-finding render,

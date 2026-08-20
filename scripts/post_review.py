@@ -538,6 +538,13 @@ def is_new_file(new_files, filepath):
     return filepath in new_files
 
 
+def _is_plain_int(value):
+    """True only for a real ``int`` — ``True`` and ``2.0`` both hash equal to the
+    integer key, so they survive every dict lookup and equality check; type is the
+    only thing that separates them from the integer they impersonate."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def validate_position(
     position, shas, valid_lines, new_files, old_paths, filepath, line
 ):
@@ -590,13 +597,10 @@ def validate_position(
 
     problems = []
 
-    # `True` and `61.0` both hash equal to the integer key, so a bool or a float line
-    # number passes line validation AND the equality check below, reaching the wire in
-    # its own spelling. Type is the only thing that separates them from the integer.
+    # A bool or a float line number passes line validation AND the equality check
+    # below, reaching the wire in its own spelling.
     new_line = position.get("new_line")
-    if "new_line" in position and (
-        isinstance(new_line, bool) or not isinstance(new_line, int)
-    ):
+    if "new_line" in position and not _is_plain_int(new_line):
         problems.append(f"new_line must be an integer, got {new_line!r}")
 
     for key in sorted(set(expected) - set(position)):
@@ -801,17 +805,30 @@ def _blockquote(text):
     return "\n".join(out)
 
 
-def _suggestion_fence(payload):
+def _suggestion_fence(payload, *, offsets=None):
     """Return ``(open, close)`` fence lines that contain ``payload``.
 
     Length is ``max(3, longest_backtick_run + 1)`` so CommonMark cannot close
-    early. Platforms keep Apply for 4+ (GitHub confirmed; GitLab documents
-    nesting with four backticks).
+    early. Per clause: the longest-run+1, min-3 rule matches GitLab's own
+    suggestion UI (gitlab-org MR !172981); GitHub keeps Apply at 4+ backticks
+    (confirmed); GitLab documents four-backtick suggestion nesting.
+
+    *offsets* is GitLab's ``(above, below)`` pair: it makes the header
+    ``suggestion:-m+n``, which widens what one click replaces to
+    ``[anchor - m, anchor + n]`` (#219). The parser is fence-length blind, so
+    the header composes with any length. ``None`` and ``(0, 0)`` both render
+    the plain header — ``suggestion:-0+0`` is its exact synonym, and the plain
+    spelling is the one every platform understands. This renderer is
+    platform-blind: whether offsets are expressible at all is the poster's
+    decision, made where the anchor is known.
     """
     runs = re.findall(r"`+", payload)
     n = max(3, max((len(r) for r in runs), default=0) + 1)
     fence = "`" * n
-    return f"{fence}suggestion", fence
+    header = "suggestion"
+    if offsets not in (None, (0, 0)):
+        header = f"suggestion:-{offsets[0]}+{offsets[1]}"
+    return f"{fence}{header}", fence
 
 
 # ---------------------------------------------------------------------------
@@ -832,6 +849,7 @@ _FIX_INVALID_RANGE = "invalid_range"
 _FIX_NO_ORACLE = "no_diff_oracle"
 _FIX_RANGE_NOT_IN_DIFF = "range_not_in_diff"
 _FIX_ANCHOR_MISMATCH = "anchor_mismatch"
+_FIX_SPAN_EXCEEDS_CAP = "span_exceeds_platform_cap"
 _FIX_NO_OP = "no_op_replacement"
 _FIX_INDENTATION = "indentation_mismatch"
 _FIX_TOO_LARGE = "replacement_too_large"
@@ -851,6 +869,7 @@ _FIX_REASONS = frozenset(
         _FIX_NO_ORACLE,
         _FIX_RANGE_NOT_IN_DIFF,
         _FIX_ANCHOR_MISMATCH,
+        _FIX_SPAN_EXCEEDS_CAP,
         _FIX_NO_OP,
         _FIX_INDENTATION,
         _FIX_TOO_LARGE,
@@ -870,6 +889,15 @@ _FIX_REASONS = frozenset(
 # CODE POINTS. Measuring the raw string instead makes a 100-line patch count 101.
 _FIX_MAX_LINES = 100
 _FIX_MAX_CHARS = 8000
+
+# GitLab's own platform limit on a ```suggestion:-m+n offset
+# (`Suggestible::MAX_LINES_CONTEXT`). An offset above it is silently CLAMPED
+# server-side, not rejected — the header would show Apply and then replace a
+# range it does not state — so an emitted header must never carry one. Unrelated
+# to `_FIX_MAX_LINES`, which bounds the fence's PAYLOAD, and to the pipeline's
+# tunable maxLineSpan intake bound (default 100), which is what keeps a span
+# this wide from reaching delivery at all unless a caller raises it.
+_GITLAB_SUGGESTION_OFFSET_CAP = 100
 
 # Per-run patch-acceptance counters, reset by main() alongside _CAPTURED and
 # _SKIP_WARNINGS. n/(n+m) over these two is the acceptance rate, deterministic
@@ -964,15 +992,11 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
         # replacement lands on a single-line anchor and corrupts the file.
         return False, _FIX_MISSING_END_LINE
     if (
-        isinstance(line, bool)
-        or not isinstance(line, int)
-        or isinstance(end_line, bool)
-        or not isinstance(end_line, int)
+        not _is_plain_int(line)
+        or not _is_plain_int(end_line)
         or line < 1
         or end_line < line
     ):
-        # `True` and `2.0` both hash equal to the integer key, so they survive every
-        # lookup — the trap validate_position documents.
         return False, _FIX_INVALID_RANGE
     if not isinstance(valid_lines, dict) or not isinstance(line_texts, dict):
         # No diff was parsed, so every check below has nothing to consult. Both
@@ -1016,7 +1040,14 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
     return True, None
 
 
-def _gated_finding(finding, apply_range, valid_lines, line_texts):
+def _gated_finding(
+    finding,
+    apply_range,
+    valid_lines,
+    line_texts,
+    *,
+    mismatch_reason=_FIX_ANCHOR_MISMATCH,
+):
     """Return the finding to RENDER at one site, gating its ``suggested_fix_code``.
 
     A failure strips the field from a SHALLOW COPY — the copy is what gets
@@ -1029,6 +1060,12 @@ def _gated_finding(finding, apply_range, valid_lines, line_texts):
     Called at every site where a fence can actually render. A corroborator inside
     a group body is not such a site — ``_render_corroboration`` renders no fence
     (nor the prose suggestion) at all — so it is neither gated nor counted here.
+
+    *mismatch_reason* renames the anchor-equality failure for a caller that knows
+    WHY no anchor could cover the stated range: GitLab's cap on ``-m+n`` offsets
+    is the one such caller (#219). It renames one outcome, it does not add a
+    check, and it cannot widen the vocabulary — an unknown name raises below
+    exactly like a typo'd gate reason.
     """
     if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
         return finding
@@ -1044,6 +1081,8 @@ def _gated_finding(finding, apply_range, valid_lines, line_texts):
     if ok:
         _FIX_COUNTS["kept"] += 1
         return finding
+    if reason == _FIX_ANCHOR_MISMATCH:
+        reason = mismatch_reason
     if reason not in _FIX_REASONS:
         # A typo'd reason string in a future gate edit must fail loudly at the
         # first downgrade, not silently record garbage in the stable warning
@@ -1057,6 +1096,68 @@ def _gated_finding(finding, apply_range, valid_lines, line_texts):
     stripped = dict(finding)
     del stripped["suggested_fix_code"]
     return stripped
+
+
+def _gitlab_fence_offsets(anchor, line, end_line):
+    """Return ``(offsets, cap_exceeded)`` for a GitLab fence posted at *anchor*.
+
+    *offsets* is the ``(above, below)`` pair a ```suggestion:-m+n header must
+    state for one click to replace ``[line, end_line]``, or ``None`` when no
+    header expresses that range from this anchor. GitLab resolves the header
+    against ``position.new_line``, so the pair is a function of the ANCHOR and
+    the stated range — never of the finding alone.
+
+    Pure and total, so both the poster and the benchmark's payload mirror can
+    consume it: a non-integer or absent bound answers ``None`` and leaves the
+    gate's own ``missing_end_line`` / ``invalid_range`` rules to name what is
+    wrong. *cap_exceeded* is True only when the range was otherwise realizable
+    and the platform cap alone forbade the header — which is what separates
+    ``span_exceeds_platform_cap`` from ``anchor_mismatch``.
+    """
+    if not all(_is_plain_int(v) for v in (anchor, line, end_line)):
+        return None, False
+    above, below = anchor - line, end_line - anchor
+    if above < 0 or below < 0:
+        # The anchor lies outside the stated range: offsets extend outward from
+        # it in both directions, so no pair can reach a range it is not inside.
+        return None, False
+    if above > _GITLAB_SUGGESTION_OFFSET_CAP or below > _GITLAB_SUGGESTION_OFFSET_CAP:
+        return None, True
+    return (above, below), False
+
+
+def _gitlab_anchored(finding, anchor, valid_lines, line_texts):
+    """Return ``(finding_to_render, fence_offsets)`` for ONE GitLab inline body.
+
+    A GitLab position is always single-line, but the fence header widens what one
+    click replaces to ``[anchor - m, anchor + n]`` (#219) — so the apply range
+    the gate judges is the one those offsets realize, and a span no header can
+    express is judged against the single anchored line instead. The gate's
+    equality check then makes a kept fence's offsets provably realize the range
+    the finding states.
+
+    The offsets are returned OUT OF BAND and never written onto the finding: the
+    findings JSON is caller-supplied and flows in unfiltered, so an in-band key
+    would be a key that widens an apply range the gate approved as narrower. This
+    is the whole GitLab render-site decision, in one place, so the benchmark's
+    payload mirror can make it by calling rather than by copying.
+    """
+    offsets, cap_exceeded = _gitlab_fence_offsets(
+        anchor, finding.get("line"), finding.get("end_line")
+    )
+    apply_range = (
+        (anchor, anchor)
+        if offsets is None
+        else (anchor - offsets[0], anchor + offsets[1])
+    )
+    gated = _gated_finding(
+        finding,
+        apply_range,
+        valid_lines,
+        line_texts,
+        mismatch_reason=_FIX_SPAN_EXCEEDS_CAP if cap_exceeded else _FIX_ANCHOR_MISMATCH,
+    )
+    return gated, offsets
 
 
 def _degraded_entry(filepath, line, finding, valid_lines, line_texts):
@@ -1109,8 +1210,15 @@ def _print_fix_summary():
     print(f"  {downgraded} suggested fix(es) downgraded to prose.")
 
 
-def render_comment_body(finding):
-    """Build the markdown comment body for a finding."""
+def render_comment_body(finding, *, fence_offsets=None):
+    """Build the markdown comment body for a finding.
+
+    *fence_offsets* is passed through to the suggestion fence and is meaningful
+    only where a platform reads one (GitLab, #219). It is a parameter rather
+    than a finding field because the value depends on the anchor the body will
+    be posted at, which only the caller knows — and because a finding's own JSON
+    is caller-supplied.
+    """
     severity = finding.get("severity", "medium").lower()
     emoji_map = {
         "critical": "🔴",
@@ -1160,7 +1268,7 @@ def render_comment_body(finding):
     # checked ones; redaction only ever substitutes a token, never empties.
     if suggested_fix:
         suggested_fix = _redact_secrets(suggested_fix)
-        open_f, close_f = _suggestion_fence(suggested_fix)
+        open_f, close_f = _suggestion_fence(suggested_fix, offsets=fence_offsets)
         parts += ["", open_f, suggested_fix, close_f]
 
     return "\n".join(parts)
@@ -1230,19 +1338,22 @@ def _render_corroboration(finding):
     return "\n".join(parts)
 
 
-def render_group_body(primary, corroborators):
+def render_group_body(primary, corroborators, *, fence_offsets=None):
     """Build the markdown comment body for one consolidation group.
 
     Renders *primary* exactly as ``render_comment_body`` always has — with no
     *corroborators* this is byte-identical to today, which is what keeps
     unstamped findings (older artifacts, degraded pipelines) unaffected.
+    *fence_offsets* reaches the primary's fence only: a corroborator never
+    renders one (see :func:`_render_corroboration`), so a group body carries at
+    most the one header, measured from the anchor the group is posted at.
     Each corroborator is appended as its own section; that appended text is
     finding-controlled, so it is run through the same ``<!--`` neutralization
     ``build_skipped_section`` applies (see its docstring) — the primary's own
     render is deliberately left alone, matching its existing raw-on-the-wire
     behavior.
     """
-    body = render_comment_body(primary)
+    body = render_comment_body(primary, fence_offsets=fence_offsets)
     if not corroborators:
         return body
     section = "\n\n".join(_render_corroboration(c) for c in corroborators)
@@ -1617,14 +1728,21 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
                 f"rejected. Check that the MR has a version carrying all three SHAs."
             )
 
-    def anchored(finding, line):
-        """Gate a finding for a GitLab inline body.
+    def body_factory(finding, corroborators=()):
+        """Return the body renderer ``deliver`` calls with the anchor it posts at.
 
-        GitLab anchors are ALWAYS single-line and this script never emits the
-        ``suggestion:-m+n`` multi-line syntax (#63 D9), so one anchored line is the
-        whole apply range — a finding stating any wider span is downgraded.
+        A GitLab position is always single-line; the ```suggestion:-m+n header is
+        what widens the apply range to ``[anchor - m, anchor + n]`` (#219). Those
+        offsets are therefore a property of the ANCHOR, not of the finding — and
+        handing ``deliver`` a renderer instead of rendered bytes is what stops a
+        body from being built for one anchor and posted at another.
         """
-        return _gated_finding(finding, (line, line), valid_lines, line_texts)
+
+        def make_body(anchor):
+            gated, offsets = _gitlab_anchored(finding, anchor, valid_lines, line_texts)
+            return render_group_body(gated, corroborators, fence_offsets=offsets)
+
+        return make_body
 
     # Pre-partition the deterministic skips (no line number, or a line the diff never
     # touched) BEFORE the summary note is composed — the note is posted first, so the
@@ -1753,7 +1871,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             render_comment_body(_key_material_finding(m)),
         )
 
-    def deliver(f, filepath, line, comment_body, keys):
+    def deliver(f, filepath, line, make_body, keys):
         """Post ONE discussion and return its outcome counter name.
 
         The group's single discussion and each fallback per-corroborator
@@ -1762,7 +1880,15 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         like any never-grouped finding. *keys* is the delivery key of every
         finding this one discussion carries — the caller owns the mapping,
         because only it knows which findings share a body.
+
+        *make_body* is called with the SAME *line* written into
+        ``position.new_line`` below, so a fence's offsets cannot be measured
+        from an anchor the discussion is not posted at (#219).
         """
+        # Rendered before the dedup check, not after: the apply-check runs at
+        # render sites, so a rerun that posts nothing still gates — and still
+        # counts — every fence it would have posted.
+        comment_body = make_body(line)
         if keys and all(k in delivered_keys for k in keys):
             # An earlier run already delivered every finding in this discussion for
             # this sha. Reposting it is the duplication issue #132 reports, not a
@@ -1943,7 +2069,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             c,
             filepath,
             line,
-            render_comment_body(anchored(c, line)),
+            body_factory(c),
             [member_key(c, filepath, line)],
         )
 
@@ -1995,7 +2121,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
                     f,
                     filepath,
                     f["line"],
-                    render_comment_body(anchored(f, f["line"])),
+                    body_factory(f),
                     [primary_key],
                 )
             ] += 1
@@ -2013,7 +2139,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             f,
             filepath,
             f["line"],
-            render_group_body(anchored(f, f["line"]), corroborators),
+            body_factory(f, corroborators),
             member_keys,
         )
         if outcome in ("invalid", "failed"):
