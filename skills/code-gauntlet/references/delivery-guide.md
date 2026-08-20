@@ -50,6 +50,13 @@ hunch writes the guess straight into the author's branch. The rule is still stru
 comes from a field that exists to be a patch, or it does not appear — the apply-check is the
 mechanism that keeps that promise now that agents populate the field too.
 
+A multi-line fence on GitLab carries an offsets header, `` ```suggestion:-m+n ``, with `m`/`n`
+decided by the poster from the discussion's anchor line — never supplied on the finding itself.
+A single-line fix still renders a plain `` ```suggestion `` fence.
+When two suggestions' multi-line ranges overlap within one file, GitLab refuses the whole batch
+apply — the same exposure GitHub multi-line already carries, accepted deliberately rather than
+adding an overlap-detection pass.
+
 Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 
 ### Using post_review.py
