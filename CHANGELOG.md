@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.16.0 (2026-08-20)
+
+### Features
+
+- **delivery**: Emit GitLab suggestion:-m+n so multi-line patches ship instead of downgrading
+  ([#222](https://github.com/liatrio-labs/claude-code-gauntlet/pull/222),
+  [`6865bc6`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/6865bc6068d54e663c3313f330bd9a9b4afcdf01))
+
+
 ## v3.15.0 (2026-08-19)
 
 ### Features
