@@ -51,6 +51,7 @@ from scripts.post_review import (
     is_line_valid,
     old_line_for,
     parse_diff_lines,
+    parse_diff_text,
     render_comment_body,
     render_group_body,
     resolve_marker_sha,
@@ -609,6 +610,32 @@ class TestParseDiffLinesPostReview(unittest.TestCase):
         self.assertIsNone(valid_lines)
         self.assertIsNone(new_files)
         self.assertIsNone(old_paths)
+
+    @patch("scripts.post_review.run_api")
+    def test_delegates_to_parse_diff_text_for_a_github_diff(self, mock_run):
+        """A successful CLI fetch must hand the SAME bytes to
+        ``parse_diff_text(platform, stdout)`` and return exactly what it returns —
+        no second, divergent parse living inside the CLI wrapper."""
+        diff = (
+            "diff --git a/foo.py b/foo.py\n"
+            "--- a/foo.py\n"
+            "+++ b/foo.py\n"
+            "@@ -1,1 +1,2 @@\n"
+            " existing\n"
+            "+added\n"
+        )
+        mock_run.return_value = (diff, "", 0)
+        got = parse_diff_lines("github", "myorg", "myrepo", 42)
+        self.assertEqual(got, parse_diff_text("github", diff))
+
+    @patch("scripts.post_review.run_api")
+    def test_delegates_to_parse_diff_text_for_a_glab_fixture(self, mock_run):
+        """Same guarantee, for a real ``glab mr diff`` fixture (no ``diff --git``
+        line, unprefixed headers)."""
+        diff = _glab_fixture("modified.diff")
+        mock_run.return_value = (diff, "", 0)
+        got = parse_diff_lines("gitlab", "myorg", "myrepo", 7)
+        self.assertEqual(got, parse_diff_text("gitlab", diff))
 
 
 # ---------------------------------------------------------------------------
@@ -6966,6 +6993,189 @@ class TestDeliveryKeysAreFenceIndependent(_GitlabLiveRunBase):
         self.assertIn(
             post_review.build_finding_marker("a" * 40, individual[0]), group_body
         )
+
+
+class TestFenceRun(unittest.TestCase):
+    """``_fence_run`` — the factored-out fence-length rule ``_suggestion_fence``
+    now delegates to (issue #226). Pinned directly, and cross-checked against
+    ``_suggestion_fence``'s own open/close pair so the two can never drift."""
+
+    def test_no_backticks_uses_the_minimum_of_three(self):
+        self.assertEqual(post_review._fence_run("plain text"), "```")
+
+    def test_a_three_run_needs_a_four_run_fence(self):
+        self.assertEqual(post_review._fence_run("a ``` run"), "````")
+
+    def test_a_four_run_needs_a_five_run_fence(self):
+        self.assertEqual(post_review._fence_run("a ```` run"), "`````")
+
+    def test_matches_suggestion_fence_open_and_close(self):
+        for payload in ("plain", "has ``` three", "has ```` four"):
+            fence = post_review._fence_run(payload)
+            open_line, close_line = post_review._suggestion_fence(payload)
+            self.assertEqual(close_line, fence)
+            self.assertEqual(open_line, f"{fence}suggestion")
+
+
+class TestResetRunState(unittest.TestCase):
+    """``reset_run_state()`` — the one entry point that clears every
+    module-level counter/log a run accumulates (issue #226): main() calls it
+    instead of its old inline reset, and a second gate caller
+    (scripts/report_patches.py) that never calls main() calls it directly."""
+
+    def tearDown(self):
+        post_review.reset_run_state()
+
+    def test_clears_all_four(self):
+        post_review._CAPTURED.append({"poison": True})
+        post_review._SKIP_WARNINGS.append("poison")
+        post_review._FIX_COUNTS["kept"] = 7
+        post_review._FIX_COUNTS["downgraded"] = 3
+        post_review._FIX_REASON_COUNTS["empty"] = 5
+
+        post_review.reset_run_state()
+
+        self.assertEqual(post_review._CAPTURED, [])
+        self.assertEqual(post_review._SKIP_WARNINGS, [])
+        self.assertEqual(post_review._FIX_COUNTS, {"kept": 0, "downgraded": 0})
+        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
+
+    def test_main_still_resets_stale_state_from_a_prior_call(self):
+        """Regression for a dropped reset_run_state() call in main(): pollute
+        every counter as a PRIOR run would have left them, then drive a real
+        (dry-run) main() call and assert nothing from the pollution survives
+        into this run's own capture. A main() missing the reset call would
+        leave the poison entries in place."""
+        post_review._CAPTURED.append({"cmd_prefix": "poison", "payload": {}})
+        post_review._SKIP_WARNINGS.append("poison warning from a prior run")
+        post_review._FIX_COUNTS["kept"] = 99
+        post_review._FIX_COUNTS["downgraded"] = 99
+        post_review._FIX_REASON_COUNTS["empty"] = 99
+
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        findings_path = os.path.join(tmp, "findings.json")
+        with open(findings_path, "w") as fh:
+            json.dump(
+                {
+                    "platform": "github",
+                    "owner": "o",
+                    "repo": "r",
+                    "pr_number": 1,
+                    "review_body": "",
+                    "findings": [],
+                },
+                fh,
+            )
+
+        with (
+            patch.object(sys, "argv", ["post_review.py", findings_path, "--dry-run"]),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(diff=""),
+            ),
+        ):
+            post_review.main()
+
+        self.assertNotIn({"cmd_prefix": "poison", "payload": {}}, post_review._CAPTURED)
+        self.assertNotIn("poison warning from a prior run", post_review._SKIP_WARNINGS)
+        self.assertEqual(post_review._FIX_COUNTS, {"kept": 0, "downgraded": 0})
+        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
+
+
+class TestGatedFindingWarnLabel(unittest.TestCase):
+    """``_gated_finding``'s ``warn_label`` keyword (issue #226): the default
+    keeps delivery's warning bytes unchanged; a caller (the report-side gate)
+    can substitute its own label so the two records stay distinguishable."""
+
+    def setUp(self):
+        post_review.reset_run_state()
+        self.addCleanup(post_review.reset_run_state)
+
+    def _finding(self):
+        return {
+            "file": "f.py",
+            "line": 3,
+            "suggested_fix_code": "",  # empty after normalization -> "empty"
+        }
+
+    def test_default_label_matches_delivery_bytes_exactly(self):
+        with patch("scripts.post_review.warn_skip") as mock_warn:
+            post_review._gated_finding(self._finding(), (3, 3), {}, {})
+        mock_warn.assert_called_once_with("suggested-fix downgraded: f.py:3 (empty)")
+
+    def test_custom_label_replaces_only_the_leading_word(self):
+        with patch("scripts.post_review.warn_skip") as mock_warn:
+            post_review._gated_finding(
+                self._finding(), (3, 3), {}, {}, warn_label="report-patch"
+            )
+        mock_warn.assert_called_once_with("report-patch downgraded: f.py:3 (empty)")
+
+    def test_custom_label_never_leaks_into_the_default_caller(self):
+        """warn_label is per-call, not a module-level toggle: a caller that
+        passes it must not change what a caller relying on the default sees."""
+        post_review._gated_finding(
+            self._finding(), (3, 3), {}, {}, warn_label="report-patch"
+        )
+        self.assertIn(
+            "report-patch downgraded: f.py:3 (empty)", post_review._SKIP_WARNINGS
+        )
+        post_review._gated_finding(self._finding(), (3, 3), {}, {})
+        self.assertIn(
+            "suggested-fix downgraded: f.py:3 (empty)", post_review._SKIP_WARNINGS
+        )
+
+
+class TestFixReasonCounts(unittest.TestCase):
+    """``_FIX_REASON_COUNTS`` — the per-reason tally the report-side gate
+    (scripts/report_patches.py) reads to render a downgrade breakdown."""
+
+    def setUp(self):
+        post_review.reset_run_state()
+        self.addCleanup(post_review.reset_run_state)
+
+    def test_starts_empty(self):
+        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
+
+    def test_tallies_by_reason_across_multiple_downgrades(self):
+        empty = {"file": "a.py", "line": 1, "suggested_fix_code": ""}
+        also_empty = {"file": "b.py", "line": 2, "suggested_fix_code": "   "}
+        no_end_line = {
+            "file": "c.py",
+            "line": 1,
+            "suggested_fix_code": "x",
+        }  # no end_line -> missing_end_line
+
+        post_review._gated_finding(empty, (1, 1), {}, {})
+        post_review._gated_finding(also_empty, (2, 2), {}, {})
+        post_review._gated_finding(no_end_line, None, {}, {})
+
+        self.assertEqual(
+            post_review._FIX_REASON_COUNTS,
+            {"empty": 2, "missing_end_line": 1},
+        )
+
+    def test_a_kept_finding_does_not_tally(self):
+        valid_lines, _, _, line_texts = _parse_fixture(
+            GH_DIFF_INDENTED, platform="github"
+        )
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "suggested_fix_code": "    return 2\n    # done",
+        }
+        result = post_review._gated_finding(finding, (2, 3), valid_lines, line_texts)
+        self.assertIn("suggested_fix_code", result)
+        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
+
+    def test_reset_run_state_clears_the_tally(self):
+        post_review._gated_finding(
+            {"file": "a.py", "line": 1, "suggested_fix_code": ""}, (1, 1), {}, {}
+        )
+        self.assertTrue(post_review._FIX_REASON_COUNTS)
+        post_review.reset_run_state()
+        self.assertEqual(post_review._FIX_REASON_COUNTS, {})
 
 
 if __name__ == "__main__":

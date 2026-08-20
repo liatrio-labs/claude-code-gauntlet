@@ -65,6 +65,7 @@ module = [
   "filter_findings",
   "finding_dedup",
   "merge_findings",
+  "post_review",
   "profile_run",
   "review_marker",
   "runner.*",

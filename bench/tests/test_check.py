@@ -619,6 +619,24 @@ class CheckRunTest(unittest.TestCase):
                 (check._DEGRADE_STRUCTURED, check._DEGRADE_TEXT),
             )
 
+    def test_patches_artifact_is_never_a_g3_degrade_carrier(self):
+        """``code-gauntlet-patches-*.md`` (issue #226's read-only apply-check
+        artifact) must never be added to ``_DEGRADE_CARRIER_POLICY``: unlike
+        ``code-gauntlet-report-*.md``, it renders the REVIEWED REPO's own
+        source text verbatim inside fenced code blocks — a repo could
+        legitimately contain either G3 sentinel phrase ("no write proof",
+        "partial-artifacts") in a comment, string literal, or docstring having
+        nothing to do with this harness's own degrade signal, so scanning it
+        as a G3 text carrier would produce a false positive the checker could
+        never distinguish from a real one.
+        """
+        self.assertNotIn(
+            "code-gauntlet-patches-*.md",
+            check._DEGRADE_CARRIER_POLICY,
+            "the patches artifact renders reviewed-repo source verbatim and "
+            "must never become a G3 degrade-phrase text carrier",
+        )
+
     def test_stale_marketplace_script_path_fails_g4(self):
         _build_ok_run(
             self.run_dir,
