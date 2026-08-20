@@ -1052,5 +1052,33 @@ class TestDeliveryVocabularySurfaces(unittest.TestCase):
         )
 
 
+class TestFullReportTemplateRenderInstructions(unittest.TestCase):
+    """Pins the Full Report Template's render instructions to the report-path
+    mechanism: fields the pipeline strips before the report-writer's dispatch must
+    not be interpolated or referenced by the template that writer follows."""
+
+    def test_full_report_template_never_instructs_a_suggested_fix_code_render(self):
+        """Pins the docs to the #220 mechanism: the report path structurally strips
+        suggested_fix_code (stripFixCode in workflows/src/stages.js) before the
+        report-writer ever sees it, so no template instruction may ask for a render —
+        a reintroduced instruction here would tell a model to do something the field
+        can no longer supply.
+        """
+        region = full_report_template_region(REPORT_FORMAT.read_text(encoding="utf-8"))
+        self.assertNotIn(
+            "suggested_fix_code",
+            region,
+            "Full Report Template must not interpolate or reference suggested_fix_code "
+            "— the field never reaches the report-writer's input (stripped by "
+            "stripFixCode before dispatch); delivery is the only rendered surface.",
+        )
+        self.assertNotIn(
+            "not apply-checked",
+            region,
+            "the '(not apply-checked)' render instruction was the unvetted-render "
+            "capability #220 removed — it must not reappear in the template.",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

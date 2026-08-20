@@ -3,10 +3,11 @@
 // of the Phase 8 model. Unit tests call dimensionsSummaryTable directly with synthetic
 // inputs and assert exact rendered strings; the reportStage-level tests at the bottom
 // reuse the ctx-mock pattern from pipeline_run.test.js to check the plumbing
-// (reportPrompt / minimalReport) around it.
+// (reportPrompt / minimalReport) around it. Also covers stripFixCode and reportStage's
+// report-path suggested_fix_code strip (issue #220).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dimensionsSummaryTable, reportStage } from '../src/stages.js';
+import { dimensionsSummaryTable, reportStage, stripFixCode } from '../src/stages.js';
 import { AGENTS, AGENT_LABELS } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
@@ -337,4 +338,110 @@ test('reportStage: a writer throw degrades to the minimal report, which renders 
   assert.ok(primaryIdx >= 0, 'the primary is rendered as a top-level bullet');
   assert.match(lines[primaryIdx + 1], /Corroborating: security-reviewer \(security, confidence 70\)/);
   assert.ok(!out.report.includes(`- [MEDIUM] ${corroborator.title}`), 'the corroborator is not rendered as its own top-level bullet');
+});
+
+// --- stripFixCode (issue #220) -----------------------------------------------
+//
+// The report-writer is a sampled model: no apply-check oracle exists at report time,
+// so suggested_fix_code must never reach the report path. stripFixCode is the copy-
+// based mechanism reportStage rebinds its input through before any consumer reads it.
+
+test('stripFixCode: strips suggested_fix_code from a finding that carries it', () => {
+  const f = makeFinding('F1', { suggested_fix_code: 'const x = 1;' });
+  const [out] = stripFixCode([f]);
+  assert.equal(out.suggested_fix_code, undefined);
+  assert.ok(!('suggested_fix_code' in out), 'the key itself must be gone, not just falsy');
+});
+
+test('stripFixCode: a finding without the field is returned as the SAME object (no copy made)', () => {
+  const f = makeFinding('F1');
+  const [out] = stripFixCode([f]);
+  assert.equal(out, f, 'no suggested_fix_code present -> identity passthrough, not a copy');
+});
+
+test('stripFixCode: a finding carrying the field is copied — the original object is untouched', () => {
+  const f = makeFinding('F1', { suggested_fix_code: 'const x = 1;' });
+  const [out] = stripFixCode([f]);
+  assert.notEqual(out, f, 'a stripped finding must be a copy, never the mutated original');
+  assert.equal(f.suggested_fix_code, 'const x = 1;', 'the caller\'s original object keeps the field — delivery reads the same objects reportStage was called with');
+});
+
+test('stripFixCode: every other field survives untouched on the copy', () => {
+  const f = makeFinding('F1', { suggested_fix_code: 'const x = 1;', suggestion: 'do this instead' });
+  const [out] = stripFixCode([f]);
+  assert.equal(out.id, 'F1');
+  assert.equal(out.suggestion, 'do this instead');
+  assert.equal(out.file, f.file);
+  assert.equal(out.description, f.description);
+});
+
+test('stripFixCode: absent/empty input does not throw', () => {
+  assert.deepEqual(stripFixCode(undefined), []);
+  assert.deepEqual(stripFixCode([]), []);
+});
+
+test('stripFixCode: primitive/null members pass through unchanged and do not throw', () => {
+  // 'x' in 'str' throws TypeError — a primitive element in a replayed checkpoint's
+  // findings must not turn stripFixCode's guard into an unhandled throw.
+  assert.deepEqual(stripFixCode([null, 'oops', 7]), [null, 'oops', 7]);
+});
+
+// --- reportStage strips suggested_fix_code before any consumer reads it (#220) ----
+
+test('reportStage: the dispatched prompt carries no suggested_fix_code occurrence, from either the findings or the unverified bucket', async () => {
+  let capturedPrompt = null;
+  const ctx = {
+    agent: async (prompt) => { capturedPrompt = prompt; return { report: '# r' }; },
+    parallel: async () => [],
+  };
+  const findings = [makeFinding('B1', { dimension: 'bug', severity: 'high', suggested_fix_code: 'const patched = true;' })];
+  const unverified = [makeFinding('B2', { dimension: 'bug', severity: 'low', suggested_fix_code: 'const alsoPatched = true;' })];
+  await reportStage(ctx, { findings, unverified, stats: {}, dimensions: { dispatched: AGENTS, degraded: [] } });
+
+  assert.equal(typeof capturedPrompt, 'string');
+  // A raw '!includes(\'suggested_fix_code\')' check over-pins: filterFindings legitimately
+  // stamps suggested_fix_code_removed_by / suggested_fix_code_removal_reason on findings,
+  // and those field NAMES can legitimately reach the prompt. What must never reach it is
+  // the stripped CODE PAYLOAD itself.
+  assert.ok(!capturedPrompt.includes('const patched = true;'), 'the report-writer prompt must not contain the stripped fix-code payload');
+  assert.ok(!capturedPrompt.includes('const alsoPatched = true;'), 'the report-writer prompt must not contain the stripped unverified fix-code payload');
+  const body = resultsBody(capturedPrompt);
+  assert.ok(!('suggested_fix_code' in body.findings[0]), 'the findings bucket in the parsed prompt body must not carry the field');
+  assert.ok(!('suggested_fix_code' in body.unverified[0]), 'the unverified bucket in the parsed prompt body must not carry the field');
+});
+
+test('reportStage: the caller\'s original finding objects still carry suggested_fix_code after the stage returns (delivery invariance)', async () => {
+  const ctx = {
+    agent: async () => ({ report: '# r' }),
+    parallel: async () => [],
+  };
+  const finding = makeFinding('B1', { dimension: 'bug', severity: 'high', suggested_fix_code: 'const patched = true;' });
+  const unverifiedFinding = makeFinding('B2', { dimension: 'bug', severity: 'low', suggested_fix_code: 'const alsoPatched = true;' });
+  const findings = [finding];
+  const unverified = [unverifiedFinding];
+  await reportStage(ctx, { findings, unverified, stats: {}, dimensions: { dispatched: AGENTS, degraded: [] } });
+
+  assert.equal(finding.suggested_fix_code, 'const patched = true;', 'the caller\'s findings array is unmutated — selectDelivery/writerPayload read this same object');
+  assert.equal(unverifiedFinding.suggested_fix_code, 'const alsoPatched = true;', 'the caller\'s unverified array is unmutated');
+});
+
+test('reportStage: a segmented report strips suggested_fix_code from every segment\'s prompt', async () => {
+  const prompts = [];
+  const ctx = {
+    agent: async (prompt, opts) => { prompts.push(prompt); return { report: `body ${opts.label}` }; },
+    parallel: async (thunks) => Promise.all(thunks.map((t) => t())),
+  };
+  const big = Array.from({ length: 80 }, (_, i) => makeFinding(`F${i}`, {
+    description: 'x'.repeat(2000), dimension: 'bug', severity: 'high', suggested_fix_code: `const patch${i} = true;`,
+  }));
+  await reportStage(ctx, { findings: big, unverified: [], stats: {}, dimensions: { dispatched: AGENTS, degraded: [] } });
+
+  assert.ok(prompts.length > 1, 'fixture must segment for this test to be meaningful');
+  for (const p of prompts) {
+    // Distinctive PATCH PAYLOAD substring, not the field name (see #220 over-pin note above).
+    assert.ok(!p.includes('const patch'), 'every segment prompt must be free of the stripped fix-code payload');
+    for (const f of resultsBody(p).findings) {
+      assert.ok(!('suggested_fix_code' in f), 'no finding in any segment\'s parsed prompt body may carry the field');
+    }
+  }
 });
