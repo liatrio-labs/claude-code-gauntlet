@@ -2,6 +2,26 @@
 
 <!-- version list -->
 
+## v3.18.0 (2026-08-20)
+
+### Features
+
+- **report**: Render apply-checked suggested_fix_code patches into a sibling artifact
+  ([#228](https://github.com/liatrio-labs/claude-code-gauntlet/pull/228),
+  [`422d101`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/422d1018bee6a26d6337c005d9b69792098f9d8f))
+
+- **report**: Render apply-checked suggested_fix_code patches into a sibling artifact (#226)
+  ([#228](https://github.com/liatrio-labs/claude-code-gauntlet/pull/228),
+  [`422d101`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/422d1018bee6a26d6337c005d9b69792098f9d8f))
+
+### Refactoring
+
+- **report**: Fold the pre-oracle receipt into one helper; fix stale dropSuggestedFixCode comment;
+  pin the stamps-only strip shape (#226 review)
+  ([#228](https://github.com/liatrio-labs/claude-code-gauntlet/pull/228),
+  [`422d101`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/422d1018bee6a26d6337c005d9b69792098f9d8f))
+
+
 ## v3.17.1 (2026-08-20)
 
 ### Bug Fixes
