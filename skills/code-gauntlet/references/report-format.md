@@ -54,7 +54,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | no | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
-| `suggested_fix_code` | string | no | Exact replacement source for `file:line_start-line_end`, emitted by discovery agents only when the fix is a byte-exact, drop-in replacement for exactly those lines. Delivery (`scripts/post_review.py`) runs a deterministic apply-check before ever rendering it as a committable GitHub/GitLab `suggestion` block (one-click apply) — non-string, stale, wrong-range, wrong-anchor, or oversized fails the check and the finding downgrades to the prose `suggestion` instead. On GitLab, the render-site apply range is the discussion anchor plus offsets, not the stated range directly — a span the anchor and offsets can't realize within GitLab's cap downgrades the same way. |
+| `suggested_fix_code` | string | no | Exact replacement source for `file:line_start-line_end`, emitted by discovery agents only when the fix is a byte-exact, drop-in replacement for exactly those lines. The report path never renders this field — the pipeline strips it from the report-writer's input before dispatch (`stripFixCode` in `workflows/src/stages.js`). The only rendered surface is delivery: `scripts/post_review.py` runs a deterministic apply-check before ever rendering it as a committable GitHub/GitLab `suggestion` block (one-click apply) — non-string, stale, wrong-range, wrong-anchor, or oversized fails the check and the finding downgrades to the prose `suggestion` instead. On GitLab, the render-site apply range is the discussion anchor plus offsets, not the stated range directly — a span the anchor and offsets can't realize within GitLab's cap downgrades the same way. |
 
 ### Per-dimension fields
 
@@ -135,18 +135,6 @@ Example: "This PR adds JWT-based authentication to the API layer. The token vali
 {If finding.claude_md_rule or finding.spec_text is present — the rule the finding is measured
 against. `agents/report-writer.md` instructs the same:}
 **Cited rule:** {finding.claude_md_rule or finding.spec_text}
-
-{If finding.suggested_fix_code is present — informational only, this template does not run
-delivery's apply-check, so render it as a PLAIN fenced code block, never a ```suggestion
-fence: a suggestion fence pasted into a PR comment is a one-click apply button, and nothing
-on the report path has gated this content the way `post_review.py` gates the Inline PR
-Comment Format below.}
-Proposed replacement for {finding.file}:{finding.line_start}-{finding.line_end} (not apply-checked):
-```
-
-{finding.suggested_fix_code}
-
-```
 
 ---
 
@@ -316,4 +304,4 @@ comments.
 
 ```
 
-**`suggested_fix_code` field:** Optional canonical field — instructed by all 7 discovery contracts, emitted only when the fix is a byte-exact drop-in replacement for `line_start..line_end`. `scripts/post_review.py` runs a deterministic apply-check before ever rendering it as a GitHub or GitLab `suggestion` block (one-click apply): the field must be a string, non-empty after redaction, ship a matching `line_end`, match a valid diff range, land at this render site's actual apply range, differ from the current text, and stay within the size bound. On GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit — a span the anchor can't realize within that cap fails the check the same as any other mismatched range. Any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.
+**`suggested_fix_code` field:** Delivery is the only surface that ever renders this field, gated on `scripts/post_review.py`'s deterministic apply-check (field must be a string, non-empty after redaction, ship a matching `line_end`, match a valid diff range, land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`). The report path never reaches this code at all — the pipeline strips `suggested_fix_code` from the report-writer's input before dispatch (`stripFixCode` in `workflows/src/stages.js`), so there is no report-path render to gate. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.
