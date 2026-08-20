@@ -2,6 +2,27 @@
 
 <!-- version list -->
 
+## v3.17.1 (2026-08-20)
+
+### Bug Fixes
+
+- **delivery**: Migrate post_review parse_diff_lines onto diff_lines.walk_diff (#163)
+  ([#227](https://github.com/liatrio-labs/claude-code-gauntlet/pull/227),
+  [`5b4829c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5b4829c04abf9422e1b84de621233b87fe6b75b2))
+
+### Refactoring
+
+- **scripts**: Migrate post_review parse_diff_lines onto diff_lines.walk_diff
+  ([#227](https://github.com/liatrio-labs/claude-code-gauntlet/pull/227),
+  [`5b4829c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5b4829c04abf9422e1b84de621233b87fe6b75b2))
+
+### Testing
+
+- **docs**: Make _TENS the single source for every tens word (#163 review)
+  ([#227](https://github.com/liatrio-labs/claude-code-gauntlet/pull/227),
+  [`5b4829c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/5b4829c04abf9422e1b84de621233b87fe6b75b2))
+
+
 ## v3.17.0 (2026-08-20)
 
 ### Features
