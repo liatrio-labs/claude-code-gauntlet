@@ -73,8 +73,8 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 92.5 / 87.5 (scripts raised 2026-08-19 from the #219 PR measurement:
-93.42; bench raised 2026-08-19 from the same PR's bench run: 88.48); JS 98 / 85.7 / 97.4 (lines pinned
+Floors: Python 92.5 / 87.5 (scripts raised 2026-08-19 from the #219 PR CI measurement:
+93.37; bench raised 2026-08-19 from the same run: 88.29); JS 98 / 85.7 / 97.4 (lines pinned
 2026-08-03 from first green CI: 98.61; branches/functions raised 2026-08-18
 from the #62 PR measurement: 86.7/98.4). Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop,
