@@ -26,7 +26,7 @@ REPO = Path(__file__).resolve().parents[1]
 # many as fifty; extend the range here if it ever does.
 _ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
 _TENS = {30: "thirty", 40: "forty", 50: "fifty"}
-_NUMBER_WORDS = {50: "fifty"}
+_NUMBER_WORDS = {50: _TENS[50]}
 for _tens in (30, 40):
     _NUMBER_WORDS[_tens] = _TENS[_tens]
     for _i in range(1, 10):
