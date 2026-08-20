@@ -538,6 +538,13 @@ def is_new_file(new_files, filepath):
     return filepath in new_files
 
 
+def _is_plain_int(value):
+    """True only for a real ``int`` — ``True`` and ``2.0`` both hash equal to the
+    integer key, so they survive every dict lookup and equality check; type is the
+    only thing that separates them from the integer they impersonate."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def validate_position(
     position, shas, valid_lines, new_files, old_paths, filepath, line
 ):
@@ -590,13 +597,10 @@ def validate_position(
 
     problems = []
 
-    # `True` and `61.0` both hash equal to the integer key, so a bool or a float line
-    # number passes line validation AND the equality check below, reaching the wire in
-    # its own spelling. Type is the only thing that separates them from the integer.
+    # A bool or a float line number passes line validation AND the equality check
+    # below, reaching the wire in its own spelling.
     new_line = position.get("new_line")
-    if "new_line" in position and (
-        isinstance(new_line, bool) or not isinstance(new_line, int)
-    ):
+    if "new_line" in position and not _is_plain_int(new_line):
         problems.append(f"new_line must be an integer, got {new_line!r}")
 
     for key in sorted(set(expected) - set(position)):
@@ -988,15 +992,11 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
         # replacement lands on a single-line anchor and corrupts the file.
         return False, _FIX_MISSING_END_LINE
     if (
-        isinstance(line, bool)
-        or not isinstance(line, int)
-        or isinstance(end_line, bool)
-        or not isinstance(end_line, int)
+        not _is_plain_int(line)
+        or not _is_plain_int(end_line)
         or line < 1
         or end_line < line
     ):
-        # `True` and `2.0` both hash equal to the integer key, so they survive every
-        # lookup — the trap validate_position documents.
         return False, _FIX_INVALID_RANGE
     if not isinstance(valid_lines, dict) or not isinstance(line_texts, dict):
         # No diff was parsed, so every check below has nothing to consult. Both
@@ -1114,9 +1114,7 @@ def _gitlab_fence_offsets(anchor, line, end_line):
     and the platform cap alone forbade the header — which is what separates
     ``span_exceeds_platform_cap`` from ``anchor_mismatch``.
     """
-    if any(
-        isinstance(v, bool) or not isinstance(v, int) for v in (anchor, line, end_line)
-    ):
+    if not all(_is_plain_int(v) for v in (anchor, line, end_line)):
         return None, False
     above, below = anchor - line, end_line - anchor
     if above < 0 or below < 0:
