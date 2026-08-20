@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.17.0 (2026-08-20)
+
+### Features
+
+- **report**: Strip suggested_fix_code from every report-path model input
+  ([#225](https://github.com/liatrio-labs/claude-code-gauntlet/pull/225),
+  [`93b8631`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/93b8631d8cb2e6010980bbec6fa9ce441b0b4e45))
+
+
 ## v3.16.0 (2026-08-20)
 
 ### Features
