@@ -4,7 +4,8 @@ Tests for scripts/post_review.py
 Covers:
   - detect_platform: GitHub SSH, GitHub HTTPS, GitLab SSH, GitLab HTTPS,
     unknown host, malformed URL
-  - parse_diff_lines: (post_review version) same diff parsing as verify_findings
+  - parse_diff_lines: (post_review version) platform header semantics over the shared
+    diff_lines.walk_diff
   - is_line_valid: exact match, stripped path, None valid_lines
   - render_comment_body: all severity emojis, with/without suggestion block
   - build_footer: metadata JSON in HTML comment
@@ -5505,6 +5506,132 @@ class TestParseDiffLinesLineTexts(unittest.TestCase):
         valid_lines, _, _, line_texts = parse_diff_lines("bitbucket", "o", "r", 1)
         self.assertIsNone(valid_lines)
         self.assertIsNone(line_texts)
+
+
+class TestParseDiffLinesHeaderDecoding(unittest.TestCase):
+    """``parse_diff_lines`` now walks headers through ``diff_lines.walk_diff``, which
+    undoes git's wire spelling of a header path (the TAB terminator after a path
+    containing a space, and C-quoting of control/non-ASCII bytes) BEFORE this module's
+    platform-specific ``a/``/``b/`` prefix strip runs.
+
+    Pre-migration, the hand-rolled regexes (``^--- (?:a/)?(.+)$`` and friends) captured
+    everything up to end-of-line verbatim: a trailing TAB stayed part of the key, and a
+    C-quoted path stayed a literal quoted-and-escaped string that no finding could ever
+    name. Cases (a), (b) and (d) below reproduce exactly that failure — each is reasoned
+    through against the pre-migration regex in its own docstring, and was confirmed to
+    fail by running it against ``git show origin/main:scripts/post_review.py``. Case (c)
+    does not regress under the old code (GitLab's header regex never stripped a prefix),
+    but pins the platform split itself — the direct regression test for "make the prefix
+    strip unconditional for GitLab too". It pins BOTH sides (an ``a/``- and a ``b/``-rooted
+    real directory each survive on their own file) and BOTH mappings the walk feeds
+    (``old_paths`` for the old side, ``line_texts`` for the new side), keyed
+    independently — the failure mode a shared walk could introduce is an unconditional
+    strip landing on only one side or only one mapping while the other still looks correct.
+    """
+
+    def _parse(self, diff, platform="github"):
+        with patch("scripts.post_review.run_api", return_value=(diff, "", 0)):
+            return parse_diff_lines(platform, "o", "r", 1)
+
+    def test_github_path_with_a_space_decodes_past_the_tab_terminator(self):
+        """git appends a TAB after a header path containing a space, so the field
+        does not run into the classic timestamp column.
+
+        Pre-migration: ``(?:a/)?(.+)$`` is greedy to end-of-line, so ``group(1)``
+        keeps the trailing ``"\\t"`` and the key lands as
+        ``("dir with space/x.py\\t", 1)`` — nothing a finding names ever matches it.
+        """
+        diff = (
+            "--- a/dir with space/x.py\t\n"
+            "+++ b/dir with space/x.py\t\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        valid_lines, _, _, _ = self._parse(diff, platform="github")
+        self.assertIn(("dir with space/x.py", 1), valid_lines)
+        self.assertNotIn(("dir with space/x.py\t", 1), valid_lines)
+
+    def test_github_c_quoted_non_ascii_path_decodes_then_strips_the_prefix(self):
+        """A non-ASCII path is C-quoted with the octal-escaped UTF-8 bytes; the
+        synthetic ``b/`` prefix sits INSIDE the quotes, so it must be stripped
+        AFTER decoding, not matched against the raw quoted text.
+
+        Pre-migration: the line does not start with ``b/`` (it starts with ``"``),
+        so ``(?:b/)?`` matches nothing and ``group(1)`` is the literal
+        ``'"b/caf\\\\303\\\\251.py"'`` — quotes, backslashes and octal digits as
+        themselves. The key that lands is that literal string, not ``café.py``.
+        """
+        diff = (
+            '--- "a/caf\\303\\251.py"\n'
+            '+++ "b/caf\\303\\251.py"\n'
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        valid_lines, _, _, _ = self._parse(diff, platform="github")
+        self.assertIn(("café.py", 1), valid_lines)
+
+    def test_gitlab_keeps_real_a_and_b_slash_directories(self):
+        """``glab mr diff`` writes paths verbatim: a leading ``a/`` OR ``b/`` there is a
+        real top-level directory, not git's synthetic prefix, so both must survive the
+        header decode and the (github-only) prefix strip. The old side is pinned through
+        ``old_paths``, the new side through ``valid_lines`` AND ``line_texts`` — the two
+        mappings are keyed independently."""
+        diff = (
+            "--- a/real/x.py\n+++ a/real/x.py\n@@ -1 +1 @@\n-old\n+new\n"
+            "--- b/real/y.py\n+++ b/real/y.py\n@@ -1 +1 @@\n-old\n+fresh\n"
+        )
+        valid_lines, _, old_paths, line_texts = self._parse(diff, platform="gitlab")
+        self.assertEqual(set(valid_lines), {("a/real/x.py", 1), ("b/real/y.py", 1)})
+        self.assertEqual(
+            old_paths, {"a/real/x.py": "a/real/x.py", "b/real/y.py": "b/real/y.py"}
+        )
+        self.assertEqual(line_texts[("a/real/x.py", 1)], "new")
+        self.assertEqual(line_texts[("b/real/y.py", 1)], "fresh")
+
+    def test_a_body_line_before_any_file_header_is_not_recorded(self):
+        """`current_file` is None until a `+++` header names one; a line read before that
+        has no path to key on and must record nothing."""
+        valid_lines, _, _, line_texts = self._parse("@@ -0,0 +1 @@\n+orphan\n")
+        self.assertEqual(valid_lines, {})
+        self.assertEqual(line_texts, {})
+
+    def test_gitlab_quoted_path_is_decoded_like_gits_wire_spelling(self):
+        """This pins a documented choice, not a requirement: the header decode in
+        ``diff_lines._decode_header_path`` runs on every producer, including GitLab's
+        verbatim-path ``glab mr diff`` output. So a literal quote-wrapped name in a
+        GitLab diff — which ``glab`` would never itself need to quote, but which this
+        walk cannot distinguish from git's own C-quoting — is decoded the same way a
+        real git wire-spelling would be. See the accepted-limitation note in
+        ``_decode_header_path``'s docstring for why this is not fixed."""
+        diff = '--- "notes"\n+++ "notes"\n@@ -1 +1,2 @@\n c\n+z\n'
+        valid_lines, _, _, _ = self._parse(diff, platform="gitlab")
+        self.assertIn(("notes", 1), valid_lines)
+
+    def test_github_renamed_file_old_path_is_decoded_before_recording(self):
+        """A rename's ``---`` header names the pre-rename path, recorded in
+        ``old_paths`` under the NEW path's key. Quoted, that pre-rename path must be
+        decoded — GitLab's ``position.old_path`` (#130) is a real filesystem path,
+        not git's C-quoted wire spelling of one.
+
+        Pre-migration: the old-side line does not start with ``a/`` (it starts with
+        ``"``), so the captured, un-decoded literal ``'"a/caf\\\\303\\\\251
+        old.py"'`` is what ``old_paths`` would carry — never a path the pre-rename
+        file actually had.
+        """
+        diff = (
+            'diff --git "a/caf\\303\\251 old.py" b/new.py\n'
+            "similarity index 100%\n"
+            'rename from "caf\\303\\251 old.py"\n'
+            "rename to new.py\n"
+            '--- "a/caf\\303\\251 old.py"\n'
+            "+++ b/new.py\n"
+            "@@ -1 +1 @@\n"
+            " ctx\n"
+        )
+        _, _, old_paths, _ = self._parse(diff, platform="github")
+        self.assertEqual(old_paths, {"new.py": "café old.py"})
 
 
 class TestSuggestedFixGate(unittest.TestCase):

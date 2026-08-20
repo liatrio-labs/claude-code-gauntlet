@@ -97,10 +97,12 @@ import tempfile
 # swallowing a real ImportError raised from inside review_marker.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# The idempotency checks READ the markers, and detect_prior_review.py is the only reader
-# (review_marker.py's contract). Importing its one state helper keeps this module
-# write-only: it must never grow a second parse of the signals it writes.
+# The detect_prior_review import below: the idempotency checks READ the markers, and
+# detect_prior_review.py is the only reader (review_marker.py's contract). Importing its
+# one state helper keeps this module write-only: it must never grow a second parse of the
+# signals it writes.
 from detect_prior_review import gitlab_prior_delivery_state
+from diff_lines import walk_diff
 from review_marker import SHA_RE, build_finding_marker, build_footer, is_sha_shaped
 
 # ---------------------------------------------------------------------------
@@ -266,8 +268,8 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     * ``line_texts`` — a PARALLEL mapping over the SAME keys as ``valid_lines``, holding
       each line's NEW-SIDE TEXT with the diff's marker column removed. Parallel rather
       than folded into ``valid_lines``'s value so every existing consumer of that mapping
-      reads exactly what it read before. The parser already read this text off each
-      ``+``/context line and discarded it; it is the content oracle the
+      reads exactly what it read before. The walk already reads this text off each
+      ``+``/context line (``DiffEvent.text``); it is the content oracle the
       ``suggested_fix_code`` apply-check needs, and by construction it is the content the
       platform's anchor points at, at the same head SHA the position carries. ``git show``
       is not an alternative: the local HEAD is usually the base branch, a shallow clone has
@@ -276,21 +278,30 @@ def parse_diff_lines(platform, owner, repo, pr_number):
     Returns ``(None, None, None, None)`` when validation should be skipped (unknown
     platform or CLI failure). Callers must handle the ``None`` case.
 
-    Header syntax is read PER PLATFORM (see the compiled pair below): ``gh pr diff``
-    writes git's synthetic ``a/`` / ``b/`` prefixes, ``glab mr diff`` writes paths
-    verbatim. Every key returned therefore carries the platform's true spelling.
+    The unified-diff walk itself — header/hunk-body zone tracking, the old/new line
+    advance, and the wire spelling of a header path — is ``diff_lines.walk_diff``; this
+    function reads its events and keeps only what is local to this platform pair: which
+    prefix a header's decoded path carries (``a/``/``b/`` stripped for GitHub, kept
+    verbatim for GitLab, since there a leading ``a/`` is a real top-level directory), what
+    ``/dev/null`` means for ``current_file``/``current_file_is_new``, and the
+    ``new_files``/``old_paths`` bookkeeping described above.
 
-    The parser tracks each hunk's DECLARED old/new line budgets (a unified diff hunk
-    header states exactly how many lines of each side the hunk body contains) and only
-    matches file/hunk headers BETWEEN hunks. Well-formed git/gh/glab diffs always declare
-    correct counts, so the counts are trusted. Header matching is suspended inside a hunk
-    body because diff body lines collide with the header syntax: removing the SQL comment
-    ``-- deprecated: drop me`` renders as ``--- deprecated: drop me``, which the old-side
-    header regex swallows — silently desyncing ``old_line`` for every later line of the
-    hunk. Symmetrically an added ``++ x`` renders ``+++ x`` and would reset
-    ``current_file``. Suspending header matching also means non-header noise between
-    hunks (``diff --git …``, ``index …``, ``Binary files … differ``) is ignored instead of
-    being admitted as a fake context line.
+    Two behaviours change with this migration:
+
+    1. Header paths now arrive DECODED — the TAB terminator git appends after a path
+       containing a space, and the C-quoting git uses for a path holding a control
+       character or (by default) a non-ASCII byte, are both undone before this function
+       ever sees the path. A finding on such a path previously matched nothing in
+       ``valid_lines`` (the raw, still-encoded spelling was the key); it now matches its
+       diff line like any other path. The decode also runs on ``glab mr diff``'s verbatim
+       paths, where it has nothing of git's to undo and only mis-reads a TAB-bearing or
+       quote-wrapped name — an accepted limitation, see ``diff_lines._decode_header_path``.
+    2. A newline-terminated diff whose last hunk is cut short no longer mints a phantom
+       final line. The old hand-rolled loop walked the trailing empty string left by
+       splitting on the terminating newline as a context line — a key for a line the file
+       does not have, backed by an empty ``line_texts`` entry that would have fed the
+       apply-check a false oracle. ``walk_diff`` drops that trailing empty string instead
+       of walking it.
     """
     if platform == "github":
         stdout, stderr, rc = run_api(
@@ -318,131 +329,67 @@ def parse_diff_lines(platform, owner, repo, pr_number):
         )
         return None, None, None, None
 
-    # File-header regexes, chosen ONCE by platform — the platform cannot change inside
-    # the loop. `gh pr diff` emits git's synthetic prefixes (`a/` on the old side, `b/`
-    # on the new side): those are diff syntax and must come off. `glab mr diff` emits
-    # paths VERBATIM and never writes a synthetic prefix, so a leading `a/` there is a
-    # REAL top-level directory; stripping it truncated `a/`-rooted paths (`a/foo.py` ->
-    # `foo.py`) into keys and positions GitLab does not know, and every finding in such
-    # a repo was rejected. The catch-all group carries `/dev/null`, which only the GitHub
-    # shape ever writes — glab repeats the real path on both sides for an added or
-    # deleted file (tests/fixtures/glab_diff/ pins both shapes).
-    if platform == "github":
-        old_header_re = re.compile(r"^--- (?:a/)?(.+)$")
-        new_header_re = re.compile(r"^\+\+\+ (?:b/)?(.+)$")
-    else:
-        old_header_re = re.compile(r"^--- (.+)$")
-        new_header_re = re.compile(r"^\+\+\+ (.+)$")
-
     valid_lines = {}
     line_texts = {}
     new_files = set()
     old_paths = {}
     pending_old_path = None
     current_file = None
-    new_line = 0
-    old_line = 0
-    # Lines of each side still owed by the hunk currently being read. Both at 0 means
-    # "between hunks" — the only zone where a line may be read as a header.
-    old_rem = 0
-    new_rem = 0
     current_file_is_new = False
 
-    # Split on "\n" ONLY, never str.splitlines(): that also breaks on \x0c, \x0b, \x85 and
-    # U+2028/U+2029, which git treats as ordinary line CONTENT. A form feed inside a hunk
-    # body would become two parsed lines, draining the declared budgets one line early —
-    # flipping the header/body zone boundary and shipping a wrong old_line thereafter. The
-    # trailing "" a newline-terminated stream yields lands in the header zone and matches
-    # nothing.
-    for raw_line in stdout.split("\n"):
-        if old_rem <= 0 and new_rem <= 0:
-            # -- header zone -------------------------------------------------
-            # Old-side header: `--- a/path` (gh), `--- path` (glab), or `--- /dev/null`.
-            old_match = old_header_re.match(raw_line)
-            if old_match:
-                old_side = old_match.group(1)
-                current_file_is_new = old_side == "/dev/null"
-                # Held until the `+++` header names the new-side path this belongs to;
-                # for a rename the two differ and only this one is GitLab's `old_path`.
-                pending_old_path = None if current_file_is_new else old_side
-                continue
+    for event in walk_diff(stdout):
+        if event.kind == "old_path":
+            # `--- a/path` (gh, prefix stripped below), `--- path` (glab, kept
+            # verbatim — there a leading `a/` is a REAL top-level directory, and
+            # stripping it truncated `a/`-rooted paths into keys and positions
+            # GitLab does not know), or `--- /dev/null`.
+            old_side = event.path
+            if platform == "github":
+                old_side = old_side.removeprefix("a/")
+            current_file_is_new = old_side == "/dev/null"
+            # Held until the `+++` header names the new-side path this belongs to;
+            # for a rename the two differ and only this one is GitLab's `old_path`.
+            pending_old_path = None if current_file_is_new else old_side
+            continue
 
-            # New-side header: `+++ b/path` (gh), `+++ path` (glab), or `+++ /dev/null`.
-            file_match = new_header_re.match(raw_line)
-            if file_match:
-                path = file_match.group(1)
-                if path == "/dev/null":
-                    current_file = None  # deleted file — no new path to track
-                else:
-                    current_file = path
-                    if current_file_is_new:
-                        new_files.add(current_file)
-                    if pending_old_path is not None:
-                        old_paths[current_file] = pending_old_path
-                new_line = 0
-                old_line = 0
-                current_file_is_new = False
-                continue
-
-            # Hunk header: @@ -old_start[,old_count] +new_start[,new_count] @@
-            # A count is omitted only for a one-line side, so it defaults to 1.
-            hunk_match = re.match(
-                r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", raw_line
-            )
-            if hunk_match:
-                old_start, old_count, new_start, new_count = hunk_match.groups()
-                old_line = int(old_start)
-                new_line = int(new_start)
-                old_rem = 1 if old_count is None else int(old_count)
-                new_rem = 1 if new_count is None else int(new_count)
-                # `@@ -0,0` means the old side of this file is empty: either the file is
-                # ADDED, or it pre-existed and was empty. Plain `glab mr diff` offers no
-                # discriminator between the two (it repeats the path on both
-                # `---`/`+++` lines and never writes /dev/null, so this is its ONLY
-                # added-file signal). We prefer the added-file reading: sending
-                # `old_path` into a genuinely new file is the documented HTTP 500,
-                # whereas omitting it for a pre-existing empty file is not.
-                if old_line == 0 and old_rem == 0 and current_file is not None:
+        if event.kind == "new_path":
+            # `+++ b/path` (gh, prefix stripped below), `+++ path` (glab, verbatim),
+            # or `+++ /dev/null`.
+            path = event.path
+            if platform == "github":
+                path = path.removeprefix("b/")
+            if path == "/dev/null":
+                current_file = None  # deleted file — no new path to track
+            else:
+                current_file = path
+                if current_file_is_new:
                     new_files.add(current_file)
-                continue
-
-            # Anything else between hunks (`diff --git …`, `index …`,
-            # `Binary files … differ`, mode lines) is noise — never a commentable line.
+                if pending_old_path is not None:
+                    old_paths[current_file] = pending_old_path
+            current_file_is_new = False
             continue
 
-        # -- hunk-body zone --------------------------------------------------
-        # Headers are NOT matched here: `--- <text>` / `+++ <text>` are body content.
-        # Budgets are consumed even when `current_file` is None (a deleted file's body
-        # must still drain, or its lines would be read as the next file's headers).
-        if raw_line.startswith("\\"):
-            # `\ No newline at end of file` belongs to neither side.
+        if event.kind == "hunk":
+            # `@@ -0,0` means the old side of this file is empty: either the file is
+            # ADDED, or it pre-existed and was empty. Plain `glab mr diff` offers no
+            # discriminator between the two (it repeats the path on both
+            # `---`/`+++` lines and never writes /dev/null, so this is its ONLY
+            # added-file signal). We prefer the added-file reading: sending
+            # `old_path` into a genuinely new file is the documented HTTP 500,
+            # whereas omitting it for a pre-existing empty file is not.
+            if (
+                event.old_line == 0
+                and event.old_count == 0
+                and current_file is not None
+            ):
+                new_files.add(current_file)
             continue
 
-        if raw_line.startswith("+"):
-            # Added line — new side only, so there is no old_line to record.
-            new_rem -= 1
-            if current_file is not None:
-                valid_lines[(current_file, new_line)] = None
-                line_texts[(current_file, new_line)] = raw_line[1:]
-            new_line += 1
-        elif raw_line.startswith("-"):
-            # Removed line — advances the OLD side only; not addressable by new_line.
-            old_rem -= 1
-            old_line += 1
-        else:
-            # Context line (space- or zero-prefixed) — present on BOTH sides. The
-            # marker column comes off only when it is really there: a blank context
-            # line is a lone space (content ""), but a zero-prefixed one is already
-            # bare and slicing it would eat its first character.
-            old_rem -= 1
-            new_rem -= 1
-            if current_file is not None:
-                valid_lines[(current_file, new_line)] = old_line
-                line_texts[(current_file, new_line)] = (
-                    raw_line[1:] if raw_line.startswith(" ") else raw_line
-                )
-            new_line += 1
-            old_line += 1
+        # event.kind == "line". A removed line carries no `new_line` — not
+        # addressable by the new side, so it records nothing here.
+        if event.new_line is not None and current_file is not None:
+            valid_lines[(current_file, event.new_line)] = event.old_line
+            line_texts[(current_file, event.new_line)] = event.text
 
     return valid_lines, new_files, old_paths, line_texts
 

@@ -12,12 +12,14 @@ which lines are worth recording at all are decisions the two callers answer
 differently — folding them in here would need a platform flag and would put one
 caller's answer on the other's path.
 
-The event vocabulary is the UNION of what both retained parsers need, so some of
-it has no reader yet: the poster's own copy of this walk keys its GitLab position
-fields off ``---`` headers and reads a hunk's old count to recognise an added file
-(``@@ -0,0 +N,M @@``, the only added-file signal a verbatim-path diff carries).
-Narrowing the events to today's single caller would only have to be undone when
-that copy moves here; until then their coverage is this module's own tests.
+The event vocabulary is the UNION of what both retained parsers need. The poster
+(``scripts/post_review.py::parse_diff_lines``) is a live reader of all three shapes: it
+keys its GitLab position fields off ``---``/``+++`` headers, reads a hunk's old count to
+recognise an added file (``@@ -0,0 +N,M @@``, the only added-file signal a verbatim-path
+diff carries), and reads a line's ``text`` as the content oracle its suggested-fix
+apply-check needs. A hunk event's ``new_count`` and ``new_line`` are still carried for
+symmetry with the old side but are read only by this module's own tests — the poster has
+no use for them. HEADER SEMANTICS still stay in the callers, per the scope split above.
 
 No external dependencies. stdlib only.
 
@@ -53,7 +55,15 @@ class DiffEvent(NamedTuple):
     * ``"line"`` — a hunk-body line. ``new_line`` is set when the line exists on the new
       side and ``old_line`` when it exists on the old side: an added line carries only
       the former, a removed line only the latter, a context line both. ``\\ No newline
-      at end of file`` belongs to neither side and yields no event at all.
+      at end of file`` belongs to neither side and yields no event at all. ``text`` is
+      the line's body with the marker column removed — ``raw[1:]`` for a ``+``/``-``
+      line, and ``raw[1:]`` for a context line only when the raw line actually starts
+      with a space (a zero-prefixed bare context line is already bare; slicing it would
+      eat its first character instead of its marker). A removed line carries ``text``
+      too, despite having no ``new_line``: the walk stays lossless.
+
+    ``old_path`` / ``new_path`` / ``hunk`` events carry ``text=None`` — there is no body
+    line to hold text for.
     """
 
     kind: str
@@ -62,6 +72,7 @@ class DiffEvent(NamedTuple):
     new_line: int | None = None
     old_count: int | None = None
     new_count: int | None = None
+    text: str | None = None
 
 
 # Prefix-free on purpose: a header's `a/`/`b/` is diff syntax on one platform and a real
@@ -95,10 +106,14 @@ def _decode_header_path(field: str) -> str:
     timestamp column begins. And a path holding a control character, a quote, a
     backslash, or (unless ``core.quotePath=false``) a non-ASCII byte is written
     C-quoted as a whole, with the quotes OUTSIDE the synthetic prefix and the tab, if
-    any, after the closing quote: ``+++ "b/caf\\303\\251 x.py"<TAB>``. Neither
-    encoding is platform-specific — they are how git writes the header — so a caller
-    left to strip them itself would be re-deriving diff syntax to answer a question
-    about a path.
+    any, after the closing quote: ``+++ "b/caf\\303\\251 x.py"<TAB>``. Both encodings
+    are git's wire convention — how ``gh pr diff`` and plain ``git diff`` write a
+    header. ``glab mr diff`` reconstructs headers from the API with paths verbatim, so
+    on that producer the decode has nothing to undo and is a no-op for every path git
+    could not have encoded — it mis-reads only a name that itself carries a literal TAB
+    or is wrapped in double quotes, an accepted limitation (the poster's pre-migration
+    regex kept such a name raw; now the finding on it is demoted to summary-only rather
+    than anchored).
 
     A field that does not decode comes back verbatim: git never writes an escape this
     cannot read, so an undecodable field is not a path a finding could name either,
@@ -220,16 +235,24 @@ def walk_diff(diff_text: str) -> Iterator[DiffEvent]:
 
         if raw_line.startswith("+"):
             new_rem -= 1
-            yield DiffEvent("line", new_line=new_line)
+            yield DiffEvent("line", new_line=new_line, text=raw_line[1:])
             new_line += 1
         elif raw_line.startswith("-"):
             old_rem -= 1
-            yield DiffEvent("line", old_line=old_line)
+            yield DiffEvent("line", old_line=old_line, text=raw_line[1:])
             old_line += 1
         else:
-            # Context line (space- or zero-prefixed) — present on BOTH sides.
+            # Context line (space- or zero-prefixed) — present on BOTH sides. The
+            # marker column comes off only when it is really there: a blank context
+            # line is a lone space (content ""), but a zero-prefixed one is already
+            # bare and slicing it would eat its first character.
             old_rem -= 1
             new_rem -= 1
-            yield DiffEvent("line", old_line=old_line, new_line=new_line)
+            yield DiffEvent(
+                "line",
+                old_line=old_line,
+                new_line=new_line,
+                text=raw_line[1:] if raw_line.startswith(" ") else raw_line,
+            )
             new_line += 1
             old_line += 1

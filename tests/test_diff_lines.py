@@ -13,6 +13,8 @@ Covers:
   - hunk budgets: resolved counts, omitted counts, drain across files
   - hunk body: added/removed/context line numbering, header-shaped body content,
     `\\ No newline at end of file`, form feeds and friends, a body cut short
+  - line text: marker-column removal, the zero-prefixed context exception,
+    header/hunk events carry none
 """
 
 import os
@@ -189,9 +191,9 @@ class TestHunkHeaders(unittest.TestCase):
             events(diff),
             [
                 DiffEvent("hunk", old_line=10, new_line=20, old_count=2, new_count=3),
-                DiffEvent("line", old_line=10, new_line=20),
-                DiffEvent("line", new_line=21),
-                DiffEvent("line", old_line=11, new_line=22),
+                DiffEvent("line", old_line=10, new_line=20, text="ctx"),
+                DiffEvent("line", new_line=21, text="added"),
+                DiffEvent("line", old_line=11, new_line=22, text="tail"),
             ],
         )
 
@@ -205,7 +207,7 @@ class TestHunkHeaders(unittest.TestCase):
             events(diff),
             [
                 DiffEvent("hunk", old_line=0, new_line=1, old_count=0, new_count=1),
-                DiffEvent("line", new_line=1),
+                DiffEvent("line", new_line=1, text="only"),
             ],
         )
 
@@ -226,13 +228,13 @@ class TestHunkHeaders(unittest.TestCase):
             [
                 DiffEvent("new_path", path="b/multi.py"),
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", new_line=2),
-                DiffEvent("line", old_line=2, new_line=3),
+                DiffEvent("line", old_line=1, new_line=1, text="a"),
+                DiffEvent("line", new_line=2, text="b"),
+                DiffEvent("line", old_line=2, new_line=3, text="c"),
                 DiffEvent("hunk", old_line=50, new_line=51, old_count=2, new_count=3),
-                DiffEvent("line", old_line=50, new_line=51),
-                DiffEvent("line", new_line=52),
-                DiffEvent("line", old_line=51, new_line=53),
+                DiffEvent("line", old_line=50, new_line=51, text="d"),
+                DiffEvent("line", new_line=52, text="e"),
+                DiffEvent("line", old_line=51, new_line=53, text="f"),
             ],
         )
 
@@ -249,10 +251,10 @@ class TestHunkBody(unittest.TestCase):
             events(diff),
             [
                 DiffEvent("hunk", old_line=7, new_line=7, old_count=3, new_count=3),
-                DiffEvent("line", old_line=7, new_line=7),
-                DiffEvent("line", old_line=8),
-                DiffEvent("line", new_line=8),
-                DiffEvent("line", old_line=9, new_line=9),
+                DiffEvent("line", old_line=7, new_line=7, text="ctx"),
+                DiffEvent("line", old_line=8, text="gone"),
+                DiffEvent("line", new_line=8, text="fresh"),
+                DiffEvent("line", old_line=9, new_line=9, text="tail"),
             ],
         )
 
@@ -265,9 +267,9 @@ class TestHunkBody(unittest.TestCase):
             events(diff),
             [
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", old_line=2),
-                DiffEvent("line", new_line=2),
+                DiffEvent("line", old_line=1, new_line=1, text="a"),
+                DiffEvent("line", old_line=2, text="b"),
+                DiffEvent("line", new_line=2, text="b2"),
             ],
         )
 
@@ -288,9 +290,9 @@ class TestHunkBody(unittest.TestCase):
                 DiffEvent("old_path", path="a/schema.sql"),
                 DiffEvent("new_path", path="b/schema.sql"),
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=3, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", old_line=2),
-                DiffEvent("line", old_line=3, new_line=2),
+                DiffEvent("line", old_line=1, new_line=1, text="CREATE TABLE t ("),
+                DiffEvent("line", old_line=2, text="-- deprecated: drop me"),
+                DiffEvent("line", old_line=3, new_line=2, text=");"),
             ],
         )
 
@@ -311,9 +313,9 @@ class TestHunkBody(unittest.TestCase):
                 DiffEvent("old_path", path="a/notes.md"),
                 DiffEvent("new_path", path="b/notes.md"),
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", new_line=2),
-                DiffEvent("line", old_line=2, new_line=3),
+                DiffEvent("line", old_line=1, new_line=1, text="intro"),
+                DiffEvent("line", new_line=2, text="++ x marks a diff-of-a-diff"),
+                DiffEvent("line", old_line=2, new_line=3, text="outro"),
             ],
         )
 
@@ -329,11 +331,11 @@ class TestHunkBody(unittest.TestCase):
             events(diff),
             [
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=4, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", old_line=2),
-                DiffEvent("line", new_line=2),
-                DiffEvent("line", old_line=3, new_line=3),
-                DiffEvent("line", old_line=4),
+                DiffEvent("line", old_line=1, new_line=1, text="head"),
+                DiffEvent("line", old_line=2, text="alpha\x0cbeta"),
+                DiffEvent("line", new_line=2, text="gamma"),
+                DiffEvent("line", old_line=3, new_line=3, text="middle"),
+                DiffEvent("line", old_line=4, text="omega"),
             ],
         )
 
@@ -350,8 +352,8 @@ class TestHunkBody(unittest.TestCase):
                 DiffEvent("old_path", path="a/f.py"),
                 DiffEvent("new_path", path="b/f.py"),
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=4, new_count=4),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", new_line=2),
+                DiffEvent("line", old_line=1, new_line=1, text="ctx"),
+                DiffEvent("line", new_line=2, text="added"),
             ],
         )
 
@@ -363,8 +365,8 @@ class TestHunkBody(unittest.TestCase):
             events(diff),
             [
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", new_line=2),
+                DiffEvent("line", old_line=1, new_line=1, text="ctx"),
+                DiffEvent("line", new_line=2, text="added"),
             ],
         )
 
@@ -377,9 +379,9 @@ class TestHunkBody(unittest.TestCase):
             events(diff),
             [
                 DiffEvent("hunk", old_line=1, new_line=1, old_count=3, new_count=3),
-                DiffEvent("line", old_line=1, new_line=1),
-                DiffEvent("line", old_line=2, new_line=2),
-                DiffEvent("line", new_line=3),
+                DiffEvent("line", old_line=1, new_line=1, text="a"),
+                DiffEvent("line", old_line=2, new_line=2, text=""),
+                DiffEvent("line", new_line=3, text="b"),
             ],
         )
 
@@ -410,16 +412,110 @@ class TestHunkBody(unittest.TestCase):
                 DiffEvent("old_path", path="a/gone.py"),
                 DiffEvent("new_path", path="/dev/null"),
                 DiffEvent("hunk", old_line=1, new_line=0, old_count=3, new_count=0),
-                DiffEvent("line", old_line=1),
-                DiffEvent("line", old_line=2),
-                DiffEvent("line", old_line=3),
+                DiffEvent("line", old_line=1, text="alpha"),
+                DiffEvent("line", old_line=2, text="beta"),
+                DiffEvent("line", old_line=3, text="gamma"),
                 DiffEvent("old_path", path="a/next.py"),
                 DiffEvent("new_path", path="b/next.py"),
                 DiffEvent("hunk", old_line=10, new_line=10, old_count=1, new_count=2),
-                DiffEvent("line", old_line=10, new_line=10),
-                DiffEvent("line", new_line=11),
+                DiffEvent("line", old_line=10, new_line=10, text="ctx"),
+                DiffEvent("line", new_line=11, text="added"),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# Line text
+# ---------------------------------------------------------------------------
+
+
+class TestLineText(unittest.TestCase):
+    """``text`` is a ``"line"`` event's body with the marker column removed.
+
+    Every case above already pins ``text`` alongside the numbering it exercises;
+    these tests isolate the marker-stripping rule itself, one shape at a time.
+    """
+
+    def test_added_line_text_drops_the_leading_plus(self):
+        diff = "@@ -0,0 +1 @@\n+hello\n"
+        self.assertEqual(events(diff)[1], DiffEvent("line", new_line=1, text="hello"))
+
+    def test_removed_line_text_drops_the_leading_minus(self):
+        diff = "@@ -1 +0,0 @@\n-hello\n"
+        self.assertEqual(events(diff)[1], DiffEvent("line", old_line=1, text="hello"))
+
+    def test_context_line_text_drops_exactly_one_leading_space(self):
+        diff = "@@ -1 +1 @@\n  indented\n"
+        self.assertEqual(
+            events(diff)[1],
+            DiffEvent("line", old_line=1, new_line=1, text=" indented"),
+        )
+
+    def test_blank_context_line_written_as_a_lone_space_yields_empty_text(self):
+        # A unified diff spells a blank context line as a lone space — its content
+        # is the empty string, not a space.
+        diff = "@@ -1 +1 @@\n \n"
+        self.assertEqual(
+            events(diff)[1], DiffEvent("line", old_line=1, new_line=1, text="")
+        )
+
+    def test_zero_prefixed_bare_context_line_yields_empty_text_and_drains(self):
+        # Some producers write a blank context line with no marker column at all
+        # (the bare empty string). Slicing an empty string is safe and would also
+        # yield "" here, so this case alone does not distinguish sliced from
+        # unsliced — it only pins that the empty line still drains the hunk's
+        # declared budget, and that its text comes out as "" either way.
+        diff = "@@ -1,2 +1,2 @@\n\n ctx\n"
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
+                DiffEvent("line", old_line=1, new_line=1, text=""),
+                DiffEvent("line", old_line=2, new_line=2, text="ctx"),
+            ],
+        )
+
+    def test_bare_context_line_with_content_keeps_its_first_character(self):
+        # A body line with no marker column at all is passed through, not sliced:
+        # slicing would eat a content character as if it were a marker.
+        diff = "@@ -1,2 +1,2 @@\nbare_ctx\n ctx\n"
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
+                DiffEvent("line", old_line=1, new_line=1, text="bare_ctx"),
+                DiffEvent("line", old_line=2, new_line=2, text="ctx"),
+            ],
+        )
+
+    def test_leading_whitespace_after_the_marker_is_preserved_verbatim(self):
+        diff = "@@ -0,0 +1 @@\n+    indented_add\n"
+        self.assertEqual(
+            events(diff)[1], DiffEvent("line", new_line=1, text="    indented_add")
+        )
+
+    def test_form_feed_inside_the_text_is_preserved(self):
+        diff = "@@ -0,0 +1 @@\n+a\x0cb\n"
+        self.assertEqual(events(diff)[1], DiffEvent("line", new_line=1, text="a\x0cb"))
+
+    def test_no_newline_marker_yields_no_event(self):
+        diff = "@@ -1,2 +1,2 @@\n a\n\\ No newline at end of file\n b\n"
+        self.assertEqual(
+            events(diff),
+            [
+                DiffEvent("hunk", old_line=1, new_line=1, old_count=2, new_count=2),
+                DiffEvent("line", old_line=1, new_line=1, text="a"),
+                DiffEvent("line", old_line=2, new_line=2, text="b"),
+            ],
+        )
+
+    def test_header_and_hunk_events_carry_no_text(self):
+        diff = "--- a/f.py\n+++ b/f.py\n@@ -1 +1 @@\n ctx\n"
+        old_path, new_path, hunk, line = events(diff)
+        self.assertIsNone(old_path.text)
+        self.assertIsNone(new_path.text)
+        self.assertIsNone(hunk.text)
+        self.assertEqual(line.text, "ctx")
 
 
 if __name__ == "__main__":
