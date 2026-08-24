@@ -2,6 +2,15 @@
 
 <!-- version list -->
 
+## v3.18.2 (2026-08-24)
+
+### Bug Fixes
+
+- **bench**: Resolve payload-mirror comment paths through diff_path_spelling (#232)
+  ([#233](https://github.com/liatrio-labs/claude-code-gauntlet/pull/233),
+  [`d3bc427`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d3bc427f8f3329c8612bbec29038a29b4d388e55))
+
+
 ## v3.18.1 (2026-08-24)
 
 ### Bug Fixes
