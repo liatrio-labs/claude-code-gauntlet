@@ -710,15 +710,19 @@ GL_PREFIXED_PATH_PROJECT = "acme/widgets"
 GL_PREFIXED_PATH_MR_IID = 7
 
 # `context_line` anchors on both sides (it has an old_line); the two added
-# lines that follow have none. Three findings walk post_gitlab's real
-# two-pass structure (#234): the THIRD (off-diff) finding pre-partitions into
-# the skipped section BEFORE the summary note is composed, so its skip
-# warning always precedes the FIRST finding's downgrade — which fires only
-# once the inline loop renders it, a full pass later. The first finding's
-# fence states no end_line (an oracle-independent downgrade); the second's
-# spans [2, 3] with a KEPT fence (it fires no warning at all), pinning
-# `_gitlab_anchored`'s offsets against a live capture rather than only the
-# fixture below.
+# lines that follow have none. Four findings walk post_gitlab's real
+# two-pass structure (#234): the THIRD (off-diff) and FOURTH (no-line)
+# findings both pre-partition into the skipped section BEFORE the summary
+# note is composed, in findings order, so both their skip warnings always
+# precede the FIRST finding's downgrade — which fires only once the inline
+# loop renders it, a full pass later. The first finding's fence states no
+# end_line (an oracle-independent downgrade); the second's spans [2, 3] with
+# a KEPT fence (it fires no warning at all), pinning `_gitlab_anchored`'s
+# offsets against a live capture rather than only the fixture below. The
+# fourth carries no `line` and no `file` key, mirroring the GitHub
+# no-line-no-file case (`GH_SKIPPED_SECTION_FINDINGS`'s "Repo-wide
+# observation") to pin post_gitlab's own `if line is None:` pre-partition
+# branch and its `?` file fallback against a live capture.
 GL_DIFF_FENCED_SUGGESTION = (
     "--- src/edited.py\n"
     "+++ src/edited.py\n"
@@ -752,6 +756,11 @@ GL_FENCED_FINDINGS = [
         "severity": "low",
         "title": "Off-diff finding",
         "body": "This finding's line sits outside the diff.",
+    },
+    {
+        "severity": "low",
+        "title": "Repo-wide observation",
+        "body": "This finding applies to the whole MR, not one line.",
     },
 ]
 
@@ -984,6 +993,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             [
                 "Skipping finding 'Off-diff finding' at src/edited.py:99 — "
                 + "line not found in diff. Valid lines for this file: [1, 2, 3]",
+                "Finding 'Repo-wide observation' has no line number — skipping.",
                 "suggested-fix downgraded: src/edited.py:1 (missing_end_line)",
             ],
         )
@@ -991,18 +1001,20 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         # discussions[0] is the context-line finding, downgraded to prose
         # first; discussions[1] is the kept fence — the inline loop posts in
         # findings order, and the fenced finding is listed second (#234).
+        # The no-line finding pre-partitions straight into the skipped
+        # section and posts no discussion at all.
         fenced = real["discussions"][1]
         self.assertIn("```suggestion:-0+1\n", fenced["body"])
         self.assertEqual(fenced["position"]["new_line"], 2)
         self.assertNotIn("old_line", fenced["position"])
         summary_body = real["summary"]["body"]
-        self.assertIn("### ⚠️ 1 finding(s) could not be anchored inline", summary_body)
+        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", summary_body)
         # Hand-typed intro sentence, group_note included — dropping
         # inline_count OR group_note on both sides (poster and mirror) stays
         # green against each other; only this full literal (and the
         # regenerated fixture) catches either (#234).
         self.assertIn(
-            "The following 1 finding(s) reference lines outside this diff "
+            "The following 2 finding(s) reference lines outside this diff "
             "and are included here instead of as inline comments: A "
             "finding listed here may not have an anchoring problem of its "
             "own — a consolidation group whose primary could not be "
@@ -1010,6 +1022,9 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             "included.",
             summary_body,
         )
+        self.assertIn("#### `src/edited.py:99`", summary_body)
+        # The no-line finding has no file key — the poster's own "?" fallback.
+        self.assertIn("#### `?`", summary_body)
 
 
 # ---------------------------------------------------------------------------
