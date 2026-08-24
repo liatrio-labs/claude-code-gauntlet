@@ -906,8 +906,8 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             [
                 "suggested-fix downgraded: b/src/edited.py:2 (missing_end_line)",
                 "Skipping finding 'Off-diff finding' at b/src/edited.py:99 — "
-                "line not found in diff. Valid lines for this file: "
-                "[1, 2, 3, 4, 5]",
+                + "line not found in diff. Valid lines for this file: "
+                + "[1, 2, 3, 4, 5]",
                 "suggested-fix downgraded: b/src/edited.py:99 (range_not_in_diff)",
                 "Finding 'Repo-wide observation' has no line number — skipping.",
             ],
@@ -983,7 +983,7 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             real["skipped"],
             [
                 "Skipping finding 'Off-diff finding' at src/edited.py:99 — "
-                "line not found in diff. Valid lines for this file: [1, 2, 3]",
+                + "line not found in diff. Valid lines for this file: [1, 2, 3]",
                 "suggested-fix downgraded: src/edited.py:1 (missing_end_line)",
             ],
         )
