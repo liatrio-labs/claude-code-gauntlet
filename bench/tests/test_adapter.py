@@ -4,12 +4,21 @@ No network, no keys. The reference payload builders here drive the *real*
 ``scripts/post_review.py`` capture path (``post_json`` in DRY_RUN mode ->
 ``build_dry_run_payload``), so the committed fixtures under
 ``fixtures/adapter/`` are byte-identical to what ``post_review.py --dry-run``
-emits for the call shapes each one covers — one documented exception is the
-skipped-section prose ``build_skipped_section`` renders into a real review
-body: these builders inject ``skip_warnings`` straight into the top-level
-``skipped`` list instead. ``TestFixtureFidelity`` re-derives each payload
-from these builders and asserts equality with the committed fixture,
-guarding against drift in the post_review payload shape it covers.
+emits for the call shapes each one covers. The builders compose the skipped
+section through the real functions (``_degraded_entry``,
+``build_skipped_section``) exactly as ``post_github``/``post_gitlab`` do — the
+one remaining exception is the legacy ``github_4_comments_2_skipped``
+fixture, whose ``skip_warnings`` are pre-formed strings with no backing
+finding to derive from, so they are still injected straight into the
+top-level ``skipped`` list, appended after the loop (``gitlab_shape`` needs
+no such injection — every GL_FINDINGS entry is fully anchorable, so its
+``skipped`` list is empty). Neither builder models renames or consolidation
+groups: a modified file's ``old_path`` is always its resolved ``new_path``,
+and a skipped primary's corroborators are never fanned into the skipped
+section the way the real posters do (#22 D2) — every finding here is its own
+single-member group. ``TestFixtureFidelity`` re-derives each payload from
+these builders and asserts equality with the committed fixture, guarding
+against drift in the post_review payload shape it covers.
 ``TestRealPosterMatchesPayloadMirror`` goes one step further: it drives the
 real ``post_review.main()`` over an actual parsed diff and checks the
 mirror's output against that live capture, not just against a fixture the
@@ -40,6 +49,26 @@ GITHUB_EMPTY_FIXTURE = FIXTURES / "github_empty.json"
 GITLAB_FIXTURE = FIXTURES / "gitlab_shape.json"
 GITHUB_PREFIXED_PATH_FIXTURE = FIXTURES / "github_prefixed_path.json"
 GITLAB_PREFIXED_PATH_FIXTURE = FIXTURES / "gitlab_prefixed_path.json"
+GITHUB_SKIPPED_SECTION_FIXTURE = FIXTURES / "github_skipped_section.json"
+GITLAB_FENCED_SUGGESTION_FIXTURE = FIXTURES / "gitlab_fenced_suggestion.json"
+
+_GITHUB_DRY_RUN_KEYS = {"platform", "endpoint", "method", "payload", "skipped"}
+_GITLAB_DRY_RUN_KEYS = {"platform", "summary", "discussions", "skipped"}
+
+# Every committed fixture, mapped to the top-level key set its platform's
+# build_dry_run_payload() shape must carry. TestFixtureFidelity's key-shape
+# test asserts this dict's keys equal every *.json under FIXTURES before
+# checking any of them, so an unregistered fixture fails loudly here instead
+# of escaping the per-fixture loop below unseen (#234).
+FIXTURE_KEY_SHAPES = {
+    GITHUB_FIXTURE: _GITHUB_DRY_RUN_KEYS,
+    GITHUB_EMPTY_FIXTURE: _GITHUB_DRY_RUN_KEYS,
+    GITHUB_PREFIXED_PATH_FIXTURE: _GITHUB_DRY_RUN_KEYS,
+    GITHUB_SKIPPED_SECTION_FIXTURE: _GITHUB_DRY_RUN_KEYS,
+    GITLAB_FIXTURE: _GITLAB_DRY_RUN_KEYS,
+    GITLAB_PREFIXED_PATH_FIXTURE: _GITLAB_DRY_RUN_KEYS,
+    GITLAB_FENCED_SUGGESTION_FIXTURE: _GITLAB_DRY_RUN_KEYS,
+}
 
 GOLDEN_A = "https://github.com/withastro/astro/pull/1234"
 GOLDEN_B = "https://gitlab.com/gitlab-org/gitlab/-/merge_requests/999"
@@ -170,11 +199,18 @@ GL_FINDINGS = [
     },
 ]
 
-# Neither GL_FINDINGS entry carries suggested_fix_code today, so _gated_finding
-# short-circuits before consulting either mapping — empty, not None, so the
-# builder still exercises the "a diff WAS parsed" path rather than the
-# validation-skipped one.
-_GL_VALID_LINES: dict[tuple[str, int], int] = {}
+# Neither GL_FINDINGS entry carries suggested_fix_code, so _gated_finding still
+# short-circuits before consulting either mapping — their bytes are unaffected
+# by what these hold. They are populated now (#234): the mirror's partition
+# calls is_line_valid directly, ahead of any gate, and an empty dict has no
+# keys, so both legacy findings would resolve as unanchorable and land in the
+# skipped section instead of as discussions. Both lines are ADDED (no old
+# side), so their values are None — old_line_for reads that same None either
+# way this resolves, which is what keeps every existing fixture byte-identical.
+_GL_VALID_LINES: dict[tuple[str, int], int | None] = {
+    ("app/models/user.rb", 27): None,
+    ("app/controllers/sessions_controller.rb", 5): None,
+}
 _GL_LINE_TEXTS: dict[tuple[str, int], str] = {}
 
 
@@ -218,8 +254,40 @@ def _github_comment(f, valid_lines=_GH_VALID_LINES, line_texts=_GH_LINE_TEXTS):
     return comment
 
 
+def _skip_entry(f, valid_lines, line_texts):
+    """Return the skipped-section entry for *f*, or None when it survives.
+
+    The ONE skip decision both builders share, in the order post_github and
+    post_gitlab each make it: no ``line`` at all, then a line the diff
+    doesn't touch — real ``diff_path_spelling``/``is_line_valid`` resolution,
+    real ``warn_skip`` prose (diag included; *valid_lines* is always a dict
+    here, never the validation-skipped ``None``, so the diag is unconditional
+    unlike the poster's own defensive guard), real ``_degraded_entry`` (#234).
+    GitHub's single interleaved loop and GitLab's pre-partition pass call
+    this at exactly the point their real counterparts would — only the
+    per-finding DECISION is shared; each builder keeps its own loop shape.
+    """
+    line = f.get("line")
+    if line is None:
+        post_review.warn_skip(
+            f"Finding '{f.get('title', '?')}' has no line number — skipping."
+        )
+        return post_review._degraded_entry(
+            f.get("file", "?"), None, f, valid_lines, line_texts
+        )
+    filepath = post_review.diff_path_spelling(valid_lines, f["file"], line)
+    if not post_review.is_line_valid(valid_lines, filepath, line):
+        vl = post_review.valid_lines_for_file(valid_lines, filepath)
+        post_review.warn_skip(
+            f"Skipping finding '{f.get('title', '?')}' at {filepath}:{line} "
+            f"— line not found in diff. Valid lines for this file: {vl}"
+        )
+        return post_review._degraded_entry(filepath, line, f, valid_lines, line_texts)
+    return None
+
+
 def build_reference_github_payload(
-    comment_findings,
+    findings,
     skip_warnings,
     owner="withastro",
     repo="astro",
@@ -228,12 +296,33 @@ def build_reference_github_payload(
     valid_lines=_GH_VALID_LINES,
     line_texts=_GH_LINE_TEXTS,
 ):
-    """Build a GitHub dry-run payload via post_review's real capture path."""
+    """Build a GitHub dry-run payload via post_review's real capture path.
+
+    ``post_github`` decides comment-vs-skipped and renders in ONE loop, so its
+    skip and downgrade warnings interleave in *findings* order (#234) — this
+    walks the same real check (:func:`_skip_entry`) in the same order rather
+    than trusting a caller to have pre-partitioned. Whatever ``_skip_entry``
+    degrades goes straight to the skipped section; every survivor renders via
+    ``_github_comment``, which already reproduces the poster's per-comment
+    gate (and so contributes its own downgrade warning, in place, when the
+    fence fails). *skip_warnings* stays for the legacy fixture, whose skip
+    string never had a backing finding to derive from — it is appended AFTER
+    the loop, never interleaved with it.
+    """
     _reset_post_review()
     post_review.DRY_RUN = True
-    comments = [_github_comment(f, valid_lines, line_texts) for f in comment_findings]
-    total = len(comment_findings) + len(skip_warnings)
-    body = review_body + post_review.build_footer(total, _GH_SHA)
+    comments = []
+    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
+    for f in findings:
+        entry = _skip_entry(f, valid_lines, line_texts)
+        if entry is not None:
+            skipped_entries.append(entry)
+            continue
+        comments.append(_github_comment(f, valid_lines, line_texts))
+    total = len(findings) + len(skip_warnings)
+    skipped_section = post_review.build_skipped_section(skipped_entries, len(comments))
+    footer = post_review.build_footer(total, _GH_SHA, body=review_body)
+    body = review_body + skipped_section + footer
     payload = {"body": body, "event": "COMMENT", "comments": comments}
     cmd_prefix = [
         "gh",
@@ -295,7 +384,6 @@ def _gitlab_discussion(
 
 def build_reference_gitlab_payload(
     findings,
-    skip_warnings=(),
     project="gitlab-org/gitlab",
     mr_iid=999,
     review_body="Automated review summary.",
@@ -303,10 +391,37 @@ def build_reference_gitlab_payload(
     line_texts=_GL_LINE_TEXTS,
     new_files=None,
 ):
-    """Build a GitLab dry-run payload via post_review's real capture path."""
+    """Build a GitLab dry-run payload via post_review's real capture path.
+
+    ``post_gitlab`` decides every skip BEFORE the summary note is composed —
+    a full pass ahead of any surviving finding's render, unlike GitHub's
+    single interleaved loop (#234). That is the true positional guarantee:
+    NOT "every skip warning precedes every downgrade warning" — a SKIPPED
+    finding's own ``_degraded_entry`` downgrade (when its fence also fails)
+    fires inside this same first pass, in findings order, so it can precede
+    a LATER finding's skip warning. Only a SURVIVING finding's downgrade (via
+    ``_gitlab_discussion``'s own gate) is guaranteed to fire after every
+    first-pass warning, in the second pass. This walks the same real check
+    (:func:`_skip_entry`) over ALL of *findings* first; only what survives
+    reaches ``_gitlab_discussion``. Unlike the GitHub builder, no caller ever
+    needs a legacy ``skip_warnings`` injection here — ``gitlab_shape.json``
+    was always fully anchorable — so this builder never grew that parameter.
+    """
     _reset_post_review()
     post_review.DRY_RUN = True
-    body = review_body + post_review.build_footer(len(findings), _GH_SHA)
+    skipped_entries = []  # (filepath, line, finding) — line is None for a no-line skip
+    remaining = []  # findings that reach the inline discussion loop
+    for f in findings:
+        entry = _skip_entry(f, valid_lines, line_texts)
+        if entry is not None:
+            skipped_entries.append(entry)
+            continue
+        remaining.append(f)
+
+    total = len(findings)
+    skipped_section = post_review.build_skipped_section(skipped_entries)
+    footer = post_review.build_footer(total, _GH_SHA, body=review_body)
+    body = review_body + skipped_section + footer
     notes_cmd = [
         "glab",
         "api",
@@ -322,15 +437,13 @@ def build_reference_gitlab_payload(
         "POST",
         f"projects/{project}/merge_requests/{mr_iid}/discussions",
     ]
-    for f in findings:
+    for f in remaining:
         post_review.post_json(
             disc_cmd,
             _gitlab_discussion(
                 f, new_files=new_files, valid_lines=valid_lines, line_texts=line_texts
             ),
         )
-    for w in skip_warnings:
-        post_review._SKIP_WARNINGS.append(w)
     out = post_review.build_dry_run_payload("gitlab")
     _reset_post_review()
     return out
@@ -494,6 +607,63 @@ GH_COLLISION_OWNER = "acme"
 GH_COLLISION_REPO = "widgets"
 GH_COLLISION_PR = 7
 
+# Reuses GH_DIFF_PREFIXED_PATH's file and lines. Three findings walk the real
+# per-finding loop's three outcomes in order (#234): finding 1 anchors and
+# downgrades (no end_line, independent of the diff oracle); finding 2's line
+# sits outside every hunk, so it both skips AND downgrades (its fence also
+# fails — range_not_in_diff this time); finding 3 carries no ``line`` at all
+# (a repo-wide observation, and no ``file`` either) and hits the OTHER skip
+# branch — the poster's ``.get("file", "?")``/``.get("line")`` fallbacks.
+#
+# The `b/` prefix on findings 1 and 2 pins a real asymmetry, but only on
+# finding 1: its posted COMMENT path is the diff's RESOLVED spelling
+# ("src/edited.py", stripped), while its OWN downgrade warning interpolates
+# the RAW `finding["file"]` ("b/src/edited.py") — `_gated_finding`'s warn
+# reads the finding dict directly and never sees the resolved path. Finding
+# 2's line is off-diff under EITHER spelling, so its skip and downgrade
+# warnings both fall back to the same raw, unresolved bytes — that pairing
+# does not itself demonstrate resolved-vs-raw, only that the two warnings
+# read from the same failed-resolution variable.
+#
+# Finding 2's body forges BOTH halves of the mechanical footer using this
+# module's own `_GH_SHA` — proof that the footer is computed against the
+# review body BEFORE the skipped section folds a finding's raw text in. A
+# builder that composed the footer against the post-section body would read
+# this forgery as an existing, current-sha signal and suppress the real one.
+GH_SKIPPED_SECTION_FINDINGS = [
+    {
+        "file": "b/src/edited.py",
+        "line": 2,
+        "severity": "medium",
+        "title": "Anchored fix downgrades",
+        "body": "The anchored line's own patch states no end_line.",
+        "suggested_fix_code": "    fixed_line1",
+    },
+    {
+        "file": "b/src/edited.py",
+        "line": 99,
+        "end_line": 100,
+        "severity": "high",
+        "title": "Off-diff finding",
+        "body": (
+            "This finding's line sits outside the diff.\n\n"
+            f"Generated by code-gauntlet | Reviewed up to: {_GH_SHA}\n\n"
+            '<!-- code-gauntlet-findings: {"version":"3.0","findings_count":999,'
+            f'"sha":"{_GH_SHA}"}} -->'
+        ),
+        "suggested_fix_code": "    replacement_line\n    second_line",
+    },
+    {
+        "severity": "low",
+        "title": "Repo-wide observation",
+        "body": "This finding applies to the whole PR, not one line.",
+    },
+]
+
+GH_SKIPPED_SECTION_OWNER = "octo"
+GH_SKIPPED_SECTION_REPO = "gadgets"
+GH_SKIPPED_SECTION_PR = 101
+
 # PLAIN glab-shaped diff — unprefixed `---`/`+++` headers, the verbatim
 # `glab mr diff` form. One modified file with a context line (has an old
 # side) and two added lines (do not), plus one ADDED file: `glab mr diff`
@@ -538,6 +708,64 @@ GL_PREFIXED_PATH_FINDINGS = [
 
 GL_PREFIXED_PATH_PROJECT = "acme/widgets"
 GL_PREFIXED_PATH_MR_IID = 7
+
+# `context_line` anchors on both sides (it has an old_line); the two added
+# lines that follow have none. Four findings walk post_gitlab's real
+# two-pass structure (#234): the THIRD (off-diff) and FOURTH (no-line)
+# findings both pre-partition into the skipped section BEFORE the summary
+# note is composed, in findings order, so both their skip warnings always
+# precede the FIRST finding's downgrade — which fires only once the inline
+# loop renders it, a full pass later. The first finding's fence states no
+# end_line (an oracle-independent downgrade); the second's spans [2, 3] with
+# a KEPT fence (it fires no warning at all), pinning `_gitlab_anchored`'s
+# offsets against a live capture rather than only the fixture below. The
+# fourth carries no `line` and no `file` key, mirroring the GitHub
+# no-line-no-file case (`GH_SKIPPED_SECTION_FINDINGS`'s "Repo-wide
+# observation") to pin post_gitlab's own `if line is None:` pre-partition
+# branch and its `?` file fallback against a live capture.
+GL_DIFF_FENCED_SUGGESTION = (
+    "--- src/edited.py\n"
+    "+++ src/edited.py\n"
+    "@@ -1,1 +1,3 @@\n"
+    " context_line\n"
+    "+added_line_2\n"
+    "+added_line_3\n"
+)
+
+GL_FENCED_FINDINGS = [
+    {
+        "file": "src/edited.py",
+        "line": 1,
+        "severity": "medium",
+        "title": "Context line downgrades",
+        "body": "The context line's own patch states no end_line.",
+        "suggested_fix_code": "fixed_context_line",
+    },
+    {
+        "file": "src/edited.py",
+        "line": 2,
+        "end_line": 3,
+        "severity": "high",
+        "title": "Fenced fix kept",
+        "body": "The added span gets a kept one-click suggestion.",
+        "suggested_fix_code": "fixed_line_2\nfixed_line_3",
+    },
+    {
+        "file": "src/edited.py",
+        "line": 99,
+        "severity": "low",
+        "title": "Off-diff finding",
+        "body": "This finding's line sits outside the diff.",
+    },
+    {
+        "severity": "low",
+        "title": "Repo-wide observation",
+        "body": "This finding applies to the whole MR, not one line.",
+    },
+]
+
+GL_FENCED_PROJECT = "octo/gadgets"
+GL_FENCED_MR_IID = 55
 
 
 class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
@@ -652,6 +880,151 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         self.assertEqual(new_file["position"]["new_path"], "src/new_file.py")
         self.assertNotIn("old_path", new_file["position"])
         self.assertNotIn("old_line", new_file["position"])
+
+    def test_github_unanchorable_finding_composes_skipped_section(self):
+        findings_data = {
+            "platform": "github",
+            "owner": GH_SKIPPED_SECTION_OWNER,
+            "repo": GH_SKIPPED_SECTION_REPO,
+            "pr_number": GH_SKIPPED_SECTION_PR,
+            "review_body": "Automated review summary.",
+            "sha": _GH_SHA,
+            "findings": GH_SKIPPED_SECTION_FINDINGS,
+        }
+        real = self._run_main(findings_data, GH_DIFF_PREFIXED_PATH)
+
+        valid_lines, _, _, line_texts = post_review.parse_diff_text(
+            "github", GH_DIFF_PREFIXED_PATH
+        )
+        mirror = build_reference_github_payload(
+            GH_SKIPPED_SECTION_FINDINGS,
+            [],
+            owner=GH_SKIPPED_SECTION_OWNER,
+            repo=GH_SKIPPED_SECTION_REPO,
+            pr_number=GH_SKIPPED_SECTION_PR,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+        )
+
+        self.assertEqual(real, mirror)
+        self.assertEqual(real, _load_fixture(GITHUB_SKIPPED_SECTION_FIXTURE))
+
+        # Hand-typed from the real captured run, not rebuilt f-strings (#234).
+        self.assertEqual(
+            real["skipped"],
+            [
+                "suggested-fix downgraded: b/src/edited.py:2 (missing_end_line)",
+                "Skipping finding 'Off-diff finding' at b/src/edited.py:99 — "
+                + "line not found in diff. Valid lines for this file: "
+                + "[1, 2, 3, 4, 5]",
+                "suggested-fix downgraded: b/src/edited.py:99 (range_not_in_diff)",
+                "Finding 'Repo-wide observation' has no line number — skipping.",
+            ],
+        )
+        body = real["payload"]["body"]
+        comments = real["payload"]["comments"]
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["path"], "src/edited.py")
+        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", body)
+        # Hand-typed intro sentence, group_note included — dropping
+        # inline_count OR group_note on both sides (poster and mirror) stays
+        # green against each other; only this full literal (and the
+        # regenerated fixture) catches either (#234).
+        self.assertIn(
+            "1 inline comment(s) were posted; the following 2 finding(s) "
+            "reference lines outside this diff and are included here "
+            "instead: A finding listed here may not have an anchoring "
+            "problem of its own — a consolidation group whose primary "
+            "could not be anchored inline is listed here in full, "
+            "corroborators included.",
+            body,
+        )
+        self.assertIn("#### `b/src/edited.py:99`", body)
+        # The no-line finding has no file key — the poster's own "?" fallback.
+        self.assertIn("#### `?`", body)
+        # The degraded entries' fences were stripped — only the prose survives.
+        self.assertNotIn("```suggestion", body)
+        # The forged marker was neutralized inside the skipped section; the
+        # real trailing marker (appended after it) was not.
+        self.assertIn("&lt;!--", body)
+        self.assertEqual(body.count("<!--"), 1)
+
+    def test_gitlab_fenced_suggestion_and_skipped_summary(self):
+        owner, repo = GL_FENCED_PROJECT.split("/")
+        findings_data = {
+            "platform": "gitlab",
+            "owner": owner,
+            "repo": repo,
+            "pr_number": GL_FENCED_MR_IID,
+            "review_body": "Automated review summary.",
+            "sha": _GH_SHA,
+            "findings": GL_FENCED_FINDINGS,
+        }
+        real = self._run_main(
+            findings_data,
+            GL_DIFF_FENCED_SUGGESTION,
+            versions=[
+                {
+                    "base_commit_sha": _GL_BASE,
+                    "head_commit_sha": _GL_HEAD,
+                    "start_commit_sha": _GL_START,
+                }
+            ],
+        )
+
+        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
+            "gitlab", GL_DIFF_FENCED_SUGGESTION
+        )
+        mirror = build_reference_gitlab_payload(
+            GL_FENCED_FINDINGS,
+            project=GL_FENCED_PROJECT,
+            mr_iid=GL_FENCED_MR_IID,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+            new_files=new_files,
+        )
+
+        self.assertEqual(real, mirror)
+        self.assertEqual(real, _load_fixture(GITLAB_FENCED_SUGGESTION_FIXTURE))
+
+        # Hand-typed from the real captured run, not rebuilt f-strings (#234).
+        self.assertEqual(
+            real["skipped"],
+            [
+                "Skipping finding 'Off-diff finding' at src/edited.py:99 — "
+                + "line not found in diff. Valid lines for this file: [1, 2, 3]",
+                "Finding 'Repo-wide observation' has no line number — skipping.",
+                "suggested-fix downgraded: src/edited.py:1 (missing_end_line)",
+            ],
+        )
+        self.assertEqual(len(real["discussions"]), 2)
+        # discussions[0] is the context-line finding, downgraded to prose
+        # first; discussions[1] is the kept fence — the inline loop posts in
+        # findings order, and the fenced finding is listed second (#234).
+        # The no-line finding pre-partitions straight into the skipped
+        # section and posts no discussion at all.
+        fenced = real["discussions"][1]
+        self.assertIn("```suggestion:-0+1\n", fenced["body"])
+        self.assertEqual(fenced["position"]["new_line"], 2)
+        self.assertNotIn("old_line", fenced["position"])
+        summary_body = real["summary"]["body"]
+        self.assertIn("### ⚠️ 2 finding(s) could not be anchored inline", summary_body)
+        # Hand-typed intro sentence, group_note included — dropping
+        # inline_count OR group_note on both sides (poster and mirror) stays
+        # green against each other; only this full literal (and the
+        # regenerated fixture) catches either (#234).
+        self.assertIn(
+            "The following 2 finding(s) reference lines outside this diff "
+            "and are included here instead of as inline comments: A "
+            "finding listed here may not have an anchoring problem of its "
+            "own — a consolidation group whose primary could not be "
+            "anchored inline is listed here in full, corroborators "
+            "included.",
+            summary_body,
+        )
+        self.assertIn("#### `src/edited.py:99`", summary_body)
+        # The no-line finding has no file key — the poster's own "?" fallback.
+        self.assertIn("#### `?`", summary_body)
 
 
 # ---------------------------------------------------------------------------
@@ -918,13 +1291,40 @@ class TestFixtureFidelity(unittest.TestCase):
         )
         self.assertEqual(_load_fixture(GITLAB_PREFIXED_PATH_FIXTURE), expected)
 
-    def test_fixture_top_level_keys_are_the_dry_run_shape(self):
-        gh = _load_fixture(GITHUB_FIXTURE)
-        self.assertEqual(
-            set(gh), {"platform", "endpoint", "method", "payload", "skipped"}
+    def test_github_skipped_section_fixture_matches_post_review(self):
+        valid_lines, _, _, line_texts = post_review.parse_diff_text(
+            "github", GH_DIFF_PREFIXED_PATH
         )
-        gl = _load_fixture(GITLAB_FIXTURE)
-        self.assertEqual(set(gl), {"platform", "summary", "discussions", "skipped"})
+        expected = build_reference_github_payload(
+            GH_SKIPPED_SECTION_FINDINGS,
+            [],
+            owner=GH_SKIPPED_SECTION_OWNER,
+            repo=GH_SKIPPED_SECTION_REPO,
+            pr_number=GH_SKIPPED_SECTION_PR,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+        )
+        self.assertEqual(_load_fixture(GITHUB_SKIPPED_SECTION_FIXTURE), expected)
+
+    def test_gitlab_fenced_suggestion_fixture_matches_post_review(self):
+        valid_lines, new_files, _, line_texts = post_review.parse_diff_text(
+            "gitlab", GL_DIFF_FENCED_SUGGESTION
+        )
+        expected = build_reference_gitlab_payload(
+            GL_FENCED_FINDINGS,
+            project=GL_FENCED_PROJECT,
+            mr_iid=GL_FENCED_MR_IID,
+            valid_lines=valid_lines,
+            line_texts=line_texts,
+            new_files=new_files,
+        )
+        self.assertEqual(_load_fixture(GITLAB_FENCED_SUGGESTION_FIXTURE), expected)
+
+    def test_fixture_top_level_keys_are_the_dry_run_shape(self):
+        self.assertEqual(set(FIXTURE_KEY_SHAPES), set(FIXTURES.glob("*.json")))
+        for path, expected_keys in FIXTURE_KEY_SHAPES.items():
+            with self.subTest(fixture=path.name):
+                self.assertEqual(set(_load_fixture(path)), expected_keys)
 
 
 if __name__ == "__main__":
