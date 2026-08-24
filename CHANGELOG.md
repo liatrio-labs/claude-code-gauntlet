@@ -2,6 +2,29 @@
 
 <!-- version list -->
 
+## v3.18.1 (2026-08-24)
+
+### Bug Fixes
+
+- **delivery**: Fail the suggestion fence closed on a same-diff a/-b/ path collision
+  ([#231](https://github.com/liatrio-labs/claude-code-gauntlet/pull/231),
+  [`7061a60`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7061a6007868095522704eb7e9d00aa0441d434f))
+
+- **delivery**: Fail the suggestion fence closed on a same-diff a/-b/ path collision (#229)
+  ([#231](https://github.com/liatrio-labs/claude-code-gauntlet/pull/231),
+  [`7061a60`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7061a6007868095522704eb7e9d00aa0441d434f))
+
+### Chores
+
+- **ci**: Ratchet scripts coverage floor to 92.6 from the #231 CI measurement
+  ([#231](https://github.com/liatrio-labs/claude-code-gauntlet/pull/231),
+  [`7061a60`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/7061a6007868095522704eb7e9d00aa0441d434f))
+
+- **deps**: Bump github/codeql-action/upload-sarif in the actions group
+  ([#230](https://github.com/liatrio-labs/claude-code-gauntlet/pull/230),
+  [`d75ef86`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d75ef868990eb98fb79344106c45299350a44846))
+
+
 ## v3.18.0 (2026-08-20)
 
 ### Features
