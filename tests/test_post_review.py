@@ -5461,6 +5461,76 @@ GL_DIFF_LONG = (
     + "".join(f"+    line{n}\n" for n in range(1, _GL_LONG_LINE_COUNT + 1))
 )
 
+# The #229 collision shape, git-shaped: a real top-level `b/` directory's
+# `b/foo.py` alongside a SEPARATE, real `foo.py` in the same diff. `foo.py` gets
+# TWO added lines (2, 3); `b/foo.py` gets only ONE (2) — so a finding spelled
+# `b/foo.py` at line 2 hits its OWN key directly (exact-hit collision), while one
+# at line 3 validates ONLY through the stripped fallback to `foo.py` (exact-miss
+# collision, today's silent cross-file case).
+GH_DIFF_FENCE_COLLISION = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,1 +1,3 @@\n"
+    " line1\n"
+    "+TOP_V1\n"
+    "+TOP_V2\n"
+    "diff --git a/b/foo.py b/b/foo.py\n"
+    "--- a/b/foo.py\n"
+    "+++ b/b/foo.py\n"
+    "@@ -1,1 +1,2 @@\n"
+    " line1\n"
+    "+SUB_V1\n"
+)
+
+# The same collision shape, verbatim (plain `glab mr diff` — no `diff --git`
+# decoration): a real top-level `a/` directory's `a/x.py` alongside a separate
+# real `x.py`.
+GL_DIFF_FENCE_COLLISION = (
+    "--- a/x.py\n+++ a/x.py\n@@ -1,1 +1,2 @@\n line1\n+SUB_V1\n"
+    "--- x.py\n+++ x.py\n@@ -1,1 +1,2 @@\n line1\n+TOP_V1\n"
+)
+
+# A single real file, PREFIXED-SPELLING recall check: `src/edited.py` is the
+# diff's only file (git-shaped, so the header strips to the unprefixed key) — a
+# finding spelled `b/src/edited.py` has no colliding sibling to be ambiguous
+# with, so both its anchor AND its fence must still resolve.
+GH_DIFF_PREFIXED_NO_COLLISION = (
+    "diff --git a/src/edited.py b/src/edited.py\n"
+    "--- a/src/edited.py\n"
+    "+++ b/src/edited.py\n"
+    "@@ -1,1 +1,2 @@\n"
+    " line1\n"
+    "+CURRENT\n"
+)
+
+# The same recall check, verbatim (GitLab): `src/edited.py` is the diff's only
+# file, unprefixed and unambiguous.
+GL_DIFF_PREFIXED_NO_COLLISION = (
+    "--- src/edited.py\n+++ src/edited.py\n@@ -1,1 +1,2 @@\n line1\n+CURRENT\n"
+)
+
+# The #229 MULTI-LINE ANCHOR delta (distinct from the fence-ambiguity shape
+# above): `foo.py` carries lines {1, 2}; the real top-level `b/foo.py` carries
+# {3, 4} — two SEPARATE files, no collision (each stripped/exact spelling
+# names only ONE of them at any given line). A finding spelled `b/foo.py`
+# stating a range that spans BOTH files' line sets is what post_github's
+# multiline check must now judge against the RESOLVED path.
+GH_DIFF_MULTILINE_ANCHOR_COLLISION = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,1 +1,2 @@\n"
+    " line0\n"
+    "+FOO_L1\n"
+    "diff --git a/b/foo.py b/b/foo.py\n"
+    "--- a/b/foo.py\n"
+    "+++ b/b/foo.py\n"
+    "@@ -3,1 +3,2 @@\n"
+    " line2\n"
+    "+SUB_L4\n"
+)
+
 _FENCE = "```suggestion"
 
 
@@ -5733,37 +5803,6 @@ class TestSuggestedFixGate(unittest.TestCase):
         finding = self._finding(suggested_fix_code="    return 1\n    # tail")
         self.assertEqual(
             self._gate(finding, line_texts={("foo.py", 2): "    return 1"}),
-            (False, "no_diff_oracle"),
-        )
-
-    def test_a_mixed_path_spelling_range_has_no_content_oracle(self):
-        """``_range_is_valid``/``is_line_valid`` tolerate a per-line mix of the
-        exact diff key and its ``a/``/``b/``-stripped form, so a mixed-spelling
-        range validates line-by-line. ``_span_texts`` demands ONE spelling for
-        every line, so the very same range makes the span ``None`` — no
-        content oracle, so this must downgrade rather than silently skip the
-        content checks.
-        """
-        valid_lines = {("b/x.py", 10): 10, ("x.py", 11): 11, ("x.py", 12): 12}
-        line_texts = {
-            ("b/x.py", 10): "line10",
-            ("x.py", 11): "line11",
-            ("x.py", 12): "line12",
-        }
-        finding = {
-            "file": "b/x.py",
-            "line": 10,
-            "end_line": 12,
-            "suggested_fix_code": "a\nb\nc",
-        }
-        self.assertEqual(
-            post_review._suggested_fix_gate(
-                finding,
-                apply_range=(10, 12),
-                line_texts=line_texts,
-                valid_lines=valid_lines,
-                path_lookup="b/x.py",
-            ),
             (False, "no_diff_oracle"),
         )
 
@@ -6057,6 +6096,122 @@ class TestSuggestedFixGate(unittest.TestCase):
         self.assertEqual(len(body), post_review._FIX_MAX_CHARS)
         self.assertEqual(
             self._gate(self._finding(suggested_fix_code=body + "\n")), (True, None)
+        )
+
+    # -- fence-path ambiguity (issue #229) ----------------------------------
+
+    def test_exact_hit_collision_fails_closed(self):
+        """The finding's raw spelling directly matches a real diff key — but
+        its stripped form ALSO names a real, DIFFERENT diff key in the same
+        diff, so the fence cannot tell which file a patch targets even though
+        it validates cleanly against its own. Today's verified one-click-
+        corruption case (#229): the fence used to validate against
+        ``b/x.py``'s own text while the patch may have meant ``x.py``.
+
+        Mutation: gut ``_fence_path_is_ambiguous`` to ``return False``
+        unconditionally — RED (``(True, None)`` instead of the downgrade).
+        """
+        valid_lines = {("b/x.py", 10): 10, ("x.py", 10): 10}
+        line_texts = {("b/x.py", 10): "subline", ("x.py", 10): "topline"}
+        finding = {
+            "file": "b/x.py",
+            "line": 10,
+            "end_line": 10,
+            "suggested_fix_code": "changed",
+        }
+        self.assertEqual(
+            post_review._suggested_fix_gate(
+                finding,
+                apply_range=(10, 10),
+                line_texts=line_texts,
+                valid_lines=valid_lines,
+                path_lookup="b/x.py",
+            ),
+            (False, "no_diff_oracle"),
+        )
+
+    def test_exact_miss_collision_fails_closed(self):
+        """The finding's raw spelling is ABSENT from the diff at its stated
+        line; only the stripped form validates there — the silent cross-file
+        case. Still ambiguous at the PATH level (both spellings name real,
+        distinct files somewhere in this diff), so the fence still fails
+        closed even though :func:`diff_path_spelling` would resolve the
+        anchor to the sibling without complaint.
+        """
+        valid_lines = {("b/x.py", 9): 9, ("x.py", 10): 10}
+        line_texts = {("b/x.py", 9): "subline", ("x.py", 10): "topline"}
+        finding = {
+            "file": "b/x.py",
+            "line": 10,
+            "end_line": 10,
+            "suggested_fix_code": "changed",
+        }
+        self.assertEqual(
+            post_review._suggested_fix_gate(
+                finding,
+                apply_range=(10, 10),
+                line_texts=line_texts,
+                valid_lines=valid_lines,
+                path_lookup="x.py",  # diff_path_spelling's own cross-resolution
+            ),
+            (False, "no_diff_oracle"),
+        )
+
+    def test_off_diff_sibling_residual_still_validates_the_fence(self):
+        """RATIFIED (issue #229): the diff has no real ``b/x.py`` at all —
+        only its stripped sibling ``x.py`` — so the finding's raw spelling is
+        not itself a diff path and the ambiguity check does not fire. The
+        fence still cross-resolves and validates against ``x.py``'s own text,
+        exactly as before #229; a change here must be deliberate, not
+        incidental.
+        """
+        valid_lines = {("x.py", 10): 10}
+        line_texts = {("x.py", 10): "topline"}
+        finding = {
+            "file": "b/x.py",
+            "line": 10,
+            "end_line": 10,
+            "suggested_fix_code": "changed",
+        }
+        self.assertEqual(
+            post_review._suggested_fix_gate(
+                finding,
+                apply_range=(10, 10),
+                line_texts=line_texts,
+                valid_lines=valid_lines,
+                path_lookup="x.py",
+            ),
+            (True, None),
+        )
+
+    def test_an_unprefixed_path_is_never_ambiguous(self):
+        """A raw spelling with no ``a/``/``b/`` prefix has nothing to strip,
+        so it is never flagged — regardless of what else the diff contains."""
+        self.assertFalse(post_review._fence_path_is_ambiguous({}, "x.py"))
+        self.assertFalse(
+            post_review._fence_path_is_ambiguous(
+                {("x.py", 1): 1, ("b/x.py", 1): 1}, "x.py"
+            )
+        )
+
+    def test_missing_file_field_is_never_ambiguous(self):
+        """A finding missing its ``file`` key entirely still reaches this
+        gate (``report_patches.py`` admits such findings — see its L470-472
+        candidate filter, which only requires ``suggested_fix_code``), so this
+        goes through the REAL call site (``_suggested_fix_gate``, which reads
+        ``finding.get("file", "?")``) rather than asserting on
+        ``_fence_path_is_ambiguous`` in isolation. ``"?"`` has no ``a/``/``b/``
+        prefix, so the predicate never fires for it and the gate falls
+        through to the ordinary range check instead of raising ``KeyError``.
+        """
+        finding = {
+            "line": 2,
+            "end_line": 3,
+            "suggested_fix_code": "    return 2\n    # done",
+        }
+        self.assertEqual(
+            self._gate(finding, path_lookup="?"),
+            (False, "range_not_in_diff"),
         )
 
     # -- the vocabulary is closed -----------------------------------------
@@ -6909,6 +7064,205 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         self.assertEqual(run.payload["discussions"], [])
         self.assertNotIn(_FENCE, run.payload["summary"]["body"])
         self._assert_downgraded(run, "range_not_in_diff", where="foo.py:999")
+
+
+class TestGitHubFencePathAmbiguity(_FixGateRunBase):
+    """Issue #229: a real top-level ``b/`` directory's ``b/foo.py`` alongside a
+    separate real ``foo.py`` in the SAME diff makes a finding spelled
+    ``b/foo.py`` ambiguous — neither its exact spelling nor the stripped
+    fallback can say which file a patch targets, so the FENCE fails closed
+    even though the comment still posts (the anchor is unaffected — see
+    ``diff_path_spelling``'s docstring)."""
+
+    DIFF = GH_DIFF_FENCE_COLLISION
+
+    def test_exact_hit_collision_downgrades_the_fence(self):
+        """``b/foo.py``'s OWN key validates the finding's line directly — the
+        verified one-click-corruption case #229 fixes: the fence used to
+        validate against ``b/foo.py``'s real text while a patch may have
+        meant ``foo.py``.
+
+        Mutation: gut ``_fence_path_is_ambiguous`` to ``return False``
+        unconditionally — RED (the fence renders instead of downgrading).
+        """
+        run = self._run(
+            [
+                self._finding(
+                    file="b/foo.py", line=2, end_line=2, suggested_fix_code="CHANGED"
+                )
+            ]
+        )
+        comment = run.payload["payload"]["comments"][0]
+        self.assertEqual(comment["path"], "b/foo.py")
+        self.assertNotIn(_FENCE, comment["body"])
+        self._assert_downgraded(run, "no_diff_oracle", where="b/foo.py:2")
+
+    def test_exact_miss_collision_downgrades_the_fence_but_anchor_still_resolves(
+        self,
+    ):
+        """``b/foo.py`` has no line 3 of its own — the finding validates ONLY
+        through the stripped fallback to ``foo.py``'s line 3 (today's silent
+        cross-file case). The ANCHOR still resolves there (ratified), but the
+        fence must still fail closed regardless.
+
+        Mutation: revert post_github's path resolution back to raw
+        ``primary["file"]`` — RED (``comment["path"]`` becomes ``b/foo.py``,
+        a path GitHub does not have).
+        """
+        run = self._run(
+            [
+                self._finding(
+                    file="b/foo.py", line=3, end_line=3, suggested_fix_code="CHANGED"
+                )
+            ]
+        )
+        comment = run.payload["payload"]["comments"][0]
+        self.assertEqual(comment["path"], "foo.py")
+        self.assertNotIn(_FENCE, comment["body"])
+        self._assert_downgraded(run, "no_diff_oracle", where="b/foo.py:3")
+
+
+class TestGitHubFencePathRecall(_FixGateRunBase):
+    """A prefixed finding with NO colliding sibling in the diff must still
+    validate — both its anchor and its fence — exactly as before #229 (the
+    ambiguity check is scoped to genuine two-file collisions, not to every
+    prefixed spelling). The GitHub twin of ``TestGitlabFindingPathNormalization``,
+    extended to cover the FENCE as well as the position."""
+
+    DIFF = GH_DIFF_PREFIXED_NO_COLLISION
+
+    def test_prefixed_finding_keeps_its_fence(self):
+        run = self._run(
+            [
+                self._finding(
+                    file="b/src/edited.py",
+                    line=2,
+                    end_line=2,
+                    suggested_fix_code="CHANGED",
+                )
+            ]
+        )
+        comment = run.payload["payload"]["comments"][0]
+        self.assertEqual(comment["path"], "src/edited.py")
+        self.assertIn(_FENCE, comment["body"])
+        self.assertEqual(run.payload["skipped"], [])
+
+
+class TestGitLabFencePathAmbiguity(_FixGateRunBase):
+    """The verbatim/GitLab twin of ``TestGitHubFencePathAmbiguity``: a real
+    top-level ``a/`` directory alongside a separate real ``x.py``, with no
+    ``diff --git`` line at all (producer detection from the diff's own bytes
+    is a ``report_patches.py`` concept — ``post_review.py`` is told the
+    platform directly)."""
+
+    PLATFORM = "gitlab"
+    DIFF = GL_DIFF_FENCE_COLLISION
+
+    VERSIONS: ClassVar[list] = [
+        {
+            "base_commit_sha": "base1",
+            "head_commit_sha": "head1",
+            "start_commit_sha": "start1",
+        }
+    ]
+
+    def _run(self, findings, **kw):
+        kw.setdefault("versions", self.VERSIONS)
+        return super()._run(findings, **kw)
+
+    def test_collision_downgrades_the_fence(self):
+        run = self._run(
+            [
+                self._finding(
+                    file="a/x.py", line=2, end_line=2, suggested_fix_code="CHANGED"
+                )
+            ]
+        )
+        discussion = run.payload["discussions"][0]
+        # The ANCHOR is unaffected by the fence's ambiguity: "a/x.py" is an
+        # EXACT hit on its own diff key here, so the position keeps the
+        # finding's own spelling — only the fence fails closed.
+        self.assertEqual(discussion["position"]["new_path"], "a/x.py")
+        self.assertNotIn(_FENCE, discussion["body"])
+        self._assert_downgraded(run, "no_diff_oracle", where="a/x.py:2")
+
+
+class TestGitLabFencePathRecall(_FixGateRunBase):
+    """The verbatim/GitLab twin of ``TestGitHubFencePathRecall``."""
+
+    PLATFORM = "gitlab"
+    DIFF = GL_DIFF_PREFIXED_NO_COLLISION
+
+    VERSIONS: ClassVar[list] = [
+        {
+            "base_commit_sha": "base1",
+            "head_commit_sha": "head1",
+            "start_commit_sha": "start1",
+        }
+    ]
+
+    def _run(self, findings, **kw):
+        kw.setdefault("versions", self.VERSIONS)
+        return super()._run(findings, **kw)
+
+    def test_prefixed_finding_keeps_its_fence(self):
+        run = self._run(
+            [
+                self._finding(
+                    file="b/src/edited.py",
+                    line=2,
+                    end_line=2,
+                    suggested_fix_code="CHANGED",
+                )
+            ]
+        )
+        discussion = run.payload["discussions"][0]
+        self.assertEqual(discussion["position"]["new_path"], "src/edited.py")
+        self.assertIn(_FENCE, discussion["body"])
+        self.assertEqual(run.payload["skipped"], [])
+
+
+class TestGitHubMultilineAnchorUsesResolvedPath(_FixGateRunBase):
+    """The multi-line anchor decision (``post_github``'s ``multiline`` local)
+    now validates against the RESOLVED filepath, not the finding's raw
+    spelling — a second #229 delta, distinct from the fence-ambiguity gate
+    (this shape has no path collision at all: `foo.py` and `b/foo.py` share
+    no line, so neither spelling is ambiguous).
+
+    `foo.py` carries lines {1, 2}; the real top-level `b/foo.py` carries
+    {3, 4} — two SEPARATE files. A finding spelled `b/foo.py` stating 1..3
+    resolves, AT ITS OWN LINE (1), to `foo.py` — so the whole range is
+    validated against `foo.py` and correctly finds line 3 missing there,
+    posting a single-line comment. Before #229's path-resolution fix, the
+    UNRESOLVED raw spelling let `_range_is_valid` accept a range that mixed
+    BOTH files' line sets (1, 2 via the stripped fallback to `foo.py`; 3 as
+    an EXACT hit on `b/foo.py` itself) and posted a multi-line comment
+    naming `b/foo.py` lines 1 and 2, which that file does not have.
+
+    Mutation: revert post_github's path resolution back to raw
+    ``primary["file"]`` (post_review.py's ``filepath = diff_path_spelling(...)``
+    line) — RED (the payload reverts to the old multi-line shape).
+    """
+
+    DIFF = GH_DIFF_MULTILINE_ANCHOR_COLLISION
+
+    def test_a_range_spanning_two_files_anchors_single_line_on_the_resolved_file(
+        self,
+    ):
+        finding = {
+            "file": "b/foo.py",
+            "line": 1,
+            "end_line": 3,
+            "severity": "high",
+            "title": "Wide Range",
+            "body": "Body",
+        }
+        run = self._run([finding])
+        comment = run.payload["payload"]["comments"][0]
+        self.assertEqual(comment["path"], "foo.py")
+        self.assertEqual(comment["line"], 1)
+        self.assertNotIn("start_line", comment)
+        self.assertNotIn("start_side", comment)
 
 
 class TestDeliveryKeysAreFenceIndependent(_GitlabLiveRunBase):

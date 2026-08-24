@@ -143,7 +143,12 @@ CODEX_CAP_BYTES = 32_768
 # author needs before adding a fourth receipt-line script is not otherwise stated
 # anywhere in the tree. (report_patches.py's own module docstring already states
 # what the script itself does, so no second bullet restates it here.)
-AGENTS_SET_BUDGET_BYTES = 20_628
+# Raised 20_628 -> 20_700 (2026-08-24, #231): the Python coverage floor ratchet (scripts
+# 92.5 -> 92.6) rewrote the floors-and-provenance paragraph to name the #231 PR CI
+# measurement (93.54) alongside the existing #219 note — the floor policy requires the
+# note name the measurement it came from, and a stale note is the unverifiable claim the
+# repo's own rules prohibit.
+AGENTS_SET_BUDGET_BYTES = 20_700
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

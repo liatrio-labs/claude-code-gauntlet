@@ -401,16 +401,41 @@ def parse_diff_text(platform, diff_text):
     return valid_lines, new_files, old_paths, line_texts
 
 
+def _strip_ab_prefix(filepath):
+    """Return *filepath* with a leading synthetic ``a/``/``b/`` diff prefix removed.
+
+    The single home for this regex: every helper below that tries a finding's exact
+    spelling and falls back to the stripped one shares this pattern, so it cannot
+    drift out of sync between them. Idempotent on an already-unprefixed path.
+    """
+    return re.sub(r"^[ab]/", "", filepath)
+
+
+def _resolve_spelling(valid_lines, filepath, line):
+    """Return the diff-key spelling of *filepath* at *line* — exact, else its
+    ``a/``/``b/``-stripped form — or ``None`` when neither is a diff key.
+
+    The single resolution order shared by :func:`is_line_valid`,
+    :func:`diff_path_spelling` and :func:`old_line_for`: prefer the finding's own
+    spelling (a real top-level ``a/``/``b/`` directory on GitLab must not be
+    stripped), fall back to the diff-prefix-stripped one (a GitHub finding may spell
+    its path with git's synthetic prefix). Assumes *valid_lines* is already known to
+    behave like a mapping — every caller guards its own None / non-dict case first,
+    since their "validation skipped" defaults differ (see each docstring).
+    """
+    if (filepath, line) in valid_lines:
+        return filepath
+    stripped = _strip_ab_prefix(filepath)
+    if (stripped, line) in valid_lines:
+        return stripped
+    return None
+
+
 def is_line_valid(valid_lines, filepath, line):
     """Check whether (filepath, line) appears in the diff."""
     if valid_lines is None:
         return True  # validation skipped
-    # Try exact path and also path without leading component
-    if (filepath, line) in valid_lines:
-        return True
-    # Strip leading "a/" or "b/" if present
-    stripped = re.sub(r"^[ab]/", "", filepath)
-    return (stripped, line) in valid_lines
+    return _resolve_spelling(valid_lines, filepath, line) is not None
 
 
 def diff_path_spelling(valid_lines, filepath, line):
@@ -421,15 +446,26 @@ def diff_path_spelling(valid_lines, filepath, line):
     ``a/``/``b/`` directory that must not be stripped. Trust the diff: prefer the exact
     key, fall back to the stripped one, and when validation was skipped (*valid_lines*
     is None) pass the finding's own spelling through untouched.
+
+    Ratified residual (issue #229): when the diff contains a real file under the
+    STRIPPED spelling but nothing ADDRESSABLE under the exact one, this resolves to the
+    stripped sibling — cross-file, and undecidable from the diff text alone. That is an
+    accepted, ANCHOR-level limitation (a wrong anchor costs a misplaced comment a human
+    reads and ignores). The higher-harm case — a patch silently applying to the wrong
+    one of two REAL files under both spellings — is caught one layer up, at the
+    ``suggested_fix_code`` fence (:func:`_suggested_fix_gate`'s ambiguity check), but
+    ONLY when both files contribute at least one addressable new-side line to
+    *valid_lines*: that check reads path components off *valid_lines*' own keys, which
+    hold nothing for a file present in the diff solely as a deletion, or as the
+    pre-rename side of a rename (no ``new_line`` to record — see ``parse_diff_text``).
+    The finding's own file being absent from the diff entirely, or contributing only
+    such non-addressable lines, is exactly the residual above, not the caught case: the
+    fence cross-resolves to the sibling and validates against it same as the anchor.
     """
     if not isinstance(valid_lines, dict):
         return filepath
-    if (filepath, line) in valid_lines:
-        return filepath
-    stripped = re.sub(r"^[ab]/", "", filepath)
-    if (stripped, line) in valid_lines:
-        return stripped
-    return filepath
+    spelling = _resolve_spelling(valid_lines, filepath, line)
+    return filepath if spelling is None else spelling
 
 
 def old_line_for(valid_lines, filepath, line):
@@ -443,20 +479,20 @@ def old_line_for(valid_lines, filepath, line):
     """
     if not isinstance(valid_lines, dict):
         return None
-    if (filepath, line) in valid_lines:
-        return valid_lines[(filepath, line)]
-    stripped = re.sub(r"^[ab]/", "", filepath)
-    return valid_lines.get((stripped, line))
+    spelling = _resolve_spelling(valid_lines, filepath, line)
+    return None if spelling is None else valid_lines[(spelling, line)]
 
 
 def valid_lines_for_file(valid_lines, filepath):
     """Return sorted list of up to 10 valid line numbers for *filepath* in the diff.
 
-    Returns None when *valid_lines* is None (validation was skipped).
+    Returns None when *valid_lines* is None (validation was skipped). No *line* to
+    resolve against here, so this uses the shared strip helper directly rather than
+    :func:`_resolve_spelling` — both spellings' lines are wanted, not one.
     """
     if valid_lines is None:
         return None
-    stripped = re.sub(r"^[ab]/", "", filepath)
+    stripped = _strip_ab_prefix(filepath)
     lines = sorted({line for fp, line in valid_lines if fp in (filepath, stripped)})
     return lines[:10]
 
@@ -921,6 +957,36 @@ def _span_texts(line_texts, path_lookup, start, end):
     return texts
 
 
+def _fence_path_is_ambiguous(valid_lines, raw_file):
+    """True when *raw_file* — the finding's OWN spelling, unresolved — cannot say
+    which of two distinct real files in the diff a ``suggested_fix_code`` fence
+    targets (issue #229).
+
+    Fires only when *raw_file* carries a synthetic ``a/``/``b/`` diff prefix AND
+    BOTH it and its stripped form name a real path in *valid_lines* — path level,
+    any line, so this is a property of the diff's file set, not of which line the
+    finding happens to state. When that holds, the diff itself contains two
+    distinct files one strip apart (most commonly a real top-level ``a/``/``b/``
+    directory alongside its unprefixed sibling), and neither the exact spelling
+    nor :func:`diff_path_spelling`'s stripped fallback can disambiguate which one
+    a patch is meant to replace — one directly (the raw spelling IS a real,
+    different file's key), the other by silent cross-resolution. Both directions
+    are closed by the same check: it does not matter which one the finding's
+    stated line happens to validate against.
+
+    Reads only ``valid_lines`` KEYS — no platform, no alias map, no second keying
+    implementation — so delivery and ``scripts/report_patches.py``'s payload
+    mirror (both routing through :func:`_suggested_fix_gate`) get identical
+    semantics for free. *valid_lines* must already be known to be a dict; the
+    caller checks that first.
+    """
+    stripped = _strip_ab_prefix(raw_file)
+    if stripped == raw_file:
+        return False
+    diff_paths = {fp for fp, _line in valid_lines}
+    return raw_file in diff_paths and stripped in diff_paths
+
+
 def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_lookup):
     """Return ``(ok, reason)`` for *finding*'s ``suggested_fix_code`` at ONE render site.
 
@@ -945,6 +1011,14 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
     and ignores; a patch cannot, because a wrong patch is committed by one click
     and corrupts the file. The fallback is free: the prose ``suggestion`` still
     carries the same content, so nothing is lost but the affordance.
+
+    That same harm asymmetry is why the fence-path AMBIGUITY check
+    (:func:`_fence_path_is_ambiguous`) fails closed here, before span
+    validation, on the finding's RAW (unresolved) spelling — even though
+    :func:`diff_path_spelling` (used for *path_lookup*, and separately for the
+    posted anchor) tolerates and cross-resolves the exact same collision. An
+    anchor pointed at the wrong one of two colliding files costs a misplaced
+    comment; a fence pointed at the wrong one commits a patch to it.
     """
     if "suggested_fix_code" not in finding:
         return True, None
@@ -991,6 +1065,12 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
         # mappings are required: one alone answers only half of "is this range
         # real" / "does this patch change anything".
         return False, _FIX_NO_ORACLE
+    if _fence_path_is_ambiguous(valid_lines, finding.get("file", "?")):
+        # The diff names two distinct real files one strip apart: this finding's
+        # own spelling cannot say which one the patch targets, so the fence fails
+        # closed even though the ANCHOR still resolves (ratified, comment-level
+        # harm only — see diff_path_spelling's docstring).
+        return False, _FIX_NO_ORACLE
     if not _range_is_valid(valid_lines, path_lookup, line, end_line):
         return False, _FIX_RANGE_NOT_IN_DIFF
     if apply_range != (line, end_line):
@@ -1001,11 +1081,16 @@ def _suggested_fix_gate(finding, *, apply_range, line_texts, valid_lines, path_l
     if span is None:
         # _range_is_valid/is_line_valid tolerate a per-line mix of path-spelling
         # variants (the exact diff key, or its a/ b/ -stripped form), but a span
-        # needs ONE spelling to hold for every line in it — so a mixed-spelling
-        # range makes this None even though every line individually validated.
-        # That is still "no oracle", not "no difference": treating it as the
-        # latter would silently skip the no-op/indentation checks below instead
-        # of failing the patch closed.
+        # needs ONE spelling to hold for every line in it. A mixed-spelling range
+        # PARSED from a real diff is no longer reachable here — the ambiguity
+        # check above already fails closed on it, since a mix implies both
+        # spellings name real diff paths. What still reaches this branch is a
+        # PARTIAL line_texts oracle: a hand-built or truncated mapping (e.g. a
+        # caller-supplied dict missing some span lines) that answers is_line_valid
+        # for every line but has no text for one of them. That is still "no
+        # oracle", not "no difference": treating it as the latter would silently
+        # skip the no-op/indentation checks below instead of failing the patch
+        # closed.
         return False, _FIX_NO_ORACLE
     # A trailing CR is transport (a CRLF diff carries one on every line), not
     # content, and `_fix_code_text` already took the replacement's terminating
@@ -1520,7 +1605,11 @@ def post_github(data, valid_lines, line_texts):
                 )
             continue
 
-        filepath = primary["file"]
+        # Resolve to the diff's own spelling BEFORE validating: a prefixed
+        # finding that only the STRIPPED form validates must ship that
+        # stripped path as `comment["path"]`, or GitHub 422s the whole review
+        # on a path the PR does not have.
+        filepath = diff_path_spelling(valid_lines, primary["file"], line)
         if not is_line_valid(valid_lines, filepath, line):
             diag = ""
             vl = valid_lines_for_file(valid_lines, filepath)
