@@ -324,9 +324,22 @@ class TestProducerDetection(ReportPatchesTestBase):
         leading ``b/`` from each new-side header — stripping the real
         subdirectory off the first file (colliding it onto ``foo.py``, the
         second file's own key) and stripping nothing off the second file
-        (which has no ``b/`` to strip) — so the ``b/foo.py`` finding no
-        longer has a key to anchor to and fails closed as
-        ``range_not_in_diff`` instead of the correct ``no_op_replacement``.
+        (which has no ``b/`` to strip). Both files then key as the SAME
+        ``foo.py``, the second hunk's lines overwriting the first's in
+        ``valid_lines`` — so the ``b/foo.py`` finding is judged against the
+        WRONG (collided) content and wrongly reads as a genuine change
+        instead of the no-op it actually is: measured as
+        ``receipt["kept"] == 2``, not the correct ``1``.
+
+        The ``b/foo.py`` finding's own reason is ``no_diff_oracle``, not
+        ``no_op_replacement`` (issue #229): correctly parsed verbatim, this
+        diff's real ``b/foo.py`` sits alongside a REAL, separate ``foo.py`` —
+        exactly the two-real-files-one-strip-apart shape the fence-ambiguity
+        check fails closed on, before the no-op comparison it would otherwise
+        also fail. That check is orthogonal to producer detection (it never
+        looks at how the keys were derived, only at whether both spellings
+        are diff paths) — this test still pins detection choosing "gitlab"
+        correctly for this shape, just via the new reason.
         """
         diff = (
             "diff --git b/foo.py b/foo.py\n"
@@ -368,7 +381,7 @@ class TestProducerDetection(ReportPatchesTestBase):
         self.assertEqual(receipt["candidates"], 2)
         self.assertEqual(receipt["kept"], 1)
         self.assertEqual(receipt["downgraded"], 1)
-        self.assertEqual(receipt["reasons"], {"no_op_replacement": 1})
+        self.assertEqual(receipt["reasons"], {"no_diff_oracle": 1})
         content = self._read_artifact()
         self.assertIn("Top File Kept", content)
         self.assertNotIn("Real Subdir No-Op", content)
@@ -415,25 +428,31 @@ class TestProducerDetection(ReportPatchesTestBase):
         self.assertIn("Quoted First File", self._read_artifact())
 
 
-class TestSiblingBPathAnchorsToItsOwnFile(ReportPatchesTestBase):
+class TestSiblingBPathCollisionFailsTheFenceClosed(ReportPatchesTestBase):
     """A git-shaped diff touching both ``foo.py`` and a real top-level ``b/``
     directory's ``b/foo.py`` must key each file under its OWN path, never
     collapse the two together. ``parse_diff_text`` strips exactly ONE leading
     ``b/`` from a new-side header: ``+++ b/foo.py`` keys as ``foo.py``, while
     ``+++ b/b/foo.py`` keys as ``b/foo.py`` — the real subdirectory's ``b/``
-    survives the strip. So each finding below is checked against its OWN
-    file's actual new-side text, and both are genuine no-ops for the file
-    they each name.
+    survives the strip.
+
+    Issue #229 decision, pinned here: a finding spelled ``b/foo.py`` — the
+    diff's OWN key for the real subdirectory file — is still AMBIGUOUS,
+    because ``foo.py`` (its stripped form) is ALSO a real, different file in
+    this same diff. Neither spelling can say which file a patch is meant for,
+    so that fence fails closed on the no-oracle reason regardless of its
+    content. The sibling finding spelled plainly ``foo.py`` carries no such
+    prefix, so it is not ambiguous and is judged normally — kept here, since
+    its patch genuinely differs from ``foo.py``'s own line.
 
     RED under the reverted alias/ambiguity keying, which resolved a header
     path against a computed alias set and dropped ``b/foo.py`` in favor of
     re-resolving it to ``foo.py``: the ``b/foo.py`` finding would then be
-    checked against the WRONG file's content (``foo.py``'s ``SOMETHING_ELSE``
-    instead of its own ``CURRENT_SUB_TEXT``), failing as a content mismatch
-    instead of the correct ``no_op_replacement``.
+    checked against the WRONG file's content instead of failing closed on
+    the ambiguity itself.
     """
 
-    def test_patch_targeting_either_real_file_is_judged_against_the_shared_key(self):
+    def test_prefixed_sibling_downgrades_unprefixed_sibling_kept(self):
         diff = (
             "diff --git a/foo.py b/foo.py\n"
             "--- a/foo.py\n"
@@ -455,15 +474,15 @@ class TestSiblingBPathAnchorsToItsOwnFile(ReportPatchesTestBase):
                     "file": "b/foo.py",
                     "line": 2,
                     "end_line": 2,
-                    "title": "Sub Path No-Op",
-                    "suggested_fix_code": "CURRENT_SUB_TEXT",
+                    "title": "Sub Path Ambiguous",
+                    "suggested_fix_code": "CHANGED_SUB_TEXT",
                 },
                 {
                     "file": "foo.py",
                     "line": 2,
                     "end_line": 2,
-                    "title": "Top Path No-Op",
-                    "suggested_fix_code": "SOMETHING_ELSE",
+                    "title": "Top Path Unambiguous",
+                    "suggested_fix_code": "CHANGED_TOP_TEXT",
                 },
             ]
         )
@@ -472,12 +491,80 @@ class TestSiblingBPathAnchorsToItsOwnFile(ReportPatchesTestBase):
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(receipt["candidates"], 2)
-        self.assertEqual(receipt["kept"], 0)
-        self.assertEqual(receipt["downgraded"], 2)
-        self.assertEqual(receipt["reasons"], {"no_op_replacement": 2})
+        self.assertEqual(receipt["kept"], 1)
+        self.assertEqual(receipt["downgraded"], 1)
+        self.assertEqual(receipt["reasons"], {"no_diff_oracle": 1})
         content = self._read_artifact()
-        self.assertNotIn("Sub Path No-Op", content)
-        self.assertNotIn("Top Path No-Op", content)
+        self.assertIn("Top Path Unambiguous", content)
+        self.assertNotIn("Sub Path Ambiguous", content)
+
+
+class TestFenceAmbiguityVerbatimShaped(ReportPatchesTestBase):
+    """Issue #229's fence-ambiguity gate, verbatim/glab-shaped: a real top-level
+    ``a/`` directory (``a/x.py``) alongside a separate real ``x.py`` in the SAME
+    diff is exactly the two-real-files-one-strip-apart shape — parsed here with
+    NO ``diff --git`` line at all, so producer detection keys it verbatim
+    (nothing stripped), same as the git-shaped collision
+    ``TestSiblingBPathCollisionFailsTheFenceClosed`` already pins.
+    """
+
+    def test_collision_finding_downgrades_with_no_diff_oracle(self):
+        diff = (
+            "--- a/x.py\n+++ a/x.py\n@@ -1,1 +1,2 @@\n line1\n+ORIG_A\n"
+            "--- x.py\n+++ x.py\n@@ -1,1 +1,2 @@\n line1\n+ORIG_TOP\n"
+        )
+        self._write_diff(diff)
+        self._write_findings(
+            [
+                {
+                    "file": "a/x.py",
+                    "line": 2,
+                    "end_line": 2,
+                    "title": "Ambiguous A Dir",
+                    "suggested_fix_code": "CHANGED_A",
+                }
+            ]
+        )
+
+        exit_code, receipt, *_ = self._run()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(receipt["candidates"], 1)
+        self.assertEqual(receipt["kept"], 0)
+        self.assertEqual(receipt["downgraded"], 1)
+        self.assertEqual(receipt["reasons"], {"no_diff_oracle": 1})
+        self.assertNotIn("Ambiguous A Dir", self._read_artifact())
+
+    def test_off_diff_sibling_residual_is_still_kept(self):
+        """The RATIFIED residual (issue #229): the diff contains only ``x.py`` —
+        no real ``b/x.py`` at all — so a finding spelled ``b/x.py`` is not
+        ambiguous (its raw spelling names no real file here); it still
+        cross-resolves to ``x.py`` and its fence still ships, exactly as
+        before #229. A future change here must be deliberate — this is the
+        accepted limitation :func:`diff_path_spelling`'s docstring documents,
+        not a bug.
+        """
+        diff = "--- x.py\n+++ x.py\n@@ -1,1 +1,2 @@\n line1\n+ORIG_TOP\n"
+        self._write_diff(diff)
+        self._write_findings(
+            [
+                {
+                    "file": "b/x.py",
+                    "line": 2,
+                    "end_line": 2,
+                    "title": "Off Diff Sibling",
+                    "suggested_fix_code": "CHANGED_TOP",
+                }
+            ]
+        )
+
+        exit_code, receipt, *_ = self._run()
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(receipt["candidates"], 1)
+        self.assertEqual(receipt["kept"], 1)
+        self.assertEqual(receipt["downgraded"], 0)
+        self.assertIn("Off Diff Sibling", self._read_artifact())
 
 
 class TestVerbatimAliasNotKept(ReportPatchesTestBase):
