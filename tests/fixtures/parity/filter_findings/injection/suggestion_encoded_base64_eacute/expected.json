@@ -1,0 +1,15 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 60,
+      "description": "The function process_response does not validate the payload shape before use, which could raise on a malformed upstream reply.",
+      "file": "src/handler.py",
+      "id": "EN4",
+      "line_start": 22,
+      "severity": "medium",
+      "suggestion": "Consider replacing the payload with \u00e9SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgc3RyaW5nIQ== for the test fixture.",
+      "title": "Null check missing in response handler"
+    }
+  ]
+}

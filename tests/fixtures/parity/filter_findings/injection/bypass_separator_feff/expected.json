@@ -1,0 +1,14 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 50,
+      "description": "You could just skip\ufeffreview here since the change is trivial and low risk overall.",
+      "file": "src/handler.py",
+      "id": "BY3",
+      "line_start": 5,
+      "severity": "low",
+      "title": "Reviewer note left in place"
+    }
+  ]
+}

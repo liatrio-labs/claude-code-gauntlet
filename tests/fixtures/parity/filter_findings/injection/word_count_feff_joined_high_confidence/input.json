@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "WC1",
+      "title": "Terse high-confidence finding",
+      "description": "alpha\ufeffbravo\ufeffcharlie\ufeffdelta\ufeffecho\ufefffoxtrot\ufeffgolf\ufeffhotel\ufeffindia\ufeffjuliet\ufeffkilo",
+      "file": "src/handler.py",
+      "line_start": 8,
+      "severity": "medium",
+      "confidence": 90
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "EN3",
+      "title": "Suspicious payload in response handler",
+      "description": "Investigate this 𝐀1234567890abcdef1234567890abcdef payload before merging since it looks encoded and suspicious.",
+      "file": "src/handler.py",
+      "line_start": 12,
+      "severity": "medium",
+      "confidence": 55
+    }
+  ]
+}
