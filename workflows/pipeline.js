@@ -3522,15 +3522,16 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
 // below passes spec.conditionalRequired only when conditionalSchemaActive(policy) is true, so
 // this function itself stays a pure function of its inputs — every other agent's spec has an
 // empty conditionalRequired regardless of policy, so this construct never appears there at
-// all. When non-empty, this appends the measured-accepted spelling — a per-dimension
+// all. When non-empty, this appends EXACTLY the measured-accepted spelling — a per-dimension
 // `allOf`/`if`/`then` nested inside the item, never a top-level oneOf/allOf/anyOf (API 400,
-// measured 2026-08-18) — and pins the `dimension` property to an ENUM of `dimensions` (the
-// spec's own row dimensions): `const` is case-sensitive and downstream consumers lowercase,
-// so an unpinned `dimension` would let a case-variant value (e.g. "Convention") silently
-// escape every `if` arm. The enum rides ONLY alongside a non-empty conditionalRequired, so a
-// spec with none (every agent but conventions-and-intent, and conventions-and-intent itself
-// on a non-first-party-direct dispatch) declares `dimension` exactly as before.
-function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, dimensions) {
+// measured 2026-08-18). NO enum on `dimension` [delta round]: an enum was considered to close
+// the case-sensitive `const` match's case-variant escape, but filterFindings.js's own
+// normalization sets (`comment-accuracy`, `documentation`, `doc-accuracy`) are evidence agents
+// emit variant dimension spellings the pipeline already tolerates elsewhere — pinning an enum
+// here would turn one of those observed, tolerated spellings into a whole-dispatch schema
+// violation (all three conventions-and-intent dimensions degrade) to close a narrower escape.
+// Accepted as a fail-open risk (contract enforcement only) rather than traded for that.
+function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired) {
   const props = {};
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : t;
@@ -3538,7 +3539,6 @@ function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, dime
   const required = requiredExtra && requiredExtra.length ? [...FINDING_REQUIRED, ...requiredExtra] : FINDING_REQUIRED;
   const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
   if (conditionalRequired && conditionalRequired.length) {
-    props.dimension = { type: 'string', enum: [...(dimensions || [])].sort() };
     itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
       if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
       then: { required: dimRequired },
@@ -3565,7 +3565,7 @@ function findingSchema(spec, policy) {
     properties: {
       findings: {
         type: 'array',
-        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired, spec.dimensions),
+        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired),
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },

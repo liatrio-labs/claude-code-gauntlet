@@ -228,7 +228,13 @@ test('every DIMENSIONS row declares requiredWhenDimension as an array of field-n
   }
 });
 
-test('every requiredWhenDimension entry is EITHER a key of its own row\'s schemaExtra OR a canonical field not in FINDING_REQUIRED', () => {
+// [v3] Pipeline-stamped canonical fields no agent ever emits (mirrors PIPELINE_STAMPED in
+// tests/test_dimensions_registry.py). Excluded from the canonical-field arm below: the bare
+// either-or rule would otherwise admit `origin`, and schema-requiring a field within a
+// dimension no agent contract ever instructs guarantees that dimension's dispatch degrades.
+const PIPELINE_STAMPED = new Set(['origin']);
+
+test('every requiredWhenDimension entry is EITHER a key of its own row\'s schemaExtra OR a canonical field not in FINDING_REQUIRED and not pipeline-stamped', () => {
   // [v2] red-team finding 1: unlike requiredExtra, a requiredWhenDimension entry may be a
   // canonical FINDING_PROP_TYPES field (claude_md_rule) as long as it is not already
   // unconditional (FINDING_REQUIRED) — that promotion belongs in FINDING_REQUIRED directly.
@@ -236,11 +242,11 @@ test('every requiredWhenDimension entry is EITHER a key of its own row\'s schema
     const declared = new Set(Object.keys(d.schemaExtra || {}));
     for (const field of d.requiredWhenDimension) {
       const ownSchemaExtra = declared.has(field);
-      const canonicalNotRequired = field in FINDING_PROP_TYPES && !FINDING_REQUIRED.includes(field);
+      const canonicalNotRequired = field in FINDING_PROP_TYPES && !FINDING_REQUIRED.includes(field) && !PIPELINE_STAMPED.has(field);
       assert.ok(
         ownSchemaExtra || canonicalNotRequired,
         `${d.dimension}: requiredWhenDimension names "${field}", which is neither a key of ` +
-          'this row\'s own schemaExtra nor a canonical field outside FINDING_REQUIRED',
+          'this row\'s own schemaExtra nor a canonical field outside FINDING_REQUIRED/pipeline-stamped',
       );
     }
   }

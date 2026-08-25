@@ -183,7 +183,7 @@ const INACTIVE_POLICIES = [
   { gateway: true }, // absent provider (firstParty by default) + gateway:true
 ];
 
-test('firstParty/absent/null + no gateway: conventions-and-intent carries the exact allOf construct and dimension enum', async () => {
+test('firstParty/absent/null + no gateway: conventions-and-intent carries the exact allOf construct, dimension stays unpinned (no enum)', async () => {
   for (const policy of [{}, { provider: 'firstParty' }, { provider: null }, { provider: undefined, gateway: false }]) {
     const schemas = await discoverySchemas(policy);
     const items = schemas['code-gauntlet:conventions-and-intent'].properties.findings.items;
@@ -195,15 +195,19 @@ test('firstParty/absent/null + no gateway: conventions-and-intent carries the ex
       ],
       `active policy ${JSON.stringify(policy)}: allOf must be the exact measured spelling, both entries, sorted by dimension`,
     );
+    // [delta round] NO enum on dimension, even on the active-policy dispatch that carries
+    // the allOf construct: an enum would turn an observed, tolerated variant dimension
+    // spelling (filterFindings.js's own normalization sets) into a whole-dispatch schema
+    // violation. The case-variant escape this would have closed is an accepted fail-open risk.
     assert.deepEqual(
       items.properties.dimension,
-      { type: 'string', enum: ['comment_accuracy', 'convention', 'intent'] },
-      `active policy ${JSON.stringify(policy)}: dimension must be pinned to the spec's own sorted dimensions`,
+      { type: 'string' },
+      `active policy ${JSON.stringify(policy)}: dimension must stay unpinned — no enum`,
     );
   }
 });
 
-test('firstParty/no gateway: every OTHER agent\'s schema carries no allOf and no dimension enum', async () => {
+test('firstParty/no gateway: every OTHER agent\'s schema carries no allOf', async () => {
   const schemas = await discoverySchemas({});
   for (const spec of agentSpecs()) {
     if (spec.agentType === 'code-gauntlet:conventions-and-intent') continue;
@@ -213,7 +217,7 @@ test('firstParty/no gateway: every OTHER agent\'s schema carries no allOf and no
   }
 });
 
-test('bedrock/vertex/foundry, and firstParty-with-gateway: no allOf and no dimension enum anywhere', async () => {
+test('bedrock/vertex/foundry, and firstParty-with-gateway: no allOf anywhere', async () => {
   for (const policy of INACTIVE_POLICIES) {
     const schemas = await discoverySchemas(policy);
     for (const [agentType, schema] of Object.entries(schemas)) {

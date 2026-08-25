@@ -257,16 +257,16 @@ def field_carries_omit_instruction(raw_block, field, source=None):
 # about a field named three paragraphs away must not count as a claim about it.
 _DISPATCH_REQUIRED_PHRASE = "required by the dispatch schema"
 
-# issue #218, [v2] red-team finding 5: the CONDITIONAL sibling of _DISPATCH_REQUIRED_PHRASE —
+# issue #218, [v3] red-team finding 5: the CONDITIONAL sibling of _DISPATCH_REQUIRED_PHRASE —
 # a field that is required by the dispatch schema only on some dimensions of a shared
-# multi-dimension dispatch (requiredWhenDimension), not on every finding the agent emits. This
-# phrase's bytes CONTAIN _DISPATCH_REQUIRED_PHRASE as a trailing substring by construction
-# ("conditionally " + _DISPATCH_REQUIRED_PHRASE), so the two claim functions below are written
-# to be mutually exclusive per line — a line making the conditional claim must never also
-# count toward the unconditional one, or a conditional field would incorrectly have to satisfy
-# requiredExtra membership (which forbids canonical fields — see
-# test_required_when_dimension_is_own_schema_extra_or_canonical_not_required above).
-_CONDITIONAL_DISPATCH_REQUIRED_PHRASE = "conditionally required by the dispatch schema"
+# multi-dimension dispatch (requiredWhenDimension), not on every finding the agent emits.
+# _DISPATCH_REQUIRED_PHRASE's reverse-leg lockstep (below) is a plain SUBSTRING test, so this
+# phrase must NOT contain those bytes as a substring — a v2 draft used "conditionally required
+# by the dispatch schema", which does, and would have hard-failed that lockstep by making
+# every conditional field look like an (incorrect) requiredExtra claim. Deliberately distinct
+# wording avoids the collision outright, so the two claim functions below need no
+# cross-exclusion between them.
+_DIMENSION_CONDITIONAL_PHRASE = "dimension-conditional dispatch requirement"
 
 
 def dispatch_required_claims(name):
@@ -274,31 +274,26 @@ def dispatch_required_claims(name):
     UNCONDITIONALLY — i.e. the requiredExtra sense, not the requiredWhenDimension one.
 
     Scans line by line: a line containing the canonical phrase contributes every backticked
-    field name ON THAT LINE to the claimed set. A line that makes the CONDITIONAL claim is
-    excluded even though it contains the unconditional phrase as a substring — see
-    _CONDITIONAL_DISPATCH_REQUIRED_PHRASE's comment.
+    field name ON THAT LINE to the claimed set.
     """
     text = (REPO / "agents" / f"{name}.md").read_text()
     claimed = set()
     for line in text.splitlines():
-        if (
-            _DISPATCH_REQUIRED_PHRASE in line
-            and _CONDITIONAL_DISPATCH_REQUIRED_PHRASE not in line
-        ):
+        if _DISPATCH_REQUIRED_PHRASE in line:
             claimed |= set(_BACKTICKED_FIELD.findall(line))
     return claimed
 
 
-def dispatch_conditionally_required_claims(name):
-    """Field names agents/<name>.md's prose claims are 'conditionally required by the
-    dispatch schema' — the requiredWhenDimension sense (issue #218).
+def dimension_conditional_claims(name):
+    """Field names agents/<name>.md's prose claims are a 'dimension-conditional dispatch
+    requirement' — the requiredWhenDimension sense (issue #218).
 
     Scans line by line, same shape as dispatch_required_claims above.
     """
     text = (REPO / "agents" / f"{name}.md").read_text()
     claimed = set()
     for line in text.splitlines():
-        if _CONDITIONAL_DISPATCH_REQUIRED_PHRASE in line:
+        if _DIMENSION_CONDITIONAL_PHRASE in line:
             claimed |= set(_BACKTICKED_FIELD.findall(line))
     return claimed
 
@@ -511,19 +506,46 @@ class TestDimensionsRegistry(unittest.TestCase):
         # issue #218, [v2] red-team finding 1: unlike requiredExtra, an entry here may be a
         # canonical FINDING_PROP_TYPES field (claude_md_rule) as well as a row's own
         # schemaExtra key (spec_text) — as long as it is not already unconditional
-        # (FINDING_REQUIRED), which would make the promotion belong there instead.
+        # (FINDING_REQUIRED) or pipeline-stamped [v3] (PIPELINE_STAMPED — the bare either-or
+        # rule would otherwise admit `origin`, and no agent ever emits it, so schema-requiring
+        # it within a dimension guarantees that dimension's dispatch degrades).
         prop_types = set(registry()["propTypes"])
         required = set(registry()["required"])
         for row in registry()["dimensions"]:
             declared = set(row["extras"])
             for field in row.get("requiredWhenDimension", []):
                 own_schema_extra = field in declared
-                canonical_not_required = field in prop_types and field not in required
+                canonical_not_required = (
+                    field in prop_types
+                    and field not in required
+                    and field not in PIPELINE_STAMPED
+                )
                 self.assertTrue(
                     own_schema_extra or canonical_not_required,
                     f"{row['dimension']}: requiredWhenDimension names {field!r}, which is "
                     "neither a key of this row's own schemaExtra nor a canonical field "
-                    "outside FINDING_REQUIRED",
+                    "outside FINDING_REQUIRED/pipeline-stamped",
+                )
+
+    def test_required_when_dimension_entries_are_instructed_by_the_owning_contract(
+        self,
+    ):
+        # issue #218, [v3]: a STRUCTURAL strengthening of the either-or rule above. The
+        # either-or rule (plus the pipeline-stamped exclusion) is itself a shape guard that
+        # can only rule OUT one known bad field (`origin`); this asserts the actual fact
+        # that matters directly — every requiredWhenDimension entry must be a field the
+        # owning contract's ```json blocks actually instruct, using the same instructed_fields
+        # parser TestContractSchemaLockstep already trusts for the #47 lockstep, rather than
+        # inferring emission from the registry's own type declarations.
+        for row in registry()["dimensions"]:
+            name = agent_name(row["agentType"])
+            instructed = instructed_fields(name)
+            for field in row.get("requiredWhenDimension", []):
+                self.assertIn(
+                    field,
+                    instructed,
+                    f"{row['dimension']}: requiredWhenDimension names {field!r}, which "
+                    f"agents/{name}.md's contract does not instruct",
                 )
 
     def test_required_when_dimension_is_disjoint_from_the_rows_own_required_extra(self):
@@ -948,15 +970,13 @@ class TestContractSchemaLockstep(unittest.TestCase):
                 "promote it — stale contract prose",
             )
 
-    def test_conditionally_dispatch_required_contract_sentences_match_requiredWhenDimension(
-        self,
-    ):
-        # issue #218, [v2] red-team finding 5: the sibling lockstep for the CONDITIONAL
-        # phrase, grouped by AGENT rather than by row — the prose sentence lives once in the
-        # shared agent .md file, not per-dimension, so what it claims is compared against the
-        # UNION of that agentType's rows' requiredWhenDimension, exactly as the design
-        # documents ("fields claimed under the conditional phrase must equal the union of the
-        # agent's rows' requiredWhenDimension").
+    def test_dimension_conditional_contract_sentences_match_requiredWhenDimension(self):
+        # issue #218, [v3] red-team finding 5: the sibling lockstep for the
+        # dimension-conditional phrase, grouped by AGENT rather than by row — the prose
+        # sentence lives once in the shared agent .md file, not per-dimension, so what it
+        # claims is compared against the UNION of that agentType's rows'
+        # requiredWhenDimension, exactly as the design documents ("fields claimed under it
+        # must equal the union of the agent's rows' requiredWhenDimension").
         by_agent = {}
         for row in registry()["dimensions"]:
             by_agent.setdefault(row["agentType"], set()).update(
@@ -964,41 +984,26 @@ class TestContractSchemaLockstep(unittest.TestCase):
             )
         for agent_type, expected in by_agent.items():
             name = agent_name(agent_type)
-            claimed = dispatch_conditionally_required_claims(name)
+            claimed = dimension_conditional_claims(name)
             self.assertEqual(
                 claimed,
                 expected,
-                f"agents/{name}.md's {_CONDITIONAL_DISPATCH_REQUIRED_PHRASE!r} claims "
+                f"agents/{name}.md's {_DIMENSION_CONDITIONAL_PHRASE!r} claims "
                 f"{sorted(claimed)}, but registry.js's requiredWhenDimension union for this "
                 f"agent is {sorted(expected)} — add or remove the contract sentence",
             )
 
-    def test_conditional_phrase_lines_are_excluded_from_the_unconditional_claim_set(
+    def test_dimension_conditional_phrase_is_not_a_superstring_of_the_unconditional_phrase(
         self,
     ):
-        # Self-test for the phrase-disambiguation logic itself (red-team finding 5's
-        # mechanism), isolated from the live contracts and from file I/O: a line making the
-        # CONDITIONAL claim must never leak into the UNCONDITIONAL claim's per-line
-        # predicate, even though _CONDITIONAL_DISPATCH_REQUIRED_PHRASE contains
-        # _DISPATCH_REQUIRED_PHRASE as a trailing substring by construction.
-        self.assertIn(_DISPATCH_REQUIRED_PHRASE, _CONDITIONAL_DISPATCH_REQUIRED_PHRASE)
-        line = f"`spec_text` is {_CONDITIONAL_DISPATCH_REQUIRED_PHRASE}."
-        self.assertIn(
-            _DISPATCH_REQUIRED_PHRASE,
-            line,
-            "the conditional line must contain the unconditional phrase as a substring",
-        )
-        # dispatch_required_claims' exact per-line predicate, exercised directly.
-        unconditional_match = (
-            _DISPATCH_REQUIRED_PHRASE in line
-            and _CONDITIONAL_DISPATCH_REQUIRED_PHRASE not in line
-        )
-        self.assertFalse(
-            unconditional_match,
-            "a conditional-phrase line must not also count as an unconditional claim",
-        )
-        # dispatch_conditionally_required_claims' predicate correctly picks it up.
-        self.assertIn(_CONDITIONAL_DISPATCH_REQUIRED_PHRASE, line)
+        # issue #218, [v3]: the reverse-leg lockstep for the UNCONDITIONAL phrase
+        # (dispatch_required_claims, above) is a plain substring test — a conditional-phrase
+        # sentence that happened to contain those bytes (a v2 draft used "conditionally
+        # required by the dispatch schema") would corrupt it, making every conditional field
+        # look like an incorrect requiredExtra claim. Pinned directly on the two live
+        # constants so a future reword of either phrase cannot silently reintroduce the
+        # collision without failing this test.
+        self.assertNotIn(_DISPATCH_REQUIRED_PHRASE, _DIMENSION_CONDITIONAL_PHRASE)
 
 
 class TestClaudeMdFieldLists(unittest.TestCase):
