@@ -1180,7 +1180,11 @@ def _gated_finding(
     *demote_reason* (per-fence reasons always win — a set-level demotion is
     chosen only among findings the gate already approved, so the two paths can
     never disagree about the same finding). ``None`` (the default) is a no-op —
-    every existing caller is unaffected.
+    every existing caller is unaffected. The ``elif`` below that applies
+    *mismatch_reason* is reached only on that gate-FAILURE branch — a
+    set-level *demote_reason* is never renamed by *mismatch_reason*, because
+    the ``ok`` branch above already returned or reassigned ``reason`` before
+    this ``elif`` is ever evaluated.
 
     *warn_label* names the CALLER in the downgrade warning line (default
     ``"suggested-fix"``, delivery's own spelling — unchanged bytes for every
@@ -1354,6 +1358,72 @@ def _ranges_overlap(a, b):
     ``<=`` that would need to run the other way to fire).
     """
     return max(a[0], b[0]) <= min(a[1], b[1])
+
+
+def _github_overlap_records(groups, valid_lines, line_texts):
+    """Return the CANDIDATE ``(index, path_lookup, apply_range)`` records for
+    post_github's overlap pre-pass (issue #223).
+
+    *groups* is ``consolidate_delivery``'s own output (or the benchmark
+    mirror's single-member-group equivalent — it models no consolidation) —
+    the returned ``index`` is ``enumerate(groups)``'s index into THAT list,
+    the same index post_github's render loop later checks with
+    ``index in losers``. A candidate is a group whose primary carries
+    ``suggested_fix_code``, anchors on a line the diff has, and whose fence
+    passes the SAME pure gate (:func:`_fence_verdict`) at the SAME apply
+    range (:func:`_github_apply_range`) the render loop itself will apply —
+    "candidate" and "would render a kept fence" are one computation, not two
+    that could disagree. Called by post_github's pre-pass and by the
+    benchmark's payload mirror — never duplicated (issue #224).
+    """
+    records = []
+    for index, group in enumerate(groups):
+        primary = group["primary"]
+        if not isinstance(primary, dict) or "suggested_fix_code" not in primary:
+            continue
+        line = primary.get("line")
+        if line is None:
+            continue
+        filepath = diff_path_spelling(valid_lines, primary.get("file", "?"), line)
+        if not is_line_valid(valid_lines, filepath, line):
+            continue
+        _, apply_range = _github_apply_range(
+            valid_lines, filepath, line, primary.get("end_line")
+        )
+        ok, _ = _fence_verdict(primary, apply_range, valid_lines, line_texts)
+        if ok:
+            records.append((index, filepath, apply_range))
+    return records
+
+
+def _gitlab_overlap_records(remaining, valid_lines, line_texts):
+    """Return the CANDIDATE ``(index, path_lookup, apply_range)`` records for
+    post_gitlab's overlap pre-pass (issue #223).
+
+    *remaining* is post_gitlab's own pre-partitioned list of ``(filepath,
+    group)`` pairs — every skip decision already made — so the returned
+    ``index`` is ``enumerate(remaining)``'s index into THAT list, the same
+    index post_gitlab's render loop later checks with ``index in losers``.
+    Feeding this the unfiltered ``findings``/``consolidate_delivery`` list
+    instead would silently re-key every record against the wrong basis — a
+    skipped (e.g. off-diff) finding shifts ``remaining``'s positions but
+    never occupies one itself. A candidate is a primary carrying
+    ``suggested_fix_code`` whose fence passes the SAME pure gate the render
+    loop applies, anchored at its own ``line``. Called by post_gitlab's
+    pre-pass and by the benchmark's payload mirror.
+    """
+    records = []
+    for index, (filepath, group) in enumerate(remaining):
+        primary = group["primary"]
+        if not isinstance(primary, dict) or "suggested_fix_code" not in primary:
+            continue
+        apply_range, _offsets, _cap_exceeded = _gitlab_apply_range(
+            primary, primary["line"]
+        )
+        ok, _ = _fence_verdict(primary, apply_range, valid_lines, line_texts)
+        if ok:
+            records.append((index, filepath, apply_range))
+    return records
 
 
 def _overlap_losers(records):
@@ -1711,28 +1781,10 @@ def post_github(data, valid_lines, line_texts):
     # existing warning still fires exactly once, from its existing render-loop
     # site below, in loop order (byte-stability constraint: a findings set with
     # no overlapping kept fences produces zero losers and is untouched by this
-    # pass). A candidate is a group whose primary is a dict carrying
-    # `suggested_fix_code`, anchors on a line the diff has, and whose fence
-    # passes the SAME pure gate the render loop will apply at the SAME apply
-    # range — "candidate" and "would render a kept fence" are one computation
-    # (`_fence_verdict`), not two that could disagree.
-    overlap_records = []
-    for index, group in enumerate(groups):
-        primary = group["primary"]
-        if not isinstance(primary, dict) or "suggested_fix_code" not in primary:
-            continue
-        line = primary.get("line")
-        if line is None:
-            continue
-        filepath = diff_path_spelling(valid_lines, primary.get("file", "?"), line)
-        if not is_line_valid(valid_lines, filepath, line):
-            continue
-        _, apply_range = _github_apply_range(
-            valid_lines, filepath, line, primary.get("end_line")
-        )
-        ok, _ = _fence_verdict(primary, apply_range, valid_lines, line_texts)
-        if ok:
-            overlap_records.append((index, filepath, apply_range))
+    # pass). The candidate predicate and index basis are `_github_overlap_records`'s
+    # own docstring — this poster and the benchmark mirror both call it rather
+    # than each keeping their own copy.
+    overlap_records = _github_overlap_records(groups, valid_lines, line_texts)
     losers = _overlap_losers(overlap_records)
 
     comments = []
@@ -2062,29 +2114,18 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
 
         remaining.append((filepath, group))
 
-    # Pure, SILENT pre-pass (#223), same shape and same discipline as GitHub's:
-    # decide which kept fences among `remaining`'s primaries would collide, on
-    # GitLab's own closed-interval overlap semantic, with another kept fence in
-    # the same file — BEFORE the summary note or any discussion posts, so the
-    # decision is made once, statically, and never depends on what has or
-    # hasn't gone out live yet (R8: the demoted SET is a pure function of
-    # findings + diff, rerun-stable, dry-run == live). A candidate is a primary
-    # carrying `suggested_fix_code` whose fence passes the SAME pure gate the
-    # render loop will apply, anchored at its own `line` — the anchor every
-    # call site below actually posts at. `kept_intervals` is the read-only map
-    # `deliver_corroborator`'s reactive fence sites consult (#223 R6) — it
-    # names every WINNING candidate's apply range per path, never a loser's.
-    overlap_records = []
-    for index, (filepath, group) in enumerate(remaining):
-        primary = group["primary"]
-        if not isinstance(primary, dict) or "suggested_fix_code" not in primary:
-            continue
-        apply_range, _offsets, _cap_exceeded = _gitlab_apply_range(
-            primary, primary["line"]
-        )
-        ok, _ = _fence_verdict(primary, apply_range, valid_lines, line_texts)
-        if ok:
-            overlap_records.append((index, filepath, apply_range))
+    # Pure, SILENT pre-pass (#223), same shape and same discipline as GitHub's —
+    # BEFORE the summary note or any discussion posts, so the decision is made
+    # once, statically, and never depends on what has or hasn't gone out live
+    # yet (R8: the demoted SET is a pure function of findings + diff,
+    # rerun-stable, dry-run == live). The candidate predicate and index basis
+    # are `_gitlab_overlap_records`'s own docstring — this poster and the
+    # benchmark mirror both call it rather than each keeping their own copy.
+    # `kept_intervals` is the read-only map `deliver_corroborator`'s reactive
+    # fence sites consult (#223 R6) — it names every WINNING candidate's apply
+    # range per path, never a loser's (the `if index not in losers:` guard
+    # below is load-bearing: a loser's own range must never occupy anything).
+    overlap_records = _gitlab_overlap_records(remaining, valid_lines, line_texts)
     losers = _overlap_losers(overlap_records)
     kept_intervals = {}
     for index, filepath, apply_range in overlap_records:
@@ -2358,7 +2399,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             )
             return "invalid"
         demote_reason = None
-        if isinstance(c, dict) and "suggested_fix_code" in c:
+        if "suggested_fix_code" in c:
             apply_range, _offsets, _cap_exceeded = _gitlab_apply_range(c, line)
             if any(
                 _ranges_overlap(apply_range, kept)

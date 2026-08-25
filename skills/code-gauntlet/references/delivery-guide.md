@@ -56,18 +56,17 @@ A single-line fix still renders a plain `` ```suggestion `` fence.
 
 **A fence that would overlap another kept fence in the same file demotes to prose.** GitLab
 refuses to batch-apply a set of suggestions with any two overlapping ranges in one file, and
-serially applying one outdates the other — so before rendering, the poster compares every kept
-fence's apply range against every other kept fence's, per file, and downgrades the LATER one in
-delivery order (the pipeline's own priority ranking, not line position). Overlap uses GitLab's own
-closed-interval semantic: two single-line fences anchored at the identical line collide, but two
-fences that merely touch (`[n, m]` next to `[m + 1, k]`) do not. A demoted finding still ships with
-its prose `suggestion` — only the one-click affordance is withheld — and the decision is a pure
-function of the findings and the diff, so a rerun always reaches the same verdict regardless of
-what has or hasn't already posted. This is a narrower fix than it may look: GitHub's own batch-apply
-exposure for overlapping or merely adjacent multi-line suggestions is NOT structurally avoided here
-— its failure mode (observed silent content loss from line-count drift during batch apply) is
-broader than the index-overlap case this demotion catches, which uses GitLab's source-verified
-semantic as the only one confirmed from a primary source.
+serially applying one outdates the other — so before rendering, the poster walks the fences in
+delivery order (the pipeline's own priority ranking, not line position) and withholds any whose
+apply range overlaps one it has already kept in that file: the earlier fence wins, and a withheld
+fence claims no range of its own. Overlap uses GitLab's closed-interval semantic: two single-line
+fences anchored at the identical line collide; two fences that merely touch (`[n, m]` next to
+`[m + 1, k]`) do not. A demoted finding still ships with its prose `suggestion` — only the
+one-click affordance is withheld — and which fences are withheld is a pure function of the
+findings and the diff, so a rerun reaches the same verdict regardless of what has already posted.
+This rule is scoped to overlapping ranges: GitHub's batch apply can also fail on multi-line
+suggestions that are merely adjacent rather than overlapping, and a fence is never withheld for
+that case.
 
 Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 

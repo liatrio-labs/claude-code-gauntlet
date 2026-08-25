@@ -295,30 +295,16 @@ def _skip_entry(f, valid_lines, line_texts):
 
 
 def _github_overlap_losers(findings, valid_lines, line_texts):
-    """Mirror post_github's overlap pre-pass (#223) — the SAME candidate
-    predicate and the SAME real helpers (`_github_apply_range`,
-    `_fence_verdict`), never a hand-rolled reimplementation, over *findings*
-    in array order. This mirror models no consolidation (the module
-    docstring), so each finding is its own single-member group and array
-    order already IS `consolidate_delivery` group order — no separate
-    grouping step is needed to match what the real pre-pass indexes.
+    """Mirror post_github's overlap pre-pass (#223) — calls the REAL
+    `_github_overlap_records` (the SAME candidate predicate and index basis
+    post_github itself uses, issue #224's exact ask), never a hand-rolled
+    reimplementation. This mirror models no consolidation (the module
+    docstring), so each finding becomes its own single-member group in array
+    order — already `consolidate_delivery` group order — before the real
+    builder ever sees it.
     """
-    records = []
-    for index, f in enumerate(findings):
-        if not isinstance(f, dict) or "suggested_fix_code" not in f:
-            continue
-        line = f.get("line")
-        if line is None:
-            continue
-        filepath = post_review.diff_path_spelling(valid_lines, f.get("file", "?"), line)
-        if not post_review.is_line_valid(valid_lines, filepath, line):
-            continue
-        _, apply_range = post_review._github_apply_range(
-            valid_lines, filepath, line, f.get("end_line")
-        )
-        ok, _ = post_review._fence_verdict(f, apply_range, valid_lines, line_texts)
-        if ok:
-            records.append((index, filepath, apply_range))
+    groups = [{"primary": f, "corroborators": []} for f in findings]
+    records = post_review._github_overlap_records(groups, valid_lines, line_texts)
     return post_review._overlap_losers(records)
 
 
@@ -441,27 +427,21 @@ def _gitlab_discussion(
 def _gitlab_overlap_losers(remaining, valid_lines, line_texts):
     """Mirror post_gitlab's overlap pre-pass (#223) over `remaining` — the
     findings that survive the skip pre-partition, in the same order the real
-    poster's `remaining` list carries them — using the SAME real helpers
-    (`_gitlab_apply_range`, `_fence_verdict`), never a hand-rolled copy.
+    poster's `remaining` list carries them — calling the REAL
+    `_gitlab_overlap_records` (the SAME candidate predicate and index basis
+    post_gitlab itself uses) rather than a hand-rolled copy. Wrapping each
+    survivor as its own single-member `(filepath, group)` pair — never
+    feeding it the unfiltered `findings` list — is what keeps this mirror's
+    index basis identical to post_gitlab's own `remaining`.
     """
-    records = []
-    for index, f in enumerate(remaining):
-        if not isinstance(f, dict) or "suggested_fix_code" not in f:
-            continue
-        apply_range, _offsets, _cap_exceeded = post_review._gitlab_apply_range(
-            f, f["line"]
+    pairs = [
+        (
+            post_review.diff_path_spelling(valid_lines, f.get("file", "?"), f["line"]),
+            {"primary": f, "corroborators": []},
         )
-        ok, _ = post_review._fence_verdict(f, apply_range, valid_lines, line_texts)
-        if ok:
-            records.append(
-                (
-                    index,
-                    post_review.diff_path_spelling(
-                        valid_lines, f.get("file", "?"), f["line"]
-                    ),
-                    apply_range,
-                )
-            )
+        for f in remaining
+    ]
+    records = post_review._gitlab_overlap_records(pairs, valid_lines, line_texts)
     return post_review._overlap_losers(records)
 
 
@@ -880,10 +860,22 @@ GH_DIFF_OVERLAP = (
     "+    line6\n"
 )
 
-# First finding is delivery-order first and keeps its fence: [2, 4]. Second
-# overlaps it at line 3-4 ([3, 5]) and demotes — its `suggestion` prose field
-# is what the demoted comment falls back to.
+# First is a fence-less finding at a distinct, non-overlapping line — a
+# candidate the mirror's overlap pre-pass must SKIP without shifting the
+# index it hands the two fenced findings after it (#223 R4: the index basis
+# is the group index, never a separate "candidate ordinal" among only the
+# gate-passing records). The second finding is delivery-order first among
+# the FENCED pair and keeps its fence: [2, 4]. The third overlaps it at line
+# 3-4 ([3, 5]) and demotes — its `suggestion` prose field is what the
+# demoted comment falls back to.
 GH_OVERLAP_FINDINGS = [
+    {
+        "file": "foo.py",
+        "line": 6,
+        "severity": "low",
+        "title": "Index splitter",
+        "body": "No suggested_fix_code — never a candidate, but still a group.",
+    },
     {
         "file": "foo.py",
         "line": 2,
@@ -923,7 +915,11 @@ GL_DIFF_OVERLAP = (
     "+    line7\n"
 )
 
-# Four findings, delivery order = array order:
+# Five findings, delivery order = array order:
+#   0. line 99 — OFF-DIFF: skipped before `remaining` is even built, so the
+#      `findings` array index (0) and the `remaining` index of every finding
+#      after it diverge by one (#223 R4: the pre-pass's records are keyed on
+#      the `remaining` index, never the raw `findings` index).
 #   1. line 2, single-line — kept (first).
 #   2. line 2, single-line — SAME line as #1: GitLab's own Range#overlaps?
 #      treats two identical single-line ranges as conflicting, so this one
@@ -933,6 +929,13 @@ GL_DIFF_OVERLAP = (
 #      line index with it, so both #3 and #4 keep their fences (#223 R4's
 #      touching-disjoint case, pinned end to end through the real poster).
 GL_OVERLAP_FINDINGS = [
+    {
+        "file": "foo.py",
+        "line": 99,
+        "severity": "low",
+        "title": "Off-diff finding",
+        "body": "This finding's line sits outside the diff — skipped before `remaining` is built.",
+    },
     {
         "file": "foo.py",
         "line": 2,
@@ -1237,8 +1240,12 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
     def test_github_overlap_demotion(self):
         """#223: two findings whose stated ranges overlap in the same file.
         The first (higher-priority — array/delivery order) keeps its fence;
-        the second demotes to prose. Both findings are UNSTAMPED (no
-        `consolidation_key`) — this mirror models no consolidation groups.
+        the second demotes to prose. A fence-less finding ahead of the pair
+        (#223 R4's index-splitter — its group index is 0, but it is never a
+        CANDIDATE) pins that the mirror's overlap pre-pass keys its records
+        on the group index, not a separate candidate ordinal. All three
+        findings are UNSTAMPED (no `consolidation_key`) — this mirror models
+        no consolidation groups.
         """
         findings_data = {
             "platform": "github",
@@ -1274,22 +1281,25 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             ["suggested-fix downgraded: foo.py:3 (overlaps_kept_fence)"],
         )
         comments = real["payload"]["comments"]
-        self.assertEqual(len(comments), 2)
-        # The kept (first, survivor) fence.
-        self.assertIn("```suggestion\n    a2\n    a3\n    a4\n```", comments[0]["body"])
-        # The demoted (second, loser) comment: fence ABSENT, prose SUGGESTION
+        self.assertEqual(len(comments), 3)
+        # comments[0]: the index-splitter — never had a fence, never a
+        # candidate, no `overlaps_kept_fence` warning of its own.
+        self.assertNotIn("```suggestion", comments[0]["body"])
+        # The kept (survivor) fence.
+        self.assertIn("```suggestion\n    a2\n    a3\n    a4\n```", comments[1]["body"])
+        # The demoted (loser) comment: fence ABSENT, prose SUGGESTION
         # present — hand-typed, not re-derived — this is the exact body the
         # real poster sends when a finding's own gate passed but a sibling's
         # fence claimed its range first.
         self.assertEqual(
-            comments[1]["body"],
+            comments[2]["body"],
             "**\U0001f7e1 [MEDIUM] Second overlapping fix**\n\n"
             "This fence's range overlaps the first finding's and demotes "
             "to prose.\n\n"
             "**Suggested fix:**\n"
             "Apply the equivalent three-line change by hand.",
         )
-        self.assertNotIn("```suggestion", comments[1]["body"])
+        self.assertNotIn("```suggestion", comments[2]["body"])
 
     def test_gitlab_overlap_demotion(self):
         """#223's GitLab dry-run equivalent, including a SAME-LINE
@@ -1297,7 +1307,11 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         collides two identical single-line ranges) and a TOUCHING DISJOINT
         pair that BOTH keep their fences (findings 3-4 — the third oracle
         pin for #223 R4's worked example, end to end through the real
-        poster). Unstamped: no finding carries `consolidation_key`.
+        poster). An OFF-DIFF finding (0) is skipped before `remaining` is
+        even built, so `findings`' own array index and `remaining`'s index
+        diverge by one — pinning that the mirror's overlap pre-pass keys its
+        records on the `remaining` index, not the raw `findings` index.
+        Unstamped: no finding carries `consolidation_key`.
         """
         owner, repo = GL_OVERLAP_PROJECT.split("/")
         findings_data = {
@@ -1336,10 +1350,17 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
         self.assertEqual(real, mirror)
         self.assertEqual(real, _load_fixture(GITLAB_OVERLAP_DEMOTION_FIXTURE))
 
-        # Hand-typed — the exact warning line bytes for the same-line loser.
+        # Hand-typed — the exact warning line bytes: the off-diff skip fires
+        # first (pre-partition, before the summary note), the same-line
+        # loser's downgrade fires later (the render/deliver loop).
         self.assertEqual(
             real["skipped"],
-            ["suggested-fix downgraded: foo.py:2 (overlaps_kept_fence)"],
+            [
+                "Skipping finding 'Off-diff finding' at foo.py:99 — line not "
+                "found in diff. Valid lines for this file: "
+                "[1, 2, 3, 4, 5, 6, 7]",
+                "suggested-fix downgraded: foo.py:2 (overlaps_kept_fence)",
+            ],
         )
         discussions = real["discussions"]
         self.assertEqual(len(discussions), 4)
