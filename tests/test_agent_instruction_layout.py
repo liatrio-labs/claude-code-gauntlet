@@ -151,7 +151,14 @@ CODEX_CAP_BYTES = 32_768
 # Raised 20_700 -> 20_761 (2026-08-24, #236): the Python coverage floor ratchet (scripts
 # 92.6 -> 92.7) extended the floors-and-provenance paragraph with the #236 PR CI
 # measurement (93.67) — same policy, same shape as the #219/#231 raises above.
-AGENTS_SET_BUDGET_BYTES = 20_761
+# Raised 20_761 -> 21_004 (2026-08-25, #218): agents/AGENTS.md's required-semantics bullet
+# now names `requiredWhenDimension` — a field required only within its own dimension, on a
+# first-party-direct dispatch, contract-enforced elsewhere. No single code site states this
+# for an agent-contract author: registry.js's own comment is written for the workflows
+# codebase, not for someone about to write an agent .md contract, which is this bullet's
+# whole reason to exist (the same gap the requiredExtra half of the same bullet already
+# closes for that mechanism).
+AGENTS_SET_BUDGET_BYTES = 21_004
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

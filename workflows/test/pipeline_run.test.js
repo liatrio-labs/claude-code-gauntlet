@@ -411,7 +411,9 @@ test('issue #178 regression: every discovery agent null -> ok:false, no downstre
   assert.equal(out.phaseReached, 'discover');
   assert.deepEqual(out.artifactPaths, {});
   assert.deepEqual([...out.stats.degraded].sort(), DIMENSIONS.map((d) => d.dimension).sort());
-  assert.deepEqual(out.resolvedPolicy, { subagentModel: 'claude-x', provider: 'bedrock' });
+  // gateway/conditionalSchema (issue #218): bedrock is non-firstParty, so
+  // conditionalSchemaActive is false regardless of gateway (not stamped here -> false).
+  assert.deepEqual(out.resolvedPolicy, { subagentModel: 'claude-x', provider: 'bedrock', gateway: false, conditionalSchema: false });
 
   // The 7 per-agent gaps (one per nulled discovery dispatch) plus EXACTLY one all-degraded gap.
   const perAgentGaps = out.gaps.filter((g) => /agent returned null/.test(g));
@@ -1007,6 +1009,44 @@ test('absent policy.provider keeps first-party full-ID pins and reports firstPar
   assert.equal(out.ok, true);
   assert.ok(ctx.calls.every((c) => /^claude-/.test(c.model)), 'every dispatch pins a full first-party ID');
   assert.equal(out.resolvedPolicy.provider, 'firstParty');
+});
+
+// --- policy.gateway / conditionalSchema envelope (issue #218) ---------------------
+
+test('default (firstParty, no gateway): resolvedPolicy reports gateway:false, conditionalSchema:true, and the live conventions-and-intent dispatch carries the allOf construct', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.equal(out.resolvedPolicy.gateway, false);
+  assert.equal(out.resolvedPolicy.conditionalSchema, true);
+  const convCall = ctx.calls.find((c) => c.agentType === 'code-gauntlet:conventions-and-intent');
+  assert.ok(convCall, 'conventions-and-intent must have dispatched');
+  assert.ok(Array.isArray(convCall.schema.properties.findings.items.allOf), 'the live dispatch must carry the conditional construct');
+});
+
+test('policy.gateway:true on an otherwise first-party run: resolvedPolicy reports gateway:true, conditionalSchema:false, and the dispatch stays flat (model pin unaffected)', async () => {
+  const args = validArgs({ policy: { tier: 'optimized', subagentModel: null, gateway: true } });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.equal(out.resolvedPolicy.gateway, true);
+  assert.equal(out.resolvedPolicy.conditionalSchema, false);
+  assert.equal(out.resolvedPolicy.provider, 'firstParty');
+  // The model pin is unaffected by gateway — only the schema construct is gated (design
+  // decision: a gateway proxies the Anthropic API and expects standard Claude model names).
+  assert.ok(ctx.calls.every((c) => /^claude-/.test(c.model)), 'gateway sessions keep the first-party full-ID pin');
+  const convCall = ctx.calls.find((c) => c.agentType === 'code-gauntlet:conventions-and-intent');
+  assert.equal(convCall.schema.properties.findings.items.allOf, undefined, 'gateway sessions must not carry the conditional construct');
+});
+
+test('non-firstParty provider: resolvedPolicy reports conditionalSchema:false regardless of gateway', async () => {
+  const args = validArgs({ policy: { tier: 'optimized', subagentModel: null, provider: 'bedrock', gateway: false } });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.equal(out.resolvedPolicy.gateway, false);
+  assert.equal(out.resolvedPolicy.conditionalSchema, false);
 });
 
 test('sweep: bucketed summarize + segmented report emit only contract-valid dispatches', async () => {

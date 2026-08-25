@@ -1,7 +1,7 @@
 // registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, resolvePolicy } from '../src/registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
 import { intersectRequiredExtra, agentSpecs } from '../src/stages.js';
 
 test('7 unique discovery agents', () => { assert.equal(AGENTS.length, 7); });
@@ -215,4 +215,130 @@ test('agentSpecs(dims): order is derived from dims itself, not the module-level 
   const specs = agentSpecs(dims);
   assert.deepEqual(specs.map((s) => s.agentType), ['synthetic:only-here']);
   assert.ok(specs[0], 'spec must be a real object, not undefined');
+});
+
+// --- requiredWhenDimension (issue #218) -------------------------------------------
+
+test('every DIMENSIONS row declares requiredWhenDimension as an array of field-name strings', () => {
+  for (const d of DIMENSIONS) {
+    assert.ok(Array.isArray(d.requiredWhenDimension), `${d.dimension}: requiredWhenDimension must be an array`);
+    for (const field of d.requiredWhenDimension) {
+      assert.equal(typeof field, 'string', `${d.dimension}: requiredWhenDimension entries must be strings`);
+    }
+  }
+});
+
+// [v3] Pipeline-stamped canonical fields no agent ever emits (mirrors PIPELINE_STAMPED in
+// tests/test_dimensions_registry.py). Excluded from the canonical-field arm below: the bare
+// either-or rule would otherwise admit `origin`, and schema-requiring a field within a
+// dimension no agent contract ever instructs guarantees that dimension's dispatch degrades.
+const PIPELINE_STAMPED = new Set(['origin']);
+
+test('every requiredWhenDimension entry is EITHER a key of its own row\'s schemaExtra OR a canonical field not in FINDING_REQUIRED and not pipeline-stamped', () => {
+  // [v2] red-team finding 1: unlike requiredExtra, a requiredWhenDimension entry may be a
+  // canonical FINDING_PROP_TYPES field (claude_md_rule) as long as it is not already
+  // unconditional (FINDING_REQUIRED) — that promotion belongs in FINDING_REQUIRED directly.
+  for (const d of DIMENSIONS) {
+    const declared = new Set(Object.keys(d.schemaExtra || {}));
+    for (const field of d.requiredWhenDimension) {
+      const ownSchemaExtra = declared.has(field);
+      const canonicalNotRequired = field in FINDING_PROP_TYPES && !FINDING_REQUIRED.includes(field) && !PIPELINE_STAMPED.has(field);
+      assert.ok(
+        ownSchemaExtra || canonicalNotRequired,
+        `${d.dimension}: requiredWhenDimension names "${field}", which is neither a key of ` +
+          'this row\'s own schemaExtra nor a canonical field outside FINDING_REQUIRED/pipeline-stamped',
+      );
+    }
+  }
+});
+
+test('requiredWhenDimension is disjoint from the row\'s own requiredExtra', () => {
+  for (const d of DIMENSIONS) {
+    for (const field of d.requiredWhenDimension) {
+      assert.ok(!d.requiredExtra.includes(field), `${d.dimension}: "${field}" is in both requiredExtra and requiredWhenDimension`);
+    }
+  }
+});
+
+test('requiredWhenDimension is non-empty only on rows whose agentType has multiple rows', () => {
+  const rowCounts = new Map();
+  for (const d of DIMENSIONS) rowCounts.set(d.agentType, (rowCounts.get(d.agentType) || 0) + 1);
+  for (const d of DIMENSIONS) {
+    if (d.requiredWhenDimension.length) {
+      assert.ok(
+        rowCounts.get(d.agentType) > 1,
+        `${d.dimension}: requiredWhenDimension is non-empty on a single-row agentType — use requiredExtra instead`,
+      );
+    }
+  }
+});
+
+test('the live registry: only convention (claude_md_rule) and intent (spec_text) carry a requiredWhenDimension entry', () => {
+  const byDim = (dim) => DIMENSIONS.find((d) => d.dimension === dim);
+  assert.deepEqual(byDim('convention').requiredWhenDimension, ['claude_md_rule']);
+  assert.deepEqual(byDim('intent').requiredWhenDimension, ['spec_text']);
+  for (const dim of ['bug', 'security', 'cross_file_impact', 'test_coverage', 'comment_accuracy', 'type_design', 'simplification']) {
+    assert.deepEqual(byDim(dim).requiredWhenDimension, [], `${dim} must carry no requiredWhenDimension entry`);
+  }
+});
+
+test('agentSpecs(): conventions-and-intent carries the sorted conditionalRequired derivation', () => {
+  const spec = agentSpecs().find((s) => s.agentType === 'code-gauntlet:conventions-and-intent');
+  assert.deepEqual(spec.conditionalRequired, [
+    { dimension: 'convention', required: ['claude_md_rule'] },
+    { dimension: 'intent', required: ['spec_text'] },
+  ]);
+});
+
+test('agentSpecs(): every single-dimension spec has an empty conditionalRequired', () => {
+  for (const spec of agentSpecs()) {
+    if (spec.agentType === 'code-gauntlet:conventions-and-intent') continue;
+    assert.deepEqual(spec.conditionalRequired, [], `${spec.agentType}: expected no conditionalRequired entries`);
+  }
+});
+
+test('agentSpecs(dims): a synthetic multi-dimension agent derives conditionalRequired sorted by dimension', () => {
+  const dims = [
+    { agentType: 'synthetic:agent', dimension: 'dim_b', conditionalFlag: null, schemaExtra: { y: 'string' }, requiredExtra: [], requiredWhenDimension: ['y'], promptExtra: null },
+    { agentType: 'synthetic:agent', dimension: 'dim_a', conditionalFlag: null, schemaExtra: { x: 'string' }, requiredExtra: [], requiredWhenDimension: ['x'], promptExtra: null },
+  ];
+  const specs = agentSpecs(dims);
+  assert.equal(specs.length, 1);
+  assert.deepEqual(specs[0].conditionalRequired, [
+    { dimension: 'dim_a', required: ['x'] },
+    { dimension: 'dim_b', required: ['y'] },
+  ]);
+});
+
+test('agentSpecs(dims): rows WITHOUT a requiredWhenDimension key do not throw and yield no conditionalRequired', () => {
+  // Mirrors the pre-existing synthetic-dims tests above (F2): a row shaped like the ones this
+  // file already builds for requiredExtra coverage must not need updating for the new key.
+  const dims = [{ agentType: 'synthetic:only-here', dimension: 'dim_z', conditionalFlag: null, schemaExtra: {}, requiredExtra: [], promptExtra: null }];
+  assert.doesNotThrow(() => agentSpecs(dims));
+  const specs = agentSpecs(dims);
+  assert.deepEqual(specs[0].conditionalRequired, []);
+});
+
+test('conditionalSchemaActive: firstParty/absent/null provider with no gateway is active', () => {
+  assert.equal(conditionalSchemaActive({}), true);
+  assert.equal(conditionalSchemaActive({ provider: 'firstParty' }), true);
+  assert.equal(conditionalSchemaActive({ provider: null }), true);
+  assert.equal(conditionalSchemaActive({ provider: undefined }), true);
+});
+
+test('conditionalSchemaActive: any non-firstParty provider is inactive regardless of gateway', () => {
+  for (const provider of ['bedrock', 'vertex', 'foundry']) {
+    assert.equal(conditionalSchemaActive({ provider }), false);
+    assert.equal(conditionalSchemaActive({ provider, gateway: false }), false);
+  }
+});
+
+test('conditionalSchemaActive: gateway:true on an otherwise first-party policy is inactive', () => {
+  assert.equal(conditionalSchemaActive({ gateway: true }), false);
+  assert.equal(conditionalSchemaActive({ provider: 'firstParty', gateway: true }), false);
+});
+
+test('conditionalSchemaActive: gateway:false or absent on first-party stays active', () => {
+  assert.equal(conditionalSchemaActive({ gateway: false }), true);
+  assert.equal(conditionalSchemaActive({}), true);
 });

@@ -121,6 +121,7 @@ def registry():
             "    dimension: d.dimension, agentType: d.agentType,"
             "    extras: Object.fromEntries(Object.entries(d.schemaExtra || {}).map(([k, v]) => [k, t(v)])),"
             "    requiredExtra: d.requiredExtra || [],"
+            "    requiredWhenDimension: d.requiredWhenDimension || [],"
             "  })),"
             "})))"
         )
@@ -178,6 +179,23 @@ def all_required_extras():
     for row in registry()["dimensions"]:
         required |= set(row["requiredExtra"])
     return required
+
+
+def all_required_when_dimension():
+    """field -> the single dimension that requires it, across every DIMENSIONS row (#218).
+
+    Mirrors all_required_extras() for the new conditional key. Unlike requiredExtra, an entry
+    may be a canonical FINDING_PROP_TYPES field (claude_md_rule, owned by the convention row
+    though it is not a key of that row's own schemaExtra) as well as a row's own schemaExtra
+    key (spec_text, owned by the intent row) — see registry.js's requiredWhenDimension
+    comment. Each field currently has exactly one owning row, so field -> dimension is safe;
+    a future field owned by two rows would need this to become field -> {dimensions}.
+    """
+    owner = {}
+    for row in registry()["dimensions"]:
+        for field in row.get("requiredWhenDimension", []):
+            owner[field] = row["dimension"]
+    return owner
 
 
 def field_carries_omit_instruction(raw_block, field, source=None):
@@ -239,9 +257,21 @@ def field_carries_omit_instruction(raw_block, field, source=None):
 # about a field named three paragraphs away must not count as a claim about it.
 _DISPATCH_REQUIRED_PHRASE = "required by the dispatch schema"
 
+# issue #218, [v3] red-team finding 5: the CONDITIONAL sibling of _DISPATCH_REQUIRED_PHRASE —
+# a field that is required by the dispatch schema only on some dimensions of a shared
+# multi-dimension dispatch (requiredWhenDimension), not on every finding the agent emits.
+# _DISPATCH_REQUIRED_PHRASE's reverse-leg lockstep (below) is a plain SUBSTRING test, so this
+# phrase must NOT contain those bytes as a substring — a v2 draft used "conditionally required
+# by the dispatch schema", which does, and would have hard-failed that lockstep by making
+# every conditional field look like an (incorrect) requiredExtra claim. Deliberately distinct
+# wording avoids the collision outright, so the two claim functions below need no
+# cross-exclusion between them.
+_DIMENSION_CONDITIONAL_PHRASE = "dimension-conditional dispatch requirement"
+
 
 def dispatch_required_claims(name):
-    """Field names agents/<name>.md's prose claims are 'required by the dispatch schema'.
+    """Field names agents/<name>.md's prose claims are 'required by the dispatch schema'
+    UNCONDITIONALLY — i.e. the requiredExtra sense, not the requiredWhenDimension one.
 
     Scans line by line: a line containing the canonical phrase contributes every backticked
     field name ON THAT LINE to the claimed set.
@@ -250,6 +280,20 @@ def dispatch_required_claims(name):
     claimed = set()
     for line in text.splitlines():
         if _DISPATCH_REQUIRED_PHRASE in line:
+            claimed |= set(_BACKTICKED_FIELD.findall(line))
+    return claimed
+
+
+def dimension_conditional_claims(name):
+    """Field names agents/<name>.md's prose claims are a 'dimension-conditional dispatch
+    requirement' — the requiredWhenDimension sense (issue #218).
+
+    Scans line by line, same shape as dispatch_required_claims above.
+    """
+    text = (REPO / "agents" / f"{name}.md").read_text()
+    claimed = set()
+    for line in text.splitlines():
+        if _DIMENSION_CONDITIONAL_PHRASE in line:
             claimed |= set(_BACKTICKED_FIELD.findall(line))
     return claimed
 
@@ -454,6 +498,78 @@ class TestDimensionsRegistry(unittest.TestCase):
                     required,
                     f"{row['dimension']}: {field!r} is already in FINDING_REQUIRED — "
                     "requiredExtra must not repeat it",
+                )
+
+    def test_required_when_dimension_is_own_schema_extra_or_canonical_not_required(
+        self,
+    ):
+        # issue #218, [v2] red-team finding 1: unlike requiredExtra, an entry here may be a
+        # canonical FINDING_PROP_TYPES field (claude_md_rule) as well as a row's own
+        # schemaExtra key (spec_text) — as long as it is not already unconditional
+        # (FINDING_REQUIRED) or pipeline-stamped [v3] (PIPELINE_STAMPED — the bare either-or
+        # rule would otherwise admit `origin`, and no agent ever emits it, so schema-requiring
+        # it within a dimension guarantees that dimension's dispatch degrades).
+        prop_types = set(registry()["propTypes"])
+        required = set(registry()["required"])
+        for row in registry()["dimensions"]:
+            declared = set(row["extras"])
+            for field in row.get("requiredWhenDimension", []):
+                own_schema_extra = field in declared
+                canonical_not_required = (
+                    field in prop_types
+                    and field not in required
+                    and field not in PIPELINE_STAMPED
+                )
+                self.assertTrue(
+                    own_schema_extra or canonical_not_required,
+                    f"{row['dimension']}: requiredWhenDimension names {field!r}, which is "
+                    "neither a key of this row's own schemaExtra nor a canonical field "
+                    "outside FINDING_REQUIRED/pipeline-stamped",
+                )
+
+    def test_required_when_dimension_entries_are_instructed_by_the_owning_contract(
+        self,
+    ):
+        # issue #218, [v3]: a STRUCTURAL strengthening of the either-or rule above. The
+        # either-or rule (plus the pipeline-stamped exclusion) is itself a shape guard that
+        # can only rule OUT one known bad field (`origin`); this asserts the actual fact
+        # that matters directly — every requiredWhenDimension entry must be a field the
+        # owning contract's ```json blocks actually instruct, using the same instructed_fields
+        # parser TestContractSchemaLockstep already trusts for the #47 lockstep, rather than
+        # inferring emission from the registry's own type declarations.
+        for row in registry()["dimensions"]:
+            name = agent_name(row["agentType"])
+            instructed = instructed_fields(name)
+            for field in row.get("requiredWhenDimension", []):
+                self.assertIn(
+                    field,
+                    instructed,
+                    f"{row['dimension']}: requiredWhenDimension names {field!r}, which "
+                    f"agents/{name}.md's contract does not instruct",
+                )
+
+    def test_required_when_dimension_is_disjoint_from_the_rows_own_required_extra(self):
+        for row in registry()["dimensions"]:
+            for field in row.get("requiredWhenDimension", []):
+                self.assertNotIn(
+                    field,
+                    row["requiredExtra"],
+                    f"{row['dimension']}: {field!r} is in both requiredExtra and "
+                    "requiredWhenDimension",
+                )
+
+    def test_required_when_dimension_is_non_empty_only_on_multi_row_agent_types(self):
+        rows = registry()["dimensions"]
+        row_counts = {}
+        for row in rows:
+            row_counts[row["agentType"]] = row_counts.get(row["agentType"], 0) + 1
+        for row in rows:
+            if row.get("requiredWhenDimension"):
+                self.assertGreater(
+                    row_counts[row["agentType"]],
+                    1,
+                    f"{row['dimension']}: requiredWhenDimension is non-empty on a "
+                    "single-row agentType — use requiredExtra instead",
                 )
 
 
@@ -699,6 +815,65 @@ class TestContractSchemaLockstep(unittest.TestCase):
             f"stale: {offenders}",
         )
 
+    def test_required_when_dimension_fields_carry_both_an_omit_and_a_required_marker(
+        self,
+    ):
+        # issue #218: the mirror-image guard to test_required_extra_fields_carry_no_omit_
+        # instruction above. A requiredWhenDimension field is REQUIRED within its owning
+        # dimension but OMITTED on every sibling dimension sharing the same dispatch — the
+        # opposite of requiredExtra's unconditional-everywhere contract — so its owning
+        # contract block must carry BOTH an OMIT instruction (proving the field really is
+        # conditional, not accidentally promoted here instead of requiredExtra) and a
+        # REQUIRED marker naming the owning dimension (proving the model is told which
+        # dimension actually requires it).
+        #
+        # OMIT presence is checked PER FIELD, across every contract block, not per block:
+        # a field's OMIT instruction lives in the template block (the worked example shows a
+        # real value with no OMIT text, so field_carries_omit_instruction is correctly False
+        # there). Checking block-by-block and `continue`-ing past every False result — the
+        # original shape of this guard — made the whole test vacuously pass the moment NO
+        # block carried OMIT: nothing was ever asserted against, since every iteration just
+        # skipped to the next. Track whether ANY block carried it instead, and record an
+        # offender when none did.
+        #
+        # Acknowledged weaker than the requiredExtra no-OMIT guard in ONE remaining respect:
+        # the REQUIRED-marker check is substring-based over the whole file text, not
+        # dimension-scoped, so it cannot catch a REQUIRED marker attributed to the wrong
+        # dimension. A dimension-aware version would mean parsing prose structure, which the
+        # module docstring's "never a prose-frequency check" warning is about grep-for-a-word
+        # guards, not this — but the substring form is what ships, and the acknowledgment is
+        # intentional, not an oversight.
+        offenders = []
+        for row in registry()["dimensions"]:
+            name = agent_name(row["agentType"])
+            text = (REPO / "agents" / f"{name}.md").read_text()
+            blocks = raw_contract_blocks(name)
+            for field in row.get("requiredWhenDimension", []):
+                has_omit = any(
+                    field_carries_omit_instruction(
+                        raw, field, source=f"agents/{name}.md"
+                    )
+                    for raw in blocks
+                )
+                if not has_omit:
+                    offenders.append(
+                        f"{name}.{field} ({row['dimension']}): no contract block carries "
+                        "an OMIT instruction for this field"
+                    )
+                    continue
+                marker = f"REQUIRED for {row['dimension']}"
+                if marker not in text:
+                    offenders.append(
+                        f"{name}.{field} ({row['dimension']}): missing {marker!r}"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "these requiredWhenDimension fields are missing an OMIT instruction (in every "
+            "contract block) or a REQUIRED marker naming their owning dimension: "
+            f"{offenders}",
+        )
+
     def test_field_carries_omit_instruction_parses_every_real_value_shape(self):
         # Self-test for field_carries_omit_instruction's parser, synthetic and isolated from
         # the live contracts so it pins the parser's behavior directly rather than through
@@ -813,6 +988,41 @@ class TestContractSchemaLockstep(unittest.TestCase):
                 "promote it — stale contract prose",
             )
 
+    def test_dimension_conditional_contract_sentences_match_requiredWhenDimension(self):
+        # issue #218, [v3] red-team finding 5: the sibling lockstep for the
+        # dimension-conditional phrase, grouped by AGENT rather than by row — the prose
+        # sentence lives once in the shared agent .md file, not per-dimension, so what it
+        # claims is compared against the UNION of that agentType's rows'
+        # requiredWhenDimension, exactly as the design documents ("fields claimed under it
+        # must equal the union of the agent's rows' requiredWhenDimension").
+        by_agent = {}
+        for row in registry()["dimensions"]:
+            by_agent.setdefault(row["agentType"], set()).update(
+                row.get("requiredWhenDimension", [])
+            )
+        for agent_type, expected in by_agent.items():
+            name = agent_name(agent_type)
+            claimed = dimension_conditional_claims(name)
+            self.assertEqual(
+                claimed,
+                expected,
+                f"agents/{name}.md's {_DIMENSION_CONDITIONAL_PHRASE!r} claims "
+                f"{sorted(claimed)}, but registry.js's requiredWhenDimension union for this "
+                f"agent is {sorted(expected)} — add or remove the contract sentence",
+            )
+
+    def test_dimension_conditional_phrase_is_not_a_superstring_of_the_unconditional_phrase(
+        self,
+    ):
+        # issue #218, [v3]: the reverse-leg lockstep for the UNCONDITIONAL phrase
+        # (dispatch_required_claims, above) is a plain substring test — a conditional-phrase
+        # sentence that happened to contain those bytes (a v2 draft used "conditionally
+        # required by the dispatch schema") would corrupt it, making every conditional field
+        # look like an incorrect requiredExtra claim. Pinned directly on the two live
+        # constants so a future reword of either phrase cannot silently reintroduce the
+        # collision without failing this test.
+        self.assertNotIn(_DISPATCH_REQUIRED_PHRASE, _DIMENSION_CONDITIONAL_PHRASE)
+
 
 class TestClaudeMdFieldLists(unittest.TestCase):
     """agents/AGENTS.md's two field enumerations are the human index of the registry."""
@@ -895,28 +1105,44 @@ class TestReportFormatFieldTables(unittest.TestCase):
             )
 
     def test_canonical_table_required_column_matches_registry(self):
+        # issue #218: tri-state. `conditional` covers a canonical field named in some row's
+        # requiredWhenDimension (claude_md_rule) — schema-required only on a first-party-direct
+        # dispatch, and only for findings on the owning dimension; contract-enforced everywhere.
         required = set(registry()["required"])
+        conditional = set(all_required_when_dimension())
         for field, cells in table_named(report_format_tables(), "Canonical"):
-            expected = "yes" if field in required else "no"
+            if field in required:
+                expected = "yes"
+            elif field in conditional:
+                expected = "conditional"
+            else:
+                expected = "no"
             self.assertEqual(
                 expected,
                 cells[1].lower(),
                 f"report-format.md marks {field} required={cells[1]!r}; "
-                f"FINDING_REQUIRED says {expected}",
+                f"expected {expected!r} (FINDING_REQUIRED / requiredWhenDimension)",
             )
 
     def test_per_dimension_table_required_column_matches_registry(self):
         # Mirrors test_canonical_table_required_column_matches_registry above, one column
         # index over: the per-dimension table's cells are (Type, Dimension, Required,
-        # Description), so the Required column is cells[2].
+        # Description), so the Required column is cells[2]. Tri-state for the same reason
+        # (issue #218): spec_text is named in the intent row's own requiredWhenDimension.
         required = all_required_extras()
+        conditional = set(all_required_when_dimension())
         for field, cells in table_named(report_format_tables(), "Per-dimension"):
-            expected = "yes" if field in required else "no"
+            if field in required:
+                expected = "yes"
+            elif field in conditional:
+                expected = "conditional"
+            else:
+                expected = "no"
             self.assertEqual(
                 expected,
                 cells[2].lower(),
                 f"report-format.md marks {field} required={cells[2]!r}; "
-                f"registry.js requiredExtra says {expected}",
+                f"expected {expected!r} (registry.js requiredExtra / requiredWhenDimension)",
             )
 
     def test_per_dimension_table_matches_registry(self):
@@ -1036,6 +1262,7 @@ class TestDeliveryVocabularySurfaces(unittest.TestCase):
             "delivery-guide.md is missing the Example workflow / Script "
             "behavior anchors the loose bash scan needs",
         )
+        assert match is not None  # narrows for static analysis (pyright)
         region = match.group(1)
         self.assertRegex(
             region,
