@@ -280,7 +280,12 @@ const INJECTION_TITLE_PATTERNS = [
   /\bdemo finding\b/i,
 ];
 
-const INJECTION_BODY_PATTERNS = [/<finding>/i, /<example>/i, /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]/i, /lorem ipsum/i];
+const INJECTION_BODY_PATTERNS = [
+  /<finding>/i,
+  /<example>/i,
+  /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]/i,
+  /lorem ipsum/i,
+];
 
 const INJECTION_SHELL_PATTERNS = [
   /\brm[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-[rf]/i,
@@ -297,7 +302,10 @@ const INJECTION_URL_PATTERNS = [
   /\bnavigate to\b/i,
 ];
 
-const INJECTION_ENCODED_PATTERNS = [/\b[A-Za-z0-9+/]{40,}={0,2}\b/i, /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i];
+const INJECTION_ENCODED_PATTERNS = [
+  /\b[A-Za-z0-9+/]{40,}={0,2}\b/i,
+  /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
+];
 
 const INJECTION_BYPASS_PATTERNS = [
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
