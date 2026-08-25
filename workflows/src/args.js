@@ -3,8 +3,9 @@ import { parseReviewMd, loadExclusions } from './filterFindings.js';
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
-// policy shape: { tier, subagentModel, provider } — tier records the resolved model_tier
-// knob (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
+// policy shape: { tier, subagentModel, provider, gateway } — tier records the resolved
+// model_tier knob (its only valid value today is "optimized"; alternate modes are roadmap
+// #17 V3.2).
 //   - policy.subagentModel is passed to registry.js's resolvePolicy() as opts.subagentModelEnv.
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
@@ -14,6 +15,12 @@ import { parseReviewMd, loadExclusions } from './filterFindings.js';
 //     'firstParty'/absent; any other provider dispatches bare aliases, which the harness
 //     resolves through the provider's deployment mapping — first-party IDs like
 //     claude-sonnet-5 are passed through unchecked on Bedrock/Vertex/Foundry and 400.
+//   - policy.gateway (optional boolean; issue #218) is the skill's Phase 2 capture of
+//     whether ANTHROPIC_BASE_URL is set — an LLM gateway proxies the Anthropic API, so it
+//     does not change policy.provider (see POLICY_PROVIDERS below), but it DOES gate off
+//     registry.js's conditionalSchemaActive: a gateway forwards input_schema verbatim to
+//     whatever backend it fronts, which could be an unmeasured third-party surface even
+//     while the session itself reads as firstParty.
 export const ARGS_VERSION = 1;
 // changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
 // REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
@@ -42,7 +49,10 @@ const DELIVERY_TIERS = ['all', 'main_only'];
 // with no error anywhere. Fail loud at the waist instead. No 'gateway' value: an LLM
 // gateway (ANTHROPIC_BASE_URL) proxies the Anthropic API and expects standard Claude model
 // names, so gateway sessions are firstParty; non-standard gateway names go through the
-// subagentModel escape hatch.
+// subagentModel escape hatch. A gateway session is instead marked by the separate
+// policy.gateway BOOLEAN (issue #218, validated below) — it rides alongside provider rather
+// than inside this enum because it answers a different question (does input_schema reach an
+// unmeasured backend verbatim?), not which model-ID arm resolvePolicy takes.
 const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
 
 // Shared with PATH_CONTROL_RE further down (declared locally there because it sits inside
@@ -619,6 +629,14 @@ export function validateArgs(args) {
     && args.policy.provider !== undefined && args.policy.provider !== null
     && !POLICY_PROVIDERS.includes(args.policy.provider)) {
     errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
+  }
+  // policy.gateway gates registry.js's conditionalSchemaActive (issue #218) — a non-boolean
+  // would silently coerce (e.g. the string "false" is truthy), so shape-check it the same
+  // way provider is above. Absent/null both mean "no gateway", same tolerance as provider.
+  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
+    && args.policy.gateway !== undefined && args.policy.gateway !== null
+    && typeof args.policy.gateway !== 'boolean') {
+    errors.push(`invalid policy.gateway: ${args.policy.gateway} (expected a boolean)`);
   }
   // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
   if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))

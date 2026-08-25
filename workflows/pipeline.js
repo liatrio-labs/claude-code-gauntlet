@@ -1963,15 +1963,19 @@ const FINDING_PROP_TYPES = {
 // (issue #66): agentSpecs() intersects across a multi-dimension agent's rows, so a field
 // required for only ONE dimension of a shared dispatch (conventions-and-intent mixes
 // convention/intent/comment_accuracy in one schema) can never be enforced there — union
-// semantics would force fabrication on the sibling dimensions. Conditional schema enforcement
-// is not a provider-portable escape hatch: a TOP-LEVEL `oneOf`/`allOf`/`anyOf` in input_schema
-// is rejected outright (API 400, measured 2026-08-18); `if`/`then` nested inside `items` was
-// accepted AND enforced by the retry loop in that same measurement, but only on the first-party
-// API — unmeasured on Bedrock/Vertex, so this rule sticks to provider-portable constructs only.
-// So the promotion rule is narrow: only a field whose owning contract emits it UNCONDITIONALLY
-// (no "OMIT this field" branch) may be listed in requiredExtra; a genuinely conditional field
-// (claude_md_rule, spec_text, hidden_errors, invalid_state_example) stays contract-enforced,
-// the same retry-storm-avoidance class the OMIT-not-null rule already governs.
+// semantics would force fabrication on the sibling dimensions. A TOP-LEVEL
+// `oneOf`/`allOf`/`anyOf` in input_schema is rejected outright (API 400, measured
+// 2026-08-18); `if`/`then` nested inside `items` was accepted AND enforced by the retry loop
+// in that same measurement, but only on the first-party API — unmeasured on
+// Bedrock/Vertex/Foundry, so requiredExtra sticks to the provider-portable flat `required`
+// list only. So the promotion rule for requiredExtra is narrow: only a field whose owning
+// contract emits it UNCONDITIONALLY (no "OMIT this field" branch) may be listed there; a
+// genuinely conditional field (hidden_errors, invalid_state_example) stays contract-enforced
+// everywhere, the same retry-storm-avoidance class the OMIT-not-null rule already governs.
+// claude_md_rule and spec_text are a THIRD case — conditional across dimensions but
+// unconditional WITHIN their own dimension — and go through `requiredWhenDimension` below,
+// which does spend the measured nested if/then construct, gated behind
+// conditionalSchemaActive so it never reaches an unmeasured provider.
 const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 'severity', 'confidence', 'dimension'];
 
 // `schemaExtra` declares the per-dimension finding fields BEYOND the canonical schema above —
@@ -2012,25 +2016,43 @@ const FINDING_REQUIRED = ['id', 'file', 'line_start', 'title', 'description', 's
 // (conventions-and-intent additionally can't promote a single-dimension field at all — see the
 // agentSpecs comment in stages.js), so they stay contract-enforced. findingItemSchema
 // (stages.js) appends a spec's effective requiredExtra onto FINDING_REQUIRED per dispatch.
+// `requiredWhenDimension` (issue #218) names fields the owning contract emits
+// UNCONDITIONALLY within THIS row's dimension while every sibling dimension on the same
+// agentType is told to OMIT them — the exact shape `requiredExtra` cannot hold (its
+// sibling-parity guard demands every row of an agentType agree, and its intersection would
+// either force every sibling to fabricate the field or silently drop it). Each entry is
+// EITHER a key of this row's OWN schemaExtra (spec_text on the intent row) OR a canonical
+// FINDING_PROP_TYPES field that is not in FINDING_REQUIRED (claude_md_rule on the convention
+// row) — never a canonical field already unconditional everywhere, which belongs in
+// FINDING_REQUIRED directly. `[]` on every other row.
+//
+// Unlike requiredExtra this cannot become a flat `required` entry on the dispatch schema: a
+// TOP-LEVEL oneOf/allOf/anyOf in input_schema is rejected outright (API 400, measured
+// 2026-08-18), but the same if/then nested inside `items` was accepted AND enforced on that
+// same measurement — first-party only, unmeasured on Bedrock/Vertex/Foundry. So
+// findingItemSchema (stages.js) emits the nested allOf/if/then construct ONLY when
+// conditionalSchemaActive(policy) is true (first-party-direct, no gateway) — third-party
+// providers and gateway sessions keep today's flat schema, contract prose is the floor
+// everywhere. See agentSpecs' conditionalRequired derivation in stages.js.
 const DIMENSIONS = [
-  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, requiredExtra: ['attack_vector'], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
+  { dimension: 'bug', agentType: 'code-gauntlet:bug-detector', conditionalFlag: null, schemaExtra: { hidden_errors: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'security', agentType: 'code-gauntlet:security-reviewer', conditionalFlag: null, schemaExtra: { attack_vector: 'string' }, requiredExtra: ['attack_vector'], requiredWhenDimension: [], modelOverride: 'opus', promptExtra: SECURITY_SWEEP_PROMPT_EXTRA },
   { dimension: 'cross_file_impact', agentType: 'code-gauntlet:cross-file-impact', conditionalFlag: DEEP,
-    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'], modelOverride: null, promptExtra: null },
+    schemaExtra: { affected_consumers: { type: 'array', items: { type: 'string' } } }, requiredExtra: ['affected_consumers'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'test_coverage', agentType: 'code-gauntlet:test-analyzer', conditionalFlag: DEEP,
     // criticality is a 1-10 IMPACT scale (agents/test-analyzer.md); bound it in the schema
     // fragment so StructuredOutput rejects 0/-5/999 the same way items is required on arrays.
     // confidence stays unbound here and is clamped later — validators adjust it at runtime.
     schemaExtra: { criticality: { type: 'number', minimum: 1, maximum: 10 }, failure_scenario: 'string' },
-    requiredExtra: ['criticality', 'failure_scenario'], modelOverride: null, promptExtra: null },
-  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    requiredExtra: ['criticality', 'failure_scenario'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
+  { dimension: 'convention', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], requiredWhenDimension: ['claude_md_rule'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'intent', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP,
-    schemaExtra: { spec_text: 'string' }, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
-  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+    schemaExtra: { spec_text: 'string' }, requiredExtra: [], requiredWhenDimension: ['spec_text'], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
+  { dimension: 'comment_accuracy', agentType: 'code-gauntlet:conventions-and-intent', conditionalFlag: DEEP, schemaExtra: {}, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: TYPO_NAMING_SWEEP_PROMPT_EXTRA },
   { dimension: 'type_design', agentType: 'code-gauntlet:type-design-analyzer', conditionalFlag: DEEP,
-    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], modelOverride: null, promptExtra: null },
+    schemaExtra: { invalid_state_example: 'string' }, requiredExtra: [], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
   { dimension: 'simplification', agentType: 'code-gauntlet:code-simplifier', conditionalFlag: DEEP,
-    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], modelOverride: null, promptExtra: null },
+    schemaExtra: { behavior_preserved: 'string' }, requiredExtra: ['behavior_preserved'], requiredWhenDimension: [], modelOverride: null, promptExtra: null },
 ];
 
 const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
@@ -2089,6 +2111,20 @@ const MODEL_IDS = { sonnet: 'claude-sonnet-5', opus: 'claude-opus-4-8', haiku: '
 const pinsModelIds = (provider) => provider === undefined || provider === null || provider === 'firstParty';
 const toModelId = (m, provider) => (pinsModelIds(provider) ? (MODEL_IDS[m] || m) : m);
 
+// conditionalSchemaActive(policy) -> whether the nested allOf/if/then conditional-required
+// block (findingItemSchema, stages.js) may ride the conventions-and-intent dispatch (issue
+// #218). NOT an alias for pinsModelIds: a gateway (policy.gateway, stamped from
+// ANTHROPIC_BASE_URL) still gets the first-party model-ID pin — a gateway proxies the
+// Anthropic API and expects standard Claude model names — but forwards input_schema verbatim
+// to whatever backend it fronts, so the unmeasured-third-party risk the schema gate exists to
+// avoid survives a gateway hop even though the model-pin risk does not. So this predicate
+// takes its own compound signal (first-party provider AND no gateway) rather than being read
+// off the model-pin predicate alone.
+const conditionalSchemaActive = (policy) => {
+  const p = policy || {};
+  return pinsModelIds(p.provider) && !p.gateway;
+};
+
 function resolvePolicy(agentType, opts = {}) {
   if (opts.subagentModelEnv) { // sourced from args.policy.subagentModel by the pipeline dispatch sites (see args.js)
     // The override maps through the same full-ID pin: a bare alias pins the plain full ID
@@ -2112,8 +2148,9 @@ function resolvePolicy(agentType, opts = {}) {
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
 //
-// policy shape: { tier, subagentModel, provider } — tier records the resolved model_tier
-// knob (its only valid value today is "optimized"; alternate modes are roadmap #17 V3.2).
+// policy shape: { tier, subagentModel, provider, gateway } — tier records the resolved
+// model_tier knob (its only valid value today is "optimized"; alternate modes are roadmap
+// #17 V3.2).
 //   - policy.subagentModel is passed to registry.js's resolvePolicy() as opts.subagentModelEnv.
 //     This is a RENAME, not a passthrough — dispatch sites must map the field name.
 //   - policy.tier is carried through the waist but is not read by resolvePolicy today.
@@ -2123,6 +2160,12 @@ function resolvePolicy(agentType, opts = {}) {
 //     'firstParty'/absent; any other provider dispatches bare aliases, which the harness
 //     resolves through the provider's deployment mapping — first-party IDs like
 //     claude-sonnet-5 are passed through unchecked on Bedrock/Vertex/Foundry and 400.
+//   - policy.gateway (optional boolean; issue #218) is the skill's Phase 2 capture of
+//     whether ANTHROPIC_BASE_URL is set — an LLM gateway proxies the Anthropic API, so it
+//     does not change policy.provider (see POLICY_PROVIDERS below), but it DOES gate off
+//     registry.js's conditionalSchemaActive: a gateway forwards input_schema verbatim to
+//     whatever backend it fronts, which could be an unmeasured third-party surface even
+//     while the session itself reads as firstParty.
 const ARGS_VERSION = 1;
 // changedFiles/changedLines feed summarize bucketing and the agent-count guard, so they're
 // REQUIRED because they're consumed. `mode` is NOT read anywhere in workflows/src beyond a
@@ -2151,7 +2194,10 @@ const DELIVERY_TIERS = ['all', 'main_only'];
 // with no error anywhere. Fail loud at the waist instead. No 'gateway' value: an LLM
 // gateway (ANTHROPIC_BASE_URL) proxies the Anthropic API and expects standard Claude model
 // names, so gateway sessions are firstParty; non-standard gateway names go through the
-// subagentModel escape hatch.
+// subagentModel escape hatch. A gateway session is instead marked by the separate
+// policy.gateway BOOLEAN (issue #218, validated below) — it rides alongside provider rather
+// than inside this enum because it answers a different question (does input_schema reach an
+// unmeasured backend verbatim?), not which model-ID arm resolvePolicy takes.
 const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
 
 // Shared with PATH_CONTROL_RE further down (declared locally there because it sits inside
@@ -2728,6 +2774,14 @@ function validateArgs(args) {
     && args.policy.provider !== undefined && args.policy.provider !== null
     && !POLICY_PROVIDERS.includes(args.policy.provider)) {
     errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
+  }
+  // policy.gateway gates registry.js's conditionalSchemaActive (issue #218) — a non-boolean
+  // would silently coerce (e.g. the string "false" is truthy), so shape-check it the same
+  // way provider is above. Absent/null both mean "no gateway", same tolerance as provider.
+  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
+    && args.policy.gateway !== undefined && args.policy.gateway !== null
+    && typeof args.policy.gateway !== 'boolean') {
+    errors.push(`invalid policy.gateway: ${args.policy.gateway} (expected a boolean)`);
   }
   // Type-check the consumed by-value fields (absence is already a REQUIRED error above).
   if (args.changedFiles !== undefined && !Array.isArray(args.changedFiles))
@@ -3349,6 +3403,17 @@ function agentSpecs(dims = DIMENSIONS) {
   return order.map((a) => {
     const spec = byAgent.get(a);
     spec.requiredExtra = intersectRequiredExtra(spec.rows);
+    // conditionalRequired (issue #218): one { dimension, required } entry per row that
+    // declares a non-empty requiredWhenDimension, sorted by dimension so the derivation
+    // never depends on DIMENSIONS row order. Defensive `|| []` on the read — synthetic rows
+    // built for tests (registry.test.js) omit the key entirely, and this must not throw.
+    // Empty on every single-dimension spec (and on the two of conventions-and-intent's three
+    // rows that carry none) by construction, so findingItemSchema below emits nothing extra
+    // for them regardless of policy.
+    spec.conditionalRequired = spec.rows
+      .filter((r) => (r.requiredWhenDimension || []).length)
+      .map((r) => ({ dimension: r.dimension, required: [...r.requiredWhenDimension].sort() }))
+      .sort((a1, b1) => a1.dimension.localeCompare(b1.dimension));
     delete spec.rows;
     return spec;
   });
@@ -3453,13 +3518,33 @@ function allActiveDimensionsDegraded(dispatched, degraded) {
 // A conditionally-omitted field (claude_md_rule, spec_text, hidden_errors,
 // invalid_state_example) promoted here would make that omission — which the contract itself
 // tells the model to do — a self-inflicted retry storm on every dimension the agent covers.
-function findingItemSchema(schemaExtra, requiredExtra) {
+// `conditionalRequired` (issue #218) is the ONLY caller-gated argument here: findingSchema
+// below passes spec.conditionalRequired only when conditionalSchemaActive(policy) is true, so
+// this function itself stays a pure function of its inputs — every other agent's spec has an
+// empty conditionalRequired regardless of policy, so this construct never appears there at
+// all. When non-empty, this appends the measured-accepted spelling — a per-dimension
+// `allOf`/`if`/`then` nested inside the item, never a top-level oneOf/allOf/anyOf (API 400,
+// measured 2026-08-18) — and pins the `dimension` property to an ENUM of `dimensions` (the
+// spec's own row dimensions): `const` is case-sensitive and downstream consumers lowercase,
+// so an unpinned `dimension` would let a case-variant value (e.g. "Convention") silently
+// escape every `if` arm. The enum rides ONLY alongside a non-empty conditionalRequired, so a
+// spec with none (every agent but conventions-and-intent, and conventions-and-intent itself
+// on a non-first-party-direct dispatch) declares `dimension` exactly as before.
+function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, dimensions) {
   const props = {};
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : t;
   }
   const required = requiredExtra && requiredExtra.length ? [...FINDING_REQUIRED, ...requiredExtra] : FINDING_REQUIRED;
-  return { type: 'object', properties: props, required, additionalProperties: false };
+  const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
+  if (conditionalRequired && conditionalRequired.length) {
+    props.dimension = { type: 'string', enum: [...(dimensions || [])].sort() };
+    itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
+      if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
+      then: { required: dimRequired },
+    }));
+  }
+  return itemSchema;
 }
 
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
@@ -3467,13 +3552,20 @@ function findingItemSchema(schemaExtra, requiredExtra) {
 // {type, properties, required, items} — because the platform validates schemas before
 // dispatch and StructuredOutput enforces them (shorthand {id:'string'} is rejected).
 // schemaExtra is shorthand {key: typeName} (or a full JSON-Schema fragment for arrays).
-function findingSchema(spec) {
+//
+// `policy` gates the conditional-required construct (issue #218): spec.conditionalRequired is
+// threaded through only when conditionalSchemaActive(policy) is true (first-party-direct, no
+// gateway). Every other run — third-party providers, gateway sessions, or a spec that simply
+// has no conditional rows — dispatches the byte-identical flat schema it always did; contract
+// prose (agents/conventions-and-intent.md) stays the enforcement floor everywhere.
+function findingSchema(spec, policy) {
+  const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
   return {
     type: 'object',
     properties: {
       findings: {
         type: 'array',
-        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra),
+        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired, spec.dimensions),
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
@@ -3556,7 +3648,7 @@ async function discover(ctx, input) {
       label: spec.agentType,
       agentType: spec.agentType,
       model,
-      schema: findingSchema(spec),
+      schema: findingSchema(spec, policy),
     });
   });
 
@@ -3566,12 +3658,24 @@ async function discover(ctx, input) {
   const findings = [];
   const degradedDims = [];
 
+  // conditionalSchemaActive is policy-only (not per-spec), so compute it once outside the
+  // loop — whether a GIVEN spec actually carried the construct still depends on that spec's
+  // own conditionalRequired (empty for every agent but conventions-and-intent).
+  const schemaActive = conditionalSchemaActive(policy);
+
   // parallel() resolves a failed member to null IN PLACE (Phase 0 verified): the
   // results array is positionally aligned with `thunks`, so results[i] pairs with specs[i].
   results.forEach((res, i) => {
     const spec = specs[i];
     if (res === null || res === undefined) {
-      gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered`);
+      // issue #218: a dispatch failure on a spec that carried the conditional allOf/if/then
+      // construct is worth distinguishing in the gap text — the construct is the one thing
+      // about this dispatch's schema that differs from every other run, so it is the first
+      // thing an operator diagnosing a schema-retry-exhaustion failure should rule in or out.
+      const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
+        ? ' (dispatch carried the conditional per-dimension schema)'
+        : '';
+      gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
       degradedDims.push(...spec.dimensions); // terminal agent failure -> its dimensions degraded
       return;
     }
@@ -6637,8 +6741,21 @@ function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) {
 // resolution and a change to either fallback costs one edit.
 // 'firstParty' when the waist omitted provider — the omission and the explicit value
 // resolve identically in resolvePolicy, and the envelope reports the resolution.
+//
+// `gateway`/`conditionalSchema` (issue #218): a provider that would 400 on the conditional
+// per-dimension construct must be self-diagnosing from the envelope alone, the same reason
+// `provider` itself rides here — an operator staring at an all-degraded conventions-and-intent
+// dispatch should not have to re-derive conditionalSchemaActive by hand. `conditionalSchema`
+// is the SAME predicate the dispatch gate used (not re-derived by a parallel computation that
+// could drift from it), so the envelope can never claim a resolution the dispatch disagrees
+// with.
 function resolvedPolicyEnvelope(policy) {
-  return { subagentModel: policy.subagentModel || null, provider: policy.provider || 'firstParty' };
+  return {
+    subagentModel: policy.subagentModel || null,
+    provider: policy.provider || 'firstParty',
+    gateway: !!policy.gateway,
+    conditionalSchema: conditionalSchemaActive(policy),
+  };
 }
 
 // --- Full orchestration: runWith --------------------------------------------

@@ -16,7 +16,7 @@
 // bucket members without per-bucket gaps, and emits one generic gap if no partial
 // survives, the merge or single-call result is null, or any summarize dispatch throws.
 // No wall-clock, no import at runtime.
-import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED } from './registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER } from './filterFindings.js';
@@ -320,6 +320,17 @@ export function agentSpecs(dims = DIMENSIONS) {
   return order.map((a) => {
     const spec = byAgent.get(a);
     spec.requiredExtra = intersectRequiredExtra(spec.rows);
+    // conditionalRequired (issue #218): one { dimension, required } entry per row that
+    // declares a non-empty requiredWhenDimension, sorted by dimension so the derivation
+    // never depends on DIMENSIONS row order. Defensive `|| []` on the read — synthetic rows
+    // built for tests (registry.test.js) omit the key entirely, and this must not throw.
+    // Empty on every single-dimension spec (and on the two of conventions-and-intent's three
+    // rows that carry none) by construction, so findingItemSchema below emits nothing extra
+    // for them regardless of policy.
+    spec.conditionalRequired = spec.rows
+      .filter((r) => (r.requiredWhenDimension || []).length)
+      .map((r) => ({ dimension: r.dimension, required: [...r.requiredWhenDimension].sort() }))
+      .sort((a1, b1) => a1.dimension.localeCompare(b1.dimension));
     delete spec.rows;
     return spec;
   });
@@ -424,13 +435,33 @@ export function allActiveDimensionsDegraded(dispatched, degraded) {
 // A conditionally-omitted field (claude_md_rule, spec_text, hidden_errors,
 // invalid_state_example) promoted here would make that omission — which the contract itself
 // tells the model to do — a self-inflicted retry storm on every dimension the agent covers.
-function findingItemSchema(schemaExtra, requiredExtra) {
+// `conditionalRequired` (issue #218) is the ONLY caller-gated argument here: findingSchema
+// below passes spec.conditionalRequired only when conditionalSchemaActive(policy) is true, so
+// this function itself stays a pure function of its inputs — every other agent's spec has an
+// empty conditionalRequired regardless of policy, so this construct never appears there at
+// all. When non-empty, this appends the measured-accepted spelling — a per-dimension
+// `allOf`/`if`/`then` nested inside the item, never a top-level oneOf/allOf/anyOf (API 400,
+// measured 2026-08-18) — and pins the `dimension` property to an ENUM of `dimensions` (the
+// spec's own row dimensions): `const` is case-sensitive and downstream consumers lowercase,
+// so an unpinned `dimension` would let a case-variant value (e.g. "Convention") silently
+// escape every `if` arm. The enum rides ONLY alongside a non-empty conditionalRequired, so a
+// spec with none (every agent but conventions-and-intent, and conventions-and-intent itself
+// on a non-first-party-direct dispatch) declares `dimension` exactly as before.
+function findingItemSchema(schemaExtra, requiredExtra, conditionalRequired, dimensions) {
   const props = {};
   for (const [k, t] of Object.entries({ ...FINDING_PROP_TYPES, ...(schemaExtra || {}) })) {
     props[k] = typeof t === 'string' ? { type: t } : t;
   }
   const required = requiredExtra && requiredExtra.length ? [...FINDING_REQUIRED, ...requiredExtra] : FINDING_REQUIRED;
-  return { type: 'object', properties: props, required, additionalProperties: false };
+  const itemSchema = { type: 'object', properties: props, required, additionalProperties: false };
+  if (conditionalRequired && conditionalRequired.length) {
+    props.dimension = { type: 'string', enum: [...(dimensions || [])].sort() };
+    itemSchema.allOf = conditionalRequired.map(({ dimension, required: dimRequired }) => ({
+      if: { properties: { dimension: { const: dimension } }, required: ['dimension'] },
+      then: { required: dimRequired },
+    }));
+  }
+  return itemSchema;
 }
 
 // Canonical finding schema (per-dimension schemaExtra unioned on top), wrapped in the
@@ -438,13 +469,20 @@ function findingItemSchema(schemaExtra, requiredExtra) {
 // {type, properties, required, items} — because the platform validates schemas before
 // dispatch and StructuredOutput enforces them (shorthand {id:'string'} is rejected).
 // schemaExtra is shorthand {key: typeName} (or a full JSON-Schema fragment for arrays).
-function findingSchema(spec) {
+//
+// `policy` gates the conditional-required construct (issue #218): spec.conditionalRequired is
+// threaded through only when conditionalSchemaActive(policy) is true (first-party-direct, no
+// gateway). Every other run — third-party providers, gateway sessions, or a spec that simply
+// has no conditional rows — dispatches the byte-identical flat schema it always did; contract
+// prose (agents/conventions-and-intent.md) stays the enforcement floor everywhere.
+function findingSchema(spec, policy) {
+  const conditionalRequired = conditionalSchemaActive(policy) ? (spec.conditionalRequired || []) : [];
   return {
     type: 'object',
     properties: {
       findings: {
         type: 'array',
-        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra),
+        items: findingItemSchema(spec.schemaExtra, spec.requiredExtra, conditionalRequired, spec.dimensions),
       },
       complete: { type: 'boolean' },
       total_seen: { type: 'number' },
@@ -527,7 +565,7 @@ export async function discover(ctx, input) {
       label: spec.agentType,
       agentType: spec.agentType,
       model,
-      schema: findingSchema(spec),
+      schema: findingSchema(spec, policy),
     });
   });
 
@@ -537,12 +575,24 @@ export async function discover(ctx, input) {
   const findings = [];
   const degradedDims = [];
 
+  // conditionalSchemaActive is policy-only (not per-spec), so compute it once outside the
+  // loop — whether a GIVEN spec actually carried the construct still depends on that spec's
+  // own conditionalRequired (empty for every agent but conventions-and-intent).
+  const schemaActive = conditionalSchemaActive(policy);
+
   // parallel() resolves a failed member to null IN PLACE (Phase 0 verified): the
   // results array is positionally aligned with `thunks`, so results[i] pairs with specs[i].
   results.forEach((res, i) => {
     const spec = specs[i];
     if (res === null || res === undefined) {
-      gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered`);
+      // issue #218: a dispatch failure on a spec that carried the conditional allOf/if/then
+      // construct is worth distinguishing in the gap text — the construct is the one thing
+      // about this dispatch's schema that differs from every other run, so it is the first
+      // thing an operator diagnosing a schema-retry-exhaustion failure should rule in or out.
+      const conditionalNote = schemaActive && (spec.conditionalRequired || []).length
+        ? ' (dispatch carried the conditional per-dimension schema)'
+        : '';
+      gaps.push(`${spec.agentType}: agent returned null (dispatch failed) — dimensions ${spec.dimensions.join('/')} not covered${conditionalNote}`);
       degradedDims.push(...spec.dimensions); // terminal agent failure -> its dimensions degraded
       return;
     }
@@ -3608,8 +3658,21 @@ export function slimPersistedCheckpoints(phaseOutputs, completed, phaseReached) 
 // resolution and a change to either fallback costs one edit.
 // 'firstParty' when the waist omitted provider — the omission and the explicit value
 // resolve identically in resolvePolicy, and the envelope reports the resolution.
+//
+// `gateway`/`conditionalSchema` (issue #218): a provider that would 400 on the conditional
+// per-dimension construct must be self-diagnosing from the envelope alone, the same reason
+// `provider` itself rides here — an operator staring at an all-degraded conventions-and-intent
+// dispatch should not have to re-derive conditionalSchemaActive by hand. `conditionalSchema`
+// is the SAME predicate the dispatch gate used (not re-derived by a parallel computation that
+// could drift from it), so the envelope can never claim a resolution the dispatch disagrees
+// with.
 function resolvedPolicyEnvelope(policy) {
-  return { subagentModel: policy.subagentModel || null, provider: policy.provider || 'firstParty' };
+  return {
+    subagentModel: policy.subagentModel || null,
+    provider: policy.provider || 'firstParty',
+    gateway: !!policy.gateway,
+    conditionalSchema: conditionalSchemaActive(policy),
+  };
 }
 
 // --- Full orchestration: runWith --------------------------------------------
