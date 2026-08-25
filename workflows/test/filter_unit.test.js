@@ -349,6 +349,22 @@ test('#211/M5: U+FEFF-joined 11-word description still counted as 11 words (JS s
   assert.equal(kept.length, 1);
 });
 
+// Mutation-testing addition: the FEFF vector above does NOT exercise this
+// mechanism on the JS side, since JS's native (pre-#211) \s already included
+// U+FEFF -- reverting countWords to plain split(/\s+/) still passes it. NEL
+// (U+0085) is the vector that actually kills that mutation: JS's native \s
+// never included it (only Python's did), so only the union-class splitter
+// counts it correctly. See tests/fixtures/parity/filter_findings/injection/
+// word_count_nel_joined_high_confidence for the cross-twin form.
+test('#211/M5: U+0085 NEL-joined 11-word description counted as 11 words (JS native \\s never included NEL)', () => {
+  const nel = String.fromCharCode(0x85); // NEL
+  const words = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet', 'kilo'];
+  const findings = [cleanFinding({ confidence: 90, description: words.join(nel) })];
+  const { kept, eliminated } = applyInjectionFilter(findings);
+  assert.equal(eliminated.length, 0);
+  assert.equal(kept.length, 1);
+});
+
 test('#211: apply_exclusions unicode case folding is unchanged (café matches CAFÉ)', () => {
   const findings = [cleanFinding({ title: 'CAFÉ kiosk returns stale data' })];
   const { kept, eliminated } = applyExclusions(findings, ['café']);
