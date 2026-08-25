@@ -827,32 +827,50 @@ class TestContractSchemaLockstep(unittest.TestCase):
         # REQUIRED marker naming the owning dimension (proving the model is told which
         # dimension actually requires it).
         #
-        # Acknowledged weaker than the requiredExtra no-OMIT guard: this is substring-based
-        # over the whole file text, not dimension-scoped — it cannot catch a REQUIRED marker
-        # attributed to the wrong dimension. A dimension-aware version would mean parsing
-        # prose structure, which the module docstring's "never a prose-frequency check"
-        # warning is about grep-for-a-word guards, not this — but the substring form is what
-        # ships, and the acknowledgment is intentional, not an oversight.
+        # OMIT presence is checked PER FIELD, across every contract block, not per block:
+        # a field's OMIT instruction lives in the template block (the worked example shows a
+        # real value with no OMIT text, so field_carries_omit_instruction is correctly False
+        # there). Checking block-by-block and `continue`-ing past every False result — the
+        # original shape of this guard — made the whole test vacuously pass the moment NO
+        # block carried OMIT: nothing was ever asserted against, since every iteration just
+        # skipped to the next. Track whether ANY block carried it instead, and record an
+        # offender when none did.
+        #
+        # Acknowledged weaker than the requiredExtra no-OMIT guard in ONE remaining respect:
+        # the REQUIRED-marker check is substring-based over the whole file text, not
+        # dimension-scoped, so it cannot catch a REQUIRED marker attributed to the wrong
+        # dimension. A dimension-aware version would mean parsing prose structure, which the
+        # module docstring's "never a prose-frequency check" warning is about grep-for-a-word
+        # guards, not this — but the substring form is what ships, and the acknowledgment is
+        # intentional, not an oversight.
         offenders = []
         for row in registry()["dimensions"]:
             name = agent_name(row["agentType"])
             text = (REPO / "agents" / f"{name}.md").read_text()
+            blocks = raw_contract_blocks(name)
             for field in row.get("requiredWhenDimension", []):
-                for raw in raw_contract_blocks(name):
-                    if not field_carries_omit_instruction(
+                has_omit = any(
+                    field_carries_omit_instruction(
                         raw, field, source=f"agents/{name}.md"
-                    ):
-                        continue
-                    marker = f"REQUIRED for {row['dimension']}"
-                    if marker not in text:
-                        offenders.append(
-                            f"{name}.{field} ({row['dimension']}): missing {marker!r}"
-                        )
+                    )
+                    for raw in blocks
+                )
+                if not has_omit:
+                    offenders.append(
+                        f"{name}.{field} ({row['dimension']}): no contract block carries "
+                        "an OMIT instruction for this field"
+                    )
+                    continue
+                marker = f"REQUIRED for {row['dimension']}"
+                if marker not in text:
+                    offenders.append(
+                        f"{name}.{field} ({row['dimension']}): missing {marker!r}"
+                    )
         self.assertEqual(
             offenders,
             [],
-            "these requiredWhenDimension fields carry an OMIT instruction (correctly, since "
-            "they are conditional) but no REQUIRED marker naming their owning dimension: "
+            "these requiredWhenDimension fields are missing an OMIT instruction (in every "
+            "contract block) or a REQUIRED marker naming their owning dimension: "
             f"{offenders}",
         )
 
