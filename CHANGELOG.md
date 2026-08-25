@@ -2,6 +2,61 @@
 
 <!-- version list -->
 
+## v3.20.0 (2026-08-25)
+
+### Bug Fixes
+
+- **review**: Apply the two gauntlet LOWs — comment row-count and isPlainObject reuse
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+- **schema**: Apply delta-round-3 corrections to the #218 conditional-required construct
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+- **tests**: Narrow re.Match for pyright in the delivery-guide bash-example test
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+- **tests**: The OMIT half of the requiredWhenDimension contract guard was never asserted
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+### Documentation
+
+- **agents**: Document requiredWhenDimension and the conditional dispatch phrase
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+- **machine-parsed-strings**: Correct the stale exclusion-hack note on the dispatch-required row
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+- **policy**: Document policy.gateway in the waist-shape docs orchestrators actually copy
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+### Features
+
+- **schema**: Dimension-conditional dispatch requirement gated to first-party-direct runs (#218)
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+- **schema**: Gate a conditional per-dimension required construct behind conditionalSchemaActive
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+### Testing
+
+- **dimensions**: Lockstep pytest coverage for requiredWhenDimension
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+- **workflows**: Cover the conditional per-dimension schema gate
+  ([#237](https://github.com/liatrio-labs/claude-code-gauntlet/pull/237),
+  [`5703094`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/57030949e6367fb43f787d35afbc31544ff1def7))
+
+
 ## v3.19.0 (2026-08-25)
 
 ### Bug Fixes
