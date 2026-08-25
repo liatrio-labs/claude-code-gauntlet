@@ -196,7 +196,9 @@ Each finding is a JSON object with this shape:
 {"id": "cross-file-<n>", "dimension": "cross_file_impact", "severity": "<critical|high|medium|low>", "confidence": <0-100>, "file": "<path of the changed file causing the impact>", "line_start": <number>, "line_end": <number>, "title": "<one-line summary>", "description": "<single-paragraph prose explaining what breaks and why — no code blocks, no multi-line snippets; affected files go in affected_consumers and cross_file_refs>", "evidence": "<specific code or context that supports this finding>", "suggestion": "<concrete fix — update the caller, implementor, or dependent>", "suggested_fix_code": "<exact replacement source for lines line_start..line_end of file — complete lines, byte-exact including indentation, no ellipsis or placeholders; emitting this REQUIRES line_end (set line_end == line_start for a single-line fix): the block replaces exactly those lines. OMIT this field entirely unless the replacement is a complete, correct, drop-in substitute for exactly those lines — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "affected_consumers": ["<file paths of callers, implementors, or consumers that break>"], "claude_md_rule": "<the documented project rule this finding violates, quoted with its source file (CLAUDE.md/REVIEW.md/AGENTS.md). OMIT this field entirely when no documented rule applies — never emit null (the dispatch schema types it string, and a null burns structured-output retries)>", "cross_file_refs": ["<other files involved in this finding>"]}
 ```
 
+<!-- generated-from-registry: do not edit; scripts/generate_contract_requirements.py -->
 `affected_consumers` is required by the dispatch schema — a finding without it is rejected at the StructuredOutput boundary and retried, so it must always be present.
+<!-- /generated-from-registry -->
 
 **Example:**
 
