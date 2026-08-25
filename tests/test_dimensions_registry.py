@@ -956,45 +956,55 @@ class TestContractSchemaLockstep(unittest.TestCase):
             "whitespace-separated array — the backtracking-prone regex form is back",
         )
 
-    def test_dispatch_required_contract_sentences_match_requiredExtra_exactly(self):
-        # F5, issue #66: bidirectional lockstep between the registry's requiredExtra and the
-        # contract prose sentences claiming a field is dispatch-required.
-        #   forward — every requiredExtra field's owning contract claims it (a promotion in
-        #             registry.js with no matching sentence is undocumented to the model).
-        #   reverse — no OTHER per-dimension field on that row is claimed dispatch-required
-        #             (a stale or bogus claim would tell the model something the schema does
-        #             not enforce).
+    def test_generated_contract_requirements_are_not_stale(self):
+        # issue #238: the requiredExtra/requiredWhenDimension contract sentences (previously
+        # hand-written prose, kept honest by two lockstep equality tests here) are now
+        # GENERATED from the registry by scripts/generate_contract_requirements.py, the same
+        # protocol as scripts/sync_agent_rules.py for the CLAUDE.md twins. Delegating to the
+        # generator's own --check means this test cannot itself drift from what the generator
+        # considers current.
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "scripts" / "generate_contract_requirements.py"),
+                "--check",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"generated contract requirement sentences are stale: {result.stderr.strip()}",
+        )
+
+    def test_contract_sentences_match_registry_in_both_directions(self):
+        # Adversarial-review regression on issue #238's freshness test: that test only
+        # diffs the files `generate_contract_requirements.py` itself targets, so a
+        # hand-typed sentence added to a file the generator DOES NOT touch — e.g. an
+        # over-claim like "`hidden_errors` is required by the dispatch schema" pasted into
+        # agents/bug-detector.md, whose registry row has requiredExtra: [] — passes
+        # `--check` and the whole suite silently. This is the equality check the original
+        # #66/#218 lockstep tests ran (deleted when the freshness test was added); restored
+        # here as ONE bidirectional test across every agent so it cannot drift back into
+        # a forward-only or file-scoped guard.
+        #   requiredExtra sense: for every row, contract claims == row's requiredExtra.
+        #   requiredWhenDimension sense: for every agentType, contract claims == the UNION
+        #     of that agentType's rows' requiredWhenDimension (the sentence lives once in
+        #     the shared agent .md file, not per-dimension).
         for row in registry()["dimensions"]:
             name = agent_name(row["agentType"])
             claimed = dispatch_required_claims(name)
             required = set(row["requiredExtra"])
-            extras = set(row["extras"])
-
-            missing = required - claimed
             self.assertEqual(
-                missing,
-                set(),
-                f"agents/{name}.md never says {sorted(missing)} is "
-                f"{_DISPATCH_REQUIRED_PHRASE!r} though registry.js's requiredExtra promotes "
-                "it — add the canonical contract sentence",
+                claimed & set(row["extras"]),
+                required,
+                f"agents/{name}.md's {_DISPATCH_REQUIRED_PHRASE!r} claims for this row's "
+                f"own extras are {sorted(claimed & set(row['extras']))} but registry.js's "
+                f"requiredExtra is {sorted(required)} — add, remove, or correct the "
+                "contract sentence",
             )
 
-            over_claimed = (claimed & extras) - required
-            self.assertEqual(
-                over_claimed,
-                set(),
-                f"agents/{name}.md claims {sorted(over_claimed)} is "
-                f"{_DISPATCH_REQUIRED_PHRASE!r} but registry.js's requiredExtra does not "
-                "promote it — stale contract prose",
-            )
-
-    def test_dimension_conditional_contract_sentences_match_requiredWhenDimension(self):
-        # issue #218, [v3] red-team finding 5: the sibling lockstep for the
-        # dimension-conditional phrase, grouped by AGENT rather than by row — the prose
-        # sentence lives once in the shared agent .md file, not per-dimension, so what it
-        # claims is compared against the UNION of that agentType's rows'
-        # requiredWhenDimension, exactly as the design documents ("fields claimed under it
-        # must equal the union of the agent's rows' requiredWhenDimension").
         by_agent = {}
         for row in registry()["dimensions"]:
             by_agent.setdefault(row["agentType"], set()).update(
