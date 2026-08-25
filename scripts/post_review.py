@@ -1208,7 +1208,10 @@ def _gated_finding(
         # loudly at the first downgrade, not silently record garbage in the
         # stable warning line (whose readers rely on the vocabulary being
         # closed).
-        raise ValueError(f"_suggested_fix_gate returned an unknown reason: {reason!r}")
+        raise ValueError(
+            f"unknown downgrade reason: {reason!r} (from the gate, a "
+            f"mismatch_reason rename, or a caller's demote_reason)"
+        )
     _FIX_COUNTS["downgraded"] += 1
     _FIX_REASON_COUNTS[reason] = _FIX_REASON_COUNTS.get(reason, 0) + 1
     warn_skip(

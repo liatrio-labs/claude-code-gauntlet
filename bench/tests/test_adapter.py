@@ -1357,8 +1357,8 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             real["skipped"],
             [
                 "Skipping finding 'Off-diff finding' at foo.py:99 — line not "
-                "found in diff. Valid lines for this file: "
-                "[1, 2, 3, 4, 5, 6, 7]",
+                + "found in diff. Valid lines for this file: "
+                + "[1, 2, 3, 4, 5, 6, 7]",
                 "suggested-fix downgraded: foo.py:2 (overlaps_kept_fence)",
             ],
         )
