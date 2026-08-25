@@ -323,16 +323,28 @@ class TestSliceInputProofParity(unittest.TestCase):
 
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
-        before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}
-        subprocess.run(
-            [sys.executable, str(REPO / "workflows/test/tools/record_parity.py")],
-            check=True,
+        # --check records into a TEMP tree and diffs against the committed
+        # goldens -- it never writes into tests/fixtures/parity, so a run of
+        # this test (mutated implementation or not) cannot corrupt the working
+        # tree the way in-place recording used to (issue #211 review F7: the
+        # old form also silently minted-but-never-compared the golden for any
+        # BRAND NEW case, since its snapshot loop only knew about
+        # expected.json paths that existed before the subprocess ran).
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "workflows/test/tools/record_parity.py"),
+                "--check",
+            ],
             cwd=REPO,
+            capture_output=True,
+            text=True,
         )
-        for p, b in before.items():
-            self.assertEqual(
-                p.read_bytes(), b, f"stale golden: {p} — rerun record_parity.py"
-            )
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"stale/missing golden(s) -- rerun record_parity.py:\n{result.stderr}",
+        )
 
 
 if __name__ == "__main__":

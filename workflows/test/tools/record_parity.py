@@ -243,17 +243,23 @@ RECORDERS = {
 }
 
 
-def record(script, case_dir):
+def _compute(script, case_dir):
     inp = json.loads((case_dir / "input.json").read_text())
-    out = RECORDERS[script](inp)
-    (case_dir / "expected.json").write_text(
-        json.dumps(out, indent=2, sort_keys=True) + "\n"
-    )
+    return RECORDERS[script](inp)
 
 
-def main(argv):
-    only_script = argv[1] if len(argv) > 1 else None
-    only_case = argv[2] if len(argv) > 2 else None
+def _serialize(out):
+    return json.dumps(out, indent=2, sort_keys=True) + "\n"
+
+
+def record(script, case_dir):
+    (case_dir / "expected.json").write_text(_serialize(_compute(script, case_dir)))
+
+
+def _iter_cases(only_script, only_case):
+    """Yield (script, case_dir, case_label) for every input.json under FIXTURES,
+    scoped by the optional script/case filters. Shared by in-place recording and
+    --check so the two modes see exactly the same case set."""
     for script in RECORDERS:
         if only_script and script != only_script:
             continue
@@ -266,8 +272,68 @@ def main(argv):
             case_label = str(case_dir.relative_to(script_dir))
             if only_case and only_case not in (case_label, case_dir.name):
                 continue
-            record(script, case_dir)
-            print(f"recorded {script}/{case_label}")
+            yield script, case_dir, case_label
+
+
+def check(only_script=None, only_case=None):
+    """Record every in-scope case into a TEMP tree (never touching the working
+    tree) and diff the result against the committed goldens.
+
+    Returns a list of human-readable mismatch lines (empty = fresh). Covers
+    both directions -- a case whose committed expected.json disagrees with a
+    fresh recording, AND a case with input.json but no committed expected.json
+    at all (a brand-new fixture that was never authored/recorded; #214's
+    TestGoldenFreshness could not see this direction at all, since it only
+    ever compared bytes for expected.json paths that already existed on disk
+    -- issue #211 review F7).
+    """
+    import tempfile
+
+    mismatches = []
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        for script, case_dir, case_label in _iter_cases(only_script, only_case):
+            rel = case_dir.relative_to(FIXTURES)
+            fresh_bytes = _serialize(_compute(script, case_dir))
+            fresh_path = tmp_root / rel / "expected.json"
+            fresh_path.parent.mkdir(parents=True, exist_ok=True)
+            fresh_path.write_text(fresh_bytes)
+
+            committed_path = case_dir / "expected.json"
+            if not committed_path.exists():
+                mismatches.append(
+                    f"MISSING committed golden: {rel}/expected.json "
+                    "-- run record_parity.py to author it"
+                )
+                continue
+            committed_bytes = committed_path.read_text()
+            if committed_bytes != fresh_bytes:
+                mismatches.append(
+                    f"STALE golden: {rel}/expected.json -- rerun record_parity.py"
+                )
+    return mismatches
+
+
+def main(argv):
+    args = argv[1:]
+    check_mode = "--check" in args
+    positional = [a for a in args if a != "--check"]
+    only_script = positional[0] if len(positional) > 0 else None
+    only_case = positional[1] if len(positional) > 1 else None
+
+    if check_mode:
+        mismatches = check(only_script, only_case)
+        if mismatches:
+            for line in mismatches:
+                print(line, file=sys.stderr)
+            print(f"{len(mismatches)} stale/missing golden(s)", file=sys.stderr)
+            return 1
+        print("all goldens fresh")
+        return 0
+
+    for script, case_dir, case_label in _iter_cases(only_script, only_case):
+        record(script, case_dir)
+        print(f"recorded {script}/{case_label}")
     return 0
 
 
