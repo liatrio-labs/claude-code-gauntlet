@@ -1447,9 +1447,12 @@ def _overlap_losers(records):
     ``B=[5,6]``, ``C=[8,20]`` in that order, only ``A`` survives (``B`` and
     ``C`` both collide with it) even though keeping ``B`` and ``C`` instead
     would keep two fences rather than one. Priority (delivery order) beats
-    count, deliberately — the first record is the higher-priority finding by
-    construction (delivery order IS the pipeline's rank order), and demoting
-    IT to keep more lower-priority fences would be the wrong trade.
+    count, deliberately — record order is the poster's GROUP order (each
+    group positioned at its first member's array index, per
+    ``consolidate_delivery``), so a group's fence inherits its best-ranked
+    member's priority, not necessarily its primary's own rank, and demoting
+    the first group to keep more lower-priority fences would still be the
+    wrong trade.
     """
     losers = set()
     kept_by_path = {}
@@ -2378,10 +2381,16 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
         candidate in the pre-pass above (the pre-pass only ever sees a group's
         primary), so it QUERIES `kept_intervals` read-only — never claims an
         interval of its own — and demotes when its stated closed interval
-        intersects an already-KEPT one on the same path. A corroborator that
-        collides only with another reactive corroborator is a named residual
-        (#223 R6): this call site cannot see a sibling it has not been called
-        for yet.
+        intersects an already-KEPT one on the same path. Two named residuals
+        (#223 R6): a corroborator that collides only with another reactive
+        corroborator (this call site cannot see a sibling it has not been
+        called for yet), and a corroborator that collides with a WINNING
+        primary whose own discussion is lost late (malformed position, or a
+        rejected POST) — that primary still occupies its interval in
+        `kept_intervals`, so the corroborator can lose its affordance to a
+        fence that never actually landed. Both are accepted: the map is built
+        once by the pure pre-pass and deliberately never depends on live
+        delivery outcomes.
         """
         line = c.get("line")
         title = c.get("title", "?")

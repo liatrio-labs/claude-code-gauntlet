@@ -62,8 +62,9 @@ apply range overlaps one it has already kept in that file: the earlier fence win
 fence claims no range of its own. Overlap uses GitLab's closed-interval semantic: two single-line
 fences anchored at the identical line collide; two fences that merely touch (`[n, m]` next to
 `[m + 1, k]`) do not. A demoted finding still ships with its prose `suggestion` — only the
-one-click affordance is withheld — and which fences are withheld is a pure function of the
-findings and the diff, so a rerun reaches the same verdict regardless of what has already posted.
+one-click affordance is withheld — and which of a run's ranked fences are withheld is a pure
+function of the findings and the diff, so a rerun reaches the same verdict regardless of what has
+already posted.
 This rule is scoped to overlapping ranges: GitHub's batch apply can also fail on multi-line
 suggestions that are merely adjacent rather than overlapping, and a fence is never withheld for
 that case.

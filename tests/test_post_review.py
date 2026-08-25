@@ -6803,10 +6803,12 @@ class TestGitHubSuggestedFixGate(_FixGateRunBase):
         only by luck: here the second finding states 2..940 and the comment it
         produces applies at line 2 alone.
 
-        The overlap pre-pass (#223) also calls the gate once per candidate ahead
-        of the render loop, so `seen` carries those calls too — this only pins
-        the LAST call per finding, which is the render site's own, to keep this
-        test's original point (the render site, not the pre-pass) intact.
+        The overlap pre-pass (#223) calls the gate once per candidate, in group
+        order, ahead of the render loop; the render loop then gates both
+        findings again, in the same order. `seen` asserts the FULL sequence —
+        pre-pass calls followed by render-site calls — so a render loop that
+        swapped in a bare `primary` and skipped its own gate call still goes
+        red, even though the pre-pass calls alone would otherwise mask it.
         """
         seen = []
         real = post_review._suggested_fix_gate
@@ -7431,15 +7433,25 @@ class TestGitHubOverlapDemotion(_FixGateRunBase):
         self.assertNotIn("overlaps_kept_fence", "\n".join(run.payload["skipped"]))
 
     def test_a_lineless_candidate_is_skipped_by_the_prepass(self):
-        """The pre-pass has its own copy of the "no line" branch (it cannot
-        share the render loop's, which runs later) — a fenced finding with no
-        line at all must not crash it or claim an interval."""
+        """The pre-pass runs two early-exits before it can compute an
+        apply_range: ``if line is None: continue`` and, right after,
+        ``if not is_line_valid(...): continue``. For a lineless candidate,
+        ``is_line_valid`` alone already excludes it — ``(filepath, None)`` is
+        never a key in ``valid_lines`` — so deleting the ``line is None``
+        check BY ITSELF leaves this test green; it is currently defensive,
+        not independently load-bearing. What the pair jointly prevents is
+        real: ``end_line`` below is an INTEGER specifically so that removing
+        BOTH early-exits reaches ``_github_apply_range``, whose
+        ``end_line >= line`` comparison (``int >= None``) raises
+        ``TypeError`` for a lineless candidate rather than being politely
+        skipped (verified by mutation, not by reading — see the PR record)."""
         a = {
             "file": "foo.py",
             "severity": "low",
             "title": "No line",
             "body": "No line number at all.",
             "suggested_fix_code": "x",
+            "end_line": 5,
         }
         b = self._finding(
             title="Fenced",
@@ -7455,9 +7467,15 @@ class TestGitHubOverlapDemotion(_FixGateRunBase):
         self.assertIn(_FENCE, comments[0]["body"])
 
     def test_an_off_diff_candidate_is_skipped_by_the_prepass(self):
-        """Same as above for the pre-pass's own line-validity check — a
-        fenced finding whose OWN line is off-diff entirely (not merely its
-        end_line) must not claim an interval either."""
+        """The pre-pass's own ``is_line_valid`` guard is defensive, not
+        load-bearing: an off-diff apply_range already fails `_fence_verdict`'s
+        own gate (``range_not_in_diff``), so a finding whose OWN line is
+        off-diff is never a CANDIDATE regardless of this guard — deleting it
+        alone leaves this test green. What actually keeps the finding out of
+        ``comments`` is post_github's separate per-primary line check in the
+        render loop itself, which runs whether or not the pre-pass's guard
+        exists. This pins the outcome (no interval claimed, not posted), not
+        that this particular guard is what produces it."""
         a = self._finding(
             title="Off diff", line=999, end_line=999, suggested_fix_code="x"
         )
