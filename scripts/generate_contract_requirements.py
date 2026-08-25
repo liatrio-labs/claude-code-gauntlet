@@ -171,7 +171,8 @@ _EXISTING_BLOCK = re.compile(
 # runs on a file that has never been generated. Matched loosely (DOTALL, non-greedy) so a
 # reword before this script existed still gets swallowed into the first generated block.
 _SINGLE_SENTENCE_ANCHOR = re.compile(
-    r"`[a-z_]+`(?: and `[a-z_]+`)? (?:is|are) required by the dispatch schema[^\n]*"
+    r"`[a-z_]+`(?:, `[a-z_]+`)*(?:,? and `[a-z_]+`)? (?:is|are) required by the dispatch "
+    r"schema[^\n]*"
 )
 _CONDITIONAL_ANCHOR = re.compile(
     r"For convention findings:.*?\n\nFor intent findings:.*?(?=\n\n)", re.DOTALL

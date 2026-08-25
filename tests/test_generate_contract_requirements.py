@@ -111,6 +111,24 @@ class TestSplice(unittest.TestCase):
         self.assertNotIn("v1", second)
         self.assertEqual(second.count(gen.MARKER_OPEN), 1)
 
+    def test_anchor_matches_the_generators_own_output_for_every_field_count(self):
+        # A stripped marker block must be recoverable from the sentence the generator
+        # itself wrote — including the Oxford-comma join for three or more fields. Full
+        # equality, not marker presence: an anchor that only matches from the final
+        # backticked field would still splice, leaving the leading field list as debris.
+        for fields in (["a"], ["a", "b"], ["a", "b", "c"], ["a", "b", "c", "d"]):
+            sentence = gen.dispatch_required_sentence(fields)
+            out = gen.splice(
+                f"before\n{sentence}\nafter\n",
+                gen._SINGLE_SENTENCE_ANCHOR,
+                sentence,
+            )
+            self.assertEqual(
+                out,
+                f"before\n{gen.wrap_block(sentence)}\nafter\n",
+                f"anchor mis-spanned the {len(fields)}-field sentence",
+            )
+
     def test_no_anchor_and_no_marker_raises(self):
         with self.assertRaises(SystemExit):
             gen.splice(

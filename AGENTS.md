@@ -75,7 +75,7 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
 
 Floors: Python 92.9 / 87.5 (scripts raised 2026-08-19 from the #219 PR CI measurement:
 93.37, then 2026-08-24 to 92.6 (#231: 93.54), to 92.7 (#236: 93.67), and 2026-08-25 to 92.9
-(#238: 93.91); bench raised 2026-08-19 from the #219 run:
+(#238: 93.84); bench raised 2026-08-19 from the #219 run:
 88.29); JS 98 / 85.7 / 97.4 (lines pinned
 2026-08-03 from first green CI: 98.61; branches/functions raised 2026-08-18
 from the #62 PR measurement: 86.7/98.4). Policy: a floor sits no more than 1.0 pp below the CI
