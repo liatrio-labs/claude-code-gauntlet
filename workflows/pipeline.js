@@ -348,8 +348,7 @@ const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u202
 
 // Port of _count_words: union-whitespace-split word count, 0 for blank/whitespace-only text.
 function countWords(text) {
-  const t = (text || '').replace(WORD_SPLIT_RE, ' ').trim();
-  return t ? t.split(WORD_SPLIT_RE).length : 0;
+  return (text || '').split(WORD_SPLIT_RE).filter(Boolean).length;
 }
 
 // Port of _first_match: the pattern SOURCE of the first regex that matches, or null.

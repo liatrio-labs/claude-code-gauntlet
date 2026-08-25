@@ -530,8 +530,7 @@ _WORD_SPLIT_RE = re.compile(
 
 def _count_words(text):
     """Return the number of words in text (split on the union whitespace class)."""
-    stripped = _WORD_SPLIT_RE.sub(" ", text).strip()
-    return len(_WORD_SPLIT_RE.split(stripped)) if stripped else 0
+    return sum(1 for w in _WORD_SPLIT_RE.split(text or "") if w)
 
 
 def apply_injection_filter(findings):

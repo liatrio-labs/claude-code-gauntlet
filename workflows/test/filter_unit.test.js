@@ -10,6 +10,7 @@ import {
   applyInjectionFilter,
   applyExclusions,
   WORD_SPLIT_RE,
+  countWords,
 } from '../src/filterFindings.js';
 
 // suggested_fix_code field-strip matrix (#63/D8) -- mirrors the Python
@@ -376,7 +377,13 @@ test('#211: WORD_SPLIT_RE matches EXACTLY the intended 30-codepoint union class'
   // Mirrors tests/test_filter_findings.py::TestUnionWhitespaceClassMembership.
   // Every union member is < U+10000 (all BMP), so a bounded sweep over the
   // BMP plus a small astral sample is exact -- see that test's docstring for
-  // the full justification.
+  // the full justification. The astral sample actually runs past U+FFFF
+  // (0xfefe..0x10002, matching the Python twin's range(0xFEFE, 0x10003)
+  // exactly) using String.fromCodePoint so it constructs real astral
+  // characters instead of BMP surrogate halves -- #211 round-1 review r2-F8:
+  // a String.fromCharCode-based sweep never leaves the BMP no matter how far
+  // the loop bound is raised, so it silently proved nothing about surrogate
+  // handling despite the comment's claim.
   const expected = new Set([
     0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20,
     0x1c, 0x1d, 0x1e, 0x1f,
@@ -388,15 +395,77 @@ test('#211: WORD_SPLIT_RE matches EXACTLY the intended 30-codepoint union class'
 
   const matched = new Set();
   const fullMatch = (cp) => {
-    const ch = String.fromCharCode(cp);
+    const ch = String.fromCodePoint(cp);
     const m = WORD_SPLIT_RE.exec(ch);
     return m !== null && m[0] === ch;
   };
   for (let cp = 0x0; cp <= 0x3100; cp++) {
     if (fullMatch(cp)) matched.add(cp);
   }
-  for (let cp = 0xfefe; cp <= 0xffff; cp++) {
+  for (let cp = 0xfefe; cp <= 0x10002; cp++) {
     if (fullMatch(cp)) matched.add(cp);
   }
   assert.deepEqual(matched, expected);
+});
+
+// Shared cross-twin behavioral table (#211 round-1 adjudication item 1(b)).
+// The SAME (input, expected count) pairs are hardcoded independently here
+// and in tests/test_filter_findings.py's WORD_SPLIT_BEHAVIOR_TABLE, so a
+// divergence between the two engines' splitters shows up as a failure on
+// exactly one side rather than as a silently-agreeing wrong answer. This is
+// what catches a countWords regression that only manifests on a TRAILING or
+// leading run of a union-class separator the host language's own
+// trim()/strip() does not already strip (U+0085, U+001C-U+001F) -- see F1
+// in review-r1.md/review-r2.md.
+const NEL = String.fromCharCode(0x85);
+const FS = String.fromCharCode(0x1c);
+const GS = String.fromCharCode(0x1d);
+const RS = String.fromCharCode(0x1e);
+const US = String.fromCharCode(0x1f);
+const NBSP = String.fromCharCode(0xa0);
+const FEFF = String.fromCharCode(0xfeff);
+
+const WORD_SPLIT_BEHAVIOR_TABLE = [
+  // -- plain ASCII (must be unchanged by #211) --
+  ['', 0],
+  ['   ', 0],
+  ['\t\n ', 0],
+  ['alpha', 1],
+  ['  alpha  ', 1],
+  ['alpha bravo', 2],
+  ['alpha   bravo', 2],
+  ['alpha\tbravo\ncharlie', 3],
+];
+for (const sep of [NEL, FS, GS, RS, US, NBSP, FEFF]) {
+  WORD_SPLIT_BEHAVIOR_TABLE.push(
+    [sep + 'alpha bravo charlie', 3], // leading
+    ['alpha bravo charlie' + sep, 3], // trailing
+    [sep + 'alpha bravo charlie' + sep, 3], // both ends
+    ['alpha bravo charlie' + sep + sep, 3] // doubled trailing run
+  );
+}
+
+test('#211/table: countWords shared cross-twin behavioral table', () => {
+  for (const [text, expected] of WORD_SPLIT_BEHAVIOR_TABLE) {
+    assert.equal(countWords(text), expected, `countWords(${JSON.stringify(text)})`);
+  }
+});
+
+// #211 decision item 4: `.` -> `[^\n]` in the template-marker file-path check
+// so a `<...>`/`{...}` span containing a line separator other than `\n`
+// still matches on both twins (a genuine shipped-JS behavior change -- see
+// #211 round-1 review r1-F5). Mirrors tests/test_filter_findings.py's
+// test_template_filepath_with_embedded_cr_matches /
+// _with_embedded_line_separator_matches.
+test('#211: template filepath with embedded CR still matches (the [^\\n] respell)', () => {
+  const { eliminated } = applyInjectionFilter([cleanFinding({ file: 'src/<na\rme>.py' })]);
+  assert.equal(eliminated.length, 1);
+  assert.match(eliminated[0].elimination_reason, /file path is empty/);
+});
+
+test('#211: template filepath with embedded U+2028 still matches (the [^\\n] respell)', () => {
+  const sep = String.fromCharCode(0x2028);
+  const { eliminated } = applyInjectionFilter([cleanFinding({ file: `src/<na${sep}me>.py` })]);
+  assert.equal(eliminated.length, 1);
+  assert.match(eliminated[0].elimination_reason, /file path is empty/);
 });

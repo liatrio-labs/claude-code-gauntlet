@@ -347,5 +347,59 @@ class TestGoldenFreshness(unittest.TestCase):
         )
 
 
+class TestRecordParityCheckDirect(unittest.TestCase):
+    """Direct, isolated test of record_parity.py's check() (#211 round-1
+    adjudication item 4 / r2-F4): TestGoldenFreshness above only ever
+    exercises check() through a subprocess against the REAL (correct) twins,
+    so a mutation of check() itself that still compares fresh-vs-committed
+    bytes correctly (e.g. writing the fresh recording in place instead of
+    into a temp tree) is invisible there -- the bytes it writes and the bytes
+    already committed are identical, so the corruption is a silent no-op.
+    This test corrupts a COMMITTED golden first, so check()'s comparison has
+    a real mismatch to report, and asserts both of its guarantees directly:
+    it reports the mismatch, and it never touches the corrupted file."""
+
+    def test_check_reports_stale_and_never_writes_into_the_fixture_tree(self):
+        import importlib
+        import shutil
+        import tempfile
+
+        sys.path.insert(0, str(REPO / "workflows" / "test" / "tools"))
+        mod = importlib.import_module("record_parity")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_fixtures = Path(tmp) / "parity"
+            shutil.copytree(mod.FIXTURES, tmp_fixtures)
+            original_fixtures = mod.FIXTURES
+            mod.FIXTURES = tmp_fixtures
+            try:
+                case_dir = (
+                    tmp_fixtures
+                    / "filter_findings"
+                    / "injection"
+                    / "word_count_nel_joined_high_confidence"
+                )
+                golden_path = case_dir / "expected.json"
+                corrupted = golden_path.read_text() + "\n// corrupted by test\n"
+                golden_path.write_text(corrupted)
+
+                mismatches = mod.check()
+            finally:
+                mod.FIXTURES = original_fixtures
+
+            self.assertTrue(
+                any(
+                    "STALE" in m and "word_count_nel_joined_high_confidence" in m
+                    for m in mismatches
+                ),
+                mismatches,
+            )
+            self.assertEqual(
+                golden_path.read_text(),
+                corrupted,
+                "check() must never write into the fixture tree it is checking",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

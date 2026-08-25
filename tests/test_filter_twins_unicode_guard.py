@@ -34,12 +34,14 @@ allowlist of what to check:
   REVIEW.md / exclusions-md file FORMAT (config block markers, bullet
   lines), not attacker-controlled finding text.
 - INERT-EXEMPT (re.ASCII would be a structural no-op): a call whose
-  resolved pattern text contains none of ``\\b \\B \\w \\W`` AND whose flags
-  carry no ``re.IGNORECASE`` -- re.ASCII only ever changes the meaning of
-  those four escapes and of IGNORECASE folding, so a call using neither is
-  unaffected by the flag either way. This is a content rule, not a name
-  rule: it currently covers ``_WORD_SPLIT_RE`` (an explicit character class,
-  no \\w/\\b at all) and the file-path template check (``<[^\\n]*?>|\\{[^\\n]*?\\}``,
+  resolved pattern text contains none of ``\\b \\B \\w \\W \\d \\D \\s \\S`` AND
+  whose flags carry no ``re.IGNORECASE`` -- re.ASCII changes the meaning of
+  those eight escapes (not just the word-boundary four -- it also narrows
+  ``\\d``/``\\D`` to ASCII digits and ``\\s``/``\\S`` to ASCII whitespace) and
+  of IGNORECASE folding, so a call using none of the eight is unaffected by
+  the flag either way. This is a content rule, not a name rule: it currently
+  covers ``_WORD_SPLIT_RE`` (an explicit character class, no \\w/\\b/\\d/\\s at
+  all) and the file-path template check (``<[^\\n]*?>|\\{[^\\n]*?\\}``,
   punctuation only). Everything else defaults to REQUIRED.
 
 Everything not in one of those buckets is REQUIRED to carry re.ASCII by
@@ -57,7 +59,7 @@ PY_SRC = REPO / "scripts" / "filter_findings.py"
 JS_SRC = REPO / "workflows" / "src" / "filterFindings.js"
 
 _METACHAR_RE = re.compile(r"[\\\[\]()|+*?{}.^$]")
-_WORD_BOUNDARY_TOKEN_RE = re.compile(r"\\[bBwW]")
+_ASCII_SENSITIVE_TOKEN_RE = re.compile(r"\\[bBwWdDsS]")
 
 _REGEX_CALL_METHODS = {
     "compile",
@@ -182,7 +184,7 @@ def _is_inert(call):
     text = call["pattern_text"]
     if text is None:
         return False  # unresolvable pattern (e.g. a comprehension var) -- not inert by construction
-    return not _WORD_BOUNDARY_TOKEN_RE.search(text)
+    return not _ASCII_SENSITIVE_TOKEN_RE.search(text)
 
 
 # --- JS-side discovery: line-oriented, keyed off Python-discovered names ---
@@ -502,6 +504,27 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             js_text.count(full),
             8,
             "expected the union class to appear at multiple JS call sites",
+        )
+
+        # Cross-twin equality on the INNER spelling (contents + closing bracket),
+        # so both the plain `[...]` form and the `[-...]` variant (which prefixes
+        # a literal `-`, e.g. the auto[-<union>]?generated suppression rule) are
+        # counted together. This is the only assertion in this class that reaches
+        # the two detect_disagreement suppression regexes and the file-path
+        # template check -- inline literals on both twins that
+        # test_first_party_families_are_byte_identical_across_twins does not
+        # scan (those sites are not part of any of the paired list/const
+        # families it walks). A JS-only respelling of either suppression rule's
+        # union class changes this count on the JS side only (#211 round-1
+        # review F2/r2-F2: measured silent on 908 node + 1731 pytest + this
+        # class's other five assertions before this check was added).
+        inner = contents + "]"
+        self.assertEqual(
+            py_text.count(inner),
+            js_text.count(inner),
+            "union class inner spelling occurs a different number of times in "
+            "each twin -- a JS-only or Python-only respelling of an inline "
+            "site (e.g. a suppression rule) went undetected",
         )
 
 

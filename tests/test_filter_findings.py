@@ -659,6 +659,28 @@ class TestApplyInjectionFilter(unittest.TestCase):
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
 
+    def test_template_filepath_with_embedded_cr_matches(self):
+        # #211 decision item 4: `.` -> `[^\n]` in the template-marker check so
+        # a `<...>`/`{...}` span containing a line separator other than `\n`
+        # still matches on both twins (a genuine shipped-JS behavior change --
+        # see #211 round-1 review r1-F5). CR is the discriminating vector: the
+        # old `.` spelling excludes it in BOTH engines' regex dialects, but
+        # `[^\n]` includes it in both.
+        findings = [self._finding_with(file="src/<na\rme>.py")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn("file path is empty", eliminated[0]["elimination_reason"])
+
+    def test_template_filepath_with_embedded_line_separator_matches(self):
+        # U+2028 LINE SEPARATOR: JS's `.` (no /s flag) excludes it, same as
+        # `\n`, so this is the other discriminating vector for the twin.
+        # chr(0x2028), not a literal char, to avoid ruff RUF001 (ambiguous
+        # LINE SEPARATOR) -- matches this file's existing convention.
+        findings = [self._finding_with(file="src/<na" + chr(0x2028) + "me>.py")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn("file path is empty", eliminated[0]["elimination_reason"])
+
     def test_duplicate_signature(self):
         f1 = self._finding_with(
             id="dup-1", title="Same Bug", file="a.py", line_start=10
@@ -2044,6 +2066,62 @@ class TestCountWords(unittest.TestCase):
         nel = chr(0x85)
         text = nel.join(["alpha", "bravo", "charlie"])
         self.assertEqual(_count_words(text), 3)
+
+
+# Shared cross-twin behavioral table (#211 round-1 adjudication item 1(b)).
+# The SAME (input, expected count) pairs are hardcoded independently here and
+# in workflows/test/filter_unit.test.js's '#211/table' test, so a divergence
+# between the two engines' splitters shows up as a failure on exactly one
+# side rather than as a silently-agreeing wrong answer. This is what catches
+# a countWords regression that only manifests on a TRAILING or leading run of
+# a union-class separator the host language's own trim()/strip() does not
+# already strip (U+0085, U+001C-U+001F) -- see F1 in review-r1.md/review-r2.md.
+_NEL = chr(0x85)
+_FS = chr(0x1C)
+_GS = chr(0x1D)
+_RS = chr(0x1E)
+_US = chr(0x1F)
+_NBSP = chr(0xA0)
+_FEFF = chr(0xFEFF)
+
+WORD_SPLIT_BEHAVIOR_TABLE = [
+    # -- plain ASCII (must be unchanged by #211) --
+    ("", 0),
+    ("   ", 0),
+    ("\t\n ", 0),
+    ("alpha", 1),
+    ("  alpha  ", 1),
+    ("alpha bravo", 2),
+    ("alpha   bravo", 2),
+    ("alpha\tbravo\ncharlie", 3),
+]
+for _sep, _name in [
+    (_NEL, "NEL"),
+    (_FS, "FS"),
+    (_GS, "GS"),
+    (_RS, "RS"),
+    (_US, "US"),
+    (_NBSP, "NBSP"),
+    (_FEFF, "FEFF"),
+]:
+    WORD_SPLIT_BEHAVIOR_TABLE.extend(
+        [
+            (_sep + "alpha bravo charlie", 3),  # leading
+            ("alpha bravo charlie" + _sep, 3),  # trailing
+            (_sep + "alpha bravo charlie" + _sep, 3),  # both ends
+            ("alpha bravo charlie" + _sep + _sep, 3),  # doubled trailing run
+        ]
+    )
+
+
+class TestCountWordsBehaviorTable(unittest.TestCase):
+    """Mirrors workflows/test/filter_unit.test.js's '#211/table' test
+    row-for-row -- see WORD_SPLIT_BEHAVIOR_TABLE's docstring above."""
+
+    def test_shared_behavior_table(self):
+        for i, (text, expected) in enumerate(WORD_SPLIT_BEHAVIOR_TABLE):
+            with self.subTest(row=i, text=repr(text)):
+                self.assertEqual(_count_words(text), expected)
 
 
 class TestUnionWhitespaceClassMembership(unittest.TestCase):

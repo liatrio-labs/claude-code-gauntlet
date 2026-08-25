@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Regenerate expected.json golden files from the authoritative Python twins.
 
-Usage: python3 workflows/test/tools/record_parity.py [<script>] [<case>]
+Usage: python3 workflows/test/tools/record_parity.py [--check] [<script>] [<case>]
 Reads each case's input.json, dispatches to the Python function, writes expected.json.
+
+--check records into a TEMP tree and diffs against the committed goldens instead
+of writing; it never touches tests/fixtures/parity. Use it to verify goldens are
+fresh (this is what TestGoldenFreshness runs); use the in-place form (no --check)
+only as the explicit authoring command when a golden genuinely needs updating.
 """
 
 import json
