@@ -4,7 +4,7 @@
       "confidence": 50,
       "description": "The build script executes rm -rf /var/cache during startup which seems dangerous behavior overall.",
       "eliminated_by": "injection",
-      "elimination_reason": "contains shell command pattern: '\\\\brm\\\\s+-[rf]'",
+      "elimination_reason": "contains shell command pattern: '\\\\brm[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-[rf]'",
       "file": "src/build.sh",
       "id": "I1",
       "line_start": 10,

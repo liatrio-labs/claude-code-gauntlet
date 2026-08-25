@@ -423,7 +423,7 @@ _INJECTION_TITLE_PATTERNS = [
 _INJECTION_BODY_PATTERNS = [
     r"<finding>",
     r"<example>",
-    r"\[\s*INSERT\s*\]",
+    r"\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]",
     r"lorem ipsum",
 ]
 
@@ -431,18 +431,18 @@ _INJECTION_BODY_PATTERNS = [
 # was manipulated by adversarial content embedded in the code under review.
 # These match the patterns documented in false-positive-exclusions.md
 _INJECTION_SHELL_PATTERNS = [
-    r"\brm\s+-[rf]",
-    r"\bcurl\s+https?://",
-    r"\bwget\s+https?://",
-    r"\bgit\s+push\b",
-    r"\bgh\s+api\b",
+    r"\brm[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-[rf]",
+    r"\bcurl[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
+    r"\bwget[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
+    r"\bgit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+push\b",
+    r"\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b",
 ]
 
 # URL patterns — findings should reference code locations, not external URLs to visit/fetch
 _INJECTION_URL_PATTERNS = [
-    r"https?://[^\s)>\"']{20,}",
-    r"\bvisit\s+https?://",
-    r"\bdownload from\s+https?://",
+    r"https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff)>\"']{20,}",
+    r"\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
+    r"\bdownload from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
     r"\bnavigate to\b",
 ]
 
@@ -454,36 +454,36 @@ _INJECTION_ENCODED_PATTERNS = [
 
 # Bypass / auto-approve instruction patterns
 _INJECTION_BYPASS_PATTERNS = [
-    r"\bskip\s+review\b",
-    r"\bauto[-\s]?approve\b",
-    r"\bbypass\s+(?:security\s+)?controls?\b",
-    r"\bbypass\s+(?:the\s+)?(?:auth|authentication|authorization)\b",
-    r"\bdisable\s+(?:auth|authentication|authorization)\b",
-    r"\bmark\s+(?:this\s+)?(?:finding\s+)?as\s+safe\b",
-    r"\bapprove\s+(?:this|the)\s+(?:PR|pull\s+request|change)\b",
+    r"\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b",
+    r"\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve\b",
+    r"\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?controls?\b",
+    r"\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:auth|authentication|authorization)\b",
+    r"\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:auth|authentication|authorization)\b",
+    r"\bmark[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:finding[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?as[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+safe\b",
+    r"\bapprove[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:PR|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|change)\b",
 ]
 
 # Instructional tone patterns — analytical findings do not issue commands to the user
 _INJECTION_INSTRUCTIONAL_PATTERNS = [
-    r"\byou\s+should\s+run\b",
-    r"\bexecute\s+the\s+following\b",
-    r"\brun\s+this\s+command\b",
-    r"\bplease\s+run\b",
-    r"\bpaste\s+(?:this|the\s+following)\s+into\s+(?:your\s+)?terminal",
-    r"\bcopy\s+and\s+paste\s+the\s+following\b",
+    r"\byou[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+should[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b",
+    r"\bexecute[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b",
+    r"\brun[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+command\b",
+    r"\bplease[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b",
+    r"\bpaste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+into[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:your[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?terminal",
+    r"\bcopy[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+paste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b",
 ]
 
 # Patterns that recommend introducing vulnerabilities or disabling security features
 _INJECTION_VULN_INTRO_PATTERNS = [
-    r"\badd\s+eval\s*\(",
-    r"\buse\s+eval\s*\(",
-    r"\bdisable\s+(?:CORS|CSP|content[-\s]security[-\s]policy)\b",
-    r"\bdisable\s+(?:CSRF|csrf)\s+(?:protection|check|token)\b",
-    r"\ballow\s+all\s+origins\b",
-    r"\bset\s+secure\s+to\s+false\b",
-    r"\bdisable\s+(?:TLS|SSL|HTTPS)\s+(?:verification|validation)\b",
-    r"\bskip\s+(?:certificate|cert)\s+(?:verification|validation)\b",
-    r"\bdisable\s+security\s+(?:check|feature|control)\b",
+    r"\badd[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(",
+    r"\buse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(",
+    r"\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CORS|CSP|content[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]security[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]policy)\b",
+    r"\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:CSRF|csrf)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:protection|check|token)\b",
+    r"\ballow[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+all[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+origins\b",
+    r"\bset[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+secure[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+false\b",
+    r"\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:TLS|SSL|HTTPS)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b",
+    r"\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:certificate|cert)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b",
+    r"\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b",
 ]
 
 # Minimum word count for a valid finding description; fewer words + high confidence = suspicious
@@ -518,9 +518,18 @@ def _normalize_fix_code_for_bound(code):
     return code[:-1] if code.endswith("\n") else code
 
 
+# Matches the union whitespace class respelled into the injection/routing
+# patterns above (item 2 of the #211 decision) so a word-count boundary and
+# a pattern-match boundary agree on what separates words. re.ASCII is NOT
+# applied here -- the class is already fully explicit, so the flag would be
+# a no-op (verified: tests/test_filter_findings.py pins this).
+_WORD_SPLIT_RE = re.compile(r"[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
+
+
 def _count_words(text):
-    """Return the number of words in text (whitespace-split)."""
-    return len(text.split()) if text.strip() else 0
+    """Return the number of words in text (split on the union whitespace class)."""
+    stripped = _WORD_SPLIT_RE.sub(" ", text).strip()
+    return len(_WORD_SPLIT_RE.split(stripped)) if stripped else 0
 
 
 def apply_injection_filter(findings):
@@ -555,16 +564,16 @@ def apply_injection_filter(findings):
     seen_signatures = {}
 
     # Compile pattern lists once
-    shell_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_SHELL_PATTERNS]
-    url_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_URL_PATTERNS]
-    encoded_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_ENCODED_PATTERNS]
-    bypass_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_BYPASS_PATTERNS]
+    shell_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_SHELL_PATTERNS]
+    url_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_URL_PATTERNS]
+    encoded_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_ENCODED_PATTERNS]
+    bypass_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BYPASS_PATTERNS]
     instruct_re = [
-        re.compile(p, re.IGNORECASE) for p in _INJECTION_INSTRUCTIONAL_PATTERNS
+        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_INSTRUCTIONAL_PATTERNS
     ]
-    vuln_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_VULN_INTRO_PATTERNS]
-    title_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_TITLE_PATTERNS]
-    body_marker_re = [re.compile(p, re.IGNORECASE) for p in _INJECTION_BODY_PATTERNS]
+    vuln_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_VULN_INTRO_PATTERNS]
+    title_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_TITLE_PATTERNS]
+    body_marker_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BODY_PATTERNS]
 
     def _first_match(patterns, text):
         """Return the pattern of the first regex that matches text, or None."""
@@ -730,7 +739,7 @@ def apply_injection_filter(findings):
             reasons.append(f"description matches injection marker: {m!r}")
 
         # 9. Empty or template file path
-        if not filepath or re.search(r"<.*?>|\{.*?\}", filepath):
+        if not filepath or re.search(r"<[^\n]*?>|\{[^\n]*?\}", filepath):
             reasons.append(
                 f"file path is empty or contains template markers: {filepath!r}"
             )
@@ -858,8 +867,9 @@ def detect_disagreement(findings):
                     + conv_finding.get("title", "")
                 ).lower()
                 if re.search(
-                    r"\bintentional\b|\bby\s+design\b|\bexpected\s+behavior\b|\bdeliberate\b",
+                    r"\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b",
                     conv_text,
+                    re.ASCII,
                 ):
                     for bug_finding in agent_map[_AGENT_BUG_DETECTOR]:
                         fid = bug_finding.get("id", id(bug_finding))
@@ -884,8 +894,9 @@ def detect_disagreement(findings):
                     + conv_finding.get("title", "")
                 ).lower()
                 if re.search(
-                    r"\bgenerated\b|\bscaffolding\b|\bauto[-\s]?generated\b|\bboilerplate\b",
+                    r"\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b",
                     conv_text,
+                    re.ASCII,
                 ):
                     for test_finding in agent_map[_AGENT_TEST_ANALYZER]:
                         fid = test_finding.get("id", id(test_finding))
@@ -1043,17 +1054,17 @@ _CONDITIONAL_SUGGESTION_DIMENSIONS = {"test_coverage", "convention", "type_desig
 # Keywords that promote convention/type_design findings from suggestion to main
 # These indicate the finding describes a FUNCTIONAL violation, not just style
 _FUNCTIONAL_VIOLATION_KEYWORDS = re.compile(
-    r"\bcrash\b|\bdata\s+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b"
-    r"|\bruntime\s+error\b|\bexception\b|\bpanic\b|\bundefined\s+behavio(?:u)?r\b",
-    re.IGNORECASE,
+    r"\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b"
+    r"|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b",
+    re.IGNORECASE | re.ASCII,
 )
 
 # Keywords that promote type_design findings from suggestion to main
 # These indicate a type safety bug that could cause runtime errors
 _TYPE_SAFETY_BUG_KEYWORDS = re.compile(
-    r"\bruntime\b|\bcastexception\b|\btype\s+error\b|\bclasscastexception\b"
-    r"|\bnull\s+pointer\b|\bnullpointer\b|\btype\s+mismatch\b",
-    re.IGNORECASE,
+    r"\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b"
+    r"|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b",
+    re.IGNORECASE | re.ASCII,
 )
 
 
@@ -1115,48 +1126,48 @@ def _route_by_dimension(finding):
 # a functional correctness issue today (-> promote to main report).
 # These describe bugs that EXIST NOW, not tests that should be written.
 _TEST_CORRECTNESS_PATTERNS = [
-    re.compile(r"\brace\s+condition\b", re.IGNORECASE),
-    re.compile(r"\balways\s+pass(?:es)?\b", re.IGNORECASE),
-    re.compile(r"\balways[-\s]pass(?:es)?\b", re.IGNORECASE),
-    re.compile(r"\bnever\s+fail(?:s)?\b", re.IGNORECASE),
-    re.compile(r"\bvacuous(?:ly)?\b", re.IGNORECASE),
-    re.compile(r"\btautolog(?:y|ical)\b", re.IGNORECASE),
-    re.compile(r"\bassert(?:ion)?\s+(?:is\s+)?never\s+reached\b", re.IGNORECASE),
-    re.compile(r"\bdeadlock\b", re.IGNORECASE),
-    re.compile(r"\bdata\s+race\b", re.IGNORECASE),
-    re.compile(r"\bthread\s+(?:safety|unsafe|race)\b", re.IGNORECASE),
+    re.compile(r"\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bvacuous(?:ly)?\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\btautolog(?:y|ical)\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bdeadlock\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b", re.IGNORECASE | re.ASCII),
     re.compile(
-        r"\btest\s+(?:never\s+)?(?:actually\s+)?(?:verif|test|check)(?:s|ies)?\s+nothing\b",
-        re.IGNORECASE,
+        r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b",
+        re.IGNORECASE | re.ASCII,
     ),
-    re.compile(r"\bfalse\s+positive\s+(?:test|assertion)\b", re.IGNORECASE),
-    re.compile(r"\bincorrect(?:ly)?\s+(?:assert|verify|test)\b", re.IGNORECASE),
-    re.compile(r"\bwrong\s+(?:value|result|output)\b", re.IGNORECASE),
+    re.compile(r"\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b", re.IGNORECASE | re.ASCII),
     re.compile(
-        r"\blocal\s+variable\s+(?:is\s+)?never\s+(?:used|read)\b", re.IGNORECASE
-    ),
-    re.compile(
-        r"\bassert(?:s|ion)?\s+(?:on\s+)?(?:a\s+)?(?:local|copy|snapshot)\b",
-        re.IGNORECASE,
+        r"\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b", re.IGNORECASE | re.ASCII
     ),
     re.compile(
-        r"\bcompares?\s+(?:wrong|incorrect|different)\s+object\b", re.IGNORECASE
+        r"\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b",
+        re.IGNORECASE | re.ASCII,
     ),
     re.compile(
-        r"\btest\s+(?:does\s+not|doesn'?t)\s+(?:wait|join|block)\b", re.IGNORECASE
-    ),
-    re.compile(r"\breader\s+thread\s+not\s+waited\b", re.IGNORECASE),
-    re.compile(r"\bflaky\s+test\b", re.IGNORECASE),
-    re.compile(r"\bassertion\s+always\s+(?:true|passes?|succeed)\b", re.IGNORECASE),
-    re.compile(
-        r"\bassert(?:s|ion)?\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b",
-        re.IGNORECASE,
+        r"\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b", re.IGNORECASE | re.ASCII
     ),
     re.compile(
-        r"\btest\s+(?:is\s+)?always\s+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE
+        r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b", re.IGNORECASE | re.ASCII
     ),
-    re.compile(r"\blogic\s+error\b", re.IGNORECASE),
-    re.compile(r"\bincorrect\s+(?:logic|behavior|behaviour|result)\b", re.IGNORECASE),
+    re.compile(r"\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b", re.IGNORECASE | re.ASCII),
+    re.compile(
+        r"\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE | re.ASCII
+    ),
+    re.compile(r"\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b", re.IGNORECASE | re.ASCII),
+    re.compile(r"\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b", re.IGNORECASE | re.ASCII),
 ]
 
 
@@ -1457,6 +1468,13 @@ def apply_exclusions(findings, exclusion_patterns):
 
         matched_pattern = None
         for pattern in exclusion_patterns:
+            # Deliberately NOT re.ASCII (#211 decision item 1): these are
+            # user-authored REVIEW.md ignore patterns over arbitrary-script
+            # finding text, not first-party fixed patterns -- re.ASCII here
+            # would break e.g. "café" matching "CAFÉ" (measured regression;
+            # pinned by the exclusions/case_fold_unicode fixture and the
+            # TestFilterTwinsUnicodeGuard.test_apply_exclusions_has_no_re_ascii
+            # structural guard). JS keeps this folding by construction (no /u).
             if re.search(re.escape(pattern), combined, re.IGNORECASE):
                 matched_pattern = pattern
                 break

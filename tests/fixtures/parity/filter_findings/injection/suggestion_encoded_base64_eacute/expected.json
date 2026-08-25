@@ -8,7 +8,8 @@
       "id": "EN4",
       "line_start": 22,
       "severity": "medium",
-      "suggestion": "Consider replacing the payload with \u00e9SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgc3RyaW5nIQ== for the test fixture.",
+      "suggestion_removal_reason": "suggestion contains encoded payload pattern: '\\\\b[A-Za-z0-9+/]{40,}={0,2}\\\\b'",
+      "suggestion_removed_by": "injection",
       "title": "Null check missing in response handler"
     }
   ]
