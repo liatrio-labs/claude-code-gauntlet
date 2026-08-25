@@ -53,9 +53,21 @@ mechanism that keeps that promise now that agents populate the field too.
 A multi-line fence on GitLab carries an offsets header, `` ```suggestion:-m+n ``, with `m`/`n`
 decided by the poster from the discussion's anchor line — never supplied on the finding itself.
 A single-line fix still renders a plain `` ```suggestion `` fence.
-When two suggestions' multi-line ranges overlap within one file, GitLab refuses the whole batch
-apply — the same exposure GitHub multi-line already carries, accepted deliberately rather than
-adding an overlap-detection pass.
+
+**A fence that would overlap another kept fence in the same file demotes to prose.** GitLab
+refuses to batch-apply a set of suggestions with any two overlapping ranges in one file, and
+serially applying one outdates the other — so before rendering, the poster walks the fences in
+delivery order (the pipeline's own priority ranking, not line position) and withholds any whose
+apply range overlaps one it has already kept in that file: the earlier fence wins, and a withheld
+fence claims no range of its own. Overlap uses GitLab's closed-interval semantic: two single-line
+fences anchored at the identical line collide; two fences that merely touch (`[n, m]` next to
+`[m + 1, k]`) do not. A demoted finding still ships with its prose `suggestion` — only the
+one-click affordance is withheld — and which of a run's ranked fences are withheld is a pure
+function of the findings and the diff, so a rerun reaches the same verdict regardless of what has
+already posted.
+This rule is scoped to overlapping ranges: GitHub's batch apply can also fail on multi-line
+suggestions that are merely adjacent rather than overlapping, and a fence is never withheld for
+that case.
 
 Severity emojis: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
 

@@ -148,7 +148,10 @@ CODEX_CAP_BYTES = 32_768
 # measurement (93.54) alongside the existing #219 note — the floor policy requires the
 # note name the measurement it came from, and a stale note is the unverifiable claim the
 # repo's own rules prohibit.
-AGENTS_SET_BUDGET_BYTES = 20_700
+# Raised 20_700 -> 20_761 (2026-08-24, #236): the Python coverage floor ratchet (scripts
+# 92.6 -> 92.7) extended the floors-and-provenance paragraph with the #236 PR CI
+# measurement (93.67) — same policy, same shape as the #219/#231 raises above.
+AGENTS_SET_BUDGET_BYTES = 20_761
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

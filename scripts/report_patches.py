@@ -57,8 +57,10 @@ masquerade as the header, and an empty diff keys nothing under either
 reading. Name the one residual: a git-shaped incremental diff on a GitLab run
 is keyed git-style while live delivery keys glab-style — the finding's path
 spelling is the same real path under both, so a kept patch here may still be
-downgraded live only for render-site reasons (already disclosed in the
-artifact).
+downgraded live for render-site reasons or withheld for the delivery-side
+set-level overlap reason (``overlaps_kept_fence`` — see
+``post_review._overlap_losers``); both are already disclosed in the
+artifact.
 
 Usage:
     python3 report_patches.py --output-dir DIR --head-sha SHORT
@@ -267,7 +269,9 @@ def _render(kept, candidates, filtered_earlier, oracle_state, sha):
         f"apply-check against the pinned review diff "
         f"(`code-gauntlet-diff-{sha}.patch`, captured at Phase 2, not the current "
         "working tree or branch). Platform render-site constraints are not applied "
-        "here, so delivery may still downgrade a listed patch to prose. This covers "
+        "here, nor is delivery's set-level overlap withholding (a fence overlapping "
+        "an already-kept fence in the same file, reason `overlaps_kept_fence`), so a "
+        "patch kept here may still be downgraded or withheld at delivery. This covers "
         "high-confidence findings only; unverified findings carry no patch here."
     )
     if downgraded > 0:

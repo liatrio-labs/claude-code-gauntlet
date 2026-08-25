@@ -5531,6 +5531,32 @@ GH_DIFF_MULTILINE_ANCHOR_COLLISION = (
     "+SUB_L4\n"
 )
 
+# #223: one file, wide enough (lines 1..6) that two findings' STATED ranges can
+# genuinely overlap or genuinely touch-without-overlapping within it.
+GH_DIFF_OVERLAP = (
+    "diff --git a/foo.py b/foo.py\n"
+    "--- a/foo.py\n"
+    "+++ b/foo.py\n"
+    "@@ -1,1 +1,6 @@\n"
+    " def f():\n"
+    "+    line2\n"
+    "+    line3\n"
+    "+    line4\n"
+    "+    line5\n"
+    "+    line6\n"
+)
+
+# The same hunk, plain `glab mr diff` shape.
+GL_DIFF_OVERLAP = (
+    "--- foo.py\n+++ foo.py\n@@ -1,1 +1,6 @@\n"
+    " def f():\n"
+    "+    line2\n"
+    "+    line3\n"
+    "+    line4\n"
+    "+    line5\n"
+    "+    line6\n"
+)
+
 _FENCE = "```suggestion"
 
 
@@ -6234,14 +6260,15 @@ class TestSuggestedFixGate(unittest.TestCase):
                     "no_op_replacement",
                     "indentation_mismatch",
                     "replacement_too_large",
+                    "overlaps_kept_fence",
                 }
             ),
         )
 
-    def test_the_closed_vocabulary_has_thirteen_members(self):
+    def test_the_closed_vocabulary_has_fourteen_members(self):
         """Adding a reason is a deliberate act — this is the tripwire that says
         so out loud."""
-        self.assertEqual(len(post_review._FIX_REASONS), 13)
+        self.assertEqual(len(post_review._FIX_REASONS), 14)
 
 
 class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
@@ -6278,6 +6305,101 @@ class TestGatedFindingRejectsUnknownReason(unittest.TestCase):
         ):
             post_review._gated_finding(finding, (2, 2), {}, {}, mismatch_reason="bogus")
         self.assertIn("bogus", str(ctx.exception))
+
+    def test_a_typo_d_demote_reason_is_checked_against_the_same_set(self):
+        """``demote_reason`` (#223) is consulted only when the gate PASSES — it
+        cannot widen the vocabulary either, exactly like ``mismatch_reason``."""
+        finding = {"file": "foo.py", "line": 2, "suggested_fix_code": "x"}
+        with (
+            patch(
+                "scripts.post_review._suggested_fix_gate",
+                return_value=(True, None),
+            ),
+            self.assertRaises(ValueError) as ctx,
+        ):
+            post_review._gated_finding(finding, (2, 2), {}, {}, demote_reason="bogus")
+        self.assertIn("bogus", str(ctx.exception))
+
+
+class TestGatedFindingDemoteReason(unittest.TestCase):
+    """``_gated_finding``'s ``demote_reason`` keyword (#223).
+
+    A set-level caller (a poster's overlap pre-pass) forces a fence that PASSED
+    the per-finding gate to downgrade anyway, through the SAME tally/warn/strip
+    tail an ordinary gate failure uses — never a second, parallel strip path.
+    """
+
+    def _finding(self, **over):
+        finding = {
+            "file": "foo.py",
+            "line": 2,
+            "end_line": 3,
+            "suggested_fix_code": "fixed",
+        }
+        finding.update(over)
+        return finding
+
+    def test_demote_reason_none_is_a_no_op_when_the_gate_passes(self):
+        """The default keeps every pre-#223 caller byte-identical."""
+        finding = self._finding()
+        with patch("scripts.post_review._fence_verdict", return_value=(True, None)):
+            result = post_review._gated_finding(finding, (2, 3), {}, {})
+        self.assertIs(result, finding)
+        self.assertEqual(post_review._FIX_COUNTS["kept"], 1)
+        self.assertEqual(post_review._FIX_COUNTS["downgraded"], 0)
+
+    def test_a_set_demote_reason_downgrades_a_gate_pass(self):
+        finding = self._finding()
+        with (
+            patch("scripts.post_review._fence_verdict", return_value=(True, None)),
+            patch("scripts.post_review.warn_skip") as mock_warn,
+        ):
+            result = post_review._gated_finding(
+                finding,
+                (2, 3),
+                {},
+                {},
+                demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
+            )
+        self.assertIsNot(result, finding)
+        self.assertNotIn("suggested_fix_code", result)
+        self.assertEqual(post_review._FIX_COUNTS["kept"], 0)
+        self.assertEqual(post_review._FIX_COUNTS["downgraded"], 1)
+        self.assertEqual(post_review._FIX_REASON_COUNTS.get("overlaps_kept_fence"), 1)
+        mock_warn.assert_called_once_with(
+            "suggested-fix downgraded: foo.py:2 (overlaps_kept_fence)"
+        )
+
+    def test_a_gate_failure_keeps_its_own_reason_over_demote_reason(self):
+        """Per-fence reasons win: a demote_reason is consulted only on an ``ok``
+        gate outcome, so a genuine gate failure is never masked by it. Mutate
+        this by deleting the ``if ok:`` guard around the demote_reason branch —
+        the failing finding's ``missing_end_line`` becomes ``overlaps_kept_fence``
+        and this test goes red.
+        """
+        finding = self._finding()
+        with (
+            patch(
+                "scripts.post_review._fence_verdict",
+                return_value=(False, "missing_end_line"),
+            ),
+            patch("scripts.post_review.warn_skip") as mock_warn,
+        ):
+            post_review._gated_finding(
+                finding,
+                (2, 3),
+                {},
+                {},
+                demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
+            )
+        self.assertEqual(post_review._FIX_REASON_COUNTS.get("missing_end_line"), 1)
+        self.assertIsNone(post_review._FIX_REASON_COUNTS.get("overlaps_kept_fence"))
+        mock_warn.assert_called_once_with(
+            "suggested-fix downgraded: foo.py:2 (missing_end_line)"
+        )
+
+    def tearDown(self):
+        post_review.reset_run_state()
 
 
 class TestGitLabFenceOffsets(unittest.TestCase):
@@ -6394,6 +6516,141 @@ class TestGitLabAnchoredDecision(unittest.TestCase):
         gated, offsets = self._anchored(self._finding(), anchor=1)
         self.assertNotIn("suggested_fix_code", gated)
         self.assertIsNone(offsets)
+
+    def test_demote_reason_passes_through_to_a_kept_fence(self):
+        """#223: a caller with a set-level overlap decision states it here,
+        exactly as it would at a GitHub render site."""
+        gated, offsets = post_review._gitlab_anchored(
+            self._finding(),
+            2,
+            self.valid_lines,
+            self.line_texts,
+            demote_reason=post_review._FIX_OVERLAPS_KEPT_FENCE,
+        )
+        self.assertNotIn("suggested_fix_code", gated)
+        self.assertEqual(offsets, (0, 1))
+        post_review.reset_run_state()
+
+
+class TestGithubApplyRange(unittest.TestCase):
+    """``_github_apply_range`` — GitHub's multi-line/apply_range decision, once
+    (#223/#224). Extracted verbatim from ``post_github``'s render loop; the
+    render loop, the overlap pre-pass, and the benchmark's payload mirror all
+    call it rather than each computing their own copy.
+    """
+
+    def setUp(self):
+        parsed = _parse_fixture(GH_DIFF_INDENTED, platform="github")
+        self.valid_lines = parsed[0]
+
+    def test_a_valid_multi_line_span_is_multiline(self):
+        self.assertEqual(
+            post_review._github_apply_range(self.valid_lines, "foo.py", 2, 3),
+            (True, (2, 3)),
+        )
+
+    def test_no_end_line_is_single_line(self):
+        self.assertEqual(
+            post_review._github_apply_range(self.valid_lines, "foo.py", 2, None),
+            (False, (2, 2)),
+        )
+
+    def test_end_line_equal_to_line_is_single_line(self):
+        self.assertEqual(
+            post_review._github_apply_range(self.valid_lines, "foo.py", 2, 2),
+            (False, (2, 2)),
+        )
+
+    def test_an_end_line_outside_the_diff_falls_back_to_single_line(self):
+        self.assertEqual(
+            post_review._github_apply_range(self.valid_lines, "foo.py", 2, 940),
+            (False, (2, 2)),
+        )
+
+
+class TestOverlapLosers(unittest.TestCase):
+    """``_overlap_losers`` — the pure, first-wins overlap resolver (#223).
+
+    Records are ``(index, path_lookup, apply_range)``, already known to be
+    candidates (a real, gate-passing apply range) — the resolver itself never
+    consults ``suggested_fix_code`` or the gate; that filtering is each
+    poster's/the mirror's candidate predicate, tested separately (see the
+    poster-level overlap tests).
+    """
+
+    def test_first_wins_when_two_records_overlap(self):
+        losers = post_review._overlap_losers(
+            [(0, "foo.py", (2, 4)), (1, "foo.py", (3, 5))]
+        )
+        self.assertEqual(losers, {1})
+
+    def test_same_line_single_line_pair_collides(self):
+        """Matches GitLab's own ``Range#overlaps?``: two single-line fences on
+        the identical line collide."""
+        losers = post_review._overlap_losers(
+            [(0, "foo.py", (5, 5)), (1, "foo.py", (5, 5))]
+        )
+        self.assertEqual(losers, {1})
+
+    def test_touching_disjoint_ranges_both_keep_their_fences(self):
+        """``[1, 3]`` and ``[4, 6]`` share no line index — GitLab's own
+        ``Range#overlaps?`` does not conflict them, and neither does this."""
+        losers = post_review._overlap_losers(
+            [(0, "foo.py", (1, 3)), (1, "foo.py", (4, 6))]
+        )
+        self.assertEqual(losers, set())
+
+    def test_a_loser_occupies_nothing_so_it_cannot_block_a_later_record(self):
+        """A[1,5] B[4,8] C[7,10] in that order: B collides with A (4<=5) and is
+        demoted, but a demoted record never claims its interval — C is judged
+        only against the KEPT set {A}, and C does NOT overlap A (7 > 5), so C
+        survives even though it overlaps B, which never got to keep [4,8].
+        Keeps A and C; only B is a loser (memo R4's worked example).
+        """
+        losers = post_review._overlap_losers(
+            [
+                (0, "foo.py", (1, 5)),
+                (1, "foo.py", (4, 8)),
+                (2, "foo.py", (7, 10)),
+            ]
+        )
+        self.assertEqual(losers, {1})
+
+    def test_records_on_different_paths_never_collide(self):
+        losers = post_review._overlap_losers(
+            [(0, "foo.py", (2, 4)), (1, "bar.py", (2, 4))]
+        )
+        self.assertEqual(losers, set())
+
+    def test_cross_spelling_collision_via_path_lookup(self):
+        """The resolver keys strictly on the ``path_lookup`` VALUE it is given —
+        the same key the gate itself uses (``diff_path_spelling``) — so two
+        records built from differently-spelled raw findings that a poster
+        already resolved to the same diff path collide correctly."""
+        losers = post_review._overlap_losers(
+            [(0, "src/edited.py", (2, 4)), (1, "src/edited.py", (3, 5))]
+        )
+        self.assertEqual(losers, {1})
+
+    def test_no_records_demotes_nobody(self):
+        self.assertEqual(post_review._overlap_losers([]), set())
+
+
+class TestRangesOverlap(unittest.TestCase):
+    """``_ranges_overlap`` — the closed-interval intersection both
+    ``_overlap_losers`` and the GitLab corroborator query (#223 R6) share."""
+
+    def test_identical_single_line_ranges_overlap(self):
+        self.assertTrue(post_review._ranges_overlap((5, 5), (5, 5)))
+
+    def test_touching_disjoint_ranges_do_not_overlap(self):
+        self.assertFalse(post_review._ranges_overlap((1, 3), (4, 6)))
+
+    def test_partial_overlap(self):
+        self.assertTrue(post_review._ranges_overlap((1, 5), (4, 8)))
+
+    def test_one_range_containing_the_other_overlaps(self):
+        self.assertTrue(post_review._ranges_overlap((1, 10), (4, 6)))
 
 
 class TestPosterOraclesAreRequiredArguments(unittest.TestCase):
@@ -6545,6 +6802,13 @@ class TestGitHubSuggestedFixGate(_FixGateRunBase):
         A gate that judged the STATED range instead would agree with the anchor
         only by luck: here the second finding states 2..940 and the comment it
         produces applies at line 2 alone.
+
+        The overlap pre-pass (#223) calls the gate once per candidate, in group
+        order, ahead of the render loop; the render loop then gates both
+        findings again, in the same order. `seen` asserts the FULL sequence —
+        pre-pass calls followed by render-site calls — so a render loop that
+        swapped in a bare `primary` and skipped its own gate call still goes
+        red, even though the pre-pass calls alone would otherwise mask it.
         """
         seen = []
         real = post_review._suggested_fix_gate
@@ -6560,7 +6824,12 @@ class TestGitHubSuggestedFixGate(_FixGateRunBase):
             for c in run.payload["payload"]["comments"]
         ]
         self.assertEqual(anchors, [(2, 3), (2, 2)])
-        self.assertEqual(seen, anchors)
+        # The pre-pass gates both candidates first (in group order), THEN the
+        # render loop gates both findings again (in the same order) — the
+        # full sequence, not just its tail, so a render loop that swapped in
+        # a bare `primary` (skipping its own gate call) still goes red even
+        # though the pre-pass calls alone would otherwise mask it.
+        self.assertEqual(seen, anchors + anchors)
 
     def test_the_prose_suggestion_still_renders_after_a_downgrade(self):
         run = self._run([self._finding(end_line=940)])
@@ -7064,6 +7333,575 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         self.assertEqual(run.payload["discussions"], [])
         self.assertNotIn(_FENCE, run.payload["summary"]["body"])
         self._assert_downgraded(run, "range_not_in_diff", where="foo.py:999")
+
+
+class TestGitHubOverlapDemotion(_FixGateRunBase):
+    """Two kept fences whose apply ranges overlap in the same file (#223):
+    the LATER one in delivery order (= array order — consolidate_delivery
+    does not sort) demotes to prose; the comment it rode in on still posts.
+    """
+
+    DIFF = GH_DIFF_OVERLAP
+
+    def test_the_later_overlapping_fence_demotes(self):
+        a = self._finding(
+            title="First",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+        )
+        b = self._finding(
+            title="Second",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        comments = run.payload["payload"]["comments"]
+        self.assertEqual(len(comments), 2, "the demoted finding's comment still posts")
+        self.assertIn(_FENCE, comments[0]["body"])
+        self.assertNotIn(_FENCE, comments[1]["body"])
+        self._assert_downgraded(run, "overlaps_kept_fence", where="foo.py:3")
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+        self.assertIn("  1 suggested fix(es) downgraded to prose.", run.out)
+
+    def test_touching_disjoint_ranges_both_keep_their_fences(self):
+        """``[2, 3]`` and ``[4, 5]`` share no line — GitLab's own
+        ``Range#overlaps?`` (and this demotion's identical semantic) does not
+        conflict them, so both fences survive."""
+        a = self._finding(
+            title="First", line=2, end_line=3, suggested_fix_code="    a2\n    a3"
+        )
+        b = self._finding(
+            title="Second", line=4, end_line=5, suggested_fix_code="    b4\n    b5"
+        )
+        run = self._run([a, b])
+        comments = run.payload["payload"]["comments"]
+        self.assertIn(_FENCE, comments[0]["body"])
+        self.assertIn(_FENCE, comments[1]["body"])
+        self.assertEqual(run.payload["skipped"], [])
+
+    def test_a_fenceless_finding_never_blocks_a_later_fence(self):
+        """R1: the candidate predicate requires ``suggested_fix_code`` on the
+        finding itself. Mutate the pre-pass to drop that field-presence check
+        and this goes red — the fence-less finding at line 3 would then claim
+        apply_range (3, 3), which intersects the fenced finding's [3, 5] and
+        wrongly demotes it.
+        """
+        a = {
+            "file": "foo.py",
+            "line": 3,
+            "severity": "low",
+            "title": "No fence",
+            "body": "No suggested_fix_code on this one.",
+        }
+        b = self._finding(
+            title="Fenced",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        comments = run.payload["payload"]["comments"]
+        self.assertEqual(len(comments), 2)
+        self.assertIn(_FENCE, comments[1]["body"])
+        self.assertNotIn("overlaps_kept_fence", "\n".join(run.payload["skipped"]))
+
+    def test_a_gate_failing_finding_never_blocks_a_later_fence(self):
+        """A finding whose OWN fence fails the per-finding gate is not a
+        candidate at any range — only a gate-passing finding can claim an
+        interval. Mutate the pre-pass to add records regardless of the gate
+        verdict and this goes red.
+        """
+        a = self._finding(
+            title="Fails its own gate",
+            line=3,
+            end_line=940,  # range_not_in_diff — outside GH_DIFF_OVERLAP entirely
+            suggested_fix_code="x",
+        )
+        b = self._finding(
+            title="Fenced",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        comments = run.payload["payload"]["comments"]
+        self.assertNotIn(_FENCE, comments[0]["body"])
+        self.assertIn(_FENCE, comments[1]["body"])
+        self._assert_downgraded(run, "range_not_in_diff", where="foo.py:3")
+        self.assertNotIn("overlaps_kept_fence", "\n".join(run.payload["skipped"]))
+
+    def test_a_lineless_candidate_is_skipped_by_the_prepass(self):
+        """The pre-pass runs two early-exits before it can compute an
+        apply_range: ``if line is None: continue`` and, right after,
+        ``if not is_line_valid(...): continue``. For a lineless candidate,
+        ``is_line_valid`` alone already excludes it — ``(filepath, None)`` is
+        never a key in ``valid_lines`` — so deleting the ``line is None``
+        check BY ITSELF leaves this test green; it is currently defensive,
+        not independently load-bearing. What the pair jointly prevents is
+        real: ``end_line`` below is an INTEGER specifically so that removing
+        BOTH early-exits reaches ``_github_apply_range``, whose
+        ``end_line >= line`` comparison (``int >= None``) raises
+        ``TypeError`` for a lineless candidate rather than being politely
+        skipped (verified by mutation, not by reading — see the PR record)."""
+        a = {
+            "file": "foo.py",
+            "severity": "low",
+            "title": "No line",
+            "body": "No line number at all.",
+            "suggested_fix_code": "x",
+            "end_line": 5,
+        }
+        b = self._finding(
+            title="Fenced",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        comments = run.payload["payload"]["comments"]
+        self.assertEqual(
+            len(comments), 1, "the lineless finding is skipped, not posted"
+        )
+        self.assertIn(_FENCE, comments[0]["body"])
+
+    def test_an_off_diff_candidate_is_skipped_by_the_prepass(self):
+        """The pre-pass's own ``is_line_valid`` guard is defensive, not
+        load-bearing: an off-diff apply_range already fails `_fence_verdict`'s
+        own gate (``range_not_in_diff``), so a finding whose OWN line is
+        off-diff is never a CANDIDATE regardless of this guard — deleting it
+        alone leaves this test green. What actually keeps the finding out of
+        ``comments`` is post_github's separate per-primary line check in the
+        render loop itself, which runs whether or not the pre-pass's guard
+        exists. This pins the outcome (no interval claimed, not posted), not
+        that this particular guard is what produces it."""
+        a = self._finding(
+            title="Off diff", line=999, end_line=999, suggested_fix_code="x"
+        )
+        b = self._finding(
+            title="Fenced",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        comments = run.payload["payload"]["comments"]
+        self.assertEqual(
+            len(comments), 1, "the off-diff finding is skipped, not posted"
+        )
+        self.assertIn(_FENCE, comments[0]["body"])
+
+    def test_a_non_candidate_ahead_of_the_pair_does_not_shift_the_index_basis(self):
+        """#223 R4: the pre-pass's records are keyed on the GROUP index
+        (``enumerate(groups)``), never a separate "candidate ordinal". A
+        fence-less finding ahead of the overlapping pair pushes the pair's
+        GROUP indexes to 1 and 2 while their CANDIDATE ordinals (position
+        among only the gate-passing records) would be 0 and 1 — a builder
+        that re-keyed records to the candidate ordinal would hand the render
+        loop's ``index in losers`` check the wrong index for both.
+        Mutation: re-key ``_github_overlap_records`` to
+        ``len(records)`` instead of the enumerate index — RED (the WINNER
+        demotes instead of the loser).
+        """
+        fenceless = {
+            "file": "foo.py",
+            "line": 6,
+            "severity": "low",
+            "title": "No fence",
+            "body": "No suggested_fix_code on this one.",
+        }
+        a = self._finding(
+            title="First",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+        )
+        b = self._finding(
+            title="Second",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([fenceless, a, b])
+        comments = run.payload["payload"]["comments"]
+        self.assertEqual(len(comments), 3)
+        self.assertIn(_FENCE, comments[1]["body"])
+        self.assertNotIn(_FENCE, comments[2]["body"])
+        self._assert_downgraded(run, "overlaps_kept_fence", where="foo.py:3")
+
+
+class TestGitLabOverlapDemotion(_FixGateRunBase):
+    """GitLab's dry-run equivalent of ``TestGitHubOverlapDemotion`` — the same
+    demotion decision through ``_gitlab_anchored``/``deliver``.
+    """
+
+    PLATFORM = "gitlab"
+    DIFF = GL_DIFF_OVERLAP
+
+    VERSIONS: ClassVar[list] = [
+        {
+            "base_commit_sha": "base1",
+            "head_commit_sha": "head1",
+            "start_commit_sha": "start1",
+        }
+    ]
+
+    def _run(self, findings, **kw):
+        kw.setdefault("versions", self.VERSIONS)
+        return super()._run(findings, **kw)
+
+    def test_the_later_overlapping_fence_demotes(self):
+        a = self._finding(
+            title="First",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+        )
+        b = self._finding(
+            title="Second",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        discussions = run.payload["discussions"]
+        self.assertEqual(len(discussions), 2)
+        self.assertIn(_FENCE, discussions[0]["body"])
+        self.assertNotIn(_FENCE, discussions[1]["body"])
+        self._assert_downgraded(run, "overlaps_kept_fence", where="foo.py:3")
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+        self.assertIn("  1 suggested fix(es) downgraded to prose.", run.out)
+
+    def test_touching_disjoint_ranges_both_keep_their_fences(self):
+        a = self._finding(
+            title="First", line=2, end_line=3, suggested_fix_code="    a2\n    a3"
+        )
+        b = self._finding(
+            title="Second", line=4, end_line=5, suggested_fix_code="    b4\n    b5"
+        )
+        run = self._run([a, b])
+        discussions = run.payload["discussions"]
+        self.assertIn(_FENCE, discussions[0]["body"])
+        self.assertIn(_FENCE, discussions[1]["body"])
+        self.assertEqual(run.payload["skipped"], [])
+
+    def test_a_fenceless_finding_never_blocks_a_later_fence(self):
+        a = {
+            "file": "foo.py",
+            "line": 3,
+            "severity": "low",
+            "title": "No fence",
+            "body": "No suggested_fix_code on this one.",
+        }
+        b = self._finding(
+            title="Fenced",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        discussions = run.payload["discussions"]
+        self.assertEqual(len(discussions), 2)
+        self.assertIn(_FENCE, discussions[1]["body"])
+        self.assertNotIn("overlaps_kept_fence", "\n".join(run.payload["skipped"]))
+
+    def test_a_gate_failing_finding_never_blocks_a_later_fence(self):
+        a = self._finding(
+            title="Fails its own gate",
+            line=3,
+            end_line=940,
+            suggested_fix_code="x",
+        )
+        b = self._finding(
+            title="Fenced",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([a, b])
+        discussions = run.payload["discussions"]
+        self.assertNotIn(_FENCE, discussions[0]["body"])
+        self.assertIn(_FENCE, discussions[1]["body"])
+        self._assert_downgraded(run, "range_not_in_diff", where="foo.py:3")
+        self.assertNotIn("overlaps_kept_fence", "\n".join(run.payload["skipped"]))
+
+    def test_a_non_candidate_ahead_of_the_pair_does_not_shift_the_index_basis(self):
+        """#223 R4, GitLab twin of the GitHub test of the same name: the
+        pre-pass's records are keyed on the ``remaining`` index — the SAME
+        index post_gitlab's render loop checks with ``index in losers`` —
+        never a separate "candidate ordinal". A fence-less, line-valid
+        finding ahead of the pair reaches ``remaining`` (it survives the
+        skip pre-partition — it just isn't a CANDIDATE), pushing the pair's
+        ``remaining`` indexes to 1 and 2 while their candidate ordinals
+        would be 0 and 1.
+
+        Mutation: re-key ``_gitlab_overlap_records`` to ``len(records)``
+        instead of the enumerate index — RED (the WINNER demotes instead
+        of the loser).
+        """
+        fenceless = {
+            "file": "foo.py",
+            "line": 6,
+            "severity": "low",
+            "title": "No fence",
+            "body": "No suggested_fix_code on this one.",
+        }
+        a = self._finding(
+            title="First",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+        )
+        b = self._finding(
+            title="Second",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        run = self._run([fenceless, a, b])
+        discussions = run.payload["discussions"]
+        self.assertEqual(len(discussions), 3)
+        self.assertIn(_FENCE, discussions[1]["body"])
+        self.assertNotIn(_FENCE, discussions[2]["body"])
+        self._assert_downgraded(run, "overlaps_kept_fence", where="foo.py:3")
+
+    def test_partial_rerun_demotion_is_independent_of_delivery_state(self):
+        """#223 R8: the demoted SET is a pure function of findings + diff,
+        computed before ``gitlab_prior_delivery`` is even fetched — and
+        ``gitlab_prior_delivery`` does not fetch AT ALL under ``--dry-run``
+        (its own docstring), so this must run LIVE to exercise it. Here the
+        SURVIVOR (first in delivery order) is already on the MR from an
+        earlier run — its own discussion is not reposted — but the LATER,
+        overlapping finding still demotes on this rerun exactly as it would
+        on a first run; the demotion does not depend on what has or hasn't
+        gone out live.
+        """
+        a = self._finding(
+            title="First",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+        )
+        b = self._finding(
+            title="Second",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+        )
+        key_a = post_review.finding_key(
+            "foo.py",
+            2,
+            "First",
+            render_comment_body(post_review._key_material_finding(a)),
+        )
+        payloads = []
+        run = self._run(
+            [a, b],
+            dry_run=False,
+            prior=(True, {key_a}, frozenset(), None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        discussion_bodies = [p["body"] for p in payloads if "position" in p]
+        # A's key is already delivered, so deliver()'s fast path renders/gates
+        # it (the summary below proves it rendered KEPT) but never posts it —
+        # only B's discussion reaches the wire, and it must still carry the
+        # demotion regardless of A's delivery state.
+        self.assertEqual(len(discussion_bodies), 1)
+        self.assertNotIn(_FENCE, discussion_bodies[0])
+        self.assertIn(
+            "suggested-fix downgraded: foo.py:3 (overlaps_kept_fence)", run.err
+        )
+        self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
+        self.assertIn("  1 suggested fix(es) downgraded to prose.", run.out)
+
+    def test_partial_delivery_threads_the_loser_demotion_through_its_own_group(self):
+        """#223: the overlap LOSER can also be the undelivered half of its
+        OWN group's partial-delivery split — a different code path than
+        ``test_partial_rerun_demotion_is_independent_of_delivery_state``
+        above (there, the loser was a single-member group with no
+        corroborator, reaching the full ``deliver(..., corroborators, ...)``
+        call at the bottom of the loop). Here A[2,4] is kept; P[3,5],
+        group k1's primary, is the overlap LOSER; k1's corroborator (line 6)
+        is already delivered but P itself is not — the "some but not all"
+        branch posts P alone through ``body_factory(f,
+        demote_reason=demote_reason)``, and THAT threading is what this
+        pins. Mutation: drop the ``demote_reason=demote_reason`` kwarg from
+        that call (posting ``body_factory(f)`` instead) — RED (P's fence
+        renders instead of demoting).
+        """
+        a = self._finding(
+            title="First",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+        )
+        p = self._finding(
+            title="Second",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+            consolidation_key="k1",
+            consolidation_primary=True,
+        )
+        corroborator = {
+            "file": "foo.py",
+            "line": 6,
+            "severity": "medium",
+            "title": "Corroborator",
+            "body": "Body C",
+            "agent": "bug-detector",
+            "dimension": "correctness",
+            "confidence": 70,
+            "consolidation_key": "k1",
+        }
+        key_corroborator = post_review.finding_key(
+            "foo.py",
+            6,
+            "Corroborator",
+            render_comment_body(post_review._key_material_finding(corroborator)),
+        )
+        payloads = []
+        run = self._run(
+            [a, p, corroborator],
+            dry_run=False,
+            # Only the corroborator's key is already delivered — P's own key
+            # is not, so k1's "some but not all" branch delivers P alone.
+            prior=(True, {key_corroborator}, frozenset(), None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        discussion_bodies = [pl["body"] for pl in payloads if "position" in pl]
+        # A posts kept; the corroborator is already_present (no repost); P
+        # posts alone, demoted.
+        self.assertEqual(len(discussion_bodies), 2)
+        self.assertIn(_FENCE, discussion_bodies[0])
+        self.assertNotIn(_FENCE, discussion_bodies[1])
+        # The prose suggestion still ships — only the one-click fence is
+        # withheld (``_finding``'s default ``suggestion`` text, unchanged).
+        self.assertIn("**Suggested fix:**\nReturn two instead.", discussion_bodies[1])
+        self.assertIn(
+            "suggested-fix downgraded: foo.py:3 (overlaps_kept_fence)", run.err
+        )
+
+    def test_a_reactively_promoted_corroborator_queries_the_kept_interval_map(self):
+        """#223 R6: a corroborator promoted to its own discussion (here, via the
+        partial-delivery split — its group's primary already delivered, itself
+        not) is a REACTIVE fence site: it was never a candidate in the pre-pass
+        (only a group's primary is), so it QUERIES the read-only
+        ``kept_intervals`` map built from the primary and demotes when its own
+        stated interval intersects it. Mutate ``deliver_corroborator`` to drop
+        that query (always pass ``demote_reason=None``) and this goes red.
+        """
+        primary = self._finding(
+            title="Primary",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+            consolidation_key="k1",
+            consolidation_primary=True,
+        )
+        corroborator = self._finding(
+            title="Corroborator",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+            consolidation_key="k1",
+        )
+        key_primary = post_review.finding_key(
+            "foo.py",
+            2,
+            "Primary",
+            render_comment_body(post_review._key_material_finding(primary)),
+        )
+        key_corroborator = post_review.finding_key(
+            "foo.py",
+            3,
+            "Corroborator",
+            render_comment_body(post_review._key_material_finding(corroborator)),
+        )
+        self.assertNotEqual(key_primary, key_corroborator)
+        payloads = []
+        run = self._run(
+            [primary, corroborator],
+            dry_run=False,
+            # Primary already delivered; corroborator is not — the "some but
+            # not all" split that routes the corroborator through
+            # deliver_corroborator instead of the group's own discussion.
+            prior=(True, {key_primary}, frozenset(), None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        discussion_bodies = [p["body"] for p in payloads if "position" in p]
+        self.assertEqual(len(discussion_bodies), 1, "only the corroborator posts")
+        self.assertNotIn(_FENCE, discussion_bodies[0])
+        self.assertIn(
+            "suggested-fix downgraded: foo.py:3 (overlaps_kept_fence)", run.err
+        )
+
+    def test_a_reactively_promoted_corroborator_ignores_a_losers_phantom_interval(
+        self,
+    ):
+        """#223 R6 / the ``kept_intervals`` guard: the interval map reactive
+        corroborator sites consult carries only WINNING candidates' apply
+        ranges — a LOSER's own range must never occupy anything (a
+        demoted record "occupies nothing", :func:`_overlap_losers`'s own
+        docstring). Winner A[2,4] keeps; loser P[3,5] (group k2's primary,
+        already delivered so its own group never re-renders) overlaps A and
+        demotes; group k2's corroborator [5,5] overlaps ONLY P's [3,5]
+        range, not A's [2,4] — so it must KEEP its fence. Mutate the
+        ``if index not in losers:`` guard away (append every record's
+        interval unconditionally) and P's phantom [3,5] wrongly demotes the
+        corroborator too — RED.
+        """
+        a = self._finding(
+            title="First",
+            line=2,
+            end_line=4,
+            suggested_fix_code="    a2\n    a3\n    a4",
+        )
+        p = self._finding(
+            title="Second",
+            line=3,
+            end_line=5,
+            suggested_fix_code="    b3\n    b4\n    b5",
+            consolidation_key="k2",
+            consolidation_primary=True,
+        )
+        corroborator = self._finding(
+            title="Corroborator",
+            line=5,
+            end_line=5,
+            suggested_fix_code="    fixed5",
+            consolidation_key="k2",
+        )
+        key_p = post_review.finding_key(
+            "foo.py",
+            3,
+            "Second",
+            render_comment_body(post_review._key_material_finding(p)),
+        )
+        payloads = []
+        run = self._run(
+            [a, p, corroborator],
+            dry_run=False,
+            # P's own key is already delivered — its group never re-renders,
+            # but the corroborator's key is not, so it splits off through
+            # deliver_corroborator.
+            prior=(True, {key_p}, frozenset(), None),
+            payloads=payloads,
+        )
+        self.assertIsNone(run.exit_code)
+        discussion_bodies = [pl["body"] for pl in payloads if "position" in pl]
+        # A posts kept; P's group is already_present (no repost); the
+        # corroborator posts on its own via deliver_corroborator.
+        self.assertEqual(len(discussion_bodies), 2)
+        self.assertIn(_FENCE, discussion_bodies[0])  # A
+        self.assertIn(_FENCE, discussion_bodies[1])  # corroborator keeps its fence
+        self.assertNotIn(
+            "suggested-fix downgraded: foo.py:5 (overlaps_kept_fence)", run.err
+        )
 
 
 class TestGitHubFencePathAmbiguity(_FixGateRunBase):
