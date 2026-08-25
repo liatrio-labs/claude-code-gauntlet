@@ -24,6 +24,23 @@ export function assertPrompt(prompt) {
   }
 }
 
+// A single allOf entry of the conditional-required construct (issue #218): { if, then }, NOT
+// a full JSON Schema — `if`/`then` here carry only `properties`/`required`, no `type` (the
+// measured-accepted spelling stages.js emits). Local validity coverage only: this pins the
+// SHAPE (if.properties.dimension.const, if.required, then.required), not that it is
+// semantically the right dimension/field pair — that is finding_schema.test.js's job.
+function assertValidConditional(clause, path) {
+  if (!clause || typeof clause !== 'object') throw new Error(`schema ${path}: allOf entry must be an object`);
+  if (!clause.if || typeof clause.if !== 'object') throw new Error(`schema ${path}: allOf entry must declare "if"`);
+  if (!clause.then || typeof clause.then !== 'object') throw new Error(`schema ${path}: allOf entry must declare "then"`);
+  if (!clause.if.properties || typeof clause.if.properties !== 'object') throw new Error(`schema ${path}.if: must declare "properties"`);
+  if (!clause.if.properties.dimension || typeof clause.if.properties.dimension.const !== 'string') {
+    throw new Error(`schema ${path}.if.properties.dimension: must declare a string "const"`);
+  }
+  if (!Array.isArray(clause.if.required)) throw new Error(`schema ${path}.if: must declare "required" as an array`);
+  if (!Array.isArray(clause.then.required)) throw new Error(`schema ${path}.then: must declare "required" as an array`);
+}
+
 // opts.schema must be REAL JSON Schema: a "type", object schemas carry "properties",
 // array schemas carry "items" — recursively (catches nested shorthand like {id:'string'}).
 export function assertValidSchema(schema, path = '$') {
@@ -32,6 +49,10 @@ export function assertValidSchema(schema, path = '$') {
   if (schema.type === 'object') {
     if (!schema.properties || typeof schema.properties !== 'object') throw new Error(`schema ${path}: object must declare "properties"`);
     for (const [k, v] of Object.entries(schema.properties)) assertValidSchema(v, `${path}.${k}`);
+    if (schema.allOf !== undefined) {
+      if (!Array.isArray(schema.allOf)) throw new Error(`schema ${path}: allOf must be an array`);
+      schema.allOf.forEach((clause, i) => assertValidConditional(clause, `${path}.allOf[${i}]`));
+    }
   } else if (schema.type === 'array') {
     if (!schema.items) throw new Error(`schema ${path}: array must declare "items"`);
     assertValidSchema(schema.items, `${path}[]`);

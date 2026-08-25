@@ -91,6 +91,20 @@ test('validateArgs rejects an unknown policy.provider', () => {
   // expects standard Claude model names, so gateway sessions stay firstParty (bugbot #179).
   assert.equal(validateArgs({ ...good, policy: { ...good.policy, provider: 'gateway' } }).ok, false);
 });
+// issue #218: policy.gateway gates registry.js's conditionalSchemaActive. A non-boolean
+// (e.g. the string "true") must fail loud at the waist rather than silently coerce.
+test('validateArgs accepts policy.gateway true/false and tolerates null/absent', () => {
+  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, gateway: true } }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, gateway: false } }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs({ ...good, policy: { ...good.policy, gateway: null } }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs(good), { ok: true, errors: [] }); // absent
+});
+test('validateArgs rejects a non-boolean policy.gateway', () => {
+  const r = validateArgs({ ...good, policy: { ...good.policy, gateway: 'true' } });
+  assert.equal(r.ok, false);
+  assert.match(r.errors.join(' '), /invalid policy\.gateway: true/);
+});
+
 test('validateArgs rejects an unknown delivery.tier', () => {
   const r = validateArgs({ ...good, delivery: { tier: 'suggestions_only' } });
   assert.equal(r.ok, false);

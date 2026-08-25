@@ -136,6 +136,28 @@ test('a nulled multi-dimension agent degrades every dimension it covers', async 
   assert.deepEqual([...out.degraded].sort(), ['comment_accuracy', 'convention', 'intent']);
 });
 
+// issue #218: the null-gap message names the conditional construct only when the failed
+// dispatch actually carried it (schemaActive AND the spec's own conditionalRequired is
+// non-empty) — three of the ternary's four reachable states, the fourth being covered by
+// the two tests above (schemaActive true + empty conditionalRequired -> security-reviewer;
+// schemaActive true + non-empty conditionalRequired -> conventions-and-intent above).
+test('a nulled conventions-and-intent under an ACTIVE policy names the conditional construct in the gap', async () => {
+  const ctx = fakeCtx({ nulls: ['code-gauntlet:conventions-and-intent'] });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  assert.ok(
+    out.gaps.some((g) => /conventions-and-intent/.test(g) && /conditional per-dimension schema/.test(g)),
+    `expected the conditional note on an active-policy null gap, got: ${JSON.stringify(out.gaps)}`,
+  );
+});
+
+test('a nulled conventions-and-intent under an INACTIVE policy (bedrock) omits the conditional note', async () => {
+  const ctx = fakeCtx({ nulls: ['code-gauntlet:conventions-and-intent'] });
+  const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: { provider: 'bedrock' } });
+  const gap = out.gaps.find((g) => /conventions-and-intent/.test(g));
+  assert.ok(gap, 'expected a gap for the nulled agent');
+  assert.ok(!/conditional per-dimension schema/.test(gap), `bedrock must not claim the conditional construct: ${gap}`);
+});
+
 test('complete=false is a SOFT possibly-incomplete gap, not degradation', async () => {
   const ctx = fakeCtx({ byAgent: { 'code-gauntlet:bug-detector': { findings: [], complete: false, total_seen: 999 } } });
   const out = await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });

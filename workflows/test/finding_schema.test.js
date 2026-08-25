@@ -42,8 +42,11 @@ function declaredType(agentType, field) {
   return typeName(FINDING_PROP_TYPES[field]);
 }
 
-// Capture every discovery dispatch's schema, keyed by agentType.
-async function discoverySchemas() {
+// Capture every discovery dispatch's schema, keyed by agentType. `policy` defaults to {}
+// (firstParty, no gateway) — parameterized (issue #218) so callers can capture the schema
+// under a policy that gates the conditional per-dimension construct off (bedrock/vertex/
+// foundry, or firstParty-with-gateway) as well as the default active case.
+async function discoverySchemas(policy = {}) {
   const schemas = {};
   const ctx = {
     agent: async (_prompt, opts = {}) => {
@@ -52,7 +55,7 @@ async function discoverySchemas() {
     },
     parallel: async (thunks) => Promise.all(thunks.map((t) => t())),
   };
-  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy: {} });
+  await discover(ctx, { changedFiles: ['a.js'], agentFlags: {}, limits: {}, policy });
   return schemas;
 }
 
@@ -151,6 +154,72 @@ test('a CLOSED item schema declares every field it requires — no unsatisfiable
         `${spec.agentType}: required "${field}" is not declared in properties — a CLOSED schema ` +
           'that requires an undeclared field can never be satisfied',
       );
+    }
+    // issue #218: the same no-unsatisfiable guarantee extends to the conditional allOf's
+    // `then.required` arrays — a then-required field the item schema never declares would be
+    // just as unsatisfiable as a flat-required one, only triggered per-dimension instead of
+    // on every finding.
+    for (const clause of items.allOf || []) {
+      for (const field of clause.then.required) {
+        assert.ok(
+          field in items.properties,
+          `${spec.agentType}: conditionally-required "${field}" is not declared in properties`,
+        );
+      }
+    }
+  }
+});
+
+// --- Conditional per-dimension required (issue #218) ------------------------------
+
+// Every policy under which the conditional allOf/if/then construct must NOT appear anywhere
+// in any dispatched schema: any third-party provider, and firstParty explicitly paired with
+// gateway:true. Contract prose stays the enforcement floor on every one of these.
+const INACTIVE_POLICIES = [
+  { provider: 'bedrock' },
+  { provider: 'vertex' },
+  { provider: 'foundry' },
+  { provider: 'firstParty', gateway: true },
+  { gateway: true }, // absent provider (firstParty by default) + gateway:true
+];
+
+test('firstParty/absent/null + no gateway: conventions-and-intent carries the exact allOf construct and dimension enum', async () => {
+  for (const policy of [{}, { provider: 'firstParty' }, { provider: null }, { provider: undefined, gateway: false }]) {
+    const schemas = await discoverySchemas(policy);
+    const items = schemas['code-gauntlet:conventions-and-intent'].properties.findings.items;
+    assert.deepEqual(
+      items.allOf,
+      [
+        { if: { properties: { dimension: { const: 'convention' } }, required: ['dimension'] }, then: { required: ['claude_md_rule'] } },
+        { if: { properties: { dimension: { const: 'intent' } }, required: ['dimension'] }, then: { required: ['spec_text'] } },
+      ],
+      `active policy ${JSON.stringify(policy)}: allOf must be the exact measured spelling, both entries, sorted by dimension`,
+    );
+    assert.deepEqual(
+      items.properties.dimension,
+      { type: 'string', enum: ['comment_accuracy', 'convention', 'intent'] },
+      `active policy ${JSON.stringify(policy)}: dimension must be pinned to the spec's own sorted dimensions`,
+    );
+  }
+});
+
+test('firstParty/no gateway: every OTHER agent\'s schema carries no allOf and no dimension enum', async () => {
+  const schemas = await discoverySchemas({});
+  for (const spec of agentSpecs()) {
+    if (spec.agentType === 'code-gauntlet:conventions-and-intent') continue;
+    const items = schemas[spec.agentType].properties.findings.items;
+    assert.equal(items.allOf, undefined, `${spec.agentType}: must carry no allOf`);
+    assert.deepEqual(items.properties.dimension, { type: 'string' }, `${spec.agentType}: dimension must stay unpinned`);
+  }
+});
+
+test('bedrock/vertex/foundry, and firstParty-with-gateway: no allOf and no dimension enum anywhere', async () => {
+  for (const policy of INACTIVE_POLICIES) {
+    const schemas = await discoverySchemas(policy);
+    for (const [agentType, schema] of Object.entries(schemas)) {
+      const items = schema.properties.findings.items;
+      assert.equal(items.allOf, undefined, `policy ${JSON.stringify(policy)}, ${agentType}: must carry no allOf`);
+      assert.deepEqual(items.properties.dimension, { type: 'string' }, `policy ${JSON.stringify(policy)}, ${agentType}: dimension must stay unpinned`);
     }
   }
 });
