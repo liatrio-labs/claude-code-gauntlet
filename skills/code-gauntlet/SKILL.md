@@ -356,7 +356,7 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   diffPath, changedFilesPath, reviewConfigPath,
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // ONLY when the 2e trivial-scope gate asked; omit otherwise
-  policy: { tier, subagentModel, provider },
+  policy: { tier, subagentModel, provider, gateway },
   limits: { deliveryCap },  // pass ONLY genuine overrides — a REVIEW.md-set value, or the
                              // env-threaded deliveryCap — never the full table:
                              // normalizeArgs fills summarizeBucketSize/validateBatch/

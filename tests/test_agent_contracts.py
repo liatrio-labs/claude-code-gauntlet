@@ -302,6 +302,45 @@ class TestCompleteReadContract(unittest.TestCase):
             "contextReadPlan", bundle, "the shipped bundle carries no read plan"
         )
 
+    def test_the_skill_documents_policy_gateway(self):
+        # issue #218: the same silent-fallback drift class as
+        # test_the_skill_documents_measuring_and_stamping_the_context_size above, applied to
+        # policy.gateway. The waist treats an omitted gateway identically to a stamped
+        # false (registry.js's conditionalSchemaActive), so an orchestrator that builds the
+        # waist from these docs without ever resolving ANTHROPIC_BASE_URL silently leaves
+        # the conditional per-dimension schema construct fail-OPEN through a gateway to a
+        # backend the construct was never measured against — a live docs gap, not a
+        # theoretical one, since these two files are what an orchestrator actually reads
+        # to assemble the args waist.
+        skill = (REPO / "skills/code-gauntlet/SKILL.md").read_text()
+        triage = (REPO / "skills/code-gauntlet/references/phase2-triage.md").read_text()
+        for doc, label in [(skill, "SKILL.md"), (triage, "phase2-triage.md")]:
+            self.assertIn(
+                "policy.gateway",
+                doc,
+                f"{label} does not document the policy.gateway waist field",
+            )
+
+    def test_the_workflow_validates_and_consumes_policy_gateway(self):
+        # Mirrors test_the_workflow_validates_and_consumes_the_stamped_size above: the
+        # skill's docs (above) promise a field the workflow must still accept and act on.
+        args_js = (REPO / "workflows/src/args.js").read_text()
+        registry_js = (REPO / "workflows/src/registry.js").read_text()
+        self.assertIn(
+            "policy.gateway", args_js, "args.js no longer validates policy.gateway"
+        )
+        self.assertIn(
+            "conditionalSchemaActive",
+            registry_js,
+            "registry.js no longer derives conditionalSchemaActive",
+        )
+        bundle = (REPO / "workflows/pipeline.js").read_text()
+        self.assertIn(
+            "conditionalSchemaActive",
+            bundle,
+            "the shipped bundle carries no conditionalSchemaActive derivation",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
