@@ -2778,7 +2778,7 @@ function validateArgs(args) {
   // policy.gateway gates registry.js's conditionalSchemaActive (issue #218) — a non-boolean
   // would silently coerce (e.g. the string "false" is truthy), so shape-check it the same
   // way provider is above. Absent/null both mean "no gateway", same tolerance as provider.
-  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
+  if (isPlainObject(args.policy)
     && args.policy.gateway !== undefined && args.policy.gateway !== null
     && typeof args.policy.gateway !== 'boolean') {
     errors.push(`invalid policy.gateway: ${args.policy.gateway} (expected a boolean)`);
@@ -3407,9 +3407,9 @@ function agentSpecs(dims = DIMENSIONS) {
     // declares a non-empty requiredWhenDimension, sorted by dimension so the derivation
     // never depends on DIMENSIONS row order. Defensive `|| []` on the read — synthetic rows
     // built for tests (registry.test.js) omit the key entirely, and this must not throw.
-    // Empty on every single-dimension spec (and on the two of conventions-and-intent's three
-    // rows that carry none) by construction, so findingItemSchema below emits nothing extra
-    // for them regardless of policy.
+    // Empty on every single-dimension spec (and on the one of conventions-and-intent's three
+    // rows — comment_accuracy — that carries none) by construction, so findingItemSchema below
+    // emits nothing extra for them regardless of policy.
     spec.conditionalRequired = spec.rows
       .filter((r) => (r.requiredWhenDimension || []).length)
       .map((r) => ({ dimension: r.dimension, required: [...r.requiredWhenDimension].sort() }))

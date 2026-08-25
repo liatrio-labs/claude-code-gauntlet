@@ -633,7 +633,7 @@ export function validateArgs(args) {
   // policy.gateway gates registry.js's conditionalSchemaActive (issue #218) — a non-boolean
   // would silently coerce (e.g. the string "false" is truthy), so shape-check it the same
   // way provider is above. Absent/null both mean "no gateway", same tolerance as provider.
-  if (args.policy && typeof args.policy === 'object' && !Array.isArray(args.policy)
+  if (isPlainObject(args.policy)
     && args.policy.gateway !== undefined && args.policy.gateway !== null
     && typeof args.policy.gateway !== 'boolean') {
     errors.push(`invalid policy.gateway: ${args.policy.gateway} (expected a boolean)`);

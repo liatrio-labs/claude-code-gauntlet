@@ -324,9 +324,9 @@ export function agentSpecs(dims = DIMENSIONS) {
     // declares a non-empty requiredWhenDimension, sorted by dimension so the derivation
     // never depends on DIMENSIONS row order. Defensive `|| []` on the read — synthetic rows
     // built for tests (registry.test.js) omit the key entirely, and this must not throw.
-    // Empty on every single-dimension spec (and on the two of conventions-and-intent's three
-    // rows that carry none) by construction, so findingItemSchema below emits nothing extra
-    // for them regardless of policy.
+    // Empty on every single-dimension spec (and on the one of conventions-and-intent's three
+    // rows — comment_accuracy — that carries none) by construction, so findingItemSchema below
+    // emits nothing extra for them regardless of policy.
     spec.conditionalRequired = spec.rows
       .filter((r) => (r.requiredWhenDimension || []).length)
       .map((r) => ({ dimension: r.dimension, required: [...r.requiredWhenDimension].sort() }))
