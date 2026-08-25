@@ -1244,6 +1244,7 @@ class TestDeliveryVocabularySurfaces(unittest.TestCase):
             "delivery-guide.md is missing the Example workflow / Script "
             "behavior anchors the loose bash scan needs",
         )
+        assert match is not None  # narrows for static analysis (pyright)
         region = match.group(1)
         self.assertRegex(
             region,
