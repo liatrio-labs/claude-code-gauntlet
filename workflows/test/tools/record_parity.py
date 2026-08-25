@@ -292,7 +292,7 @@ def check(only_script=None, only_case=None):
     mismatches = []
     with tempfile.TemporaryDirectory() as tmp:
         tmp_root = Path(tmp)
-        for script, case_dir, case_label in _iter_cases(only_script, only_case):
+        for script, case_dir, _case_label in _iter_cases(only_script, only_case):
             rel = case_dir.relative_to(FIXTURES)
             fresh_bytes = _serialize(_compute(script, case_dir))
             fresh_path = tmp_root / rel / "expected.json"

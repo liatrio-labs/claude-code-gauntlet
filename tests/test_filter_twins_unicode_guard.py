@@ -137,9 +137,12 @@ class _Discovery(ast.NodeVisitor):
                 self._expr_has_flag(e, "IGNORECASE") for e in flag_exprs
             )
             pattern_text = None
-            if node.args and isinstance(node.args[0], ast.Constant):
-                if isinstance(node.args[0].value, str):
-                    pattern_text = node.args[0].value
+            if (
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
+            ):
+                pattern_text = node.args[0].value
             self.calls.append(
                 {
                     "func": self._current_func(),
@@ -283,7 +286,9 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
         }
         self.assertEqual(len(injection_lists), 8, sorted(injection_lists))
         self.assertIn("block_patterns", self.list_families)
-        self.assertEqual(self.list_families["block_patterns"]["func"], "parse_review_md")
+        self.assertEqual(
+            self.list_families["block_patterns"]["func"], "parse_review_md"
+        )
         # 25 TEST_CORRECTNESS compiles + 2 keyword-set compiles + 1 word-split
         # compile (func=None, module level) = 28, + 8 list-comp compiles + 1
         # file-path search (func=apply_injection_filter) = 9, + 2 suppression
@@ -309,7 +314,9 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
                 continue
             if "\\s" in text or "\\S" in text:
                 offenders.append(f"call@{call['lineno']}: {text!r}")
-        self.assertEqual(offenders, [], f"bare \\s/\\S found in first-party pattern(s): {offenders}")
+        self.assertEqual(
+            offenders, [], f"bare \\s/\\S found in first-party pattern(s): {offenders}"
+        )
 
     def test_every_first_party_call_site_carries_re_ascii(self):
         """(ii) Every first-party Python call/compile site carries re.ASCII;
@@ -323,8 +330,12 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             if _is_inert(call):
                 continue
             if not call["has_ascii"]:
-                missing.append(f"call@{call['lineno']} (func={call['func']}): missing re.ASCII")
-        self.assertEqual(missing, [], f"first-party call site(s) missing re.ASCII: {missing}")
+                missing.append(
+                    f"call@{call['lineno']} (func={call['func']}): missing re.ASCII"
+                )
+        self.assertEqual(
+            missing, [], f"first-party call site(s) missing re.ASCII: {missing}"
+        )
 
     def test_apply_exclusions_has_no_re_ascii(self):
         """(ii), negative half: apply_exclusions' re.search MUST NOT carry
@@ -332,7 +343,9 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
         the flag is caught immediately; the café/CAFÉ fixture pins the
         resulting BEHAVIOR, this pins the FLAG."""
         forbidden_calls = [c for c in self.calls if c["func"] in _ASCII_FORBIDDEN_FUNCS]
-        self.assertTrue(forbidden_calls, "expected to find apply_exclusions' re.search call")
+        self.assertTrue(
+            forbidden_calls, "expected to find apply_exclusions' re.search call"
+        )
         for call in forbidden_calls:
             self.assertFalse(
                 call["has_ascii"],
@@ -360,7 +373,9 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             py_texts = [_py_pattern_text(p) for p in fam["patterns"]]
             js_texts = [_js_literal_to_regex_text(e) for e in js_elements]
             if py_texts != js_texts:
-                mismatches.append(f"{py_name}/{js_name}: element mismatch\n  py={py_texts}\n  js={js_texts}")
+                mismatches.append(
+                    f"{py_name}/{js_name}: element mismatch\n  py={py_texts}\n  js={js_texts}"
+                )
 
         # FUNCTIONAL_VIOLATION_KEYWORDS / TYPE_SAFETY_BUG_KEYWORDS: single
         # compiled alternation patterns (Python: adjacent-string-literal
@@ -382,7 +397,9 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
                 ):
                     assign_node = node
                     break
-            self.assertIsNotNone(assign_node, f"could not locate {py_name}'s assignment")
+            self.assertIsNotNone(
+                assign_node, f"could not locate {py_name}'s assignment"
+            )
             self.assertIsInstance(assign_node.value, ast.Call)
             self.assertIsInstance(assign_node.value.args[0], ast.Constant)
             py_text = assign_node.value.args[0].value
@@ -391,15 +408,19 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             self.assertIsNotNone(js_pattern, f"{js_name}: not found in JS source")
             js_text = _js_literal_to_regex_text(js_pattern)
             if py_text != js_text:
-                mismatches.append(f"{py_name}/{js_name}: mismatch\n  py={py_text}\n  js={js_text}")
+                mismatches.append(
+                    f"{py_name}/{js_name}: mismatch\n  py={py_text}\n  js={js_text}"
+                )
 
         # _TEST_CORRECTNESS_PATTERNS: 25 module-level re.compile(...) calls,
         # in source order, vs the JS array of the same length in the same order.
-        test_correctness_calls = [c for c in self.calls if c["func"] is None and c["pattern_text"] is not None]
-        # Filter to exactly the ones inside the _TEST_CORRECTNESS_PATTERNS list
-        # literal by re-walking the AST list directly (module-level Call list,
+        # Located by re-walking the AST list directly (module-level Call list,
         # not caught by visit_Assign's "list of Constants" rule since its
-        # elements are Call nodes, not Constants).
+        # elements are Call nodes, not Constants), rather than filtering
+        # self.calls -- module scope holds other compiles too (FUNCTIONAL_
+        # VIOLATION_KEYWORDS, TYPE_SAFETY_BUG_KEYWORDS, WORD_SPLIT_RE), and
+        # this list literal is the only structural anchor for "these 25, in
+        # this order".
         tree = ast.parse(PY_SRC.read_text(encoding="utf-8"), filename=str(PY_SRC))
         tc_node = None
         for node in ast.walk(tree):
@@ -411,7 +432,9 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             ):
                 tc_node = node
                 break
-        self.assertIsNotNone(tc_node, "could not locate _TEST_CORRECTNESS_PATTERNS assignment")
+        self.assertIsNotNone(
+            tc_node, "could not locate _TEST_CORRECTNESS_PATTERNS assignment"
+        )
         py_tc_texts = []
         for elt in tc_node.value.elts:
             self.assertIsInstance(elt, ast.Call)
@@ -419,7 +442,9 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             py_tc_texts.append(elt.args[0].value)
 
         js_tc_elements = _find_js_list("TEST_CORRECTNESS_PATTERNS")
-        self.assertIsNotNone(js_tc_elements, "TEST_CORRECTNESS_PATTERNS: not found in JS source")
+        self.assertIsNotNone(
+            js_tc_elements, "TEST_CORRECTNESS_PATTERNS: not found in JS source"
+        )
         js_tc_texts = [_js_literal_to_regex_text(e) for e in js_tc_elements]
         if py_tc_texts != js_tc_texts:
             mismatches.append(
@@ -458,13 +483,25 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
         full = "[" + contents + "]"
         py_text = PY_SRC.read_text(encoding="utf-8")
         js_text = JS_SRC.read_text(encoding="utf-8")
-        self.assertIn(full, py_text, "union class spelling not found verbatim in scripts/filter_findings.py")
-        self.assertIn(full, js_text, "union class spelling not found verbatim in workflows/src/filterFindings.js")
-        self.assertGreaterEqual(
-            py_text.count(full), 8, "expected the union class to appear at multiple Python call sites"
+        self.assertIn(
+            full,
+            py_text,
+            "union class spelling not found verbatim in scripts/filter_findings.py",
+        )
+        self.assertIn(
+            full,
+            js_text,
+            "union class spelling not found verbatim in workflows/src/filterFindings.js",
         )
         self.assertGreaterEqual(
-            js_text.count(full), 8, "expected the union class to appear at multiple JS call sites"
+            py_text.count(full),
+            8,
+            "expected the union class to appear at multiple Python call sites",
+        )
+        self.assertGreaterEqual(
+            js_text.count(full),
+            8,
+            "expected the union class to appear at multiple JS call sites",
         )
 
 

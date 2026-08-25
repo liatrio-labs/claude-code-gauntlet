@@ -523,7 +523,9 @@ def _normalize_fix_code_for_bound(code):
 # a pattern-match boundary agree on what separates words. re.ASCII is NOT
 # applied here -- the class is already fully explicit, so the flag would be
 # a no-op (verified: tests/test_filter_findings.py pins this).
-_WORD_SPLIT_RE = re.compile(r"[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+")
+_WORD_SPLIT_RE = re.compile(
+    r"[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+"
+)
 
 
 def _count_words(text):
@@ -564,16 +566,29 @@ def apply_injection_filter(findings):
     seen_signatures = {}
 
     # Compile pattern lists once
-    shell_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_SHELL_PATTERNS]
-    url_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_URL_PATTERNS]
-    encoded_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_ENCODED_PATTERNS]
-    bypass_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BYPASS_PATTERNS]
-    instruct_re = [
-        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_INSTRUCTIONAL_PATTERNS
+    shell_re = [
+        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_SHELL_PATTERNS
     ]
-    vuln_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_VULN_INTRO_PATTERNS]
-    title_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_TITLE_PATTERNS]
-    body_marker_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BODY_PATTERNS]
+    url_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_URL_PATTERNS]
+    encoded_re = [
+        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_ENCODED_PATTERNS
+    ]
+    bypass_re = [
+        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BYPASS_PATTERNS
+    ]
+    instruct_re = [
+        re.compile(p, re.IGNORECASE | re.ASCII)
+        for p in _INJECTION_INSTRUCTIONAL_PATTERNS
+    ]
+    vuln_re = [
+        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_VULN_INTRO_PATTERNS
+    ]
+    title_re = [
+        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_TITLE_PATTERNS
+    ]
+    body_marker_re = [
+        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BODY_PATTERNS
+    ]
 
     def _first_match(patterns, text):
         """Return the pattern of the first regex that matches text, or None."""
@@ -1126,48 +1141,97 @@ def _route_by_dimension(finding):
 # a functional correctness issue today (-> promote to main report).
 # These describe bugs that EXIST NOW, not tests that should be written.
 _TEST_CORRECTNESS_PATTERNS = [
-    re.compile(r"\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b", re.IGNORECASE | re.ASCII),
+    re.compile(
+        r"\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\balways[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]pass(?:es)?\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\bnever[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+fail(?:s)?\b",
+        re.IGNORECASE | re.ASCII,
+    ),
     re.compile(r"\bvacuous(?:ly)?\b", re.IGNORECASE | re.ASCII),
     re.compile(r"\btautolog(?:y|ical)\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b", re.IGNORECASE | re.ASCII),
+    re.compile(
+        r"\bassert(?:ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+reached\b",
+        re.IGNORECASE | re.ASCII,
+    ),
     re.compile(r"\bdeadlock\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b", re.IGNORECASE | re.ASCII),
+    re.compile(
+        r"\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+race\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\bthread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:safety|unsafe|race)\b",
+        re.IGNORECASE | re.ASCII,
+    ),
     re.compile(
         r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:actually[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:verif|test|check)(?:s|ies)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+nothing\b",
         re.IGNORECASE | re.ASCII,
     ),
-    re.compile(r"\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b", re.IGNORECASE | re.ASCII),
     re.compile(
-        r"\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b", re.IGNORECASE | re.ASCII
+        r"\bfalse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+positive[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:test|assertion)\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\bincorrect(?:ly)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:assert|verify|test)\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\bwrong[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:value|result|output)\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\blocal[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+variable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?never[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:used|read)\b",
+        re.IGNORECASE | re.ASCII,
     ),
     re.compile(
         r"\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:on[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:a[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:local|copy|snapshot)\b",
         re.IGNORECASE | re.ASCII,
     ),
     re.compile(
-        r"\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b", re.IGNORECASE | re.ASCII
+        r"\bcompares?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wrong|incorrect|different)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+object\b",
+        re.IGNORECASE | re.ASCII,
     ),
     re.compile(
-        r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b", re.IGNORECASE | re.ASCII
+        r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:does[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not|doesn'?t)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:wait|join|block)\b",
+        re.IGNORECASE | re.ASCII,
     ),
-    re.compile(r"\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b", re.IGNORECASE | re.ASCII),
+    re.compile(
+        r"\breader[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+thread[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+not[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+waited\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\bflaky[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+test\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\bassertion[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|passes?|succeed)\b",
+        re.IGNORECASE | re.ASCII,
+    ),
     re.compile(
         r"\bassert(?:s|ion)?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b",
         re.IGNORECASE | re.ASCII,
     ),
     re.compile(
-        r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b", re.IGNORECASE | re.ASCII
+        r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:is[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?always[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:true|pass(?:es?)?|succeed)\b",
+        re.IGNORECASE | re.ASCII,
     ),
-    re.compile(r"\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b", re.IGNORECASE | re.ASCII),
-    re.compile(r"\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b", re.IGNORECASE | re.ASCII),
+    re.compile(
+        r"\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b",
+        re.IGNORECASE | re.ASCII,
+    ),
+    re.compile(
+        r"\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b",
+        re.IGNORECASE | re.ASCII,
+    ),
 ]
 
 

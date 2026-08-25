@@ -29,11 +29,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scripts.filter_findings import (
     _CONTESTATION_DROP_THRESHOLD,
     _SINGLETON_PENALTY,
+    _WORD_SPLIT_RE,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
     _count_words,
-    _WORD_SPLIT_RE,
     _is_test_correctness_finding,
     _route_by_dimension,
     apply_exclusions,
@@ -555,7 +555,9 @@ class TestApplyInjectionFilter(unittest.TestCase):
         self.assertEqual(len(passed), 0)
 
     def test_encoded_payload_astral_letter_boundary_eliminated(self):
-        astral_bold_a = "\U0001d400"  # MATHEMATICAL BOLD CAPITAL A -- a letter, not a symbol
+        astral_bold_a = (
+            "\U0001d400"  # MATHEMATICAL BOLD CAPITAL A -- a letter, not a symbol
+        )
         findings = [
             self._finding_with(
                 description=f"Investigate this {astral_bold_a}1234567890abcdef1234567890abcdef payload before merging since it looks encoded and suspicious."
@@ -566,7 +568,8 @@ class TestApplyInjectionFilter(unittest.TestCase):
 
     def test_homoglyph_fold_no_longer_eliminates(self):
         # Before #211: Python's default IGNORECASE fully folds unicode, so
-        # U+017F LATIN SMALL LETTER LONG S ("ſkip") matched ASCII
+        # U+017F LATIN SMALL LETTER LONG S in place of the leading "s" of
+        # "skip" matched ASCII
         # \bskip\s+review\b and this finding was (silently, dormant-twin-
         # only) eliminated. re.ASCII disables non-ASCII->ASCII folding, so
         # it now survives -- matching the shipped JS twin's behavior, which
