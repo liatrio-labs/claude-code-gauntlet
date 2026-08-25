@@ -2,6 +2,59 @@
 
 <!-- version list -->
 
+## v3.19.0 (2026-08-25)
+
+### Bug Fixes
+
+- **post-review**: Address PR #236 review comments
+  ([#236](https://github.com/liatrio-labs/claude-code-gauntlet/pull/236),
+  [`21367d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21367d3053743dbc28c45e0e4a4b5a2612ac45ed))
+
+### Chores
+
+- **ci**: Ratchet the scripts coverage floor to 92.7 from the #236 CI measurement
+  ([#236](https://github.com/liatrio-labs/claude-code-gauntlet/pull/236),
+  [`21367d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21367d3053743dbc28c45e0e4a4b5a2612ac45ed))
+
+### Documentation
+
+- **delivery**: State the overlap-fence demotion rule, reverse the prior ratification
+  ([#236](https://github.com/liatrio-labs/claude-code-gauntlet/pull/236),
+  [`21367d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21367d3053743dbc28c45e0e4a4b5a2612ac45ed))
+
+### Features
+
+- **delivery**: Demote a fence that overlaps an already-kept fence in the same file
+  ([#236](https://github.com/liatrio-labs/claude-code-gauntlet/pull/236),
+  [`21367d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21367d3053743dbc28c45e0e4a4b5a2612ac45ed))
+
+- **delivery**: Overlap-aware suggestion fence demotion (#223, folds #224)
+  ([#236](https://github.com/liatrio-labs/claude-code-gauntlet/pull/236),
+  [`21367d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21367d3053743dbc28c45e0e4a4b5a2612ac45ed))
+
+### Testing
+
+- **bench**: Cover skipped-section prose and fenced bodies in the real-poster equality guard
+  ([#235](https://github.com/liatrio-labs/claude-code-gauntlet/pull/235),
+  [`4c43ab2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4c43ab2d251edf1c94235472f3856e8eb2160ba5))
+
+- **bench**: Drive post_gitlab's no-line skip branch through the fenced equality case
+  ([#235](https://github.com/liatrio-labs/claude-code-gauntlet/pull/235),
+  [`4c43ab2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4c43ab2d251edf1c94235472f3856e8eb2160ba5))
+
+- **bench**: Make the wrapped skipped-list literals explicit concatenations
+  ([#235](https://github.com/liatrio-labs/claude-code-gauntlet/pull/235),
+  [`4c43ab2`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4c43ab2d251edf1c94235472f3856e8eb2160ba5))
+
+- **bench**: Mirror the overlap-demotion decision through the real posters
+  ([#236](https://github.com/liatrio-labs/claude-code-gauntlet/pull/236),
+  [`21367d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21367d3053743dbc28c45e0e4a4b5a2612ac45ed))
+
+- **delivery**: Pin the overlap-demotion index basis and partial-delivery threading
+  ([#236](https://github.com/liatrio-labs/claude-code-gauntlet/pull/236),
+  [`21367d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/21367d3053743dbc28c45e0e4a4b5a2612ac45ed))
+
+
 ## v3.18.2 (2026-08-24)
 
 ### Bug Fixes
