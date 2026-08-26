@@ -39,6 +39,8 @@ Output JSON schema:
             "contested_count":         N,   # findings that bypassed threshold via validator contestation
             "injections_removed":      N,   # removed by injection filter
             "suggestions_removed":     N,   # kept findings whose suggestion field was stripped by injection scan
+            "claude_md_rules_removed": N,   # kept findings whose claude_md_rule field was stripped by injection scan
+            "spec_texts_removed":      N,   # kept findings whose spec_text field was stripped by injection scan
             "suggested_fix_codes_removed": N, # kept findings whose suggested_fix_code field was stripped by injection scan
             "consensus_boosted":       N,   # confidence boosted for co-location (same file + 10-line bucket, any agent)
             "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
@@ -57,6 +59,13 @@ Each filtered finding includes:
     "suggestion_removal_reason": "..."        # present only when suggestion_removed_by is present
     # "suggestion" itself may be absent after filtering -- it is deleted, not
     # nulled, whenever suggestion_removed_by is present.
+    "claude_md_rule_removed_by":     "injection"  # present only when claude_md_rule was stripped
+    "claude_md_rule_removal_reason": "..."        # present only when claude_md_rule_removed_by is present
+    "spec_text_removed_by":     "injection"  # present only when spec_text was stripped
+    "spec_text_removal_reason": "..."        # present only when spec_text_removed_by is present
+    # "claude_md_rule"/"spec_text" follow the same delete-not-null contract as
+    # "suggestion" above (#213 extends the #62 strip mechanism to these two
+    # repo-derived citation fields).
     "suggested_fix_code_removed_by":     "injection"  # present only when suggested_fix_code was stripped
     "suggested_fix_code_removal_reason": "..."        # present only when suggested_fix_code_removed_by is present
     # "suggested_fix_code" itself may be absent after filtering -- it is
@@ -533,6 +542,20 @@ def _count_words(text):
     return sum(1 for w in _WORD_SPLIT_RE.split(text or "") if w)
 
 
+# Prose fields scanned by the seven _SUGGESTION_SETS pattern sets and stripped
+# (never eliminated) on a match -- #62 introduced this for `suggestion`; #213
+# extends it to `claude_md_rule`/`spec_text`, the two repo-derived citation
+# fields the conventions-and-intent agent quotes verbatim into posted
+# comments (a higher-risk injection source than agent-authored suggestion).
+# One shared list, mirrored by workflows/src/filterFindings.js's
+# INJECTION_STRIPPED_PROSE_FIELDS -- a lockstep test (TestFixBoundConstantsLockstep-
+# adjacent, tests/test_filter_findings.py) asserts the two lists agree element-wise
+# so adding a field to only one twin goes red. Order is scan/strip order:
+# `suggestion` first, so its bytes are reproduced exactly when it is the field
+# that matches.
+_INJECTION_STRIPPED_PROSE_FIELDS = ("suggestion", "claude_md_rule", "spec_text")
+
+
 def apply_injection_filter(findings):
     """
     Remove findings that appear to be prompt-injection artifacts or hallucinations.
@@ -550,10 +573,12 @@ def apply_injection_filter(findings):
       9. File path is empty or contains template markers
       10. Duplicate signature (title+file+line)
 
-    A finding that survives all ten heuristics then has its `suggestion` field
-    (if any) scanned separately against the shell/url/encoded/bypass/
-    instructional/vuln-intro/body-marker sets; a match strips the field rather
-    than eliminating the finding (#62) — see `_strip_suggestion_if_injected`.
+    A finding that survives all ten heuristics then has each of
+    `_INJECTION_STRIPPED_PROSE_FIELDS` (`suggestion`, `claude_md_rule`,
+    `spec_text`) scanned separately against the shell/url/encoded/bypass/
+    instructional/vuln-intro/body-marker sets; a match strips that field
+    rather than eliminating the finding (#62, extended #213) — see
+    `_strip_injected_prose_fields`.
 
     Eliminated findings are logged via stderr for the methodology section.
 
@@ -596,11 +621,12 @@ def apply_injection_filter(findings):
                 return rx.pattern
         return None
 
-    # suggestion is rendered into posted PR/MR comments and reports, so
-    # payload-bearing advice must not reach a human — but a benign finding
-    # must not die for its advice (imperative security advice like "Never
-    # disable TLS verification" legitimately resembles these patterns), so a
-    # match strips the field instead of eliminating the finding (#62).
+    # suggestion (and, since #213, claude_md_rule/spec_text) is rendered into
+    # posted PR/MR comments and reports, so payload-bearing advice must not
+    # reach a human — but a benign finding must not die for its advice
+    # (imperative security advice like "Never disable TLS verification"
+    # legitimately resembles these patterns), so a match strips the field
+    # instead of eliminating the finding (#62).
     _SUGGESTION_SETS = (
         ("contains shell command pattern", shell_re),
         ("contains visit-URL pattern", url_re),
@@ -611,44 +637,56 @@ def apply_injection_filter(findings):
         ("matches injection marker", body_marker_re),
     )
 
-    def _strip_suggestion_if_injected(finding):
-        # Returns (kept_finding, phrase). `phrase` is the _SUGGESTION_SETS label
-        # that matched, or None when suggestion was untouched OR stripped for a
-        # reason that is not a pattern match (absent, empty, non-string) --
-        # `_strip_suggested_fix_code_if_needed` below only propagates a strip on
-        # an actual injection match (#63/D8c), not on a type violation.
+    def _strip_injected_prose_fields(finding):
+        # Returns (kept_finding, first_pattern_strip). Scans
+        # _INJECTION_STRIPPED_PROSE_FIELDS in list order; each PRESENT field is
+        # independently stripped -- never eliminates the finding -- on a
+        # non-string type or the first _SUGGESTION_SETS pattern match (#62,
+        # extended to claude_md_rule/spec_text by #213). Scanning continues
+        # after a match: every matching field strips.
         #
-        # A present suggestion that is not a string (possible via the retained
+        # first_pattern_strip is the (field, phrase) pair of the FIRST field a
+        # PATTERN (not a type violation) stripped, or None -- this is what
+        # feeds `_strip_suggested_fix_code_if_needed`'s propagation trigger
+        # (#63/D8c, #213/D2): a type-violation strip never propagates, and
+        # among pattern strips only the first-in-order field names the reason.
+        #
+        # A present field that is not a string (possible via the retained
         # Python CLI's unvalidated --input and checkpoint resume; the JS
         # dispatch boundary's JSON schema pins string-only) is inert to the
         # scan below; a dict/list/number would reach post_review's str()
         # coercion verbatim, and a None (rendered as absent downstream) is
         # stripped too so presence + non-string type is the whole trigger (#62).
-        if "suggestion" in finding and not isinstance(finding["suggestion"], str):
-            kept = dict(finding)
-            del kept["suggestion"]
-            kept["suggestion_removed_by"] = "injection"
-            kept["suggestion_removal_reason"] = "suggestion is not a string"
-            return kept, None
-        suggestion = finding.get("suggestion", "")
-        if not suggestion:
-            return finding, None
-        for phrase, patterns in _SUGGESTION_SETS:
-            m = _first_match(patterns, suggestion)
-            if m:
-                kept = dict(finding)
-                del kept["suggestion"]
-                kept["suggestion_removed_by"] = "injection"
-                kept["suggestion_removal_reason"] = f"suggestion {phrase}: {m!r}"
-                return kept, phrase
-        return finding, None
+        kept = finding
+        first_pattern_strip = None
+        for field in _INJECTION_STRIPPED_PROSE_FIELDS:
+            if field in kept and not isinstance(kept[field], str):
+                kept = dict(kept)
+                del kept[field]
+                kept[f"{field}_removed_by"] = "injection"
+                kept[f"{field}_removal_reason"] = f"{field} is not a string"
+                continue
+            value = kept.get(field, "")
+            if not value:
+                continue
+            for phrase, patterns in _SUGGESTION_SETS:
+                m = _first_match(patterns, value)
+                if m:
+                    kept = dict(kept)
+                    del kept[field]
+                    kept[f"{field}_removed_by"] = "injection"
+                    kept[f"{field}_removal_reason"] = f"{field} {phrase}: {m!r}"
+                    if first_pattern_strip is None:
+                        first_pattern_strip = (field, phrase)
+                    break
+        return kept, first_pattern_strip
 
-    def _strip_suggested_fix_code_if_needed(finding, suggestion_phrase):
-        """Mirrors `_strip_suggestion_if_injected`'s shape for
+    def _strip_suggested_fix_code_if_needed(finding, first_pattern_strip):
+        """Mirrors `_strip_injected_prose_fields`'s shape for
         `suggested_fix_code` (#63/D8): non-string strip first, then oversize,
-        then propagation-on-suggestion-strip. Independent of whether
-        `suggestion` is even present -- the first two checks fire on their
-        own regardless of `suggestion_phrase`.
+        then propagation-on-pattern-strip. Independent of whether any prose
+        field is even present -- the first two checks fire on their own
+        regardless of `first_pattern_strip`.
 
         Deliberately NO pattern scan of the code content itself: #62 measured
         content-pattern sets killing legitimate fixes, and code trips them
@@ -677,16 +715,19 @@ def apply_injection_filter(findings):
                 "suggested_fix_code exceeds the delivery bound"
             )
             return kept
-        if suggestion_phrase is not None:
+        if first_pattern_strip is not None:
             # A patch whose accompanying prose was flagged as injection must
             # not survive as a one-click apply -- pattern-free and byte-
             # identical to the JS twin's reason (the parity test only
-            # prefix-compares `suggestion_removal_reason`, not this key).
+            # prefix-compares `{field}_removal_reason`, not this key).
+            # `field` is the FIRST scanned field (list order) a pattern
+            # stripped (#213/D2/D7); "suggestion" reproduces today's bytes.
+            prop_field, prop_phrase = first_pattern_strip
             kept = dict(finding)
             del kept["suggested_fix_code"]
             kept["suggested_fix_code_removed_by"] = "injection"
             kept["suggested_fix_code_removal_reason"] = (
-                f"suggestion carried {suggestion_phrase}"
+                f"{prop_field} carried {prop_phrase}"
             )
             return kept
         return finding
@@ -775,8 +816,10 @@ def apply_injection_filter(findings):
                 + reasons[0]
             )
         else:
-            kept, phrase = _strip_suggestion_if_injected(finding)
-            passed.append(_strip_suggested_fix_code_if_needed(kept, phrase))
+            kept, first_pattern_strip = _strip_injected_prose_fields(finding)
+            passed.append(
+                _strip_suggested_fix_code_if_needed(kept, first_pattern_strip)
+            )
 
     return passed, eliminated
 
@@ -1513,6 +1556,17 @@ def apply_exclusions(findings, exclusion_patterns):
     comments same as description — user-authored ignore patterns are the user's
     kill-switch over everything that gets rendered (#62).
 
+    claude_md_rule/spec_text are also rendered into posted comments (#213 gives
+    them the same seven-set injection scan as suggestion), but are deliberately
+    NOT added here: the actual discriminator is not "gets rendered" (true of
+    all three) but cost. A `suggestion` exclusion match costs only that one
+    agent-authored field; claude_md_rule/spec_text quote the user's own repo
+    text, and a common CLAUDE.md phrasing (e.g. "MUST") would, via this
+    whole-finding elimination, mass-eliminate the conventions dimension for an
+    unbounded recall cost that the field-strip mechanism above does not carry.
+    A user kill-switch reaching rendered citation text is an open question,
+    tracked separately, not silently declined.
+
     Returns (passed, eliminated) lists. Each eliminated finding gains
     "eliminated_by" = "exclusion".
     """
@@ -1651,9 +1705,15 @@ def main():
     findings, elim_injection = apply_injection_filter(findings)
     all_eliminated.extend(elim_injection)
     injections_removed = len(elim_injection)
-    suggestions_removed = sum(
-        1 for f in findings if f.get("suggestion_removed_by") == "injection"
-    )
+    # One `{field}s_removed` stat per _INJECTION_STRIPPED_PROSE_FIELDS entry --
+    # looping the shared list (rather than one hardcoded sum() per field) means
+    # adding a field to the list is the only edit a future extension needs (#213).
+    prose_fields_removed = {
+        f"{field}s_removed": sum(
+            1 for f in findings if f.get(f"{field}_removed_by") == "injection"
+        )
+        for field in _INJECTION_STRIPPED_PROSE_FIELDS
+    }
     suggested_fix_codes_removed = sum(
         1 for f in findings if f.get("suggested_fix_code_removed_by") == "injection"
     )
@@ -1689,7 +1749,9 @@ def main():
             "passed_threshold": passed_threshold,
             "contested_count": contested_count,
             "injections_removed": injections_removed,
-            "suggestions_removed": suggestions_removed,
+            "suggestions_removed": prose_fields_removed["suggestions_removed"],
+            "claude_md_rules_removed": prose_fields_removed["claude_md_rules_removed"],
+            "spec_texts_removed": prose_fields_removed["spec_texts_removed"],
             "suggested_fix_codes_removed": suggested_fix_codes_removed,
             "consensus_boosted": consensus_boosted,
             "singleton_penalized": singleton_penalized,
