@@ -3952,10 +3952,10 @@ export async function runWith(ctx, rawArgs) {
     // a REPLAYED checkpoint.challenge (runPhase reuses checkpoints.challenge verbatim,
     // never re-dispatching challengeStage) bypasses this run's filterStage entirely.
     //
-    // Rewrites challengeOut's OWN findings/unverified IN PLACE, rather than threading
-    // stripped locals through the rest of this function, so every existing downstream
-    // reader of challengeOut.findings/.unverified is automatically correct with no
-    // second call site to keep in sync: selectDelivery/reportInput below, AND
+    // Rewrites challengeOut's OWN findings/unverified/eliminated IN PLACE, rather than
+    // threading stripped locals through the rest of this function, so every existing
+    // downstream reader of challengeOut.findings/.unverified is automatically correct
+    // with no second call site to keep in sync: selectDelivery/reportInput below, AND
     // writeArtifacts's `findings:` param further down (what becomes findings.json on
     // disk — assemble_artifacts.py's DERIVED persistence path re-projects
     // post-review.json/checkpoint-all.json FROM THAT FILE, never consulting the
@@ -3964,11 +3964,35 @@ export async function runWith(ctx, rawArgs) {
     // clean — round-1 review finding), AND phaseOutputs.challenge (=== challengeOut,
     // already recorded by runPhase above), so slimPersistedCheckpoints persists the
     // STRIPPED set and a future resume-of-a-resume replays an already-stripped
-    // checkpoint. Idempotent both ways: a fresh run's filterStage already stripped any
-    // matching field (no-op here), and re-stripping an already-stripped finding is also
-    // a no-op (nothing left to match), so resume-of-a-resume is safe.
-    challengeOut.findings = (challengeOut.findings || []).map(applyInjectedProseStrip);
-    challengeOut.unverified = (challengeOut.unverified || []).map(applyInjectedProseStrip);
+    // checkpoint. .eliminated rides into that same persisted checkpoint wholesale, so it
+    // is stripped too (round-2 review): a pre-#213 checkpoint's rejected findings must
+    // not re-persist a raw citation field into checkpoint-all.json, even though they are
+    // never delivered or reported. Idempotent both ways: a fresh run's filterStage
+    // already stripped any matching field (no-op here), and re-stripping an
+    // already-stripped finding is also a no-op (nothing left to match), so
+    // resume-of-a-resume is safe.
+    //
+    // Guard: a MALFORMED replayed checkpoint (checkpoints.challenge is a non-object --
+    // string/number/boolean) must fall through to the SAME tolerant behavior this
+    // function has always had here. Every challengeOut.PROPERTY *read* below already
+    // returns undefined on a primitive (JS property access, not assignment), and the
+    // `|| []` fallbacks downstream turn that into an empty, ok:true review — there is
+    // nothing to strip when there is no object to hold findings. Property ASSIGNMENT on
+    // a primitive throws in strict mode (this file is an ES module), which the belt
+    // would otherwise introduce as the FIRST write ever made to challengeOut, turning a
+    // tolerated malformed checkpoint into an uncaught throw. Tolerating a malformed
+    // checkpoint this way is itself pre-existing and out of this issue's scope — a
+    // follow-up tracks tightening it.
+    //
+    // Note: a belt strip on a REPLAYED checkpoint is disclosed per-finding (the
+    // `*_removed_by`/`*_removal_reason` stamps this run adds), but is NOT counted in
+    // `stats.filter` — that stat reflects only this run's OWN filterStage pass, same
+    // pre-existing shape as the #62 suggestion strip before it.
+    if (challengeOut && typeof challengeOut === 'object') {
+      challengeOut.findings = (challengeOut.findings || []).map(applyInjectedProseStrip);
+      challengeOut.unverified = (challengeOut.unverified || []).map(applyInjectedProseStrip);
+      challengeOut.eliminated = (challengeOut.eliminated || []).map(applyInjectedProseStrip);
+    }
 
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
     // delivery TIER (args.delivery.tier — 'all' by default, 'main_only' to withhold
