@@ -2,6 +2,87 @@
 
 <!-- version list -->
 
+## v3.21.0 (2026-08-26)
+
+### Bug Fixes
+
+- **pipeline**: Also strip the persisted findings the derived path projects from
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **pipeline**: Preserve the tolerated malformed-checkpoint envelope, extend belt to eliminated
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **pipeline**: Re-apply the prose-field strip when challenge is replayed from a checkpoint
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **pipeline**: Tolerate malformed checkpoint lists in the replay belt
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+### Chores
+
+- Re-trigger CI after dropped workflow events
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- Remove accidentally committed uv.lock
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **ci**: Ratchet JS coverage floors from the #249 CI measurement
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+### Documentation
+
+- **code-gauntlet**: Update the filter-stage doc for the generalized citation-field strip
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **test**: Pin the boundary-parity seed strings as injection-pattern-free
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+### Features
+
+- **filter**: Mirror the citation-field strip in the JS twin
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **filter**: Scan claude_md_rule/spec_text with the injection sets, strip on match
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **filter**: Scan claude_md_rule/spec_text with the injection sets, strip on match (#213)
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+### Testing
+
+- **filter**: Drop the splice substring guard, the emission test is the structural proof
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **filter**: Mutation guards, spliced stats emission, direct belt-function coverage
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **filter**: Upgrade the stats lockstep guard to a real emission assertion
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **parity**: Fix the spec_text_scan vuln-intro row to actually match its pattern
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+- **parity**: Generalize the removal-reason tolerance to every scanned prose field
+  ([#249](https://github.com/liatrio-labs/claude-code-gauntlet/pull/249),
+  [`0b5f720`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/0b5f720fd28e40519e673f54001ef5ccb5d57746))
+
+
 ## v3.20.1 (2026-08-26)
 
 ### Bug Fixes
