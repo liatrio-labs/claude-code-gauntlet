@@ -1,0 +1,14 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 90,
+      "description": "alpha\u0085bravo\u0085charlie\u0085delta\u0085echo\u0085foxtrot\u0085golf\u0085hotel\u0085india\u0085juliet\u0085kilo",
+      "file": "src/handler.py",
+      "id": "WC2",
+      "line_start": 8,
+      "severity": "medium",
+      "title": "Terse high-confidence finding"
+    }
+  ]
+}

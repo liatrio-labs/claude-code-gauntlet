@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "WC9",
+      "title": "Terse high-confidence finding",
+      "description": "alpha bravo charlie delta echo foxtrot golf hotel india\u0085",
+      "file": "src/handler.py",
+      "line_start": 8,
+      "severity": "medium",
+      "confidence": 90
+    }
+  ]
+}

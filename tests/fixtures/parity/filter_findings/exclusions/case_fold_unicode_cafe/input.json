@@ -1,0 +1,15 @@
+{
+  "fn": "apply_exclusions",
+  "findings": [
+    {
+      "id": "EX1",
+      "title": "CAFÉ kiosk endpoint returns stale data",
+      "description": "The kiosk endpoint caches the menu for too long and serves stale prices to customers.",
+      "file": "src/kiosk.py",
+      "line_start": 14,
+      "severity": "low",
+      "confidence": 55
+    }
+  ],
+  "exclusion_patterns": ["café"]
+}

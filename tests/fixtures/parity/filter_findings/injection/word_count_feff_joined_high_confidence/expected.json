@@ -1,0 +1,14 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 90,
+      "description": "alpha\ufeffbravo\ufeffcharlie\ufeffdelta\ufeffecho\ufefffoxtrot\ufeffgolf\ufeffhotel\ufeffindia\ufeffjuliet\ufeffkilo",
+      "file": "src/handler.py",
+      "id": "WC1",
+      "line_start": 8,
+      "severity": "medium",
+      "title": "Terse high-confidence finding"
+    }
+  ]
+}

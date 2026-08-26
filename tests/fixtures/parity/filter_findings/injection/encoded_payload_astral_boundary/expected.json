@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 55,
+      "description": "Investigate this \ud835\udc001234567890abcdef1234567890abcdef payload before merging since it looks encoded and suspicious.",
+      "eliminated_by": "injection",
+      "elimination_reason": "description contains encoded payload pattern: '(?<!\\\\w)(?:0x)?[0-9a-fA-F]{32,}(?!\\\\w)'",
+      "file": "src/handler.py",
+      "id": "EN3",
+      "line_start": 12,
+      "severity": "medium",
+      "title": "Suspicious payload in response handler"
+    }
+  ],
+  "kept": []
+}

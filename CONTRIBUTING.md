@@ -136,6 +136,7 @@ and the JS stage together, then regenerate with the recorder and review the resu
 ```bash
 python3 workflows/test/tools/record_parity.py                  # every case
 python3 workflows/test/tools/record_parity.py filter_findings  # one script
+python3 workflows/test/tools/record_parity.py --check           # verify goldens are fresh, writes nothing
 ```
 
 ## Style and Quality

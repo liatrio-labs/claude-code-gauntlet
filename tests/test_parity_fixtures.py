@@ -323,15 +323,81 @@ class TestSliceInputProofParity(unittest.TestCase):
 
 class TestGoldenFreshness(unittest.TestCase):
     def test_recorder_output_matches_committed(self):
-        before = {p: p.read_bytes() for p in FIXTURES.rglob("expected.json")}
-        subprocess.run(
-            [sys.executable, str(REPO / "workflows/test/tools/record_parity.py")],
-            check=True,
+        # --check records into a TEMP tree and diffs against the committed
+        # goldens -- it never writes into tests/fixtures/parity, so a run of
+        # this test (mutated implementation or not) cannot corrupt the working
+        # tree the way in-place recording used to (issue #211 review F7: the
+        # old form also silently minted-but-never-compared the golden for any
+        # BRAND NEW case, since its snapshot loop only knew about
+        # expected.json paths that existed before the subprocess ran).
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(REPO / "workflows/test/tools/record_parity.py"),
+                "--check",
+            ],
             cwd=REPO,
+            capture_output=True,
+            text=True,
         )
-        for p, b in before.items():
+        self.assertEqual(
+            result.returncode,
+            0,
+            f"stale/missing golden(s) -- rerun record_parity.py:\n{result.stderr}",
+        )
+
+
+class TestRecordParityCheckDirect(unittest.TestCase):
+    """Direct, isolated test of record_parity.py's check() (#211 round-1
+    adjudication item 4 / r2-F4): TestGoldenFreshness above only ever
+    exercises check() through a subprocess against the REAL (correct) twins,
+    so a mutation of check() itself that still compares fresh-vs-committed
+    bytes correctly (e.g. writing the fresh recording in place instead of
+    into a temp tree) is invisible there -- the bytes it writes and the bytes
+    already committed are identical, so the corruption is a silent no-op.
+    This test corrupts a COMMITTED golden first, so check()'s comparison has
+    a real mismatch to report, and asserts both of its guarantees directly:
+    it reports the mismatch, and it never touches the corrupted file."""
+
+    def test_check_reports_stale_and_never_writes_into_the_fixture_tree(self):
+        import importlib
+        import shutil
+        import tempfile
+
+        sys.path.insert(0, str(REPO / "workflows" / "test" / "tools"))
+        mod = importlib.import_module("record_parity")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_fixtures = Path(tmp) / "parity"
+            shutil.copytree(mod.FIXTURES, tmp_fixtures)
+            original_fixtures = mod.FIXTURES
+            mod.FIXTURES = tmp_fixtures
+            try:
+                case_dir = (
+                    tmp_fixtures
+                    / "filter_findings"
+                    / "injection"
+                    / "word_count_nel_joined_high_confidence"
+                )
+                golden_path = case_dir / "expected.json"
+                corrupted = golden_path.read_text() + "\n// corrupted by test\n"
+                golden_path.write_text(corrupted)
+
+                mismatches = mod.check()
+            finally:
+                mod.FIXTURES = original_fixtures
+
+            self.assertTrue(
+                any(
+                    "STALE" in m and "word_count_nel_joined_high_confidence" in m
+                    for m in mismatches
+                ),
+                mismatches,
+            )
             self.assertEqual(
-                p.read_bytes(), b, f"stale golden: {p} — rerun record_parity.py"
+                golden_path.read_text(),
+                corrupted,
+                "check() must never write into the fixture tree it is checking",
             )
 
 

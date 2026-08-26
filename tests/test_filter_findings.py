@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from scripts.filter_findings import (
     _CONTESTATION_DROP_THRESHOLD,
     _SINGLETON_PENALTY,
+    _WORD_SPLIT_RE,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
@@ -534,6 +535,81 @@ class TestApplyInjectionFilter(unittest.TestCase):
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
 
+    # -----------------------------------------------------------------------
+    # #211: re.ASCII on the encoded set closes the unicode word-boundary gap.
+    # Plain unit tests (unlike the parity fixtures) survive a golden
+    # re-record, so the same vectors are pinned here too.
+    # -----------------------------------------------------------------------
+
+    def test_encoded_payload_eacute_boundary_eliminated(self):
+        # Before #211: Python's unicode \w treated "é" as a word char, so the
+        # (?<!\w)/(?!\w) lookarounds in the encoded-payload pattern never
+        # fired and this finding survived. re.ASCII closes it.
+        findings = [
+            self._finding_with(
+                description="Investigate this é1234567890abcdef1234567890abcdef payload before merging since it looks encoded and suspicious."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+
+    def test_encoded_payload_astral_letter_boundary_eliminated(self):
+        astral_bold_a = (
+            "\U0001d400"  # MATHEMATICAL BOLD CAPITAL A -- a letter, not a symbol
+        )
+        findings = [
+            self._finding_with(
+                description=f"Investigate this {astral_bold_a}1234567890abcdef1234567890abcdef payload before merging since it looks encoded and suspicious."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+
+    def test_homoglyph_fold_no_longer_eliminates(self):
+        # Before #211: Python's default IGNORECASE fully folds unicode, so
+        # U+017F LATIN SMALL LETTER LONG S in place of the leading "s" of
+        # "skip" matched ASCII
+        # \bskip\s+review\b and this finding was (silently, dormant-twin-
+        # only) eliminated. re.ASCII disables non-ASCII->ASCII folding, so
+        # it now survives -- matching the shipped JS twin's behavior, which
+        # never folded this either.
+        long_s = chr(0x17F)  # LATIN SMALL LETTER LONG S
+        findings = [
+            self._finding_with(
+                description=f"You could just {long_s}kip review here since the change is trivial and low risk overall."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(len(passed), 1)
+
+    def test_bypass_nel_separator_eliminated(self):
+        # The one LIVE evasion #211 closes: JS's pre-fix \s (25 members) does
+        # not include U+0085 NEL, so "skip<NEL>review" survived the shipped
+        # filter. The union-class respell closes it on both twins.
+        nel = chr(0x85)  # NEL
+        findings = [
+            self._finding_with(
+                description=f"You could just skip{nel}review here since the change is trivial and low risk overall."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+
+    def test_bypass_feff_separator_eliminated(self):
+        # The mirror-image, pre-existing divergence: JS's \s already included
+        # U+FEFF; Python's bare \s did not. The union class closes it from
+        # the Python side too.
+        feff = chr(0xFEFF)  # BOM / ZERO WIDTH NO-BREAK SPACE
+        findings = [
+            self._finding_with(
+                description=f"You could just skip{feff}review here since the change is trivial and low risk overall."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+
     def test_short_description_high_confidence(self):
         findings = [self._finding_with(description="Bug here", confidence=90)]
         passed, eliminated = apply_injection_filter(findings)
@@ -582,6 +658,41 @@ class TestApplyInjectionFilter(unittest.TestCase):
         findings = [self._finding_with(file="<path>")]
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
+
+    def test_template_filepath_with_embedded_cr_matches_on_both_twins(self):
+        # #211 decision item 4: `.` -> `[^\n]` in the template-marker check.
+        # This is a JS-only shipped-behavior change: JS's `.` (no /s flag)
+        # excludes CR and \n, so `[^\n]` widens what JS matches. Python's bare
+        # `.` already excluded only `\n`, so it already matched CR before this
+        # PR -- measured, #211 round-2 review R2A-F3. This test is therefore a
+        # cross-twin EQUAL-OUTCOME pin, not a regression test for a Python-side
+        # bug: reverting the Python respell alone leaves this test green; only
+        # its JS mirror (workflows/test/filter_unit.test.js) goes red under a
+        # JS-only revert.
+        findings = [self._finding_with(file="src/<na\rme>.py")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn("file path is empty", eliminated[0]["elimination_reason"])
+
+    def test_template_filepath_with_embedded_line_separator_matches(self):
+        # U+2028 LINE SEPARATOR: JS's `.` (no /s flag) excludes it, same as
+        # `\n`, so this is the other discriminating vector for the twin.
+        # chr(0x2028), not a literal char, to avoid ruff RUF001 (ambiguous
+        # LINE SEPARATOR) -- matches this file's existing convention.
+        findings = [self._finding_with(file="src/<na" + chr(0x2028) + "me>.py")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn("file path is empty", eliminated[0]["elimination_reason"])
+
+    def test_template_filepath_with_brace_markers_matches(self):
+        # #211 round-2 review B2: the `\{[^\n]*?\}` alternative of the
+        # template-marker check (as opposed to the `<...>` alternative every
+        # other test in this class exercises) had zero coverage in either
+        # twin. Pin it directly.
+        findings = [self._finding_with(file="src/{name}.py")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn("file path is empty", eliminated[0]["elimination_reason"])
 
     def test_duplicate_signature(self):
         f1 = self._finding_with(
@@ -1873,6 +1984,19 @@ class TestApplyExclusions(unittest.TestCase):
         passed, eliminated = apply_exclusions(findings, ["security vulnerability"])
         self.assertEqual(len(eliminated), 1)
 
+    def test_unicode_case_fold_still_matches(self):
+        """#211 decision item 1: apply_exclusions deliberately does NOT get
+        re.ASCII (user-authored, arbitrary-script ignore patterns) -- full
+        unicode IGNORECASE folding of "café" against "CAFÉ" must survive
+        this PR unchanged. Guarded structurally by
+        TestFilterTwinsUnicodeGuard.test_apply_exclusions_has_no_re_ascii."""
+        e_acute = chr(0xE9)
+        e_acute_upper = chr(0xC9)
+        findings = [_make_finding(title=f"CAF{e_acute_upper} kiosk returns stale data")]
+        passed, eliminated = apply_exclusions(findings, [f"caf{e_acute}"])
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+
     def test_non_matching_passes(self):
         findings = [
             _make_finding(
@@ -1933,6 +2057,134 @@ class TestCountWords(unittest.TestCase):
 
     def test_whitespace_only(self):
         self.assertEqual(_count_words("   "), 0)
+
+    def test_ascii_output_unchanged_by_211(self):
+        """#211 changed the splitter's mechanism (str.split() -> a real regex
+        over the union class) but must preserve every ASCII output exactly."""
+        self.assertEqual(_count_words("hello\tworld\nfoo\r\nbar"), 4)
+        self.assertEqual(_count_words("  leading and trailing  "), 3)
+
+    def test_feff_joined_words_now_counted(self):
+        # #211/M5: before the fix, str.split() did not treat U+FEFF as
+        # whitespace, so this counted as ONE word; the union-class splitter
+        # now agrees with JS's split(/\s+/), which always counted 11.
+        feff = chr(0xFEFF)
+        text = feff.join(["alpha", "bravo", "charlie", "delta", "echo"])
+        self.assertEqual(_count_words(text), 5)
+
+    def test_nel_joined_words_counted(self):
+        # Python's str.split() already split on U+0085 before #211 (it was
+        # JS's split(/\s+/) that didn't); the union-class splitter keeps
+        # that count unchanged.
+        nel = chr(0x85)
+        text = nel.join(["alpha", "bravo", "charlie"])
+        self.assertEqual(_count_words(text), 3)
+
+
+# Shared cross-twin behavioral table (#211 round-1 adjudication item 1(b)).
+# The SAME (input, expected count) pairs are hardcoded independently here and
+# in workflows/test/filter_unit.test.js's '#211/table' test, so a divergence
+# between the two engines' splitters shows up as a failure on exactly one
+# side rather than as a silently-agreeing wrong answer. This is what catches
+# a countWords regression that only manifests on a TRAILING or leading run of
+# a union-class separator the host language's own trim()/strip() does not
+# already strip (U+0085, U+001C-U+001F) -- see F1 in review-r1.md/review-r2.md.
+_NEL = chr(0x85)
+_FS = chr(0x1C)
+_GS = chr(0x1D)
+_RS = chr(0x1E)
+_US = chr(0x1F)
+_NBSP = chr(0xA0)
+_FEFF = chr(0xFEFF)
+
+WORD_SPLIT_BEHAVIOR_TABLE = [
+    # -- plain ASCII (must be unchanged by #211) --
+    ("", 0),
+    ("   ", 0),
+    ("\t\n ", 0),
+    ("alpha", 1),
+    ("  alpha  ", 1),
+    ("alpha bravo", 2),
+    ("alpha   bravo", 2),
+    ("alpha\tbravo\ncharlie", 3),
+]
+for _sep, _name in [
+    (_NEL, "NEL"),
+    (_FS, "FS"),
+    (_GS, "GS"),
+    (_RS, "RS"),
+    (_US, "US"),
+    (_NBSP, "NBSP"),
+    (_FEFF, "FEFF"),
+]:
+    WORD_SPLIT_BEHAVIOR_TABLE.extend(
+        [
+            (_sep + "alpha bravo charlie", 3),  # leading
+            ("alpha bravo charlie" + _sep, 3),  # trailing
+            (_sep + "alpha bravo charlie" + _sep, 3),  # both ends
+            ("alpha bravo charlie" + _sep + _sep, 3),  # doubled trailing run
+        ]
+    )
+
+
+class TestCountWordsBehaviorTable(unittest.TestCase):
+    """Mirrors workflows/test/filter_unit.test.js's '#211/table' test
+    row-for-row -- see WORD_SPLIT_BEHAVIOR_TABLE's docstring above."""
+
+    def test_shared_behavior_table(self):
+        for i, (text, expected) in enumerate(WORD_SPLIT_BEHAVIOR_TABLE):
+            with self.subTest(row=i, text=repr(text)):
+                self.assertEqual(_count_words(text), expected)
+
+
+class TestUnionWhitespaceClassMembership(unittest.TestCase):
+    """#211 decision item 6's membership pin: the union whitespace class
+    (respelled into the injection/routing patterns and the word-count
+    splitter) must match EXACTLY the intended 30 codepoints -- no more, no
+    fewer -- in this engine. This is the durable form of rt2's Addition 1.
+
+    Every union member is < U+10000 (all are BMP), so a bounded sweep over
+    the BMP plus a small astral sample is exact: nothing above U+FFFF can
+    possibly be a false negative (no member lives there to miss) and the
+    astral sample only needs to prove no false POSITIVE leaks in from a
+    surrogate-handling bug. Sweeping the full 0x110000 codepoint space is
+    unnecessary for the same reason and would just cost time for no more
+    certainty.
+    """
+
+    _EXPECTED = frozenset(
+        {0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x20}
+        | set(range(0x1C, 0x1F + 1))
+        | {0x85, 0xA0, 0x1680}
+        | set(range(0x2000, 0x200A + 1))
+        | {0x2028, 0x2029, 0x202F, 0x205F, 0x3000, 0xFEFF}
+    )
+
+    def test_matched_set_equals_expected_30_codepoints(self):
+        self.assertEqual(len(self._EXPECTED), 30)
+        matched = set()
+        for cp in range(0x0, 0x3100 + 1):
+            if _WORD_SPLIT_RE.fullmatch(chr(cp)):
+                matched.add(cp)
+        # Sample: every union member's immediate neighbors (already covered
+        # by the 0x0-0x3100 sweep) plus U+FEFF's astral neighborhood, since
+        # U+FEFF is the only member close to the BMP/astral boundary's
+        # matching concerns (surrogate-pair mishandling would show up as a
+        # false positive somewhere just past U+FFFF).
+        for cp in range(0xFEFE, 0x10003):
+            if _WORD_SPLIT_RE.fullmatch(chr(cp)):
+                matched.add(cp)
+        self.assertEqual(matched, self._EXPECTED)
+
+    def test_re_ascii_does_not_shrink_the_explicit_class(self):
+        # Distinguishes this class from a bare \s: re.ASCII only affects
+        # \w/\W/\b/\B/\s/\S and IGNORECASE folding -- an explicit character
+        # class of literal/hex/unicode escapes is untouched by the flag.
+        # This is why _WORD_SPLIT_RE carries no re.ASCII (would be a no-op).
+        ascii_pattern = re.compile(_WORD_SPLIT_RE.pattern, re.ASCII)
+        for cp in sorted(self._EXPECTED):
+            with self.subTest(codepoint=hex(cp)):
+                self.assertTrue(ascii_pattern.fullmatch(chr(cp)))
 
 
 # ---------------------------------------------------------------------------

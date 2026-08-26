@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 90,
+      "description": "alpha bravo charlie delta echo foxtrot golf hotel india\u0085",
+      "eliminated_by": "injection",
+      "elimination_reason": "suspiciously short description (9 words) with high confidence (90)",
+      "file": "src/handler.py",
+      "id": "WC9",
+      "line_start": 8,
+      "severity": "medium",
+      "title": "Terse high-confidence finding"
+    }
+  ],
+  "kept": []
+}

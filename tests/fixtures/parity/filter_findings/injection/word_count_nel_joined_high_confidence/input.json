@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "WC2",
+      "title": "Terse high-confidence finding",
+      "description": "alpha\u0085bravo\u0085charlie\u0085delta\u0085echo\u0085foxtrot\u0085golf\u0085hotel\u0085india\u0085juliet\u0085kilo",
+      "file": "src/handler.py",
+      "line_start": 8,
+      "severity": "medium",
+      "confidence": 90
+    }
+  ]
+}
