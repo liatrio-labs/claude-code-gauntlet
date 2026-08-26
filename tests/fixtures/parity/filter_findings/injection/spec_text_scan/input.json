@@ -59,7 +59,7 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "The fallback path disables TLS verification when the primary cert is unavailable."
+      "spec_text": "The fallback path may disable TLS verification when the primary cert is unavailable."
     },
     {
       "id": "T7",
