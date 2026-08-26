@@ -58,7 +58,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install python-semantic-release
-        run: pip install python-semantic-release==10.6.1
+        # GitPython is pinned because 3.1.60 (2026-08-25) removed
+        # Actor.name_email_regex, which python-semantic-release 10.6.1 reads
+        # (#245). Bump both together after verifying compatibility.
+        run: pip install python-semantic-release==10.6.1 gitpython==3.1.59
 
       - name: Semantic Release
         id: release
