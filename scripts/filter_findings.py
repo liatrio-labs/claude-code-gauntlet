@@ -1535,7 +1535,7 @@ def apply_exclusions(findings, exclusion_patterns):
             # user-authored REVIEW.md ignore patterns over arbitrary-script
             # finding text, not first-party fixed patterns -- re.ASCII here
             # would break e.g. "café" matching "CAFÉ" (measured regression;
-            # pinned by the exclusions/case_fold_unicode fixture and the
+            # pinned by the exclusions/case_fold_unicode_cafe fixture and the
             # TestFilterTwinsUnicodeGuard.test_apply_exclusions_has_no_re_ascii
             # structural guard). JS keeps this folding by construction (no /u).
             if re.search(re.escape(pattern), combined, re.IGNORECASE):

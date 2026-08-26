@@ -281,8 +281,8 @@ def _iter_cases(only_script, only_case):
 
 
 def check(only_script=None, only_case=None):
-    """Record every in-scope case into a TEMP tree (never touching the working
-    tree) and diff the result against the committed goldens.
+    """Compute every in-scope case's fresh golden bytes in memory (never
+    writing to disk) and diff them against the committed goldens.
 
     Returns a list of human-readable mismatch lines (empty = fresh). Covers
     both directions -- a case whose committed expected.json disagrees with a
@@ -292,30 +292,23 @@ def check(only_script=None, only_case=None):
     ever compared bytes for expected.json paths that already existed on disk
     -- issue #211 review F7).
     """
-    import tempfile
-
     mismatches = []
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_root = Path(tmp)
-        for script, case_dir, _case_label in _iter_cases(only_script, only_case):
-            rel = case_dir.relative_to(FIXTURES)
-            fresh_bytes = _serialize(_compute(script, case_dir))
-            fresh_path = tmp_root / rel / "expected.json"
-            fresh_path.parent.mkdir(parents=True, exist_ok=True)
-            fresh_path.write_text(fresh_bytes)
+    for script, case_dir, _case_label in _iter_cases(only_script, only_case):
+        rel = case_dir.relative_to(FIXTURES)
+        fresh_bytes = _serialize(_compute(script, case_dir))
 
-            committed_path = case_dir / "expected.json"
-            if not committed_path.exists():
-                mismatches.append(
-                    f"MISSING committed golden: {rel}/expected.json "
-                    "-- run record_parity.py to author it"
-                )
-                continue
-            committed_bytes = committed_path.read_text()
-            if committed_bytes != fresh_bytes:
-                mismatches.append(
-                    f"STALE golden: {rel}/expected.json -- rerun record_parity.py"
-                )
+        committed_path = case_dir / "expected.json"
+        if not committed_path.exists():
+            mismatches.append(
+                f"MISSING committed golden: {rel}/expected.json "
+                "-- run record_parity.py to author it"
+            )
+            continue
+        committed_bytes = committed_path.read_text()
+        if committed_bytes != fresh_bytes:
+            mismatches.append(
+                f"STALE golden: {rel}/expected.json -- rerun record_parity.py"
+            )
     return mismatches
 
 
