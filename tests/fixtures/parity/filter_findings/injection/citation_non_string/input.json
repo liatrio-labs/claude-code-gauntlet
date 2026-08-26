@@ -1,0 +1,50 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "N1",
+      "title": "Null check missing in handler n1",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n1.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "claude_md_rule": null
+    },
+    {
+      "id": "N2",
+      "title": "Null check missing in handler n2",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n2.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "claude_md_rule": {
+        "note": "structured citation payload"
+      }
+    },
+    {
+      "id": "N3",
+      "title": "Null check missing in handler n3",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n3.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": 42
+    },
+    {
+      "id": "N4",
+      "title": "Null check missing in handler n4",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n4.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": [
+        "clause one",
+        "clause two"
+      ]
+    }
+  ]
+}

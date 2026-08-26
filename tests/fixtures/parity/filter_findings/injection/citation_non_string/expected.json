@@ -1,0 +1,49 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "claude_md_rule_removal_reason": "claude_md_rule is not a string",
+      "claude_md_rule_removed_by": "injection",
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n1.py",
+      "id": "N1",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "Null check missing in handler n1"
+    },
+    {
+      "claude_md_rule_removal_reason": "claude_md_rule is not a string",
+      "claude_md_rule_removed_by": "injection",
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n2.py",
+      "id": "N2",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "Null check missing in handler n2"
+    },
+    {
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n3.py",
+      "id": "N3",
+      "line_start": 10,
+      "severity": "medium",
+      "spec_text_removal_reason": "spec_text is not a string",
+      "spec_text_removed_by": "injection",
+      "title": "Null check missing in handler n3"
+    },
+    {
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/n4.py",
+      "id": "N4",
+      "line_start": 10,
+      "severity": "medium",
+      "spec_text_removal_reason": "spec_text is not a string",
+      "spec_text_removed_by": "injection",
+      "title": "Null check missing in handler n4"
+    }
+  ]
+}

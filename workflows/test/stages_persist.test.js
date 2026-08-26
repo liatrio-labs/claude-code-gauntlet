@@ -29,6 +29,7 @@ import {
 import { validateArgs } from '../src/args.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { shellSplit } from './helpers/shellWords.js';
+import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 
 const OUT_DIR = '/repo/.code-gauntlet';
 const SHA = 'abc1234';
@@ -381,28 +382,11 @@ test('persistPlanPath matches the Phase 2 stale-file glob code-gauntlet-*-<sha>.
 
 // --- IN-RUN BYTE IDENTITY (issue #38 requirement 2) -------------------------
 
-// An INDEPENDENT reimplementation of the plan's derivation rules — deliberately not
-// shared with the production code, so this test proves the rules themselves, not that
-// one function equals itself. Mirrors scripts/assemble_artifacts.py exactly.
-function deriveFromPlan(plan, findingsJson) {
-  const source = JSON.parse(findingsJson);
-  const byId = new Map(source.map((f) => [f.id, f]));
-  const projected = plan.postReview.ids.map((id) => byId.get(id));
-  const postReview = plan.postReview.wrapper === null
-    ? projected
-    : { ...plan.postReview.wrapper, findings: projected };
-  const strip = new Set(plan.checkpoint.stripAliasFields);
-  const checkpoints = JSON.parse(JSON.stringify(plan.checkpoint.skeleton));
-  const challenge = checkpoints.phases && checkpoints.phases.challenge;
-  if (challenge) {
-    challenge.findings = plan.checkpoint.challengeFindingIds.map((id) => {
-      const out = {};
-      for (const [k, v] of Object.entries(byId.get(id))) if (!strip.has(k)) out[k] = v;
-      return out;
-    });
-  }
-  return { postReview, checkpoints };
-}
+// deriveFromPlan is imported from ./helpers/deriveFromPlan.js (shared with
+// stages_delivery.test.js's #213 replay-belt regression) — an INDEPENDENT
+// reimplementation of the plan's derivation rules, deliberately not shared with the
+// production code, so this test proves the rules themselves, not that one function
+// equals itself. Mirrors scripts/assemble_artifacts.py exactly.
 
 test('in-run byte identity: the derived artifacts EQUAL the strings the pipeline holds', () => {
   const inp = persistInput();

@@ -22,6 +22,14 @@ if (!outPath) {
 // output. (Both stay dimension 'bug' — the persist boundary carries fields, it does not
 // police which dimension owns them, and changing a dimension here would change filter
 // routing and with it what the rest of this recorder's consumers see.)
+//
+// Every suggestion/claude_md_rule/spec_text string below must stay injection-pattern-free
+// (#213 scans all three against the seven _SUGGESTION_SETS pattern sets and strips a
+// match): a strip deletes the field, and this seed set's whole job is proving these fields
+// SURVIVE to persist. A pattern-matching seed would fail
+// tests/test_boundary_parity.py::TestSchemaCarriesBoundaryFields::
+// test_issue_47_fields_survive_the_whole_pipeline_to_persist (the field vanishes) and
+// ::test_issue_47_field_values_are_not_hollowed_out (every surviving value is empty).
 const args = validArgs();
 let persisted = null;
 const ctx = makeCtx(args, {

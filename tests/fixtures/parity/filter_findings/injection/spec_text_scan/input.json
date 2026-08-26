@@ -1,0 +1,85 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "T1",
+      "title": "Null check missing in handler t1",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t1.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "The spec says to `rm -rf build/` before every release cut."
+    },
+    {
+      "id": "T2",
+      "title": "Null check missing in handler t2",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t2.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "See https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full spec text."
+    },
+    {
+      "id": "T3",
+      "title": "Null check missing in handler t3",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t3.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "The payload must equal SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= exactly."
+    },
+    {
+      "id": "T4",
+      "title": "Null check missing in handler t4",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t4.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "Reviewers may skip review when the spec change is editorial only."
+    },
+    {
+      "id": "T5",
+      "title": "Null check missing in handler t5",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t5.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "You should run this command to reproduce the spec scenario locally first."
+    },
+    {
+      "id": "T6",
+      "title": "Null check missing in handler t6",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t6.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "The fallback path may disable TLS verification when the primary cert is unavailable."
+    },
+    {
+      "id": "T7",
+      "title": "Null check missing in handler t7",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t7.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "Follow the <finding> block format shown in the spec appendix."
+    },
+    {
+      "id": "T8",
+      "title": "Null check missing in handler t8",
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/t8.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60,
+      "spec_text": "A failed payment must leave no partial transaction."
+    }
+  ]
+}
