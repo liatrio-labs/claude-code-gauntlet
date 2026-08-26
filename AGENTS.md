@@ -64,9 +64,9 @@ COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
 LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage \
   --test-coverage-include='workflows/src/*.js' \
   --test-coverage-include='workflows/build.js' \
-  --test-coverage-lines=98 \
-  --test-coverage-branches=85.7 \
-  --test-coverage-functions=97.4 \
+  --test-coverage-lines=98.1 \
+  --test-coverage-branches=86.3 \
+  --test-coverage-functions=97.5 \
   --test-reporter=spec --test-reporter-destination=stdout \
   --test-reporter=lcov --test-reporter-destination="$LCOV" \
   workflows/test/*.test.js \
@@ -76,9 +76,10 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
 Floors: Python 92.9 / 87.5 (scripts raised 2026-08-19 from the #219 PR CI measurement:
 93.37, then 2026-08-24 to 92.6 (#231: 93.54), to 92.7 (#236: 93.67), and 2026-08-25 to 92.9
 (#238: 93.84); bench raised 2026-08-19 from the #219 run:
-88.29); JS 98 / 85.7 / 97.4 (lines pinned
+88.29); JS 98.1 / 86.3 / 97.5 (lines pinned
 2026-08-03 from first green CI: 98.61; branches/functions raised 2026-08-18
-from the #62 PR measurement: 86.7/98.4). Policy: a floor sits no more than 1.0 pp below the CI
+from the #62 PR measurement: 86.7/98.4, then 2026-08-26 to 98.1/86.3/97.5 from the #249 PR
+CI measurement: 99.01/87.25/98.48). Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop,
 reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
 multi-point JS drop usually means a deleted fixture group or an unloaded

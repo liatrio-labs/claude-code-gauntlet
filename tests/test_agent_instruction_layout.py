@@ -158,7 +158,11 @@ CODEX_CAP_BYTES = 32_768
 # codebase, not for someone about to write an agent .md contract, which is this bullet's
 # whole reason to exist (the same gap the requiredExtra half of the same bullet already
 # closes for that mechanism).
-AGENTS_SET_BUDGET_BYTES = 21_004
+# Raised 21_004 -> 21_061 (2026-08-26, #213/#249): the JS coverage floor ratchet (lines
+# 98 -> 98.1, branches 85.7 -> 86.3, functions 97.4 -> 97.5) extended the
+# floors-and-provenance paragraph to name the #249 PR CI measurement (99.01/87.25/98.48) —
+# same policy, same shape as the #218/#231/#236 Python-floor raises above.
+AGENTS_SET_BUDGET_BYTES = 21_061
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
