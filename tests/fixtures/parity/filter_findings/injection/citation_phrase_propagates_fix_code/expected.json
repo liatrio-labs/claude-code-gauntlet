@@ -1,0 +1,69 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "claude_md_rule_removal_reason": "claude_md_rule contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'",
+      "claude_md_rule_removed_by": "injection",
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/p1.py",
+      "id": "P1",
+      "line_start": 10,
+      "severity": "medium",
+      "suggested_fix_code_removal_reason": "claude_md_rule carried contains bypass/auto-approve instruction",
+      "suggested_fix_code_removed_by": "injection",
+      "title": "Null check missing in handler p1"
+    },
+    {
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/p2.py",
+      "id": "P2",
+      "line_start": 10,
+      "severity": "medium",
+      "spec_text_removal_reason": "spec_text contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'",
+      "spec_text_removed_by": "injection",
+      "suggested_fix_code_removal_reason": "spec_text carried contains bypass/auto-approve instruction",
+      "suggested_fix_code_removed_by": "injection",
+      "title": "Null check missing in handler p2"
+    },
+    {
+      "claude_md_rule_removal_reason": "claude_md_rule contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'",
+      "claude_md_rule_removed_by": "injection",
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/p3.py",
+      "id": "P3",
+      "line_start": 10,
+      "severity": "medium",
+      "suggested_fix_code_removal_reason": "suggestion carried contains bypass/auto-approve instruction",
+      "suggested_fix_code_removed_by": "injection",
+      "suggestion_removal_reason": "suggestion contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'",
+      "suggestion_removed_by": "injection",
+      "title": "Null check missing in handler p3"
+    },
+    {
+      "claude_md_rule_removal_reason": "claude_md_rule is not a string",
+      "claude_md_rule_removed_by": "injection",
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/p4.py",
+      "id": "P4",
+      "line_start": 10,
+      "severity": "medium",
+      "suggested_fix_code": "def process_data(x):\n    return x\n",
+      "title": "Null check missing in handler p4"
+    },
+    {
+      "claude_md_rule_removal_reason": "claude_md_rule contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'",
+      "claude_md_rule_removed_by": "injection",
+      "confidence": 60,
+      "description": "The function process_data does not validate input types, which could lead to a runtime error when processing a malformed response from an external service.",
+      "file": "src/handlers/p5.py",
+      "id": "P5",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "Null check missing in handler p5"
+    }
+  ]
+}

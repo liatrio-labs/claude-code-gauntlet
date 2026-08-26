@@ -17,6 +17,7 @@ import {
   routeByDimension,
   consolidateCrossAgent,
   tagFindings,
+  INJECTION_STRIPPED_PROSE_FIELDS,
 } from '../src/filterFindings.js';
 import { applyChallenges } from '../src/applyChallenges.js';
 import { joinVerifyDeltas, deltaContentProof, fnv1a32 } from '../src/stages.js';
@@ -134,22 +135,31 @@ for (const c of loadCases('filter_findings')) {
       assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
       // Free-text join format is not load-bearing (per the brief) — only presence matters.
       for (const e of eliminated) assert.ok(e.elimination_reason && e.elimination_reason.length > 0);
-      // suggestion_removal_reason is MOSTLY free text (Python !r vs JS
-      // pattern-source quoting differ), but the "suggestion <noun phrase>: "
+      // `{field}_removal_reason` is MOSTLY free text (Python !r vs JS
+      // pattern-source quoting differ), but the "{field} <noun phrase>: "
       // prefix up to and including the ": " separator is identical across
       // runtimes by construction (both read it from the same SUGGESTION_SETS
-      // phrase strings) -- compare that prefix byte-exactly so renaming any of
-      // the 7 set labels goes red here, and leave only the pattern-spelling
-      // tail (after the ": ") presence-only. The non-string-suggestion reason
-      // ("suggestion is not a string") carries no pattern tail and no colon
-      // separator, so it gets its own byte-exact branch instead.
+      // phrase strings) -- compare that prefix byte-exactly, for EVERY field
+      // in INJECTION_STRIPPED_PROSE_FIELDS (#213: suggestion, claude_md_rule,
+      // spec_text), so renaming any of the 7 set labels OR adding/renaming a
+      // scanned field goes red here, and leave only the pattern-spelling tail
+      // (after the ": ") presence-only. The non-string reason
+      // ("{field} is not a string") carries no pattern tail and no colon
+      // separator, so it gets its own byte-exact branch instead. A single
+      // kept finding can carry MORE THAN ONE of these keys at once (D7: every
+      // matching field strips independently), so each is peeled off in turn
+      // before the remainder is compared structurally.
       kept.forEach((got, i) => {
         const exp = c.expected.kept[i];
-        if ('suggestion_removal_reason' in exp) {
-          const expReason = exp.suggestion_removal_reason;
-          const gotReason = got.suggestion_removal_reason;
+        let gotRest = got;
+        let expRest = exp;
+        for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
+          const key = `${field}_removal_reason`;
+          if (!(key in exp)) continue;
+          const expReason = exp[key];
+          const gotReason = got[key];
           assert.ok(gotReason && gotReason.length > 0);
-          if (expReason === 'suggestion is not a string') {
+          if (expReason === `${field} is not a string`) {
             assert.equal(gotReason, expReason);
           } else {
             const sepIdx = expReason.indexOf(': ');
@@ -157,12 +167,12 @@ for (const c of loadCases('filter_findings')) {
             const expPrefix = expReason.slice(0, sepIdx + 2);
             assert.equal(gotReason.slice(0, expPrefix.length), expPrefix);
           }
-          const { suggestion_removal_reason: _g, ...gotRest } = got;
-          const { suggestion_removal_reason: _e, ...expRest } = exp;
-          assert.deepEqual(gotRest, expRest);
-        } else {
-          assert.deepEqual(got, exp);
+          const { [key]: _g, ...gotWithout } = gotRest;
+          const { [key]: _e, ...expWithout } = expRest;
+          gotRest = gotWithout;
+          expRest = expWithout;
         }
+        assert.deepEqual(gotRest, expRest);
       });
       return;
     }

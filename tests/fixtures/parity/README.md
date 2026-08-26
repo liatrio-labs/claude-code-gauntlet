@@ -14,17 +14,21 @@ Both runtimes assert against `expected.json`:
 - JS: `workflows/test/parity.test.js` (JS twin == expected).
 
 Assertion rule: decision outcomes and integer counts/stats are asserted EXACTLY.
-Free-text fields (`elimination_reason`, `suggestion_removal_reason`, warning
-bodies, `escalation_note`, `corroborated_by` ordering of equal keys) are
-asserted for substring/prefix presence only — Python f-string formatting need
-not match JS template strings. `suggestion_removal_reason` is the one
-exception with a byte-exact slice: the "suggestion <noun phrase>: " prefix up
-to and including the ": " separator is identical across runtimes by
-construction (both runtimes read it from the same set-label strings), so
-`parity.test.js` compares that prefix exactly and leaves only the
-pattern-spelling tail presence-only; the non-string-suggestion reason
-("suggestion is not a string") has no tail and is compared byte-exactly in
-full.
+Free-text fields (`elimination_reason`, warning bodies, `escalation_note`,
+`corroborated_by` ordering of equal keys) are asserted for substring/prefix
+presence only — Python f-string formatting need not match JS template
+strings. `{field}_removal_reason` for every field in
+`INJECTION_STRIPPED_PROSE_FIELDS` (`suggestion`, `claude_md_rule`,
+`spec_text` — filter_findings' `apply_injection_filter`) is the one exception
+with a byte-exact slice: the "{field} <noun phrase>: " prefix up to and
+including the ": " separator is identical across runtimes by construction
+(both runtimes read it from the same set-label strings), so `parity.test.js`
+compares that prefix exactly and leaves only the pattern-spelling tail
+presence-only; the non-string reason ("{field} is not a string") has no tail
+and is compared byte-exactly in full. A single kept finding can carry more
+than one of these keys at once (every matching field strips independently),
+so `parity.test.js` peels each one off in turn before comparing what remains
+structurally.
 
 Authoring caveat (`merge_findings`): a fixture finding must not be missing more
 than ONE required field. `validate_findings` iterates the `REQUIRED_FIELDS`
