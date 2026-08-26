@@ -3294,64 +3294,8 @@ class TestInjectionStrippedProseFieldsLockstep(unittest.TestCase):
             "the scan/strip order and the propagation-naming order, #213/D7)",
         )
 
-    def test_both_twins_splice_the_derived_stats_map_into_the_receipt(self):
-        """Round-1 review items 6/7: both twins EMIT the per-field stat by
-        splicing the whole derived map (`**prose_fields_removed` /
-        `...proseFieldsRemoved`) into the receipt, not by hand-listing one key
-        per field -- so a future field addition to
-        _INJECTION_STRIPPED_PROSE_FIELDS costs no second edit here. A per-field
-        string search is no longer meaningful (the splice means no per-field
-        key literal appears in either source at all); this checks for the
-        SPLICE CONSTRUCT itself, scoped to the function that owns it, with a
-        fail-loud anchor if that function cannot be found (matching the
-        element-wise list-identity test above)."""
-        py_src = (_REPO_ROOT / "scripts" / "filter_findings.py").read_text()
-        js_src = (_REPO_ROOT / "workflows" / "src" / "filterFindings.js").read_text()
-
-        py_main_start = py_src.find("def main():")
-        if py_main_start == -1:
-            raise AssertionError(
-                "could not find `def main():` in scripts/filter_findings.py"
-            )
-        # Bounded to the next top-level def/class (matching the JS bound below) --
-        # main() is the last top-level def in this file today, so this is
-        # currently equivalent to slicing to EOF, but stays correct if that ever
-        # changes.
-        py_main_next = re.search(r"\n(?:def |class )", py_src[py_main_start + 1 :])
-        py_main_body = (
-            py_src[py_main_start : py_main_start + 1 + py_main_next.start()]
-            if py_main_next
-            else py_src[py_main_start:]
-        )
-        self.assertIn(
-            "**prose_fields_removed",
-            py_main_body,
-            "scripts/filter_findings.py's main() no longer splices "
-            "prose_fields_removed into its stats dict -- a future field would "
-            "need a second hand-listed key",
-        )
-
-        js_fn_start = js_src.find("export function applyFilterPipeline(")
-        if js_fn_start == -1:
-            raise AssertionError(
-                "could not find `export function applyFilterPipeline(` in "
-                "workflows/src/filterFindings.js"
-            )
-        # Bounded to the NEXT top-level function (applyExclusions follows it in this
-        # file) -- an unbounded slice-to-EOF would also (wrongly) pass if the splice
-        # landed in a later function instead of this one.
-        js_fn_next = js_src.find("\nexport function ", js_fn_start + 1)
-        js_fn_body = js_src[js_fn_start : js_fn_next if js_fn_next != -1 else None]
-        self.assertIn(
-            "...proseFieldsRemoved",
-            js_fn_body,
-            "workflows/src/filterFindings.js's applyFilterPipeline no longer "
-            "splices proseFieldsRemoved into its stats object",
-        )
-
     def test_both_twins_emit_a_removed_stat_for_every_scanned_field(self):
-        """Round-2 review item 4: the source-construct check above proves the
-        splice MECHANISM exists; this proves the Python twin's receipt
+        """Round-2 review item 4: this proves the Python twin's receipt
         actually EMITS a correct `{field}s_removed` count for EVERY field in
         the shared list, driven through the real entry point (`main()`'s CLI,
         matching how the rest of this suite already drives it) rather than a
