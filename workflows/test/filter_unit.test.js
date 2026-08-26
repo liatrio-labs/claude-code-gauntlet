@@ -453,9 +453,13 @@ test('#211/table: countWords shared cross-twin behavioral table', () => {
 
 // #211 decision item 4: `.` -> `[^\n]` in the template-marker file-path check
 // so a `<...>`/`{...}` span containing a line separator other than `\n`
-// still matches on both twins (a genuine shipped-JS behavior change -- see
-// #211 round-1 review r1-F5). Mirrors tests/test_filter_findings.py's
-// test_template_filepath_with_embedded_cr_matches /
+// still matches on both twins. This is a JS-only shipped-behavior change:
+// JS's `.` (no /s flag) excludes CR/U+2028/\n, so `[^\n]` widens what JS
+// matches; Python's bare `.` already excluded only `\n`, so these two cases
+// are pure JS regressions-if-reverted, unlike their Python mirrors (which
+// are cross-twin equal-outcome pins -- #211 round-2 review R2A-F3). Mirrors
+// tests/test_filter_findings.py's
+// test_template_filepath_with_embedded_cr_matches_on_both_twins /
 // _with_embedded_line_separator_matches.
 test('#211: template filepath with embedded CR still matches (the [^\\n] respell)', () => {
   const { eliminated } = applyInjectionFilter([cleanFinding({ file: 'src/<na\rme>.py' })]);
@@ -466,6 +470,16 @@ test('#211: template filepath with embedded CR still matches (the [^\\n] respell
 test('#211: template filepath with embedded U+2028 still matches (the [^\\n] respell)', () => {
   const sep = String.fromCharCode(0x2028);
   const { eliminated } = applyInjectionFilter([cleanFinding({ file: `src/<na${sep}me>.py` })]);
+  assert.equal(eliminated.length, 1);
+  assert.match(eliminated[0].elimination_reason, /file path is empty/);
+});
+
+// #211 round-2 review B2: the `\{[^\n]*?\}` alternative of the
+// template-marker check had zero coverage in either twin. Pin it directly.
+// Mirrors tests/test_filter_findings.py's
+// test_template_filepath_with_brace_markers_matches.
+test('#211: template filepath with brace markers matches (the {...} alternative)', () => {
+  const { eliminated } = applyInjectionFilter([cleanFinding({ file: 'src/{name}.py' })]);
   assert.equal(eliminated.length, 1);
   assert.match(eliminated[0].elimination_reason, /file path is empty/);
 });

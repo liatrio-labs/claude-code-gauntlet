@@ -659,13 +659,16 @@ class TestApplyInjectionFilter(unittest.TestCase):
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
 
-    def test_template_filepath_with_embedded_cr_matches(self):
-        # #211 decision item 4: `.` -> `[^\n]` in the template-marker check so
-        # a `<...>`/`{...}` span containing a line separator other than `\n`
-        # still matches on both twins (a genuine shipped-JS behavior change --
-        # see #211 round-1 review r1-F5). CR is the discriminating vector: the
-        # old `.` spelling excludes it in BOTH engines' regex dialects, but
-        # `[^\n]` includes it in both.
+    def test_template_filepath_with_embedded_cr_matches_on_both_twins(self):
+        # #211 decision item 4: `.` -> `[^\n]` in the template-marker check.
+        # This is a JS-only shipped-behavior change: JS's `.` (no /s flag)
+        # excludes CR and \n, so `[^\n]` widens what JS matches. Python's bare
+        # `.` already excluded only `\n`, so it already matched CR before this
+        # PR -- measured, #211 round-2 review R2A-F3. This test is therefore a
+        # cross-twin EQUAL-OUTCOME pin, not a regression test for a Python-side
+        # bug: reverting the Python respell alone leaves this test green; only
+        # its JS mirror (workflows/test/filter_unit.test.js) goes red under a
+        # JS-only revert.
         findings = [self._finding_with(file="src/<na\rme>.py")]
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
@@ -677,6 +680,16 @@ class TestApplyInjectionFilter(unittest.TestCase):
         # chr(0x2028), not a literal char, to avoid ruff RUF001 (ambiguous
         # LINE SEPARATOR) -- matches this file's existing convention.
         findings = [self._finding_with(file="src/<na" + chr(0x2028) + "me>.py")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn("file path is empty", eliminated[0]["elimination_reason"])
+
+    def test_template_filepath_with_brace_markers_matches(self):
+        # #211 round-2 review B2: the `\{[^\n]*?\}` alternative of the
+        # template-marker check (as opposed to the `<...>` alternative every
+        # other test in this class exercises) had zero coverage in either
+        # twin. Pin it directly.
+        findings = [self._finding_with(file="src/{name}.py")]
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
         self.assertIn("file path is empty", eliminated[0]["elimination_reason"])

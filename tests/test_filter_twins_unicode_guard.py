@@ -200,6 +200,12 @@ _JS_LIST_END_RE = re.compile(r"^\];$")
 _JS_ELEMENT_RE = re.compile(r"^\s*(/.*/[a-z]*),?$")
 _JS_CONST_HEAD_RE = re.compile(r"^const (\w+) =$")
 _JS_CONST_BODY_RE = re.compile(r"^\s*(/.*/[a-z]*);$")
+# Any JS regex literal immediately followed by `.test(` -- catches an inline
+# literal used at its call site (as opposed to a named const/array, which the
+# other _JS_* finders above already cover). Deliberately not anchored to a
+# fixed set of line numbers: a new inline `.test(` call anywhere in the file
+# is picked up automatically.
+_JS_INLINE_TEST_RE = re.compile(r"(/.*/[a-z]*)\.test\(")
 
 
 def _js_lines():
@@ -224,6 +230,19 @@ def _find_js_list(name):
             return elements
         i += 1
     return None
+
+
+def _find_js_inline_test_literals():
+    """Return, in source order, the regex-literal source of every JS inline
+    `/pattern/flags.test(...)` call site -- the inline suppression-rule
+    regexes and the file-path template check, none of which is a named
+    const/array the other _find_js_* helpers key off of."""
+    out = []
+    for line in _js_lines():
+        m = _JS_INLINE_TEST_RE.search(line)
+        if m:
+            out.append(m.group(1))
+    return out
 
 
 def _find_js_const_pattern(name):
@@ -456,6 +475,35 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
 
         self.assertEqual(mismatches, [], "\n".join(mismatches))
 
+    def test_inline_first_party_literals_are_byte_identical_across_twins(self):
+        """(v) The inline (not-a-named-const) first-party call sites -- the
+        file-path template check and the two detect_disagreement suppression
+        regexes -- are element-wise byte-identical between the twins, same
+        technique as test_first_party_families_are_byte_identical_across_twins
+        above. #211 round-2 review R2A-F1/B2: these three sites are inline
+        literals, not part of any named list/const family the other
+        byte-identity assertions in this class walk, and a JS-only edit to
+        one of them (a suppression word added/changed, or an alternative
+        dropped from the file-path check) is INVISIBLE to every other
+        assertion in this class as long as it doesn't change the union
+        class's total occurrence count -- measured: `\\bdeliberate\\b` deleted
+        from JS suppression rule 1, and the file-path check's `\\{...\\}`
+        alternative dropped from JS, both leave the full pytest suite, the
+        full node suite, and every other assertion in this class green.
+        """
+        py_texts = [
+            _py_pattern_text(c["pattern_text"])
+            for c in self.calls
+            if c["func"] is not None
+            and self._scope(c["func"]) == "in_scope"
+            and c["pattern_text"] is not None
+        ]
+        js_texts = [
+            _js_literal_to_regex_text(lit) for lit in _find_js_inline_test_literals()
+        ]
+        self.assertEqual(len(py_texts), 3, py_texts)
+        self.assertEqual(py_texts, js_texts)
+
     def test_union_class_constant_is_byte_identical_across_twins(self):
         """(iv) The union whitespace class constant appears with the same
         byte spelling in both twins. Built once here from integers (never
@@ -509,15 +557,15 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
         # Cross-twin equality on the INNER spelling (contents + closing bracket),
         # so both the plain `[...]` form and the `[-...]` variant (which prefixes
         # a literal `-`, e.g. the auto[-<union>]?generated suppression rule) are
-        # counted together. This is the only assertion in this class that reaches
-        # the two detect_disagreement suppression regexes and the file-path
-        # template check -- inline literals on both twins that
-        # test_first_party_families_are_byte_identical_across_twins does not
-        # scan (those sites are not part of any of the paired list/const
-        # families it walks). A JS-only respelling of either suppression rule's
-        # union class changes this count on the JS side only (#211 round-1
-        # review F2/r2-F2: measured silent on 908 node + 1731 pytest + this
-        # class's other five assertions before this check was added).
+        # counted together. This is a cheap count-parity FLOOR over the union
+        # class's total occurrences in each whole file -- it catches only a
+        # change to how many times the class appears, not what else changed
+        # around it. Element-wise byte identity for the two suppression-rule
+        # regexes and the file-path template check is asserted precisely by
+        # test_inline_first_party_literals_are_byte_identical_across_twins
+        # above (#211 round-2 review R2A-F1/F2/B2); this count assertion is
+        # kept alongside it as a belt-and-suspenders backstop, not the
+        # mechanism that reaches those sites.
         inner = contents + "]"
         self.assertEqual(
             py_text.count(inner),
