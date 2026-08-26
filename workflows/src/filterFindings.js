@@ -330,11 +330,12 @@ function firstMatch(patterns, text) {
   return null;
 }
 
-// suggestion is rendered into posted PR/MR comments and reports, so
-// payload-bearing advice must not reach a human -- but a benign finding must
-// not die for its advice (imperative security advice like "Never disable TLS
-// verification" legitimately resembles these patterns), so a match strips
-// the field instead of eliminating the finding (#62).
+// suggestion (and, since #213, claude_md_rule/spec_text) is rendered into
+// posted PR/MR comments and reports, so payload-bearing advice must not
+// reach a human -- but a benign finding must not die for its advice
+// (imperative security advice like "Never disable TLS verification"
+// legitimately resembles these patterns), so a match strips the field
+// instead of eliminating the finding (#62).
 const SUGGESTION_SETS = [
   ['contains shell command pattern', INJECTION_SHELL_PATTERNS],
   ['contains visit-URL pattern', INJECTION_URL_PATTERNS],
@@ -344,6 +345,19 @@ const SUGGESTION_SETS = [
   ['recommends introducing vulnerability', INJECTION_VULN_INTRO_PATTERNS],
   ['matches injection marker', INJECTION_BODY_PATTERNS],
 ];
+
+// Prose fields scanned by SUGGESTION_SETS and stripped (never eliminated) on
+// a match -- #62 introduced this for `suggestion`; #213 extends it to
+// `claude_md_rule`/`spec_text`, the two repo-derived citation fields the
+// conventions-and-intent agent quotes verbatim into posted comments (a
+// higher-risk injection source than agent-authored suggestion). One shared
+// list, mirrored by scripts/filter_findings.py's
+// _INJECTION_STRIPPED_PROSE_FIELDS -- a lockstep test
+// (tests/test_filter_findings.py) asserts the two lists agree element-wise
+// so adding a field to only one twin goes red. Order is scan/strip order:
+// `suggestion` first, so its bytes are reproduced exactly when it is the
+// field that matches.
+export const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
 
 // Delivery bound on suggested_fix_code content (#63/D8) -- the SAME two
 // numbers bound the field at render time in scripts/post_review.py
@@ -365,52 +379,64 @@ function normalizeFixCodeForBound(code) {
   return code.endsWith('\n') ? code.slice(0, -1) : code;
 }
 
-// Port of _strip_suggestion_if_injected. Only called for a finding that
-// already survived all ten title/description heuristics below. Returns
-// [keptFinding, phrase]: `phrase` is the SUGGESTION_SETS label that matched,
-// or null when suggestion was untouched OR stripped for a reason that is not
-// a pattern match (absent, empty, non-string) -- stripSuggestedFixCodeIfNeeded
-// below only propagates a strip on an actual injection match (#63/D8c), not
-// on a type violation.
-function stripSuggestionIfInjected(finding) {
-  // A present suggestion that is not a string (possible via the retained
-  // Python CLI's unvalidated --input and checkpoint resume; the JS dispatch
+// Port of _strip_injected_prose_fields. Only called for a finding that
+// already survived all ten title/description heuristics below. Scans
+// INJECTION_STRIPPED_PROSE_FIELDS in list order; each PRESENT field is
+// independently stripped -- never eliminates the finding -- on a non-string
+// type or the first SUGGESTION_SETS pattern match (#62, extended to
+// claude_md_rule/spec_text by #213). Scanning continues after a match: every
+// matching field strips.
+//
+// Returns [keptFinding, firstPatternStrip]: firstPatternStrip is
+// [field, phrase] for the FIRST field a PATTERN (not a type violation)
+// stripped, or null -- this is what feeds stripSuggestedFixCodeIfNeeded's
+// propagation trigger (#63/D8c, #213/D2/D7): a type-violation strip never
+// propagates, and among pattern strips only the first-in-order field names
+// the reason.
+function stripInjectedProseFields(finding) {
+  // A present field that is not a string (possible via the retained Python
+  // CLI's unvalidated --input and checkpoint resume; the JS dispatch
   // boundary's JSON schema pins string-only) is inert to the scan below; a
   // dict/list/number would reach post_review's str() coercion verbatim, and a
   // null (rendered as absent downstream) is stripped too so presence +
   // non-string type is the whole trigger (#62).
-  if ('suggestion' in finding && typeof finding.suggestion !== 'string') {
-    const kept = { ...finding };
-    delete kept.suggestion;
-    kept.suggestion_removed_by = 'injection';
-    kept.suggestion_removal_reason = 'suggestion is not a string';
-    return [kept, null];
-  }
-  const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
-  if (!suggestion) return [finding, null];
-  for (const [phrase, patterns] of SUGGESTION_SETS) {
-    const m = firstMatch(patterns, suggestion);
-    if (m) {
-      const kept = { ...finding };
-      delete kept.suggestion;
-      kept.suggestion_removed_by = 'injection';
-      kept.suggestion_removal_reason = `suggestion ${phrase}: ${JSON.stringify(m)}`;
-      return [kept, phrase];
+  let kept = finding;
+  let firstPatternStrip = null;
+  for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
+    if (field in kept && typeof kept[field] !== 'string') {
+      kept = { ...kept };
+      delete kept[field];
+      kept[`${field}_removed_by`] = 'injection';
+      kept[`${field}_removal_reason`] = `${field} is not a string`;
+      continue;
+    }
+    const value = typeof kept[field] === 'string' ? kept[field] : '';
+    if (!value) continue;
+    for (const [phrase, patterns] of SUGGESTION_SETS) {
+      const m = firstMatch(patterns, value);
+      if (m) {
+        kept = { ...kept };
+        delete kept[field];
+        kept[`${field}_removed_by`] = 'injection';
+        kept[`${field}_removal_reason`] = `${field} ${phrase}: ${JSON.stringify(m)}`;
+        if (firstPatternStrip === null) firstPatternStrip = [field, phrase];
+        break;
+      }
     }
   }
-  return [finding, null];
+  return [kept, firstPatternStrip];
 }
 
 // Port of _strip_suggested_fix_code_if_needed (#63/D8). Mirrors
-// stripSuggestionIfInjected's shape for suggested_fix_code: non-string strip
-// first, then oversize, then propagation-on-suggestion-strip. Independent of
-// whether suggestion is even present -- the first two checks fire on their
-// own regardless of suggestionPhrase.
+// stripInjectedProseFields's shape for suggested_fix_code: non-string strip
+// first, then oversize, then propagation-on-pattern-strip. Independent of
+// whether any prose field is even present -- the first two checks fire on
+// their own regardless of firstPatternStrip.
 //
 // Deliberately NO pattern scan of the code content itself: #62 measured
 // content-pattern sets killing legitimate fixes, and code trips them harder
 // than prose does.
-function stripSuggestedFixCodeIfNeeded(finding, suggestionPhrase) {
+function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
   if (!('suggested_fix_code' in finding)) return finding;
   const code = finding.suggested_fix_code;
   if (typeof code !== 'string') {
@@ -428,18 +454,37 @@ function stripSuggestedFixCodeIfNeeded(finding, suggestionPhrase) {
     kept.suggested_fix_code_removal_reason = 'suggested_fix_code exceeds the delivery bound';
     return kept;
   }
-  if (suggestionPhrase !== null) {
+  if (firstPatternStrip !== null) {
     // A patch whose accompanying prose was flagged as injection must not
     // survive as a one-click apply -- pattern-free and byte-identical to the
     // Python twin's reason (the parity test only prefix-compares
-    // suggestion_removal_reason, not this key).
+    // `${field}_removal_reason`, not this key). `field` is the FIRST scanned
+    // field (list order) a pattern stripped (#213/D2/D7); "suggestion"
+    // reproduces today's bytes.
+    const [propField, propPhrase] = firstPatternStrip;
     const kept = { ...finding };
     delete kept.suggested_fix_code;
     kept.suggested_fix_code_removed_by = 'injection';
-    kept.suggested_fix_code_removal_reason = `suggestion carried ${suggestionPhrase}`;
+    kept.suggested_fix_code_removal_reason = `${propField} carried ${propPhrase}`;
     return kept;
   }
   return finding;
+}
+
+// Port of _strip_injected_prose_fields + _strip_suggested_fix_code_if_needed
+// composed as the SINGLE per-finding step applyInjectionFilter runs for every
+// KEPT finding, exposed standalone for the #213 replay belt (stages.js): a
+// challenge checkpoint recorded by a pipeline version that predates a scanned
+// field (e.g. claude_md_rule/spec_text before #213) never had this strip
+// applied when it originally ran through filterStage, and a REPLAYED
+// checkpoint.challenge bypasses filterStage entirely (the persisted output is
+// reused verbatim) -- so report and delivery selection must pass every
+// challenge-stage finding through this before reading it. Idempotent: a
+// finding a fresh run's applyInjectionFilter already stripped has nothing
+// left to match, so a second pass here is a no-op.
+export function applyInjectedProseStrip(finding) {
+  const [stripped, firstPatternStrip] = stripInjectedProseFields(finding);
+  return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
 
 // Port of apply_injection_filter. All 10 heuristics, in the same order as the
@@ -447,8 +492,9 @@ function stripSuggestedFixCodeIfNeeded(finding, suggestionPhrase) {
 // asserted here) lines up. Heuristic #10 (duplicate signature) is STATEFUL
 // across the input list — the FIRST (title,file,line_start) occurrence
 // survives, later ones are flagged — so caller input order is load-bearing.
-// Scans only title + description; a finding that passes then has its
-// suggestion (if any) scanned separately by stripSuggestionIfInjected (#62).
+// Scans only title + description; a finding that passes then has each of
+// INJECTION_STRIPPED_PROSE_FIELDS (if any) scanned separately by
+// stripInjectedProseFields (#62, extended #213).
 export function applyInjectionFilter(findings) {
   const kept = [];
   const eliminated = [];
@@ -509,8 +555,8 @@ export function applyInjectionFilter(findings) {
     if (reasons.length) {
       eliminated.push({ ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') });
     } else {
-      const [strippedSuggestion, phrase] = stripSuggestionIfInjected(finding);
-      kept.push(stripSuggestedFixCodeIfNeeded(strippedSuggestion, phrase));
+      const [strippedFinding, firstPatternStrip] = stripInjectedProseFields(finding);
+      kept.push(stripSuggestedFixCodeIfNeeded(strippedFinding, firstPatternStrip));
     }
   }
 
@@ -1069,7 +1115,16 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
-  const suggestionsRemoved = afterInjection.filter((f) => f.suggestion_removed_by === 'injection').length;
+  // One `{field}s_removed` stat per INJECTION_STRIPPED_PROSE_FIELDS entry --
+  // looping the shared list (rather than one hardcoded .filter() per field)
+  // means adding a field to the list is the only edit a future extension
+  // needs (#213).
+  const proseFieldsRemoved = Object.fromEntries(
+    INJECTION_STRIPPED_PROSE_FIELDS.map((field) => [
+      `${field}s_removed`,
+      afterInjection.filter((f) => f[`${field}_removed_by`] === 'injection').length,
+    ]),
+  );
   const suggestedFixCodesRemoved = afterInjection.filter(
     (f) => f.suggested_fix_code_removed_by === 'injection',
   ).length;
@@ -1091,7 +1146,9 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
       passed_threshold: passedThreshold,
       contested_count: contestedCount,
       injections_removed: injectionsRemoved,
-      suggestions_removed: suggestionsRemoved,
+      suggestions_removed: proseFieldsRemoved.suggestions_removed,
+      claude_md_rules_removed: proseFieldsRemoved.claude_md_rules_removed,
+      spec_texts_removed: proseFieldsRemoved.spec_texts_removed,
       suggested_fix_codes_removed: suggestedFixCodesRemoved,
       consensus_boosted: consensusBoosted,
       singleton_penalized: singletonPenalized,
@@ -1110,6 +1167,17 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
 // suggestion is included because it is rendered into posted PR/MR comments same
 // as description -- user-authored ignore patterns are the user's kill-switch
 // over everything that gets rendered (#62).
+//
+// claude_md_rule/spec_text are also rendered into posted comments (#213 gives
+// them the same seven-set injection scan as suggestion), but are deliberately
+// NOT added here: the actual discriminator is not "gets rendered" (true of
+// all three) but cost. A `suggestion` exclusion match costs only that one
+// agent-authored field; claude_md_rule/spec_text quote the user's own repo
+// text, and a common CLAUDE.md phrasing (e.g. "MUST") would, via this
+// whole-finding elimination, mass-eliminate the conventions dimension for an
+// unbounded recall cost that the field-strip mechanism above does not carry.
+// A user kill-switch reaching rendered citation text is an open question,
+// tracked separately, not silently declined.
 export function applyExclusions(findings, exclusionPatterns) {
   if (!exclusionPatterns || !exclusionPatterns.length) return { kept: findings, eliminated: [] };
 
