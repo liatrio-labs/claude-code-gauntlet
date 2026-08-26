@@ -19,7 +19,7 @@
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict } from './applyValidations.js';
-import { applyFilterPipeline, SEVERITY_ORDER } from './filterFindings.js';
+import { applyFilterPipeline, SEVERITY_ORDER, applyInjectedProseStrip } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
 
@@ -3946,6 +3946,19 @@ export async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
+    // #213 replay belt: a challenge checkpoint recorded by a pipeline version that
+    // predates a scanned prose field (e.g. claude_md_rule/spec_text before #213) never
+    // had this run's field-strip applied when it originally passed through filterStage —
+    // a REPLAYED checkpoint.challenge (runPhase reuses checkpoints.challenge verbatim,
+    // never re-dispatching challengeStage) bypasses this run's filterStage entirely. Both
+    // consumers below (postReview via selectDelivery, and reportInput) must therefore see
+    // strip-applied findings regardless of whether challengeOut came from a fresh dispatch
+    // or a replay — applying it here, unconditionally, is the single site covering both.
+    // Idempotent on the common (non-replay) path: a fresh run's filterStage already
+    // stripped any matching field, so applyInjectedProseStrip finds nothing left to match.
+    const strippedChallengeFindings = (challengeOut.findings || []).map(applyInjectedProseStrip);
+    const strippedChallengeUnverified = (challengeOut.unverified || []).map(applyInjectedProseStrip);
+
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
     // delivery TIER (args.delivery.tier — 'all' by default, 'main_only' to withhold
     // suggestions), rank-ordered and capped at limits.deliveryCap (fed from
@@ -3953,12 +3966,12 @@ export async function runWith(ctx, rawArgs) {
     // live agent never re-filters or re-ranks. Challenge-removed (challengeOut.eliminated) and
     // challenge-skipped (challengeOut.unverified) are already absent here, so they stay excluded.
     const deliveryTier = A.delivery && A.delivery.tier;
-    const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
+    const postReview = selectDelivery(strippedChallengeFindings, limits.deliveryCap, deliveryTier);
 
     const reportInput = {
       summary: summaryOut.summary,
-      findings: challengeOut.findings,
-      unverified: challengeOut.unverified,
+      findings: strippedChallengeFindings,
+      unverified: strippedChallengeUnverified,
       stats: {
         discovered: (discoverOut.findings || []).length,
         validate: validateOut.stats,
