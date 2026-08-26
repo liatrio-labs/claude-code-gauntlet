@@ -1749,9 +1749,11 @@ def main():
             "passed_threshold": passed_threshold,
             "contested_count": contested_count,
             "injections_removed": injections_removed,
-            "suggestions_removed": prose_fields_removed["suggestions_removed"],
-            "claude_md_rules_removed": prose_fields_removed["claude_md_rules_removed"],
-            "spec_texts_removed": prose_fields_removed["spec_texts_removed"],
+            # Spliced, not hand-listed: prose_fields_removed's keys/order are exactly
+            # _INJECTION_STRIPPED_PROSE_FIELDS's (dict comprehension, insertion-ordered),
+            # so adding a field to that list is the only edit a future stat needs -- no
+            # second key to add here.
+            **prose_fields_removed,
             "suggested_fix_codes_removed": suggested_fix_codes_removed,
             "consensus_boosted": consensus_boosted,
             "singleton_penalized": singleton_penalized,

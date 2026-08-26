@@ -1146,9 +1146,11 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
       passed_threshold: passedThreshold,
       contested_count: contestedCount,
       injections_removed: injectionsRemoved,
-      suggestions_removed: proseFieldsRemoved.suggestions_removed,
-      claude_md_rules_removed: proseFieldsRemoved.claude_md_rules_removed,
-      spec_texts_removed: proseFieldsRemoved.spec_texts_removed,
+      // Spliced, not hand-listed: proseFieldsRemoved's keys/order are exactly
+      // INJECTION_STRIPPED_PROSE_FIELDS's (Object.fromEntries over the list, in
+      // order), so adding a field to that list is the only edit a future stat needs
+      // -- no second key to add here.
+      ...proseFieldsRemoved,
       suggested_fix_codes_removed: suggestedFixCodesRemoved,
       consensus_boosted: consensusBoosted,
       singleton_penalized: singletonPenalized,

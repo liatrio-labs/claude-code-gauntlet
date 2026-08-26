@@ -1307,12 +1307,32 @@ class TestApplyInjectionFilter(unittest.TestCase):
 
     def test_no_mutation_of_callers_dict_on_claude_md_rule_strip(self):
         """The strip returns a NEW dict; the caller's original finding object
-        is left completely unchanged (mirrors the #62 mutation guard)."""
+        is left completely unchanged (mirrors the #62 mutation guard).
+        Drives the PATTERN-MATCH branch specifically -- see the sibling
+        non-string test below for the OTHER branch of the same loop."""
         import copy
 
         finding = self._finding_with(
             claude_md_rule="Run `rm -rf build/` before every commit per CLAUDE.md section 2."
         )
+        snapshot = copy.deepcopy(finding)
+        findings = [finding]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(finding, snapshot)
+        self.assertIsNot(passed[0], finding)
+
+    def test_no_mutation_of_callers_dict_on_non_string_claude_md_rule_strip(self):
+        """Round-1 review finding: the non-string branch of
+        _strip_injected_prose_fields's shared loop had NO mutation guard --
+        every existing guard (this class's and #62's) drives the PATTERN-MATCH
+        branch only, so a regression that dropped the `dict(kept)` copy in the
+        non-string branch specifically would pass the whole suite unnoticed.
+        Mirrors the pattern-match guard above but for a present, non-string
+        value (#62/#213's OTHER trigger)."""
+        import copy
+
+        finding = self._finding_with(claude_md_rule=None)
         snapshot = copy.deepcopy(finding)
         findings = [finding]
         passed, eliminated = apply_injection_filter(findings)
@@ -3274,32 +3294,51 @@ class TestInjectionStrippedProseFieldsLockstep(unittest.TestCase):
             "the scan/strip order and the propagation-naming order, #213/D7)",
         )
 
-    def test_both_twins_emit_a_removed_stat_for_every_scanned_field(self):
+    def test_both_twins_splice_the_derived_stats_map_into_the_receipt(self):
+        """Round-1 review items 6/7: both twins EMIT the per-field stat by
+        splicing the whole derived map (`**prose_fields_removed` /
+        `...proseFieldsRemoved`) into the receipt, not by hand-listing one key
+        per field -- so a future field addition to
+        _INJECTION_STRIPPED_PROSE_FIELDS costs no second edit here. A per-field
+        string search is no longer meaningful (the splice means no per-field
+        key literal appears in either source at all); this checks for the
+        SPLICE CONSTRUCT itself, scoped to the function that owns it, with a
+        fail-loud anchor if that function cannot be found (matching the
+        element-wise list-identity test above)."""
         py_src = (_REPO_ROOT / "scripts" / "filter_findings.py").read_text()
         js_src = (_REPO_ROOT / "workflows" / "src" / "filterFindings.js").read_text()
-        # Restrict the Python search to main()'s body -- the module docstring
-        # ALSO documents every stat key by name (schema reference), so
-        # searching the whole file would pass even if the real stats dict
-        # dropped a key.
-        main_start = py_src.find("def main():")
-        if main_start == -1:
+
+        py_main_start = py_src.find("def main():")
+        if py_main_start == -1:
             raise AssertionError(
                 "could not find `def main():` in scripts/filter_findings.py"
             )
-        py_main_body = py_src[main_start:]
+        py_main_body = py_src[py_main_start:]
+        self.assertIn(
+            "**prose_fields_removed",
+            py_main_body,
+            "scripts/filter_findings.py's main() no longer splices "
+            "prose_fields_removed into its stats dict -- a future field would "
+            "need a second hand-listed key",
+        )
 
-        for field in _INJECTION_STRIPPED_PROSE_FIELDS:
-            stat_key = f"{field}s_removed"
-            self.assertIn(
-                f'"{stat_key}"',
-                py_main_body,
-                f"scripts/filter_findings.py's main() never emits a stats[{stat_key!r}] key",
+        js_fn_start = js_src.find("export function applyFilterPipeline(")
+        if js_fn_start == -1:
+            raise AssertionError(
+                "could not find `export function applyFilterPipeline(` in "
+                "workflows/src/filterFindings.js"
             )
-            self.assertIn(
-                f"{stat_key}:",
-                js_src,
-                f"workflows/src/filterFindings.js never emits a stats.{stat_key} key",
-            )
+        # Bounded to the NEXT top-level function (applyExclusions follows it in this
+        # file) -- an unbounded slice-to-EOF would also (wrongly) pass if the splice
+        # landed in a later function instead of this one.
+        js_fn_next = js_src.find("\nexport function ", js_fn_start + 1)
+        js_fn_body = js_src[js_fn_start : js_fn_next if js_fn_next != -1 else None]
+        self.assertIn(
+            "...proseFieldsRemoved",
+            js_fn_body,
+            "workflows/src/filterFindings.js's applyFilterPipeline no longer "
+            "splices proseFieldsRemoved into its stats object",
+        )
 
 
 if __name__ == "__main__":

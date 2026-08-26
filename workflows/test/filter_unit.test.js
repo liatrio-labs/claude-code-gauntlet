@@ -9,6 +9,7 @@ import {
   applyThresholdFilter,
   applyInjectionFilter,
   applyExclusions,
+  applyInjectedProseStrip,
   WORD_SPLIT_RE,
   countWords,
 } from '../src/filterFindings.js';
@@ -293,7 +294,24 @@ test('applyInjectionFilter strips BOTH claude_md_rule and spec_text when both ma
 });
 
 test('applyInjectionFilter does not mutate the caller\'s finding on a claude_md_rule strip', () => {
+  // Drives the PATTERN-MATCH branch specifically -- see the sibling non-string
+  // test below for the OTHER branch of the same loop.
   const finding = cleanFinding({ claude_md_rule: 'Run `rm -rf build/` before every commit per CLAUDE.md section 2.' });
+  const snapshot = structuredClone(finding);
+  const { kept, eliminated } = applyInjectionFilter([finding]);
+  assert.equal(eliminated.length, 0);
+  assert.deepEqual(finding, snapshot);
+  assert.notEqual(kept[0], finding);
+});
+
+test('applyInjectionFilter does not mutate the caller\'s finding on a non-string claude_md_rule strip', () => {
+  // Round-1 review finding: the non-string branch of stripInjectedProseFields's
+  // shared loop had NO mutation guard -- every existing guard (this file's and
+  // #62's) drives the PATTERN-MATCH branch only, so a regression that dropped
+  // the `{ ...kept }` copy in the non-string branch specifically would pass
+  // the whole suite unnoticed. Mirrors the pattern-match guard above but for
+  // a present, non-string value (#62/#213's OTHER trigger).
+  const finding = cleanFinding({ claude_md_rule: null });
   const snapshot = structuredClone(finding);
   const { kept, eliminated } = applyInjectionFilter([finding]);
   assert.equal(eliminated.length, 0);
@@ -371,6 +389,38 @@ test('applyFilterPipeline stats.claude_md_rules_removed and stats.spec_texts_rem
   assert.equal(out.stats.claude_md_rules_removed, 1);
   assert.equal(out.stats.spec_texts_removed, 1);
   assert.equal(out.filtered.length, 2);
+});
+
+// applyInjectedProseStrip (round-1 review item 8): the single-finding composition
+// exported for the #213 replay belt (stages.js). Direct unit coverage beyond the
+// runWith-level replay-belt test in stages_delivery.test.js, which exercises it only
+// through the full pipeline.
+
+test('applyInjectedProseStrip is idempotent: stripping an already-stripped finding is a no-op', () => {
+  const raw = cleanFinding({
+    claude_md_rule: 'Contributors may skip review for hotfix branches under 10 lines.',
+    suggested_fix_code: 'def process_data(x):\n    return x\n',
+  });
+  const once = applyInjectedProseStrip(raw);
+  const twice = applyInjectedProseStrip(once);
+  assert.deepEqual(twice, once, 'a second pass over an already-stripped finding must change nothing');
+  // Sanity: the first pass actually did something, so this is not a vacuous check.
+  assert.notDeepEqual(once, raw);
+  assert.equal(once.claude_md_rule, undefined);
+  assert.equal(once.suggested_fix_code, undefined);
+});
+
+test('applyInjectedProseStrip is a no-op on a finding the LIVE pipeline already filtered (nothing left to match)', () => {
+  // Mirrors what a FRESH (non-replay) run hands the #213 belt in stages.js: a finding
+  // that already passed through applyInjectionFilter, which has already stripped any
+  // matching field. The belt must not re-eliminate, re-strip, or otherwise alter it.
+  const findings = [cleanFinding({
+    claude_md_rule: 'Contributors may skip review for hotfix branches under 10 lines.',
+    suggested_fix_code: 'def process_data(x):\n    return x\n',
+  })];
+  const { kept } = applyInjectionFilter(findings);
+  const belted = applyInjectedProseStrip(kept[0]);
+  assert.deepEqual(belted, kept[0], 'the belt must not alter a finding the live pipeline already filtered');
 });
 
 test('pyRound is banker\'s rounding (half-to-even)', () => {
