@@ -2,6 +2,79 @@
 
 <!-- version list -->
 
+## v3.20.1 (2026-08-26)
+
+### Bug Fixes
+
+- **ci**: Pin GitPython 3.1.59 in the release job (#245)
+  ([#246](https://github.com/liatrio-labs/claude-code-gauntlet/pull/246),
+  [`7137647`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/71376470acce1f31032ea62375c538eca88ebd4d))
+
+- **filter**: Pin the filter twins' unicode word-boundary/whitespace/fold semantics (#211, folds
+  #214) ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+- **filter**: Pin the filter-twin unicode word-boundary/whitespace/fold class
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+- **filter**: Round-1 adjudication fixes for #211 (countWords, guard gaps, docs)
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+- **filter**: Round-2 adjudication fixes for #211 (byte-identity scanner, register accuracy)
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+- **scripts**: Span the first-run anchor across n-field sentences; cite the CI coverage measurement
+  ([#239](https://github.com/liatrio-labs/claude-code-gauntlet/pull/239),
+  [`f6458d9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6458d9bf022ad56b0117301421f3dbdd5fd4562))
+
+- **tests**: Apply PR #240 gauntlet-review lows (in-memory check(), fixture-path comment)
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+- **tests**: Non-corrupting check mode for record_parity.py (folds #214)
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+### Code Style
+
+- Pre-commit fixes (ruff format/check) for the #211 changes
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+### Documentation
+
+- **register**: File the three #211 residuals on the filter-twins row
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+### Refactoring
+
+- **agents**: Generate dispatch-requirement contract sentences from the registry
+  ([#239](https://github.com/liatrio-labs/claude-code-gauntlet/pull/239),
+  [`f6458d9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6458d9bf022ad56b0117301421f3dbdd5fd4562))
+
+- **agents**: Generate dispatch-requirement contract sentences from the registry (#238)
+  ([#239](https://github.com/liatrio-labs/claude-code-gauntlet/pull/239),
+  [`f6458d9`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6458d9bf022ad56b0117301421f3dbdd5fd4562))
+
+### Testing
+
+- **filter**: Structural guard + unit/membership pins for the #211 unicode class
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+- **parity**: NEL word-count fixture -- close a mutation-testing gap
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+- **parity**: Red-first fixtures for the filter-twin unicode divergence
+  ([#240](https://github.com/liatrio-labs/claude-code-gauntlet/pull/240),
+  [`727a26c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/727a26c1d8e8cb2fba5e27b76135a2e5981e1099))
+
+
 ## v3.20.0 (2026-08-25)
 
 ### Bug Fixes
