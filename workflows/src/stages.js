@@ -3950,14 +3950,25 @@ export async function runWith(ctx, rawArgs) {
     // predates a scanned prose field (e.g. claude_md_rule/spec_text before #213) never
     // had this run's field-strip applied when it originally passed through filterStage —
     // a REPLAYED checkpoint.challenge (runPhase reuses checkpoints.challenge verbatim,
-    // never re-dispatching challengeStage) bypasses this run's filterStage entirely. Both
-    // consumers below (postReview via selectDelivery, and reportInput) must therefore see
-    // strip-applied findings regardless of whether challengeOut came from a fresh dispatch
-    // or a replay — applying it here, unconditionally, is the single site covering both.
-    // Idempotent on the common (non-replay) path: a fresh run's filterStage already
-    // stripped any matching field, so applyInjectedProseStrip finds nothing left to match.
-    const strippedChallengeFindings = (challengeOut.findings || []).map(applyInjectedProseStrip);
-    const strippedChallengeUnverified = (challengeOut.unverified || []).map(applyInjectedProseStrip);
+    // never re-dispatching challengeStage) bypasses this run's filterStage entirely.
+    //
+    // Rewrites challengeOut's OWN findings/unverified IN PLACE, rather than threading
+    // stripped locals through the rest of this function, so every existing downstream
+    // reader of challengeOut.findings/.unverified is automatically correct with no
+    // second call site to keep in sync: selectDelivery/reportInput below, AND
+    // writeArtifacts's `findings:` param further down (what becomes findings.json on
+    // disk — assemble_artifacts.py's DERIVED persistence path re-projects
+    // post-review.json/checkpoint-all.json FROM THAT FILE, never consulting the
+    // in-memory postReview array, so a raw findings.json silently reintroduces the
+    // payload on the derived path even though selectDelivery's in-memory output was
+    // clean — round-1 review finding), AND phaseOutputs.challenge (=== challengeOut,
+    // already recorded by runPhase above), so slimPersistedCheckpoints persists the
+    // STRIPPED set and a future resume-of-a-resume replays an already-stripped
+    // checkpoint. Idempotent both ways: a fresh run's filterStage already stripped any
+    // matching field (no-op here), and re-stripping an already-stripped finding is also
+    // a no-op (nothing left to match), so resume-of-a-resume is safe.
+    challengeOut.findings = (challengeOut.findings || []).map(applyInjectedProseStrip);
+    challengeOut.unverified = (challengeOut.unverified || []).map(applyInjectedProseStrip);
 
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
     // delivery TIER (args.delivery.tier — 'all' by default, 'main_only' to withhold
@@ -3966,12 +3977,12 @@ export async function runWith(ctx, rawArgs) {
     // live agent never re-filters or re-ranks. Challenge-removed (challengeOut.eliminated) and
     // challenge-skipped (challengeOut.unverified) are already absent here, so they stay excluded.
     const deliveryTier = A.delivery && A.delivery.tier;
-    const postReview = selectDelivery(strippedChallengeFindings, limits.deliveryCap, deliveryTier);
+    const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
 
     const reportInput = {
       summary: summaryOut.summary,
-      findings: strippedChallengeFindings,
-      unverified: strippedChallengeUnverified,
+      findings: challengeOut.findings,
+      unverified: challengeOut.unverified,
       stats: {
         discovered: (discoverOut.findings || []).length,
         validate: validateOut.stats,

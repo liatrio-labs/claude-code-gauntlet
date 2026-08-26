@@ -12,8 +12,9 @@
 //    challenge-skipped findings stay excluded exactly as before.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { selectDelivery, writerPayload, runWith } from '../src/stages.js';
+import { selectDelivery, writerPayload, runWith, normalizeForChecksum, fnv1a32 } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
+import { deriveFromPlan } from './helpers/deriveFromPlan.js';
 
 function dFinding(id, over = {}) {
   return {
@@ -345,6 +346,27 @@ test('runWith replay belt: a REPLAYED challenge checkpoint with an unstripped cl
   assert.equal(delivered.suggested_fix_code, undefined, 'suggested_fix_code propagation-stripped alongside it');
   assert.equal(delivered.suggested_fix_code_removal_reason, 'claude_md_rule carried contains bypass/auto-approve instruction');
 
+  // Persist: `persisted.findings` is the FULL set the writer serializes to findings.json
+  // on disk (round-1 review finding) — a DIFFERENT array from `persisted.postReview`
+  // above, and the one assemble_artifacts.py's DERIVED persistence path re-projects
+  // post-review.json/checkpoint-all.json FROM on a production run, never consulting the
+  // in-memory postReview array. Checking only postReview (as this test originally did)
+  // leaves that second consumer of challengeOut.findings unverified.
+  const persistedFinding = persisted.findings.find((f) => f.id === 'M1');
+  assert.ok(persistedFinding, 'M1 present in the persisted findings set');
+  assert.equal(persistedFinding.claude_md_rule, undefined, 'claude_md_rule stripped from the PERSISTED finding');
+  assert.equal(persistedFinding.claude_md_rule_removed_by, 'injection');
+  assert.equal(persistedFinding.suggested_fix_code, undefined, 'suggested_fix_code propagation-stripped in the persisted finding too');
+
+  // No derived-persistence demotion: this run takes no persist waist at all (legacy
+  // path), so there is nothing for persistDerivable to refuse in the first place — but a
+  // future edit that starts threading a persist waist through this fixture must not
+  // silently reintroduce the round-1 finding/postReview mismatch that trips it.
+  assert.ok(
+    !out.gaps.some((g) => /derived persistence unavailable/.test(g)),
+    `unexpected derived-persistence gap: ${out.gaps}`,
+  );
+
   // Report: reportPrompt JSON.stringifies inp.findings verbatim into the report-writer
   // dispatch, so an unstripped citation would show up in the literal prompt text.
   const reportCall = ctx.calls.find((c) => c.label === 'report-writer');
@@ -352,6 +374,74 @@ test('runWith replay belt: a REPLAYED challenge checkpoint with an unstripped cl
   assert.ok(
     !reportCall.prompt.includes('skip review for hotfix branches'),
     'the raw claude_md_rule payload text must not reach the report-writer prompt',
+  );
+});
+
+test('runWith replay belt (RETURN persist channel): the projected post-review document derived from findings.json stays stripped, and the persist plan\'s own proof agrees with an independent re-derivation (#213)', async () => {
+  // Drives the SAME pre-#213 replay scenario through a PRODUCTION persist path
+  // (args.persist.returnPrimaries) instead of the legacy artifact-writer dispatch T6
+  // above exercises. This is the path the round-1 review reproduced the bug on:
+  // scripts/assemble_artifacts.py's DERIVED projection reads findings.json bytes off
+  // disk (here: the `findings` entry in persistReturn.entries, which the harness would
+  // write verbatim) and reconstructs post-review.json BY FINDING ID — it never reads
+  // the in-memory `postReview` array runWith computed. If challengeOut.findings itself
+  // were not stripped (the original bug), persistDerivable's byte-identity guard between
+  // postReview and findings would refuse the derived path outright (a
+  // 'derived persistence unavailable' gap, demoting silently to the legacy writer), and
+  // even if it had not, the projected document would carry the raw payload straight back.
+  const args = validArgs({
+    checkpoints: { challenge: preInjectionScanChallengeCheckpoint() },
+    persist: { returnPrimaries: true },
+  });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  assert.ok(
+    !out.gaps.some((g) => /derived persistence unavailable/.test(g)),
+    `persistDerivable refused the belt-stripped replay: ${out.gaps}`,
+  );
+  assert.ok(out.persistReturn, 'the return channel was actually taken');
+
+  const entries = out.persistReturn.entries;
+  const findingsEntry = entries.find((e) => /code-gauntlet-findings-/.test(e.path));
+  const planEntry = entries.find((e) => /persist-plan/.test(e.path));
+  assert.ok(findingsEntry && planEntry, `expected findings.json + persist-plan entries, got: ${entries.map((e) => e.path)}`);
+
+  // The ACTUAL bytes that would land in findings.json on disk are stripped.
+  const persistedFindings = JSON.parse(findingsEntry.text);
+  const persistedFinding = persistedFindings.find((f) => f.id === 'M1');
+  assert.ok(persistedFinding, 'M1 present in the persisted findings.json content');
+  assert.equal(persistedFinding.claude_md_rule, undefined, 'claude_md_rule stripped in the on-disk findings.json bytes');
+  assert.equal(persistedFinding.suggested_fix_code, undefined, 'suggested_fix_code propagation-stripped in the on-disk bytes too');
+
+  // Independently re-derive post-review.json THE WAY scripts/assemble_artifacts.py does
+  // (project by id out of findings.json, never out of the in-memory postReview array),
+  // and assert the projected document itself carries no trace of the payload.
+  const plan = JSON.parse(planEntry.text);
+  const derived = deriveFromPlan(plan, findingsEntry.text);
+  const derivedFinding = (Array.isArray(derived.postReview) ? derived.postReview : derived.postReview.findings)
+    .find((f) => f.id === 'M1');
+  assert.ok(derivedFinding, 'M1 present in the independently-derived post-review document');
+  assert.equal(derivedFinding.claude_md_rule, undefined, 'the PROJECTED post-review document has no raw claude_md_rule');
+  assert.equal(derivedFinding.suggested_fix_code, undefined, 'the PROJECTED post-review document has no raw suggested_fix_code');
+
+  // The content-proof mechanism itself must agree with reality: persistPlan's own
+  // pre-computed derive[0] expectation (built from writerPayload(inp).postReview, i.e.
+  // the IN-MEMORY postReview array) must match what an honest assemble_artifacts.py run
+  // actually derives from the ON-DISK findings.json bytes. Before the round-1 fix these
+  // two computations read from different arrays (postReview stripped, findings raw) and
+  // could disagree; persistDerivable already gates that case (asserted above via the
+  // absent gap), and this pins the CONTENT PROOF's own two sides never drift apart again.
+  const derivedPostReviewText = JSON.stringify(derived.postReview, null, 2);
+  assert.equal(
+    normalizeForChecksum(derivedPostReviewText).length,
+    plan.derive[0].chars,
+    'independent re-derivation char count must match the plan\'s own pre-computed expectation',
+  );
+  assert.equal(
+    fnv1a32(normalizeForChecksum(derivedPostReviewText)),
+    plan.derive[0].checksum,
+    'independent re-derivation checksum must match the plan\'s own pre-computed expectation',
   );
 });
 
