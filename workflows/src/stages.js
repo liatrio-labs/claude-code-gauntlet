@@ -3988,10 +3988,27 @@ export async function runWith(ctx, rawArgs) {
     // `*_removed_by`/`*_removal_reason` stamps this run adds), but is NOT counted in
     // `stats.filter` — that stat reflects only this run's OWN filterStage pass, same
     // pre-existing shape as the #62 suggestion strip before it.
+    //
+    // List/element tolerance (Bugbot, round-2 review): a malformed checkpoint can also
+    // carry a truthy non-array `findings` (`.map` is undefined -> throws) or a
+    // null/primitive element inside an otherwise real array (stripInjectedProseFields
+    // indexes into it -> throws) — both shapes this function never wrote here and so
+    // never validated, but main still tolerated them (nothing read that deep). Mirrors
+    // stripReportExcludedFields's own skip predicate (same file) at both levels: pass
+    // a non-array through unchanged (never coerced to `[]` — every downstream reader
+    // already falls back with `|| []`, so an untouched `undefined` behaves identically
+    // and keeps the persisted checkpoint closer to its original bytes), and pass a
+    // non-object element through unchanged rather than feeding it to
+    // applyInjectedProseStrip. Fixed at this call site only — applyInjectedProseStrip /
+    // stripInjectedProseFields are twin-paired with the Python filter and must not
+    // diverge from it.
+    const beltStrip = (list) => (Array.isArray(list)
+      ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
+      : list);
     if (challengeOut && typeof challengeOut === 'object') {
-      challengeOut.findings = (challengeOut.findings || []).map(applyInjectedProseStrip);
-      challengeOut.unverified = (challengeOut.unverified || []).map(applyInjectedProseStrip);
-      challengeOut.eliminated = (challengeOut.eliminated || []).map(applyInjectedProseStrip);
+      challengeOut.findings = beltStrip(challengeOut.findings);
+      challengeOut.unverified = beltStrip(challengeOut.unverified);
+      challengeOut.eliminated = beltStrip(challengeOut.eliminated);
     }
 
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
