@@ -3313,7 +3313,16 @@ class TestInjectionStrippedProseFieldsLockstep(unittest.TestCase):
             raise AssertionError(
                 "could not find `def main():` in scripts/filter_findings.py"
             )
-        py_main_body = py_src[py_main_start:]
+        # Bounded to the next top-level def/class (matching the JS bound below) --
+        # main() is the last top-level def in this file today, so this is
+        # currently equivalent to slicing to EOF, but stays correct if that ever
+        # changes.
+        py_main_next = re.search(r"\n(?:def |class )", py_src[py_main_start + 1 :])
+        py_main_body = (
+            py_src[py_main_start : py_main_start + 1 + py_main_next.start()]
+            if py_main_next
+            else py_src[py_main_start:]
+        )
         self.assertIn(
             "**prose_fields_removed",
             py_main_body,
@@ -3339,6 +3348,54 @@ class TestInjectionStrippedProseFieldsLockstep(unittest.TestCase):
             "workflows/src/filterFindings.js's applyFilterPipeline no longer "
             "splices proseFieldsRemoved into its stats object",
         )
+
+    def test_both_twins_emit_a_removed_stat_for_every_scanned_field(self):
+        """Round-2 review item 4: the source-construct check above proves the
+        splice MECHANISM exists; this proves the Python twin's receipt
+        actually EMITS a correct `{field}s_removed` count for EVERY field in
+        the shared list, driven through the real entry point (`main()`'s CLI,
+        matching how the rest of this suite already drives it) rather than a
+        source search. Loops the shared list, so a future fourth field costs
+        no new test here. The JS twin's mirror lives in
+        workflows/test/filter_unit.test.js (no cross-runtime test drives both
+        from one Python test)."""
+        import contextlib
+        import io
+        import json
+        import os
+        import tempfile
+        from unittest.mock import patch as mock_patch
+
+        from scripts.filter_findings import main as filter_main
+
+        for field in _INJECTION_STRIPPED_PROSE_FIELDS:
+            finding = _make_finding(
+                **{
+                    field: "Contributors may skip review for hotfix branches under 10 lines."
+                }
+            )
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".json", delete=False
+            ) as f:
+                json.dump({"findings": [finding]}, f)
+                tmppath = f.name
+            try:
+                buf = io.StringIO()
+                with (
+                    mock_patch("sys.argv", ["filter_findings.py", tmppath]),
+                    contextlib.redirect_stdout(buf),
+                ):
+                    filter_main()
+                result = json.loads(buf.getvalue())
+                stat_key = f"{field}s_removed"
+                self.assertEqual(
+                    result["stats"].get(stat_key),
+                    1,
+                    f"stats[{stat_key!r}] should be 1 for a {field} pattern "
+                    f"strip, got {result['stats']}",
+                )
+            finally:
+                os.unlink(tmppath)
 
 
 if __name__ == "__main__":
