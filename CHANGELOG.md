@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.22.0 (2026-08-27)
+
+### Chores
+
+- **ci**: Ratchet JS coverage floors to 86.5 branches / 97.6 functions
+  ([#251](https://github.com/liatrio-labs/claude-code-gauntlet/pull/251),
+  [`d748e10`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d748e1066717616b42f6bb6024e7476989955ff3))
+
+### Features
+
+- **filter**: Title scan for the six content sets minus four measured-noisy patterns
+  ([#251](https://github.com/liatrio-labs/claude-code-gauntlet/pull/251),
+  [`d748e10`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d748e1066717616b42f6bb6024e7476989955ff3))
+
+- **filter**: Title scan for the six content sets minus four measured-noisy patterns (#215)
+  ([#251](https://github.com/liatrio-labs/claude-code-gauntlet/pull/251),
+  [`d748e10`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d748e1066717616b42f6bb6024e7476989955ff3))
+
+
 ## v3.21.0 (2026-08-26)
 
 ### Bug Fixes
