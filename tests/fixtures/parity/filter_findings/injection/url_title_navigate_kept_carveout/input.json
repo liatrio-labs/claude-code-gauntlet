@@ -1,5 +1,5 @@
 {
-  "_carveout_note": "Deliberate carve-out: the navigate-to phrase is title-excluded (generic verb phrase, realistic legitimate title use, no corpus exercise either way). TestGoldenFreshness goes stale if _TITLE_SCAN_EXCLUDED_PATTERNS ever drops this entry.",
+  "_carveout_note": "#252: the standalone \"navigate to\" phrase was folded into long-bare-URL entry A, which now requires \"navigate to\" to be followed directly by https://. This router-bug title's \"navigate to\" has no URL object, so it stays KEPT under the narrowed pattern.",
   "findings": [
     {
       "confidence": 40,

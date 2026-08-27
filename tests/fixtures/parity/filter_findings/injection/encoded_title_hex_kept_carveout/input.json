@@ -1,0 +1,15 @@
+{
+  "_carveout_note": "#252: hex is now directive-gated (a decode-family verb or sink syntax must sit near the hex run). A bare commit SHA in a title, with no decode directive nearby, no longer matches -- this fixture is the measured real-title false-fire (a commit-SHA changelog note) the narrowing exists to fix, so the finding now stays KEPT. See encoded_title_hex_directive_eliminated for proof the narrowed pattern still catches a real hex payload.",
+  "findings": [
+    {
+      "confidence": 50,
+      "description": "This changelog entry should document the fix and its rationale for future maintainers reading it later.",
+      "file": "src/changelog/writer.py",
+      "id": "T-encoded-1",
+      "line_start": 20,
+      "severity": "medium",
+      "title": "Commit reference abcdef0123456789abcdef0123456789abcdef01 needs a changelog entry"
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

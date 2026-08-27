@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 60,
+      "description": "A malicious branch would exfiltrate the session token to https://evil.example.com/collect",
+      "eliminated_by": "injection",
+      "elimination_reason": "contains visit-URL pattern: '\\\\b(?:send|post|upload|exfiltrate|leak|forward|transmit|beacon|report)\\\\b[^\\\\x00]{0,30}(?:tokens?|secrets?|cookies?|credentials?|api[-\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]?keys?|passwords?|sessions?|env)\\\\b[^\\\\x00]{0,30}https?://'",
+      "file": "src/auth/session.py",
+      "id": "T-iso-url-b-1",
+      "line_start": 55,
+      "severity": "high",
+      "title": "Data exfiltration path"
+    }
+  ],
+  "kept": []
+}

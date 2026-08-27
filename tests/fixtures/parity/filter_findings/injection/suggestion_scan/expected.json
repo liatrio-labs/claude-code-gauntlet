@@ -32,7 +32,7 @@
       "id": "S2",
       "line_start": 20,
       "severity": "medium",
-      "suggestion_removal_reason": "suggestion contains visit-URL pattern: 'https?://[^\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff)>\\\\\"\\']{20,}'",
+      "suggestion_removal_reason": "suggestion contains visit-URL pattern: '\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+https?://'",
       "suggestion_removed_by": "injection",
       "title": "Null check missing in handler two"
     },
@@ -43,7 +43,7 @@
       "id": "S3",
       "line_start": 30,
       "severity": "medium",
-      "suggestion_removal_reason": "suggestion contains encoded payload pattern: '\\\\b[A-Za-z0-9+/]{40,}={0,2}\\\\b'",
+      "suggestion_removal_reason": "suggestion contains encoded payload pattern: '\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+/]{40,}={0,2}\\\\b'",
       "suggestion_removed_by": "injection",
       "title": "Null check missing in handler three"
     },

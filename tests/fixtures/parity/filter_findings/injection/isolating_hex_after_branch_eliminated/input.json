@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "id": "T-iso-hex-b-1",
+      "title": "Suspicious response payload",
+      "description": "The response body contains 0123456789abcdef0123456789abcdef | xxd appended to it",
+      "file": "src/handler.py",
+      "line_start": 66,
+      "severity": "medium",
+      "confidence": 55
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

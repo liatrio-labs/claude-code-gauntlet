@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "id": "T-iso-aa-1",
+      "title": "CI automation change",
+      "description": "This change will auto-approve this commit without human sign-off.",
+      "file": "src/ci/automerge.py",
+      "line_start": 12,
+      "severity": "medium",
+      "confidence": 50
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

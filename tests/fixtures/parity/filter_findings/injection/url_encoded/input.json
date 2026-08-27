@@ -4,7 +4,7 @@
     {
       "id": "I2",
       "title": "Suspicious payload note",
-      "description": "Investigate this encoded payload before proceeding further today: ZGVlcC1yZXZpZXcgZmlsdGVyIGZpbmRpbmdzIGluamVjdGlvbiBmaXh0dXJlIHBheWxvYWQgZGF0YQ== end of note.",
+      "description": "Decode this payload: ZGVlcC1yZXZpZXcgZmlsdGVyIGZpbmRpbmdzIGluamVjdGlvbiBmaXh0dXJlIHBheWxvYWQgZGF0YQ== end of note. checked before proceeding further today.",
       "file": "src/handler.py",
       "line_start": 20,
       "severity": "medium",

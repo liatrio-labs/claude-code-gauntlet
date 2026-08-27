@@ -295,21 +295,47 @@ const INJECTION_SHELL_PATTERNS = [
   /\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b/i,
 ];
 
+// URL patterns -- findings should reference code locations, not external URLs
+// to visit/fetch. The bare-URL and standalone "navigate to" shapes measured a
+// false-fire on real finding titles (SSRF/open-redirect findings legitimately
+// quote the offending URL; "navigate to" is generic frontend-routing
+// vocabulary) and are replaced by two directive-gated long-bare-URL entries: a
+// reader-imperative verb immediately before the URL, or a data-exfiltration
+// verb + secret-object phrase ahead of it. "visit"/"download from" are
+// unchanged -- an imperative to fetch a URL is not something a legitimate
+// finding states about itself.
 const INJECTION_URL_PATTERNS = [
-  /https?:\/\/[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff)>"']{20,}/i,
   /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
   /\bdownload from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
-  /\bnavigate to\b/i,
+  /\b(?:browse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|go[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|open|navigate[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|fetch[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from|retrieve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
+  /\b(?:send|post|upload|exfiltrate|leak|forward|transmit|beacon|report)\b[^\x00]{0,30}(?:tokens?|secrets?|cookies?|credentials?|api[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?keys?|passwords?|sessions?|env)\b[^\x00]{0,30}https?:\/\//i,
 ];
 
+// Encoded payload patterns -- base64 or hex blobs in findings are injection
+// artifacts. Each shape is now two directive-gated entries: a before-branch
+// requiring a decode-family verb ahead of the blob, an after-branch requiring
+// decode/execute sink syntax after it. A bare encoded-looking run with no
+// decode directive nearby (a commit SHA, an opaque config token, a padded
+// identifier) no longer matches either branch -- both measured a false-fire
+// on ordinary review/DevOps prose where a generic verb (run/curl/wget)
+// happened to sit near an unrelated hash-shaped token.
 const INJECTION_ENCODED_PATTERNS = [
-  /\b[A-Za-z0-9+/]{40,}={0,2}\b/i,
-  /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
+  /\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+\/]{40,}={0,2}\b/i,
+  /\b[A-Za-z0-9+\/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)/i,
+  /\b(?:decode|unhex|xxd|fromhex|unhexlify)\b[^\x00]{0,40}(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
+  /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)/i,
 ];
 
+// Bypass / auto-approve instruction patterns. auto-approve is now two
+// grammatically-gated entries (a determiner + PR/MR/commit object, or an
+// "and <verb>" continuation) instead of a bare phrase match -- the bare
+// phrase false-fired on third-person policy prose ("auto-approve changes to
+// lockfiles should be gated behind review") where "auto-approve" is the
+// grammatical subject, not an imperative.
 const INJECTION_BYPASS_PATTERNS = [
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
-  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve\b/i,
+  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b/i,
+  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:merge|skip|bypass|push|deploy|proceed|continue)\b/i,
   /\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?controls?\b/i,
   /\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:auth|authentication|authorization)\b/i,
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:auth|authentication|authorization)\b/i,
@@ -388,44 +414,14 @@ const SUGGESTION_SETS = [
 // field that matches.
 const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
 
-// Four of the eight sets' patterns measure a false-fire on real finding
-// titles, fire on synthetic hard negatives only, or fire on realistic
-// counterexamples round-1 review executed: this array names exactly those
-// four regex literals, copied byte-for-byte from their home lists above (do
-// not retype -- a respelled whitespace class here silently re-enables the
-// excluded pattern under a different byte sequence). Only .source is
-// load-bearing below (TITLE_SCAN_EXCLUDED_SOURCES, TITLE_SUGGESTION_SETS'
-// filter, and the exclusion-membership guard all compare .source strings) --
-// the /i flag on each literal here is inert, kept only so a literal copy-paste
-// from its home list needs no editing. Everything else across all eight
-// sets measured a zero false-fire over the 1,895-title corpus (six of the
-// eight sets take part in the new title pass -- shell already spans
-// combined at heuristic 1, and the placeholder set already scans title on
-// its own at heuristic 7) and ships title-enabled, including the rest of
-// bypass and encoded's hex pattern. Mirrors
-// scripts/filter_findings.py's _TITLE_SCAN_EXCLUDED_PATTERNS -- see its
-// comment for the per-pattern basis (measured false-fire counts, the
-// synthetic-only basis for auto-approve, and decision rule (b) for the
-// bare-URL entry).
-const TITLE_SCAN_EXCLUDED_PATTERNS = [
-  /\b[A-Za-z0-9+/]{40,}={0,2}\b/i,
-  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve\b/i,
-  /\bnavigate to\b/i,
-  /https?:\/\/[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff)>"']{20,}/i,
-];
-
-// Title-scan pattern lists: SUGGESTION_SETS minus its first entry (shell,
-// which already scans `combined` in applyInjectionFilter -- a dedicated
-// title pass would double-report it), each filtered to drop any pattern
-// whose .source matches one of TITLE_SCAN_EXCLUDED_PATTERNS. Derived once
-// at module scope, mirroring the Python twin's per-call derivation (JS
-// patterns are already module-level consts, so there is no per-call
-// compile step to mirror here).
-const TITLE_SCAN_EXCLUDED_SOURCES = TITLE_SCAN_EXCLUDED_PATTERNS.map((rx) => rx.source);
-const TITLE_SUGGESTION_SETS = SUGGESTION_SETS.slice(1).map(([phrase, patterns]) => [
-  phrase,
-  patterns.filter((rx) => !TITLE_SCAN_EXCLUDED_SOURCES.includes(rx.source)),
-]);
+// Title-scan pattern lists: SUGGESTION_SETS minus shell/url/encoded (indices
+// 0-2), which already scan `combined` in applyInjectionFilter -- `combined`
+// already includes `title`, so a dedicated title pass over those three
+// would double-report the same match. Only bypass/instructional/vuln-intro/
+// body-marker (indices 3-6) are still description-only sets that need a
+// separate title-only pass. Mirrors the Python twin's
+// `_title_suggestion_sets = _SUGGESTION_SETS[3:]`.
+const TITLE_SUGGESTION_SETS = SUGGESTION_SETS.slice(3);
 
 // Delivery bound on suggested_fix_code content (#63/D8) -- the SAME two
 // numbers bound the field at render time in scripts/post_review.py
@@ -563,6 +559,23 @@ function applyInjectedProseStrip(finding) {
 // Scans only title + description; a finding that passes then has each of
 // INJECTION_STRIPPED_PROSE_FIELDS (if any) scanned separately by
 // stripInjectedProseFields (#62, extended #213).
+//
+// Heuristics 1/2 (shell/url/encoded) scan `combined` (title+description)
+// rather than either field alone -- #252 Finding 1: the encoded/url sets
+// are directive-gated with an adjacency requirement (the verb and the
+// blob/URL within roughly 40 characters), so a payload split across fields
+// (the directive in title, the blob in description) would satisfy neither
+// field scanned alone even though the rendered PR comment concatenates them
+// into one coherent instruction. A far-apart split still evades by design
+// (adjacency-gating is inherently local); that residual is accepted.
+//
+// Heuristics 3/5/6/8 additionally scan `title` alone against the same four
+// content sets that scan `description` (TITLE_SUGGESTION_SETS =
+// SUGGESTION_SETS.slice(3): bypass/instructional/vuln-intro/body-marker).
+// shell/url/encoded (indices 0-2) are excluded from this separate pass
+// because they already scan `combined`, which already includes `title` --
+// re-scanning title alone for those three would double-report the same
+// match.
 function applyInjectionFilter(findings) {
   const kept = [];
   const eliminated = [];
@@ -587,11 +600,12 @@ function applyInjectionFilter(findings) {
     let m = firstMatch(INJECTION_SHELL_PATTERNS, combined);
     if (m) reasons.push(`contains shell command pattern: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_URL_PATTERNS, description);
-    if (m) reasons.push(`description contains visit-URL pattern: ${JSON.stringify(m)}`);
+    // 2a/2b: combined title+description (#252 Finding 1 -- see doc comment above).
+    m = firstMatch(INJECTION_URL_PATTERNS, combined);
+    if (m) reasons.push(`contains visit-URL pattern: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_ENCODED_PATTERNS, description);
-    if (m) reasons.push(`description contains encoded payload pattern: ${JSON.stringify(m)}`);
+    m = firstMatch(INJECTION_ENCODED_PATTERNS, combined);
+    if (m) reasons.push(`contains encoded payload pattern: ${JSON.stringify(m)}`);
 
     m = firstMatch(INJECTION_BYPASS_PATTERNS, description);
     if (m) reasons.push(`description contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
@@ -614,10 +628,9 @@ function applyInjectionFilter(findings) {
     if (m) reasons.push(`description matches injection marker: ${JSON.stringify(m)}`);
 
     // Title scan: each of the six sets above minus shell (already scanned at
-    // heuristic 1) is re-scanned against `title` alone, minus
-    // TITLE_SCAN_EXCLUDED_PATTERNS -- a payload placed only in the title
-    // reaches the wire and downstream model prompts untouched by the
-    // description-only scans above.
+    // heuristic 1) is re-scanned against `title` alone -- a payload placed
+    // only in the title reaches the wire and downstream model prompts
+    // untouched by the description-only scans above.
     for (const [phrase, patterns] of TITLE_SUGGESTION_SETS) {
       const tm = firstMatch(patterns, title);
       if (tm) {

@@ -448,24 +448,47 @@ _INJECTION_SHELL_PATTERNS = [
     r"\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b",
 ]
 
-# URL patterns — findings should reference code locations, not external URLs to visit/fetch
+# URL patterns — findings should reference code locations, not external URLs to
+# visit/fetch. The bare-URL and standalone "navigate to" shapes measured a
+# false-fire on real finding titles (SSRF/open-redirect findings legitimately
+# quote the offending URL; "navigate to" is generic frontend-routing
+# vocabulary) and are replaced by two directive-gated long-bare-URL entries: a
+# reader-imperative verb immediately before the URL, or a data-exfiltration
+# verb + secret-object phrase ahead of it. "visit"/"download from" are
+# unchanged -- an imperative to fetch a URL is not something a legitimate
+# finding states about itself.
 _INJECTION_URL_PATTERNS = [
-    r"https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff)>\"']{20,}",
     r"\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
     r"\bdownload from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
-    r"\bnavigate to\b",
+    r"\b(?:browse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|go[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|open|navigate[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|fetch[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from|retrieve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
+    r"\b(?:send|post|upload|exfiltrate|leak|forward|transmit|beacon|report)\b[^\x00]{0,30}(?:tokens?|secrets?|cookies?|credentials?|api[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?keys?|passwords?|sessions?|env)\b[^\x00]{0,30}https?://",
 ]
 
-# Encoded payload patterns — base64 or hex blobs in findings are injection artifacts
+# Encoded payload patterns — base64 or hex blobs in findings are injection
+# artifacts. Each shape is now two directive-gated entries: a before-branch
+# requiring a decode-family verb ahead of the blob, an after-branch requiring
+# decode/execute sink syntax after it. A bare encoded-looking run with no
+# decode directive nearby (a commit SHA, an opaque config token, a padded
+# identifier) no longer matches either branch -- both measured a false-fire
+# on ordinary review/DevOps prose where a generic verb (run/curl/wget)
+# happened to sit near an unrelated hash-shaped token.
 _INJECTION_ENCODED_PATTERNS = [
-    r"\b[A-Za-z0-9+/]{40,}={0,2}\b",
-    r"(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)",
+    r"\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+/]{40,}={0,2}\b",
+    r"\b[A-Za-z0-9+/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)",
+    r"\b(?:decode|unhex|xxd|fromhex|unhexlify)\b[^\x00]{0,40}(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)",
+    r"(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)",
 ]
 
-# Bypass / auto-approve instruction patterns
+# Bypass / auto-approve instruction patterns. auto-approve is now two
+# grammatically-gated entries (a determiner + PR/MR/commit object, or an
+# "and <verb>" continuation) instead of a bare phrase match -- the bare
+# phrase false-fired on third-person policy prose ("auto-approve changes to
+# lockfiles should be gated behind review") where "auto-approve" is the
+# grammatical subject, not an imperative.
 _INJECTION_BYPASS_PATTERNS = [
     r"\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b",
-    r"\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve\b",
+    r"\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b",
+    r"\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:merge|skip|bypass|push|deploy|proceed|continue)\b",
     r"\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?controls?\b",
     r"\bbypass[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:auth|authentication|authorization)\b",
     r"\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:auth|authentication|authorization)\b",
@@ -558,11 +581,10 @@ _INJECTION_STRIPPED_PROSE_FIELDS = ("suggestion", "claude_md_rule", "spec_text")
 
 # Module-level table of the seven content-set (phrase, raw-pattern-tuple)
 # pairs, in _SUGGESTION_SETS order -- apply_injection_filter compiles this
-# ONCE per call into its `_SUGGESTION_SETS` (#215 round-1 parity-F4/F5), and
-# the title-scan membership guard (tests/test_filter_findings.py) iterates
-# `_CONTENT_PATTERN_SETS[1:]` (the title-scanned slice, shell excluded)
-# rather than a hand-copied tuple of the same seven lists. Reordering,
-# adding, or removing a content set is a single edit here.
+# ONCE per call into its `_SUGGESTION_SETS` (#215 round-1 parity-F4/F5) and
+# also uses it, unchanged, as the source for the field-strip scan
+# (_strip_injected_prose_fields). Reordering, adding, or removing a content
+# set is a single edit here.
 _CONTENT_PATTERN_SETS = (
     ("contains shell command pattern", tuple(_INJECTION_SHELL_PATTERNS)),
     ("contains visit-URL pattern", tuple(_INJECTION_URL_PATTERNS)),
@@ -573,49 +595,6 @@ _CONTENT_PATTERN_SETS = (
     ("matches injection marker", tuple(_INJECTION_BODY_PATTERNS)),
 )
 
-# Four of the eight sets' patterns measure a false-fire on real finding
-# titles, fire on synthetic hard negatives only, or fire on realistic
-# counterexamples round-1 review executed: this tuple names exactly those
-# four, copied byte-for-byte from their home lists above (do not retype --
-# a respelled whitespace class here silently re-enables the excluded
-# pattern under a different byte sequence). Everything else across all
-# eight sets measured a zero false-fire over the 1,895-title corpus (six
-# of the eight sets take part in the new title pass -- shell already spans
-# combined at heuristic 1, and the placeholder set already scans title on
-# its own at heuristic 7) and ships title-enabled, including the rest of
-# bypass and encoded's hex pattern.
-#   - encoded's base64-run shape: fires 8/1895 on slash-joined identifier
-#     pairs (e.g. getAuthorizationConditions/getFilterConditions) in real
-#     titles -- a measured real-title false-fire.
-#   - bypass's auto-approve phrase: fires 2/1895, both self-authored
-#     synthetic hard negatives (0/1745 on real titles) -- a weaker basis
-#     than a measured real-title fire, carved as a precaution because
-#     auto-approve is legitimate CI-security title vocabulary (a feature
-#     name under review), not because the corpus measured a real fire.
-#   - url's navigate-to phrase: 0/1895, but the corpus contains ZERO real
-#     titles with any `https?://` or `navigat*` token at all -- that zero
-#     is absence of exercise, not evidence of safety. The phrase is also a
-#     generic verb realistic frontend titles use ("Router fails to
-#     navigate to the error boundary on a 500 response"); carved pending
-#     corpus evidence, not on a measured false-fire.
-#   - url's bare-URL shape (round-1 hostile-F2, decision rule (b)): also
-#     0/1895 on that same zero-exercise corpus, but round-1 review executed
-#     counterexamples the corpus happened not to sample -- an SSRF/open-
-#     redirect/origin-validation finding's title legitimately quotes the
-#     offending URL itself, and two real bench-golden security-finding
-#     comments do the same. That is a real, executed false-fire class, so
-#     it is carved on the stronger basis decision rule (b) names, not on
-#     absence of exercise. The two DIRECTIVE url patterns ("visit ...
-#     https://", "download from ... https://") stay enabled: an imperative
-#     to fetch a URL is not something a legitimate finding title states
-#     about itself.
-_TITLE_SCAN_EXCLUDED_PATTERNS = (
-    r"\b[A-Za-z0-9+/]{40,}={0,2}\b",
-    r"\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve\b",
-    r"\bnavigate to\b",
-    r"https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff)>\"']{20,}",
-)
-
 
 def apply_injection_filter(findings):
     """
@@ -623,14 +602,12 @@ def apply_injection_filter(findings):
 
     Detection heuristics (from false-positive-exclusions.md § Prompt Injection Artifacts),
     scanned across title/description only:
-      1. Body or title contains shell commands (rm -rf, curl, wget, git push, gh api)
-      2. Body contains a URL to visit/download from or an encoded payload (base64,
-         hex); title is scanned for the same set MINUS the bare-URL,
-         navigate-to and encoded-base64-run shapes (title-excluded, see
-         `_TITLE_SCAN_EXCLUDED_PATTERNS`)
+      1. Combined title+description contains shell commands (rm -rf, curl, wget,
+         git push, gh api)
+      2. Combined title+description contains a URL to visit/download from, or an
+         encoded payload (base64, hex)
       3. Body instructs the user to bypass controls, skip review, or auto-approve;
-         title is scanned for the same set MINUS the auto-approve phrase
-         (title-excluded)
+         title is scanned for the same set
       4. Body has fewer than 10 words AND confidence is high (>= 85) — suspiciously terse
       5. Body or title's tone shifts from analytical to instructional ("you should run this command")
       6. Body or title recommends adding code that introduces a vulnerability or disables security features
@@ -639,15 +616,29 @@ def apply_injection_filter(findings):
       9. File path is empty or contains template markers
       10. Duplicate signature (title+file+line)
 
-    Heuristics 2/3/5/6/8 above additionally scan `title` alone against the
-    same set that scans `description`, minus the four patterns named in
-    `_TITLE_SCAN_EXCLUDED_PATTERNS` (measured false-fire on real titles, a
-    fire on synthetic hard negatives only, or a false-fire class round-1
-    review executed on a corpus zero-exercise did not measure) -- see that
-    constant's comment for the per-pattern basis, and its header for the
-    1,895-title corpus the six title-scanned sets were measured against.
-    Heuristic 1 (shell) already spans `combined` (title+description) and is
-    not re-scanned.
+    Heuristics 1/2 scan `combined` (title+description) rather than either
+    field alone: the encoded/url sets are directive-gated (a decode-family
+    verb or sink syntax around an encoded blob, a reader-imperative verb or
+    exfiltration phrase ahead of a URL) with an adjacency requirement (the
+    verb and the blob/URL within roughly 40 characters of each other), so a
+    payload split across fields -- the directive in `title`, the blob in
+    `description` -- would satisfy neither field scanned alone even though
+    the rendered PR comment concatenates them into one coherent
+    decode-then-run instruction. Scanning combined closes that split without
+    reopening the bare-blob/bare-URL false-fire the directive-gating exists
+    to fix (a decode verb sitting within the adjacency window of an
+    unrelated identifier at a title/description boundary was measured and
+    not observed in the real corpus -- see `SCRATCHPAD/final_measure.py`
+    Part 3). A far-apart split (directive and blob more than the adjacency
+    window apart) still evades by design -- adjacency-gating is inherently
+    local, and that residual is accepted.
+
+    Heuristics 3/5/6/8 above additionally scan `title` alone against the
+    same four content sets that scan `description` (bypass/instructional/
+    vuln-intro/body-marker -- `_SUGGESTION_SETS[3:]`; shell and url/encoded
+    are excluded from this separate pass because they already scan
+    `combined`, which already includes `title` -- re-scanning title alone
+    for those three would double-report the same match).
 
     A finding that survives all ten heuristics then has each of
     `_INJECTION_STRIPPED_PROSE_FIELDS` (`suggestion`, `claude_md_rule`,
@@ -702,18 +693,13 @@ def apply_injection_filter(findings):
     # legitimately resembles these patterns), so a match strips the field
     # instead of eliminating the finding (#62).
 
-    # Title-scan pattern lists: _SUGGESTION_SETS minus its first entry
-    # (shell, which already scans `combined` at heuristic 1 -- a dedicated
-    # title pass would double-report it), each filtered to drop
-    # _TITLE_SCAN_EXCLUDED_PATTERNS. Derived once, like the compiled pattern
-    # lists above, not per finding.
-    _title_suggestion_sets = [
-        (
-            phrase,
-            [rx for rx in patterns if rx.pattern not in _TITLE_SCAN_EXCLUDED_PATTERNS],
-        )
-        for phrase, patterns in _SUGGESTION_SETS[1:]
-    ]
+    # Title-scan pattern lists: _SUGGESTION_SETS minus shell/url/encoded
+    # (indices 0-2), which already scan `combined` -- `combined` already
+    # includes `title`, so a dedicated title pass over those three would
+    # double-report the same match. Only bypass/instructional/vuln-intro/
+    # body-marker (indices 3-6) are still description-only sets that need a
+    # separate title-only pass.
+    _title_suggestion_sets = _SUGGESTION_SETS[3:]
 
     def _strip_injected_prose_fields(finding):
         # Returns (kept_finding, first_pattern_strip). Scans
@@ -831,15 +817,18 @@ def apply_injection_filter(findings):
         if m:
             reasons.append(f"contains shell command pattern: {m!r}")
 
-        # 2a. URLs to visit in description
-        m = _first_match(url_re, description)
+        # 2a. URLs to visit -- combined title+description (#252 Finding 1:
+        # a decode/exfil directive in title and the URL/blob in description
+        # must be caught together, since the rendered comment concatenates
+        # them into one instruction).
+        m = _first_match(url_re, combined)
         if m:
-            reasons.append(f"description contains visit-URL pattern: {m!r}")
+            reasons.append(f"contains visit-URL pattern: {m!r}")
 
-        # 2b. Encoded payloads in description
-        m = _first_match(encoded_re, description)
+        # 2b. Encoded payloads -- combined title+description (same rationale).
+        m = _first_match(encoded_re, combined)
         if m:
-            reasons.append(f"description contains encoded payload pattern: {m!r}")
+            reasons.append(f"contains encoded payload pattern: {m!r}")
 
         # 3. Bypass / auto-approve instructions in description
         m = _first_match(bypass_re, description)
@@ -879,10 +868,9 @@ def apply_injection_filter(findings):
             reasons.append(f"description matches injection marker: {m!r}")
 
         # Title scan: each of the six sets above minus shell (already
-        # scanned at heuristic 1) is re-scanned against `title` alone, minus
-        # _TITLE_SCAN_EXCLUDED_PATTERNS -- a payload placed only in the title
-        # reaches the wire and downstream model prompts untouched by the
-        # description-only scans above.
+        # scanned at heuristic 1) is re-scanned against `title` alone -- a
+        # payload placed only in the title reaches the wire and downstream
+        # model prompts untouched by the description-only scans above.
         for phrase, patterns in _title_suggestion_sets:
             m = _first_match(patterns, title)
             if m:

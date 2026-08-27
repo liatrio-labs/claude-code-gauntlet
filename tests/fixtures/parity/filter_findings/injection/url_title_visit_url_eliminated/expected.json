@@ -4,13 +4,12 @@
       "confidence": 45,
       "description": "This changelog entry links out to supplementary release notes hosted outside the repository for context.",
       "eliminated_by": "injection",
-      "elimination_reason": "title contains visit-URL pattern: '\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+https?://'",
+      "elimination_reason": "contains visit-URL pattern: '\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+https?://'",
       "file": "docs/changelog/entry.md",
       "id": "T-url-visit-1",
       "line_start": 20,
       "severity": "low",
-      "title": "Changelog note tells readers to visit https://malicious.example.com/patch for the full write-up",
-      "title_scan_matched": true
+      "title": "Changelog note tells readers to visit https://malicious.example.com/patch for the full write-up"
     }
   ],
   "kept": []

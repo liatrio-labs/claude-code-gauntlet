@@ -1,0 +1,14 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 50,
+      "description": "This changelog entry should document the fix and its rationale for future maintainers reading it later.",
+      "file": "src/changelog/writer.py",
+      "id": "T-encoded-1",
+      "line_start": 20,
+      "severity": "medium",
+      "title": "Commit reference abcdef0123456789abcdef0123456789abcdef01 needs a changelog entry"
+    }
+  ]
+}
