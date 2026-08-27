@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "confidence": 50,
+      "description": "This plugin scripting engine currently only supports a small fixed set of built-in operations today.",
+      "file": "src/plugins/engine.py",
+      "id": "T-vuln-1",
+      "line_start": 50,
+      "severity": "medium",
+      "title": "Ticket proposes to add eval( support for the plugin scripting engine"
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

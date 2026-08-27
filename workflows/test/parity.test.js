@@ -105,6 +105,77 @@ function mapByAgent(files) {
 
 const idsOf = (list) => list.map((f) => f.id);
 
+// Extracted (#215 round-1 parity-F1/hostile-F4) so the fixture loop below and
+// the seeded-divergence meta-test that follows it exercise the SAME
+// comparator, not two copies that could silently drift apart. Free-text JOIN
+// format ('; '-separated) is not load-bearing, but each individual reason
+// SEGMENT is not free -- the "<field> <phrase>: " prefix up to and including
+// the ": " separator is built from the same SUGGESTION_SETS phrase strings in
+// both runtimes, so it is byte-exact across twins; only the trailing
+// pattern-spelling tail (Python `!r` vs JS `rx.source` + JSON.stringify) is
+// free. A segment with no ': ' separator (the word-count and
+// duplicate-signature heuristics, whose text is NOT built from a shared
+// phrase table) is presence-only. Segment COUNT must match too, so a title
+// reason silently dropped (or a spurious extra one added) on either twin is
+// caught even when the eliminated ID sets already agree. Throws (via
+// `assert`) on a segment-count mismatch or a prefix divergence; does NOT
+// throw on a tail-only difference (the free pattern-spelling suffix).
+function assertEliminationReasonSegmentsMatch(gotReason, expReason, label) {
+  const gotSegs = gotReason.split('; ');
+  const expSegs = expReason.split('; ');
+  assert.equal(
+    gotSegs.length,
+    expSegs.length,
+    `elimination_reason segment count${label ? ` for ${label}` : ''}: got ${JSON.stringify(gotSegs)} vs expected ${JSON.stringify(expSegs)}`,
+  );
+  expSegs.forEach((expSeg, j) => {
+    const sepIdx = expSeg.indexOf(': ');
+    if (sepIdx === -1) return; // presence-only segment, already asserted above
+    const expPrefix = expSeg.slice(0, sepIdx + 2);
+    assert.equal(
+      gotSegs[j].slice(0, expPrefix.length),
+      expPrefix,
+      `elimination_reason segment ${j} prefix${label ? ` for ${label}` : ''}`,
+    );
+  });
+}
+
+// Seeded-divergence meta-test (#215 round-1 parity-F1/hostile-F4): proves the
+// helper above actually discriminates, rather than trusting its logic by
+// inspection. (a) a prefix divergence and (b) a dropped segment must both
+// throw; (c) a tail-only difference (the free pattern-spelling suffix) must
+// NOT throw. Mutating either half of the helper (the length check or the
+// prefix check) must turn this red -- verified by doing so and restoring.
+test('assertEliminationReasonSegmentsMatch: seeded divergence cases', () => {
+  // (a) prefix divergence: same segment count, but segment 0's phrase prefix disagrees.
+  assert.throws(() =>
+    assertEliminationReasonSegmentsMatch(
+      "description contains shell command pattern: 'rm -rf'",
+      "description uses instructional tone: 'rm -rf'",
+    ),
+  );
+  // (b) dropped segment: got carries a spurious extra segment expected does
+  // not have (one twin silently added/dropped a reason relative to the
+  // other) -- both sides still share the segment 0 prefix, so ONLY the
+  // length check catches this; deliberately NOT the got=1/expected=2 shape,
+  // which would throw a TypeError on out-of-bounds access regardless of
+  // whether the length check ran, masking whether it actually fired.
+  assert.throws(() =>
+    assertEliminationReasonSegmentsMatch(
+      "description contains shell command pattern: 'rm -rf'; title contains visit-URL pattern: 'https://x'",
+      "description contains shell command pattern: 'rm -rf'",
+    ),
+  );
+  // (c) tail-only difference: same segment count, same prefixes, only the
+  // free pattern-spelling suffix (Python !r vs JS source+JSON.stringify) differs.
+  assert.doesNotThrow(() =>
+    assertEliminationReasonSegmentsMatch(
+      "description contains shell command pattern: '\\\\brm[\\\\t\\\\n]+-[rf]'",
+      'description contains shell command pattern: "\\\\brm[\\\\t\\\\n]+-[rf]"',
+    ),
+  );
+});
+
 for (const c of loadCases('filter_findings')) {
   const fn = c.input.fn;
   test(`filter_findings parity: ${c.name} (${fn})`, () => {
@@ -133,8 +204,19 @@ for (const c of loadCases('filter_findings')) {
       const { kept, eliminated } = applyInjectionFilter(c.input.findings);
       assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
       assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
-      // Free-text join format is not load-bearing (per the brief) — only presence matters.
-      for (const e of eliminated) assert.ok(e.elimination_reason && e.elimination_reason.length > 0);
+      // Uses the extracted assertEliminationReasonSegmentsMatch helper
+      // (defined above, proven by its own seeded-divergence meta-test) --
+      // see that helper's comment for what is byte-exact vs free text here.
+      eliminated.forEach((got, i) => {
+        const exp = c.expected.eliminated[i];
+        assert.ok(got.elimination_reason && got.elimination_reason.length > 0);
+        assertEliminationReasonSegmentsMatch(got.elimination_reason, exp.elimination_reason, exp.id);
+        assert.equal(
+          got.title_scan_matched,
+          exp.title_scan_matched,
+          `title_scan_matched mismatch for ${exp.id}`,
+        );
+      });
       // `{field}_removal_reason` is MOSTLY free text (Python !r vs JS
       // pattern-source quoting differ), but the "{field} <noun phrase>: "
       // prefix up to and including the ": " separator is identical across

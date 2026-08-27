@@ -38,6 +38,7 @@ Output JSON schema:
             "passed_threshold":        N,   # passed confidence + severity threshold
             "contested_count":         N,   # findings that bypassed threshold via validator contestation
             "injections_removed":      N,   # removed by injection filter
+            "title_matches_eliminated": N,  # of injections_removed, stamped title_scan_matched by the six-set title pass (excludes heuristic 7's pre-existing placeholder-pattern title eliminations, never stamped)
             "suggestions_removed":     N,   # kept findings whose suggestion field was stripped by injection scan
             "claude_md_rules_removed": N,   # kept findings whose claude_md_rule field was stripped by injection scan
             "spec_texts_removed":      N,   # kept findings whose spec_text field was stripped by injection scan
@@ -555,6 +556,66 @@ def _count_words(text):
 # that matches.
 _INJECTION_STRIPPED_PROSE_FIELDS = ("suggestion", "claude_md_rule", "spec_text")
 
+# Module-level table of the seven content-set (phrase, raw-pattern-tuple)
+# pairs, in _SUGGESTION_SETS order -- apply_injection_filter compiles this
+# ONCE per call into its `_SUGGESTION_SETS` (#215 round-1 parity-F4/F5), and
+# the title-scan membership guard (tests/test_filter_findings.py) iterates
+# `_CONTENT_PATTERN_SETS[1:]` (the title-scanned slice, shell excluded)
+# rather than a hand-copied tuple of the same seven lists. Reordering,
+# adding, or removing a content set is a single edit here.
+_CONTENT_PATTERN_SETS = (
+    ("contains shell command pattern", tuple(_INJECTION_SHELL_PATTERNS)),
+    ("contains visit-URL pattern", tuple(_INJECTION_URL_PATTERNS)),
+    ("contains encoded payload pattern", tuple(_INJECTION_ENCODED_PATTERNS)),
+    ("contains bypass/auto-approve instruction", tuple(_INJECTION_BYPASS_PATTERNS)),
+    ("uses instructional tone", tuple(_INJECTION_INSTRUCTIONAL_PATTERNS)),
+    ("recommends introducing vulnerability", tuple(_INJECTION_VULN_INTRO_PATTERNS)),
+    ("matches injection marker", tuple(_INJECTION_BODY_PATTERNS)),
+)
+
+# Four of the eight sets' patterns measure a false-fire on real finding
+# titles, fire on synthetic hard negatives only, or fire on realistic
+# counterexamples round-1 review executed: this tuple names exactly those
+# four, copied byte-for-byte from their home lists above (do not retype --
+# a respelled whitespace class here silently re-enables the excluded
+# pattern under a different byte sequence). Everything else across all
+# eight sets measured a zero false-fire over the 1,895-title corpus (six
+# of the eight sets take part in the new title pass -- shell already spans
+# combined at heuristic 1, and the placeholder set already scans title on
+# its own at heuristic 7) and ships title-enabled, including the rest of
+# bypass and encoded's hex pattern.
+#   - encoded's base64-run shape: fires 8/1895 on slash-joined identifier
+#     pairs (e.g. getAuthorizationConditions/getFilterConditions) in real
+#     titles -- a measured real-title false-fire.
+#   - bypass's auto-approve phrase: fires 2/1895, both self-authored
+#     synthetic hard negatives (0/1745 on real titles) -- a weaker basis
+#     than a measured real-title fire, carved as a precaution because
+#     auto-approve is legitimate CI-security title vocabulary (a feature
+#     name under review), not because the corpus measured a real fire.
+#   - url's navigate-to phrase: 0/1895, but the corpus contains ZERO real
+#     titles with any `https?://` or `navigat*` token at all -- that zero
+#     is absence of exercise, not evidence of safety. The phrase is also a
+#     generic verb realistic frontend titles use ("Router fails to
+#     navigate to the error boundary on a 500 response"); carved pending
+#     corpus evidence, not on a measured false-fire.
+#   - url's bare-URL shape (round-1 hostile-F2, decision rule (b)): also
+#     0/1895 on that same zero-exercise corpus, but round-1 review executed
+#     counterexamples the corpus happened not to sample -- an SSRF/open-
+#     redirect/origin-validation finding's title legitimately quotes the
+#     offending URL itself, and two real bench-golden security-finding
+#     comments do the same. That is a real, executed false-fire class, so
+#     it is carved on the stronger basis decision rule (b) names, not on
+#     absence of exercise. The two DIRECTIVE url patterns ("visit ...
+#     https://", "download from ... https://") stay enabled: an imperative
+#     to fetch a URL is not something a legitimate finding title states
+#     about itself.
+_TITLE_SCAN_EXCLUDED_PATTERNS = (
+    r"\b[A-Za-z0-9+/]{40,}={0,2}\b",
+    r"\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve\b",
+    r"\bnavigate to\b",
+    r"https?://[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff)>\"']{20,}",
+)
+
 
 def apply_injection_filter(findings):
     """
@@ -563,15 +624,30 @@ def apply_injection_filter(findings):
     Detection heuristics (from false-positive-exclusions.md § Prompt Injection Artifacts),
     scanned across title/description only:
       1. Body or title contains shell commands (rm -rf, curl, wget, git push, gh api)
-      2. Body contains URLs to visit or encoded payloads (base64, hex)
-      3. Body instructs the user to bypass controls, skip review, or auto-approve
+      2. Body contains a URL to visit/download from or an encoded payload (base64,
+         hex); title is scanned for the same set MINUS the bare-URL,
+         navigate-to and encoded-base64-run shapes (title-excluded, see
+         `_TITLE_SCAN_EXCLUDED_PATTERNS`)
+      3. Body instructs the user to bypass controls, skip review, or auto-approve;
+         title is scanned for the same set MINUS the auto-approve phrase
+         (title-excluded)
       4. Body has fewer than 10 words AND confidence is high (>= 85) — suspiciously terse
-      5. Tone shifts from analytical to instructional ("you should run this command")
-      6. Recommends adding code that introduces a vulnerability or disables security features
+      5. Body or title's tone shifts from analytical to instructional ("you should run this command")
+      6. Body or title recommends adding code that introduces a vulnerability or disables security features
       7. Title matches known placeholder patterns (TODO, FIXME, etc.)
-      8. Body contains XML-like injection markers
+      8. Body or title contains XML-like injection markers
       9. File path is empty or contains template markers
       10. Duplicate signature (title+file+line)
+
+    Heuristics 2/3/5/6/8 above additionally scan `title` alone against the
+    same set that scans `description`, minus the four patterns named in
+    `_TITLE_SCAN_EXCLUDED_PATTERNS` (measured false-fire on real titles, a
+    fire on synthetic hard negatives only, or a false-fire class round-1
+    review executed on a corpus zero-exercise did not measure) -- see that
+    constant's comment for the per-pattern basis, and its header for the
+    1,895-title corpus the six title-scanned sets were measured against.
+    Heuristic 1 (shell) already spans `combined` (title+description) and is
+    not re-scanned.
 
     A finding that survives all ten heuristics then has each of
     `_INJECTION_STRIPPED_PROSE_FIELDS` (`suggestion`, `claude_md_rule`,
@@ -589,29 +665,27 @@ def apply_injection_filter(findings):
     eliminated = []
     seen_signatures = {}
 
-    # Compile pattern lists once
-    shell_re = [
-        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_SHELL_PATTERNS
-    ]
-    url_re = [re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_URL_PATTERNS]
-    encoded_re = [
-        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_ENCODED_PATTERNS
-    ]
-    bypass_re = [
-        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BYPASS_PATTERNS
-    ]
-    instruct_re = [
-        re.compile(p, re.IGNORECASE | re.ASCII)
-        for p in _INJECTION_INSTRUCTIONAL_PATTERNS
-    ]
-    vuln_re = [
-        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_VULN_INTRO_PATTERNS
-    ]
+    # Compile pattern lists once. The seven content sets compile from the
+    # module-level _CONTENT_PATTERN_SETS table (#215 round-1 parity-F4/F5) --
+    # a single source of truth for phrase + raw-pattern-list per set, order
+    # preserved exactly so `_SUGGESTION_SETS` byte-matches its pre-hoist
+    # shape and every existing golden stays byte-identical.
+    _SUGGESTION_SETS = tuple(
+        (phrase, [re.compile(p, re.IGNORECASE | re.ASCII) for p in patterns])
+        for phrase, patterns in _CONTENT_PATTERN_SETS
+    )
+    shell_re = _SUGGESTION_SETS[0][1]
+    url_re = _SUGGESTION_SETS[1][1]
+    encoded_re = _SUGGESTION_SETS[2][1]
+    bypass_re = _SUGGESTION_SETS[3][1]
+    instruct_re = _SUGGESTION_SETS[4][1]
+    vuln_re = _SUGGESTION_SETS[5][1]
+    body_marker_re = _SUGGESTION_SETS[6][1]
+    # Placeholder set (heuristic 7) is NOT one of the seven content sets --
+    # it never scans description, has no suggestion-field strip role, and is
+    # compiled separately, as before.
     title_re = [
         re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_TITLE_PATTERNS
-    ]
-    body_marker_re = [
-        re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_BODY_PATTERNS
     ]
 
     def _first_match(patterns, text):
@@ -627,15 +701,19 @@ def apply_injection_filter(findings):
     # (imperative security advice like "Never disable TLS verification"
     # legitimately resembles these patterns), so a match strips the field
     # instead of eliminating the finding (#62).
-    _SUGGESTION_SETS = (
-        ("contains shell command pattern", shell_re),
-        ("contains visit-URL pattern", url_re),
-        ("contains encoded payload pattern", encoded_re),
-        ("contains bypass/auto-approve instruction", bypass_re),
-        ("uses instructional tone", instruct_re),
-        ("recommends introducing vulnerability", vuln_re),
-        ("matches injection marker", body_marker_re),
-    )
+
+    # Title-scan pattern lists: _SUGGESTION_SETS minus its first entry
+    # (shell, which already scans `combined` at heuristic 1 -- a dedicated
+    # title pass would double-report it), each filtered to drop
+    # _TITLE_SCAN_EXCLUDED_PATTERNS. Derived once, like the compiled pattern
+    # lists above, not per finding.
+    _title_suggestion_sets = [
+        (
+            phrase,
+            [rx for rx in patterns if rx.pattern not in _TITLE_SCAN_EXCLUDED_PATTERNS],
+        )
+        for phrase, patterns in _SUGGESTION_SETS[1:]
+    ]
 
     def _strip_injected_prose_fields(finding):
         # Returns (kept_finding, first_pattern_strip). Scans
@@ -733,6 +811,12 @@ def apply_injection_filter(findings):
         return finding
 
     for finding in findings:
+        # Input must not be able to pre-set the title_scan_matched stats
+        # stamp -- pop any incoming key before this pass runs, in place
+        # (normalize_field_names precedent: BF-14 pops/renames untrusted
+        # input keys before use, not after).
+        finding.pop("title_scan_matched", None)
+
         title = finding.get("title", "")
         description = finding.get("description", "")
         filepath = finding.get("file", "")
@@ -740,6 +824,7 @@ def apply_injection_filter(findings):
         combined = f"{title}\n{description}"
 
         reasons = []
+        title_scan_matched = False
 
         # 1. Shell commands anywhere in the combined text
         m = _first_match(shell_re, combined)
@@ -793,6 +878,17 @@ def apply_injection_filter(findings):
         if m:
             reasons.append(f"description matches injection marker: {m!r}")
 
+        # Title scan: each of the six sets above minus shell (already
+        # scanned at heuristic 1) is re-scanned against `title` alone, minus
+        # _TITLE_SCAN_EXCLUDED_PATTERNS -- a payload placed only in the title
+        # reaches the wire and downstream model prompts untouched by the
+        # description-only scans above.
+        for phrase, patterns in _title_suggestion_sets:
+            m = _first_match(patterns, title)
+            if m:
+                reasons.append(f"title {phrase}: {m!r}")
+                title_scan_matched = True
+
         # 9. Empty or template file path
         if not filepath or re.search(r"<[^\n]*?>|\{[^\n]*?\}", filepath):
             reasons.append(
@@ -810,6 +906,8 @@ def apply_injection_filter(findings):
             elim = dict(finding)
             elim["eliminated_by"] = "injection"
             elim["elimination_reason"] = "; ".join(reasons)
+            if title_scan_matched:
+                elim["title_scan_matched"] = True
             eliminated.append(elim)
             warn(
                 f"[injection-filter] Discarded finding {finding.get('id', '?')!r}: "
@@ -1705,6 +1803,16 @@ def main():
     findings, elim_injection = apply_injection_filter(findings)
     all_eliminated.extend(elim_injection)
     injections_removed = len(elim_injection)
+    # Findings the six-set title scan eliminated -- counted structurally via
+    # the `title_scan_matched` stamp apply_injection_filter puts on the
+    # eliminated copy (#215 round-1 parity-F3), never by parsing
+    # `elimination_reason` text. Heuristic 7's pre-existing placeholder-
+    # pattern title eliminations are a separate, pre-existing class that the
+    # title pass never stamps, so they fall out of this count for free --
+    # no string-prefix exclusion needed.
+    title_matches_eliminated = sum(
+        1 for f in elim_injection if f.get("title_scan_matched")
+    )
     # One `{field}s_removed` stat per _INJECTION_STRIPPED_PROSE_FIELDS entry --
     # looping the shared list (rather than one hardcoded sum() per field) means
     # adding a field to the list is the only edit a future extension needs (#213).
@@ -1749,6 +1857,7 @@ def main():
             "passed_threshold": passed_threshold,
             "contested_count": contested_count,
             "injections_removed": injections_removed,
+            "title_matches_eliminated": title_matches_eliminated,
             # Spliced, not hand-listed: prose_fields_removed's keys/order are exactly
             # _INJECTION_STRIPPED_PROSE_FIELDS's (dict comprehension, insertion-ordered),
             # so adding a field to that list is the only edit a future stat needs -- no

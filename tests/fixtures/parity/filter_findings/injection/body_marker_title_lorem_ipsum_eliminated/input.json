@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "confidence": 50,
+      "description": "This changelog heading needs real release notes before the next scheduled deployment goes out today.",
+      "file": "src/changelog/heading.py",
+      "id": "T-marker-1",
+      "line_start": 60,
+      "severity": "medium",
+      "title": "Draft copy still has lorem ipsum filler text in the changelog heading"
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

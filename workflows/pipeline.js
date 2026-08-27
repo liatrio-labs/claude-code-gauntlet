@@ -388,6 +388,45 @@ const SUGGESTION_SETS = [
 // field that matches.
 const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
 
+// Four of the eight sets' patterns measure a false-fire on real finding
+// titles, fire on synthetic hard negatives only, or fire on realistic
+// counterexamples round-1 review executed: this array names exactly those
+// four regex literals, copied byte-for-byte from their home lists above (do
+// not retype -- a respelled whitespace class here silently re-enables the
+// excluded pattern under a different byte sequence). Only .source is
+// load-bearing below (TITLE_SCAN_EXCLUDED_SOURCES, TITLE_SUGGESTION_SETS'
+// filter, and the exclusion-membership guard all compare .source strings) --
+// the /i flag on each literal here is inert, kept only so a literal copy-paste
+// from its home list needs no editing. Everything else across all eight
+// sets measured a zero false-fire over the 1,895-title corpus (six of the
+// eight sets take part in the new title pass -- shell already spans
+// combined at heuristic 1, and the placeholder set already scans title on
+// its own at heuristic 7) and ships title-enabled, including the rest of
+// bypass and encoded's hex pattern. Mirrors
+// scripts/filter_findings.py's _TITLE_SCAN_EXCLUDED_PATTERNS -- see its
+// comment for the per-pattern basis (measured false-fire counts, the
+// synthetic-only basis for auto-approve, and decision rule (b) for the
+// bare-URL entry).
+const TITLE_SCAN_EXCLUDED_PATTERNS = [
+  /\b[A-Za-z0-9+/]{40,}={0,2}\b/i,
+  /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve\b/i,
+  /\bnavigate to\b/i,
+  /https?:\/\/[^\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff)>"']{20,}/i,
+];
+
+// Title-scan pattern lists: SUGGESTION_SETS minus its first entry (shell,
+// which already scans `combined` in applyInjectionFilter -- a dedicated
+// title pass would double-report it), each filtered to drop any pattern
+// whose .source matches one of TITLE_SCAN_EXCLUDED_PATTERNS. Derived once
+// at module scope, mirroring the Python twin's per-call derivation (JS
+// patterns are already module-level consts, so there is no per-call
+// compile step to mirror here).
+const TITLE_SCAN_EXCLUDED_SOURCES = TITLE_SCAN_EXCLUDED_PATTERNS.map((rx) => rx.source);
+const TITLE_SUGGESTION_SETS = SUGGESTION_SETS.slice(1).map(([phrase, patterns]) => [
+  phrase,
+  patterns.filter((rx) => !TITLE_SCAN_EXCLUDED_SOURCES.includes(rx.source)),
+]);
+
 // Delivery bound on suggested_fix_code content (#63/D8) -- the SAME two
 // numbers bound the field at render time in scripts/post_review.py
 // (`_FIX_MAX_LINES` / `_FIX_MAX_CHARS`) and in the Python filter twin
@@ -530,6 +569,12 @@ function applyInjectionFilter(findings) {
   const seenSignatures = new Map();
 
   for (const finding of findings) {
+    // Input must not be able to pre-set the title_scan_matched stats stamp
+    // -- delete any incoming key before this pass runs, in place
+    // (normalizeFieldNames precedent: BF-14 pops/renames untrusted input
+    // keys before use, not after).
+    delete finding.title_scan_matched;
+
     const title = finding.title || '';
     const description = finding.description || '';
     const filepath = finding.file || '';
@@ -537,6 +582,7 @@ function applyInjectionFilter(findings) {
     const combined = `${title}\n${description}`;
 
     const reasons = [];
+    let titleScanMatched = false;
 
     let m = firstMatch(INJECTION_SHELL_PATTERNS, combined);
     if (m) reasons.push(`contains shell command pattern: ${JSON.stringify(m)}`);
@@ -567,6 +613,19 @@ function applyInjectionFilter(findings) {
     m = firstMatch(INJECTION_BODY_PATTERNS, description);
     if (m) reasons.push(`description matches injection marker: ${JSON.stringify(m)}`);
 
+    // Title scan: each of the six sets above minus shell (already scanned at
+    // heuristic 1) is re-scanned against `title` alone, minus
+    // TITLE_SCAN_EXCLUDED_PATTERNS -- a payload placed only in the title
+    // reaches the wire and downstream model prompts untouched by the
+    // description-only scans above.
+    for (const [phrase, patterns] of TITLE_SUGGESTION_SETS) {
+      const tm = firstMatch(patterns, title);
+      if (tm) {
+        reasons.push(`title ${phrase}: ${JSON.stringify(tm)}`);
+        titleScanMatched = true;
+      }
+    }
+
     if (!filepath || /<[^\n]*?>|\{[^\n]*?\}/.test(filepath)) {
       reasons.push(`file path is empty or contains template markers: ${JSON.stringify(filepath)}`);
     }
@@ -582,7 +641,9 @@ function applyInjectionFilter(findings) {
     }
 
     if (reasons.length) {
-      eliminated.push({ ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') });
+      const elim = { ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') };
+      if (titleScanMatched) elim.title_scan_matched = true;
+      eliminated.push(elim);
     } else {
       const [strippedFinding, firstPatternStrip] = stripInjectedProseFields(finding);
       kept.push(stripSuggestedFixCodeIfNeeded(strippedFinding, firstPatternStrip));
@@ -1144,6 +1205,14 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
+  // Findings the six-set title scan eliminated -- counted structurally via
+  // the `title_scan_matched` stamp applyInjectionFilter puts on the
+  // eliminated copy (#215 round-1 parity-F3), never by parsing
+  // elimination_reason text. Heuristic 7's pre-existing placeholder-pattern
+  // title eliminations are a separate, pre-existing class the title pass
+  // never stamps, so they fall out of this count for free -- no
+  // string-prefix exclusion needed.
+  const titleMatchesEliminated = elimInjection.filter((f) => f.title_scan_matched).length;
   // One `{field}s_removed` stat per INJECTION_STRIPPED_PROSE_FIELDS entry --
   // looping the shared list (rather than one hardcoded .filter() per field)
   // means adding a field to the list is the only edit a future extension
@@ -1175,6 +1244,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
       passed_threshold: passedThreshold,
       contested_count: contestedCount,
       injections_removed: injectionsRemoved,
+      title_matches_eliminated: titleMatchesEliminated,
       // Spliced, not hand-listed: proseFieldsRemoved's keys/order are exactly
       // INJECTION_STRIPPED_PROSE_FIELDS's (Object.fromEntries over the list, in
       // order), so adding a field to that list is the only edit a future stat needs

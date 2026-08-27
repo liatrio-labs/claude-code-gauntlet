@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "confidence": 50,
+      "description": "This change would also let a reviewer skip review under narrow deadline pressure conditions today.",
+      "file": "src/plugins/engine2.py",
+      "id": "T-both-1",
+      "line_start": 100,
+      "severity": "medium",
+      "title": "Ticket proposes to add eval( support for the plugin scripting engine"
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

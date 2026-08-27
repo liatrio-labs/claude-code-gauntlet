@@ -1,0 +1,15 @@
+{
+  "_carveout_note": "Deliberate carve-out: the auto-approve phrase is title-excluded (fires on legitimate CI-security title vocabulary). TestGoldenFreshness goes stale if _TITLE_SCAN_EXCLUDED_PATTERNS ever drops this entry.",
+  "findings": [
+    {
+      "confidence": 40,
+      "description": "This toggle lets a trusted release branch skip the manual approval step under narrow conditions.",
+      "file": "src/ci/toggle.py",
+      "id": "T-carve-bypass-1",
+      "line_start": 80,
+      "severity": "low",
+      "title": "Add an auto-approve toggle for trusted release branches in CI"
+    }
+  ],
+  "fn": "apply_injection_filter"
+}
