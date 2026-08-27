@@ -311,11 +311,17 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             self.list_families["block_patterns"]["func"], "parse_review_md"
         )
         # 25 TEST_CORRECTNESS compiles + 2 keyword-set compiles + 1 word-split
-        # compile (func=None, module level) = 28, + 8 list-comp compiles + 1
-        # file-path search (func=apply_injection_filter) = 9, + 2 suppression
+        # compile (func=None, module level) = 28, + 2 list-comp compiles (#215
+        # round-1 parity-F4/F5 collapsed the seven _CONTENT_PATTERN_SETS
+        # compiles into ONE re.compile call site inside apply_injection_filter's
+        # generator expression -- one AST node compiling all seven sets, still
+        # carrying the same literal re.IGNORECASE | re.ASCII flags this guard
+        # checks per call site, so nothing is unprotected; title_re's own
+        # list-comp compile stays separate) + 1 file-path search
+        # (func=apply_injection_filter) = 3, + 2 suppression
         # (func=detect_disagreement), + parse_review_md's 6, + load_exclusions'
-        # 2, + apply_exclusions' 1 = 48
-        self.assertEqual(len(self.calls), 48, len(self.calls))
+        # 2, + apply_exclusions' 1 = 42
+        self.assertEqual(len(self.calls), 42, len(self.calls))
 
     def test_no_first_party_pattern_contains_bare_whitespace_class(self):
         """(i) No first-party finding-text pattern contains \\s or \\S -- they

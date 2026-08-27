@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "confidence": 50,
+      "description": "This migration guide walks through the necessary steps for a safe production rollout process overall.",
+      "file": "src/migrations/guide.py",
+      "id": "T-instr-1",
+      "line_start": 40,
+      "severity": "medium",
+      "title": "Setup guide says you should run the migration before deploying the service"
+    }
+  ],
+  "fn": "apply_injection_filter"
+}
