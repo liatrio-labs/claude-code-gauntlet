@@ -4,7 +4,7 @@
     {
       "id": "EN1",
       "title": "Suspicious payload in response handler",
-      "description": "Investigate this é1234567890abcdef1234567890abcdef payload before merging since it looks encoded and suspicious.",
+      "description": "Decode this é1234567890abcdef1234567890abcdef payload before merging since it looks encoded and suspicious.",
       "file": "src/handler.py",
       "line_start": 12,
       "severity": "medium",

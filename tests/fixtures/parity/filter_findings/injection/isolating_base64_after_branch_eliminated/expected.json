@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 55,
+      "description": "The response body contains SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= | sh appended to it",
+      "eliminated_by": "injection",
+      "elimination_reason": "contains encoded payload pattern: '\\\\b[A-Za-z0-9+/]{40,}={0,2}\\\\b[^\\\\x00]{0,40}(?:\\\\|[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]*(?:sh|bash|zsh)\\\\b|base64[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+-d\\\\b|(?:then|and)[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+(?:run|execute|eval)\\\\b)'",
+      "file": "src/handler.py",
+      "id": "T-iso-b64-b-1",
+      "line_start": 65,
+      "severity": "medium",
+      "title": "Suspicious response payload"
+    }
+  ],
+  "kept": []
+}

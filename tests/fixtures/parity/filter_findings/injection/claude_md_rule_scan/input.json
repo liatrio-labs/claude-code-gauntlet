@@ -19,7 +19,7 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "See https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full rule text."
+      "claude_md_rule": "Visit https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full rule text."
     },
     {
       "id": "C3",
@@ -29,7 +29,7 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "claude_md_rule": "Every commit must include the token SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= per policy."
+      "claude_md_rule": "Every commit must decode the token SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= per policy."
     },
     {
       "id": "C4",

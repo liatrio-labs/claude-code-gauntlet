@@ -1,5 +1,5 @@
 {
-  "_carveout_note": "Deliberate carve-out (#215 round-1 hostile-F2, decision rule (b)): the bare-URL shape is title-excluded because round-1 review executed a false-fire counterexample -- an SSRF/open-redirect finding's title legitimately quotes the offending URL itself, as this fixture does. TestGoldenFreshness goes stale if _TITLE_SCAN_EXCLUDED_PATTERNS ever drops this entry.",
+  "_carveout_note": "#255: the bare-URL and exfil directive-gated long-bare-URL entries #252 added were REMOVED entirely (they false-fired on legitimate security findings that quote the same vocabulary an injected instruction would use). url now ships only visit/download-from, so this SSRF finding's title -- which legitimately quotes the offending URL itself -- stays KEPT trivially, not via any narrowing. See url_keeps_legit_nav_and_exfil_findings for the broader negative proof.",
   "findings": [
     {
       "confidence": 50,

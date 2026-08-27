@@ -1,5 +1,5 @@
 {
-  "_carveout_note": "Deliberate carve-out: the navigate-to phrase is title-excluded (generic verb phrase, realistic legitimate title use, no corpus exercise either way). TestGoldenFreshness goes stale if _TITLE_SCAN_EXCLUDED_PATTERNS ever drops this entry.",
+  "_carveout_note": "#255: the standalone \"navigate to\" shape (and the long-bare-URL entry it was folded into by #252) was REMOVED entirely -- it false-fired on legitimate routing/navigation findings that use the same phrasing. url now ships only visit/download-from, so this router-bug title's \"navigate to\" stays KEPT trivially. See url_keeps_legit_nav_and_exfil_findings for the broader negative proof.",
   "findings": [
     {
       "confidence": 40,

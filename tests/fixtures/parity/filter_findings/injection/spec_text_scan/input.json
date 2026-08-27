@@ -19,7 +19,7 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "See https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full spec text."
+      "spec_text": "Visit https://very-long-url-that-exceeds-twenty-characters.example.com/path/to/resource for the full spec text."
     },
     {
       "id": "T3",
@@ -29,7 +29,7 @@
       "line_start": 10,
       "severity": "medium",
       "confidence": 60,
-      "spec_text": "The payload must equal SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= exactly."
+      "spec_text": "Decode the payload SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= exactly as specified."
     },
     {
       "id": "T4",

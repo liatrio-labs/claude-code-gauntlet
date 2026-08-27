@@ -5,7 +5,7 @@
       "id": "EN4",
       "title": "Null check missing in response handler",
       "description": "The function process_response does not validate the payload shape before use, which could raise on a malformed upstream reply.",
-      "suggestion": "Consider replacing the payload with éSGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgc3RyaW5nIQ== for the test fixture.",
+      "suggestion": "Decode the payload with éSGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgc3RyaW5nIQ== for the test fixture.",
       "file": "src/handler.py",
       "line_start": 22,
       "severity": "medium",

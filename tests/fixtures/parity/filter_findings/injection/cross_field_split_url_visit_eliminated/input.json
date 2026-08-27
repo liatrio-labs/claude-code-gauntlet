@@ -1,0 +1,14 @@
+{
+  "findings": [
+    {
+      "id": "T-split-visit-1",
+      "title": "Reviewers should visit",
+      "description": "https://internal.example.com/patch for details",
+      "file": "docs/changelog/entry.md",
+      "line_start": 22,
+      "severity": "low",
+      "confidence": 45
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

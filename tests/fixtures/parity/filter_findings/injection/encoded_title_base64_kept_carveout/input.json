@@ -1,5 +1,5 @@
 {
-  "_carveout_note": "Deliberate carve-out: the base64-run pattern is title-excluded (measured false-fire on real titles). TestGoldenFreshness goes stale if _TITLE_SCAN_EXCLUDED_PATTERNS ever drops this entry.",
+  "_carveout_note": "#252: base64-run is now directive-gated (a decode-family verb must sit near the blob, or sink syntax must follow it). This title's base64-shaped identifier carries neither, so it stays KEPT -- a real benign padded-blob title (a tooling-emitted deep-link) that the narrowing is designed not to flag, not an exclusion carve-out.",
   "findings": [
     {
       "confidence": 40,

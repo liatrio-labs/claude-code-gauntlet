@@ -8,7 +8,7 @@
       "id": "EN4",
       "line_start": 22,
       "severity": "medium",
-      "suggestion_removal_reason": "suggestion contains encoded payload pattern: '\\\\b[A-Za-z0-9+/]{40,}={0,2}\\\\b'",
+      "suggestion_removal_reason": "suggestion contains encoded payload pattern: '\\\\b(?:decode|base64|atob|b64decode)\\\\b[^\\\\x00]{0,40}[A-Za-z0-9+/]{40,}={0,2}\\\\b'",
       "suggestion_removed_by": "injection",
       "title": "Null check missing in response handler"
     }

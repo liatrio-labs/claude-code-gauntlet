@@ -1,5 +1,5 @@
 {
-  "_carveout_note": "Deliberate carve-out: the auto-approve phrase is title-excluded (fires on legitimate CI-security title vocabulary). TestGoldenFreshness goes stale if _TITLE_SCAN_EXCLUDED_PATTERNS ever drops this entry.",
+  "_carveout_note": "#252: the bare auto-approve phrase was replaced by two grammatically-gated entries (a determiner + PR/MR/commit object, or an \"and <verb>\" continuation). This CI-feature title's \"auto-approve toggle\" has neither shape, so it stays KEPT under the narrowed pattern.",
   "findings": [
     {
       "confidence": 40,
