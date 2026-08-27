@@ -80,7 +80,8 @@ Floors: Python 92.9 / 87.5 (scripts raised 2026-08-19 from the #219 PR CI measur
 2026-08-03 from first green CI: 98.61; branches/functions raised 2026-08-18
 from the #62 PR measurement: 86.7/98.4, then 2026-08-26 to 98.1/86.3/97.5 from the #249 PR
 CI measurement: 99.01/87.25/98.48, then branches/functions 2026-08-27 to 86.5/97.6 from
-the #251 PR CI measurement: 99.02/87.47/98.51). Policy: a floor sits no more than 1.0 pp below the CI
+the #251 PR CI measurement: 99.02/87.47/98.51, then branches 2026-08-27 to 86.6 from
+the #255 PR CI measurement: 87.60). Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop,
 reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
 multi-point JS drop usually means a deleted fixture group or an unloaded

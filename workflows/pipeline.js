@@ -296,19 +296,20 @@ const INJECTION_SHELL_PATTERNS = [
 ];
 
 // URL patterns -- findings should reference code locations, not external URLs
-// to visit/fetch. The bare-URL and standalone "navigate to" shapes measured a
-// false-fire on real finding titles (SSRF/open-redirect findings legitimately
-// quote the offending URL; "navigate to" is generic frontend-routing
-// vocabulary) and are replaced by two directive-gated long-bare-URL entries: a
-// reader-imperative verb immediately before the URL, or a data-exfiltration
-// verb + secret-object phrase ahead of it. "visit"/"download from" are
-// unchanged -- an imperative to fetch a URL is not something a legitimate
-// finding states about itself.
+// to visit/fetch. Only "visit"/"download from" ship: they are imperatives a
+// legitimate finding never states about itself. A prior pass (#252) tried
+// adding two directive-gated long-bare-URL entries -- a reader-imperative
+// verb immediately before the URL, and an exfiltration-verb + secret-object
+// phrase ahead of it -- but round-2 review measured both false-firing on
+// realistic LEGITIMATE security findings that quote the same vocabulary a
+// real vulnerability description needs ("the router should navigate to
+// <url>" for a routing bug, "an attacker can send the session cookie to
+// <url>" for a real exfil finding): a legit finding and an injected
+// instruction both read as "<verb> to/from <url>" in English, so this shape
+// cannot be narrowed further to tell them apart. Reverted; see #255 review.
 const INJECTION_URL_PATTERNS = [
   /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
   /\bdownload from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
-  /\b(?:browse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|go[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|open|navigate[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+to|fetch[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from|retrieve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
-  /\b(?:send|post|upload|exfiltrate|leak|forward|transmit|beacon|report)\b[^\x00]{0,30}(?:tokens?|secrets?|cookies?|credentials?|api[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?keys?|passwords?|sessions?|env)\b[^\x00]{0,30}https?:\/\//i,
 ];
 
 // Encoded payload patterns -- base64 or hex blobs in findings are injection
@@ -561,12 +562,17 @@ function applyInjectedProseStrip(finding) {
 // stripInjectedProseFields (#62, extended #213).
 //
 // Heuristics 1/2 (shell/url/encoded) scan `combined` (title+description)
-// rather than either field alone -- #252 Finding 1: the encoded/url sets
-// are directive-gated with an adjacency requirement (the verb and the
-// blob/URL within roughly 40 characters), so a payload split across fields
-// (the directive in title, the blob in description) would satisfy neither
-// field scanned alone even though the rendered PR comment concatenates them
-// into one coherent instruction. A far-apart split still evades by design
+// rather than either field alone -- #252 Finding 1: a payload split across
+// fields (the directive in title, the blob/URL in description) would
+// otherwise satisfy neither field scanned alone even though the rendered
+// PR comment concatenates them into one coherent instruction. The encoded
+// set is directive-gated with an adjacency window (decode verb or sink
+// syntax within up to ~40 characters of the blob); url ships only
+// visit/download-from (#255: the two directive-gated long-bare-URL entries
+// were removed -- they false-fired on legitimate findings using the same
+// vocabulary), so url's directive verb must sit immediately adjacent to
+// the URL, not within a numeric character bound. A far-apart split (outside
+// the adjacency window, where one applies) still evades by design
 // (adjacency-gating is inherently local); that residual is accepted.
 //
 // Heuristics 3/5/6/8 additionally scan `title` alone against the same four
@@ -627,10 +633,11 @@ function applyInjectionFilter(findings) {
     m = firstMatch(INJECTION_BODY_PATTERNS, description);
     if (m) reasons.push(`description matches injection marker: ${JSON.stringify(m)}`);
 
-    // Title scan: each of the six sets above minus shell (already scanned at
-    // heuristic 1) is re-scanned against `title` alone -- a payload placed
-    // only in the title reaches the wire and downstream model prompts
-    // untouched by the description-only scans above.
+    // Title scan: each of the four sets above minus shell/url/encoded
+    // (those three already scan `combined`, which includes `title`) is
+    // re-scanned against `title` alone -- a payload placed only in the
+    // title reaches the wire and downstream model prompts untouched by the
+    // description-only scans above.
     for (const [phrase, patterns] of TITLE_SUGGESTION_SETS) {
       const tm = firstMatch(patterns, title);
       if (tm) {
@@ -1218,7 +1225,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
-  // Findings the six-set title scan eliminated -- counted structurally via
+  // Findings the four-set title scan eliminated -- counted structurally via
   // the `title_scan_matched` stamp applyInjectionFilter puts on the
   // eliminated copy (#215 round-1 parity-F3), never by parsing
   // elimination_reason text. Heuristic 7's pre-existing placeholder-pattern

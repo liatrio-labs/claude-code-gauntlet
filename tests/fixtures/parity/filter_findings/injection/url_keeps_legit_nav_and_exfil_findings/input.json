@@ -1,0 +1,50 @@
+{
+  "findings": [
+    {
+      "id": "T-legit-nav-1",
+      "title": "Routing bug",
+      "description": "The router should navigate to https://app.example.com/dashboard after a successful login completes.",
+      "file": "src/router/index.js",
+      "line_start": 30,
+      "severity": "medium",
+      "confidence": 55
+    },
+    {
+      "id": "T-legit-docs-1",
+      "title": "Docs issue",
+      "description": "Documentation tells developers to open https://portal.example.com to configure the integration correctly.",
+      "file": "docs/setup.md",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 40
+    },
+    {
+      "id": "T-legit-exfil-1",
+      "title": "Session cookie exfiltration",
+      "description": "An attacker can send the session cookie to https://evil.example.com/collect via this unvalidated redirect.",
+      "file": "src/auth/redirect.py",
+      "line_start": 44,
+      "severity": "high",
+      "confidence": 70
+    },
+    {
+      "id": "T-legit-exfil-2",
+      "title": "Auth token leak",
+      "description": "a malicious page could exfiltrate the auth token to https://evil.example.com/x through the open postMessage handler.",
+      "file": "src/widgets/embed.js",
+      "line_start": 88,
+      "severity": "high",
+      "confidence": 65
+    },
+    {
+      "id": "T-legit-exfil-3",
+      "title": "Bearer token in logs",
+      "description": "Logs leak the bearer token to https://siem.internal.example.com/ingest whenever a request fails unexpectedly.",
+      "file": "src/logging/handler.py",
+      "line_start": 19,
+      "severity": "medium",
+      "confidence": 60
+    }
+  ],
+  "fn": "apply_injection_filter"
+}

@@ -166,7 +166,13 @@ CODEX_CAP_BYTES = 32_768
 # 86.3 -> 86.5, functions 97.5 -> 97.6; lines unchanged at 98.1) extended the
 # floors-and-provenance paragraph to name the #251 PR CI measurement (99.02/87.47/98.51) —
 # same policy, same shape as the #213/#249 raise above.
-AGENTS_SET_BUDGET_BYTES = 21_161
+# Raised 21_161 -> 21_234 (2026-08-27, #255): the JS coverage floor ratchet (branches
+# 86.5 -> 86.6; lines/functions unchanged) extended the floors-and-provenance paragraph
+# to name the #255 PR CI measurement (87.60) — same policy, same shape as the raises
+# above: the floor-history convention requires every prior floor bump be citable to the
+# measurement that justified it, and an uncited bump is the unverifiable claim the repo's
+# own rules prohibit.
+AGENTS_SET_BUDGET_BYTES = 21_234
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
