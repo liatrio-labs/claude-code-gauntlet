@@ -2,6 +2,16 @@
 
 <!-- version list -->
 
+## v3.22.1 (2026-08-27)
+
+### Bug Fixes
+
+- **filter**: Directive-gate base64/hex/auto-approve injection patterns, drop un-narrowable
+  url/navigate shapes, empty the title-scan exclusion list
+  ([#252](https://github.com/liatrio-labs/claude-code-gauntlet/pull/252),
+  [`bcc3917`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/bcc39172c49764bb0f93dd22df5f30499779ca1f))
+
+
 ## v3.22.0 (2026-08-27)
 
 ### Chores
