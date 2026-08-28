@@ -4,13 +4,12 @@
       "confidence": 50,
       "description": "This changelog heading needs real release notes before the next scheduled deployment goes out today.",
       "eliminated_by": "injection",
-      "elimination_reason": "title matches injection marker: 'lorem ipsum'",
+      "elimination_reason": "matches injection marker: 'lorem ipsum'",
       "file": "src/changelog/heading.py",
       "id": "T-marker-1",
       "line_start": 60,
       "severity": "medium",
-      "title": "Draft copy still has lorem ipsum filler text in the changelog heading",
-      "title_scan_matched": true
+      "title": "Draft copy still has lorem ipsum filler text in the changelog heading"
     }
   ],
   "kept": []

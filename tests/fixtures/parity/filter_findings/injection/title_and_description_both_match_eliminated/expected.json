@@ -4,13 +4,12 @@
       "confidence": 50,
       "description": "This change would also let a reviewer skip review under narrow deadline pressure conditions today.",
       "eliminated_by": "injection",
-      "elimination_reason": "description contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'; title recommends introducing vulnerability: '\\\\badd[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+eval[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]*\\\\('",
+      "elimination_reason": "contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'; recommends introducing vulnerability: '\\\\badd[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+eval[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]*\\\\('",
       "file": "src/plugins/engine2.py",
       "id": "T-both-1",
       "line_start": 100,
       "severity": "medium",
-      "title": "Ticket proposes to add eval( support for the plugin scripting engine",
-      "title_scan_matched": true
+      "title": "Ticket proposes to add eval( support for the plugin scripting engine"
     }
   ],
   "kept": []

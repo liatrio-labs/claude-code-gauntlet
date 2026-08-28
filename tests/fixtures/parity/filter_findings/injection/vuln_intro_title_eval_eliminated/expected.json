@@ -4,13 +4,12 @@
       "confidence": 50,
       "description": "This plugin scripting engine currently only supports a small fixed set of built-in operations today.",
       "eliminated_by": "injection",
-      "elimination_reason": "title recommends introducing vulnerability: '\\\\badd[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+eval[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]*\\\\('",
+      "elimination_reason": "recommends introducing vulnerability: '\\\\badd[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+eval[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]*\\\\('",
       "file": "src/plugins/engine.py",
       "id": "T-vuln-1",
       "line_start": 50,
       "severity": "medium",
-      "title": "Ticket proposes to add eval( support for the plugin scripting engine",
-      "title_scan_matched": true
+      "title": "Ticket proposes to add eval( support for the plugin scripting engine"
     }
   ],
   "kept": []

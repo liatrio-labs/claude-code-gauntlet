@@ -4,13 +4,12 @@
       "confidence": 50,
       "description": "This migration guide walks through the necessary steps for a safe production rollout process overall.",
       "eliminated_by": "injection",
-      "elimination_reason": "title uses instructional tone: '\\\\byou[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+should[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+run\\\\b'",
+      "elimination_reason": "uses instructional tone: '\\\\byou[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+should[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+run\\\\b'",
       "file": "src/migrations/guide.py",
       "id": "T-instr-1",
       "line_start": 40,
       "severity": "medium",
-      "title": "Setup guide says you should run the migration before deploying the service",
-      "title_scan_matched": true
+      "title": "Setup guide says you should run the migration before deploying the service"
     }
   ],
   "kept": []

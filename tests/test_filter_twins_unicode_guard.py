@@ -581,6 +581,48 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             "site (e.g. a suppression rule) went undetected",
         )
 
+    # -----------------------------------------------------------------------
+    # #256 D6(b): the seven content sets that scan `combined` (shell/url/
+    # encoded/bypass/instructional/vuln-intro/body-marker -- everything in
+    # SUGGESTION_SETS/_CONTENT_PATTERN_SETS EXCEPT the placeholder-title set,
+    # which intentionally still scans title alone via heuristic 7) must never
+    # anchor to a string/line boundary. combined ⊇ title OR description holds
+    # ONLY because none of them do: `^` as the first atom or `$` as the last
+    # would anchor to the wrong string once title and description are joined
+    # into `combined`, and `\A`/`\Z`/`(?m)` anywhere would do the same more
+    # subtly. This is the structural half of the #256 superset guard (the
+    # empirical half is TestCombinedScanIsSupersetOfFieldwiseScans in
+    # tests/test_filter_findings.py); it does NOT ban lookarounds -- the
+    # shipped `(?<!\w)`/`(?!\w)` encoded-set lookarounds are junction-safe
+    # because `\n` (the title/description join character) is a non-word
+    # character, so they behave identically at a real string boundary and at
+    # the `\n` junction.
+    # -----------------------------------------------------------------------
+
+    _CONTENT_SET_FAMILIES = (
+        "_INJECTION_SHELL_PATTERNS",
+        "_INJECTION_URL_PATTERNS",
+        "_INJECTION_ENCODED_PATTERNS",
+        "_INJECTION_BYPASS_PATTERNS",
+        "_INJECTION_INSTRUCTIONAL_PATTERNS",
+        "_INJECTION_VULN_INTRO_PATTERNS",
+        "_INJECTION_BODY_PATTERNS",
+    )
+
+    def test_content_sets_have_no_anchors_or_multiline_flags(self):
+        offenders = []
+        for name in self._CONTENT_SET_FAMILIES:
+            fam = self.list_families.get(name)
+            self.assertIsNotNone(fam, f"{name} not found by discovery")
+            for p in fam["patterns"]:
+                if p.startswith("^"):
+                    offenders.append(f"{name}: {p!r} starts with ^")
+                if p.endswith("$"):
+                    offenders.append(f"{name}: {p!r} ends with $")
+                if "\\A" in p or "\\Z" in p or "(?m)" in p:
+                    offenders.append(f"{name}: {p!r} contains \\A/\\Z/(?m)")
+        self.assertEqual(offenders, [], offenders)
+
 
 if __name__ == "__main__":
     unittest.main()

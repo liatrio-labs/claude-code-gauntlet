@@ -38,7 +38,6 @@ Output JSON schema:
             "passed_threshold":        N,   # passed confidence + severity threshold
             "contested_count":         N,   # findings that bypassed threshold via validator contestation
             "injections_removed":      N,   # removed by injection filter
-            "title_matches_eliminated": N,  # of injections_removed, stamped title_scan_matched by the four-set title pass (excludes heuristic 7's pre-existing placeholder-pattern title eliminations, never stamped)
             "suggestions_removed":     N,   # kept findings whose suggestion field was stripped by injection scan
             "claude_md_rules_removed": N,   # kept findings whose claude_md_rule field was stripped by injection scan
             "spec_texts_removed":      N,   # kept findings whose spec_text field was stripped by injection scan
@@ -607,41 +606,46 @@ def apply_injection_filter(findings):
          git push, gh api)
       2. Combined title+description contains a URL to visit/download from, or an
          encoded payload (base64, hex)
-      3. Body instructs the user to bypass controls, skip review, or auto-approve;
-         title is scanned for the same set
+      3. Combined title+description instructs the user to bypass controls, skip
+         review, or auto-approve
       4. Body has fewer than 10 words AND confidence is high (>= 85) — suspiciously terse
-      5. Body or title's tone shifts from analytical to instructional ("you should run this command")
-      6. Body or title recommends adding code that introduces a vulnerability or disables security features
+      5. Combined title+description's tone shifts from analytical to instructional
+         ("you should run this command")
+      6. Combined title+description recommends adding code that introduces a
+         vulnerability or disables security features
       7. Title matches known placeholder patterns (TODO, FIXME, etc.)
-      8. Body or title contains XML-like injection markers
+      8. Combined title+description contains XML-like injection markers
       9. File path is empty or contains template markers
       10. Duplicate signature (title+file+line)
 
-    Heuristics 1/2 scan `combined` (title+description) rather than either
-    field alone. The encoded set is directive-gated with an adjacency
-    window: a decode-family verb or sink syntax must sit within up to ~40
-    characters of the encoded blob (`[^\x00]{0,40}` between them). The url
-    set ships only "visit"/"download from" -- a prior pass tried two
-    directive-gated long-bare-URL entries with their own adjacency windows,
-    but they false-fired on legitimate security findings that quote the
-    same vocabulary an injected instruction would use (a real routing bug
-    legitimately states "navigate to <url>"), so they were removed rather
-    than tuned; url's directive verb must now sit immediately adjacent to
-    the URL (whitespace-only gap), not "roughly N characters" away.
-    Scanning combined (rather than description alone) closes a payload
-    split across fields -- the directive in `title`, the blob/URL in
-    `description` -- that would otherwise satisfy neither field scanned
-    alone even though the rendered PR comment concatenates them into one
-    coherent instruction. A far-apart split (directive outside the
-    adjacency window, where one applies) still evades by design --
-    adjacency-gating is inherently local, and that residual is accepted.
-
-    Heuristics 3/5/6/8 above additionally scan `title` alone against the
-    same four content sets that scan `description` (bypass/instructional/
-    vuln-intro/body-marker -- `_SUGGESTION_SETS[3:]`; shell and url/encoded
-    are excluded from this separate pass because they already scan
-    `combined`, which already includes `title` -- re-scanning title alone
-    for those three would double-report the same match).
+    #256: all seven `_CONTENT_PATTERN_SETS` content sets (shell/url/encoded/
+    bypass/instructional/vuln-intro/body-marker -- heuristics 1/2/3/5/6/8)
+    scan `combined` (title+description) uniformly; there is no separate
+    title-only pass. A payload split across fields -- the directive in
+    `title`, the blob/body in `description` -- still fires, since the
+    rendered PR comment concatenates them into one coherent instruction
+    (#252 Finding 1, generalized to all seven sets by #256). Every set's
+    reason string is bare (no "title "/"description " field-attribution
+    prefix) since the scanned text is neither field alone; field
+    attribution is a deliberately dropped capability (#256 record). This is
+    a strict superset of scanning `title`/`description` separately: none of
+    the seven sets' patterns anchor with ``^``/``$``/``\\A``/``\\Z``/``(?m)``
+    (guarded by tests/test_filter_twins_unicode_guard.py), and the union whitespace
+    class joining title and description includes `\n`, so a match spanning
+    either field alone still matches `combined`. The encoded set is
+    directive-gated with an adjacency window: a decode-family verb or sink
+    syntax must sit within up to ~40 characters of the encoded blob
+    (`[^\x00]{0,40}` between them). The url set ships only "visit"/
+    "download from" -- a prior pass tried two directive-gated long-bare-URL
+    entries with their own adjacency windows, but they false-fired on
+    legitimate security findings that quote the same vocabulary an injected
+    instruction would use (a real routing bug legitimately states "navigate
+    to <url>"), so they were removed rather than tuned; url's directive
+    verb must now sit immediately adjacent to the URL (whitespace-only
+    gap), not "roughly N characters" away. A far-apart split (directive
+    outside the adjacency window, where one applies) still evades by
+    design -- adjacency-gating is inherently local, and that residual is
+    accepted.
 
     A finding that survives all ten heuristics then has each of
     `_INJECTION_STRIPPED_PROSE_FIELDS` (`suggestion`, `claude_md_rule`,
@@ -695,14 +699,6 @@ def apply_injection_filter(findings):
     # (imperative security advice like "Never disable TLS verification"
     # legitimately resembles these patterns), so a match strips the field
     # instead of eliminating the finding (#62).
-
-    # Title-scan pattern lists: _SUGGESTION_SETS minus shell/url/encoded
-    # (indices 0-2), which already scan `combined` -- `combined` already
-    # includes `title`, so a dedicated title pass over those three would
-    # double-report the same match. Only bypass/instructional/vuln-intro/
-    # body-marker (indices 3-6) are still description-only sets that need a
-    # separate title-only pass.
-    _title_suggestion_sets = _SUGGESTION_SETS[3:]
 
     def _strip_injected_prose_fields(finding):
         # Returns (kept_finding, first_pattern_strip). Scans
@@ -800,12 +796,6 @@ def apply_injection_filter(findings):
         return finding
 
     for finding in findings:
-        # Input must not be able to pre-set the title_scan_matched stats
-        # stamp -- pop any incoming key before this pass runs, in place
-        # (normalize_field_names precedent: BF-14 pops/renames untrusted
-        # input keys before use, not after).
-        finding.pop("title_scan_matched", None)
-
         title = finding.get("title", "")
         description = finding.get("description", "")
         filepath = finding.get("file", "")
@@ -813,7 +803,6 @@ def apply_injection_filter(findings):
         combined = f"{title}\n{description}"
 
         reasons = []
-        title_scan_matched = False
 
         # 1. Shell commands anywhere in the combined text
         m = _first_match(shell_re, combined)
@@ -833,12 +822,10 @@ def apply_injection_filter(findings):
         if m:
             reasons.append(f"contains encoded payload pattern: {m!r}")
 
-        # 3. Bypass / auto-approve instructions in description
-        m = _first_match(bypass_re, description)
+        # 3. Bypass / auto-approve instructions anywhere in the combined text
+        m = _first_match(bypass_re, combined)
         if m:
-            reasons.append(
-                f"description contains bypass/auto-approve instruction: {m!r}"
-            )
+            reasons.append(f"contains bypass/auto-approve instruction: {m!r}")
 
         # 4. Short description with high confidence (suspiciously terse)
         description_word_count = _count_words(description)
@@ -850,36 +837,26 @@ def apply_injection_filter(findings):
                 f"suspiciously short description ({description_word_count} words) with high confidence ({confidence})"
             )
 
-        # 5. Instructional tone in description
-        m = _first_match(instruct_re, description)
+        # 5. Instructional tone anywhere in the combined text
+        m = _first_match(instruct_re, combined)
         if m:
-            reasons.append(f"description uses instructional tone: {m!r}")
+            reasons.append(f"uses instructional tone: {m!r}")
 
-        # 6. Recommends introducing vulnerability or disabling security features
-        m = _first_match(vuln_re, description)
+        # 6. Recommends introducing vulnerability or disabling security
+        # features, anywhere in the combined text
+        m = _first_match(vuln_re, combined)
         if m:
-            reasons.append(f"description recommends introducing vulnerability: {m!r}")
+            reasons.append(f"recommends introducing vulnerability: {m!r}")
 
         # 7. Title matches placeholder patterns
         m = _first_match(title_re, title)
         if m:
             reasons.append(f"title matches placeholder pattern: {m!r}")
 
-        # 8. Description contains XML-like injection markers
-        m = _first_match(body_marker_re, description)
+        # 8. Combined text contains XML-like injection markers
+        m = _first_match(body_marker_re, combined)
         if m:
-            reasons.append(f"description matches injection marker: {m!r}")
-
-        # Title scan: each of the four sets above minus shell/url/encoded
-        # (those three already scan `combined`, which includes `title`) is
-        # re-scanned against `title` alone -- a payload placed only in the
-        # title reaches the wire and downstream model prompts untouched by
-        # the description-only scans above.
-        for phrase, patterns in _title_suggestion_sets:
-            m = _first_match(patterns, title)
-            if m:
-                reasons.append(f"title {phrase}: {m!r}")
-                title_scan_matched = True
+            reasons.append(f"matches injection marker: {m!r}")
 
         # 9. Empty or template file path
         if not filepath or re.search(r"<[^\n]*?>|\{[^\n]*?\}", filepath):
@@ -898,8 +875,6 @@ def apply_injection_filter(findings):
             elim = dict(finding)
             elim["eliminated_by"] = "injection"
             elim["elimination_reason"] = "; ".join(reasons)
-            if title_scan_matched:
-                elim["title_scan_matched"] = True
             eliminated.append(elim)
             warn(
                 f"[injection-filter] Discarded finding {finding.get('id', '?')!r}: "
@@ -1795,16 +1770,6 @@ def main():
     findings, elim_injection = apply_injection_filter(findings)
     all_eliminated.extend(elim_injection)
     injections_removed = len(elim_injection)
-    # Findings the four-set title scan eliminated -- counted structurally via
-    # the `title_scan_matched` stamp apply_injection_filter puts on the
-    # eliminated copy (#215 round-1 parity-F3), never by parsing
-    # `elimination_reason` text. Heuristic 7's pre-existing placeholder-
-    # pattern title eliminations are a separate, pre-existing class that the
-    # title pass never stamps, so they fall out of this count for free --
-    # no string-prefix exclusion needed.
-    title_matches_eliminated = sum(
-        1 for f in elim_injection if f.get("title_scan_matched")
-    )
     # One `{field}s_removed` stat per _INJECTION_STRIPPED_PROSE_FIELDS entry --
     # looping the shared list (rather than one hardcoded sum() per field) means
     # adding a field to the list is the only edit a future extension needs (#213).
@@ -1849,7 +1814,6 @@ def main():
             "passed_threshold": passed_threshold,
             "contested_count": contested_count,
             "injections_removed": injections_removed,
-            "title_matches_eliminated": title_matches_eliminated,
             # Spliced, not hand-listed: prose_fields_removed's keys/order are exactly
             # _INJECTION_STRIPPED_PROSE_FIELDS's (dict comprehension, insertion-ordered),
             # so adding a field to that list is the only edit a future stat needs -- no
