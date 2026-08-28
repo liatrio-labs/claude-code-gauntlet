@@ -1162,6 +1162,34 @@ test('applyInjectionFilter: isolating lorem<NBSP>ipsum separator respell elimina
   assert.match(eliminated[0].elimination_reason, /matches injection marker/);
 });
 
+test('applyInjectionFilter: isolating download<NBSP>from url separator respell eliminates', () => {
+  // F13: "download from" previously required a literal ASCII space between
+  // "download" and "from" -- only the union-whitespace-class respell
+  // matches a non-breaking space there. Scheme stays https (already
+  // matched pre-#254) so this isolates the separator change from C1's
+  // scheme-general widening.
+  const nbsp = String.fromCharCode(0xa0); // NO-BREAK SPACE
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      description: `The setup script still tells contributors to download${nbsp}from https://legacy.internal/tools/install.sh before running it locally.`,
+    }),
+  ]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /contains visit-URL pattern/);
+});
+
+test('applyInjectionFilter: isolating title-placeholder separator respell eliminates', () => {
+  // F13: the four "<word> finding" title patterns previously required a
+  // literal ASCII space -- only the union-whitespace-class respell matches
+  // a non-breaking space between the word and "finding".
+  const nbsp = String.fromCharCode(0xa0); // NO-BREAK SPACE
+  const { kept, eliminated } = applyInjectionFilter([cleanFinding({ title: `Example${nbsp}finding` })]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
+});
+
 // -----------------------------------------------------------------------
 // #255 round-3 review Finding 5: the two long-bare-URL branches (reader-
 // imperative and exfil-verb) were REMOVED because they false-fired on

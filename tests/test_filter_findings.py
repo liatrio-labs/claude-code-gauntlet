@@ -1896,6 +1896,36 @@ class TestApplyInjectionFilter(unittest.TestCase):
         self.assertEqual(len(passed), 0)
         self.assertIn("matches injection marker", eliminated[0]["elimination_reason"])
 
+    def test_isolating_download_from_nbsp_separator_eliminates(self):
+        # F13: "download<NBSP>from" only fires under the union-whitespace-
+        # class respell -- the pre-#254 literal-space "download from"
+        # pattern does not match a non-breaking space. Scheme stays https
+        # (already matched pre-#254) so this isolates the separator change
+        # from C1's scheme-general widening.
+        nbsp = chr(0xA0)  # NO-BREAK SPACE
+        findings = [
+            self._finding_with(
+                description=f"The setup script still tells contributors to download{nbsp}from https://legacy.internal/tools/install.sh before running it locally."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn("contains visit-URL pattern", eliminated[0]["elimination_reason"])
+
+    def test_isolating_title_placeholder_nbsp_separator_eliminates(self):
+        # F13: "Example<NBSP>finding" only fires under the union-whitespace-
+        # class respell -- the pre-#254 literal-space title-placeholder
+        # patterns do not match a non-breaking space.
+        nbsp = chr(0xA0)  # NO-BREAK SPACE
+        findings = [self._finding_with(title=f"Example{nbsp}finding")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn(
+            "title matches placeholder pattern", eliminated[0]["elimination_reason"]
+        )
+
     # -----------------------------------------------------------------------
     # #255 round-3 review Finding 5: the two long-bare-URL branches (reader-
     # imperative and exfil-verb) were REMOVED because they false-fired on
