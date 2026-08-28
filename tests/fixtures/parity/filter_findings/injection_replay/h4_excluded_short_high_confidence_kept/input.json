@@ -1,0 +1,14 @@
+{
+  "fn": "apply_replay_injection_scan",
+  "findings": [
+    {
+      "id": "RP2",
+      "title": "Possible issue",
+      "description": "Bug here maybe.",
+      "file": "src/app.py",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 90
+    }
+  ]
+}

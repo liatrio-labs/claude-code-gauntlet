@@ -538,9 +538,11 @@ export function applyInjectedProseStrip(finding) {
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
 
-// Port of apply_injection_filter. All 10 heuristics, in the same order as the
-// Python original so `reasons[0]` (used in the stderr-equivalent warning, not
-// asserted here) lines up. Heuristic #10 (duplicate signature) is STATEFUL
+// Port of _injection_scan_core (Python twin). All 10 heuristics (4 gated by
+// includeH4, see that parameter's doc comment below), in the same order as
+// the Python original so `reasons[0]` (used in the stderr-equivalent
+// warning, not asserted here) lines up. Heuristic #10 (duplicate signature)
+// is STATEFUL
 // across the input list — the FIRST (title,file,line_start) occurrence
 // survives, later ones are flagged — so caller input order is load-bearing.
 // Scans only title + description; a finding that passes then has each of
@@ -570,7 +572,19 @@ export function applyInjectedProseStrip(finding) {
 // numeric character bound. A far-apart split (outside the adjacency window,
 // where one applies) still evades by design (adjacency-gating is inherently
 // local); that residual is accepted.
-export function applyInjectionFilter(findings) {
+// #253: shared core behind applyInjectionFilter/applyReplayInjectionScan.
+// `includeH4` gates heuristic 4 (short-description + high-confidence) -- the
+// ONE heuristic that reads finding.confidence, a field detectDisagreement
+// mutates IN PLACE after this scan first runs at filter time (the +10
+// consensus boost on a corroborated finding). Heuristics 1/2/3/5-10 read
+// only title/description/file/line_start/id -- static content that cannot
+// change between a finding's first scan and a later re-scan -- so they are
+// safe to re-run against anything that already passed them once; heuristic 4
+// is not, because a finding that failed it (80 < 85) at record time can pass
+// it (90 >= 85) after a later stage boosts confidence, which would make a
+// re-scan eliminate a finding the pipeline just corroborated. See
+// applyReplayInjectionScan below for the caller this exists for.
+function injectionScanCore(findings, includeH4) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
@@ -597,9 +611,11 @@ export function applyInjectionFilter(findings) {
     m = firstMatch(INJECTION_BYPASS_PATTERNS, combined);
     if (m) reasons.push(`contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
 
-    const wordCount = countWords(description);
-    if (wordCount < MIN_BODY_WORDS && confidence >= HIGH_CONFIDENCE_THRESHOLD) {
-      reasons.push(`suspiciously short description (${wordCount} words) with high confidence (${confidence})`);
+    if (includeH4) {
+      const wordCount = countWords(description);
+      if (wordCount < MIN_BODY_WORDS && confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+        reasons.push(`suspiciously short description (${wordCount} words) with high confidence (${confidence})`);
+      }
     }
 
     m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, combined);
@@ -638,6 +654,31 @@ export function applyInjectionFilter(findings) {
   }
 
   return { kept, eliminated };
+}
+
+// Port of apply_injection_filter -- the record-time entry point (filterStage,
+// via applyFilterPipeline), byte-identical to its pre-#253 shape: all 10
+// heuristics, including heuristic 4.
+export function applyInjectionFilter(findings) {
+  return injectionScanCore(findings, true);
+}
+
+// #253 replay filtering belt (stages.js): re-scans findings that already
+// survived applyInjectionFilter once, at record time, against a challenge
+// checkpoint the pipeline is now REPLAYING (persisted by an earlier version,
+// under earlier content patterns) or a fresh challenge-stage output (a no-op
+// by construction there, since filterStage already ran this same content
+// scan this run). Structurally excludes heuristic 4 -- see injectionScanCore's
+// doc comment -- so the belt's callable unit is confidence-free BY
+// CONSTRUCTION, not by caller discipline. Heuristic 10 (duplicate signature)
+// is proven unable to newly fire here: nothing between record-time
+// applyInjectionFilter and a challenge checkpoint mutates a finding's
+// (title, file, line_start) triple (detectDisagreement/consolidateCrossAgent/
+// applyChallenges touch only confidence/severity/stamp fields), and a dedup
+// re-run over a SUBSET of the originally-deduped set can only fire fewer
+// times, never newly.
+export function applyReplayInjectionScan(findings) {
+  return injectionScanCore(findings, false);
 }
 
 // --- Exclusions loader -------------------------------------------------------

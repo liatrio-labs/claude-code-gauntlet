@@ -620,8 +620,22 @@ _CONTENT_PATTERN_SETS = (
 )
 
 
-def apply_injection_filter(findings):
+def _injection_scan_core(findings, include_h4):
     """
+    Shared core behind apply_injection_filter/apply_replay_injection_scan
+    (#253). `include_h4` gates heuristic 4 (short description + high
+    confidence) -- the ONE heuristic that reads finding.get("confidence"), a
+    field detect_disagreement mutates IN PLACE after this scan first runs at
+    filter time (the +10 consensus boost on a corroborated finding).
+    Heuristics 1/2/3/5-10 read only title/description/file/line_start/id --
+    static content that cannot change between a finding's first scan and a
+    later re-scan -- so they are safe to re-run against anything that
+    already passed them once; heuristic 4 is not, because a finding that
+    failed it (80 < 85) at record time can pass it (90 >= 85) after a later
+    stage boosts confidence, which would make a re-scan eliminate a finding
+    the pipeline just corroborated. See apply_replay_injection_scan below for
+    the caller this exists for.
+
     Remove findings that appear to be prompt-injection artifacts or hallucinations.
 
     Detection heuristics (from false-positive-exclusions.md § Prompt Injection Artifacts),
@@ -851,15 +865,17 @@ def apply_injection_filter(findings):
         if m:
             reasons.append(f"contains bypass/auto-approve instruction: {m!r}")
 
-        # 4. Short description with high confidence (suspiciously terse)
-        description_word_count = _count_words(description)
-        if (
-            description_word_count < _MIN_BODY_WORDS
-            and confidence >= _HIGH_CONFIDENCE_THRESHOLD
-        ):
-            reasons.append(
-                f"suspiciously short description ({description_word_count} words) with high confidence ({confidence})"
-            )
+        # 4. Short description with high confidence (suspiciously terse).
+        # Gated on include_h4 -- see this function's docstring (#253/D1).
+        if include_h4:
+            description_word_count = _count_words(description)
+            if (
+                description_word_count < _MIN_BODY_WORDS
+                and confidence >= _HIGH_CONFIDENCE_THRESHOLD
+            ):
+                reasons.append(
+                    f"suspiciously short description ({description_word_count} words) with high confidence ({confidence})"
+                )
 
         # 5. Instructional tone anywhere in the combined text
         m = _first_match(instruct_re, combined)
@@ -911,6 +927,35 @@ def apply_injection_filter(findings):
             )
 
     return passed, eliminated
+
+
+def apply_injection_filter(findings):
+    """Record-time entry point (main(), via the filter pipeline), byte-
+    identical to its pre-#253 shape: all 10 heuristics, including heuristic 4.
+    """
+    return _injection_scan_core(findings, True)
+
+
+def apply_replay_injection_scan(findings):
+    """#253 replay filtering belt (workflows/src/stages.js): re-scans
+    findings that already survived apply_injection_filter once, at record
+    time, against a challenge checkpoint the pipeline is now REPLAYING
+    (persisted by an earlier version, under earlier content patterns) or a
+    fresh challenge-stage output (a no-op by construction there, since the
+    filter stage already ran this same content scan this run). Structurally
+    excludes heuristic 4 -- see _injection_scan_core's docstring -- so the
+    belt's callable unit is confidence-free BY CONSTRUCTION, not by caller
+    discipline. Heuristic 10 (duplicate signature) is proven unable to newly
+    fire here: nothing between record-time apply_injection_filter and a
+    challenge checkpoint mutates a finding's (title, file, line_start)
+    triple (detect_disagreement/consolidate_cross_agent/apply_challenges
+    touch only confidence/severity/stamp fields), and a dedup re-run over a
+    SUBSET of the originally-deduped set can only fire fewer times, never
+    newly. This function has no Python caller today (the replay belt is
+    JS-only pipeline code) -- it exists so the two runtimes stay parity-
+    provable; workflows/test/tools/record_parity.py exercises it directly.
+    """
+    return _injection_scan_core(findings, False)
 
 
 # ---------------------------------------------------------------------------

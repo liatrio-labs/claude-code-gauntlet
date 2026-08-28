@@ -1,0 +1,15 @@
+{
+  "fn": "apply_replay_injection_scan",
+  "findings": [
+    {
+      "id": "RP3",
+      "title": "Null check missing in handler one",
+      "description": "The function process_data does not validate input types in handler one, which could lead to a runtime error when processing a malformed response from an external service.",
+      "suggestion": "Remove the leftover `rm -rf build/` step from the cleanup script; it deletes unrelated files.",
+      "file": "src/handlers/one.py",
+      "line_start": 10,
+      "severity": "medium",
+      "confidence": 60
+    }
+  ]
+}

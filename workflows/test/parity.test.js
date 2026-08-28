@@ -11,6 +11,7 @@ import {
   parseReviewMd,
   applyThresholdFilter,
   applyInjectionFilter,
+  applyReplayInjectionScan,
   loadExclusions,
   applyExclusions,
   detectDisagreement,
@@ -177,6 +178,61 @@ test('assertEliminationReasonSegmentsMatch: seeded divergence cases', () => {
   );
 });
 
+// Shared by the apply_injection_filter and apply_replay_injection_scan (#253)
+// branches below -- both twins return the identical { kept, eliminated }
+// shape, so one comparator covers both callers of injectionScanCore.
+function assertInjectionScanParity({ kept, eliminated }, expected) {
+  assert.deepEqual(idsOf(kept), idsOf(expected.kept));
+  assert.deepEqual(idsOf(eliminated), idsOf(expected.eliminated));
+  // Uses the extracted assertEliminationReasonSegmentsMatch helper (defined
+  // above, proven by its own seeded-divergence meta-test) -- see that
+  // helper's comment for what is byte-exact vs free text here.
+  eliminated.forEach((got, i) => {
+    const exp = expected.eliminated[i];
+    assert.ok(got.elimination_reason && got.elimination_reason.length > 0);
+    assertEliminationReasonSegmentsMatch(got.elimination_reason, exp.elimination_reason, exp.id);
+  });
+  // `{field}_removal_reason` is MOSTLY free text (Python !r vs JS
+  // pattern-source quoting differ), but the "{field} <noun phrase>: "
+  // prefix up to and including the ": " separator is identical across
+  // runtimes by construction (both read it from the same SUGGESTION_SETS
+  // phrase strings) -- compare that prefix byte-exactly, for EVERY field
+  // in INJECTION_STRIPPED_PROSE_FIELDS (#213: suggestion, claude_md_rule,
+  // spec_text), so renaming any of the 7 set labels OR adding/renaming a
+  // scanned field goes red here, and leave only the pattern-spelling tail
+  // (after the ": ") presence-only. The non-string reason
+  // ("{field} is not a string") carries no pattern tail and no colon
+  // separator, so it gets its own byte-exact branch instead. A single
+  // kept finding can carry MORE THAN ONE of these keys at once (D7: every
+  // matching field strips independently), so each is peeled off in turn
+  // before the remainder is compared structurally.
+  kept.forEach((got, i) => {
+    const exp = expected.kept[i];
+    let gotRest = got;
+    let expRest = exp;
+    for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
+      const key = `${field}_removal_reason`;
+      if (!(key in exp)) continue;
+      const expReason = exp[key];
+      const gotReason = got[key];
+      assert.ok(gotReason && gotReason.length > 0);
+      if (expReason === `${field} is not a string`) {
+        assert.equal(gotReason, expReason);
+      } else {
+        const sepIdx = expReason.indexOf(': ');
+        assert.ok(sepIdx !== -1, `golden reason missing ': ' separator: ${expReason}`);
+        const expPrefix = expReason.slice(0, sepIdx + 2);
+        assert.equal(gotReason.slice(0, expPrefix.length), expPrefix);
+      }
+      const { [key]: _g, ...gotWithout } = gotRest;
+      const { [key]: _e, ...expWithout } = expRest;
+      gotRest = gotWithout;
+      expRest = expWithout;
+    }
+    assert.deepEqual(gotRest, expRest);
+  });
+}
+
 for (const c of loadCases('filter_findings')) {
   const fn = c.input.fn;
   test(`filter_findings parity: ${c.name} (${fn})`, () => {
@@ -202,56 +258,16 @@ for (const c of loadCases('filter_findings')) {
       return;
     }
     if (fn === 'apply_injection_filter') {
-      const { kept, eliminated } = applyInjectionFilter(c.input.findings);
-      assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
-      assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
-      // Uses the extracted assertEliminationReasonSegmentsMatch helper
-      // (defined above, proven by its own seeded-divergence meta-test) --
-      // see that helper's comment for what is byte-exact vs free text here.
-      eliminated.forEach((got, i) => {
-        const exp = c.expected.eliminated[i];
-        assert.ok(got.elimination_reason && got.elimination_reason.length > 0);
-        assertEliminationReasonSegmentsMatch(got.elimination_reason, exp.elimination_reason, exp.id);
-      });
-      // `{field}_removal_reason` is MOSTLY free text (Python !r vs JS
-      // pattern-source quoting differ), but the "{field} <noun phrase>: "
-      // prefix up to and including the ": " separator is identical across
-      // runtimes by construction (both read it from the same SUGGESTION_SETS
-      // phrase strings) -- compare that prefix byte-exactly, for EVERY field
-      // in INJECTION_STRIPPED_PROSE_FIELDS (#213: suggestion, claude_md_rule,
-      // spec_text), so renaming any of the 7 set labels OR adding/renaming a
-      // scanned field goes red here, and leave only the pattern-spelling tail
-      // (after the ": ") presence-only. The non-string reason
-      // ("{field} is not a string") carries no pattern tail and no colon
-      // separator, so it gets its own byte-exact branch instead. A single
-      // kept finding can carry MORE THAN ONE of these keys at once (D7: every
-      // matching field strips independently), so each is peeled off in turn
-      // before the remainder is compared structurally.
-      kept.forEach((got, i) => {
-        const exp = c.expected.kept[i];
-        let gotRest = got;
-        let expRest = exp;
-        for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
-          const key = `${field}_removal_reason`;
-          if (!(key in exp)) continue;
-          const expReason = exp[key];
-          const gotReason = got[key];
-          assert.ok(gotReason && gotReason.length > 0);
-          if (expReason === `${field} is not a string`) {
-            assert.equal(gotReason, expReason);
-          } else {
-            const sepIdx = expReason.indexOf(': ');
-            assert.ok(sepIdx !== -1, `golden reason missing ': ' separator: ${expReason}`);
-            const expPrefix = expReason.slice(0, sepIdx + 2);
-            assert.equal(gotReason.slice(0, expPrefix.length), expPrefix);
-          }
-          const { [key]: _g, ...gotWithout } = gotRest;
-          const { [key]: _e, ...expWithout } = expRest;
-          gotRest = gotWithout;
-          expRest = expWithout;
-        }
-        assert.deepEqual(gotRest, expRest);
-      });
+      assertInjectionScanParity(applyInjectionFilter(c.input.findings), c.expected);
+      return;
+    }
+    if (fn === 'apply_replay_injection_scan') {
+      // #253: same shape/assertions as apply_injection_filter above (both
+      // return { kept, eliminated }) -- the only behavioral difference
+      // (heuristic 4 excluded) is exercised by the fixture content itself
+      // (tests/fixtures/parity/filter_findings/injection_replay/), not by a
+      // different comparator here.
+      assertInjectionScanParity(applyReplayInjectionScan(c.input.findings), c.expected);
       return;
     }
     if (fn === 'apply_exclusions') {
