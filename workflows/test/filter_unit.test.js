@@ -1148,6 +1148,22 @@ test('applyInjectionFilter: isolating [INSERT ... placeholder-noun] eliminates',
   assert.match(eliminated[0].elimination_reason, /matches injection marker/);
 });
 
+test('applyInjectionFilter: SQL privilege-list [INSERT, UPDATE, DELETE] carveout kept', () => {
+  // The noun-gated `[INSERT ...]` entry exists precisely so a real SQL
+  // privilege-list finding like this one is not eliminated -- only a
+  // bracketed INSERT payload naming a placeholder noun (FINDING/TITLE/TEXT/
+  // PLACEHOLDER/HERE) matches, and this description names none.
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      title: 'Stored procedure grants excessive privileges to the public role',
+      description:
+        'The stored procedure grants [INSERT, UPDATE, DELETE] privileges to the public role, which is broader than intended for this operation.',
+    }),
+  ]);
+  assert.equal(eliminated.length, 0);
+  assert.equal(kept.length, 1);
+});
+
 test('applyInjectionFilter: isolating lorem<NBSP>ipsum separator respell eliminates', () => {
   // F13: the pre-#254 literal-space "lorem ipsum" pattern does not match a
   // non-breaking space -- only the union-whitespace-class respell does.

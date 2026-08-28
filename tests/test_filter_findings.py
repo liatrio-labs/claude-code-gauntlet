@@ -1680,6 +1680,25 @@ class TestApplyInjectionFilter(unittest.TestCase):
         self.assertEqual(len(eliminated), 0)
         self.assertEqual(len(passed), 1)
 
+    def test_sql_privilege_list_insert_carveout_kept(self):
+        # The noun-gated `[INSERT ...]` entry exists precisely so a real SQL
+        # privilege-list finding like this one is not eliminated -- only a
+        # bracketed INSERT payload naming a placeholder noun (FINDING/TITLE/
+        # TEXT/PLACEHOLDER/HERE) matches, and this description names none.
+        findings = [
+            self._finding_with(
+                title="Stored procedure grants excessive privileges to the public role",
+                description=(
+                    "The stored procedure grants [INSERT, UPDATE, DELETE] "
+                    "privileges to the public role, which is broader than "
+                    "intended for this operation."
+                ),
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(len(passed), 1)
+
     # -----------------------------------------------------------------------
     # Cross-field split (#252 Finding 1): a payload split across title
     # (directive) and description (blob) must still eliminate, since the
