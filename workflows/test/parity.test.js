@@ -11,6 +11,7 @@ import {
   parseReviewMd,
   applyThresholdFilter,
   applyInjectionFilter,
+  applyReplayInjectionScan,
   loadExclusions,
   applyExclusions,
   detectDisagreement,
@@ -109,17 +110,18 @@ const idsOf = (list) => list.map((f) => f.id);
 // the seeded-divergence meta-test that follows it exercise the SAME
 // comparator, not two copies that could silently drift apart. Free-text JOIN
 // format ('; '-separated) is not load-bearing, but each individual reason
-// SEGMENT is not free -- the "<field> <phrase>: " prefix up to and including
-// the ": " separator is built from the same SUGGESTION_SETS phrase strings in
-// both runtimes, so it is byte-exact across twins; only the trailing
+// SEGMENT is not free -- the "<phrase>: " prefix up to and including the ": "
+// separator is built from the same SUGGESTION_SETS phrase strings in both
+// runtimes (bare, no "title "/"description " field-attribution prefix since
+// #256), so it is byte-exact across twins; only the trailing
 // pattern-spelling tail (Python `!r` vs JS `rx.source` + JSON.stringify) is
 // free. A segment with no ': ' separator (the word-count and
 // duplicate-signature heuristics, whose text is NOT built from a shared
-// phrase table) is presence-only. Segment COUNT must match too, so a title
-// reason silently dropped (or a spurious extra one added) on either twin is
-// caught even when the eliminated ID sets already agree. Throws (via
-// `assert`) on a segment-count mismatch or a prefix divergence; does NOT
-// throw on a tail-only difference (the free pattern-spelling suffix).
+// phrase table) is presence-only. Segment COUNT must match too, so a reason
+// silently dropped (or a spurious extra one added) on either twin is caught
+// even when the eliminated ID sets already agree. Throws (via `assert`) on a
+// segment-count mismatch or a prefix divergence; does NOT throw on a
+// tail-only difference (the free pattern-spelling suffix).
 function assertEliminationReasonSegmentsMatch(gotReason, expReason, label) {
   const gotSegs = gotReason.split('; ');
   const expSegs = expReason.split('; ');
@@ -150,8 +152,8 @@ test('assertEliminationReasonSegmentsMatch: seeded divergence cases', () => {
   // (a) prefix divergence: same segment count, but segment 0's phrase prefix disagrees.
   assert.throws(() =>
     assertEliminationReasonSegmentsMatch(
-      "description contains shell command pattern: 'rm -rf'",
-      "description uses instructional tone: 'rm -rf'",
+      "contains shell command pattern: 'rm -rf'",
+      "uses instructional tone: 'rm -rf'",
     ),
   );
   // (b) dropped segment: got carries a spurious extra segment expected does
@@ -162,19 +164,74 @@ test('assertEliminationReasonSegmentsMatch: seeded divergence cases', () => {
   // whether the length check ran, masking whether it actually fired.
   assert.throws(() =>
     assertEliminationReasonSegmentsMatch(
-      "description contains shell command pattern: 'rm -rf'; title contains visit-URL pattern: 'https://x'",
-      "description contains shell command pattern: 'rm -rf'",
+      "contains shell command pattern: 'rm -rf'; contains visit-URL pattern: 'https://x'",
+      "contains shell command pattern: 'rm -rf'",
     ),
   );
   // (c) tail-only difference: same segment count, same prefixes, only the
   // free pattern-spelling suffix (Python !r vs JS source+JSON.stringify) differs.
   assert.doesNotThrow(() =>
     assertEliminationReasonSegmentsMatch(
-      "description contains shell command pattern: '\\\\brm[\\\\t\\\\n]+-[rf]'",
-      'description contains shell command pattern: "\\\\brm[\\\\t\\\\n]+-[rf]"',
+      "contains shell command pattern: '\\\\brm[\\\\t\\\\n]+-[rf]'",
+      'contains shell command pattern: "\\\\brm[\\\\t\\\\n]+-[rf]"',
     ),
   );
 });
+
+// Shared by the apply_injection_filter and apply_replay_injection_scan (#253)
+// branches below -- both twins return the identical { kept, eliminated }
+// shape, so one comparator covers both callers of injectionScanCore.
+function assertInjectionScanParity({ kept, eliminated }, expected) {
+  assert.deepEqual(idsOf(kept), idsOf(expected.kept));
+  assert.deepEqual(idsOf(eliminated), idsOf(expected.eliminated));
+  // Uses the extracted assertEliminationReasonSegmentsMatch helper (defined
+  // above, proven by its own seeded-divergence meta-test) -- see that
+  // helper's comment for what is byte-exact vs free text here.
+  eliminated.forEach((got, i) => {
+    const exp = expected.eliminated[i];
+    assert.ok(got.elimination_reason && got.elimination_reason.length > 0);
+    assertEliminationReasonSegmentsMatch(got.elimination_reason, exp.elimination_reason, exp.id);
+  });
+  // `{field}_removal_reason` is MOSTLY free text (Python !r vs JS
+  // pattern-source quoting differ), but the "{field} <noun phrase>: "
+  // prefix up to and including the ": " separator is identical across
+  // runtimes by construction (both read it from the same SUGGESTION_SETS
+  // phrase strings) -- compare that prefix byte-exactly, for EVERY field
+  // in INJECTION_STRIPPED_PROSE_FIELDS (#213: suggestion, claude_md_rule,
+  // spec_text), so renaming any of the 7 set labels OR adding/renaming a
+  // scanned field goes red here, and leave only the pattern-spelling tail
+  // (after the ": ") presence-only. The non-string reason
+  // ("{field} is not a string") carries no pattern tail and no colon
+  // separator, so it gets its own byte-exact branch instead. A single
+  // kept finding can carry MORE THAN ONE of these keys at once (D7: every
+  // matching field strips independently), so each is peeled off in turn
+  // before the remainder is compared structurally.
+  kept.forEach((got, i) => {
+    const exp = expected.kept[i];
+    let gotRest = got;
+    let expRest = exp;
+    for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
+      const key = `${field}_removal_reason`;
+      if (!(key in exp)) continue;
+      const expReason = exp[key];
+      const gotReason = got[key];
+      assert.ok(gotReason && gotReason.length > 0);
+      if (expReason === `${field} is not a string`) {
+        assert.equal(gotReason, expReason);
+      } else {
+        const sepIdx = expReason.indexOf(': ');
+        assert.ok(sepIdx !== -1, `golden reason missing ': ' separator: ${expReason}`);
+        const expPrefix = expReason.slice(0, sepIdx + 2);
+        assert.equal(gotReason.slice(0, expPrefix.length), expPrefix);
+      }
+      const { [key]: _g, ...gotWithout } = gotRest;
+      const { [key]: _e, ...expWithout } = expRest;
+      gotRest = gotWithout;
+      expRest = expWithout;
+    }
+    assert.deepEqual(gotRest, expRest);
+  });
+}
 
 for (const c of loadCases('filter_findings')) {
   const fn = c.input.fn;
@@ -201,61 +258,16 @@ for (const c of loadCases('filter_findings')) {
       return;
     }
     if (fn === 'apply_injection_filter') {
-      const { kept, eliminated } = applyInjectionFilter(c.input.findings);
-      assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
-      assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
-      // Uses the extracted assertEliminationReasonSegmentsMatch helper
-      // (defined above, proven by its own seeded-divergence meta-test) --
-      // see that helper's comment for what is byte-exact vs free text here.
-      eliminated.forEach((got, i) => {
-        const exp = c.expected.eliminated[i];
-        assert.ok(got.elimination_reason && got.elimination_reason.length > 0);
-        assertEliminationReasonSegmentsMatch(got.elimination_reason, exp.elimination_reason, exp.id);
-        assert.equal(
-          got.title_scan_matched,
-          exp.title_scan_matched,
-          `title_scan_matched mismatch for ${exp.id}`,
-        );
-      });
-      // `{field}_removal_reason` is MOSTLY free text (Python !r vs JS
-      // pattern-source quoting differ), but the "{field} <noun phrase>: "
-      // prefix up to and including the ": " separator is identical across
-      // runtimes by construction (both read it from the same SUGGESTION_SETS
-      // phrase strings) -- compare that prefix byte-exactly, for EVERY field
-      // in INJECTION_STRIPPED_PROSE_FIELDS (#213: suggestion, claude_md_rule,
-      // spec_text), so renaming any of the 7 set labels OR adding/renaming a
-      // scanned field goes red here, and leave only the pattern-spelling tail
-      // (after the ": ") presence-only. The non-string reason
-      // ("{field} is not a string") carries no pattern tail and no colon
-      // separator, so it gets its own byte-exact branch instead. A single
-      // kept finding can carry MORE THAN ONE of these keys at once (D7: every
-      // matching field strips independently), so each is peeled off in turn
-      // before the remainder is compared structurally.
-      kept.forEach((got, i) => {
-        const exp = c.expected.kept[i];
-        let gotRest = got;
-        let expRest = exp;
-        for (const field of INJECTION_STRIPPED_PROSE_FIELDS) {
-          const key = `${field}_removal_reason`;
-          if (!(key in exp)) continue;
-          const expReason = exp[key];
-          const gotReason = got[key];
-          assert.ok(gotReason && gotReason.length > 0);
-          if (expReason === `${field} is not a string`) {
-            assert.equal(gotReason, expReason);
-          } else {
-            const sepIdx = expReason.indexOf(': ');
-            assert.ok(sepIdx !== -1, `golden reason missing ': ' separator: ${expReason}`);
-            const expPrefix = expReason.slice(0, sepIdx + 2);
-            assert.equal(gotReason.slice(0, expPrefix.length), expPrefix);
-          }
-          const { [key]: _g, ...gotWithout } = gotRest;
-          const { [key]: _e, ...expWithout } = expRest;
-          gotRest = gotWithout;
-          expRest = expWithout;
-        }
-        assert.deepEqual(gotRest, expRest);
-      });
+      assertInjectionScanParity(applyInjectionFilter(c.input.findings), c.expected);
+      return;
+    }
+    if (fn === 'apply_replay_injection_scan') {
+      // #253: same shape/assertions as apply_injection_filter above (both
+      // return { kept, eliminated }) -- the only behavioral difference
+      // (heuristic 4 excluded) is exercised by the fixture content itself
+      // (tests/fixtures/parity/filter_findings/injection_replay/), not by a
+      // different comparator here.
+      assertInjectionScanParity(applyReplayInjectionScan(c.input.findings), c.expected);
       return;
     }
     if (fn === 'apply_exclusions') {

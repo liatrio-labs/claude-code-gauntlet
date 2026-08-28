@@ -1,0 +1,14 @@
+{
+  "fn": "apply_replay_injection_scan",
+  "findings": [
+    {
+      "id": "RP1",
+      "title": "Cleanup step review",
+      "description": "The cleanup script runs rm -rf /tmp/cache which looks concerning for a routine build step.",
+      "file": "src/cleanup.sh",
+      "line_start": 12,
+      "severity": "medium",
+      "confidence": 45
+    }
+  ]
+}

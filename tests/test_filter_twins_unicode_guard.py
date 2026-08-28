@@ -581,6 +581,83 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             "site (e.g. a suppression rule) went undetected",
         )
 
+    # -----------------------------------------------------------------------
+    # #256 D6(b): the seven content sets that scan `combined` (shell/url/
+    # encoded/bypass/instructional/vuln-intro/body-marker -- everything in
+    # SUGGESTION_SETS/_CONTENT_PATTERN_SETS EXCEPT the placeholder-title set,
+    # which intentionally still scans title alone via heuristic 7) must never
+    # anchor to a string/line boundary. combined ⊇ title OR description holds
+    # ONLY because none of them do: `^` as the first atom or `$` as the last
+    # would anchor to the wrong string once title and description are joined
+    # into `combined`, and `\A`/`\Z`/`(?m)` anywhere would do the same more
+    # subtly. This is the structural half of the #256 superset guard (the
+    # empirical half is TestCombinedScanIsSupersetOfFieldwiseScans in
+    # tests/test_filter_findings.py); it does NOT ban lookarounds -- the
+    # shipped `(?<!\w)`/`(?!\w)` encoded-set lookarounds are junction-safe
+    # because `\n` (the title/description join character) is a non-word
+    # character, so they behave identically at a real string boundary and at
+    # the `\n` junction.
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _content_set_family_names():
+        """AST-derive the content-set family names from `_CONTENT_PATTERN_SETS`
+        (scripts/filter_findings.py) instead of a hard-coded name tuple, so an
+        8th content set added to that table is anchor-checked BY DEFAULT.
+        Round-2 review: this module's own docstring promises "discovery is by
+        SHAPE, not by a name allowlist, so a brand-new pattern list or call
+        site is covered by default" -- a hard-coded 7-name tuple here
+        contradicted that for this one guard specifically, and an added
+        8th set with an anchored pattern passed this test silently (confirmed
+        by execution). Each `_CONTENT_PATTERN_SETS` element is
+        `(phrase_string, tuple(_INJECTION_XXX_PATTERNS))`; this walks that
+        literal and pulls the `_INJECTION_XXX_PATTERNS` Name out of the
+        `tuple(...)` call in element position 1 -- the exact list this guard
+        must scan for anchors, with no separate list to keep in sync.
+        """
+        tree = ast.parse(PY_SRC.read_text(encoding="utf-8"), filename=str(PY_SRC))
+        cps_node = None
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "_CONTENT_PATTERN_SETS"
+            ):
+                cps_node = node
+                break
+        assert cps_node is not None, "could not locate _CONTENT_PATTERN_SETS assignment"
+
+        names = []
+        for elt in cps_node.value.elts:
+            assert isinstance(elt, ast.Tuple) and len(elt.elts) == 2, (
+                f"_CONTENT_PATTERN_SETS element is not a (phrase, patterns) pair: {ast.dump(elt)}"
+            )
+            patterns_expr = elt.elts[1]
+            assert isinstance(patterns_expr, ast.Call), (
+                f"_CONTENT_PATTERN_SETS element's patterns side is not a call: {ast.dump(patterns_expr)}"
+            )
+            arg = patterns_expr.args[0]
+            assert isinstance(arg, ast.Name), (
+                f"_CONTENT_PATTERN_SETS element's patterns side does not reference a bare name: {ast.dump(arg)}"
+            )
+            names.append(arg.id)
+        return tuple(names)
+
+    def test_content_sets_have_no_anchors_or_multiline_flags(self):
+        offenders = []
+        for name in self._content_set_family_names():
+            fam = self.list_families.get(name)
+            self.assertIsNotNone(fam, f"{name} not found by discovery")
+            for p in fam["patterns"]:
+                if p.startswith("^"):
+                    offenders.append(f"{name}: {p!r} starts with ^")
+                if p.endswith("$"):
+                    offenders.append(f"{name}: {p!r} ends with $")
+                if "\\A" in p or "\\Z" in p or "(?m)" in p:
+                    offenders.append(f"{name}: {p!r} contains \\A/\\Z/(?m)")
+        self.assertEqual(offenders, [], offenders)
+
 
 if __name__ == "__main__":
     unittest.main()

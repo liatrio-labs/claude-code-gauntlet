@@ -126,6 +126,9 @@ class TestFilterFindingsParity(unittest.TestCase):
                 elif fn == "apply_injection_filter":
                     kept, eliminated = ff.apply_injection_filter(inp["findings"])
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
+                elif fn == "apply_replay_injection_scan":
+                    kept, eliminated = ff.apply_replay_injection_scan(inp["findings"])
+                    self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
                 elif fn == "apply_exclusions":
                     kept, eliminated = ff.apply_exclusions(
                         inp["findings"], inp["exclusion_patterns"]

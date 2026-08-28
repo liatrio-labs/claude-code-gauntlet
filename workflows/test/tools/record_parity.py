@@ -90,6 +90,11 @@ def _filter_findings(inp):
     if fn == "apply_injection_filter":
         kept, eliminated = ff.apply_injection_filter(inp["findings"])
         return {"kept": kept, "eliminated": eliminated}
+    if fn == "apply_replay_injection_scan":
+        # #253: the replay belt's callable unit (heuristic 4 excluded) -- see
+        # filter_findings.apply_replay_injection_scan's docstring.
+        kept, eliminated = ff.apply_replay_injection_scan(inp["findings"])
+        return {"kept": kept, "eliminated": eliminated}
     if fn == "apply_exclusions":
         kept, eliminated = ff.apply_exclusions(
             inp["findings"], inp["exclusion_patterns"]

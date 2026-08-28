@@ -1,0 +1,14 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "confidence": 90,
+      "description": "Bug here maybe.",
+      "file": "src/app.py",
+      "id": "RP2",
+      "line_start": 5,
+      "severity": "low",
+      "title": "Possible issue"
+    }
+  ]
+}

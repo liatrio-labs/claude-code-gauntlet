@@ -270,21 +270,45 @@ function applyThresholdFilter(findings, config) {
 
 // --- Filter: injection artifact detection -----------------------------------
 
+// #254 (F13): the four (now five) "<word> finding" entries picked up the
+// union whitespace class between the word and "finding" (previously a
+// literal space) -- see the #254 record.
+// #260: the bare-word TODO/FIXME/Placeholder entries were dropped -- a real
+// finding legitimately reports TODO/FIXME/placeholder residue about the code
+// it reviews (measured: 5/727 real corpus titles, 100% false positive, 0
+// true positives across 30 recorded runs). Detection now keys on the stub
+// vocabulary "<word> finding" itself -- the phrase an injected scaffold
+// title tends to spell and a real finding about residue essentially never
+// does -- so the standalone `Placeholder` entry was replaced by a
+// `Placeholder finding` entry alongside its four siblings.
 const INJECTION_TITLE_PATTERNS = [
-  /\bTODO\b/i,
-  /\bFIXME\b/i,
-  /\bPlaceholder\b/i,
-  /\bExample finding\b/i,
-  /\bSample finding\b/i,
-  /\btest finding\b/i,
-  /\bdemo finding\b/i,
+  /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
 ];
 
+// #254: <finding>/<example> widened to tolerate attributes (unbounded
+// [^>]*, terminated by the required ">" so it stays linear and parity-safe
+// across twins -- Python counts code points, JS counts UTF-16 units, so a
+// bounded {0,N} window here would diverge on astral input; </finding> was
+// considered and declined -- an injected block always opens, so a closing
+// tag adds false-fire surface with zero catch). The bracketed placeholder
+// entry gained a second, appended form gated on a placeholder noun
+// (FINDING/TITLE/TEXT/PLACEHOLDER/HERE): a bare `[INSERT ...]` widened past
+// ~40 interior chars collides with real SQL privilege-list findings
+// (`[INSERT, UPDATE, DELETE]`), so the noun gate is the discriminator
+// instead of a length bound. Appended after the original bracket entry so
+// `firstMatch`'s reason for a bare `[INSERT]` payload is unchanged.
+// "lorem ipsum" picked up the union whitespace class (previously a literal
+// space).
 const INJECTION_BODY_PATTERNS = [
-  /<finding>/i,
-  /<example>/i,
+  /<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
+  /<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
   /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]/i,
-  /lorem ipsum/i,
+  /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT\b[^\]]*\b(?:FINDING|TITLE|TEXT|PLACEHOLDER|HERE)\b[^\]]*\]/i,
+  /lorem[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+ipsum/i,
 ];
 
 const INJECTION_SHELL_PATTERNS = [
@@ -307,9 +331,15 @@ const INJECTION_SHELL_PATTERNS = [
 // <url>" for a real exfil finding): a legit finding and an injected
 // instruction both read as "<verb> to/from <url>" in English, so this shape
 // cannot be narrowed further to tell them apart. Reverted; see #255 review.
+// #254: the scheme was widened from a bare `https?` to any scheme-shaped
+// token (ftp, sftp, scp, ...) -- the imperative is the discriminator, not
+// the scheme, so enumerating individual schemes is whack-a-mole and every
+// scheme closes in one edit. "download from" also picked up the union
+// whitespace class between "download" and "from" (previously a literal
+// space) -- see F13 in the #254 record.
 const INJECTION_URL_PATTERNS = [
-  /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
-  /\bdownload from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
+  /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
+  /\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
 ];
 
 // Encoded payload patterns -- base64 or hex blobs in findings are injection
@@ -414,15 +444,6 @@ const SUGGESTION_SETS = [
 // `suggestion` first, so its bytes are reproduced exactly when it is the
 // field that matches.
 const INJECTION_STRIPPED_PROSE_FIELDS = ['suggestion', 'claude_md_rule', 'spec_text'];
-
-// Title-scan pattern lists: SUGGESTION_SETS minus shell/url/encoded (indices
-// 0-2), which already scan `combined` in applyInjectionFilter -- `combined`
-// already includes `title`, so a dedicated title pass over those three
-// would double-report the same match. Only bypass/instructional/vuln-intro/
-// body-marker (indices 3-6) are still description-only sets that need a
-// separate title-only pass. Mirrors the Python twin's
-// `_title_suggestion_sets = _SUGGESTION_SETS[3:]`.
-const TITLE_SUGGESTION_SETS = SUGGESTION_SETS.slice(3);
 
 // Delivery bound on suggested_fix_code content (#63/D8) -- the SAME two
 // numbers bound the field at render time in scripts/post_review.py
@@ -536,64 +557,77 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
   return finding;
 }
 
-// Port of _strip_injected_prose_fields + _strip_suggested_fix_code_if_needed
+// Port of _strip_injected_prose_fields + _strip_suggested_fix_code_if_needed,
 // composed as the SINGLE per-finding step applyInjectionFilter runs for every
-// KEPT finding, exposed standalone for the #213 replay belt (stages.js): a
-// challenge checkpoint recorded by a pipeline version that predates a scanned
-// field (e.g. claude_md_rule/spec_text before #213) never had this strip
-// applied when it originally ran through filterStage, and a REPLAYED
-// checkpoint.challenge bypasses filterStage entirely (the persisted output is
-// reused verbatim) -- so report and delivery selection must pass every
-// challenge-stage finding through this before reading it. Idempotent: a
-// finding a fresh run's applyInjectionFilter already stripped has nothing
-// left to match, so a second pass here is a no-op.
+// KEPT finding. Post-#253 role: the belt (stages.js) no longer routes
+// challengeOut.findings/.unverified through this function directly -- their
+// KEPT path now runs applyReplayInjectionScan (injectionScanCore), which
+// calls this same strip composition INLINE (see injectionScanCore's own kept
+// branch) before a survivor is returned. This export's one remaining caller
+// is stages.js's stripEliminatedList, applied to the persisted
+// challengeOut.eliminated bucket alone -- the scan's eliminated path never
+// strips a finding's prose fields, so a belt-eliminated (or pre-#213
+// replayed) entry still needs this pass before it lands in
+// checkpoint-all.json. Idempotent: a finding already stripped (by either
+// caller) has nothing left to match, so a second pass here is a no-op --
+// safe to call again on a resume-of-a-resume.
 function applyInjectedProseStrip(finding) {
   const [stripped, firstPatternStrip] = stripInjectedProseFields(finding);
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);
 }
 
-// Port of apply_injection_filter. All 10 heuristics, in the same order as the
-// Python original so `reasons[0]` (used in the stderr-equivalent warning, not
-// asserted here) lines up. Heuristic #10 (duplicate signature) is STATEFUL
+// Port of _injection_scan_core (Python twin). All 10 heuristics (4 gated by
+// includeH4, see that parameter's doc comment below), in the same order as
+// the Python original so `reasons[0]` (used in the stderr-equivalent
+// warning, not asserted here) lines up. Heuristic #10 (duplicate signature)
+// is STATEFUL
 // across the input list — the FIRST (title,file,line_start) occurrence
 // survives, later ones are flagged — so caller input order is load-bearing.
 // Scans only title + description; a finding that passes then has each of
 // INJECTION_STRIPPED_PROSE_FIELDS (if any) scanned separately by
 // stripInjectedProseFields (#62, extended #213).
 //
-// Heuristics 1/2 (shell/url/encoded) scan `combined` (title+description)
-// rather than either field alone -- #252 Finding 1: a payload split across
-// fields (the directive in title, the blob/URL in description) would
-// otherwise satisfy neither field scanned alone even though the rendered
-// PR comment concatenates them into one coherent instruction. The encoded
-// set is directive-gated with an adjacency window (decode verb or sink
-// syntax within up to ~40 characters of the blob); url ships only
-// visit/download-from (#255: the two directive-gated long-bare-URL entries
-// were removed -- they false-fired on legitimate findings using the same
-// vocabulary), so url's directive verb must sit immediately adjacent to
-// the URL, not within a numeric character bound. A far-apart split (outside
-// the adjacency window, where one applies) still evades by design
-// (adjacency-gating is inherently local); that residual is accepted.
-//
-// Heuristics 3/5/6/8 additionally scan `title` alone against the same four
-// content sets that scan `description` (TITLE_SUGGESTION_SETS =
-// SUGGESTION_SETS.slice(3): bypass/instructional/vuln-intro/body-marker).
-// shell/url/encoded (indices 0-2) are excluded from this separate pass
-// because they already scan `combined`, which already includes `title` --
-// re-scanning title alone for those three would double-report the same
-// match.
-function applyInjectionFilter(findings) {
+// #256: all seven SUGGESTION_SETS content sets (shell/url/encoded/bypass/
+// instructional/vuln-intro/body-marker) scan `combined` (title+description)
+// uniformly -- there is no separate title-only pass. A payload split across
+// fields (the directive in title, the blob/body in description) still
+// fires, since the rendered PR comment concatenates them into one coherent
+// instruction (#252 Finding 1, generalized to all seven sets by #256). Every
+// set's reason string is bare (no "title "/"description " field-attribution
+// prefix, matching shell/url/encoded's pre-existing style) since the
+// scanned text is neither field alone; field attribution is a deliberately
+// dropped capability (#256 record). This is a strict superset of scanning
+// `title`/`description` separately: none of the seven sets' patterns anchor
+// with `^`/`$`/`\A`/`\Z`/`(?m)` (guarded by
+// tests/test_filter_twins_unicode_guard.py), and the union whitespace class
+// joining title and description includes `\n`, so a match spanning either
+// field alone still matches `combined`. The encoded set is directive-gated
+// with an adjacency window (decode verb or sink syntax within up to ~40
+// characters of the blob); url ships only visit/download-from (#255: the
+// two directive-gated long-bare-URL entries were removed -- they
+// false-fired on legitimate findings using the same vocabulary), so url's
+// directive verb must sit immediately adjacent to the URL, not within a
+// numeric character bound. A far-apart split (outside the adjacency window,
+// where one applies) still evades by design (adjacency-gating is inherently
+// local); that residual is accepted.
+// #253: shared core behind applyInjectionFilter/applyReplayInjectionScan.
+// `includeH4` gates heuristic 4 (short-description + high-confidence) -- the
+// ONE heuristic that reads finding.confidence, a field detectDisagreement
+// mutates IN PLACE after this scan first runs at filter time (the +10
+// consensus boost on a corroborated finding). Heuristics 1/2/3/5-10 read
+// only title/description/file/line_start/id -- static content that cannot
+// change between a finding's first scan and a later re-scan -- so they are
+// safe to re-run against anything that already passed them once; heuristic 4
+// is not, because a finding that failed it (80 < 85) at record time can pass
+// it (90 >= 85) after a later stage boosts confidence, which would make a
+// re-scan eliminate a finding the pipeline just corroborated. See
+// applyReplayInjectionScan below for the caller this exists for.
+function injectionScanCore(findings, includeH4) {
   const kept = [];
   const eliminated = [];
   const seenSignatures = new Map();
 
   for (const finding of findings) {
-    // Input must not be able to pre-set the title_scan_matched stats stamp
-    // -- delete any incoming key before this pass runs, in place
-    // (normalizeFieldNames precedent: BF-14 pops/renames untrusted input
-    // keys before use, not after).
-    delete finding.title_scan_matched;
-
     const title = finding.title || '';
     const description = finding.description || '';
     const filepath = finding.file || '';
@@ -601,7 +635,6 @@ function applyInjectionFilter(findings) {
     const combined = `${title}\n${description}`;
 
     const reasons = [];
-    let titleScanMatched = false;
 
     let m = firstMatch(INJECTION_SHELL_PATTERNS, combined);
     if (m) reasons.push(`contains shell command pattern: ${JSON.stringify(m)}`);
@@ -613,38 +646,27 @@ function applyInjectionFilter(findings) {
     m = firstMatch(INJECTION_ENCODED_PATTERNS, combined);
     if (m) reasons.push(`contains encoded payload pattern: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_BYPASS_PATTERNS, description);
-    if (m) reasons.push(`description contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
+    m = firstMatch(INJECTION_BYPASS_PATTERNS, combined);
+    if (m) reasons.push(`contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
 
-    const wordCount = countWords(description);
-    if (wordCount < MIN_BODY_WORDS && confidence >= HIGH_CONFIDENCE_THRESHOLD) {
-      reasons.push(`suspiciously short description (${wordCount} words) with high confidence (${confidence})`);
+    if (includeH4) {
+      const wordCount = countWords(description);
+      if (wordCount < MIN_BODY_WORDS && confidence >= HIGH_CONFIDENCE_THRESHOLD) {
+        reasons.push(`suspiciously short description (${wordCount} words) with high confidence (${confidence})`);
+      }
     }
 
-    m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, description);
-    if (m) reasons.push(`description uses instructional tone: ${JSON.stringify(m)}`);
+    m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, combined);
+    if (m) reasons.push(`uses instructional tone: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_VULN_INTRO_PATTERNS, description);
-    if (m) reasons.push(`description recommends introducing vulnerability: ${JSON.stringify(m)}`);
+    m = firstMatch(INJECTION_VULN_INTRO_PATTERNS, combined);
+    if (m) reasons.push(`recommends introducing vulnerability: ${JSON.stringify(m)}`);
 
     m = firstMatch(INJECTION_TITLE_PATTERNS, title);
     if (m) reasons.push(`title matches placeholder pattern: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_BODY_PATTERNS, description);
-    if (m) reasons.push(`description matches injection marker: ${JSON.stringify(m)}`);
-
-    // Title scan: each of the four sets above minus shell/url/encoded
-    // (those three already scan `combined`, which includes `title`) is
-    // re-scanned against `title` alone -- a payload placed only in the
-    // title reaches the wire and downstream model prompts untouched by the
-    // description-only scans above.
-    for (const [phrase, patterns] of TITLE_SUGGESTION_SETS) {
-      const tm = firstMatch(patterns, title);
-      if (tm) {
-        reasons.push(`title ${phrase}: ${JSON.stringify(tm)}`);
-        titleScanMatched = true;
-      }
-    }
+    m = firstMatch(INJECTION_BODY_PATTERNS, combined);
+    if (m) reasons.push(`matches injection marker: ${JSON.stringify(m)}`);
 
     if (!filepath || /<[^\n]*?>|\{[^\n]*?\}/.test(filepath)) {
       reasons.push(`file path is empty or contains template markers: ${JSON.stringify(filepath)}`);
@@ -662,7 +684,6 @@ function applyInjectionFilter(findings) {
 
     if (reasons.length) {
       const elim = { ...finding, eliminated_by: 'injection', elimination_reason: reasons.join('; ') };
-      if (titleScanMatched) elim.title_scan_matched = true;
       eliminated.push(elim);
     } else {
       const [strippedFinding, firstPatternStrip] = stripInjectedProseFields(finding);
@@ -671,6 +692,31 @@ function applyInjectionFilter(findings) {
   }
 
   return { kept, eliminated };
+}
+
+// Port of apply_injection_filter -- the record-time entry point (filterStage,
+// via applyFilterPipeline), byte-identical to its pre-#253 shape: all 10
+// heuristics, including heuristic 4.
+function applyInjectionFilter(findings) {
+  return injectionScanCore(findings, true);
+}
+
+// #253 replay filtering belt (stages.js): re-scans findings that already
+// survived applyInjectionFilter once, at record time, against a challenge
+// checkpoint the pipeline is now REPLAYING (persisted by an earlier version,
+// under earlier content patterns) or a fresh challenge-stage output (a no-op
+// by construction there, since filterStage already ran this same content
+// scan this run). Structurally excludes heuristic 4 -- see injectionScanCore's
+// doc comment -- so the belt's callable unit is confidence-free BY
+// CONSTRUCTION, not by caller discipline. Heuristic 10 (duplicate signature)
+// is proven unable to newly fire here: nothing between record-time
+// applyInjectionFilter and a challenge checkpoint mutates a finding's
+// (title, file, line_start) triple (detectDisagreement/consolidateCrossAgent/
+// applyChallenges touch only confidence/severity/stamp fields), and a dedup
+// re-run over a SUBSET of the originally-deduped set can only fire fewer
+// times, never newly.
+function applyReplayInjectionScan(findings) {
+  return injectionScanCore(findings, false);
 }
 
 // --- Exclusions loader -------------------------------------------------------
@@ -1225,14 +1271,6 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
   allEliminated.push(...elimInjection);
   const injectionsRemoved = elimInjection.length;
-  // Findings the four-set title scan eliminated -- counted structurally via
-  // the `title_scan_matched` stamp applyInjectionFilter puts on the
-  // eliminated copy (#215 round-1 parity-F3), never by parsing
-  // elimination_reason text. Heuristic 7's pre-existing placeholder-pattern
-  // title eliminations are a separate, pre-existing class the title pass
-  // never stamps, so they fall out of this count for free -- no
-  // string-prefix exclusion needed.
-  const titleMatchesEliminated = elimInjection.filter((f) => f.title_scan_matched).length;
   // One `{field}s_removed` stat per INJECTION_STRIPPED_PROSE_FIELDS entry --
   // looping the shared list (rather than one hardcoded .filter() per field)
   // means adding a field to the list is the only edit a future extension
@@ -1264,7 +1302,6 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
       passed_threshold: passedThreshold,
       contested_count: contestedCount,
       injections_removed: injectionsRemoved,
-      title_matches_eliminated: titleMatchesEliminated,
       // Spliced, not hand-listed: proseFieldsRemoved's keys/order are exactly
       // INJECTION_STRIPPED_PROSE_FIELDS's (Object.fromEntries over the list, in
       // order), so adding a field to that list is the only edit a future stat needs
@@ -6930,6 +6967,86 @@ function resolvedPolicyEnvelope(policy) {
   };
 }
 
+// --- #253 replay filtering belt: helpers -------------------------------
+
+// Marker key used ONLY to re-splice applyReplayInjectionScan's kept/eliminated
+// output back into the ORIGINAL list order. Heuristic 10 (duplicate signature)
+// is stateful over scan order, so object elements must be handed to the scan
+// as ONE ordered list, not pre-partitioned by kind (kept vs. eliminated) --
+// this key is how each element's original position survives that round trip;
+// it never survives into a returned finding (stripped below on both paths).
+const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
+
+// beltPartitionList(list) -> { list, eliminated }. The #253 belt's per-list
+// worker for challengeOut.findings / .unverified:
+//   - a non-array `list` (or an empty one) is returned untouched, `eliminated`
+//     empty -- mirrors the #213 tolerance this belt replaces
+//     (stages_delivery.test.js:483-507 is the sibling oracle for that same
+//     tolerance, on .eliminated);
+//   - a non-object element (null, a primitive -- stages_delivery.test.js:
+//     509-537 is the oracle) keeps its exact position in the output, never
+//     touched, never handed to the scan;
+//   - every object element is normalized (normalizeFieldNames, idempotent --
+//     a precondition of the scan, not pre-challenge semantics: a hand-built
+//     or v2-era checkpoint can carry `body`/`line`/`blame_tag` instead of the
+//     canonical names the scan reads) and then scanned as ONE ordered list
+//     via applyReplayInjectionScan (heuristic 4 structurally excluded -- see
+//     that function's doc comment in filterFindings.js). Survivors are
+//     re-spliced back into their original relative position among the other
+//     surviving elements; eliminated elements are removed from `list` and
+//     returned separately, stamped with a `replay_belt: true` marker on top
+//     of the scan's own eliminated_by/elimination_reason.
+function beltPartitionList(list) {
+  if (!Array.isArray(list) || list.length === 0) return { list, eliminated: [] };
+
+  const positions = [];
+  const objectElements = [];
+  for (const el of list) {
+    if (el && typeof el === 'object') {
+      const idx = objectElements.length;
+      objectElements.push({ ...el, [REPLAY_BELT_INDEX_KEY]: idx });
+      positions.push({ objIdx: idx });
+    } else {
+      positions.push({ raw: el });
+    }
+  }
+  if (objectElements.length === 0) return { list, eliminated: [] };
+
+  normalizeFieldNames(objectElements);
+  const { kept, eliminated } = applyReplayInjectionScan(objectElements);
+
+  const survivorByIdx = new Map();
+  for (const f of kept) {
+    const { [REPLAY_BELT_INDEX_KEY]: idx, ...clean } = f;
+    survivorByIdx.set(idx, clean);
+  }
+  const eliminatedOut = eliminated.map((f) => {
+    const { [REPLAY_BELT_INDEX_KEY]: _idx, ...clean } = f;
+    return { ...clean, replay_belt: true };
+  });
+
+  const splicedList = [];
+  for (const p of positions) {
+    if ('raw' in p) { splicedList.push(p.raw); continue; }
+    if (survivorByIdx.has(p.objIdx)) splicedList.push(survivorByIdx.get(p.objIdx));
+    // else: eliminated -- omitted from the spliced list, present in eliminatedOut.
+  }
+
+  return { list: splicedList, eliminated: eliminatedOut };
+}
+
+// stripEliminatedList(list) -> the #213-established element tolerance,
+// reused by the #253 belt for the FINAL .eliminated strip (see the
+// append-then-strip ordering at the call site, D2): a non-array `list`
+// passes through untouched, a non-object element passes through untouched,
+// every other element is run through applyInjectedProseStrip (idempotent --
+// a no-op on an already-stripped finding, so a resume-of-a-resume is safe).
+function stripEliminatedList(list) {
+  return Array.isArray(list)
+    ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
+    : list;
+}
+
 // --- Full orchestration: runWith --------------------------------------------
 
 // runWith(ctx, rawArgs) -> compact envelope.
@@ -7201,69 +7318,175 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(challengeOut.gaps || []));
 
-    // #213 replay belt: a challenge checkpoint recorded by a pipeline version that
-    // predates a scanned prose field (e.g. claude_md_rule/spec_text before #213) never
-    // had this run's field-strip applied when it originally passed through filterStage —
-    // a REPLAYED checkpoint.challenge (runPhase reuses checkpoints.challenge verbatim,
-    // never re-dispatching challengeStage) bypasses this run's filterStage entirely.
+    // #253 replay filtering belt (v2): rebuilds the #213 belt above on a sounder
+    // callable unit. A red-team of the #213 shape (redteam253.md) found that
+    // straight-generalizing it to applyInjectionFilter was unsound: heuristic 4
+    // (short description + high confidence) reads finding.confidence, a field
+    // detectDisagreement mutates IN PLACE (the +10 consensus boost) AFTER filterStage's
+    // own scan runs, so re-running the FULL filter here would eliminate a
+    // legitimately-corroborated finding on a fresh run, not just a replay. The fix is
+    // structural, not caller discipline: applyReplayInjectionScan (filterFindings.js)
+    // is the same 10-heuristic core with heuristic 4 excluded by construction, so this
+    // belt cannot reintroduce that failure mode no matter how it is called.
     //
-    // Rewrites challengeOut's OWN findings/unverified/eliminated IN PLACE, rather than
-    // threading stripped locals through the rest of this function, so every existing
-    // downstream reader of challengeOut.findings/.unverified is automatically correct
-    // with no second call site to keep in sync: selectDelivery/reportInput below, AND
-    // writeArtifacts's `findings:` param further down (what becomes findings.json on
-    // disk — assemble_artifacts.py's DERIVED persistence path re-projects
-    // post-review.json/checkpoint-all.json FROM THAT FILE, never consulting the
-    // in-memory postReview array, so a raw findings.json silently reintroduces the
-    // payload on the derived path even though selectDelivery's in-memory output was
-    // clean — round-1 review finding), AND phaseOutputs.challenge (=== challengeOut,
-    // already recorded by runPhase above), so slimPersistedCheckpoints persists the
-    // STRIPPED set and a future resume-of-a-resume replays an already-stripped
-    // checkpoint. .eliminated rides into that same persisted checkpoint wholesale, so it
-    // is stripped too (round-2 review): a pre-#213 checkpoint's rejected findings must
-    // not re-persist a raw citation field into checkpoint-all.json, even though they are
-    // never delivered or reported. Idempotent both ways: a fresh run's filterStage
-    // already stripped any matching field (no-op here), and re-stripping an
-    // already-stripped finding is also a no-op (nothing left to match), so
-    // resume-of-a-resume is safe.
+    // Rationale for running it at all: a REPLAYED checkpoint.challenge (runPhase reuses
+    // checkpoints.challenge verbatim, never re-dispatching challengeStage) bypasses this
+    // run's filterStage scan entirely, so an OLDER checkpoint's findings can carry a
+    // content pattern the CURRENT injection filter (whatever #256/#254/a later PR added)
+    // would have caught. Runs for BOTH fresh and replay (no replay('challenge') gate):
+    // on a fresh run every surviving finding already passed this exact scan (minus
+    // heuristic 4) at filter time THIS run, so it is a no-op by construction there.
+    //
+    // Position-preserving partition, single walk per list (findings, then unverified):
+    // beltPartitionList normalizes and re-scans only the OBJECT elements as one ordered
+    // list (heuristic 10's dedup state makes scan order load-bearing), then re-splices
+    // survivors back into their original relative position; a non-object element (null,
+    // a primitive) keeps its exact position, never touched (stages_delivery.test.js:
+    // 509-537 is the oracle); a non-array findings/unverified is untouched entirely
+    // (stages_delivery.test.js:483-507's non-array .eliminated is the sibling oracle for
+    // that same tolerance). See beltPartitionList's own doc comment for the splice
+    // mechanics and stripEliminatedList's for the #213 element tolerance it reuses.
+    //
+    // .eliminated: newly-belt-eliminated entries APPEND first, then the WHOLE resulting
+    // array runs through stripEliminatedList (order is the defence, D2): appending
+    // eliminated findings straight from the scan carries their claude_md_rule/
+    // suggestion/spec_text RAW (the scan's eliminated path never strips those -- only
+    // its kept path does), and a finding can be eliminated by its description while
+    // ALSO carrying an unrelated payload in one of those three fields; stripping the
+    // whole array only after the append is what keeps that second payload out of
+    // checkpoint-all.json. undefined/null .eliminated becomes a fresh array only when
+    // there is something to put in it; any OTHER non-array (a malformed checkpoint) is
+    // left untouched -- the append cannot happen, so the drop is disclosed on its own
+    // gap line below instead of silently losing the eliminations.
+    //
+    // Rewrites challengeOut's OWN findings/unverified/eliminated/stats IN PLACE (not
+    // threaded through locals): every existing downstream reader (selectDelivery/
+    // reportInput below, writeArtifacts's `findings:` param, phaseOutputs.challenge ===
+    // challengeOut already recorded by runPhase above) is automatically correct with no
+    // second call site to keep in sync, and slimPersistedCheckpoints persists the
+    // partitioned set so a future resume-of-a-resume replays an already-partitioned
+    // checkpoint. Sharper invariant than the #213 `.map()` (same length, same order):
+    // this REPLACES the three arrays wholesale, so a future reader inserted between
+    // runPhase('challenge') and this belt would silently see the pre-partition arrays --
+    // nothing today holds such a reference, but a later edit must not add one without
+    // moving it below this block.
     //
     // Guard: a MALFORMED replayed checkpoint (checkpoints.challenge is a non-object --
-    // string/number/boolean) must fall through to the SAME tolerant behavior this
-    // function has always had here. Every challengeOut.PROPERTY *read* below already
-    // returns undefined on a primitive (JS property access, not assignment), and the
-    // `|| []` fallbacks downstream turn that into an empty, ok:true review — there is
-    // nothing to strip when there is no object to hold findings. Property ASSIGNMENT on
-    // a primitive throws in strict mode (this file is an ES module), which the belt
+    // string/number/boolean) falls through to the SAME tolerant behavior this function
+    // has always had here. Every challengeOut.PROPERTY *read* below already returns
+    // undefined on a primitive (JS property access, not assignment), and the `|| []`
+    // fallbacks downstream turn that into an empty, ok:true review. Property ASSIGNMENT
+    // on a primitive throws in strict mode (this file is an ES module), which the belt
     // would otherwise introduce as the FIRST write ever made to challengeOut, turning a
-    // tolerated malformed checkpoint into an uncaught throw. Tolerating a malformed
-    // checkpoint this way is itself pre-existing and out of this issue's scope — a
-    // follow-up tracks tightening it.
+    // tolerated malformed checkpoint into an uncaught throw -- so the belt guards itself
+    // to a no-op when challengeOut is not an object, exactly as before.
     //
-    // Note: a belt strip on a REPLAYED checkpoint is disclosed per-finding (the
-    // `*_removed_by`/`*_removal_reason` stamps this run adds), but is NOT counted in
-    // `stats.filter` — that stat reflects only this run's OWN filterStage pass, same
-    // pre-existing shape as the #62 suggestion strip before it.
-    //
-    // List/element tolerance (Bugbot, round-2 review): a malformed checkpoint can also
-    // carry a truthy non-array `findings` (`.map` is undefined -> throws) or a
-    // null/primitive element inside an otherwise real array (stripInjectedProseFields
-    // indexes into it -> throws) — both shapes this function never wrote here and so
-    // never validated, but main still tolerated them (nothing read that deep). Mirrors
-    // stripReportExcludedFields's own skip predicate (same file) at both levels: pass
-    // a non-array through unchanged (never coerced to `[]` — every downstream reader
-    // already falls back with `|| []`, so an untouched `undefined` behaves identically
-    // and keeps the persisted checkpoint closer to its original bytes), and pass a
-    // non-object element through unchanged rather than feeding it to
-    // applyInjectedProseStrip. Fixed at this call site only — applyInjectedProseStrip /
-    // stripInjectedProseFields are twin-paired with the Python filter and must not
-    // diverge from it.
-    const beltStrip = (list) => (Array.isArray(list)
-      ? list.map((f) => ((f && typeof f === 'object') ? applyInjectedProseStrip(f) : f))
-      : list);
+    // Two empty-report-guard corners this belt touches (documented, not changed --
+    // findingsAtRisk below is pre-existing and out of #253's scope): (a) a resume where
+    // fresh discovery degrades to 0 AND the belt eliminates every replayed finding now
+    // legitimately yields an empty ok:true report -- intended, disclosed via the gap
+    // line below, not a guard bug; (b) the postFilterCount>0 replay corner (see
+    // postFilterCount's own doc comment further down) is pre-existing and unchanged, but
+    // this belt increases how often it is reachable, since it is one more way for
+    // challengeOut.findings to shrink below postFilterCount on a replay.
     if (challengeOut && typeof challengeOut === 'object') {
-      challengeOut.findings = beltStrip(challengeOut.findings);
-      challengeOut.unverified = beltStrip(challengeOut.unverified);
-      challengeOut.eliminated = beltStrip(challengeOut.eliminated);
+      const findingsResult = beltPartitionList(challengeOut.findings);
+      const unverifiedResult = beltPartitionList(challengeOut.unverified);
+      challengeOut.findings = findingsResult.list;
+      challengeOut.unverified = unverifiedResult.list;
+      const newlyEliminated = [...findingsResult.eliminated, ...unverifiedResult.eliminated];
+
+      let droppedCount = 0;
+      if (Array.isArray(challengeOut.eliminated)) {
+        challengeOut.eliminated = [...challengeOut.eliminated, ...newlyEliminated];
+      } else if ((challengeOut.eliminated === undefined || challengeOut.eliminated === null) && newlyEliminated.length) {
+        challengeOut.eliminated = newlyEliminated;
+      } else if (newlyEliminated.length) {
+        // A malformed .eliminated that is truthy and non-array (e.g. the string
+        // 'not-an-array', per the #213 tolerance test) cannot receive an append --
+        // these eliminations are dropped, not delivered and not persisted anywhere,
+        // and disclosed on their own gap line below (there is nothing to append to).
+        droppedCount = newlyEliminated.length;
+      }
+      challengeOut.eliminated = stripEliminatedList(challengeOut.eliminated);
+
+      // stats: final_count/skipped are the two numeric keys whose value IS the length
+      // of an array this belt just rewrote (challengeOut.findings / .unverified), so
+      // they are set BY ASSIGNMENT from those arrays' actual post-belt lengths -- never
+      // by subtracting this call's elimination count from whatever the replayed
+      // checkpoint claimed, which would only preserve (and on a stale/hand-edited
+      // checkpoint, compound) a pre-existing drift instead of correcting it. This makes
+      // the #192 principle ("a stale challengeOut.stats never claims more survivors
+      // than are actually in the arrays it sits next to") structural rather than
+      // arithmetic. NOT exhaustive, and not claimed to be: challenge_survived/
+      // challenge_contested/challenge_downgraded/unchallenged are untouched here --
+      // they are applyChallenges' PRE-belt per-outcome counts of what the challenge
+      // stage itself decided, and this belt's elimination is a LATER, separate cut over
+      // the same .findings/.unverified arrays, so after a belt elimination those
+      // buckets no longer sum to final_count. A reader of stats.challenge must treat
+      // them as pre-belt context, not a live survivor breakdown. reportInput and the
+      // envelope both read challengeOut.stats BY REFERENCE (this same object, further
+      // down in this function), so this mutation is visible to both for free.
+      // replay_belt_eliminated is this CALL's own total (not a cross-resume running
+      // total -- the gap line below is the resume-safe signal for that, and
+      // replay_belt_dropped just below is its cross-resume counterpart for the drop
+      // path); it is always stamped, even at 0, so a reader never has to distinguish
+      // "zero eliminations" from "key absent".
+      if (challengeOut.stats && typeof challengeOut.stats === 'object') {
+        const k1 = findingsResult.eliminated.length;
+        const k2 = unverifiedResult.eliminated.length;
+        if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
+          challengeOut.stats.final_count = challengeOut.findings.length;
+        }
+        if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
+          challengeOut.stats.skipped = challengeOut.unverified.length;
+        }
+        challengeOut.stats.replay_belt_eliminated = k1 + k2;
+
+        // Durable drop-disclosure counter: the sibling accumulation to markedCount's
+        // DERIVATION below, for the case markedCount cannot cover -- a malformed
+        // (truthy, non-array) .eliminated means the drop is recorded NOWHERE in the
+        // checkpoint, so there is nothing to re-derive from on a later resume. Carrying
+        // a running total here (only ever increased) is what lets a resume-of-a-resume
+        // still disclose a drop this call's own droppedCount (0) would otherwise hide.
+        // Only accumulated when stats is a plain object; when it is not, the per-call
+        // gap line below is the only disclosure there is for this run.
+        const priorDropped = (typeof challengeOut.stats.replay_belt_dropped === 'number'
+          && Number.isFinite(challengeOut.stats.replay_belt_dropped))
+          ? challengeOut.stats.replay_belt_dropped
+          : 0;
+        challengeOut.stats.replay_belt_dropped = priorDropped + droppedCount;
+      }
+
+      // Disclosure -- idempotent BY DERIVATION, not by counting this call's own
+      // eliminations: counts replay_belt-marked entries actually sitting in
+      // .eliminated right now, newly appended this run PLUS any carried over from a
+      // PRIOR resume's belt run (persisted verbatim in the checkpoint). A
+      // resume-of-a-resume that eliminates nothing NEW still discloses the full
+      // loss this way, rather than the gap silently vanishing on the second resume.
+      // Pushed to runWith's own top-level `gaps` (below), never `challengeOut.gaps`
+      // (which rides into the persisted checkpoint and would double-count on the
+      // NEXT resume's re-derivation of this same count).
+      const markedCount = Array.isArray(challengeOut.eliminated)
+        ? challengeOut.eliminated.filter((f) => f && typeof f === 'object' && f.replay_belt === true).length
+        : 0;
+      if (markedCount > 0) {
+        gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
+      }
+
+      // Drop-gap count: the DURABLE accumulated value (stats.replay_belt_dropped) when
+      // challengeOut.stats is a plain object, so the disclosure survives a
+      // resume-of-a-resume where this call's own droppedCount is 0 because the belt
+      // already shrank the arrays on a prior pass and there was never an array to leave
+      // a residue in; otherwise this call's own droppedCount is the only disclosure
+      // there is.
+      const dropGapCount = (challengeOut.stats && typeof challengeOut.stats === 'object'
+        && typeof challengeOut.stats.replay_belt_dropped === 'number')
+        ? challengeOut.stats.replay_belt_dropped
+        : droppedCount;
+      if (dropGapCount > 0) {
+        gaps.push(`replay-filter: ${dropGapCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter, but the malformed (non-array) eliminated bucket on this checkpoint could not record them — dropped, not delivered, not persisted`);
+      }
     }
 
     // Deterministic delivery selection: the challenge-survivors filtered by the user-chosen
