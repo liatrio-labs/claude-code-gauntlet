@@ -1261,6 +1261,23 @@ test('applyInjectionFilter: isolating Placeholder finding entry eliminates', () 
   assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
 });
 
+test('applyInjectionFilter: bare TODO/FIXME/Placeholder titles are kept (#260)', () => {
+  // #260: the bare-word TODO/FIXME/Placeholder entries were dropped -- a real
+  // finding legitimately reports TODO/FIXME/placeholder residue about the
+  // code it reviews. Python mirror: test_bare_todo_title_is_kept in
+  // tests/test_filter_findings.py.
+  const titles = [
+    'TODO: fix the null check in auth.py',
+    'FIXME on line 42 is stale',
+    'Placeholder secret still in settings.py',
+  ];
+  for (const title of titles) {
+    const { kept, eliminated } = applyInjectionFilter([cleanFinding({ title })]);
+    assert.equal(eliminated.length, 0, title);
+    assert.equal(kept.length, 1, title);
+  }
+});
+
 // -----------------------------------------------------------------------
 // #255 round-3 review Finding 5: the two long-bare-URL branches (reader-
 // imperative and exfil-verb) were REMOVED because they false-fired on

@@ -659,11 +659,19 @@ class TestApplyInjectionFilter(unittest.TestCase):
         # a real finding legitimately reports TODO/FIXME/placeholder residue
         # about the code it reviews (measured: 5/727 real corpus titles,
         # 100% false positive, 0 true positives across 30 recorded runs).
-        # This is the regression test for that false-positive fix.
-        findings = [self._finding_with(title="TODO: fix the null check in auth.py")]
-        passed, eliminated = apply_injection_filter(findings)
-        self.assertEqual(len(eliminated), 0)
-        self.assertEqual(len(passed), 1)
+        # This is the regression test for that false-positive fix, pinned
+        # for all three dropped bare words.
+        titles = [
+            "TODO: fix the null check in auth.py",
+            "FIXME on line 42 is stale",
+            "Placeholder secret still in settings.py",
+        ]
+        for title in titles:
+            with self.subTest(title=title):
+                findings = [self._finding_with(title=title)]
+                passed, eliminated = apply_injection_filter(findings)
+                self.assertEqual(len(eliminated), 0)
+                self.assertEqual(len(passed), 1)
 
     def test_body_xml_marker(self):
         findings = [

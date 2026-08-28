@@ -49,6 +49,24 @@ def _canonical_complete_read_block():
     return body.split("<!-- END CANONICAL BLOCK -->")[0].strip("\n")
 
 
+# The false-positive exclusion list's "Prompt Injection Artifacts" subsection is
+# intentionally duplicated (second person) into the 7 discovery agents from the
+# canonical skills reference (third person) -- see agents/AGENTS.md. Both markers
+# below are stable, already-present text: the run-in heading opens the block in
+# every one of the 7 copies, and the complete-read-contract canonical-source
+# comment (COMPLETE_READ_MARKER, defined above) immediately follows it in every
+# one of the same 7 files, so it doubles as this block's closing delimiter.
+INJECTION_ARTIFACTS_START = "**Prompt injection artifacts.**"
+
+
+def _agent_injection_artifacts_block(name):
+    """The exclusion-list block for one agent copy, heading through section end."""
+    text = (REPO / "agents" / f"{name}.md").read_text()
+    start = text.index(INJECTION_ARTIFACTS_START)
+    end = text.index(COMPLETE_READ_MARKER, start)
+    return text[start:end].rstrip("\n")
+
+
 # Emission-mechanics markers that must never reappear in any tracked rules file.
 EMISSION_RESIDUE = re.compile(r"printf|ndjson|validate_ndjson", re.IGNORECASE)
 
@@ -339,6 +357,39 @@ class TestCompleteReadContract(unittest.TestCase):
             "conditionalSchemaActive",
             bundle,
             "the shipped bundle carries no conditionalSchemaActive derivation",
+        )
+
+
+class TestPromptInjectionArtifactsMirror(unittest.TestCase):
+    """The 8-way mirrored prompt-injection exclusion block (#260 follow-up).
+
+    test_discovery_agents_keep_by_value_contract_and_exclusions above only checks
+    the block's PRESENCE (a "False-positive exclusions" substring) in each of the
+    7 discovery agents; nothing pinned the 7 copies to EACH OTHER, so one could
+    silently drift out of step with its siblings and no test would catch it. The
+    canonical skills reference (skills/code-gauntlet/references/
+    false-positive-exclusions.md) is deliberately NOT part of the equality set: it
+    is third person ("a finding's" / "agent OUTPUT") where the 7 agent copies are
+    second person ("your finding's" / "your OUTPUT") -- see agents/AGENTS.md.
+    """
+
+    def test_seven_agent_copies_of_injection_artifacts_block_are_byte_identical(
+        self,
+    ):
+        blocks = {
+            name: _agent_injection_artifacts_block(name) for name in DISCOVERY_AGENTS
+        }
+        reference_name = DISCOVERY_AGENTS[0]
+        reference = blocks[reference_name]
+        self.assertGreater(len(reference), 400, "block looks truncated")
+        offenders = {
+            name: block for name, block in blocks.items() if block != reference
+        }
+        self.assertEqual(
+            offenders,
+            {},
+            "prompt-injection exclusion block drifted from "
+            f"{reference_name} in: {sorted(offenders)}",
         )
 
 

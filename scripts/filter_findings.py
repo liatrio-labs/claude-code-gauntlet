@@ -657,7 +657,8 @@ def _injection_scan_core(findings, include_h4):
          ("you should run this command")
       6. Combined title+description recommends adding code that introduces a
          vulnerability or disables security features
-      7. Title matches known placeholder patterns (TODO, FIXME, etc.)
+      7. Title matches known placeholder patterns (Example/Sample/test/demo/Placeholder
+         finding stub vocabulary)
       8. Combined title+description contains XML-like injection markers
       9. File path is empty or contains template markers
       10. Duplicate signature (title+file+line)

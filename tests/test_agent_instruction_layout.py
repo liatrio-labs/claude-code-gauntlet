@@ -172,7 +172,13 @@ CODEX_CAP_BYTES = 32_768
 # above: the floor-history convention requires every prior floor bump be citable to the
 # measurement that justified it, and an uncited bump is the unverifiable claim the repo's
 # own rules prohibit.
-AGENTS_SET_BUDGET_BYTES = 21_234
+# Raised 21_234 -> 21_373 (2026-08-28, #260 follow-up): the same false-enforcement-claim
+# correction as the #55 audit above — agents/AGENTS.md said the 7 mirrored prompt-injection
+# exclusion-list copies were "only checked for presence"; a new byte-identity guard
+# (tests/test_agent_contracts.py::TestPromptInjectionArtifactsMirror) now pins them to each
+# other, so the bullet was wrong about what is enforced. Not derivable from code, and not
+# already stated at any single owning site.
+AGENTS_SET_BUDGET_BYTES = 21_373
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
