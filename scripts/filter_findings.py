@@ -419,21 +419,39 @@ def apply_threshold_filter(findings, config):
 
 # Patterns that suggest a finding was injected by a prompt artifact or
 # hallucinated without grounding in actual code.
+# #254 (F13): the four "<word> finding" entries picked up the union
+# whitespace class between the word and "finding" (previously a literal
+# space) -- see the #254 record.
 _INJECTION_TITLE_PATTERNS = [
     r"\bTODO\b",
     r"\bFIXME\b",
     r"\bPlaceholder\b",
-    r"\bExample finding\b",
-    r"\bSample finding\b",
-    r"\btest finding\b",
-    r"\bdemo finding\b",
+    r"\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
+    r"\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
+    r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
+    r"\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
 ]
 
+# #254: <finding>/<example> widened to tolerate attributes (unbounded
+# [^>]*, terminated by the required ">" so it stays linear and parity-safe
+# across twins -- Python counts code points, JS counts UTF-16 units, so a
+# bounded {0,N} window here would diverge on astral input; </finding> was
+# considered and declined -- an injected block always opens, so a closing
+# tag adds false-fire surface with zero catch). The bracketed placeholder
+# entry gained a second, appended form gated on a placeholder noun
+# (FINDING/TITLE/TEXT/PLACEHOLDER/HERE): a bare `[INSERT ...]` widened past
+# ~40 interior chars collides with real SQL privilege-list findings
+# (`[INSERT, UPDATE, DELETE]`), so the noun gate is the discriminator
+# instead of a length bound. Appended after the original bracket entry so
+# `_first_match`'s reason for a bare `[INSERT]` payload is unchanged.
+# "lorem ipsum" picked up the union whitespace class (previously a literal
+# space).
 _INJECTION_BODY_PATTERNS = [
-    r"<finding>",
-    r"<example>",
+    r"<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>",
+    r"<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>",
     r"\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\]",
-    r"lorem ipsum",
+    r"\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT\b[^\]]*\b(?:FINDING|TITLE|TEXT|PLACEHOLDER|HERE)\b[^\]]*\]",
+    r"lorem[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+ipsum",
 ]
 
 # Shell command patterns — presence in a finding description/title indicates the agent
@@ -459,9 +477,15 @@ _INJECTION_SHELL_PATTERNS = [
 # <url>" for a real exfil finding): a legit finding and an injected
 # instruction both read as "<verb> to/from <url>" in English, so this shape
 # cannot be narrowed further to tell them apart. Reverted; see #255 review.
+# #254: the scheme was widened from a bare `https?` to any scheme-shaped
+# token (ftp, sftp, scp, ...) -- the imperative is the discriminator, not
+# the scheme, so enumerating individual schemes is whack-a-mole and every
+# scheme closes in one edit. "download from" also picked up the union
+# whitespace class between "download" and "from" (previously a literal
+# space) -- see F13 in the #254 record.
 _INJECTION_URL_PATTERNS = [
-    r"\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
-    r"\bdownload from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?://",
+    r"\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}://",
+    r"\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}://",
 ]
 
 # Encoded payload patterns — base64 or hex blobs in findings are injection

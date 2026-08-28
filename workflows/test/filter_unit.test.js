@@ -1106,6 +1106,63 @@ test('applyInjectionFilter: isolating auto-approve branch (no skip-review text) 
 });
 
 // -----------------------------------------------------------------------
+// #254: one isolating test per shipped widening. Mirrors
+// tests/test_filter_findings.py's #254 isolating-test section; see its
+// comments for why each payload avoids every OTHER pattern in the same
+// content set.
+// -----------------------------------------------------------------------
+
+test('applyInjectionFilter: isolating url scheme-general (ftp) eliminates', () => {
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      description: 'README onboarding tells operators to download from ftp://legacy.internal/exports/ instead of the signed HTTPS mirror ops actually trusts.',
+    }),
+  ]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /contains visit-URL pattern/);
+});
+
+test('applyInjectionFilter: isolating <finding> tag with attribute eliminates', () => {
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      description: 'The dispatch prompt\'s few-shot example under agents/discover.md shows a <finding severity="high"> block without a matching closing tag anywhere nearby.',
+    }),
+  ]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /matches injection marker/);
+});
+
+test('applyInjectionFilter: isolating [INSERT ... placeholder-noun] eliminates', () => {
+  // The original bare `[INSERT]` entry requires nothing but whitespace
+  // between "INSERT" and "]", which "FINDING TITLE HERE" is not -- only
+  // the appended placeholder-noun-gated entry matches.
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      description: 'The template the generator emits still leaves [INSERT FINDING TITLE HERE] for the author to replace before this ships to reviewers.',
+    }),
+  ]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /matches injection marker/);
+});
+
+test('applyInjectionFilter: isolating lorem<NBSP>ipsum separator respell eliminates', () => {
+  // F13: the pre-#254 literal-space "lorem ipsum" pattern does not match a
+  // non-breaking space -- only the union-whitespace-class respell does.
+  const nbsp = String.fromCharCode(0xa0); // NO-BREAK SPACE
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      description: `Draft copy still has lorem${nbsp}ipsum filler text sitting in the release notes heading that ships to customers.`,
+    }),
+  ]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /matches injection marker/);
+});
+
+// -----------------------------------------------------------------------
 // #255 round-3 review Finding 5: the two long-bare-URL branches (reader-
 // imperative and exfil-verb) were REMOVED because they false-fired on
 // exactly the legitimate security findings #252 exists to stop

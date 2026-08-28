@@ -1824,6 +1824,79 @@ class TestApplyInjectionFilter(unittest.TestCase):
         )
 
     # -----------------------------------------------------------------------
+    # #254: one isolating test per shipped widening. Each payload is
+    # constructed to avoid every OTHER pattern in the same content set (and
+    # every other set), so a mutation that deletes/reverts only the named
+    # widening flips this test red rather than being masked by a co-firing
+    # sibling (mutation-tested in the ledger, same discipline as the
+    # #252-era isolating tests above).
+    # -----------------------------------------------------------------------
+
+    def test_isolating_url_scheme_general_eliminates(self):
+        # ftp, not http(s) -- only fires under the widened
+        # `[a-z][a-z0-9+.-]{1,15}://` scheme class, not the pre-#254 bare
+        # `https?`. No "visit" text, so the url set's other entry can't
+        # co-fire.
+        findings = [
+            self._finding_with(
+                description="README onboarding tells operators to download from ftp://legacy.internal/exports/ instead of the signed HTTPS mirror ops actually trusts."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn("contains visit-URL pattern", eliminated[0]["elimination_reason"])
+
+    def test_isolating_finding_tag_with_attribute_eliminates(self):
+        # `<finding severity="high">` only fires under the widened
+        # attribute-tolerant form -- the pre-#254 bare `<finding>` literal
+        # does not match text between the tag name and ">". No "[INSERT...]"
+        # or "lorem ipsum" text, so the body_marker set's other entries
+        # can't co-fire.
+        findings = [
+            self._finding_with(
+                description='The dispatch prompt\'s few-shot example under agents/discover.md shows a <finding severity="high"> block without a matching closing tag anywhere nearby.'
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn("matches injection marker", eliminated[0]["elimination_reason"])
+
+    def test_isolating_insert_placeholder_noun_eliminates(self):
+        # "[INSERT FINDING TITLE HERE]" only fires under the appended
+        # placeholder-noun-gated entry -- the original bare `[INSERT]`
+        # entry requires nothing but whitespace between "INSERT" and "]",
+        # which "FINDING TITLE HERE" is not. No `<finding>`/`<example>` or
+        # "lorem ipsum" text, so the body_marker set's other entries can't
+        # co-fire.
+        findings = [
+            self._finding_with(
+                description="The template the generator emits still leaves [INSERT FINDING TITLE HERE] for the author to replace before this ships to reviewers."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn("matches injection marker", eliminated[0]["elimination_reason"])
+
+    def test_isolating_lorem_ipsum_nbsp_separator_eliminates(self):
+        # F13: "lorem<NBSP>ipsum" only fires under the union-whitespace-class
+        # respell -- the pre-#254 literal-space "lorem ipsum" pattern does
+        # not match a non-breaking space. Same separator-brittleness axis as
+        # the bypass_separator_feff/bypass_separator_nel fixtures (#211).
+        nbsp = chr(0xA0)  # NO-BREAK SPACE
+        findings = [
+            self._finding_with(
+                description=f"Draft copy still has lorem{nbsp}ipsum filler text sitting in the release notes heading that ships to customers."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn("matches injection marker", eliminated[0]["elimination_reason"])
+
+    # -----------------------------------------------------------------------
     # #255 round-3 review Finding 5: the two long-bare-URL branches (reader-
     # imperative and exfil-verb) were REMOVED because they false-fired on
     # exactly the legitimate security findings #252 exists to stop

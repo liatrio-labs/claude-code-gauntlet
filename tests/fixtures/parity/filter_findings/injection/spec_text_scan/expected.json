@@ -19,7 +19,7 @@
       "id": "T2",
       "line_start": 10,
       "severity": "medium",
-      "spec_text_removal_reason": "spec_text contains visit-URL pattern: '\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+https?://'",
+      "spec_text_removal_reason": "spec_text contains visit-URL pattern: '\\\\bvisit[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+[a-z][a-z0-9+.\\\\-]{1,15}://'",
       "spec_text_removed_by": "injection",
       "title": "Null check missing in handler t2"
     },
@@ -74,7 +74,7 @@
       "id": "T7",
       "line_start": 10,
       "severity": "medium",
-      "spec_text_removal_reason": "spec_text matches injection marker: '<finding>'",
+      "spec_text_removal_reason": "spec_text matches injection marker: '<finding(?:[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff][^>]*)?>'",
       "spec_text_removed_by": "injection",
       "title": "Null check missing in handler t7"
     },
