@@ -2,6 +2,51 @@
 
 <!-- version list -->
 
+## v3.23.0 (2026-08-28)
+
+### Bug Fixes
+
+- **filter**: Placeholder-title set keys on stub vocabulary, drop bare-word entries
+  ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+- **filter**: Scheme-general url directives, attribute-tolerant markers, placeholder-gated INSERT,
+  separator respells ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+### Documentation
+
+- **skill**: Align injection-artifact field framing with combined-scan
+  ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+### Features
+
+- **filter,pipeline**: Combined-scan unification, pattern-shape fixes, replay filtering belt (#256,
+  #254, #253) ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+- **pipeline**: Replay-time injection filtering belt for challenge checkpoints
+  ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+### Refactoring
+
+- **filter**: Unify all injection content sets to combined-scan, retire the title pass
+  ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+### Testing
+
+- **filter**: Close isolating-test gap on two #254 separator respells
+  ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+- **filter**: Pin the SQL privilege-list kept carve-out for the noun-gated INSERT marker (gauntlet
+  review) ([#257](https://github.com/liatrio-labs/claude-code-gauntlet/pull/257),
+  [`75262d3`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/75262d309fec481d1035ff71fc9c0913ba4becb9))
+
+
 ## v3.22.1 (2026-08-27)
 
 ### Bug Fixes
