@@ -1190,6 +1190,66 @@ test('applyInjectionFilter: isolating title-placeholder separator respell elimin
   assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
 });
 
+// Adversarial-review round (#256/#253/#254 gap-closing): the five shipped #254 edits
+// above whose isolating test exercised a DIFFERENT list entry than the one it claimed
+// to pin -- each payload below avoids every OTHER pattern in its content set, and is
+// mutation-verified red against ITS OWN entry's revert (see the mutation ledger).
+
+test('applyInjectionFilter: isolating url visit scheme-general (sftp) eliminates', () => {
+  // C1: the "visit" entry (distinct from the "download from" entry the ftp test above
+  // exercises) was independently widened from https?:// to any scheme -- sftp isolates
+  // THIS widening from the pre-existing https-only match the "download from" test
+  // already covers.
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      description: 'Onboarding docs still tell new contributors to visit sftp://mirror.internal/legacy-archive for the artifact bundle that predates the current release process.',
+    }),
+  ]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /contains visit-URL pattern/);
+});
+
+test('applyInjectionFilter: isolating <example id="1"> tag with attribute eliminates', () => {
+  // C2: <example ...> is a SEPARATE list entry from <finding ...> (the test above pins
+  // only the latter) -- an attribute on <example> isolates its own widening.
+  const { kept, eliminated } = applyInjectionFilter([
+    cleanFinding({
+      description: 'The dispatch prompt\'s few-shot section under agents/discover.md shows an <example id="1"> block that the generator forgot to close.',
+    }),
+  ]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /matches injection marker/);
+});
+
+test('applyInjectionFilter: isolating title-placeholder separator respell (Sample finding, NBSP) eliminates', () => {
+  // F13: "Sample finding" is a separate list entry from "Example finding" (the test
+  // above pins only the latter) -- each of the four title-placeholder entries was
+  // independently respelled and needs its own isolating proof.
+  const nbsp = String.fromCharCode(0xa0); // NO-BREAK SPACE
+  const { kept, eliminated } = applyInjectionFilter([cleanFinding({ title: `Sample${nbsp}finding` })]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
+});
+
+test('applyInjectionFilter: isolating title-placeholder separator respell (test finding, NBSP) eliminates', () => {
+  const nbsp = String.fromCharCode(0xa0); // NO-BREAK SPACE
+  const { kept, eliminated } = applyInjectionFilter([cleanFinding({ title: `test${nbsp}finding` })]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
+});
+
+test('applyInjectionFilter: isolating title-placeholder separator respell (demo finding, NBSP) eliminates', () => {
+  const nbsp = String.fromCharCode(0xa0); // NO-BREAK SPACE
+  const { kept, eliminated } = applyInjectionFilter([cleanFinding({ title: `demo${nbsp}finding` })]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
+});
+
 // -----------------------------------------------------------------------
 // #255 round-3 review Finding 5: the two long-bare-URL branches (reader-
 // imperative and exfil-verb) were REMOVED because they false-fired on
@@ -1290,6 +1350,14 @@ const SUPERSET_SYNTHETICS = [
   ['', 'decode 0123456789abcdef0123456789abcdef'],
   ['0123456789abcdef0123456789abcdef | xxd', ''],
   ['', '0123456789abcdef0123456789abcdef | xxd'],
+  // #254 C3's placeholder-noun-gated [INSERT ...] append had NO synthetic at
+  // all (adversarial-review round: the one content-set entry this branch
+  // shipped with zero D6(a) coverage -- a junction-unsafe lookbehind
+  // (`(?<!\n)`) prepended to it passed both halves of D6 with the whole
+  // suite green). '[INSERT]' above covers the ORIGINAL bracket entry only
+  // ("INSERT" then whitespace then "]"); this covers the placeholder-noun
+  // form specifically.
+  ['[INSERT FINDING TITLE HERE]', ''], ['', '[INSERT FINDING TITLE HERE]'],
 ];
 
 test('#256 D6(a): combined scan is a superset of title-alone/description-alone, per content set', () => {
@@ -1307,4 +1375,25 @@ test('#256 D6(a): combined scan is a superset of title-alone/description-alone, 
       }
     }
   }
+});
+
+// Structural per-entry coverage (adversarial-review round, #256/#254
+// gap-closing): D6(a) above only proves the superset property over WHATEVER
+// synthetics happen to exist -- it says nothing about a pattern entry no
+// synthetic ever reaches. This asserts every individual regex in every
+// SUGGESTION_SETS content set is matched (title-alone or description-alone)
+// by at least one synthetic above, so a future pattern added with no
+// covering synthetic goes red HERE instead of silently escaping D6(a)
+// entirely (the exact shape of the #254 C3 gap this round closed).
+test('#256 D6(a) coverage: every content-set pattern entry has at least one covering synthetic', () => {
+  const uncovered = [];
+  for (const [phrase, patterns] of SUGGESTION_SETS) {
+    patterns.forEach((rx, idx) => {
+      const covered = SUPERSET_SYNTHETICS.some(
+        ([title, description]) => rx.test(title) || rx.test(description),
+      );
+      if (!covered) uncovered.push(`${phrase} pattern #${idx}: ${rx.source}`);
+    });
+  }
+  assert.deepEqual(uncovered, [], `pattern(s) with no covering synthetic: ${JSON.stringify(uncovered)}`);
 });

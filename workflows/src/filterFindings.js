@@ -522,17 +522,20 @@ function stripSuggestedFixCodeIfNeeded(finding, firstPatternStrip) {
   return finding;
 }
 
-// Port of _strip_injected_prose_fields + _strip_suggested_fix_code_if_needed
+// Port of _strip_injected_prose_fields + _strip_suggested_fix_code_if_needed,
 // composed as the SINGLE per-finding step applyInjectionFilter runs for every
-// KEPT finding, exposed standalone for the #213 replay belt (stages.js): a
-// challenge checkpoint recorded by a pipeline version that predates a scanned
-// field (e.g. claude_md_rule/spec_text before #213) never had this strip
-// applied when it originally ran through filterStage, and a REPLAYED
-// checkpoint.challenge bypasses filterStage entirely (the persisted output is
-// reused verbatim) -- so report and delivery selection must pass every
-// challenge-stage finding through this before reading it. Idempotent: a
-// finding a fresh run's applyInjectionFilter already stripped has nothing
-// left to match, so a second pass here is a no-op.
+// KEPT finding. Post-#253 role: the belt (stages.js) no longer routes
+// challengeOut.findings/.unverified through this function directly -- their
+// KEPT path now runs applyReplayInjectionScan (injectionScanCore), which
+// calls this same strip composition INLINE (see injectionScanCore's own kept
+// branch) before a survivor is returned. This export's one remaining caller
+// is stages.js's stripEliminatedList, applied to the persisted
+// challengeOut.eliminated bucket alone -- the scan's eliminated path never
+// strips a finding's prose fields, so a belt-eliminated (or pre-#213
+// replayed) entry still needs this pass before it lands in
+// checkpoint-all.json. Idempotent: a finding already stripped (by either
+// caller) has nothing left to match, so a second pass here is a no-op --
+// safe to call again on a resume-of-a-resume.
 export function applyInjectedProseStrip(finding) {
   const [stripped, firstPatternStrip] = stripInjectedProseFields(finding);
   return stripSuggestedFixCodeIfNeeded(stripped, firstPatternStrip);

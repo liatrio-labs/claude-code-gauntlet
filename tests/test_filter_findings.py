@@ -24,6 +24,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -1919,6 +1920,84 @@ class TestApplyInjectionFilter(unittest.TestCase):
         # patterns do not match a non-breaking space.
         nbsp = chr(0xA0)  # NO-BREAK SPACE
         findings = [self._finding_with(title=f"Example{nbsp}finding")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn(
+            "title matches placeholder pattern", eliminated[0]["elimination_reason"]
+        )
+
+    # -----------------------------------------------------------------------
+    # Adversarial-review round (#256/#253/#254 gap-closing): five of the ten
+    # shipped #254 pattern edits had NO isolating test that exercised THEIR
+    # OWN list entry -- the tests above pin only the "download from"
+    # scheme-general widening, the `<finding>` attribute widening, and the
+    # "Example finding" NBSP respell, leaving "visit" scheme-general,
+    # `<example>` attribute, and the "Sample"/"test"/"demo finding" NBSP
+    # respells each fully revertable with the whole suite green. Each
+    # payload below avoids every OTHER pattern in its content set, mutation-
+    # verified red against its own entry's revert (mutation ledger).
+    # -----------------------------------------------------------------------
+
+    def test_isolating_visit_url_scheme_general_eliminates(self):
+        # sftp, not http(s) -- only fires under the widened
+        # `[a-z][a-z0-9+.-]{1,15}://` scheme class on the "visit" entry
+        # specifically (distinct from the "download from" entry
+        # test_isolating_url_scheme_general_eliminates above pins). No
+        # "download from" text, so the url set's other entry can't co-fire.
+        findings = [
+            self._finding_with(
+                description="Onboarding docs still tell new contributors to visit sftp://mirror.internal/legacy-archive for the artifact bundle that predates the current release process."
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn("contains visit-URL pattern", eliminated[0]["elimination_reason"])
+
+    def test_isolating_example_tag_with_attribute_eliminates(self):
+        # `<example id="1">` only fires under the widened attribute-tolerant
+        # form of the SEPARATE `<example>` entry (distinct from `<finding>`,
+        # which test_isolating_finding_tag_with_attribute_eliminates above
+        # pins). No `<finding>`, "[INSERT...]" or "lorem ipsum" text, so the
+        # body_marker set's other entries can't co-fire.
+        findings = [
+            self._finding_with(
+                description='The dispatch prompt\'s few-shot section under agents/discover.md shows an <example id="1"> block that the generator forgot to close.'
+            )
+        ]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn("matches injection marker", eliminated[0]["elimination_reason"])
+
+    def test_isolating_sample_finding_nbsp_separator_eliminates(self):
+        # F13: "Sample<NBSP>finding" is a SEPARATE list entry from "Example
+        # finding" (pinned above) -- each of the four title-placeholder
+        # entries was independently respelled and needs its own isolating
+        # proof.
+        nbsp = chr(0xA0)  # NO-BREAK SPACE
+        findings = [self._finding_with(title=f"Sample{nbsp}finding")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn(
+            "title matches placeholder pattern", eliminated[0]["elimination_reason"]
+        )
+
+    def test_isolating_test_finding_nbsp_separator_eliminates(self):
+        nbsp = chr(0xA0)  # NO-BREAK SPACE
+        findings = [self._finding_with(title=f"test{nbsp}finding")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn(
+            "title matches placeholder pattern", eliminated[0]["elimination_reason"]
+        )
+
+    def test_isolating_demo_finding_nbsp_separator_eliminates(self):
+        nbsp = chr(0xA0)  # NO-BREAK SPACE
+        findings = [self._finding_with(title=f"demo{nbsp}finding")]
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
         self.assertEqual(len(passed), 0)
@@ -3895,21 +3974,31 @@ def _compiled_content_pattern_sets():
 
 class TestCombinedScanIsSupersetOfFieldwiseScans(unittest.TestCase):
     def _assert_superset(self, title, description):
+        """Asserts the superset property for one (title, description) pair
+        and returns the number of (finding, content-set) pairs that actually
+        exercised the assertTrue branch (fired on a field alone) -- callers
+        that need to prove the property was non-vacuously EXERCISED, not
+        merely never violated, sum this return value (see
+        test_superset_holds_over_every_parity_fixture_finding)."""
         combined = f"{title}\n{description}"
+        live_pairs = 0
         for phrase, patterns in _compiled_content_pattern_sets():
             fires_title = any(rx.search(title) for rx in patterns)
             fires_description = any(rx.search(description) for rx in patterns)
             fires_combined = any(rx.search(combined) for rx in patterns)
             if fires_title or fires_description:
+                live_pairs += 1
                 self.assertTrue(
                     fires_combined,
                     f"set {phrase!r} fired on a field alone but not on "
                     f"combined (title={title!r}, description={description!r})",
                 )
+        return live_pairs
 
     def test_superset_holds_over_every_parity_fixture_finding(self):
         base = _REPO_ROOT / "tests" / "fixtures" / "parity" / "filter_findings"
         checked = 0
+        live_pairs = 0
         for input_path in base.rglob("input.json"):
             data = json.loads(input_path.read_text())
             findings = data.get("findings") if isinstance(data, dict) else None
@@ -3922,112 +4011,168 @@ class TestCombinedScanIsSupersetOfFieldwiseScans(unittest.TestCase):
                 description = finding.get("description")
                 if not isinstance(title, str) or not isinstance(description, str):
                     continue
-                self._assert_superset(title, description)
+                live_pairs += self._assert_superset(title, description)
                 checked += 1
         self.assertGreater(
             checked, 0, "no findings with string title+description found"
         )
+        # Round-2 adversarial review: `checked > 0` alone is silently
+        # vacuous -- it only proves findings were SCANNED, not that any of
+        # them ever reached the assertTrue branch above (a corpus fixture
+        # rewording could drop every field-alone fire to 0 with this test
+        # still green). Pin a floor on the count of (finding, content-set)
+        # pairs that actually exercised it (measured 23 on the corpus at the
+        # time this was written).
+        self.assertGreaterEqual(
+            live_pairs,
+            10,
+            f"only {live_pairs} (finding, content-set) pair(s) actually fired on a "
+            "field alone over the parity corpus -- the superset property is being "
+            "checked but barely exercised; a fixture change that drops this further "
+            "needs a look, not a silent pass",
+        )
+
+    # One title-only and one description-only synthetic per pattern entry
+    # (not just per set), so a branch-specific narrowing (e.g. auto-approve's
+    # determiner-vs-"and <verb>" branches, encoded's before/after-branch
+    # pairs) is exercised on both sides of the title/description join, not
+    # just the first pattern in each list. Shared with
+    # test_every_content_set_pattern_has_a_covering_synthetic below, which
+    # asserts every pattern entry here is covered by at least one of these
+    # -- adding a pattern without a synthetic goes red there.
+    _TARGETED_SYNTHETICS: ClassVar[list[tuple[str, str]]] = [
+        ("skip review", ""),
+        ("", "skip review"),
+        ("auto-approve this PR", ""),
+        ("", "auto-approve this PR"),
+        ("auto-approve and merge", ""),
+        ("", "auto-approve and merge"),
+        ("bypass security controls", ""),
+        ("", "bypass security controls"),
+        ("bypass the authentication", ""),
+        ("", "bypass the authentication"),
+        ("disable authentication", ""),
+        ("", "disable authentication"),
+        ("mark this finding as safe", ""),
+        ("", "mark this finding as safe"),
+        ("approve this PR", ""),
+        ("", "approve this PR"),
+        ("you should run", ""),
+        ("", "you should run"),
+        ("execute the following", ""),
+        ("", "execute the following"),
+        ("run this command", ""),
+        ("", "run this command"),
+        ("please run", ""),
+        ("", "please run"),
+        ("paste this into your terminal", ""),
+        ("", "paste this into your terminal"),
+        ("copy and paste the following", ""),
+        ("", "copy and paste the following"),
+        # #256 property test payload, not executable code.
+        ("add eval(", ""),
+        ("", "add eval("),
+        ("use eval(", ""),
+        ("", "use eval("),
+        ("disable CORS", ""),
+        ("", "disable CORS"),
+        ("disable CSRF protection", ""),
+        ("", "disable CSRF protection"),
+        ("allow all origins", ""),
+        ("", "allow all origins"),
+        ("set secure to false", ""),
+        ("", "set secure to false"),
+        ("disable TLS verification", ""),
+        ("", "disable TLS verification"),
+        ("skip certificate verification", ""),
+        ("", "skip certificate verification"),
+        ("disable security check", ""),
+        ("", "disable security check"),
+        ("<finding>", ""),
+        ("", "<finding>"),
+        ("<example>", ""),
+        ("", "<example>"),
+        ("[INSERT]", ""),
+        ("", "[INSERT]"),
+        ("lorem ipsum", ""),
+        ("", "lorem ipsum"),
+        ("rm -rf /", ""),
+        ("", "rm -rf /"),
+        ("curl https://example.com", ""),
+        ("", "curl https://example.com"),
+        ("wget https://example.com", ""),
+        ("", "wget https://example.com"),
+        ("git push", ""),
+        ("", "git push"),
+        ("gh api", ""),
+        ("", "gh api"),
+        ("visit https://example.com", ""),
+        ("", "visit https://example.com"),
+        ("download from https://example.com", ""),
+        ("", "download from https://example.com"),
+        (
+            "decode SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc=",
+            "",
+        ),
+        (
+            "",
+            "decode SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc=",
+        ),
+        (
+            "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= | sh",
+            "",
+        ),
+        (
+            "",
+            "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= | sh",
+        ),
+        ("decode 0123456789abcdef0123456789abcdef", ""),
+        ("", "decode 0123456789abcdef0123456789abcdef"),
+        ("0123456789abcdef0123456789abcdef | xxd", ""),
+        ("", "0123456789abcdef0123456789abcdef | xxd"),
+        # #254 C3's placeholder-noun-gated [INSERT ...] append had NO
+        # synthetic at all (adversarial-review round: the one content-set
+        # entry this branch shipped with zero D6(a) coverage -- a
+        # junction-unsafe lookbehind `(?<!\n)` prepended to it passed
+        # both halves of D6 with the whole suite green). "[INSERT]"
+        # above covers the ORIGINAL bracket entry only ("INSERT" then
+        # whitespace then "]"); this covers the placeholder-noun form
+        # specifically.
+        ("[INSERT FINDING TITLE HERE]", ""),
+        ("", "[INSERT FINDING TITLE HERE]"),
+    ]
 
     def test_superset_holds_over_targeted_synthetics(self):
-        # One title-only and one description-only synthetic per pattern
-        # entry (not just per set), so a branch-specific narrowing (e.g.
-        # auto-approve's determiner-vs-"and <verb>" branches, encoded's
-        # before/after-branch pairs) is exercised on both sides of the
-        # title/description join, not just the first pattern in each list.
-        synthetics = [
-            ("skip review", ""),
-            ("", "skip review"),
-            ("auto-approve this PR", ""),
-            ("", "auto-approve this PR"),
-            ("auto-approve and merge", ""),
-            ("", "auto-approve and merge"),
-            ("bypass security controls", ""),
-            ("", "bypass security controls"),
-            ("bypass the authentication", ""),
-            ("", "bypass the authentication"),
-            ("disable authentication", ""),
-            ("", "disable authentication"),
-            ("mark this finding as safe", ""),
-            ("", "mark this finding as safe"),
-            ("approve this PR", ""),
-            ("", "approve this PR"),
-            ("you should run", ""),
-            ("", "you should run"),
-            ("execute the following", ""),
-            ("", "execute the following"),
-            ("run this command", ""),
-            ("", "run this command"),
-            ("please run", ""),
-            ("", "please run"),
-            ("paste this into your terminal", ""),
-            ("", "paste this into your terminal"),
-            ("copy and paste the following", ""),
-            ("", "copy and paste the following"),
-            # #256 property test payload, not executable code.
-            ("add eval(", ""),
-            ("", "add eval("),
-            ("use eval(", ""),
-            ("", "use eval("),
-            ("disable CORS", ""),
-            ("", "disable CORS"),
-            ("disable CSRF protection", ""),
-            ("", "disable CSRF protection"),
-            ("allow all origins", ""),
-            ("", "allow all origins"),
-            ("set secure to false", ""),
-            ("", "set secure to false"),
-            ("disable TLS verification", ""),
-            ("", "disable TLS verification"),
-            ("skip certificate verification", ""),
-            ("", "skip certificate verification"),
-            ("disable security check", ""),
-            ("", "disable security check"),
-            ("<finding>", ""),
-            ("", "<finding>"),
-            ("<example>", ""),
-            ("", "<example>"),
-            ("[INSERT]", ""),
-            ("", "[INSERT]"),
-            ("lorem ipsum", ""),
-            ("", "lorem ipsum"),
-            ("rm -rf /", ""),
-            ("", "rm -rf /"),
-            ("curl https://example.com", ""),
-            ("", "curl https://example.com"),
-            ("wget https://example.com", ""),
-            ("", "wget https://example.com"),
-            ("git push", ""),
-            ("", "git push"),
-            ("gh api", ""),
-            ("", "gh api"),
-            ("visit https://example.com", ""),
-            ("", "visit https://example.com"),
-            ("download from https://example.com", ""),
-            ("", "download from https://example.com"),
-            (
-                "decode SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc=",
-                "",
-            ),
-            (
-                "",
-                "decode SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc=",
-            ),
-            (
-                "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= | sh",
-                "",
-            ),
-            (
-                "",
-                "SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiYXNlNjQgZW5jb2RlZCBzdHJpbmc= | sh",
-            ),
-            ("decode 0123456789abcdef0123456789abcdef", ""),
-            ("", "decode 0123456789abcdef0123456789abcdef"),
-            ("0123456789abcdef0123456789abcdef | xxd", ""),
-            ("", "0123456789abcdef0123456789abcdef | xxd"),
-        ]
-        for title, description in synthetics:
+        for title, description in self._TARGETED_SYNTHETICS:
             with self.subTest(title=title, description=description):
                 self._assert_superset(title, description)
+
+    def test_every_content_set_pattern_has_a_covering_synthetic(self):
+        """Structural per-entry coverage (adversarial-review round,
+        #256/#254 gap-closing): test_superset_holds_over_targeted_synthetics
+        only proves the property over WHATEVER synthetics happen to exist --
+        it says nothing about a pattern entry no synthetic ever reaches
+        (exactly the shape of the #254 C3 gap this round closed: one
+        content-set entry had zero synthetics, so a junction-unsafe
+        lookbehind added to it passed the whole suite silently). Asserts
+        every individual regex in every _CONTENT_PATTERN_SETS content set is
+        matched (title-alone or description-alone) by at least one
+        _TARGETED_SYNTHETICS entry, so a future pattern added with no
+        covering synthetic goes red HERE instead of escaping D6(a) coverage
+        entirely -- the one-edit-per-extension AGENTS.md design rule.
+        """
+        uncovered = []
+        for phrase, patterns in _compiled_content_pattern_sets():
+            for idx, rx in enumerate(patterns):
+                covered = any(
+                    rx.search(title) or rx.search(description)
+                    for title, description in self._TARGETED_SYNTHETICS
+                )
+                if not covered:
+                    uncovered.append(f"{phrase!r} pattern #{idx}: {rx.pattern!r}")
+        self.assertEqual(
+            uncovered, [], f"pattern(s) with no covering synthetic: {uncovered}"
+        )
 
 
 if __name__ == "__main__":

@@ -586,6 +586,14 @@ test('runWith replay belt: a content-set payload in a REPLAYED .findings entry i
   assert.equal(elim.replay_belt, true, 'the belt-elimination marker distinguishes this from a challenge-time elimination');
   assert.match(elim.elimination_reason, /contains shell command pattern/);
 
+  // The belt's internal splice-position marker (beltPartitionList's
+  // REPLAY_BELT_INDEX_KEY, `__replayBeltIndex`) must never survive into a returned
+  // finding, on either the surviving or the belt-eliminated path.
+  const survivor = persistedChallenge.findings.find((f) => f.id === 'M1');
+  assert.ok(!Object.hasOwn(survivor, '__replayBeltIndex'), 'survivor in the persisted checkpoint carries no belt index key');
+  assert.ok(!Object.hasOwn(persisted.postReview.find((f) => f.id === 'M1'), '__replayBeltIndex'), 'survivor in postReview carries no belt index key');
+  assert.ok(!Object.hasOwn(elim, '__replayBeltIndex'), 'belt-eliminated entry carries no belt index key');
+
   assert.equal(out.stats.challenge.final_count, 1, 'final_count decremented by the one belt elimination');
   assert.equal(out.stats.challenge.replay_belt_eliminated, 1);
   assert.equal(out.stats.highConfidence, 1, 'the envelope highConfidence count agrees with the shrunken findings array');
@@ -594,6 +602,38 @@ test('runWith replay belt: a content-set payload in a REPLAYED .findings entry i
   assert.ok(gap, `expected a replay-filter gap, got: ${JSON.stringify(out.gaps)}`);
   assert.match(gap, /^replay-filter: 1 finding\(s\)/);
   assert.doesNotMatch(gap.toLowerCase(), /no write proof|partial-artifacts/, 'forbidden substrings (D12)');
+});
+
+function beltStaleFinalCountChallengeCheckpoint() {
+  return {
+    findings: [
+      makeFinding('M1', { severity: 'critical', confidence: 95, report_tag: 'main', report_destination: 'main' }),
+      makeFinding('BAD1', {
+        severity: 'high', confidence: 80, report_tag: 'main', report_destination: 'main',
+        description: REPLAY_SHELL_PAYLOAD,
+      }),
+    ],
+    unverified: [],
+    eliminated: [],
+    gaps: [],
+    // Deliberately stale: a hand-edited/corrupted checkpoint whose final_count does not
+    // match findings.length (2). If the belt adjusted by SUBTRACTING its own elimination
+    // count (999 - 1 = 998) instead of assigning from the actual post-belt array length,
+    // the impossible drift would be preserved rather than corrected.
+    stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 999 },
+    generated_at: '2026-07-18T00:00:00Z',
+  };
+}
+
+test('runWith replay belt: a stale final_count is corrected by ASSIGNMENT to the actual post-belt findings.length, not decremented from its stale value (#253)', async () => {
+  const args = validArgs({ checkpoints: { challenge: beltStaleFinalCountChallengeCheckpoint() } });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.equal(
+    out.stats.challenge.final_count,
+    1,
+    'final_count assigned from the actual surviving array length (1), not 999 - 1 = 998',
+  );
 });
 
 function beltEliminationUnverifiedChallengeCheckpoint() {
@@ -638,6 +678,60 @@ test('runWith replay belt: a FRESH (non-replayed) challenge output is a no-op by
   assert.equal(out.stats.challenge.replay_belt_eliminated, 0);
 });
 
+// A short-description (< MIN_BODY_WORDS), high-confidence (>= HIGH_CONFIDENCE_THRESHOLD)
+// finding that trips NO content-set pattern -- exactly the shape heuristic 4 (excluded
+// from applyReplayInjectionScan by construction) would eliminate if the belt's call site
+// ever regressed to the FULL filter (applyInjectionFilter, which includes h4). #253's
+// whole reason to exist is that detectDisagreement mutates confidence IN PLACE (the +10
+// consensus boost) AFTER filterStage's own record-time scan, so a legitimately-
+// corroborated short finding like this one can cross the h4 threshold only AFTER record
+// time -- re-running the full filter against a replayed checkpoint would wrongly
+// eliminate it.
+const REPLAY_H4_SHAPED_PAYLOAD = 'Loop bound is off by one';
+
+function h4CallSiteChallengeCheckpoint() {
+  return {
+    findings: [
+      makeFinding('SHORT', {
+        severity: 'medium', confidence: 90, report_tag: 'main', report_destination: 'main',
+        description: REPLAY_H4_SHAPED_PAYLOAD,
+      }),
+      makeFinding('BAD1', {
+        severity: 'high', confidence: 80, report_tag: 'main', report_destination: 'main',
+        description: REPLAY_SHELL_PAYLOAD,
+      }),
+    ],
+    unverified: [],
+    eliminated: [],
+    gaps: [],
+    stats: { total_input: 2, dispatched: 2, completed: 2, skipped: 0, final_count: 2 },
+    generated_at: '2026-07-18T00:00:00Z',
+  };
+}
+
+test('runWith replay belt: the call site is structurally confidence-free -- a short-description/high-confidence finding is DELIVERED (never belt-eliminated) while a genuine content-set payload beside it IS eliminated (#253 h4 call-site pin)', async () => {
+  const args = validArgs({ checkpoints: { challenge: h4CallSiteChallengeCheckpoint() } });
+  let persisted = null;
+  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.ok(persisted, 'writer received the payload');
+
+  // SHORT: delivered, present in the persisted challenge findings, absent from
+  // .eliminated -- proves the belt's callable unit does NOT include heuristic 4.
+  assert.ok(persisted.postReview.some((f) => f.id === 'SHORT'), 'SHORT delivered in postReview');
+  const persistedChallenge = persisted.checkpoints.phases.challenge;
+  assert.ok(persistedChallenge.findings.some((f) => f.id === 'SHORT'), 'SHORT present in the persisted challenge findings');
+  assert.ok(!persistedChallenge.eliminated.some((f) => f.id === 'SHORT'), 'SHORT absent from the persisted eliminated bucket');
+
+  // BAD1: still eliminated -- proves the pin is not merely "the belt does nothing".
+  assert.ok(!persisted.postReview.some((f) => f.id === 'BAD1'), 'BAD1 withheld from delivery');
+  assert.ok(persistedChallenge.eliminated.some((f) => f.id === 'BAD1'), 'BAD1 recorded in the persisted eliminated bucket');
+
+  assert.equal(out.stats.challenge.replay_belt_eliminated, 1, 'exactly one (BAD1) belt elimination, not two');
+});
+
 function nonArrayEliminatedWithBeltEliminationChallengeCheckpoint() {
   return {
     findings: [
@@ -673,6 +767,33 @@ test('runWith replay belt: a belt elimination against a malformed (non-array) .e
   assert.ok(dropGap, `expected a replay-filter drop gap, got: ${JSON.stringify(out.gaps)}`);
   assert.match(dropGap, /could not record them/);
   assert.doesNotMatch(dropGap.toLowerCase(), /no write proof|partial-artifacts/, 'forbidden substrings (D12)');
+  assert.equal(out.stats.challenge.replay_belt_dropped, 1, 'durable drop counter stamped on run 1');
+});
+
+test('runWith replay belt: the DROP gap (malformed .eliminated) is derived from a DURABLE accumulated stats.replay_belt_dropped counter, so it SURVIVES a resume-of-a-resume even though this call eliminates nothing new (#253/D4/D7)', async () => {
+  const args1 = validArgs({ checkpoints: { challenge: nonArrayEliminatedWithBeltEliminationChallengeCheckpoint() } });
+  let persisted1 = null;
+  const out1 = await runWith(makeCtx(args1, { onPersist: (p) => { persisted1 = p; } }), args1);
+  assert.equal(out1.ok, true);
+  const dropGap1 = out1.gaps.find((g) => g.startsWith('replay-filter:') && /could not record/.test(g));
+  assert.ok(dropGap1, `expected a drop gap on run 1, got: ${JSON.stringify(out1.gaps)}`);
+  assert.equal(out1.stats.challenge.replay_belt_dropped, 1);
+
+  // Resume-of-a-resume: feed run 1's OWN persisted challenge checkpoint straight back
+  // in. The belt eliminates NOTHING NEW this time (BAD1 is already gone from
+  // .findings) and .eliminated is STILL the malformed 'not-an-array' -- there was never
+  // anywhere to persist a residue, unlike the well-formed markedCount path. Before the
+  // durable-counter fix, this call's own droppedCount (0) made the gap silently vanish
+  // on exactly this second resume, even though the finding is still unrecoverably
+  // unrecorded.
+  const resumedChallenge = persisted1.checkpoints.phases.challenge;
+  const args2 = validArgs({ checkpoints: { challenge: resumedChallenge } });
+  const out2 = await runWith(makeCtx(args2), args2);
+  assert.equal(out2.ok, true);
+  const dropGap2 = out2.gaps.find((g) => g.startsWith('replay-filter:') && /could not record/.test(g));
+  assert.ok(dropGap2, `expected the drop gap to SURVIVE a resume-of-a-resume, got: ${JSON.stringify(out2.gaps)}`);
+  assert.equal(out2.stats.challenge.replay_belt_dropped, 1, 'accumulated counter carries forward unchanged -- no NEW drop this call');
+  assert.equal(out2.stats.challenge.replay_belt_eliminated, 0, 'zero NEW eliminations on this call');
 });
 
 function beltEliminatedWithClaudeMdRuleChallengeCheckpoint() {
@@ -764,7 +885,16 @@ test('runWith replay belt: the replay-filter gap is derived from .eliminated (no
   // in. The belt eliminates NOTHING NEW this time (BAD1 is already gone) -- the gap
   // line must still disclose the loss, derived from the replay_belt-marked entry
   // CARRIED in .eliminated, not from this call's own (zero) elimination count.
+  //
+  // De-aliasing note: runPhase returns checkpoints.challenge VERBATIM, so
+  // `challengeOut === resumedChallenge`, and the belt rewrites
+  // findings/unverified/eliminated/stats IN PLACE. Reading `resumedChallenge.*` AFTER
+  // run 2 would therefore read run 2's OWN output on both sides of a comparison --
+  // snapshot the pre-run-2 content FIRST so the "belt twice equals belt once"
+  // assertions below compare against run 1's actual persisted content, not against
+  // whatever run 2 just wrote into the same object.
   const resumedChallenge = persisted1.checkpoints.phases.challenge;
+  const resumedChallengeSnapshot = JSON.parse(JSON.stringify(resumedChallenge));
   const args2 = validArgs({ checkpoints: { challenge: resumedChallenge } });
   let persisted2 = null;
   const out2 = await runWith(makeCtx(args2, { onPersist: (p) => { persisted2 = p; } }), args2);
@@ -774,9 +904,21 @@ test('runWith replay belt: the replay-filter gap is derived from .eliminated (no
   assert.equal(gap2, gap1, 'gap text identical across the resume-of-a-resume');
   assert.equal(out2.stats.challenge.replay_belt_eliminated, 0, 'zero NEW eliminations on this call');
 
-  // Content itself is unchanged by the second pass -- belt twice equals belt once.
-  assert.deepEqual(persisted2.checkpoints.phases.challenge.findings, resumedChallenge.findings);
-  assert.deepEqual(persisted2.checkpoints.phases.challenge.eliminated, resumedChallenge.eliminated);
+  // Content itself is unchanged by the second pass -- belt twice equals belt once,
+  // compared against the PRE-run-2 snapshot (never the aliased, now-mutated object).
+  assert.deepEqual(persisted2.checkpoints.phases.challenge.findings, resumedChallengeSnapshot.findings);
+  assert.deepEqual(persisted2.checkpoints.phases.challenge.eliminated, resumedChallengeSnapshot.eliminated);
+
+  // Positive survivor-content assertion: M1 (the one belt survivor) must be
+  // byte-identical between run 1's persisted output and run 2's -- a belt that
+  // rewrites a survivor's fields on a re-scan (e.g. corrupting content on every pass)
+  // would go undetected by the two deepEquals above alone, since THOSE only compare
+  // run 2 against a snapshot of run 1's output, not run 1's INPUT against run 2's
+  // output for the same finding.
+  const survivor1 = resumedChallengeSnapshot.findings.find((f) => f.id === 'M1');
+  const survivor2 = persisted2.checkpoints.phases.challenge.findings.find((f) => f.id === 'M1');
+  assert.ok(survivor1 && survivor2, 'M1 present in both runs');
+  assert.deepEqual(survivor2, survivor1, 'a belt survivor is byte-identical to its input finding across a re-scan');
 });
 
 test('runWith with legacy args.reviewConfig (no args.reviewMd) threads it into the filter stage and echoes "preParsed"', async () => {

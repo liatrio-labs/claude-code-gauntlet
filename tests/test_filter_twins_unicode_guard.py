@@ -599,19 +599,54 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
     # the `\n` junction.
     # -----------------------------------------------------------------------
 
-    _CONTENT_SET_FAMILIES = (
-        "_INJECTION_SHELL_PATTERNS",
-        "_INJECTION_URL_PATTERNS",
-        "_INJECTION_ENCODED_PATTERNS",
-        "_INJECTION_BYPASS_PATTERNS",
-        "_INJECTION_INSTRUCTIONAL_PATTERNS",
-        "_INJECTION_VULN_INTRO_PATTERNS",
-        "_INJECTION_BODY_PATTERNS",
-    )
+    @staticmethod
+    def _content_set_family_names():
+        """AST-derive the content-set family names from `_CONTENT_PATTERN_SETS`
+        (scripts/filter_findings.py) instead of a hard-coded name tuple, so an
+        8th content set added to that table is anchor-checked BY DEFAULT.
+        Round-2 review: this module's own docstring promises "discovery is by
+        SHAPE, not by a name allowlist, so a brand-new pattern list or call
+        site is covered by default" -- a hard-coded 7-name tuple here
+        contradicted that for this one guard specifically, and an added
+        8th set with an anchored pattern passed this test silently (confirmed
+        by execution). Each `_CONTENT_PATTERN_SETS` element is
+        `(phrase_string, tuple(_INJECTION_XXX_PATTERNS))`; this walks that
+        literal and pulls the `_INJECTION_XXX_PATTERNS` Name out of the
+        `tuple(...)` call in element position 1 -- the exact list this guard
+        must scan for anchors, with no separate list to keep in sync.
+        """
+        tree = ast.parse(PY_SRC.read_text(encoding="utf-8"), filename=str(PY_SRC))
+        cps_node = None
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "_CONTENT_PATTERN_SETS"
+            ):
+                cps_node = node
+                break
+        assert cps_node is not None, "could not locate _CONTENT_PATTERN_SETS assignment"
+
+        names = []
+        for elt in cps_node.value.elts:
+            assert isinstance(elt, ast.Tuple) and len(elt.elts) == 2, (
+                f"_CONTENT_PATTERN_SETS element is not a (phrase, patterns) pair: {ast.dump(elt)}"
+            )
+            patterns_expr = elt.elts[1]
+            assert isinstance(patterns_expr, ast.Call), (
+                f"_CONTENT_PATTERN_SETS element's patterns side is not a call: {ast.dump(patterns_expr)}"
+            )
+            arg = patterns_expr.args[0]
+            assert isinstance(arg, ast.Name), (
+                f"_CONTENT_PATTERN_SETS element's patterns side does not reference a bare name: {ast.dump(arg)}"
+            )
+            names.append(arg.id)
+        return tuple(names)
 
     def test_content_sets_have_no_anchors_or_multiline_flags(self):
         offenders = []
-        for name in self._CONTENT_SET_FAMILIES:
+        for name in self._content_set_family_names():
             fam = self.list_families.get(name)
             self.assertIsNotNone(fam, f"{name} not found by discovery")
             for p in fam["patterns"]:

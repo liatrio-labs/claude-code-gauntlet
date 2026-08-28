@@ -4118,22 +4118,52 @@ export async function runWith(ctx, rawArgs) {
       }
       challengeOut.eliminated = stripEliminatedList(challengeOut.eliminated);
 
-      // stats: adjust exactly the two numeric keys that count .findings/.unverified
-      // sizes (challengeStage's final_count/skipped -- applyChallenges.js/
-      // challengeStage's stats shape has no OTHER key that counts either array), so a
-      // stale challengeOut.stats never claims more survivors than are actually in the
-      // arrays it sits next to (#192 principle). reportInput and the envelope both read
-      // challengeOut.stats BY REFERENCE (this same object, further down in this
-      // function), so this mutation is visible to both for free. replay_belt_eliminated
-      // is this CALL's own total (not a cross-resume running total -- the gap line
-      // below is the resume-safe signal for that); it is always stamped, even at 0, so
-      // a reader never has to distinguish "zero eliminations" from "key absent".
+      // stats: final_count/skipped are the two numeric keys whose value IS the length
+      // of an array this belt just rewrote (challengeOut.findings / .unverified), so
+      // they are set BY ASSIGNMENT from those arrays' actual post-belt lengths -- never
+      // by subtracting this call's elimination count from whatever the replayed
+      // checkpoint claimed, which would only preserve (and on a stale/hand-edited
+      // checkpoint, compound) a pre-existing drift instead of correcting it. This makes
+      // the #192 principle ("a stale challengeOut.stats never claims more survivors
+      // than are actually in the arrays it sits next to") structural rather than
+      // arithmetic. NOT exhaustive, and not claimed to be: challenge_survived/
+      // challenge_contested/challenge_downgraded/unchallenged are untouched here --
+      // they are applyChallenges' PRE-belt per-outcome counts of what the challenge
+      // stage itself decided, and this belt's elimination is a LATER, separate cut over
+      // the same .findings/.unverified arrays, so after a belt elimination those
+      // buckets no longer sum to final_count. A reader of stats.challenge must treat
+      // them as pre-belt context, not a live survivor breakdown. reportInput and the
+      // envelope both read challengeOut.stats BY REFERENCE (this same object, further
+      // down in this function), so this mutation is visible to both for free.
+      // replay_belt_eliminated is this CALL's own total (not a cross-resume running
+      // total -- the gap line below is the resume-safe signal for that, and
+      // replay_belt_dropped just below is its cross-resume counterpart for the drop
+      // path); it is always stamped, even at 0, so a reader never has to distinguish
+      // "zero eliminations" from "key absent".
       if (challengeOut.stats && typeof challengeOut.stats === 'object') {
         const k1 = findingsResult.eliminated.length;
         const k2 = unverifiedResult.eliminated.length;
-        if (typeof challengeOut.stats.final_count === 'number') challengeOut.stats.final_count -= k1;
-        if (typeof challengeOut.stats.skipped === 'number') challengeOut.stats.skipped -= k2;
+        if (typeof challengeOut.stats.final_count === 'number' && Array.isArray(challengeOut.findings)) {
+          challengeOut.stats.final_count = challengeOut.findings.length;
+        }
+        if (typeof challengeOut.stats.skipped === 'number' && Array.isArray(challengeOut.unverified)) {
+          challengeOut.stats.skipped = challengeOut.unverified.length;
+        }
         challengeOut.stats.replay_belt_eliminated = k1 + k2;
+
+        // Durable drop-disclosure counter: the sibling accumulation to markedCount's
+        // DERIVATION below, for the case markedCount cannot cover -- a malformed
+        // (truthy, non-array) .eliminated means the drop is recorded NOWHERE in the
+        // checkpoint, so there is nothing to re-derive from on a later resume. Carrying
+        // a running total here (only ever increased) is what lets a resume-of-a-resume
+        // still disclose a drop this call's own droppedCount (0) would otherwise hide.
+        // Only accumulated when stats is a plain object; when it is not, the per-call
+        // gap line below is the only disclosure there is for this run.
+        const priorDropped = (typeof challengeOut.stats.replay_belt_dropped === 'number'
+          && Number.isFinite(challengeOut.stats.replay_belt_dropped))
+          ? challengeOut.stats.replay_belt_dropped
+          : 0;
+        challengeOut.stats.replay_belt_dropped = priorDropped + droppedCount;
       }
 
       // Disclosure -- idempotent BY DERIVATION, not by counting this call's own
@@ -4151,8 +4181,19 @@ export async function runWith(ctx, rawArgs) {
       if (markedCount > 0) {
         gaps.push(`replay-filter: ${markedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter and were removed — disclosed per-finding in the eliminated set (eliminated_by:'injection', replay_belt:true), not counted in stats.filter`);
       }
-      if (droppedCount > 0) {
-        gaps.push(`replay-filter: ${droppedCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter, but the malformed (non-array) eliminated bucket on this checkpoint could not record them — dropped, not delivered, not persisted`);
+
+      // Drop-gap count: the DURABLE accumulated value (stats.replay_belt_dropped) when
+      // challengeOut.stats is a plain object, so the disclosure survives a
+      // resume-of-a-resume where this call's own droppedCount is 0 because the belt
+      // already shrank the arrays on a prior pass and there was never an array to leave
+      // a residue in; otherwise this call's own droppedCount is the only disclosure
+      // there is.
+      const dropGapCount = (challengeOut.stats && typeof challengeOut.stats === 'object'
+        && typeof challengeOut.stats.replay_belt_dropped === 'number')
+        ? challengeOut.stats.replay_belt_dropped
+        : droppedCount;
+      if (dropGapCount > 0) {
+        gaps.push(`replay-filter: ${dropGapCount} finding(s) recorded by an earlier pipeline pass matched this run's injection filter, but the malformed (non-array) eliminated bucket on this checkpoint could not record them — dropped, not delivered, not persisted`);
       }
     }
 
