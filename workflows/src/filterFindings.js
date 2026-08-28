@@ -241,17 +241,23 @@ export function applyThresholdFilter(findings, config) {
 
 // --- Filter: injection artifact detection -----------------------------------
 
-// #254 (F13): the four "<word> finding" entries picked up the union
-// whitespace class between the word and "finding" (previously a literal
-// space) -- see the #254 record.
+// #254 (F13): the four (now five) "<word> finding" entries picked up the
+// union whitespace class between the word and "finding" (previously a
+// literal space) -- see the #254 record.
+// #260: the bare-word TODO/FIXME/Placeholder entries were dropped -- a real
+// finding legitimately reports TODO/FIXME/placeholder residue about the code
+// it reviews (measured: 5/727 real corpus titles, 100% false positive, 0
+// true positives across 30 recorded runs). Detection now keys on the stub
+// vocabulary "<word> finding" itself -- the phrase an injected scaffold
+// title tends to spell and a real finding about residue essentially never
+// does -- so the standalone `Placeholder` entry was replaced by a
+// `Placeholder finding` entry alongside its four siblings.
 const INJECTION_TITLE_PATTERNS = [
-  /\bTODO\b/i,
-  /\bFIXME\b/i,
-  /\bPlaceholder\b/i,
   /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
+  /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
 ];
 
 // #254: <finding>/<example> widened to tolerate attributes (unbounded

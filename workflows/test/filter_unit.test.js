@@ -1250,6 +1250,17 @@ test('applyInjectionFilter: isolating title-placeholder separator respell (demo 
   assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
 });
 
+test('applyInjectionFilter: isolating Placeholder finding entry eliminates', () => {
+  // #260: the bare /\bPlaceholder\b/i entry was dropped in favor of a
+  // "Placeholder finding" entry alongside its four siblings -- this payload
+  // spells the new bigram and avoids every other pattern in the module,
+  // isolating the new entry from the surviving four.
+  const { kept, eliminated } = applyInjectionFilter([cleanFinding({ title: 'Placeholder finding title here' })]);
+  assert.equal(eliminated.length, 1);
+  assert.equal(kept.length, 0);
+  assert.match(eliminated[0].elimination_reason, /title matches placeholder pattern/);
+});
+
 // -----------------------------------------------------------------------
 // #255 round-3 review Finding 5: the two long-bare-URL branches (reader-
 // imperative and exfil-verb) were REMOVED because they false-fired on

@@ -419,17 +419,23 @@ def apply_threshold_filter(findings, config):
 
 # Patterns that suggest a finding was injected by a prompt artifact or
 # hallucinated without grounding in actual code.
-# #254 (F13): the four "<word> finding" entries picked up the union
-# whitespace class between the word and "finding" (previously a literal
-# space) -- see the #254 record.
+# #254 (F13): the four (now five) "<word> finding" entries picked up the
+# union whitespace class between the word and "finding" (previously a
+# literal space) -- see the #254 record.
+# #260: the bare-word TODO/FIXME/Placeholder entries were dropped -- a real
+# finding legitimately reports TODO/FIXME/placeholder residue about the code
+# it reviews (measured: 5/727 real corpus titles, 100% false positive, 0
+# true positives across 30 recorded runs). Detection now keys on the stub
+# vocabulary "<word> finding" itself -- the phrase an injected scaffold
+# title tends to spell and a real finding about residue essentially never
+# does -- so the standalone `Placeholder` entry was replaced by a
+# `Placeholder finding` entry alongside its four siblings.
 _INJECTION_TITLE_PATTERNS = [
-    r"\bTODO\b",
-    r"\bFIXME\b",
-    r"\bPlaceholder\b",
     r"\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
     r"\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
     r"\btest[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
     r"\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
+    r"\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b",
 ]
 
 # #254: <finding>/<example> widened to tolerate attributes (unbounded

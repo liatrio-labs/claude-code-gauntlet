@@ -645,9 +645,25 @@ class TestApplyInjectionFilter(unittest.TestCase):
         self.assertEqual(len(eliminated), 1)
 
     def test_placeholder_title(self):
-        findings = [self._finding_with(title="TODO: fill in later")]
+        findings = [
+            self._finding_with(title="Placeholder finding: replace before merge")
+        ]
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
+        self.assertIn(
+            "title matches placeholder pattern", eliminated[0]["elimination_reason"]
+        )
+
+    def test_bare_todo_title_is_kept(self):
+        # #260: the bare-word TODO/FIXME/Placeholder entries were dropped --
+        # a real finding legitimately reports TODO/FIXME/placeholder residue
+        # about the code it reviews (measured: 5/727 real corpus titles,
+        # 100% false positive, 0 true positives across 30 recorded runs).
+        # This is the regression test for that false-positive fix.
+        findings = [self._finding_with(title="TODO: fix the null check in auth.py")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 0)
+        self.assertEqual(len(passed), 1)
 
     def test_body_xml_marker(self):
         findings = [
@@ -1998,6 +2014,19 @@ class TestApplyInjectionFilter(unittest.TestCase):
     def test_isolating_demo_finding_nbsp_separator_eliminates(self):
         nbsp = chr(0xA0)  # NO-BREAK SPACE
         findings = [self._finding_with(title=f"demo{nbsp}finding")]
+        passed, eliminated = apply_injection_filter(findings)
+        self.assertEqual(len(eliminated), 1)
+        self.assertEqual(len(passed), 0)
+        self.assertIn(
+            "title matches placeholder pattern", eliminated[0]["elimination_reason"]
+        )
+
+    def test_isolating_placeholder_finding_eliminates(self):
+        # #260: the bare `\bPlaceholder\b` entry was dropped in favor of a
+        # "Placeholder finding" entry alongside its four siblings -- this
+        # payload spells the new bigram and avoids every other pattern in
+        # the module, isolating the new entry from the surviving four.
+        findings = [self._finding_with(title="Placeholder finding title here")]
         passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
         self.assertEqual(len(passed), 0)
