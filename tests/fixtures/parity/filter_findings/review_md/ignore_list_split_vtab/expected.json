@@ -1,0 +1,8 @@
+{
+  "config": {
+    "ignore": [
+      "foo\u000bbar",
+      "baz"
+    ]
+  }
+}

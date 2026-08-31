@@ -254,6 +254,84 @@ def _strip_matching_quotes(item):
     return item
 
 
+def _split_review_lines(text):
+    """Split ``text`` on the universal-newline alternation ``\r\n | \r | \n``.
+
+    The converged twin line splitter (issue #243). Replaces Python's
+    ``str.splitlines()`` (which also breaks on U+000B/U+000C/U+001C-1E/U+0085/
+    U+2028/U+2029) and the JS twin's ``split('\n')`` / ``split(/\r?\n/)`` -- the
+    two twins now agree byte-for-byte on every line boundary. The alternation
+    order (``\r\n`` first) reproduces Python ``open()``'s universal-newline
+    translation exactly, so a lone ``\r``, a ``\r\n``, and a ``\n`` all break the
+    line identically in both engines (``re.split`` here and JS
+    ``text.split(/\r\n|\r|\n/)``), while a U+2028/U+000B/U+0085 stays inside the
+    line. This subsumes the old "strip one trailing ``\r``" step: ``\r\n`` still
+    collapses to one break, and a lone ``\r`` -- which the Python file-read path
+    never delivers (``open()`` already translated it) but the JS twin sees raw --
+    now converges instead of surviving inside the line.
+    """
+    return re.split(r"\r\n|\r|\n", text)
+
+
+# The config-parser pattern declarations (issue #243) are GENERATED from
+# scripts/filter_patterns_registry.py -- edit the registry, then run
+# scripts/generate_filter_patterns.py. ``.`` under DOTALL / ``[\s\S]`` became
+# ``[^\x00]`` (cross-twin symmetric, NOT behavior-preserving against a NUL in the
+# block body); re.ASCII rides on the case-folding markers so a homoglyph key like
+# a homoglyph key (dotless-i U+0131 in "deep-review") no longer matches
+# (converged with the JS ``/i`` twin).
+# generated-from-filter-pattern-registry:_REVIEW_BLOCK_PATTERNS do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_BLOCK_PATTERNS = [
+    r"```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```",
+    r"<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->",
+    r"```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```",
+    r"<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->",
+]
+# /generated-from-filter-pattern-registry:_REVIEW_BLOCK_PATTERNS
+# generated-from-filter-pattern-registry:_REVIEW_CONFIDENCE_RE do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_CONFIDENCE_RE = re.compile(
+    r"(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})",
+    re.IGNORECASE | re.ASCII,
+)
+# /generated-from-filter-pattern-registry:_REVIEW_CONFIDENCE_RE
+# generated-from-filter-pattern-registry:_REVIEW_SECURITY_RE do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_SECURITY_RE = re.compile(
+    r"(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})",
+    re.IGNORECASE | re.ASCII,
+)
+# /generated-from-filter-pattern-registry:_REVIEW_SECURITY_RE
+# generated-from-filter-pattern-registry:_REVIEW_SEVERITY_RE do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_SEVERITY_RE = re.compile(
+    r"(?:^|\n)[ \t]*severity_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(critical|high|medium|low)",
+    re.IGNORECASE | re.ASCII,
+)
+# /generated-from-filter-pattern-registry:_REVIEW_SEVERITY_RE
+# generated-from-filter-pattern-registry:_REVIEW_IGNORE_RE do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_IGNORE_RE = re.compile(
+    r"(?:^|\n)[ \t]*ignore[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n((?:[ \t]*-[^\n]*\n?)+)",
+    re.IGNORECASE | re.ASCII,
+)
+# /generated-from-filter-pattern-registry:_REVIEW_IGNORE_RE
+# generated-from-filter-pattern-registry:_REVIEW_IGNORE_ITEM_RE do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_IGNORE_ITEM_RE = re.compile(
+    r"^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*-[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*",
+    re.ASCII,
+)
+# /generated-from-filter-pattern-registry:_REVIEW_IGNORE_ITEM_RE
+# generated-from-filter-pattern-registry:_REVIEW_EXCL_BLOCK_RE do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_EXCL_BLOCK_RE = re.compile(
+    r"```[^\n]*\n([^\x00]*?)```",
+    re.ASCII,
+)
+# /generated-from-filter-pattern-registry:_REVIEW_EXCL_BLOCK_RE
+# generated-from-filter-pattern-registry:_REVIEW_EXCL_BULLET_RE do not edit; run scripts/generate_filter_patterns.py
+_REVIEW_EXCL_BULLET_RE = re.compile(
+    r"^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$",
+    re.ASCII,
+)
+# /generated-from-filter-pattern-registry:_REVIEW_EXCL_BULLET_RE
+
+
 def parse_review_md(path):
     """
     Extract confidence_threshold, severity_threshold, and ignore patterns from REVIEW.md.
@@ -280,26 +358,13 @@ def parse_review_md(path):
         warn(f"Could not read REVIEW.md: {e}; using default thresholds.")
         return config
 
-    # Match a YAML-style code-gauntlet config block.
-    # Accepts:
-    #   ```yaml\n# code-gauntlet\n...\n```
-    #   <!-- code-gauntlet-config\n...\n-->
-    #   ## code-gauntlet config\nkey: value (until blank line or next heading)
-    block_patterns = [
-        # Fenced code block (yaml or plain)
-        r"```(?:yaml|)[\s]*#?\s*code-gauntlet(?:[^\n]*)?\n(.*?)```",
-        # HTML comment block
-        r"<!--\s*code-gauntlet-config\s*\n(.*?)-->",
-        # Legacy pre-rename markers -- user repos written against deep-review keep
-        # working. Order (current before legacy) must stay in lockstep with the JS
-        # twin's blockPatterns so both pick the same block when several match.
-        r"```(?:yaml|)[\s]*#?\s*deep-review(?:[^\n]*)?\n(.*?)```",
-        r"<!--\s*deep-review-config\s*\n(.*?)-->",
-    ]
-
+    # Match a YAML-style code-gauntlet config block (patterns in
+    # _REVIEW_BLOCK_PATTERNS). Markers are matched case-insensitively but
+    # ASCII-folded (re.ASCII), so a homoglyph marker (dotless-i U+0131 in
+    # "deep-review") no longer matches -- converged with the JS `/i` twin.
     block_text = ""
-    for pattern in block_patterns:
-        m = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+    for pattern in _REVIEW_BLOCK_PATTERNS:
+        m = re.search(pattern, text, re.IGNORECASE | re.ASCII)
         if m:
             block_text = m.group(1)
             break
@@ -311,42 +376,42 @@ def parse_review_md(path):
         )
         block_text = text
 
-    # Every key regex is anchored to the start of a line (ignoring leading
-    # whitespace) via `^` + re.MULTILINE. A `#` before the key -- a commented-out
-    # example line, e.g. `# confidence_threshold: 70` in a scaffolding template --
-    # is not in the `[ \t]*` leading-whitespace class, so it breaks the anchor and
-    # the line is correctly ignored. Without this anchor, a commented example
-    # silently became live config (issue #94 adversarial review F1).
-    m = re.search(
-        r"^[ \t]*confidence_threshold\s*[:=]\s*(\d+)", block_text, re.MULTILINE
-    )
+    # Every key regex is anchored to a line start via `(?:^|\n)` (converged with
+    # the JS twin: `/m` broke a line after \r/U+2028/U+2029, this only breaks
+    # after \n or string start). A `#` before the key -- a commented-out example
+    # line, e.g. `# confidence_threshold: 70` in a scaffolding template -- is not
+    # in the `[ \t]*` leading-whitespace class, so it breaks the anchor and the
+    # line is correctly ignored (issue #94 adversarial review F1).
+    #
+    # confidence_threshold / security_min_confidence are bounded to a 1-3 digit
+    # ASCII run and accepted only when <= 100 (review-md-spec.md `<0-100>`): a
+    # value above 100 is ignored (defaults apply). This closes the measured
+    # int()-vs-parseInt() divergence on out-of-range values (>2^53 spelled
+    # `1e+21` in JS, an exact int in Python) and the unicode-\d divergence
+    # (Arabic-Indic digits U+0667 U+0665 matched Python's `\d` but never JS's
+    # ASCII `\d`).
+    m = _REVIEW_CONFIDENCE_RE.search(block_text)
     if m:
-        config["confidence_threshold"] = int(m.group(1))
+        value = int(m.group(1))
+        if value <= 100:
+            config["confidence_threshold"] = value
 
-    # security_min_confidence
-    m = re.search(
-        r"^[ \t]*security_min_confidence\s*[:=]\s*(\d+)", block_text, re.MULTILINE
-    )
+    m = _REVIEW_SECURITY_RE.search(block_text)
     if m:
-        config["security_min_confidence"] = int(m.group(1))
+        value = int(m.group(1))
+        if value <= 100:
+            config["security_min_confidence"] = value
 
-    # severity_threshold
-    m = re.search(
-        r"^[ \t]*severity_threshold\s*[:=]\s*(critical|high|medium|low)",
-        block_text,
-        re.IGNORECASE | re.MULTILINE,
-    )
+    m = _REVIEW_SEVERITY_RE.search(block_text)
     if m:
         config["severity_threshold"] = m.group(1).lower()
 
     # ignore list -- lines after "ignore:" that start with "  -" or "- ". The
-    # `ignore:` anchor itself: same rationale, `^[ \t]*` before it, never `#`.
-    ignore_section = re.search(
-        r"^[ \t]*ignore\s*:\s*\n((?:[ \t]*-[^\n]*\n?)+)", block_text, re.MULTILINE
-    )
+    # `ignore:` anchor itself: same rationale, `[ \t]*` before it, never `#`.
+    ignore_section = _REVIEW_IGNORE_RE.search(block_text)
     if ignore_section:
-        for line in ignore_section.group(1).splitlines():
-            item = re.sub(r"^\s*-\s*", "", line).strip()
+        for line in _split_review_lines(ignore_section.group(1)):
+            item = _REVIEW_IGNORE_ITEM_RE.sub("", line).strip()
             if item:
                 config["ignore"].append(_strip_matching_quotes(item))
 
@@ -1754,18 +1819,23 @@ def load_exclusions(path):
 
     patterns = []
 
-    # Extract from fenced code blocks first
-    block_match = re.search(r"```[^\n]*\n(.*?)```", text, re.DOTALL)
+    # Extract from fenced code blocks first. `.` under DOTALL became `[^\x00]`
+    # and the line split became the converged `_split_review_lines` (universal-
+    # newline: \r\n | \r | \n) -- both respells mirror the JS twin exactly
+    # (issue #243).
+    block_match = _REVIEW_EXCL_BLOCK_RE.search(text)
     if block_match:
-        for line in block_match.group(1).splitlines():
+        for line in _split_review_lines(block_match.group(1)):
             line = line.strip()
             if line and not line.startswith("#"):
                 patterns.append(line)
         return patterns
 
-    # Fallback: bullet list items
-    for line in text.splitlines():
-        m = re.match(r"^\s*[-*]\s+(.+)$", line)
+    # Fallback: bullet list items. The tail is `([^\n]+)$` (explicit, identical
+    # in both engines) rather than `(.+)$` -- JS `.` excludes \r/U+2028/U+2029,
+    # so the old JS twin silently applied ZERO exclusions on such input.
+    for line in _split_review_lines(text):
+        m = _REVIEW_EXCL_BULLET_RE.match(line)
         if m:
             patterns.append(m.group(1).strip())
 

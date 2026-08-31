@@ -117,6 +117,59 @@ function stripMatchingQuotes(item) {
   return item;
 }
 
+// Converged twin line splitter (issue #243): split on the universal-newline
+// alternation \r\n | \r | \n (that order, \r\n first). Mirrors Python's
+// _split_review_lines (re.split(r"\r\n|\r|\n", text)) byte-for-byte and
+// reproduces Python open()'s universal-newline translation, so a lone \r, a
+// \r\n, and a \n all break the line identically in both engines. This subsumes
+// the old "strip one trailing \r" step and converges the lone-\r case the raw
+// JS text used to keep inside the line -- see the Python docstring.
+function splitReviewLines(text) {
+  return text.split(/\r\n|\r|\n/);
+}
+
+// The config-parser pattern declarations (issue #243) are GENERATED from
+// scripts/filter_patterns_registry.py -- edit the registry, then run
+// scripts/generate_filter_patterns.py. `.`/`[\s\S]` became `[^\x00]`
+// (cross-twin symmetric, NOT behavior-preserving against a NUL in the block
+// body); the Python twin carries re.ASCII where these literals carry `/i`.
+// generated-from-filter-pattern-registry:REVIEW_BLOCK_PATTERNS do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_BLOCK_PATTERNS = [
+  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```/i,
+  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*code-gauntlet-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
+  /```(?:yaml|)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*#?[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review(?:[^\n]*)?\n([^\x00]*?)```/i,
+  /<!--[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*deep-review-config[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n([^\x00]*?)-->/i,
+];
+// /generated-from-filter-pattern-registry:REVIEW_BLOCK_PATTERNS
+// generated-from-filter-pattern-registry:REVIEW_CONFIDENCE_RE do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_CONFIDENCE_RE =
+  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})/i;
+// /generated-from-filter-pattern-registry:REVIEW_CONFIDENCE_RE
+// generated-from-filter-pattern-registry:REVIEW_SECURITY_RE do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_SECURITY_RE =
+  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})/i;
+// /generated-from-filter-pattern-registry:REVIEW_SECURITY_RE
+// generated-from-filter-pattern-registry:REVIEW_SEVERITY_RE do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_SEVERITY_RE =
+  /(?:^|\n)[ \t]*severity_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(critical|high|medium|low)/i;
+// /generated-from-filter-pattern-registry:REVIEW_SEVERITY_RE
+// generated-from-filter-pattern-registry:REVIEW_IGNORE_RE do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_IGNORE_RE =
+  /(?:^|\n)[ \t]*ignore[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\n((?:[ \t]*-[^\n]*\n?)+)/i;
+// /generated-from-filter-pattern-registry:REVIEW_IGNORE_RE
+// generated-from-filter-pattern-registry:REVIEW_IGNORE_ITEM_RE do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_IGNORE_ITEM_RE =
+  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*-[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*/;
+// /generated-from-filter-pattern-registry:REVIEW_IGNORE_ITEM_RE
+// generated-from-filter-pattern-registry:REVIEW_EXCL_BLOCK_RE do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_EXCL_BLOCK_RE =
+  /```[^\n]*\n([^\x00]*?)```/;
+// /generated-from-filter-pattern-registry:REVIEW_EXCL_BLOCK_RE
+// generated-from-filter-pattern-registry:REVIEW_EXCL_BULLET_RE do not edit; run scripts/generate_filter_patterns.py
+const REVIEW_EXCL_BULLET_RE =
+  /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[-*][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+([^\n]+)$/;
+// /generated-from-filter-pattern-registry:REVIEW_EXCL_BULLET_RE
+
 // Port of parse_review_md. Python reads a file by path; this twin takes the
 // REVIEW.md TEXT directly (the workflow runtime has no disk access).
 //
@@ -133,20 +186,13 @@ function parseReviewMd(text) {
 
   if (text === undefined || text === null) return config;
 
-  // Two block patterns tried in order: fenced ```yaml block, then HTML comment
-  // block. DOTALL is `[\s\S]*?` (JS regex has no /s-independent dotall flag
-  // pre-ES2018 semantics issue here — `[\s\S]` is used for portability).
-  const blockPatterns = [
-    /```(?:yaml|)[\s]*#?\s*code-gauntlet(?:[^\n]*)?\n([\s\S]*?)```/i,
-    /<!--\s*code-gauntlet-config\s*\n([\s\S]*?)-->/i,
-    // Legacy pre-rename markers -- same current-before-legacy order as the Python
-    // twin's block_patterns so both pick the same block when several match.
-    /```(?:yaml|)[\s]*#?\s*deep-review(?:[^\n]*)?\n([\s\S]*?)```/i,
-    /<!--\s*deep-review-config\s*\n([\s\S]*?)-->/i,
-  ];
-
+  // Block patterns tried in order (REVIEW_BLOCK_PATTERNS): fenced ```yaml block,
+  // HTML comment block, then the two legacy deep-review markers. DOTALL is now
+  // `[^\x00]` (matches every char but NUL) rather than `[\s\S]`; the Python twin
+  // matches these ASCII-folded (re.ASCII), which these non-unicode `/i` literals
+  // already are, so `# deep-revıew` matches in neither.
   let blockText = '';
-  for (const pattern of blockPatterns) {
+  for (const pattern of REVIEW_BLOCK_PATTERNS) {
     const m = pattern.exec(text);
     if (m) {
       blockText = m[1];
@@ -158,27 +204,35 @@ function parseReviewMd(text) {
   // return value is unaffected so the JS twin has nothing to emit).
   if (!blockText) blockText = text;
 
-  // Every key regex is anchored to the start of a line (ignoring leading
-  // whitespace) via `^` + the `m` flag. A `#` before the key -- a commented-out
-  // example line, e.g. `# confidence_threshold: 70` in a scaffolding template --
-  // is not in the `[ \t]*` leading-whitespace class, so it breaks the anchor and
-  // the line is correctly ignored. Without this anchor, a commented example
-  // silently became live config (issue #94 adversarial review F1).
-  let m = /^[ \t]*confidence_threshold\s*[:=]\s*(\d+)/m.exec(blockText);
-  if (m) config.confidence_threshold = parseInt(m[1], 10);
+  // Every key regex is anchored to a line start via `(?:^|\n)` (converged with
+  // the Python twin: the old `/m` flag broke a line after \r/U+2028/U+2029, this
+  // only breaks after \n or string start). A `#` before the key is not in the
+  // `[ \t]*` class, so a commented example stays inert (issue #94 F1).
+  //
+  // confidence_threshold / security_min_confidence are bounded to a 1-3 digit
+  // ASCII run and accepted only when <= 100 (review-md-spec `<0-100>`): a value
+  // above 100 is ignored (defaults apply). This closes the parseInt()-vs-int()
+  // divergence on out-of-range values -- `1e+21` in JS, an exact int in Python.
+  let m = REVIEW_CONFIDENCE_RE.exec(blockText);
+  if (m) {
+    const value = parseInt(m[1], 10);
+    if (value <= 100) config.confidence_threshold = value;
+  }
 
-  m = /^[ \t]*security_min_confidence\s*[:=]\s*(\d+)/m.exec(blockText);
-  if (m) config.security_min_confidence = parseInt(m[1], 10);
+  m = REVIEW_SECURITY_RE.exec(blockText);
+  if (m) {
+    const value = parseInt(m[1], 10);
+    if (value <= 100) config.security_min_confidence = value;
+  }
 
-  m = /^[ \t]*severity_threshold\s*[:=]\s*(critical|high|medium|low)/im.exec(blockText);
+  m = REVIEW_SEVERITY_RE.exec(blockText);
   if (m) config.severity_threshold = m[1].toLowerCase();
 
   // ignore: consecutive "-"-led lines, indentation-tolerant (spaces or tabs).
-  // The `ignore:` anchor itself. Same rationale: `^[ \t]*` before it, never `#`.
-  const ignoreSection = /^[ \t]*ignore\s*:\s*\n((?:[ \t]*-[^\n]*\n?)+)/m.exec(blockText);
+  const ignoreSection = REVIEW_IGNORE_RE.exec(blockText);
   if (ignoreSection) {
-    for (const line of ignoreSection[1].split('\n')) {
-      const item = line.replace(/^\s*-\s*/, '').trim();
+    for (const line of splitReviewLines(ignoreSection[1])) {
+      const item = line.replace(REVIEW_IGNORE_ITEM_RE, '').trim();
       if (item) config.ignore.push(stripMatchingQuotes(item));
     }
   }
@@ -750,23 +804,23 @@ function loadExclusions(text) {
 
   const patterns = [];
 
-  const blockMatch = /```[^\n]*\n([\s\S]*?)```/.exec(text);
+  const blockMatch = REVIEW_EXCL_BLOCK_RE.exec(text);
   if (blockMatch) {
-    for (const rawLine of blockMatch[1].split('\n')) {
+    for (const rawLine of splitReviewLines(blockMatch[1])) {
       const line = rawLine.trim();
       if (line && !line.startsWith('#')) patterns.push(line);
     }
     return patterns;
   }
 
-  // Split on \r?\n (not plain '\n'): on CRLF input, a plain split leaves a
-  // trailing \r on every line, and `.` in the regex below excludes line
-  // terminators (including \r), so `(.+)$` could never bridge to the
-  // (non-multiline) end-of-string anchor -- every bullet would silently fail
-  // to match. Python's splitlines() (used by load_exclusions) strips \r\n as
-  // a single line break, so this normalizes JS to the same behavior.
-  for (const line of text.split(/\r?\n/)) {
-    const m = /^\s*[-*]\s+(.+)$/.exec(line);
+  // Fallback: bullet list items. splitReviewLines splits on the universal-newline
+  // alternation \r\n | \r | \n, so CRLF, a lone \r, and \n all break the line
+  // identically (matching Python's universal-newline file read); the tail is
+  // `([^\n]+)$` (explicit, identical
+  // in both engines) rather than `(.+)$`, whose `.` excluded \r/U+2028/U+2029
+  // and silently zeroed a user's exclusions on such input (issue #243).
+  for (const line of splitReviewLines(text)) {
+    const m = REVIEW_EXCL_BULLET_RE.exec(line);
     if (m) patterns.push(m[1].trim());
   }
 

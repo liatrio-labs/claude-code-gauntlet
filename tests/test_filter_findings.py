@@ -41,6 +41,7 @@ from scripts.filter_findings import (
     _count_words,
     _is_test_correctness_finding,
     _route_by_dimension,
+    _split_review_lines,
     apply_exclusions,
     apply_injection_filter,
     apply_threshold_filter,
@@ -3483,6 +3484,49 @@ class TestConsolidateCrossAgent(unittest.TestCase):
             import os
 
             os.unlink(tmppath)
+
+
+# ---------------------------------------------------------------------------
+# _split_review_lines (converged universal-newline splitter, issue #243)
+# ---------------------------------------------------------------------------
+
+
+class TestSplitReviewLines(unittest.TestCase):
+    """Direct pin for the Python twin's universal-newline splitter.
+
+    The load_exclusions / parse_review_md parity fixtures cannot observe a
+    mutation of THIS helper's carriage-return handling: both consumers read
+    the markdown through ``open()``, whose universal-newline translation
+    already collapses ``\r``/``\r\n`` to ``\n`` before the splitter runs, so a
+    lone ``\r`` never reaches ``_split_review_lines`` on the file-read path.
+    This test feeds a RAW string (as the JS twin sees it) straight to the
+    helper so a revert to a bare ``text.split("\n")`` -- which leaves an
+    interior lone ``\r`` inside the line and changes the line COUNT -- goes
+    red. It is the Python half of the cross-twin convergence the JS parity
+    fixtures (bullet_fallback_lone_cr / fenced_split_lone_cr /
+    ignore_list_split_lone_cr) pin on their side.
+    """
+
+    def test_lone_cr_breaks_the_line(self):
+        # bare split("\n") would keep this as one element ["a\rb"].
+        self.assertEqual(_split_review_lines("a\rb"), ["a", "b"])
+
+    def test_crlf_collapses_to_one_break(self):
+        self.assertEqual(_split_review_lines("a\r\nb"), ["a", "b"])
+
+    def test_lf_breaks_the_line(self):
+        self.assertEqual(_split_review_lines("a\nb"), ["a", "b"])
+
+    def test_matches_open_universal_newline_translation(self):
+        # re.split(r"\r\n|\r|\n") must equal what open() produces then splits
+        # on \n -- the property the whole convergence rests on.
+        for raw in ("a\r\r\nb", "a\n\rb", "a\r\n", "a\n", "a\rb", ""):
+            translated = raw.replace("\r\n", "\n").replace("\r", "\n")
+            self.assertEqual(
+                _split_review_lines(raw),
+                translated.split("\n"),
+                msg=repr(raw),
+            )
 
 
 # ---------------------------------------------------------------------------

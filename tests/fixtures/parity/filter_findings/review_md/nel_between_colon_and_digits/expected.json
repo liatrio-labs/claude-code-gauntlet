@@ -1,0 +1,6 @@
+{
+  "config": {
+    "confidence_threshold": 70,
+    "ignore": []
+  }
+}

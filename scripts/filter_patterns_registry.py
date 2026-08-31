@@ -254,6 +254,93 @@ PATTERN_FAMILIES = (
             r"\bincorrect[{WS}]+(?:logic|behavior|behaviour|result)\b",
         ),
     ),
+    # --- Config-parser family (issue #243) --------------------------------
+    # parse_review_md / load_exclusions read REVIEW.md and exclusions-md file
+    # FORMAT. Historically these lived UNGENERATED and NAMED-EXEMPT from the
+    # union/re.ASCII discipline, which let the two twins drift: Python `\s`,
+    # `splitlines()` and unicode `\d`/IGNORECASE folding all diverged from the
+    # JS twin's `[ \t]`/`split`/ASCII `/i`. #243 converges them and folds the
+    # declarations into the registry so they are generated, not hand-typed.
+    #
+    # The block-marker list is a `str_list` (compiled at the call site with
+    # re.IGNORECASE | re.ASCII) so it stays discoverable by the guard's
+    # visit_Assign walk; the five directive regexes and the two exclusion
+    # regexes are module-level `compile_single` constants. `.` under
+    # DOTALL / `[\s\S]` becomes `[^\x00]` (cross-twin symmetric, NOT
+    # behavior-preserving vs a NUL in the block body -- disclosed in the PR).
+    PatternFamily(
+        python_name="_REVIEW_BLOCK_PATTERNS",
+        js_name="REVIEW_BLOCK_PATTERNS",
+        kind="str_list",
+        flags=("IGNORECASE", "ASCII"),
+        js_export=False,
+        patterns=(
+            r"```(?:yaml|)[{WS}]*#?[{WS}]*code-gauntlet(?:[^\n]*)?\n([^\x00]*?)```",
+            r"<!--[{WS}]*code-gauntlet-config[{WS}]*\n([^\x00]*?)-->",
+            r"```(?:yaml|)[{WS}]*#?[{WS}]*deep-review(?:[^\n]*)?\n([^\x00]*?)```",
+            r"<!--[{WS}]*deep-review-config[{WS}]*\n([^\x00]*?)-->",
+        ),
+    ),
+    PatternFamily(
+        python_name="_REVIEW_CONFIDENCE_RE",
+        js_name="REVIEW_CONFIDENCE_RE",
+        kind="compile_single",
+        flags=("IGNORECASE", "ASCII"),
+        js_export=False,
+        patterns=(r"(?:^|\n)[ \t]*confidence_threshold[{WS}]*[:=][{WS}]*([0-9]{1,3})",),
+    ),
+    PatternFamily(
+        python_name="_REVIEW_SECURITY_RE",
+        js_name="REVIEW_SECURITY_RE",
+        kind="compile_single",
+        flags=("IGNORECASE", "ASCII"),
+        js_export=False,
+        patterns=(
+            r"(?:^|\n)[ \t]*security_min_confidence[{WS}]*[:=][{WS}]*([0-9]{1,3})",
+        ),
+    ),
+    PatternFamily(
+        python_name="_REVIEW_SEVERITY_RE",
+        js_name="REVIEW_SEVERITY_RE",
+        kind="compile_single",
+        flags=("IGNORECASE", "ASCII"),
+        js_export=False,
+        patterns=(
+            r"(?:^|\n)[ \t]*severity_threshold[{WS}]*[:=][{WS}]*(critical|high|medium|low)",
+        ),
+    ),
+    PatternFamily(
+        python_name="_REVIEW_IGNORE_RE",
+        js_name="REVIEW_IGNORE_RE",
+        kind="compile_single",
+        flags=("IGNORECASE", "ASCII"),
+        js_export=False,
+        patterns=(r"(?:^|\n)[ \t]*ignore[{WS}]*:[{WS}]*\n((?:[ \t]*-[^\n]*\n?)+)",),
+    ),
+    PatternFamily(
+        python_name="_REVIEW_IGNORE_ITEM_RE",
+        js_name="REVIEW_IGNORE_ITEM_RE",
+        kind="compile_single",
+        flags=("ASCII",),
+        js_export=False,
+        patterns=(r"^[{WS}]*-[{WS}]*",),
+    ),
+    PatternFamily(
+        python_name="_REVIEW_EXCL_BLOCK_RE",
+        js_name="REVIEW_EXCL_BLOCK_RE",
+        kind="compile_single",
+        flags=("ASCII",),
+        js_export=False,
+        patterns=(r"```[^\n]*\n([^\x00]*?)```",),
+    ),
+    PatternFamily(
+        python_name="_REVIEW_EXCL_BULLET_RE",
+        js_name="REVIEW_EXCL_BULLET_RE",
+        kind="compile_single",
+        flags=("ASCII",),
+        js_export=False,
+        patterns=(r"^[{WS}]*[-*][{WS}]+([^\n]+)$",),
+    ),
 )
 
 # The word splitter -- the one place the union class is captured as a reusable
