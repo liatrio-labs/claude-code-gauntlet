@@ -252,6 +252,7 @@ export function applyThresholdFilter(findings, config) {
 // title tends to spell and a real finding about residue essentially never
 // does -- so the standalone `Placeholder` entry was replaced by a
 // `Placeholder finding` entry alongside its four siblings.
+// generated-from-filter-pattern-registry:INJECTION_TITLE_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_TITLE_PATTERNS = [
   /\bExample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bSample[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
@@ -259,6 +260,7 @@ const INJECTION_TITLE_PATTERNS = [
   /\bdemo[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
   /\bPlaceholder[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+finding\b/i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_TITLE_PATTERNS
 
 // #254: <finding>/<example> widened to tolerate attributes (unbounded
 // [^>]*, terminated by the required ">" so it stays linear and parity-safe
@@ -274,6 +276,7 @@ const INJECTION_TITLE_PATTERNS = [
 // `firstMatch`'s reason for a bare `[INSERT]` payload is unchanged.
 // "lorem ipsum" picked up the union whitespace class (previously a literal
 // space).
+// generated-from-filter-pattern-registry:INJECTION_BODY_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_BODY_PATTERNS = [
   /<finding(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
   /<example(?:[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^>]*)?>/i,
@@ -281,7 +284,9 @@ const INJECTION_BODY_PATTERNS = [
   /\[[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*INSERT\b[^\]]*\b(?:FINDING|TITLE|TEXT|PLACEHOLDER|HERE)\b[^\]]*\]/i,
   /lorem[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+ipsum/i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_BODY_PATTERNS
 
+// generated-from-filter-pattern-registry:INJECTION_SHELL_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_SHELL_PATTERNS = [
   /\brm[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-[rf]/i,
   /\bcurl[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+https?:\/\//i,
@@ -289,6 +294,7 @@ const INJECTION_SHELL_PATTERNS = [
   /\bgit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+push\b/i,
   /\bgh[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+api\b/i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_SHELL_PATTERNS
 
 // URL patterns -- findings should reference code locations, not external URLs
 // to visit/fetch. Only "visit"/"download from" ship: they are imperatives a
@@ -308,10 +314,12 @@ const INJECTION_SHELL_PATTERNS = [
 // scheme closes in one edit. "download from" also picked up the union
 // whitespace class between "download" and "from" (previously a literal
 // space) -- see F13 in the #254 record.
+// generated-from-filter-pattern-registry:INJECTION_URL_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_URL_PATTERNS = [
   /\bvisit[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
   /\bdownload[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+from[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+[a-z][a-z0-9+.\-]{1,15}:\/\//i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_URL_PATTERNS
 
 // Encoded payload patterns -- base64 or hex blobs in findings are injection
 // artifacts. Each shape is now two directive-gated entries: a before-branch
@@ -321,12 +329,14 @@ const INJECTION_URL_PATTERNS = [
 // identifier) no longer matches either branch -- both measured a false-fire
 // on ordinary review/DevOps prose where a generic verb (run/curl/wget)
 // happened to sit near an unrelated hash-shaped token.
+// generated-from-filter-pattern-registry:INJECTION_ENCODED_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_ENCODED_PATTERNS = [
   /\b(?:decode|base64|atob|b64decode)\b[^\x00]{0,40}[A-Za-z0-9+\/]{40,}={0,2}\b/i,
   /\b[A-Za-z0-9+\/]{40,}={0,2}\b[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:sh|bash|zsh)\b|base64[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-d\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b)/i,
   /\b(?:decode|unhex|xxd|fromhex|unhexlify)\b[^\x00]{0,40}(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)/i,
   /(?<!\w)(?:0x)?[0-9a-fA-F]{32,}(?!\w)[^\x00]{0,40}(?:\|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*(?:xxd|sh|bash)\b|(?:then|and)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:run|execute|eval)\b|-r[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+-p\b)/i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_ENCODED_PATTERNS
 
 // Bypass / auto-approve instruction patterns. auto-approve is now two
 // grammatically-gated entries (a determiner + PR/MR/commit object, or an
@@ -334,6 +344,7 @@ const INJECTION_ENCODED_PATTERNS = [
 // phrase false-fired on third-person policy prose ("auto-approve changes to
 // lockfiles should be gated behind review") where "auto-approve" is the
 // grammatical subject, not an imperative.
+// generated-from-filter-pattern-registry:INJECTION_BYPASS_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_BYPASS_PATTERNS = [
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+review\b/i,
   /\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?approve[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|these|the|it|my|your)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:pr|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|mr|merge[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|changes?|commit)\b/i,
@@ -344,7 +355,9 @@ const INJECTION_BYPASS_PATTERNS = [
   /\bmark[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?(?:finding[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?as[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+safe\b/i,
   /\bapprove[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:PR|pull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+request|change)\b/i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_BYPASS_PATTERNS
 
+// generated-from-filter-pattern-registry:INJECTION_INSTRUCTIONAL_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_INSTRUCTIONAL_PATTERNS = [
   /\byou[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+should[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+run\b/i,
   /\bexecute[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
@@ -353,7 +366,9 @@ const INJECTION_INSTRUCTIONAL_PATTERNS = [
   /\bpaste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:this|the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+into[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:your[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+)?terminal/i,
   /\bcopy[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+and[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+paste[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+the[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+following\b/i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_INSTRUCTIONAL_PATTERNS
 
+// generated-from-filter-pattern-registry:INJECTION_VULN_INTRO_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const INJECTION_VULN_INTRO_PATTERNS = [
   /\badd[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
   /\buse[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+eval[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*\(/i,
@@ -365,6 +380,7 @@ const INJECTION_VULN_INTRO_PATTERNS = [
   /\bskip[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:certificate|cert)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:verification|validation)\b/i,
   /\bdisable[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+security[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:check|feature|control)\b/i,
 ];
+// /generated-from-filter-pattern-registry:INJECTION_VULN_INTRO_PATTERNS
 
 const MIN_BODY_WORDS = 10;
 const HIGH_CONFIDENCE_THRESHOLD = 85;
@@ -372,7 +388,9 @@ const HIGH_CONFIDENCE_THRESHOLD = 85;
 // Matches the union whitespace class respelled into the injection/routing
 // patterns above (item 2 of the #211 decision) so a word-count boundary and
 // a pattern-match boundary agree on what separates words.
+// generated-from-filter-pattern-registry:WORD_SPLIT_RE do not edit; run scripts/generate_filter_patterns.py
 export const WORD_SPLIT_RE = /[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+/;
+// /generated-from-filter-pattern-registry:WORD_SPLIT_RE
 
 // Port of _count_words: union-whitespace-split word count, 0 for blank/whitespace-only text.
 export function countWords(text) {
@@ -393,6 +411,7 @@ function firstMatch(patterns, text) {
 // (imperative security advice like "Never disable TLS verification"
 // legitimately resembles these patterns), so a match strips the field
 // instead of eliminating the finding (#62).
+// generated-from-filter-pattern-registry:SUGGESTION_SETS do not edit; run scripts/generate_filter_patterns.py
 export const SUGGESTION_SETS = [
   ['contains shell command pattern', INJECTION_SHELL_PATTERNS],
   ['contains visit-URL pattern', INJECTION_URL_PATTERNS],
@@ -402,6 +421,7 @@ export const SUGGESTION_SETS = [
   ['recommends introducing vulnerability', INJECTION_VULN_INTRO_PATTERNS],
   ['matches injection marker', INJECTION_BODY_PATTERNS],
 ];
+// /generated-from-filter-pattern-registry:SUGGESTION_SETS
 
 // Prose fields scanned by SUGGESTION_SETS and stripped (never eliminated) on
 // a match -- #62 introduced this for `suggestion`; #213 extends it to
@@ -1014,18 +1034,23 @@ const CONDITIONAL_SUGGESTION_DIMENSIONS = new Set(['test_coverage', 'convention'
 
 // Keywords that promote convention/type_design findings from suggestion to
 // main. Ported verbatim from _FUNCTIONAL_VIOLATION_KEYWORDS.
+// generated-from-filter-pattern-registry:FUNCTIONAL_VIOLATION_KEYWORDS do not edit; run scripts/generate_filter_patterns.py
 const FUNCTIONAL_VIOLATION_KEYWORDS =
   /\bcrash\b|\bdata[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+loss\b|\bsilent(?:ly)?\b|\bincorrect\b|\bwrong\b|\bfail(?:s|ure)?\b|\bruntime[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bexception\b|\bpanic\b|\bundefined[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavio(?:u)?r\b/i;
+// /generated-from-filter-pattern-registry:FUNCTIONAL_VIOLATION_KEYWORDS
 
 // Keywords that promote type_design findings specifically. Ported verbatim
 // from _TYPE_SAFETY_BUG_KEYWORDS.
+// generated-from-filter-pattern-registry:TYPE_SAFETY_BUG_KEYWORDS do not edit; run scripts/generate_filter_patterns.py
 const TYPE_SAFETY_BUG_KEYWORDS =
   /\bruntime\b|\bcastexception\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b|\bclasscastexception\b|\bnull[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pointer\b|\bnullpointer\b|\btype[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+mismatch\b/i;
+// /generated-from-filter-pattern-registry:TYPE_SAFETY_BUG_KEYWORDS
 
 // Keyword patterns indicating a test-analyzer finding describes a functional
 // correctness bug that EXISTS TODAY (vs. a coverage gap). Ported verbatim,
 // in order, from _TEST_CORRECTNESS_PATTERNS -- shared by routeByDimension's
 // test_coverage branch and isTestCorrectnessFinding's promotion check.
+// generated-from-filter-pattern-registry:TEST_CORRECTNESS_PATTERNS do not edit; run scripts/generate_filter_patterns.py
 const TEST_CORRECTNESS_PATTERNS = [
   /\brace[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+condition\b/i,
   /\balways[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+pass(?:es)?\b/i,
@@ -1053,6 +1078,7 @@ const TEST_CORRECTNESS_PATTERNS = [
   /\blogic[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+error\b/i,
   /\bincorrect[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+(?:logic|behavior|behaviour|result)\b/i,
 ];
+// /generated-from-filter-pattern-registry:TEST_CORRECTNESS_PATTERNS
 
 // Port of _route_by_dimension. Returns "main", "suggestion", or null (fall
 // through to agent-based routing in tagFindings).
