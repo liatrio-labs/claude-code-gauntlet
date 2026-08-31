@@ -462,22 +462,27 @@ test('runWith replay belt (RETURN persist channel): the projected post-review do
   );
 });
 
-test('runWith replay belt: a non-object replayed challenge checkpoint is left untouched, preserving the pre-existing malformed-checkpoint envelope (#213)', async () => {
-  // Round-2 review: a malformed checkpoint (checkpoints.challenge is a bare string, not
-  // an object) has ALWAYS been tolerated here -- every challengeOut.PROPERTY read is a
-  // no-op on a primitive (undefined), and the `|| []` fallbacks turn that into an empty,
-  // ok:true review. The belt's in-place assignment (challengeOut.findings = ...) would
-  // be the FIRST write ever made to challengeOut, which throws on a primitive under
-  // strict mode -- this PR must not change that pre-existing tolerance, so the belt
-  // guards itself to a no-op when challengeOut is not an object.
+test('runWith replay belt: a non-object replayed challenge checkpoint is now REFUSED pre-dispatch, not silently tolerated (#248/#250)', async () => {
+  // Superseded (#248/#250): the belt's own pre-existing primitive-checkpoint tolerance
+  // (documented above through #257) is no longer what a caller sees for this shape.
+  // `checkpoints: {merge: 'not-an-object'}` used to silently degrade to an empty ok:true
+  // review with no disclosure at all -- an operator-invisible failure mode. The fix moves
+  // the check EARLIER: every replayed checkpoint phase value is shape-gated immediately
+  // after readCheckpoints, pre-dispatch and outside runWith's try block, via the pure
+  // exported checkpointShapeErrors(). A non-object `checkpoints.challenge` now fails that
+  // gate and the run is refused before anything dispatches -- see
+  // checkpoint_shape_gate.test.js for the gate's own unit coverage (all eight phase rows,
+  // element-tolerance pins, and the dedicated refusal envelope shape asserted here).
   const args = validArgs({ checkpoints: { challenge: 'not-an-object' } });
-  const out = await runWith(makeCtx(args), args);
-  assert.equal(out.ok, true, 'a malformed challenge checkpoint must not turn into a run failure');
-  assert.deepEqual(out.postReview, undefined, 'runWith itself carries no postReview field either way');
-  // The delivery set built from a malformed challenge output is empty -- nothing to
-  // strip, nothing to deliver, no throw.
-  assert.equal(out.stats.highConfidence, 0);
-  assert.equal(out.stats.unverified, 0);
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, false, 'a malformed challenge checkpoint is now a refused run, not a silent empty review');
+  assert.equal(out.failingPhase, 'checkpoints');
+  assert.ok(out.error.startsWith('checkpoint-shape:'), `error must carry the checkpoint-shape: prefix, got: ${out.error}`);
+  assert.ok(out.error.includes('re-run without'), `error must carry the recovery sentence, got: ${out.error}`);
+  assert.ok(out.gaps.some((g) => g.startsWith('checkpoint-shape:') && g.includes('challenge')));
+  assert.deepEqual(out.checkpoints, { completed: [] }, 'dedicated refusal envelope: no .phases map, so headless auto-resume cannot fire');
+  assert.equal(ctx.calls.length, 0, 'nothing dispatched -- the gate runs before any phase is attempted');
 });
 
 test('runWith replay belt: a non-array field on an otherwise-valid replayed checkpoint passes through untouched (#213)', async () => {

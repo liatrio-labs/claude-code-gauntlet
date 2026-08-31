@@ -1705,8 +1705,9 @@ def apply_exclusions(findings, exclusion_patterns):
     text, and a common CLAUDE.md phrasing (e.g. "MUST") would, via this
     whole-finding elimination, mass-eliminate the conventions dimension for an
     unbounded recall cost that the field-strip mechanism above does not carry.
-    A user kill-switch reaching rendered citation text is an open question,
-    tracked separately, not silently declined.
+    A user kill-switch reaching rendered citation text was declined on the
+    #247 measurement (2026-08-31): the natural CLAUDE.md pattern eliminates 0
+    findings today and widens 12 via model boilerplate, not user repo text.
 
     Returns (passed, eliminated) lists. Each eliminated finding gains
     "eliminated_by" = "exclusion".

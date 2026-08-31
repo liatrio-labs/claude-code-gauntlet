@@ -655,6 +655,32 @@ test('#211: apply_exclusions unicode case folding is unchanged (café matches CA
   assert.equal(kept.length, 0);
 });
 
+test('#247 (declined 2026-08-31): a pattern present only in claude_md_rule does not eliminate', () => {
+  const findings = [
+    cleanFinding({
+      title: 'Inconsistent function naming',
+      description: 'Some functions use camelCase in an otherwise snake_case module.',
+      claude_md_rule: 'MUST use snake_case for all Python function names.',
+    }),
+  ];
+  const { kept, eliminated } = applyExclusions(findings, ['MUST use snake_case']);
+  assert.equal(eliminated.length, 0);
+  assert.equal(kept.length, 1);
+});
+
+test('#247 (declined 2026-08-31): a pattern present only in spec_text does not eliminate', () => {
+  const findings = [
+    cleanFinding({
+      title: 'Retry logic does not guard against duplicate effects',
+      description: 'The retry wrapper resubmits without checking the prior attempt.',
+      spec_text: 'The API contract requires idempotent retries on failure.',
+    }),
+  ];
+  const { kept, eliminated } = applyExclusions(findings, ['idempotent retries']);
+  assert.equal(eliminated.length, 0);
+  assert.equal(kept.length, 1);
+});
+
 test('#211: WORD_SPLIT_RE matches EXACTLY the intended 30-codepoint union class', () => {
   // Mirrors tests/test_filter_findings.py::TestUnionWhitespaceClassMembership.
   // Every union member is < U+10000 (all BMP), so a bounded sweep over the

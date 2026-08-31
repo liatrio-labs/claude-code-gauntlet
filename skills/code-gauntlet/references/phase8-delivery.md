@@ -36,6 +36,7 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 1. Inspect `return.checkpoints`.
    - Has a `.phases` map → re-invoke the same `Workflow(scriptPath, args)` call with `args.checkpoints` set to `return.checkpoints`. The workflow skips every already-completed phase (it unwraps `.phases`) and resumes at the first missing one.
    - Is `{ completed, truncated: true }` (the phase-outputs map exceeded the ~1M-char return budget, so the workflow withheld the findings bulk) → there is no phase map and nothing was persisted; **re-run from scratch** (re-invoke without `args.checkpoints`) and note the truncation in the methodology.
+   - Has `failingPhase: 'checkpoints'` (a pre-dispatch `checkpoint-shape:` refusal — a malformed value was found in `args.checkpoints` itself before any phase dispatched) → `checkpoints` is `{ completed: [] }` with no `.phases` map: there is nothing to resume, and re-invoking unchanged refuses identically. Read the `checkpoint-shape:`-prefixed `error`/`gaps` for which phase/field is malformed, then repair or delete the corrupt checkpoint artifact, or re-run without `args.checkpoints`.
 2. If resume is declined or fails again, deliver whatever `artifactPaths.report` exists markdown-only —
    report the path plus a short chat summary — and report the `gaps`.
 

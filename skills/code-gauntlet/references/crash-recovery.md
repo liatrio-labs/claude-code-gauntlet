@@ -29,6 +29,11 @@ Workflow({ scriptPath: "<plugin_root>/workflows/pipeline.js", args: <the identic
 - The error envelope names the crash site: **`failingPhase`** is the stage that actually
   threw; `phaseReached` is the last stage that *completed* (narrating from `phaseReached`
   misattributes the crash — the live Filter crash read as "failed during Validate").
+  `failingPhase` also carries two pre-dispatch pseudo-phases that never named a real
+  stage: `'args'` (the waist itself failed validation) and `'checkpoints'` (a
+  `checkpoint-shape:` refusal — a malformed value in `args.checkpoints`, caught before
+  any phase dispatched). Neither is resumable by id — nothing ran, so there is nothing
+  cached to replay; fix the cited waist field or checkpoint artifact and re-invoke.
 - The workflow journal (`<transcriptDir>/journal.jsonl`) records each agent's actual
   return value — read it before assuming what any stage produced.
 - `.code-gauntlet/` artifacts (context, diff, checkpoint files) show what was persisted

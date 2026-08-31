@@ -147,11 +147,15 @@ SCAN_MAX_DEEP_CANDIDATES = 8
 #: the success shape {ok, phaseReached, stats, artifactPaths, resolvedPolicy,
 #: checkpoints, gaps}; the early args-rejection envelope (no checkpoints, no
 #: resolvedPolicy); the mid-run catch failure (has checkpoints via
-#: buildResumeCheckpoints, omits resolvedPolicy); and the all-degraded fail-loud
+#: buildResumeCheckpoints, omits resolvedPolicy); the all-degraded fail-loud
 #: envelope (issue #178) — ok:false, artifactPaths:{}, failingPhase:'discover',
 #: WITH checkpoints AND resolvedPolicy AND a non-empty stats (unlike the mid-run
-#: catch failure, this one names both). Any member below corroborates. `error` is
-#: deliberately not in this list — it is far too generic to corroborate.
+#: catch failure, this one names both); and the checkpoint-shape refusal (issues
+#: #248/#250) — ok:false, failingPhase/phaseReached both 'checkpoints', WITH
+#: checkpoints ({completed: []}, no `.phases` map so headless auto-resume cannot
+#: replay the same malformed artifact), no resolvedPolicy, empty stats. Any
+#: member below corroborates. `error` is deliberately not in this list — it is
+#: far too generic to corroborate.
 COMPACT_RETURN_KEYS = (
     "phaseReached",
     "stats",

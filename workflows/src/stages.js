@@ -3572,13 +3572,196 @@ export function checkpointPath(phase, sha) {
 // { phase: output } map OR the persisted checkpoint artifact's { phases, completed,
 // phaseReached } wrapper (unwrapping .phases) so the artifact the pipeline itself
 // writes can be fed straight back. Falls back to a ctx-borne map (test seam), then {}.
+//
+// GARBAGE IS UNIFORM (round-2 fix): a non-plain-object top-level value (null, an array,
+// a primitive) is garbage, exactly like the already-pinned `checkpoints: 'garbage'`
+// case -- and so is a non-plain-object `.phases`. Before this fix `typeof [] === 'object'`
+// let `{checkpoints: []}` and `{checkpoints: {phases: []}}` both slip past this unwrap
+// as a truthy "resolved map", which the gate then sanitized to `{}` (no violations) --
+// but runWith indexes THAT ARRAY by phase name, and `[]['filter'] ===
+// Array.prototype.filter`, so runPhase('filter') replayed a FUNCTION as the phase's
+// output instead of refusing. Top-level-garbage-is-inert is the established decision
+// (falls through to the {} default below) -- the fix is only that arrays now count
+// as garbage too, at both unwrap points.
 export function readCheckpoints(ctx, args) {
   const unwrap = (cp) => {
-    if (!cp || typeof cp !== 'object') return null;
-    return (cp.phases && typeof cp.phases === 'object') ? cp.phases : cp;
+    if (!isPlainCheckpointObject(cp)) return null;
+    if (cp.phases === undefined) return cp;
+    return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
   };
   const A = args || {};
   return unwrap(A.checkpoints) || (ctx && unwrap(ctx.checkpoints)) || {};
+}
+
+// --- Checkpoint shape gate (#248 + #250) -------------------------------------
+//
+// A REPLAYED checkpoint phase value skips dispatch entirely (runPhase reuses it as-is),
+// so an unconditional downstream read against it -- rankKey's `finding.severity` on a
+// null element being the named #250 crash -- sees exactly whatever shape a hand-edited
+// or version-skewed checkpoint artifact carries. A non-object phase value degrades
+// silently instead: `(challengeOut.findings || [])` over a primitive yields an empty,
+// ok:true review with no disclosure at all (the named #248 defect), and the belt-free
+// phases do the same (measured: `checkpoints: {merge: 'not-an-object'}` returned
+// ok:true, merged 0). checkpointShapeErrors is the fix: a pure, exported check run
+// on the RESOLVED map readCheckpoints() returns, immediately after that call and before
+// any phase is attempted, so a malformed value is refused loud instead of silently
+// degrading somewhere downstream.
+//
+// One row per phase runPhase() names, ALL EIGHT. 'strict' means every array element
+// must also be a plain object; 'tolerant' means the array container is checked but its
+// elements are not. `gaps` is 'tolerant' on every row: runWith spreads `...(out.gaps ||
+// [])` unconditionally (issue #175), so ABSENT passes but a truthy non-array (5, {},
+// 'abc') either raw-TypeErrors on the spread or silently iterates per-character garbage --
+// container-only is enough to close that. discover also gets `dispatched`/`degraded` as
+// 'tolerant': both are unconditionally `.join`-ed or iterated (allActiveDimensionsDegraded,
+// the dimensions summary table), so a string there raw-TypeErrors the same way. Element
+// tolerance is otherwise reserved for challenge.unverified, whose null-element tolerance is
+// a pinned, correct, fully-delivering degradation (stages_delivery.test.js:514-542: the
+// belt's `{raw: el}` positions, stripReportExcludedFields, and dimensionsSummaryTable are
+// all null-safe for that one field). challenge.eliminated is deliberately ABSENT from
+// this table -- it never reaches rankFindings, and the belt owns its own malformed
+// shapes with a disclosed drop path (`stats.replay_belt_dropped`, the `replay-filter:`
+// gap) -- so it is wholly ungated here, by omission, not by an explicit skip.
+const CHECKPOINT_ARRAY_STRICT = 'strict';
+const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
+// Exported for checkpoint_shape_gate.test.js, which derives the strict rows from it so a
+// row flipped to strict gets an element-level null/primitive test for free, with no second
+// edit to keep in sync (the export costs nothing in the bundle -- the table is consumed
+// below by checkpointShapeErrors either way).
+export const CHECKPOINT_PHASE_SHAPE_TABLE = {
+  summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
+  discover: {
+    findings: CHECKPOINT_ARRAY_STRICT,
+    gaps: CHECKPOINT_ARRAY_TOLERANT,
+    dispatched: CHECKPOINT_ARRAY_TOLERANT,
+    degraded: CHECKPOINT_ARRAY_TOLERANT,
+  },
+  merge: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  verify: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  validate: { findings: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  filter: { filtered: CHECKPOINT_ARRAY_STRICT, gaps: CHECKPOINT_ARRAY_TOLERANT },
+  challenge: {
+    findings: CHECKPOINT_ARRAY_STRICT,
+    unverified: CHECKPOINT_ARRAY_TOLERANT,
+    gaps: CHECKPOINT_ARRAY_TOLERANT,
+  },
+  report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
+};
+
+// CHECKPOINT_REQUIRED_CONTENT_FIELD: phase -> the one field REQUIRED whenever the phase key
+// itself is present in a replayed checkpoint (issue #248's silent-empty). No legitimate
+// producer ever omits it -- every stage always emits it, and persistPlan empties
+// challenge.findings to `[]`, never to absent -- so a MISSING content field only ever means
+// a hand-edited or version-skewed checkpoint. Left absent, `challenge: {}` returns ok:true
+// with an empty review AND disarms the #178 all-degraded guard, whose third conjunct is
+// `checkpoints.challenge !== undefined` (this file, runWith, the all-degraded gap). Content
+// phases only: summarize/report have no required field, and challenge.unverified plus every
+// phase's gaps/dispatched/degraded stay OPTIONAL through the table above.
+const CHECKPOINT_REQUIRED_CONTENT_FIELD = {
+  discover: 'findings',
+  merge: 'findings',
+  verify: 'findings',
+  validate: 'findings',
+  filter: 'filtered',
+  challenge: 'findings',
+};
+
+function isPlainCheckpointObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function describeCheckpointShape(v) {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return 'array';
+  return typeof v;
+}
+
+// checkpointShapeErrors(resolvedCheckpoints) -> string[] of `checkpoint-shape:`-prefixed
+// violations (registered in docs/machine-parsed-strings.md). Takes the OUTPUT of
+// readCheckpoints -- already `.phases`-unwrapped, already defaulted to {} for a
+// non-object top-level `checkpoints` (that top-level shape stays inert BY that earlier
+// default, never asserted on here). An absent OPTIONAL field always passes, so a
+// version-delta replay (an older checkpoint predating a newer field) keeps working -- the
+// one exception is CHECKPOINT_REQUIRED_CONTENT_FIELD, whose absence IS itself a violation
+// (see that table's own comment). Unknown checkpoint keys (not one of the eight phase
+// names) are inert and unvalidated. Collects every violation rather than stopping at the
+// first, so a caller sees the whole shape of the damage in one refusal instead of fixing
+// it one field at a time.
+export function checkpointShapeErrors(resolvedCheckpoints) {
+  const cp = isPlainCheckpointObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
+  const violations = [];
+  for (const phase of Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE)) {
+    const value = cp[phase];
+    if (value === undefined) continue;
+    if (!isPlainCheckpointObject(value)) {
+      violations.push(`checkpoint-shape: phases.${phase} must be a plain object, got ${describeCheckpointShape(value)}`);
+      continue; // container failed -- no field inside it can be checked
+    }
+    const requiredField = CHECKPOINT_REQUIRED_CONTENT_FIELD[phase];
+    if (requiredField && value[requiredField] === undefined) {
+      violations.push(`checkpoint-shape: phases.${phase} is missing required field ${requiredField}`);
+    }
+    const fields = CHECKPOINT_PHASE_SHAPE_TABLE[phase];
+    for (const field of Object.keys(fields)) {
+      const arrVal = value[field];
+      if (arrVal === undefined) continue;
+      if (!Array.isArray(arrVal)) {
+        violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
+        continue;
+      }
+      if (fields[field] !== CHECKPOINT_ARRAY_STRICT) continue;
+      arrVal.forEach((el, idx) => {
+        if (!isPlainCheckpointObject(el)) {
+          violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
+        }
+      });
+    }
+  }
+  return violations;
+}
+
+// The checkpoint-shape refusal's own recovery sentence. SKILL_RECOVERY_LINE (args.js) is
+// wrong for this arm -- its advice is "run the skill instead", but the skill's own
+// Phase 1-2 assembly does not construct a malformed checkpoint value in the first place,
+// so telling the operator to re-run the skill would just replay the same corrupt
+// artifact. The actionable fix is the checkpoint artifact itself.
+const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint artifact, or re-run without the '
+  + '`checkpoints` argument to start the review fresh.';
+
+// makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap) -> the
+// dedicated pre-dispatch refusal for a #248/#250 shape violation. A SIBLING of
+// makeArgsRejectEnvelope (args.js), not a reuse of it: this failure is not an args-shape
+// failure (validateArgs already accepted `A`), so failingPhase/phaseReached name the
+// pseudo-phase 'checkpoints' rather than 'args'. `checkpoints: { completed: [] }` is
+// present -- SKILL.md documents every ok:false envelope as ALWAYS carrying `checkpoints`
+// -- but carries NO `.phases` map, so headless auto-resume (which fires only when
+// `.phases` is present) cannot replay the same still-malformed checkpoint straight back in.
+//
+// `nullArgGaps` (the caller's already-computed nullToleranceRejectedKeys disclosures, same
+// value the args-reject exit above threads into ITS gaps) rides on this exit too, exactly
+// as stages.js's tolerated-null invariant promises ("rides on BOTH exits" -- runWith's own
+// comment on that computation). Before this parameter existed, a run that both mis-stamped
+// a nullable top-level field AND replayed a malformed checkpoint lost the null disclosure
+// entirely: the checkpoint gate returns before the null-tolerant success exit even runs, so
+// nullArgGaps had nowhere else to surface. `contextSizeGap` (the caller's already-computed
+// context_unmeasured/context_unplannable disclosure, always an array of 0 or 1 strings)
+// rides here for the identical reason -- it is computed above the gate too, and this was
+// the one exit that dropped it silently on the floor.
+function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = []) {
+  const extra = violations.length - 1;
+  const error = extra > 0
+    ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`
+    : `${violations[0]}. ${CHECKPOINT_SHAPE_RECOVERY_LINE}`;
+  return {
+    ok: false,
+    error,
+    failingPhase: 'checkpoints',
+    phaseReached: 'checkpoints',
+    artifactPaths: {},
+    stats: {},
+    gaps: [...nullArgGaps, ...contextSizeGap, ...violations],
+    checkpoints: { completed: [] },
+  };
 }
 
 // buildResumeCheckpoints(phaseOutputs) -> resume state for a FAILURE-path return.
@@ -3689,10 +3872,10 @@ const REPLAY_BELT_INDEX_KEY = '__replayBeltIndex';
 // worker for challengeOut.findings / .unverified:
 //   - a non-array `list` (or an empty one) is returned untouched, `eliminated`
 //     empty -- mirrors the #213 tolerance this belt replaces
-//     (stages_delivery.test.js:483-507 is the sibling oracle for that same
+//     (stages_delivery.test.js:488-512 is the sibling oracle for that same
 //     tolerance, on .eliminated);
 //   - a non-object element (null, a primitive -- stages_delivery.test.js:
-//     509-537 is the oracle) keeps its exact position in the output, never
+//     514-542 is the oracle) keeps its exact position in the output, never
 //     touched, never handed to the scan;
 //   - every object element is normalized (normalizeFieldNames, idempotent --
 //     a precondition of the scan, not pre-challenge semantics: a hand-built
@@ -3859,6 +4042,16 @@ export async function runWith(ctx, rawArgs) {
         + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
       : []);
   const checkpoints = readCheckpoints(c, A);
+  // Pre-dispatch, outside the try block: a malformed replayed checkpoint value is
+  // refused loud instead of reaching a phase's unconditional downstream read (#248 +
+  // #250). Nothing has dispatched yet -- the earliest phase promise is created below,
+  // inside the try -- so this can never abandon in-flight work. nullArgGaps is already
+  // computed above (before validateArgs) and threaded through so a tolerated-null
+  // disclosure still rides on THIS exit too, not just the args-reject and success exits.
+  const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
+  if (checkpointShapeViolations.length) {
+    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap);
+  }
 
   const gaps = [...nullArgGaps, ...contextSizeGap];
   const completed = [];
@@ -4050,10 +4243,16 @@ export async function runWith(ctx, rawArgs) {
     // list (heuristic 10's dedup state makes scan order load-bearing), then re-splices
     // survivors back into their original relative position; a non-object element (null,
     // a primitive) keeps its exact position, never touched (stages_delivery.test.js:
-    // 509-537 is the oracle); a non-array findings/unverified is untouched entirely
-    // (stages_delivery.test.js:483-507's non-array .eliminated is the sibling oracle for
-    // that same tolerance). See beltPartitionList's own doc comment for the splice
-    // mechanics and stripEliminatedList's for the #213 element tolerance it reuses.
+    // 514-542 is the oracle). beltPartitionList ALSO tolerates a non-array findings/
+    // unverified (returned untouched, `eliminated` empty), but that tolerance can no
+    // longer be reached from a REPLAYED checkpoint: the pre-dispatch checkpoint-shape gate
+    // (checkpointShapeErrors + makeCheckpointShapeRejectEnvelope, above runWith's try
+    // block) already refuses a non-array phases.challenge.findings/.unverified before any
+    // phase runs. It stays live only for a non-replay caller of beltPartitionList directly
+    // -- stages_delivery.test.js:488-512's non-array `.eliminated` (wholly ungated by the
+    // shape table, so still reachable via replay) is the closest surviving oracle for the
+    // same code shape. See beltPartitionList's own doc comment for the splice mechanics
+    // and stripEliminatedList's for the #213 element tolerance it reuses.
     //
     // .eliminated: newly-belt-eliminated entries APPEND first, then the WHOLE resulting
     // array runs through stripEliminatedList (order is the defence, D2): appending
@@ -4079,15 +4278,22 @@ export async function runWith(ctx, rawArgs) {
     // nothing today holds such a reference, but a later edit must not add one without
     // moving it below this block.
     //
-    // Guard: a MALFORMED replayed checkpoint (checkpoints.challenge is a non-object --
-    // string/number/boolean) falls through to the SAME tolerant behavior this function
-    // has always had here. Every challengeOut.PROPERTY *read* below already returns
-    // undefined on a primitive (JS property access, not assignment), and the `|| []`
-    // fallbacks downstream turn that into an empty, ok:true review. Property ASSIGNMENT
-    // on a primitive throws in strict mode (this file is an ES module), which the belt
-    // would otherwise introduce as the FIRST write ever made to challengeOut, turning a
-    // tolerated malformed checkpoint into an uncaught throw -- so the belt guards itself
-    // to a no-op when challengeOut is not an object, exactly as before.
+    // Guard: `challengeOut && typeof challengeOut === 'object'` below. A MALFORMED
+    // replayed checkpoint (checkpoints.challenge a non-object -- string/number/boolean)
+    // can no longer reach this belt at all: the pre-dispatch checkpoint-shape gate
+    // (checkpointShapeErrors + makeCheckpointShapeRejectEnvelope, above runWith's try
+    // block) already refuses any non-object phases.challenge before any phase is
+    // attempted, so runPhase('challenge') never hands this function a primitive on a
+    // replay. This guard is retained as DEFENSE-IN-DEPTH only, for a source the gate does
+    // not cover -- a fresh (non-replayed) challengeStage() call returning something other
+    // than an object, or a future caller of this belt outside runWith's replay path.
+    // Every challengeOut.PROPERTY *read* below already returns undefined on a primitive
+    // (JS property access, not assignment), and the `|| []` fallbacks downstream turn that
+    // into an empty, ok:true review. Property ASSIGNMENT on a primitive throws in strict
+    // mode (this file is an ES module), which the belt would otherwise introduce as the
+    // FIRST write ever made to challengeOut, turning a tolerated malformed value into an
+    // uncaught throw -- so the belt still guards itself to a no-op when challengeOut is
+    // not an object, exactly as before.
     //
     // Two empty-report-guard corners this belt touches (documented, not changed --
     // findingsAtRisk below is pre-existing and out of #253's scope): (a) a resume where
