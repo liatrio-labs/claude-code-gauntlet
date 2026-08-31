@@ -107,6 +107,25 @@ ALL_DEGRADED_RETURN = {
     ],
 }
 
+# The checkpoint-shape refusal return (issues #248/#250): a malformed replayed
+# checkpoint phase value is refused pre-dispatch instead of silently degrading. Distinct
+# from both FAILURE_RETURN (no `checkpoints` at all -- nothing had produced one yet) and
+# ALL_DEGRADED_RETURN (`checkpoints` carries a `.phases` map so headless auto-resume can
+# replay it): this refusal's `checkpoints` is `{completed: []}` with NO `.phases` map, on
+# purpose, so headless auto-resume cannot replay the same still-malformed artifact back in.
+CHECKPOINT_SHAPE_RETURN = {
+    "ok": False,
+    "error": "checkpoint-shape: phases.challenge must be a plain object, got string. Repair or "
+    "delete the corrupt checkpoint artifact, or re-run without the `checkpoints` argument to "
+    "start the review fresh.",
+    "failingPhase": "checkpoints",
+    "phaseReached": "checkpoints",
+    "artifactPaths": {},
+    "stats": {},
+    "gaps": ["checkpoint-shape: phases.challenge must be a plain object, got string"],
+    "checkpoints": {"completed": []},
+}
+
 # The assemble receipt, from a journal.jsonl `result` record. It carries `ok` and
 # must NOT be mistaken for the return.
 ASSEMBLE_RECEIPT = {
@@ -220,6 +239,10 @@ class TestIsTerminalReturn(unittest.TestCase):
     def test_all_degraded_shape_is_terminal(self):
         """ok:false with checkpoints AND resolvedPolicy (issue #178) is still terminal."""
         self.assertTrue(is_terminal_return(ALL_DEGRADED_RETURN))
+
+    def test_checkpoint_shape_refusal_is_terminal(self):
+        """ok:false with checkpoints={completed:[]} and no resolvedPolicy (#248/#250)."""
+        self.assertTrue(is_terminal_return(CHECKPOINT_SHAPE_RETURN))
 
     def test_bare_ok_is_not_terminal(self):
         self.assertFalse(is_terminal_return({"ok": True}))

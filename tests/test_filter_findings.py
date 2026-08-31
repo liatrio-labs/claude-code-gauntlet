@@ -3122,6 +3122,36 @@ class TestApplyExclusions(unittest.TestCase):
         self.assertEqual(len(passed), 1)
         self.assertEqual(len(eliminated), 0)
 
+    def test_claude_md_rule_only_match_kept(self):
+        """#247 (declined 2026-08-31): claude_md_rule is not scanned, so a
+        pattern present only there must not eliminate the finding, even
+        though claude_md_rule is rendered into posted comments same as
+        suggestion/description."""
+        findings = [
+            _make_finding(
+                title="Inconsistent function naming",
+                description="Some functions use camelCase in an otherwise snake_case module.",
+                claude_md_rule="MUST use snake_case for all Python function names.",
+            )
+        ]
+        passed, eliminated = apply_exclusions(findings, ["MUST use snake_case"])
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+
+    def test_spec_text_only_match_kept(self):
+        """#247 (declined 2026-08-31): spec_text is not scanned either, for the
+        same cost-asymmetry reason as claude_md_rule."""
+        findings = [
+            _make_finding(
+                title="Retry logic does not guard against duplicate effects",
+                description="The retry wrapper resubmits without checking the prior attempt.",
+                spec_text="The API contract requires idempotent retries on failure.",
+            )
+        ]
+        passed, eliminated = apply_exclusions(findings, ["idempotent retries"])
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+
 
 # ---------------------------------------------------------------------------
 # _count_words

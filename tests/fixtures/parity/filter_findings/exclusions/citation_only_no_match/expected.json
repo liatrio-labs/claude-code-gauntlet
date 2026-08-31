@@ -1,0 +1,25 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "claude_md_rule": "MUST use snake_case for all Python function and variable names.",
+      "confidence": 60,
+      "description": "Some functions use camelCase while most of the module uses snake_case.",
+      "file": "src/handlers.py",
+      "id": "EX1",
+      "line_start": 21,
+      "severity": "low",
+      "title": "Inconsistent function naming in handler module"
+    },
+    {
+      "confidence": 70,
+      "description": "The retry wrapper resubmits the request without checking whether the prior attempt already applied its effect.",
+      "file": "src/client.py",
+      "id": "EX2",
+      "line_start": 88,
+      "severity": "medium",
+      "spec_text": "The API contract requires idempotent retries on failure.",
+      "title": "Retry logic does not guard against duplicate side effects"
+    }
+  ]
+}
