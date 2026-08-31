@@ -1,0 +1,25 @@
+{
+  "fn": "tag_findings",
+  "findings": [
+    {
+      "id": "TA1",
+      "agent": "test-analyzer",
+      "file": "src/worker.py",
+      "line_start": 40,
+      "severity": "medium",
+      "confidence": 70,
+      "title": null,
+      "description": "the retry counter always passes even under concurrent load, masking a race condition in the worker pool"
+    },
+    {
+      "id": "TA2",
+      "agent": "test-analyzer",
+      "file": "src/handler.py",
+      "line_start": 80,
+      "severity": "medium",
+      "confidence": 65,
+      "title": ["logic"],
+      "description": "error is not caught anywhere in this path, so it silently swallows exceptions"
+    }
+  ]
+}

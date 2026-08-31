@@ -1,0 +1,40 @@
+{
+  "fn": "apply_threshold_filter",
+  "findings": [
+    {
+      "id": "T-NC1",
+      "dimension": "bug",
+      "confidence": null,
+      "severity": "medium",
+      "title": "null confidence never crashes the threshold check",
+      "description": "d-nc1",
+      "file": "a.py",
+      "line_start": 10
+    },
+    {
+      "id": "T-NS1",
+      "dimension": "bug",
+      "confidence": 90,
+      "severity": null,
+      "title": "null severity defaults to low, never crashes",
+      "description": "d-ns1",
+      "file": "a.py",
+      "line_start": 20
+    },
+    {
+      "id": "T-SC1",
+      "dimension": "bug",
+      "confidence": "90",
+      "severity": "high",
+      "title": "a numeric-string confidence coerces to 0, not a numeric bypass",
+      "description": "d-sc1",
+      "file": "a.py",
+      "line_start": 30
+    }
+  ],
+  "config": {
+    "confidence_threshold": 70,
+    "security_min_confidence": 70,
+    "severity_threshold": "low"
+  }
+}

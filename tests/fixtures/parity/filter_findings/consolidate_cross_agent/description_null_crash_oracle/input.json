@@ -1,0 +1,49 @@
+{
+  "fn": "consolidate_cross_agent",
+  "findings": [
+    {
+      "id": "CA1",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "m.py",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 80,
+      "title": "t1",
+      "description": null
+    },
+    {
+      "id": "CA2",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "file": "m.py",
+      "line_start": 11,
+      "severity": "medium",
+      "confidence": 60,
+      "title": "t2",
+      "description": "normal description text"
+    },
+    {
+      "id": "CB1",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "file": "n.py",
+      "line_start": 20,
+      "severity": "medium",
+      "confidence": 60,
+      "title": "t3",
+      "description": ["a", "b", "c", "d", "e"]
+    },
+    {
+      "id": "CB2",
+      "agent": "code-simplifier",
+      "dimension": "convention",
+      "file": "n.py",
+      "line_start": 21,
+      "severity": "medium",
+      "confidence": 60,
+      "title": "t4",
+      "description": "tiny"
+    }
+  ]
+}

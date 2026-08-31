@@ -1,0 +1,48 @@
+{
+  "fn": "apply_exclusions",
+  "findings": [
+    {
+      "id": "EN1",
+      "title": null,
+      "description": "This finding's title field is absent and must not be mistaken for exclusion pattern text describing a missing value.",
+      "file": "src/a.py",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 60
+    },
+    {
+      "id": "EN2",
+      "title": "Missing input validation on user-provided path parameter",
+      "description": null,
+      "file": "src/b.py",
+      "line_start": 12,
+      "severity": "low",
+      "confidence": 60
+    },
+    {
+      "id": "EN3",
+      "title": "Debug statement present",
+      "description": "This file still contains a console.log debug statement left over from development.",
+      "file": "src/c.py",
+      "line_start": 20,
+      "severity": "low",
+      "confidence": 60
+    },
+    {
+      "id": "EN4",
+      "title": ["Suspicious list-typed title for coercion testing"],
+      "description": "This finding exercises a non-string, truthy title value to prove the string-typed coercion applies broadly, not only to a missing or empty field.",
+      "file": "src/d.py",
+      "line_start": 30,
+      "severity": "low",
+      "confidence": 60
+    }
+  ],
+  "exclusion_patterns": [
+    "null",
+    "None",
+    "undefined",
+    "console.log",
+    "list-typed title"
+  ]
+}

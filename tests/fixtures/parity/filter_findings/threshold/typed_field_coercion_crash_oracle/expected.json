@@ -1,0 +1,41 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": null,
+      "description": "d-nc1",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 0 < threshold 70",
+      "file": "a.py",
+      "id": "T-NC1",
+      "line_start": 10,
+      "severity": "medium",
+      "title": "null confidence never crashes the threshold check"
+    },
+    {
+      "confidence": "90",
+      "description": "d-sc1",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 0 < threshold 70",
+      "file": "a.py",
+      "id": "T-SC1",
+      "line_start": 30,
+      "severity": "high",
+      "title": "a numeric-string confidence coerces to 0, not a numeric bypass"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 90,
+      "description": "d-ns1",
+      "dimension": "bug",
+      "file": "a.py",
+      "id": "T-NS1",
+      "line_start": 20,
+      "severity": null,
+      "title": "null severity defaults to low, never crashes"
+    }
+  ]
+}

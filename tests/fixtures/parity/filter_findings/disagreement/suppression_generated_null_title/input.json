@@ -1,0 +1,49 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "DG1",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "file": "src/parser.py",
+      "line_start": 20,
+      "severity": "medium",
+      "confidence": 70,
+      "title": "missing coverage for parser branch",
+      "description": "No tests exist for the new parser branch introduced in this change."
+    },
+    {
+      "id": "DG2",
+      "agent": "conventions-and-intent",
+      "dimension": "intent",
+      "file": "src/parser.py",
+      "line_start": 21,
+      "severity": "low",
+      "confidence": 60,
+      "title": null,
+      "description": "This module is auto-generated scaffolding, do not add tests here."
+    },
+    {
+      "id": "DG3",
+      "agent": "test-analyzer",
+      "dimension": "test_coverage",
+      "file": "src/retry.py",
+      "line_start": 30,
+      "severity": "medium",
+      "confidence": 65,
+      "title": "missing test for retry backoff",
+      "description": "No coverage exists for the exponential backoff path."
+    },
+    {
+      "id": "DG4",
+      "agent": "conventions-and-intent",
+      "dimension": "intent",
+      "file": "src/retry.py",
+      "line_start": 31,
+      "severity": "low",
+      "confidence": 55,
+      "title": ["boilerplate"],
+      "description": "Unrelated commentary about naming conventions in this module."
+    }
+  ]
+}

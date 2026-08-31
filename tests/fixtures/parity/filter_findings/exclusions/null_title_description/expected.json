@@ -1,0 +1,46 @@
+{
+  "eliminated": [
+    {
+      "confidence": 60,
+      "description": "This file still contains a console.log debug statement left over from development.",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'console.log'",
+      "file": "src/c.py",
+      "id": "EN3",
+      "line_start": 20,
+      "severity": "low",
+      "title": "Debug statement present"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 60,
+      "description": "This finding's title field is absent and must not be mistaken for exclusion pattern text describing a missing value.",
+      "file": "src/a.py",
+      "id": "EN1",
+      "line_start": 5,
+      "severity": "low",
+      "title": null
+    },
+    {
+      "confidence": 60,
+      "description": null,
+      "file": "src/b.py",
+      "id": "EN2",
+      "line_start": 12,
+      "severity": "low",
+      "title": "Missing input validation on user-provided path parameter"
+    },
+    {
+      "confidence": 60,
+      "description": "This finding exercises a non-string, truthy title value to prove the string-typed coercion applies broadly, not only to a missing or empty field.",
+      "file": "src/d.py",
+      "id": "EN4",
+      "line_start": 30,
+      "severity": "low",
+      "title": [
+        "Suspicious list-typed title for coercion testing"
+      ]
+    }
+  ]
+}

@@ -299,6 +299,12 @@ test('runWith: checkpoints: "garbage" at top level resolves inert through readCh
   assert.deepEqual(readCheckpoints(null, args), {});
   const out = await runWith(makeCtx(args), args);
   assert.equal(out.ok, true);
+  // #268: the discard is no longer silent. checkpoint-discarded: names the failing
+  // POSITION (`checkpoints` — the top level itself, here) and its shape.
+  const discardGap = out.gaps.find((g) => g.startsWith('checkpoint-discarded:'));
+  assert.ok(discardGap, `expected a checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGap.includes('checkpoints must be a plain object'), discardGap);
+  assert.ok(discardGap.includes('got string'), discardGap);
 });
 
 // --- readCheckpoints: array-shaped checkpoints are garbage, uniformly (round-2 fix) -----
@@ -332,6 +338,13 @@ test('runWith: checkpoints: [] dispatches the full fresh pipeline including chal
   const out = await runWith(ctx, args);
 
   assert.equal(out.ok, true);
+  // #268: the discard is no longer silent. checkpoint-discarded: names the failing
+  // POSITION (`checkpoints`, the top level) and its shape (`array`, this time) — the
+  // disclosure does not change what dispatched, only what is disclosed.
+  const discardGap = out.gaps.find((g) => g.startsWith('checkpoint-discarded:'));
+  assert.ok(discardGap, `expected a checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGap.includes('checkpoints must be a plain object'), discardGap);
+  assert.ok(discardGap.includes('got array'), discardGap);
   assert.ok(
     ctx.calls.some((c) => (c.label || '').startsWith('challenge-')),
     `expected a challenge-labeled dispatch, got labels: ${JSON.stringify(ctx.calls.map((c) => c.label))}`,
@@ -340,6 +353,91 @@ test('runWith: checkpoints: [] dispatches the full fresh pipeline including chal
 
 test('checkpointShapeErrors: an array top-level argument is still treated as inert (defensive, pinned)', () => {
   assert.deepEqual(checkpointShapeErrors([]), []);
+});
+
+// --- checkpoint-discarded: disclosure (#268) ---------------------------------
+//
+// readCheckpoints's fallback to {} on an unusable args.checkpoints is correct behavior
+// (never abort a resume-free review over a bad resume input) but was previously silent.
+// checkpoint-discarded: discloses it — computed from the TOP-LEVEL args.checkpoints value
+// the operator actually stamped, naming the failing POSITION (`checkpoints` itself, or
+// `checkpoints.phases` for a malformed wrapper) and its shape. It never fires for
+// `checkpoints` absent, nor for a stamped `checkpoints: null` (dropped to absent by
+// normalizeArgsReport upstream, on the NULLABLE_TOP_LEVEL allowlist — the same reasoning
+// F4-3 pins for null_arg gaps in pipeline_run.test.js), because in both cases nothing real
+// was tolerated or lost.
+
+test('runWith: checkpoints: {phases: "not-an-object"} discloses checkpoint-discarded: naming checkpoints.phases, not the wrapper', async () => {
+  const args = validArgs({ checkpoints: { phases: 'not-an-object' } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGap = out.gaps.find((g) => g.startsWith('checkpoint-discarded:'));
+  assert.ok(discardGap, `expected a checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGap.includes('checkpoints.phases must be a plain object'), discardGap);
+  assert.ok(discardGap.includes('got string'), discardGap);
+  // The wrapper ITSELF is a plain object — describing IT would print the useless
+  // "(got object)"; the message must name the offending `.phases` value instead.
+  assert.ok(!discardGap.includes('got object'), discardGap);
+});
+
+test('runWith: checkpoints: {phases: []} discloses checkpoint-discarded: naming checkpoints.phases (array .phases)', async () => {
+  const args = validArgs({ checkpoints: { phases: [] } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGap = out.gaps.find((g) => g.startsWith('checkpoint-discarded:'));
+  assert.ok(discardGap, `expected a checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGap.includes('checkpoints.phases must be a plain object'), discardGap);
+  assert.ok(discardGap.includes('got array'), discardGap);
+});
+
+test('runWith: checkpoint-discarded: gap text is exit-neutral -- it never claims every phase re-runs', async () => {
+  // This same gap text is also threaded into makeCheckpointShapeRejectEnvelope's
+  // `gaps` (a hard-refusal exit where NO phase runs at all), so it must not
+  // assert what happened on the continuation path it does not always ride --
+  // only that nothing was resumed.
+  const args = validArgs({ checkpoints: { phases: 'not-an-object' } });
+  const out = await runWith(makeCtx(args), args);
+  const discardGap = out.gaps.find((g) => g.startsWith('checkpoint-discarded:'));
+  assert.ok(discardGap, `expected a checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGap.includes('nothing was resumed'), discardGap);
+  assert.ok(!discardGap.includes('every phase re-runs'), discardGap);
+});
+
+test('runWith: checkpoints: null discloses NO checkpoint-discarded: gap (equivalent to absent, same F4-3 reasoning)', async () => {
+  const args = validArgs({ checkpoints: null });
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+});
+
+test('runWith: checkpoints absent (never stamped) discloses NO checkpoint-discarded: gap', async () => {
+  const args = validArgs();
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+});
+
+test('runWith: a discarded top-level checkpoints AND a checkpoint-shape violation surfaced via the ctx fallback ride the SAME reject-envelope gaps array', async () => {
+  // Contrived seam — readCheckpoints's ctx-borne fallback is a test seam, not a live input
+  // path in production. args.checkpoints is garbage (discarded outright), so readCheckpoints
+  // falls through to ctx.checkpoints: itself a real, malformed value carrying its own shape
+  // violation. Exercises makeCheckpointShapeRejectEnvelope's fourth `discardGap` parameter,
+  // otherwise unreachable in production — a garbage args.checkpoints ALONE resolves inert
+  // with zero shape violations, so the reject envelope is never even built on that path by
+  // itself.
+  const args = validArgs({ checkpoints: 'garbage' });
+  const ctx = { ...makeCtx(args), checkpoints: { challenge: 'not-an-object' } };
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.failingPhase, 'checkpoints');
+  const discardGap = out.gaps.find((g) => g.startsWith('checkpoint-discarded:'));
+  const shapeGap = out.gaps.find((g) => g.startsWith('checkpoint-shape:'));
+  assert.ok(discardGap, `expected a checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(shapeGap, `expected a checkpoint-shape: violation, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGap.includes('got string'), discardGap);
 });
 
 // --- runWith wiring: refusal envelope ----------------------------------------
@@ -466,4 +564,7 @@ test('runWith: a well-formed replayed checkpoint set is never refused by the sha
   const out = await runWith(makeCtx(args), args);
   assert.notEqual(out.failingPhase, 'checkpoints');
   assert.ok(!(out.gaps || []).some((g) => g.startsWith('checkpoint-shape:')));
+  // #268: a well-formed, USABLE checkpoints value is not a discard either — the disclosure
+  // fires only when the value is thrown away, never merely because a resume happened.
+  assert.ok(!(out.gaps || []).some((g) => g.startsWith('checkpoint-discarded:')));
 });

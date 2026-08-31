@@ -1,0 +1,74 @@
+{
+  "active": [
+    {
+      "agent": "conventions-and-intent",
+      "confidence": 60,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "This behavior is intentional and by design -- the null check is deliberately omitted since upstream always guarantees a non-null client.",
+      "dimension": "intent",
+      "file": "src/service.py",
+      "id": "DN2",
+      "line_start": 101,
+      "security_escalation": false,
+      "severity": "low",
+      "title": null
+    },
+    {
+      "agent": "bug-detector",
+      "confidence": 85,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": false,
+      "corroborated_by": [
+        "conventions-and-intent"
+      ],
+      "description": "The cursor advances past the final page boundary, dropping the last record of every result set.",
+      "dimension": "bug",
+      "file": "src/other.py",
+      "id": "DN3",
+      "line_start": 200,
+      "security_escalation": false,
+      "severity": "high",
+      "title": "Off-by-one error in pagination cursor"
+    },
+    {
+      "agent": "conventions-and-intent",
+      "confidence": 65,
+      "consensus_boost": 10,
+      "consensus_count": 2,
+      "contradiction": false,
+      "corroborated_by": [
+        "bug-detector"
+      ],
+      "description": "This is unrelated commentary about code style choices in the pagination module.",
+      "dimension": "intent",
+      "file": "src/other.py",
+      "id": "DN4",
+      "line_start": 201,
+      "security_escalation": false,
+      "severity": "low",
+      "title": [
+        "by design"
+      ]
+    }
+  ],
+  "boosted_count": 2,
+  "suppressed": [
+    {
+      "agent": "bug-detector",
+      "confidence": 80,
+      "description": "process_data does not guard against a null client before calling client.send(), causing a crash on the error path.",
+      "dimension": "bug",
+      "eliminated_by": "suppressed:intentional",
+      "elimination_reason": "conventions-and-intent confirms behaviour at src/service.py:100 is intentional",
+      "file": "src/service.py",
+      "id": "DN1",
+      "line_start": 100,
+      "severity": "high",
+      "title": "Null pointer dereference on error path"
+    }
+  ]
+}

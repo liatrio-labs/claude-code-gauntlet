@@ -180,8 +180,8 @@ export function applyThresholdFilter(findings, config) {
   const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
 
   for (const finding of findings) {
-    const confidence = 'confidence' in finding ? finding.confidence : 0;
-    let severity = ('severity' in finding ? finding.severity : 'low').toLowerCase();
+    const confidence = asConfidence(pyGet(finding, 'confidence', 0));
+    let severity = (asText(pyGet(finding, 'severity', 'low')) || 'low').toLowerCase();
     const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
 
     const isSecurity = dimensions.includes('security');
@@ -599,10 +599,10 @@ function injectionScanCore(findings, includeH4) {
   const seenSignatures = new Map();
 
   for (const finding of findings) {
-    const title = finding.title || '';
-    const description = finding.description || '';
-    const filepath = finding.file || '';
-    const confidence = 'confidence' in finding ? finding.confidence : 0;
+    const title = asText(finding.title);
+    const description = asText(finding.description);
+    const filepath = asText(finding.file);
+    const confidence = asConfidence(finding.confidence);
     const combined = `${title}\n${description}`;
 
     const reasons = [];
@@ -744,6 +744,30 @@ function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
 }
 
+// --- Typed-field coercion (#266) --------------------------------------------
+//
+// A scanned finding field must contribute a value of its expected type or
+// that type's default -- never a stringified null, never a crash. Applied
+// wherever title/description/file/severity (string-typed) or confidence
+// (numeric-typed) is read from a finding whose provenance is not schema-
+// validated (a replayed checkpoint from an earlier pipeline version).
+// Before this, a bare `finding.field || ''` or template-literal read let a
+// non-string value (most commonly an explicit `null`) reach a regex test,
+// a `.length`/`.toLowerCase()` call, or an ordering comparison (`<`), or
+// land as the literal text "null" in a scanned string -- divergent from
+// the Python twin's "None" spelling, and in Python's case, an outright
+// TypeError. `severity` additionally keeps its historical "default to low"
+// fallback: `asText(value) || 'low'`, not a bare `asText(value)`, so an
+// empty or non-string severity still becomes 'low' rather than ''.
+// Python's twins are `_as_text`/`_as_confidence` (scripts/filter_findings.py).
+function asText(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+function asConfidence(value) {
+  return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
+}
+
 // Python round() is banker's rounding (half-to-even); JS Math.round is half-up.
 // detect_disagreement buckets on round(line/10)*10, so line_start in {5,15,25,...}
 // diverges unless we replicate half-to-even. (parity-map highest-risk fixture.)
@@ -839,7 +863,7 @@ export function detectDisagreement(findings) {
     // Suppression rule 1: bug-detector + conventions-and-intent -> intentional.
     if (agentMap.has(AGENT_BUG_DETECTOR) && agentMap.has(AGENT_CONVENTIONS)) {
       for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${pyGet(convFinding, 'description', '')} ${pyGet(convFinding, 'title', '')}`.toLowerCase();
+        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
         if (/\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/.test(convText)) {
           for (const bugFinding of agentMap.get(AGENT_BUG_DETECTOR)) {
             const fid = idKey(bugFinding);
@@ -862,7 +886,7 @@ export function detectDisagreement(findings) {
     // Suppression rule 2: test-analyzer + conventions-and-intent -> generated/scaffolding.
     if (agentMap.has(AGENT_TEST_ANALYZER) && agentMap.has(AGENT_CONVENTIONS)) {
       for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${pyGet(convFinding, 'description', '')} ${pyGet(convFinding, 'title', '')}`.toLowerCase();
+        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
         if (/\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/.test(convText)) {
           for (const testFinding of agentMap.get(AGENT_TEST_ANALYZER)) {
             const fid = idKey(testFinding);
@@ -916,7 +940,7 @@ export function detectDisagreement(findings) {
         finding.consensus_count = count;
         finding.consensus_boost = CONSENSUS_BOOST;
         finding.corroborated_by = otherAgents;
-        const originalConf = pyGet(finding, 'confidence', 0);
+        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
         finding.confidence = Math.min(originalConf + CONSENSUS_BOOST, 100);
       }
     } else {
@@ -927,7 +951,7 @@ export function detectDisagreement(findings) {
 
       const dimension = pyGet(finding, 'dimension', '').toLowerCase();
       if (dimension && !CORE_DIMENSIONS.has(dimension)) {
-        const originalConf = pyGet(finding, 'confidence', 0);
+        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
         finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
         finding.singleton_penalty = true;
       }
@@ -950,7 +974,7 @@ export function detectDisagreement(findings) {
       continue;
     }
 
-    const severities = new Set(group.map((f) => pyGet(f, 'severity', 'low').toLowerCase()));
+    const severities = new Set(group.map((f) => (asText(pyGet(f, 'severity', 'low')) || 'low').toLowerCase()));
     const agentsHere = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
 
     const hasContradiction = severities.has('critical') && severities.has('low');
@@ -1040,7 +1064,7 @@ export function routeByDimension(finding) {
   if (SUGGESTION_DIMENSIONS.has(dimension)) return 'suggestion';
 
   if (CONDITIONAL_SUGGESTION_DIMENSIONS.has(dimension)) {
-    const combined = `${pyGet(finding, 'title', '')}\n${pyGet(finding, 'description', '')}`;
+    const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
 
     if (dimension === 'test_coverage') {
       return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined)) ? 'main' : 'suggestion';
@@ -1058,7 +1082,7 @@ export function routeByDimension(finding) {
 
 // Port of _is_test_correctness_finding.
 function isTestCorrectnessFinding(finding) {
-  const combined = `${pyGet(finding, 'title', '')}\n${pyGet(finding, 'description', '')}`;
+  const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
   return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined));
 }
 
@@ -1118,8 +1142,8 @@ export function consolidateCrossAgent(findings) {
   const winnerKey = (f) => {
     const dim = pyGet(f, 'dimension', '').toLowerCase();
     const isCore = CORE_DIMENSIONS.has(dim) ? 1 : 0;
-    const conf = pyGet(f, 'confidence', 0);
-    const descLen = pyGet(f, 'description', '').length;
+    const conf = asConfidence(pyGet(f, 'confidence', 0));
+    const descLen = asText(pyGet(f, 'description', '')).length;
     return [isCore, conf, descLen];
   };
 
@@ -1238,6 +1262,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
 
   const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(afterThreshold, allExclusions);
   allEliminated.push(...elimExclusions);
+  const exclusionsRemoved = elimExclusions.length;
 
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
   allEliminated.push(...elimInjection);
@@ -1272,6 +1297,7 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
       total,
       passed_threshold: passedThreshold,
       contested_count: contestedCount,
+      exclusions_removed: exclusionsRemoved,
       injections_removed: injectionsRemoved,
       // Spliced, not hand-listed: proseFieldsRemoved's keys/order are exactly
       // INJECTION_STRIPPED_PROSE_FIELDS's (Object.fromEntries over the list, in
@@ -1315,8 +1341,8 @@ export function applyExclusions(findings, exclusionPatterns) {
   const eliminated = [];
 
   for (const finding of findings) {
-    const title = finding.title || '';
-    const description = finding.description || '';
+    const title = asText(finding.title);
+    const description = asText(finding.description);
     const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
     const combined = `${title}\n${description}\n${suggestion}`;
 
