@@ -2,6 +2,30 @@
 
 <!-- version list -->
 
+## v3.23.2 (2026-08-31)
+
+### Bug Fixes
+
+- **filter**: Coerce the remaining confidence/severity read sites, honor the 1.0pp floor policy (PR
+  #269 review) ([#269](https://github.com/liatrio-labs/claude-code-gauntlet/pull/269),
+  [`ef2401a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ef2401a0ef88a408f1640aa26b1a5a864dfbe8dc))
+
+- **filter,pipeline**: Type-coerce scanned finding fields, count exclusion eliminations, disclose
+  the discarded resume (#266, #267, #268)
+  ([#269](https://github.com/liatrio-labs/claude-code-gauntlet/pull/269),
+  [`ef2401a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ef2401a0ef88a408f1640aa26b1a5a864dfbe8dc))
+
+### Chores
+
+- **ci**: Raise the AGENTS.md set budget for the floors-history line
+  ([#269](https://github.com/liatrio-labs/claude-code-gauntlet/pull/269),
+  [`ef2401a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ef2401a0ef88a408f1640aa26b1a5a864dfbe8dc))
+
+- **ci**: Ratchet the JS branches coverage floor to 86.9
+  ([#269](https://github.com/liatrio-labs/claude-code-gauntlet/pull/269),
+  [`ef2401a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/ef2401a0ef88a408f1640aa26b1a5a864dfbe8dc))
+
+
 ## v3.23.1 (2026-08-31)
 
 ### Bug Fixes
