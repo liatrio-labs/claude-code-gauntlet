@@ -21,7 +21,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  checkpointShapeErrors, runWith, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE,
+  checkpointShapeErrors, runWith, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE, buildResumeCheckpoints,
+  slimPersistedCheckpoints,
 } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 
@@ -567,4 +568,270 @@ test('runWith: a well-formed replayed checkpoint set is never refused by the sha
   // #268: a well-formed, USABLE checkpoints value is not a discard either — the disclosure
   // fires only when the value is thrown away, never merely because a resume happened.
   assert.ok(!(out.gaps || []).some((g) => g.startsWith('checkpoint-discarded:')));
+});
+
+// --- checkpoint-discarded: no-op-resume disclosure (#270) --------------------
+//
+// #268 caught only unwrapCheckpointMap FAILING. A fed-back `{completed, truncated: true}`
+// return -- the shape SKILL.md documents as a real failure-path return, and the one a
+// headless auto-resume plausibly re-feeds straight back in -- unwraps SUCCESSFULLY (its
+// keys are not `.phases`, so the direct-return branch fires) to an inert bare map: none of
+// its keys is a recognized phase name, so every phase re-runs with zero disclosure. Arm A
+// below catches that: unwrapCheckpointMap succeeded, the resolved map is non-empty, and
+// none of its own keys is one of the eight recognized phase names (derived from
+// CHECKPOINT_PHASE_SHAPE_TABLE). Arm B catches a sibling masking bug: `{phases: {}, ...}`
+// with a recognized phase name sitting unused at the WRAPPER's top level, right next to the
+// `.phases` key the unwrap actually reads.
+
+test('runWith: {completed: [], truncated: true} discloses the truncated-return sub-case, ok:true, challenge dispatched, exactly one gap', async () => {
+  const args = validArgs({ checkpoints: { completed: [], truncated: true } });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGaps[0].includes('truncated'), discardGaps[0]);
+  assert.ok(
+    ctx.calls.some((c) => (c.label || '').startsWith('challenge-')),
+    `expected a challenge-labeled dispatch, got labels: ${JSON.stringify(ctx.calls.map((c) => c.label))}`,
+  );
+});
+
+test('runWith: {completed: ["summarize"]} (no truncated) discloses the compact-return sub-case', async () => {
+  const args = validArgs({ checkpoints: { completed: ['summarize'] } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(!discardGaps[0].includes('truncated'), discardGaps[0]);
+  assert.ok(discardGaps[0].includes('artifactPaths.checkpoints'), discardGaps[0]);
+});
+
+// {completed: []} is the OTHER producer of a bare `completed` key: makeCheckpointShapeRejectEnvelope's
+// own refusal envelope (`{completed: []}`, `artifactPaths: {}`) fed back as the next run's
+// `checkpoints` argument. Nothing was ever persisted for it, so the on-disk pointer sentence
+// the non-empty case above gets would send the operator to a path that was never written --
+// this sub-case gets fresh-run advice instead, and must NOT mention artifactPaths.checkpoints.
+test('runWith: {completed: []} (empty completed) discloses the return-envelope sub-case, NOT the on-disk pointer', async () => {
+  const args = validArgs({ checkpoints: { completed: [] } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(!discardGaps[0].includes('truncated'), discardGaps[0]);
+  assert.ok(!discardGaps[0].includes('artifactPaths.checkpoints'), discardGaps[0]);
+  assert.ok(discardGaps[0].includes('re-run without'), discardGaps[0]);
+});
+
+// The Array.isArray guard, not just `.length > 0`, drives the completed sub-case split: a
+// truthy NON-array `completed` (a string has a truthy .length too) must take the
+// return-envelope wording, never the on-disk pointer.
+test('runWith: {completed: "not-an-array"} (non-array completed) discloses the return-envelope sub-case, NOT the on-disk pointer', async () => {
+  const args = validArgs({ checkpoints: { completed: 'not-an-array' } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(!discardGaps[0].includes('truncated'), discardGaps[0]);
+  assert.ok(!discardGaps[0].includes('artifactPaths.checkpoints'), discardGaps[0]);
+  assert.ok(discardGaps[0].includes('re-run without'), discardGaps[0]);
+});
+
+// Truthiness, not key-presence: `truncated: false` sitting right next to `completed` must NOT
+// be misread as the truncated sub-case just because the key exists on the resolved map.
+test('runWith: {completed: [], truncated: false} takes the empty-completed sub-case, not the truncated one (truthiness, not key-presence)', async () => {
+  const args = validArgs({ checkpoints: { completed: [], truncated: false } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(!discardGaps[0].includes('truncated'), discardGaps[0]);
+  assert.ok(!discardGaps[0].includes('artifactPaths.checkpoints'), discardGaps[0]);
+});
+
+test('runWith: {foo: 1} discloses the eight-recognized-names sub-case', async () => {
+  const args = validArgs({ checkpoints: { foo: 1 } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  for (const phase of ALL_PHASES) assert.ok(discardGaps[0].includes(phase), `expected ${phase} named in: ${discardGaps[0]}`);
+  // Never echo the caller's own key byte-for-byte -- the message is fixed vocabulary.
+  assert.ok(!discardGaps[0].includes('foo'), discardGaps[0]);
+});
+
+test('runWith: {phases: {}, challenge: <well-formed challenge output>} discloses the empty-phases-masking sub-case (arm B), ok:true, challenge re-dispatched', async () => {
+  const args = validArgs({
+    checkpoints: { phases: {}, challenge: wellFormedCheckpoints().challenge },
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(discardGaps[0].includes('checkpoints.phases'), discardGaps[0]);
+  assert.ok(discardGaps[0].includes('empty'), discardGaps[0]);
+  // The top-level `challenge` value was ignored, not replayed -- the phase RE-DISPATCHES.
+  assert.ok(
+    ctx.calls.some((c) => (c.label || '').startsWith('challenge-')),
+    `expected a challenge-labeled dispatch (re-run, not replay), got labels: ${JSON.stringify(ctx.calls.map((c) => c.label))}`,
+  );
+});
+
+// --- #270 silence: every case that must stay gap-free ------------------------
+
+test('runWith: silence loop over the hard-coded ALL_PHASES const -- a single recognized phase key never discloses checkpoint-discarded:', async () => {
+  for (const phase of ALL_PHASES) {
+    const args = validArgs({ checkpoints: { [phase]: wellFormedCheckpoints()[phase] } });
+    const out = await runWith(makeCtx(args), args);
+    assert.deepEqual(
+      out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')),
+      [],
+      `phase ${phase} unexpectedly disclosed: ${JSON.stringify(out.gaps)}`,
+    );
+  }
+});
+
+test('runWith: {} discloses no checkpoint-discarded: gap', async () => {
+  const args = validArgs({ checkpoints: {} });
+  const out = await runWith(makeCtx(args), args);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+});
+
+test('runWith: {phases: {}} (no top-level phase names) discloses no checkpoint-discarded: gap', async () => {
+  const args = validArgs({ checkpoints: { phases: {} } });
+  const out = await runWith(makeCtx(args), args);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+});
+
+test('runWith: {phases: {}, completed: []} (buildResumeCheckpoints({}), the real first-phase-crash resume) discloses no checkpoint-discarded: gap', () => {
+  const resumed = buildResumeCheckpoints({});
+  assert.deepEqual(resumed, { phases: {}, completed: [] });
+  return (async () => {
+    const args = validArgs({ checkpoints: resumed });
+    const out = await runWith(makeCtx(args), args);
+    assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+  })();
+});
+
+test('runWith: checkpoints: null (alongside the untouched F4-3 test) discloses no checkpoint-discarded: gap', async () => {
+  const args = validArgs({ checkpoints: null });
+  const out = await runWith(makeCtx(args), args);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+});
+
+test('runWith: a map with one real phase plus one unknown key discloses no checkpoint-discarded: gap', async () => {
+  const args = validArgs({ checkpoints: { summarize: wellFormedCheckpoints().summarize, foo: 1 } });
+  const out = await runWith(makeCtx(args), args);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+});
+
+// The PRIMARY legitimate resume this whole gate exists to leave alone: the actual shape
+// slimPersistedCheckpoints produces and the skill feeds straight back in on a real resume
+// (`{phases, completed, phaseReached, counts}`). Arm A's "recognized key" check must scan
+// the RESOLVED `.phases` map, not the wrapper's own top-level keys (which are 'phases',
+// 'completed', 'phaseReached', 'counts' -- none of them a phase name) -- getting that wrong
+// would misfire #270 on every real resume.
+test('runWith: a slimPersistedCheckpoints-shaped resume (the actual legitimate producer) discloses no checkpoint-discarded: gap and REPLAYS challenge (no re-dispatch)', async () => {
+  const resumed = slimPersistedCheckpoints(
+    { challenge: wellFormedCheckpoints().challenge },
+    ['summarize', 'discover', 'merge', 'verify', 'validate', 'filter', 'challenge'],
+    'challenge',
+  );
+  assert.ok(Object.keys(resumed.phases).includes('challenge'), 'fixture sanity: slimPersistedCheckpoints kept .phases.challenge');
+  const args = validArgs({ checkpoints: resumed });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+  assert.ok(
+    !ctx.calls.some((c) => (c.label || '').startsWith('challenge-')),
+    `expected challenge to be REPLAYED (no dispatch), got labels: ${JSON.stringify(ctx.calls.map((c) => c.label))}`,
+  );
+});
+
+// Partial masking (a non-empty `.phases` resume sitting next to an ignored top-level
+// sibling) is a deliberate NON-GOAL of arm B: there is no legitimate producer of this shape,
+// and the phase inside `.phases` really is being resumed, not silently dropped.
+test('runWith: a real .phases resume plus an ignored top-level sibling discloses no checkpoint-discarded: gap (partial masking is a non-goal)', async () => {
+  const args = validArgs({
+    checkpoints: { phases: { challenge: wellFormedCheckpoints().challenge }, summarize: { gaps: [] } },
+  });
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+  assert.ok(
+    !ctx.calls.some((c) => (c.label || '').startsWith('challenge-')),
+    `expected challenge to be REPLAYED from .phases (no dispatch), got labels: ${JSON.stringify(ctx.calls.map((c) => c.label))}`,
+  );
+});
+
+// --- #270 exactly-once / exclusivity -----------------------------------------
+
+test('runWith: checkpoints: [] still discloses exactly one gap (the unwrap-fail message, not a #270 arm)', async () => {
+  const args = validArgs({ checkpoints: [] });
+  const out = await runWith(makeCtx(args), args);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, JSON.stringify(out.gaps));
+  assert.ok(discardGaps[0].includes('must be a plain object'), discardGaps[0]);
+});
+
+test('runWith: args.checkpoints "garbage" + a ctx.checkpoints fallback of {completed: []} discloses exactly one gap, the got-string unwrap-fail message', async () => {
+  const args = validArgs({ checkpoints: 'garbage' });
+  const ctx = { ...makeCtx(args), checkpoints: { completed: [] } };
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, JSON.stringify(out.gaps));
+  assert.ok(discardGaps[0].includes('got string'), discardGaps[0]);
+});
+
+test('runWith: {challenge: "x", completed: []} is a checkpoint-shape refusal with NO zero-recognized (#270) gap', async () => {
+  const args = validArgs({ checkpoints: { challenge: 'x', completed: [] } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, false);
+  assert.equal(out.failingPhase, 'checkpoints');
+  assert.ok(out.gaps.some((g) => g.startsWith('checkpoint-shape:') && g.includes('challenge')));
+  assert.deepEqual(out.gaps.filter((g) => g.startsWith('checkpoint-discarded:')), []);
+});
+
+// --- #270 G3-sentinel guard ---------------------------------------------------
+//
+// Same reasoning as the existing `checkpoint-discarded:`/`checkpoint-shape:` rows in
+// docs/machine-parsed-strings.md: bench/runner/check.py's G3 `_DEGRADE_RE` matches on
+// these exact two substrings, case-insensitively, to detect a degraded-but-undisclosed
+// run. All #270 message text is FIXED pipeline-authored vocabulary (never the caller's own
+// key bytes), so neither forbidden substring can ever appear -- but a future edit could
+// still introduce one, so pin it directly against every #270 message text this suite drives.
+test('runWith: no #270 checkpoint-discarded: gap ever contains a G3 sentinel substring', async () => {
+  const scenarios = [
+    { completed: [], truncated: true },
+    { completed: ['summarize'] },
+    { foo: 1 },
+    { phases: {}, challenge: wellFormedCheckpoints().challenge },
+  ];
+  const seen = [];
+  for (const checkpoints of scenarios) {
+    const args = validArgs({ checkpoints });
+    const out = await runWith(makeCtx(args), args);
+    const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+    assert.equal(discardGaps.length, 1, `scenario ${JSON.stringify(checkpoints)} produced: ${JSON.stringify(out.gaps)}`);
+    seen.push(...discardGaps);
+  }
+  assert.ok(seen.length >= scenarios.length);
+  for (const gap of seen) {
+    assert.doesNotMatch(gap.toLowerCase(), /no write proof|partial-artifacts/, `forbidden substring in: ${gap}`);
+  }
 });
