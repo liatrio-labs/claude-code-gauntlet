@@ -2,6 +2,31 @@
 
 <!-- version list -->
 
+## v3.23.3 (2026-08-31)
+
+### Bug Fixes
+
+- **pipeline**: Disclose the no-op resume a fed-back compact or truncated return produces
+  ([#271](https://github.com/liatrio-labs/claude-code-gauntlet/pull/271),
+  [`4663ab4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4663ab427b655bc148e6674b75dc40886f4b0d03))
+
+- **pipeline**: Disclose the no-op resume a fed-back compact or truncated return produces (#270)
+  ([#271](https://github.com/liatrio-labs/claude-code-gauntlet/pull/271),
+  [`4663ab4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4663ab427b655bc148e6674b75dc40886f4b0d03))
+
+### Chores
+
+- **ci**: Ratchet the JS lines/branches floors to 98.2/87.3
+  ([#271](https://github.com/liatrio-labs/claude-code-gauntlet/pull/271),
+  [`4663ab4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4663ab427b655bc148e6674b75dc40886f4b0d03))
+
+### Testing
+
+- **pipeline**: Pin the non-array completed sub-case of the discard gap (PR #271 review)
+  ([#271](https://github.com/liatrio-labs/claude-code-gauntlet/pull/271),
+  [`4663ab4`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/4663ab427b655bc148e6674b75dc40886f4b0d03))
+
+
 ## v3.23.2 (2026-08-31)
 
 ### Bug Fixes
