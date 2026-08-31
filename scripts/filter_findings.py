@@ -1196,7 +1196,7 @@ def detect_disagreement(findings):
                 finding["consensus_count"] = count
                 finding["consensus_boost"] = _CONSENSUS_BOOST
                 finding["corroborated_by"] = other_agents
-                original_conf = finding.get("confidence", 0)
+                original_conf = _as_confidence(finding.get("confidence"))
                 finding["confidence"] = min(original_conf + _CONSENSUS_BOOST, 100)
         else:
             # Singleton — apply confidence penalty for non-core dimensions (BF-15b)
@@ -1207,7 +1207,7 @@ def detect_disagreement(findings):
 
             dimension = finding.get("dimension", "").lower()
             if dimension and dimension not in _CORE_DIMENSIONS:
-                original_conf = finding.get("confidence", 0)
+                original_conf = _as_confidence(finding.get("confidence"))
                 finding["confidence"] = max(0, original_conf - _SINGLETON_PENALTY)
                 finding["singleton_penalty"] = True
 
@@ -1225,7 +1225,7 @@ def detect_disagreement(findings):
             group[0].setdefault("security_escalation", False)
             continue
 
-        severities = {f.get("severity", "low").lower() for f in group}
+        severities = {(_as_text(f.get("severity")) or "low").lower() for f in group}
         agents_here = {f.get("agent", "").lower() for f in group}
 
         # Basic contradiction: critical vs low at same file+line
@@ -1555,7 +1555,7 @@ def consolidate_cross_agent(findings):
         """Higher key value = better priority (sort descending)."""
         dim = f.get("dimension", "").lower()
         is_core = dim in _CORE_DIMENSIONS
-        conf = f.get("confidence", 0)
+        conf = _as_confidence(f.get("confidence"))
         desc_len = len(_as_text(f.get("description")))
         return (int(is_core), conf, desc_len)
 

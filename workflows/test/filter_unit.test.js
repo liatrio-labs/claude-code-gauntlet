@@ -401,6 +401,22 @@ test('applyFilterPipeline stats.exclusions_removed counts a finding eliminated b
   assert.ok(filteredIds.includes('X2'));
 });
 
+test('applyFilterPipeline: a co-located pair with one null severity completes without crashing (Bugbot repro)', () => {
+  // A `severity: null` finding now SURVIVES applyThresholdFilter (coerced to
+  // 'low' there) and reaches detectDisagreement's Phase 4 severity read
+  // (contradiction / security-escalation grouping over co-located
+  // findings). Pre-fix, that site called `.toLowerCase()` directly on the
+  // raw null.
+  const cfg = { confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'low', ignore: [] };
+  const findings = [
+    cleanFinding({ id: 'sev-null', agent: 'bug-detector', file: 'a.js', line_start: 10, title: 'Null deref risk', severity: null, confidence: 90 }),
+    cleanFinding({ id: 'sev-other', agent: 'security-reviewer', file: 'a.js', line_start: 10, title: 'Escalated security concern', severity: 'high', confidence: 90 }),
+  ];
+  const out = applyFilterPipeline(findings, cfg, [], '2026-07-18T00:00:00Z'); // must not throw
+  const filteredIds = out.filtered.map((f) => f.id).sort();
+  assert.deepEqual(filteredIds, ['sev-null', 'sev-other']);
+});
+
 test('applyFilterPipeline stats.claude_md_rules_removed and stats.spec_texts_removed count stripped findings', () => {
   const cfg = { confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'low', ignore: [] };
   const findings = [
@@ -1610,6 +1626,64 @@ test('detectDisagreement suppression rule 2 survives a null conventions title', 
   assert.ok(!activeIds.includes('jtest-1'));
 });
 
+test('detectDisagreement consensus boost: a null confidence does not crash and boosts from 0', () => {
+  // The consensus-boost read `pyGet(finding, 'confidence', 0)` sees the raw
+  // null (present, not absent). `null + CONSENSUS_BOOST` happens to coerce
+  // null to 0 via `+` in JS the same way asConfidence would (no crash, no
+  // divergence for THIS value) -- the mutation-discriminating companion
+  // below covers the case where the raw read and the coerced read actually
+  // disagree. asConfidence still belongs here for explicit parity with the
+  // Python twin, which DOES crash on the raw null read.
+  const f1 = { id: 'jc1', agent: 'bug-detector', file: 'a.js', line_start: 40, title: 'Null pointer risk', confidence: null };
+  const f2 = { id: 'jc2', agent: 'security-reviewer', file: 'a.js', line_start: 42, title: 'Null pointer risk', confidence: 80 };
+  const { active, boostedCount } = detectDisagreement([f1, f2]);
+  assert.equal(boostedCount, 2);
+  const byId = Object.fromEntries(active.map((f) => [f.id, f]));
+  assert.equal(byId.jc1.confidence, 10); // 0 + 10
+  assert.equal(byId.jc2.confidence, 90); // 80 + 10
+});
+
+test('detectDisagreement consensus boost: a numeric-string confidence ("50") does not string-concatenate into a false 100', () => {
+  // Mutation-discriminating companion to the null case above: pre-fix,
+  // `pyGet(finding, 'confidence', 0)` reads the raw string "50"; `+` on a
+  // string does concatenation, not addition, so `"50" + 10` produces the
+  // STRING "5010", which Math.min then ToNumber-coerces to 5010, clamped to
+  // 100 -- a confidence far higher than any legitimate boost could produce.
+  // Post-fix, asConfidence("50") === 0 (not typeof 'number'), so the boosted
+  // result is the correct 10.
+  const f = { id: 'jc3', agent: 'bug-detector', dimension: 'bug', file: 'a.js', line_start: 50, title: 'x', confidence: '50' };
+  const other = { id: 'jc4', agent: 'security-reviewer', dimension: 'security', file: 'a.js', line_start: 52, title: 'x', confidence: 40 };
+  const { active } = detectDisagreement([f, other]);
+  const byId = Object.fromEntries(active.map((x) => [x.id, x]));
+  assert.equal(byId.jc3.confidence, 10); // 0 + 10, not 100
+});
+
+test('detectDisagreement singleton penalty: a null confidence does not crash and is penalized from 0', () => {
+  // The singleton-penalty read `pyGet(finding, 'confidence', 0)` sees the raw
+  // null; Math.max(0, null - SINGLETON_PENALTY) coerces null to 0 via `-` in
+  // JS the same way asConfidence would (no crash, no divergence for THIS
+  // value -- both floor at 0). The mutation-discriminating companion below
+  // covers a value where the raw and coerced reads actually disagree.
+  const f = { id: 'js1', agent: 'conventions-and-intent', dimension: 'convention', confidence: null };
+  const { active } = detectDisagreement([f]);
+  assert.equal(active.length, 1);
+  assert.equal(active[0].confidence, 0);
+  assert.equal(active[0].singleton_penalty, true);
+});
+
+test('detectDisagreement singleton penalty: a numeric-string confidence ("50") does not survive the `-` ToNumber coercion as a real 35', () => {
+  // Mutation-discriminating companion to the null case above: pre-fix,
+  // `pyGet(finding, 'confidence', 0)` reads the raw string "50"; JS's `-`
+  // operator (unlike `+`) ToNumber-coerces a string operand, so
+  // `"50" - SINGLETON_PENALTY` evaluates to 35, not 0 -- a confidence that
+  // should never have survived, since "50" is not a legitimate numeric
+  // confidence. Post-fix, asConfidence("50") === 0, and 0 - 15 floors to 0.
+  const f = { id: 'js2', agent: 'conventions-and-intent', dimension: 'convention', confidence: '50' };
+  const { active } = detectDisagreement([f]);
+  assert.equal(active.length, 1);
+  assert.equal(active[0].confidence, 0);
+});
+
 test('tagFindings: a test-analyzer finding with a null title is promoted correctly off the description alone', () => {
   const f = { id: 'jta-1', agent: 'test-analyzer', file: 'src/worker.js', line_start: 40, severity: 'medium', confidence: 70, title: null, description: 'the retry counter always passes even under concurrent load, masking a race condition in the worker pool' };
   const { tagged } = tagFindings([f]);
@@ -1655,6 +1729,26 @@ test('consolidateCrossAgent: an array-typed description does not win the tie-bre
   const f2 = { id: 'jf2', agent: 'code-simplifier', dimension: 'simplification', file: 'n.js', line_start: 21, confidence: 60, title: 't4', description: 'tiny' };
   consolidateCrossAgent([f1, f2]);
   assert.equal(f2.consolidation_primary, true);
+  assert.equal(f1.consolidation_primary, false);
+});
+
+test('consolidateCrossAgent: a null confidence ties with a real 0, falling through to the description tie-break', () => {
+  // Pre-fix, `pyGet(f, 'confidence', 0)` reads the raw null into the sort
+  // key. `kb[i] - ka[i]` with ka[i]=null, kb[i]=0 evaluates to `0 - null`
+  // === 0 via JS's implicit ToNumber(null) -> 0, so the comparator returns 0
+  // and treats the pair as tied on confidence WITHOUT ever reaching the
+  // description-length tie-break, even though a genuine 0 and a coerced-0
+  // null should compare equal (0 === 0) and correctly fall through to it.
+  // Array.sort's stability then keeps original array order (f1 first) --
+  // wrong, since f2's much longer description should win the real
+  // tie-break. Post-fix, asConfidence(null) === 0 up front, so `0 === 0`
+  // triggers the intended fallthrough to descLen.
+  const f1 = { id: 'jf3', agent: 'test-analyzer', dimension: 'test_coverage', file: 'n.js', line_start: 20, confidence: null, title: 't5', description: 'tiny' };
+  const f2 = { id: 'jf4', agent: 'code-simplifier', dimension: 'simplification', file: 'n.js', line_start: 21, confidence: 0, title: 't6', description: 'a much longer description that should win the tie-break' };
+  const { findings, consolidatedCount } = consolidateCrossAgent([f1, f2]);
+  assert.equal(findings.length, 2);
+  assert.equal(consolidatedCount, 2);
+  assert.equal(f2.consolidation_primary, true); // longer description wins the real tie-break
   assert.equal(f1.consolidation_primary, false);
 });
 

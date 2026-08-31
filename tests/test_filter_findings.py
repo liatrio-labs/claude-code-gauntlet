@@ -2299,6 +2299,33 @@ class TestDetectDisagreement(unittest.TestCase):
         self.assertIn("security-reviewer", bug_findings[0]["corroborated_by"])
         self.assertIn("bug-detector", sec_findings[0]["corroborated_by"])
 
+    def test_consensus_boost_null_confidence_does_not_crash(self):
+        """#269: the consensus-boost read `finding.get("confidence", 0)` sees
+        the raw None (key present, not absent) and crashes computing
+        `None + _CONSENSUS_BOOST` -- coerced via _as_confidence, a null
+        confidence boosts from 0 instead."""
+        f1 = _make_finding(
+            id="c1",
+            file="a.py",
+            line_start=40,
+            title="Null pointer risk in handler",
+            agent="bug-detector",
+            confidence=None,
+        )
+        f2 = _make_finding(
+            id="c2",
+            file="a.py",
+            line_start=42,
+            title="Null pointer risk in handler",
+            agent="security-reviewer",
+            confidence=80,
+        )
+        active, suppressed, boosted = detect_disagreement([f1, f2])
+        self.assertEqual(boosted, 2)
+        by_id = {f["id"]: f for f in active}
+        self.assertEqual(by_id["c1"]["confidence"], 10)  # 0 + 10
+        self.assertEqual(by_id["c2"]["confidence"], 90)  # 80 + 10
+
     def test_consensus_different_titles_same_location(self):
         """Cross-agent findings with different titles at same file+line get consensus boost."""
         f1 = _make_finding(
@@ -2914,6 +2941,37 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         self.assertTrue(f2["consolidation_primary"])
         self.assertFalse(f1["consolidation_primary"])
 
+    def test_null_confidence_does_not_crash_winner_key(self):
+        """#269: the winner key's `f.get("confidence", 0)` tie-break reads
+        every co-located finding's confidence unconditionally to build the
+        sort key. Pre-fix, a null confidence raises `TypeError: '>' not
+        supported between instances of 'NoneType' and 'int'` the moment
+        `sorted()` compares two tuples -- both findings here are non-core
+        dimensions (is_core ties), so confidence is the deciding key."""
+        f1 = _make_finding(
+            id="f1",
+            file="n.py",
+            line_start=20,
+            agent="test-analyzer",
+            dimension="test_coverage",
+            confidence=None,
+            description="short",
+        )
+        f2 = _make_finding(
+            id="f2",
+            file="n.py",
+            line_start=21,
+            agent="code-simplifier",
+            dimension="simplification",
+            confidence=60,
+            description="also short",
+        )
+        findings, count = consolidate_cross_agent([f1, f2])
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(count, 2)
+        self.assertTrue(f2["consolidation_primary"])  # 60 beats coerced-0
+        self.assertFalse(f1["consolidation_primary"])
+
     def test_three_way_group_core_wins_primary(self):
         # Three agents at same location: core dimension wins the primary stamp,
         # but all three findings survive.
@@ -3295,9 +3353,6 @@ class TestConsolidateCrossAgent(unittest.TestCase):
             description="Null pointer dereference in the request handler when the upstream service returns an empty response body.",
         )
 
-        import json
-        import tempfile
-
         review_md_text = (
             "# Review config\n\n"
             "```yaml\n"
@@ -3342,6 +3397,57 @@ class TestConsolidateCrossAgent(unittest.TestCase):
 
             os.unlink(tmppath)
             os.unlink(reviewpath)
+
+    def test_severity_null_survives_threshold_and_reaches_disagreement_without_crash(
+        self,
+    ):
+        """Bugbot MEDIUM (PR #269): a `severity: null` finding now SURVIVES
+        apply_threshold_filter (coerced to "low" there) and reaches
+        detect_disagreement's Phase 4 severity read (contradiction /
+        security-escalation grouping over co-located findings). Pre-fix,
+        that site called `.lower()` directly on the raw None, crashing
+        main() end-to-end for any co-located pair where one finding carries
+        an explicit null severity -- this is the exact Bugbot repro."""
+        null_sev = _make_finding(
+            id="sev-null",
+            file="a.py",
+            line_start=10,
+            title="Null deref risk",
+            severity=None,
+            agent="bug-detector",
+        )
+        other = _make_finding(
+            id="sev-other",
+            file="a.py",
+            line_start=10,
+            title="Escalated security concern",
+            severity="high",
+            agent="security-reviewer",
+        )
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump({"findings": [null_sev, other]}, f)
+            tmppath = f.name
+        try:
+            import contextlib
+            import io
+            from unittest.mock import patch as mock_patch
+
+            from scripts.filter_findings import main as filter_main
+
+            buf = io.StringIO()
+            with (
+                mock_patch("sys.argv", ["filter_findings.py", tmppath]),
+                contextlib.redirect_stdout(buf),
+            ):
+                filter_main()  # must not raise
+            result = json.loads(buf.getvalue())
+            filtered_ids = {f["id"] for f in result["filtered"]}
+            self.assertEqual(filtered_ids, {"sev-null", "sev-other"})
+        finally:
+            import os
+
+            os.unlink(tmppath)
 
     def test_stats_spec_texts_removed_counts_stripped_finding(self):
         """#213: stats["spec_texts_removed"] counts a finding whose spec_text
@@ -3933,6 +4039,22 @@ class TestSingletonPenalty(unittest.TestCase):
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0]["confidence"], 85)
         self.assertFalse(active[0].get("singleton_penalty", False))
+
+    def test_singleton_null_confidence_does_not_crash(self):
+        """#269: the singleton-penalty read `finding.get("confidence", 0)`
+        sees the raw None (key present, not absent) and crashes computing
+        `None - _SINGLETON_PENALTY` -- coerced via _as_confidence, a null
+        confidence is penalized from 0 instead."""
+        f = _make_finding(
+            id="s-null",
+            confidence=None,
+            dimension="convention",
+            agent="conventions-and-intent",
+        )
+        active, _, _ = detect_disagreement([f])
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["confidence"], 0)
+        self.assertTrue(active[0].get("singleton_penalty"))
 
     def test_singleton_penalty_floors_at_zero(self):
         """Confidence cannot go below zero."""

@@ -969,7 +969,7 @@ function detectDisagreement(findings) {
         finding.consensus_count = count;
         finding.consensus_boost = CONSENSUS_BOOST;
         finding.corroborated_by = otherAgents;
-        const originalConf = pyGet(finding, 'confidence', 0);
+        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
         finding.confidence = Math.min(originalConf + CONSENSUS_BOOST, 100);
       }
     } else {
@@ -980,7 +980,7 @@ function detectDisagreement(findings) {
 
       const dimension = pyGet(finding, 'dimension', '').toLowerCase();
       if (dimension && !CORE_DIMENSIONS.has(dimension)) {
-        const originalConf = pyGet(finding, 'confidence', 0);
+        const originalConf = asConfidence(pyGet(finding, 'confidence', 0));
         finding.confidence = Math.max(0, originalConf - SINGLETON_PENALTY);
         finding.singleton_penalty = true;
       }
@@ -1003,7 +1003,7 @@ function detectDisagreement(findings) {
       continue;
     }
 
-    const severities = new Set(group.map((f) => pyGet(f, 'severity', 'low').toLowerCase()));
+    const severities = new Set(group.map((f) => (asText(pyGet(f, 'severity', 'low')) || 'low').toLowerCase()));
     const agentsHere = new Set(group.map((f) => pyGet(f, 'agent', '').toLowerCase()));
 
     const hasContradiction = severities.has('critical') && severities.has('low');
@@ -1171,7 +1171,7 @@ function consolidateCrossAgent(findings) {
   const winnerKey = (f) => {
     const dim = pyGet(f, 'dimension', '').toLowerCase();
     const isCore = CORE_DIMENSIONS.has(dim) ? 1 : 0;
-    const conf = pyGet(f, 'confidence', 0);
+    const conf = asConfidence(pyGet(f, 'confidence', 0));
     const descLen = asText(pyGet(f, 'description', '')).length;
     return [isCore, conf, descLen];
   };
