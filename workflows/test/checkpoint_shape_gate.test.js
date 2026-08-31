@@ -626,6 +626,21 @@ test('runWith: {completed: []} (empty completed) discloses the return-envelope s
   assert.ok(discardGaps[0].includes('re-run without'), discardGaps[0]);
 });
 
+// The Array.isArray guard, not just `.length > 0`, drives the completed sub-case split: a
+// truthy NON-array `completed` (a string has a truthy .length too) must take the
+// return-envelope wording, never the on-disk pointer.
+test('runWith: {completed: "not-an-array"} (non-array completed) discloses the return-envelope sub-case, NOT the on-disk pointer', async () => {
+  const args = validArgs({ checkpoints: { completed: 'not-an-array' } });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  const discardGaps = out.gaps.filter((g) => g.startsWith('checkpoint-discarded:'));
+  assert.equal(discardGaps.length, 1, `expected exactly one checkpoint-discarded: gap, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(!discardGaps[0].includes('truncated'), discardGaps[0]);
+  assert.ok(!discardGaps[0].includes('artifactPaths.checkpoints'), discardGaps[0]);
+  assert.ok(discardGaps[0].includes('re-run without'), discardGaps[0]);
+});
+
 // Truthiness, not key-presence: `truncated: false` sitting right next to `completed` must NOT
 // be misread as the truncated sub-case just because the key exists on the resolved map.
 test('runWith: {completed: [], truncated: false} takes the empty-completed sub-case, not the truncated one (truthiness, not key-presence)', async () => {
