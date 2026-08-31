@@ -3624,7 +3624,11 @@ export function readCheckpoints(ctx, args) {
 // gap) -- so it is wholly ungated here, by omission, not by an explicit skip.
 const CHECKPOINT_ARRAY_STRICT = 'strict';
 const CHECKPOINT_ARRAY_TOLERANT = 'tolerant';
-const CHECKPOINT_PHASE_SHAPE_TABLE = {
+// Exported for checkpoint_shape_gate.test.js, which derives the strict rows from it so a
+// row flipped to strict gets an element-level null/primitive test for free, with no second
+// edit to keep in sync (the export costs nothing in the bundle -- the table is consumed
+// below by checkpointShapeErrors either way).
+export const CHECKPOINT_PHASE_SHAPE_TABLE = {
   summarize: { gaps: CHECKPOINT_ARRAY_TOLERANT },
   discover: {
     findings: CHECKPOINT_ARRAY_STRICT,
@@ -3643,16 +3647,6 @@ const CHECKPOINT_PHASE_SHAPE_TABLE = {
   },
   report: { gaps: CHECKPOINT_ARRAY_TOLERANT },
 };
-
-// CHECKPOINT_STRICT_FIELDS -> [ [phase, field], ... ], the STRICT rows of the table above,
-// computed once and exported so checkpoint_shape_gate.test.js can loop over every current
-// AND future strict row instead of hand-listing them: a row flipped to strict gets an
-// element-level null/primitive test for free, with no second edit to keep in sync.
-export const CHECKPOINT_STRICT_FIELDS = Object.entries(CHECKPOINT_PHASE_SHAPE_TABLE).flatMap(
-  ([phase, fields]) => Object.entries(fields)
-    .filter(([, kind]) => kind === CHECKPOINT_ARRAY_STRICT)
-    .map(([field]) => [phase, field]),
-);
 
 // CHECKPOINT_REQUIRED_CONTENT_FIELD: phase -> the one field REQUIRED whenever the phase key
 // itself is present in a replayed checkpoint (issue #248's silent-empty). No legitimate

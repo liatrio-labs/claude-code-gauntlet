@@ -21,9 +21,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  checkpointShapeErrors, runWith, readCheckpoints, CHECKPOINT_STRICT_FIELDS,
+  checkpointShapeErrors, runWith, readCheckpoints, CHECKPOINT_PHASE_SHAPE_TABLE,
 } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
+
+// The strict rows of the exported shape table, derived here (not in stages.js, where the
+// derived list would ship as dead code in the bundle). 'strict' is the table's sentinel.
+const CHECKPOINT_STRICT_FIELDS = Object.entries(CHECKPOINT_PHASE_SHAPE_TABLE).flatMap(
+  ([phase, fields]) => Object.entries(fields)
+    .filter(([, kind]) => kind === 'strict')
+    .map(([field]) => [phase, field]),
+);
 
 // A well-formed value for every array-bearing phase field, keyed by phase name, so the
 // "everything else stays well-formed" pattern below never accidentally trips a SECOND
