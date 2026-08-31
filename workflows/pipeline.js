@@ -209,8 +209,8 @@ function applyThresholdFilter(findings, config) {
   const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
 
   for (const finding of findings) {
-    const confidence = 'confidence' in finding ? finding.confidence : 0;
-    let severity = ('severity' in finding ? finding.severity : 'low').toLowerCase();
+    const confidence = asConfidence(pyGet(finding, 'confidence', 0));
+    let severity = (asText(pyGet(finding, 'severity', 'low')) || 'low').toLowerCase();
     const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
 
     const isSecurity = dimensions.includes('security');
@@ -628,10 +628,10 @@ function injectionScanCore(findings, includeH4) {
   const seenSignatures = new Map();
 
   for (const finding of findings) {
-    const title = finding.title || '';
-    const description = finding.description || '';
-    const filepath = finding.file || '';
-    const confidence = 'confidence' in finding ? finding.confidence : 0;
+    const title = asText(finding.title);
+    const description = asText(finding.description);
+    const filepath = asText(finding.file);
+    const confidence = asConfidence(finding.confidence);
     const combined = `${title}\n${description}`;
 
     const reasons = [];
@@ -773,6 +773,30 @@ function pyGet(obj, key, dflt) {
   return key in obj ? obj[key] : dflt;
 }
 
+// --- Typed-field coercion (#266) --------------------------------------------
+//
+// A scanned finding field must contribute a value of its expected type or
+// that type's default -- never a stringified null, never a crash. Applied
+// wherever title/description/file/severity (string-typed) or confidence
+// (numeric-typed) is read from a finding whose provenance is not schema-
+// validated (a replayed checkpoint from an earlier pipeline version).
+// Before this, a bare `finding.field || ''` or template-literal read let a
+// non-string value (most commonly an explicit `null`) reach a regex test,
+// a `.length`/`.toLowerCase()` call, or an ordering comparison (`<`), or
+// land as the literal text "null" in a scanned string -- divergent from
+// the Python twin's "None" spelling, and in Python's case, an outright
+// TypeError. `severity` additionally keeps its historical "default to low"
+// fallback: `asText(value) || 'low'`, not a bare `asText(value)`, so an
+// empty or non-string severity still becomes 'low' rather than ''.
+// Python's twins are `_as_text`/`_as_confidence` (scripts/filter_findings.py).
+function asText(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+function asConfidence(value) {
+  return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
+}
+
 // Python round() is banker's rounding (half-to-even); JS Math.round is half-up.
 // detect_disagreement buckets on round(line/10)*10, so line_start in {5,15,25,...}
 // diverges unless we replicate half-to-even. (parity-map highest-risk fixture.)
@@ -868,7 +892,7 @@ function detectDisagreement(findings) {
     // Suppression rule 1: bug-detector + conventions-and-intent -> intentional.
     if (agentMap.has(AGENT_BUG_DETECTOR) && agentMap.has(AGENT_CONVENTIONS)) {
       for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${pyGet(convFinding, 'description', '')} ${pyGet(convFinding, 'title', '')}`.toLowerCase();
+        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
         if (/\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b/.test(convText)) {
           for (const bugFinding of agentMap.get(AGENT_BUG_DETECTOR)) {
             const fid = idKey(bugFinding);
@@ -891,7 +915,7 @@ function detectDisagreement(findings) {
     // Suppression rule 2: test-analyzer + conventions-and-intent -> generated/scaffolding.
     if (agentMap.has(AGENT_TEST_ANALYZER) && agentMap.has(AGENT_CONVENTIONS)) {
       for (const convFinding of agentMap.get(AGENT_CONVENTIONS)) {
-        const convText = `${pyGet(convFinding, 'description', '')} ${pyGet(convFinding, 'title', '')}`.toLowerCase();
+        const convText = `${asText(pyGet(convFinding, 'description', ''))} ${asText(pyGet(convFinding, 'title', ''))}`.toLowerCase();
         if (/\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b/.test(convText)) {
           for (const testFinding of agentMap.get(AGENT_TEST_ANALYZER)) {
             const fid = idKey(testFinding);
@@ -1069,7 +1093,7 @@ function routeByDimension(finding) {
   if (SUGGESTION_DIMENSIONS.has(dimension)) return 'suggestion';
 
   if (CONDITIONAL_SUGGESTION_DIMENSIONS.has(dimension)) {
-    const combined = `${pyGet(finding, 'title', '')}\n${pyGet(finding, 'description', '')}`;
+    const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
 
     if (dimension === 'test_coverage') {
       return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined)) ? 'main' : 'suggestion';
@@ -1087,7 +1111,7 @@ function routeByDimension(finding) {
 
 // Port of _is_test_correctness_finding.
 function isTestCorrectnessFinding(finding) {
-  const combined = `${pyGet(finding, 'title', '')}\n${pyGet(finding, 'description', '')}`;
+  const combined = `${asText(pyGet(finding, 'title', ''))}\n${asText(pyGet(finding, 'description', ''))}`;
   return TEST_CORRECTNESS_PATTERNS.some((rx) => rx.test(combined));
 }
 
@@ -1148,7 +1172,7 @@ function consolidateCrossAgent(findings) {
     const dim = pyGet(f, 'dimension', '').toLowerCase();
     const isCore = CORE_DIMENSIONS.has(dim) ? 1 : 0;
     const conf = pyGet(f, 'confidence', 0);
-    const descLen = pyGet(f, 'description', '').length;
+    const descLen = asText(pyGet(f, 'description', '')).length;
     return [isCore, conf, descLen];
   };
 
@@ -1267,6 +1291,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
 
   const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(afterThreshold, allExclusions);
   allEliminated.push(...elimExclusions);
+  const exclusionsRemoved = elimExclusions.length;
 
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
   allEliminated.push(...elimInjection);
@@ -1301,6 +1326,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
       total,
       passed_threshold: passedThreshold,
       contested_count: contestedCount,
+      exclusions_removed: exclusionsRemoved,
       injections_removed: injectionsRemoved,
       // Spliced, not hand-listed: proseFieldsRemoved's keys/order are exactly
       // INJECTION_STRIPPED_PROSE_FIELDS's (Object.fromEntries over the list, in
@@ -1344,8 +1370,8 @@ function applyExclusions(findings, exclusionPatterns) {
   const eliminated = [];
 
   for (const finding of findings) {
-    const title = finding.title || '';
-    const description = finding.description || '';
+    const title = asText(finding.title);
+    const description = asText(finding.description);
     const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
     const combined = `${title}\n${description}\n${suggestion}`;
 
@@ -6876,14 +6902,53 @@ function checkpointPath(phase, sha) {
 // output instead of refusing. Top-level-garbage-is-inert is the established decision
 // (falls through to the {} default below) -- the fix is only that arrays now count
 // as garbage too, at both unwrap points.
+// unwrapCheckpointMap(cp) -> the resolved phase-map for a checkpoints value, or `null` if
+// `cp` is not a usable shape (a non-plain-object top level, or a plain top level whose
+// `.phases` is present but not itself a plain object). Module-level, NOT named `unwrap`
+// (build.js flattens every src file's top-level scope into one bundle and
+// detectTopLevelCollisions hard-fails on a duplicate top-level name) so readCheckpoints
+// AND the #268 discard-disclosure predicate below share one definition of "usable
+// checkpoints shape" instead of readCheckpoints's old function-local copy silently
+// drifting from a second one.
+function unwrapCheckpointMap(cp) {
+  if (!isPlainCheckpointObject(cp)) return null;
+  if (cp.phases === undefined) return cp;
+  return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
+}
+
 function readCheckpoints(ctx, args) {
-  const unwrap = (cp) => {
-    if (!isPlainCheckpointObject(cp)) return null;
-    if (cp.phases === undefined) return cp;
-    return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
-  };
   const A = args || {};
-  return unwrap(A.checkpoints) || (ctx && unwrap(ctx.checkpoints)) || {};
+  return unwrapCheckpointMap(A.checkpoints) || (ctx && unwrapCheckpointMap(ctx.checkpoints)) || {};
+}
+
+// checkpointDiscardGap(topLevelCheckpoints) -> a 0-or-1-element `checkpoint-discarded:`
+// gaps array (issue #268). readCheckpoints's fallback chain silently treats an unusable
+// `args.checkpoints` exactly like an absent one -- correct behavior (a malformed resume
+// input must not abort a review that never needed to resume), but previously undisclosed:
+// an operator who stamped a real (if malformed) checkpoints value got a fresh full-pipeline
+// run with no signal that their resume attempt was discarded rather than honored.
+//
+// `checkpoints: undefined` (never stamped, OR a stamped `null` -- normalizeArgsReport
+// already dropped that to absent on the NULLABLE_TOP_LEVEL allowlist, upstream of this
+// call) is deliberately NOT a discard: nothing was tolerated, nothing was lost, exactly the
+// same "previously valid and silent" reasoning F4-3 pins for null_arg gaps
+// (pipeline_run.test.js). Everything else `unwrapCheckpointMap` rejects -- a non-plain-object
+// top level, or a plain top level with a non-plain-object `.phases` -- WAS a real value the
+// operator supplied, reduced to a fresh run with no resume, so it earns a disclosure.
+//
+// Names the failing POSITION (`checkpoints` at the top level, or `checkpoints.phases` for a
+// malformed wrapper) and reads describeCheckpointShape AT THAT POSITION: describing the
+// wrapper object itself for a `{phases: 'x'}`-class value would print the useless
+// "(got object)" instead of naming what is actually wrong (the `.phases` value).
+function checkpointDiscardGap(topLevelCheckpoints) {
+  if (topLevelCheckpoints === undefined) return [];
+  if (unwrapCheckpointMap(topLevelCheckpoints) !== null) return [];
+  const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
+  const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
+  const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
+  return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
+    + 'the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
+    + 'if no checkpoints had been supplied.'];
 }
 
 // --- Checkpoint shape gate (#248 + #250) -------------------------------------
@@ -7021,8 +7086,8 @@ function checkpointShapeErrors(resolvedCheckpoints) {
 const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint artifact, or re-run without the '
   + '`checkpoints` argument to start the review fresh.';
 
-// makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap) -> the
-// dedicated pre-dispatch refusal for a #248/#250 shape violation. A SIBLING of
+// makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap, discardGap) ->
+// the dedicated pre-dispatch refusal for a #248/#250 shape violation. A SIBLING of
 // makeArgsRejectEnvelope (args.js), not a reuse of it: this failure is not an args-shape
 // failure (validateArgs already accepted `A`), so failingPhase/phaseReached name the
 // pseudo-phase 'checkpoints' rather than 'args'. `checkpoints: { completed: [] }` is
@@ -7040,7 +7105,16 @@ const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint 
 // context_unmeasured/context_unplannable disclosure, always an array of 0 or 1 strings)
 // rides here for the identical reason -- it is computed above the gate too, and this was
 // the one exit that dropped it silently on the floor.
-function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = []) {
+//
+// `discardGap` (issue #268; also computed above the gate, alongside contextSizeGap) is the
+// same shape as contextSizeGap -- a 0-or-1-element `checkpoint-discarded:` array -- and
+// rides here for the identical reason. Unreachable in production today (a garbage
+// `args.checkpoints` alone resolves inert with zero shape violations, so this exit is never
+// taken on that path alone; reaching both a discard AND a violation needs a garbage
+// `args.checkpoints` PLUS a malformed `ctx.checkpoints` fallback seam), but one line buys
+// consistency with this envelope's own nullArgGaps/contextSizeGap rationale rather than a
+// silent gap-channel gap should that combination ever become reachable.
+function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = [], discardGap = []) {
   const extra = violations.length - 1;
   const error = extra > 0
     ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`
@@ -7052,7 +7126,7 @@ function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], context
     phaseReached: 'checkpoints',
     artifactPaths: {},
     stats: {},
-    gaps: [...nullArgGaps, ...contextSizeGap, ...violations],
+    gaps: [...nullArgGaps, ...contextSizeGap, ...discardGap, ...violations],
     checkpoints: { completed: [] },
   };
 }
@@ -7334,6 +7408,13 @@ async function runWith(ctx, rawArgs) {
         + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
         + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
       : []);
+  // checkpoint-discarded (#268): computed EARLY, alongside contextSizeGap and before
+  // readCheckpoints/the shape gate below, from the TOP-LEVEL `A.checkpoints` the operator
+  // actually stamped -- not from the resolved map, which has already thrown the distinction
+  // away by the time readCheckpoints returns. Disclose-not-abort, the same class as
+  // contextSizeGap: readCheckpoints's existing fallback to {} on an unusable value is
+  // correct behavior (never abort a review over a bad resume input), it was just silent.
+  const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(c, A);
   // Pre-dispatch, outside the try block: a malformed replayed checkpoint value is
   // refused loud instead of reaching a phase's unconditional downstream read (#248 +
@@ -7343,10 +7424,10 @@ async function runWith(ctx, rawArgs) {
   // disclosure still rides on THIS exit too, not just the args-reject and success exits.
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
-    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap);
+    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap);
   }
 
-  const gaps = [...nullArgGaps, ...contextSizeGap];
+  const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';

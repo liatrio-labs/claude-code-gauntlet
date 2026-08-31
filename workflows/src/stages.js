@@ -3583,14 +3583,53 @@ export function checkpointPath(phase, sha) {
 // output instead of refusing. Top-level-garbage-is-inert is the established decision
 // (falls through to the {} default below) -- the fix is only that arrays now count
 // as garbage too, at both unwrap points.
+// unwrapCheckpointMap(cp) -> the resolved phase-map for a checkpoints value, or `null` if
+// `cp` is not a usable shape (a non-plain-object top level, or a plain top level whose
+// `.phases` is present but not itself a plain object). Module-level, NOT named `unwrap`
+// (build.js flattens every src file's top-level scope into one bundle and
+// detectTopLevelCollisions hard-fails on a duplicate top-level name) so readCheckpoints
+// AND the #268 discard-disclosure predicate below share one definition of "usable
+// checkpoints shape" instead of readCheckpoints's old function-local copy silently
+// drifting from a second one.
+function unwrapCheckpointMap(cp) {
+  if (!isPlainCheckpointObject(cp)) return null;
+  if (cp.phases === undefined) return cp;
+  return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
+}
+
 export function readCheckpoints(ctx, args) {
-  const unwrap = (cp) => {
-    if (!isPlainCheckpointObject(cp)) return null;
-    if (cp.phases === undefined) return cp;
-    return isPlainCheckpointObject(cp.phases) ? cp.phases : null;
-  };
   const A = args || {};
-  return unwrap(A.checkpoints) || (ctx && unwrap(ctx.checkpoints)) || {};
+  return unwrapCheckpointMap(A.checkpoints) || (ctx && unwrapCheckpointMap(ctx.checkpoints)) || {};
+}
+
+// checkpointDiscardGap(topLevelCheckpoints) -> a 0-or-1-element `checkpoint-discarded:`
+// gaps array (issue #268). readCheckpoints's fallback chain silently treats an unusable
+// `args.checkpoints` exactly like an absent one -- correct behavior (a malformed resume
+// input must not abort a review that never needed to resume), but previously undisclosed:
+// an operator who stamped a real (if malformed) checkpoints value got a fresh full-pipeline
+// run with no signal that their resume attempt was discarded rather than honored.
+//
+// `checkpoints: undefined` (never stamped, OR a stamped `null` -- normalizeArgsReport
+// already dropped that to absent on the NULLABLE_TOP_LEVEL allowlist, upstream of this
+// call) is deliberately NOT a discard: nothing was tolerated, nothing was lost, exactly the
+// same "previously valid and silent" reasoning F4-3 pins for null_arg gaps
+// (pipeline_run.test.js). Everything else `unwrapCheckpointMap` rejects -- a non-plain-object
+// top level, or a plain top level with a non-plain-object `.phases` -- WAS a real value the
+// operator supplied, reduced to a fresh run with no resume, so it earns a disclosure.
+//
+// Names the failing POSITION (`checkpoints` at the top level, or `checkpoints.phases` for a
+// malformed wrapper) and reads describeCheckpointShape AT THAT POSITION: describing the
+// wrapper object itself for a `{phases: 'x'}`-class value would print the useless
+// "(got object)" instead of naming what is actually wrong (the `.phases` value).
+function checkpointDiscardGap(topLevelCheckpoints) {
+  if (topLevelCheckpoints === undefined) return [];
+  if (unwrapCheckpointMap(topLevelCheckpoints) !== null) return [];
+  const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
+  const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
+  const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
+  return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
+    + 'the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
+    + 'if no checkpoints had been supplied.'];
 }
 
 // --- Checkpoint shape gate (#248 + #250) -------------------------------------
@@ -3728,8 +3767,8 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
 const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint artifact, or re-run without the '
   + '`checkpoints` argument to start the review fresh.';
 
-// makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap) -> the
-// dedicated pre-dispatch refusal for a #248/#250 shape violation. A SIBLING of
+// makeCheckpointShapeRejectEnvelope(violations, nullArgGaps, contextSizeGap, discardGap) ->
+// the dedicated pre-dispatch refusal for a #248/#250 shape violation. A SIBLING of
 // makeArgsRejectEnvelope (args.js), not a reuse of it: this failure is not an args-shape
 // failure (validateArgs already accepted `A`), so failingPhase/phaseReached name the
 // pseudo-phase 'checkpoints' rather than 'args'. `checkpoints: { completed: [] }` is
@@ -3747,7 +3786,16 @@ const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint 
 // context_unmeasured/context_unplannable disclosure, always an array of 0 or 1 strings)
 // rides here for the identical reason -- it is computed above the gate too, and this was
 // the one exit that dropped it silently on the floor.
-function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = []) {
+//
+// `discardGap` (issue #268; also computed above the gate, alongside contextSizeGap) is the
+// same shape as contextSizeGap -- a 0-or-1-element `checkpoint-discarded:` array -- and
+// rides here for the identical reason. Unreachable in production today (a garbage
+// `args.checkpoints` alone resolves inert with zero shape violations, so this exit is never
+// taken on that path alone; reaching both a discard AND a violation needs a garbage
+// `args.checkpoints` PLUS a malformed `ctx.checkpoints` fallback seam), but one line buys
+// consistency with this envelope's own nullArgGaps/contextSizeGap rationale rather than a
+// silent gap-channel gap should that combination ever become reachable.
+function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = [], discardGap = []) {
   const extra = violations.length - 1;
   const error = extra > 0
     ? `${violations[0]} (and ${extra} more checkpoint-shape violation${extra === 1 ? '' : 's'}). ${CHECKPOINT_SHAPE_RECOVERY_LINE}`
@@ -3759,7 +3807,7 @@ function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], context
     phaseReached: 'checkpoints',
     artifactPaths: {},
     stats: {},
-    gaps: [...nullArgGaps, ...contextSizeGap, ...violations],
+    gaps: [...nullArgGaps, ...contextSizeGap, ...discardGap, ...violations],
     checkpoints: { completed: [] },
   };
 }
@@ -4041,6 +4089,13 @@ export async function runWith(ctx, rawArgs) {
         + 'That restores the failure mode of issue #48 for an oversized context. Shrink the shared context '
         + '(or raise READ_PLAN_MAX_CHUNKS with a matching prompt-size budget) so a plan can be computed.']
       : []);
+  // checkpoint-discarded (#268): computed EARLY, alongside contextSizeGap and before
+  // readCheckpoints/the shape gate below, from the TOP-LEVEL `A.checkpoints` the operator
+  // actually stamped -- not from the resolved map, which has already thrown the distinction
+  // away by the time readCheckpoints returns. Disclose-not-abort, the same class as
+  // contextSizeGap: readCheckpoints's existing fallback to {} on an unusable value is
+  // correct behavior (never abort a review over a bad resume input), it was just silent.
+  const discardGap = checkpointDiscardGap(A.checkpoints);
   const checkpoints = readCheckpoints(c, A);
   // Pre-dispatch, outside the try block: a malformed replayed checkpoint value is
   // refused loud instead of reaching a phase's unconditional downstream read (#248 +
@@ -4050,10 +4105,10 @@ export async function runWith(ctx, rawArgs) {
   // disclosure still rides on THIS exit too, not just the args-reject and success exits.
   const checkpointShapeViolations = checkpointShapeErrors(checkpoints);
   if (checkpointShapeViolations.length) {
-    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap);
+    return makeCheckpointShapeRejectEnvelope(checkpointShapeViolations, nullArgGaps, contextSizeGap, discardGap);
   }
 
-  const gaps = [...nullArgGaps, ...contextSizeGap];
+  const gaps = [...nullArgGaps, ...contextSizeGap, ...discardGap];
   const completed = [];
   const phaseOutputs = {}; // per-phase output map — persisted as the checkpoint artifact
   let phaseReached = 'start';

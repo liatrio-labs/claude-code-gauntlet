@@ -10,6 +10,10 @@ import {
   applyInjectionFilter,
   applyExclusions,
   applyInjectedProseStrip,
+  detectDisagreement,
+  routeByDimension,
+  consolidateCrossAgent,
+  tagFindings,
   INJECTION_STRIPPED_PROSE_FIELDS,
   WORD_SPLIT_RE,
   countWords,
@@ -381,6 +385,20 @@ test('applyInjectionFilter: a claude_md_rule phrase match with no suggested_fix_
   assert.equal(kept[0].claude_md_rule, undefined);
   assert.equal('suggested_fix_code' in kept[0], false);
   assert.equal(kept[0].suggested_fix_code_removed_by, undefined);
+});
+
+test('applyFilterPipeline stats.exclusions_removed counts a finding eliminated by applyExclusions (#267)', () => {
+  const cfg = { confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'low', ignore: ['banned phrase'] };
+  const findings = [
+    cleanFinding({ id: 'X1', agent: 'bug-detector', dimension: 'bug', confidence: 90, title: 'Contains the banned phrase in its title' }),
+    cleanFinding({ id: 'X2', agent: 'bug-detector', dimension: 'bug', confidence: 90, file: 'src/bar.js', line_start: 43 }),
+  ];
+  const out = applyFilterPipeline(findings, cfg, [], '2026-07-18T00:00:00Z');
+  assert.equal(out.stats.exclusions_removed, 1);
+  const eliminatedIds = out.eliminated.map((f) => f.id);
+  assert.ok(eliminatedIds.includes('X1'));
+  const filteredIds = out.filtered.map((f) => f.id);
+  assert.ok(filteredIds.includes('X2'));
 });
 
 test('applyFilterPipeline stats.claude_md_rules_removed and stats.spec_texts_removed count stripped findings', () => {
@@ -1466,4 +1484,228 @@ test('#256 D6(a) coverage: every content-set pattern entry has at least one cove
     });
   }
   assert.deepEqual(uncovered, [], `pattern(s) with no covering synthetic: ${JSON.stringify(uncovered)}`);
+});
+
+// --- #266: widened typed-field coercion across the filter twins' scan paths ---
+//
+// A scanned finding field must contribute a value of its expected type or
+// that type's default -- never a stringified null, never a crash. Python's
+// twin crashes outright at several of these sites (an uncaught TypeError --
+// see tests/test_filter_findings.py's TestInjectionScanCoreTypedFieldCoercion
+// and TestDetectDisagreement.test_suppression_intentional_survives_null_title
+// for that honesty note); JS's `||`/template-literal coercion already
+// tolerates a null/undefined value at most of these sites, so a bare null
+// does not discriminate the JS-side mutation. A TRUTHY non-string value (an
+// array, most plausibly reachable via a replayed checkpoint) does: JS's
+// template literal stringifies it via toString(), which can leak matchable
+// keyword text the way Python's f-string leaks a list's repr -- see the
+// parity fixtures under tests/fixtures/parity/filter_findings/{exclusions,
+// injection,disagreement}/ for the byte-exact cross-runtime proof; these are
+// the JS-only direct unit-test companions.
+
+test('applyExclusions: null title/description never renders as literal "null" text', () => {
+  const findings = [
+    { id: 'JN1', title: null, description: 'clean finding with no exclusion-worthy content', file: 'a.js', line_start: 1, severity: 'low', confidence: 60 },
+    { id: 'JN2', title: 'clean finding with no exclusion-worthy content', description: null, file: 'b.js', line_start: 2, severity: 'low', confidence: 60 },
+  ];
+  const { kept, eliminated } = applyExclusions(findings, ['null']);
+  assert.equal(eliminated.length, 0);
+  assert.equal(kept.length, 2);
+});
+
+test('applyInjectionFilter: null title/file/confidence never crash and file-empty still fires correctly', () => {
+  const finding = {
+    id: 'JN3',
+    title: null,
+    description: 'This finding intentionally omits identifying fields to exercise the typed-field coercion at scan time.',
+    file: null,
+    confidence: null,
+    severity: 'medium',
+    line_start: 10,
+  };
+  const { kept, eliminated } = applyInjectionFilter([finding]);
+  assert.equal(kept.length, 0);
+  assert.equal(eliminated.length, 1);
+  assert.match(eliminated[0].elimination_reason, /file path is empty or contains template markers: ""/);
+});
+
+test('applyInjectionFilter: a numeric-STRING confidence ("90") does not satisfy the >= 85 high-confidence check', () => {
+  // Pre-fix, `'confidence' in finding ? finding.confidence : 0` lets the raw
+  // string "90" through, and JS's `>=` operator coerces it to a number for
+  // the comparison -- true. Post-fix, asConfidence rejects the non-number
+  // type and defaults to 0, so heuristic 4 never sees a numeric-string bypass.
+  const finding = {
+    id: 'JN4',
+    title: 'Legitimate finding with a numeric-string confidence',
+    description: 'Too short',
+    file: 'src/real.js',
+    confidence: '90',
+    severity: 'medium',
+    line_start: 5,
+  };
+  const { kept, eliminated } = applyInjectionFilter([finding]);
+  assert.equal(kept.length, 1);
+  assert.equal(eliminated.length, 0);
+});
+
+test('detectDisagreement suppression rule 1 survives a null conventions title', () => {
+  const bug = { id: 'jbug-1', agent: 'bug-detector', file: 'a.js', line_start: 10, severity: 'high', confidence: 80, title: 'possible null deref', description: 'd4' };
+  const conv = { id: 'jconv-1', agent: 'conventions-and-intent', file: 'a.js', line_start: 12, severity: 'low', confidence: 60, title: null, description: 'this behavior is intentional and documented' };
+  const { active, suppressed } = detectDisagreement([bug, conv]);
+  const suppressedIds = suppressed.map((s) => s.id);
+  const activeIds = active.map((a) => a.id);
+  assert.ok(suppressedIds.includes('jbug-1'));
+  assert.ok(activeIds.includes('jconv-1'));
+  assert.ok(!activeIds.includes('jbug-1'));
+});
+
+test('detectDisagreement suppression rule 1: a non-string (array) conventions title does not leak keyword text into the suppression scan', () => {
+  // Mirrors tests/fixtures/parity/filter_findings/disagreement/
+  // suppression_intentional_null_title's DN3/DN4 pair: pre-fix, JS's template
+  // literal stringifies the array title to the literal text "by design"
+  // (single-element array .toString()), which the suppression regex matches
+  // even though the finding's actual (title-less) intent carries no such
+  // signal. Post-fix, asText rejects the non-string title, so only the
+  // description's real content is scanned.
+  const bug = { id: 'jbug-2', agent: 'bug-detector', file: 'b.js', line_start: 20, severity: 'high', confidence: 75, title: 'off-by-one', description: 'drops the last record' };
+  const conv = { id: 'jconv-2', agent: 'conventions-and-intent', file: 'b.js', line_start: 21, severity: 'low', confidence: 55, title: ['by design'], description: 'unrelated commentary about code style choices' };
+  const { active, suppressed } = detectDisagreement([bug, conv]);
+  const suppressedIds = suppressed.map((s) => s.id);
+  const activeIds = active.map((a) => a.id);
+  assert.ok(!suppressedIds.includes('jbug-2'), 'the array-typed title must not leak "by design" text into the suppression scan');
+  assert.ok(activeIds.includes('jbug-2'));
+});
+
+test('routeByDimension: null title/description do not crash and route by default', () => {
+  const f = { dimension: 'convention', title: null, description: null };
+  assert.equal(routeByDimension(f), 'suggestion');
+});
+
+test('routeByDimension: a non-string (array) title does not leak its stringified content into the keyword scan', () => {
+  // Mirrors the Python TestRouteByDimension companion: pre-fix, the array
+  // title's template-literal stringification ("race condition detected")
+  // still matches TEST_CORRECTNESS_PATTERNS, wrongly promoting a test_coverage
+  // finding to "main". Post-fix, asText coerces the array to "", and the
+  // dimension falls through to its suggestion default.
+  const f = { dimension: 'test_coverage', title: ['race condition detected'], description: '' };
+  assert.equal(routeByDimension(f), 'suggestion');
+});
+
+// --- #266 remaining sites: detectDisagreement rule 2, isTestCorrectnessFinding,
+// consolidateCrossAgent's winner key, applyThresholdFilter -------------------
+
+test('detectDisagreement suppression rule 2 survives a null conventions title', () => {
+  // RULE 2's own site (test-analyzer + "generated/scaffolding"), distinct from
+  // RULE 1's null-title test above -- pre-fix this site had no asText coercion
+  // at all, so a null title rendered as the literal text "null" via the
+  // template literal instead of crashing (JS's non-crashing divergence from
+  // Python's TypeError on the same site).
+  const testF = { id: 'jtest-1', agent: 'test-analyzer', file: 'd.js', line_start: 20, severity: 'medium', confidence: 70, title: 'missing test', description: 'd6' };
+  const conv = { id: 'jconv-3', agent: 'conventions-and-intent', file: 'd.js', line_start: 21, severity: 'low', confidence: 60, title: null, description: 'this file is auto-generated scaffolding, do not add tests' };
+  const { active, suppressed } = detectDisagreement([testF, conv]);
+  const suppressedIds = suppressed.map((s) => s.id);
+  const activeIds = active.map((a) => a.id);
+  assert.ok(suppressedIds.includes('jtest-1'));
+  assert.ok(activeIds.includes('jconv-3'));
+  assert.ok(!activeIds.includes('jtest-1'));
+});
+
+test('tagFindings: a test-analyzer finding with a null title is promoted correctly off the description alone', () => {
+  const f = { id: 'jta-1', agent: 'test-analyzer', file: 'src/worker.js', line_start: 40, severity: 'medium', confidence: 70, title: null, description: 'the retry counter always passes even under concurrent load, masking a race condition in the worker pool' };
+  const { tagged } = tagFindings([f]);
+  assert.equal(tagged[0].report_destination, 'main');
+});
+
+test('tagFindings: a non-string (array) test-analyzer title does not leak stringified text into the promotion scan', () => {
+  // Pre-fix, JS's bare array-to-string coercion turns `['logic']` into the
+  // literal text "logic" (no brackets/quotes for a single-element array),
+  // which -- followed by a description starting with "error" -- satisfies
+  // `\blogic[\s]+error\b` and wrongly promotes to "main". Python's f-string
+  // renders the same list as "['logic']", whose surrounding punctuation
+  // breaks that same adjacency, so pre-fix Python stays "suggestion" while
+  // pre-fix JS promotes -- a live routing divergence. Post-fix, asText
+  // coerces the array to "" in both twins, so the outcome no longer depends
+  // on which language's stringification happened to add punctuation.
+  const f = { id: 'jta-2', agent: 'test-analyzer', file: 'src/handler.js', line_start: 80, severity: 'medium', confidence: 65, title: ['logic'], description: 'error is not caught anywhere in this path, so it silently swallows exceptions' };
+  const { tagged } = tagFindings([f]);
+  assert.equal(tagged[0].report_destination, 'suggestion');
+});
+
+test('consolidateCrossAgent: a null description does not crash the winner-key sort', () => {
+  // Pre-fix, `pyGet(f, 'description', '').length` reads the raw null
+  // (present, not absent) and crashes reading `.length` off it -- this
+  // happens while BUILDING the sort key, even for a finding whose
+  // description length never ends up deciding the winner (a core dimension
+  // already wins here).
+  const bug = { id: 'jbug-null-desc', agent: 'bug-detector', dimension: 'bug', file: 'a.js', line_start: 10, confidence: 80, title: 't1', description: null };
+  const testF = { id: 'jtest-2', agent: 'test-analyzer', dimension: 'test_coverage', file: 'a.js', line_start: 12, confidence: 60, title: 't2', description: 'a perfectly normal description' };
+  const { findings, consolidatedCount } = consolidateCrossAgent([bug, testF]);
+  assert.equal(findings.length, 2);
+  assert.equal(consolidatedCount, 2);
+  assert.equal(bug.consolidation_primary, true);
+});
+
+test('consolidateCrossAgent: an array-typed description does not win the tie-break on item count', () => {
+  // Discriminating companion: pre-fix, a JS array's `.length` is its element
+  // COUNT, not a character count -- a 5-element array out-scores a
+  // 4-character string in the tie-break (both non-core, same confidence).
+  // Post-fix, asText coerces the array to "" (length 0), so the real
+  // 4-character string wins.
+  const f1 = { id: 'jf1', agent: 'test-analyzer', dimension: 'test_coverage', file: 'n.js', line_start: 20, confidence: 60, title: 't3', description: ['a', 'b', 'c', 'd', 'e'] };
+  const f2 = { id: 'jf2', agent: 'code-simplifier', dimension: 'simplification', file: 'n.js', line_start: 21, confidence: 60, title: 't4', description: 'tiny' };
+  consolidateCrossAgent([f1, f2]);
+  assert.equal(f2.consolidation_primary, true);
+  assert.equal(f1.consolidation_primary, false);
+});
+
+test('applyThresholdFilter: a null confidence does not crash and is treated as 0', () => {
+  const f = { id: 'jt-nc1', dimension: 'bug', confidence: null, severity: 'medium', title: 't', description: 'd', file: 'a.js', line_start: 1 };
+  const config = { confidence_threshold: 70, security_min_confidence: 70, severity_threshold: 'low' };
+  const { kept, eliminated } = applyThresholdFilter([f], config);
+  assert.equal(kept.length, 0);
+  assert.equal(eliminated.length, 1);
+  assert.match(eliminated[0].elimination_reason, /confidence 0 < threshold 70/);
+});
+
+test('applyThresholdFilter: a null severity does not crash and defaults to low', () => {
+  const f = { id: 'jt-ns1', dimension: 'bug', confidence: 90, severity: null, title: 't', description: 'd', file: 'a.js', line_start: 1 };
+  const config = { confidence_threshold: 70, security_min_confidence: 70, severity_threshold: 'low' };
+  const { kept, eliminated } = applyThresholdFilter([f], config);
+  assert.equal(kept.length, 1);
+  assert.equal(eliminated.length, 0);
+});
+
+test('applyThresholdFilter: a numeric-string confidence ("90") coerces to 0, not a bypass via implicit ToNumber', () => {
+  // Pre-fix, JS's `<` operator applies ToNumber to a string operand --
+  // "90" < 70 is false, so a string confidence silently BYPASSED the
+  // threshold instead of coercing to the safe default, 0.
+  const f = { id: 'jt-sc1', dimension: 'bug', confidence: '90', severity: 'high', title: 't', description: 'd', file: 'a.js', line_start: 1 };
+  const config = { confidence_threshold: 70, security_min_confidence: 70, severity_threshold: 'low' };
+  const { kept, eliminated } = applyThresholdFilter([f], config);
+  assert.equal(kept.length, 0);
+  assert.equal(eliminated.length, 1);
+  assert.match(eliminated[0].elimination_reason, /confidence 0 < threshold 70/);
+});
+
+// --- #266 FIX 3: asConfidence hardening (bool/NaN guards) -- exercised via
+// applyThresholdFilter since asConfidence itself is not exported ------------
+
+test('applyThresholdFilter: a boolean confidence (true) does not count as numeric 1', () => {
+  // A mutation that loosened asConfidence's `typeof value === 'number'`
+  // check (e.g. to a bare `!Number.isNaN(value)`) would let `true` pass
+  // through as 1 -- at confidence_threshold=1, that reads as "at or above
+  // threshold" (not eliminated) instead of the correct 0 (eliminated).
+  const f = { id: 'jt-bool1', dimension: 'bug', confidence: true, severity: 'low', title: 't', description: 'd', file: 'a.js', line_start: 1 };
+  const config = { confidence_threshold: 1, security_min_confidence: 1, severity_threshold: 'low' };
+  const { kept, eliminated } = applyThresholdFilter([f], config);
+  assert.equal(kept.length, 0);
+  assert.equal(eliminated.length, 1);
+});
+
+test('applyThresholdFilter: a NaN confidence does not crash and is treated as 0', () => {
+  const f = { id: 'jt-nan1', dimension: 'bug', confidence: NaN, severity: 'low', title: 't', description: 'd', file: 'a.js', line_start: 1 };
+  const config = { confidence_threshold: 1, security_min_confidence: 1, severity_threshold: 'low' };
+  const { kept, eliminated } = applyThresholdFilter([f], config);
+  assert.equal(kept.length, 0);
+  assert.equal(eliminated.length, 1);
 });

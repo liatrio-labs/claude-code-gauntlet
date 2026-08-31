@@ -1,0 +1,63 @@
+{
+  "consolidated_count": 4,
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 80,
+      "consolidation_key": "m.py:10",
+      "consolidation_primary": true,
+      "description": null,
+      "dimension": "bug",
+      "file": "m.py",
+      "id": "CA1",
+      "line_start": 10,
+      "severity": "high",
+      "title": "t1"
+    },
+    {
+      "agent": "test-analyzer",
+      "confidence": 60,
+      "consolidation_key": "m.py:10",
+      "consolidation_primary": false,
+      "description": "normal description text",
+      "dimension": "test_coverage",
+      "file": "m.py",
+      "id": "CA2",
+      "line_start": 11,
+      "severity": "medium",
+      "title": "t2"
+    },
+    {
+      "agent": "test-analyzer",
+      "confidence": 60,
+      "consolidation_key": "n.py:20",
+      "consolidation_primary": false,
+      "description": [
+        "a",
+        "b",
+        "c",
+        "d",
+        "e"
+      ],
+      "dimension": "test_coverage",
+      "file": "n.py",
+      "id": "CB1",
+      "line_start": 20,
+      "severity": "medium",
+      "title": "t3"
+    },
+    {
+      "agent": "code-simplifier",
+      "confidence": 60,
+      "consolidation_key": "n.py:20",
+      "consolidation_primary": true,
+      "description": "tiny",
+      "dimension": "convention",
+      "file": "n.py",
+      "id": "CB2",
+      "line_start": 21,
+      "severity": "medium",
+      "title": "t4"
+    }
+  ]
+}

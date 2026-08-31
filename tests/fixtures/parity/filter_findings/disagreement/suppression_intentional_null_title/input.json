@@ -1,0 +1,49 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "DN1",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "src/service.py",
+      "line_start": 100,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Null pointer dereference on error path",
+      "description": "process_data does not guard against a null client before calling client.send(), causing a crash on the error path."
+    },
+    {
+      "id": "DN2",
+      "agent": "conventions-and-intent",
+      "dimension": "intent",
+      "file": "src/service.py",
+      "line_start": 101,
+      "severity": "low",
+      "confidence": 60,
+      "title": null,
+      "description": "This behavior is intentional and by design -- the null check is deliberately omitted since upstream always guarantees a non-null client."
+    },
+    {
+      "id": "DN3",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "src/other.py",
+      "line_start": 200,
+      "severity": "high",
+      "confidence": 75,
+      "title": "Off-by-one error in pagination cursor",
+      "description": "The cursor advances past the final page boundary, dropping the last record of every result set."
+    },
+    {
+      "id": "DN4",
+      "agent": "conventions-and-intent",
+      "dimension": "intent",
+      "file": "src/other.py",
+      "line_start": 201,
+      "severity": "low",
+      "confidence": 55,
+      "title": ["by design"],
+      "description": "This is unrelated commentary about code style choices in the pagination module."
+    }
+  ]
+}

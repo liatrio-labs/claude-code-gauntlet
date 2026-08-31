@@ -37,6 +37,7 @@ from scripts.filter_findings import (
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
+    _as_confidence,
     _count_words,
     _is_test_correctness_finding,
     _route_by_dimension,
@@ -461,6 +462,47 @@ class TestApplyThresholdFilter(unittest.TestCase):
         self.assertEqual(contested, 2)
         self.assertEqual(len(passed), 3)
         self.assertEqual(len(eliminated), 0)
+
+    # --- #266: typed-field coercion (confidence/severity reads) ---
+
+    def test_null_confidence_does_not_crash_and_is_treated_as_zero(self):
+        """Pre-fix, `finding.get("confidence", 0)` returns the raw None
+        (present, not absent), and `confidence < effective_threshold` raises
+        TypeError comparing None to an int."""
+        findings = [_make_finding(confidence=None, severity="medium")]
+        passed, eliminated, contested = apply_threshold_filter(
+            findings, self._config(confidence=70)
+        )
+        self.assertEqual(len(passed), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn(
+            "confidence 0 < threshold 70", eliminated[0]["elimination_reason"]
+        )
+
+    def test_null_severity_does_not_crash_and_defaults_to_low(self):
+        """Pre-fix, `finding.get("severity", "low").lower()` calls .lower()
+        on the raw None (present, not absent) and raises AttributeError."""
+        findings = [_make_finding(confidence=90, severity=None)]
+        passed, eliminated, contested = apply_threshold_filter(
+            findings, self._config(confidence=70, severity="low")
+        )
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+
+    def test_numeric_string_confidence_coerces_to_zero_not_a_bypass(self):
+        """A string "90" must not satisfy a numeric >= 70 comparison via
+        Python's TypeError-on-compare (pre-fix) or a silent numeric-string
+        bypass (the JS twin's pre-fix risk, via `<`'s implicit ToNumber) --
+        both twins must coerce it to 0 and eliminate it."""
+        findings = [_make_finding(confidence="90", severity="high")]
+        passed, eliminated, contested = apply_threshold_filter(
+            findings, self._config(confidence=70)
+        )
+        self.assertEqual(len(passed), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn(
+            "confidence 0 < threshold 70", eliminated[0]["elimination_reason"]
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -2106,6 +2148,113 @@ class TestApplyInjectionFilter(unittest.TestCase):
             self.assertEqual(len(passed), 1)
 
 
+class TestAsConfidenceCoercion(unittest.TestCase):
+    """#266: direct unit tests for the shared `_as_confidence` helper --
+    every call site is exercised indirectly elsewhere, but a mutation that
+    drops the isinstance(bool)/isinstance((int, float)) guards, or the NaN
+    guard, can still slip through a call site whose surrounding logic
+    happens to produce the same observable outcome either way. These pin
+    the helper's own contract directly."""
+
+    def test_plain_numbers_pass_through_unchanged(self):
+        self.assertEqual(_as_confidence(85), 85)
+        self.assertEqual(_as_confidence(0), 0)
+        self.assertEqual(_as_confidence(72.5), 72.5)
+
+    def test_bool_true_does_not_count_as_numeric_one(self):
+        """Python's bool is an int subclass -- isinstance(True, int) is
+        True -- so a mutation that drops the explicit isinstance(bool) guard
+        lets a bare isinstance((int, float)) check return True itself
+        (which compares equal to 1) instead of the correct default, 0."""
+        self.assertEqual(_as_confidence(True), 0)
+        self.assertEqual(_as_confidence(False), 0)
+
+    def test_numeric_string_does_not_pass_through(self):
+        """A mutation that drops the isinstance((int, float)) guard entirely
+        (or loosens it to accept anything with a numeric *-looking* value)
+        would let a numeric-string confidence like "90" bypass a downstream
+        threshold check instead of coercing to the safe default, 0."""
+        self.assertEqual(_as_confidence("90"), 0)
+        self.assertEqual(_as_confidence(""), 0)
+
+    def test_none_defaults_to_zero(self):
+        self.assertEqual(_as_confidence(None), 0)
+
+    def test_nan_defaults_to_zero(self):
+        """NaN passes isinstance(value, float) but fails every ordering
+        comparison, so without an explicit math.isnan guard a NaN
+        confidence would silently dodge both the injection heuristics and
+        the threshold filter -- mirrors the JS twin's asConfidence, whose
+        `!Number.isNaN(value)` check this brings Python to parity with."""
+        self.assertEqual(_as_confidence(float("nan")), 0)
+
+
+class TestInjectionScanCoreTypedFieldCoercion(unittest.TestCase):
+    """#266: _injection_scan_core reads title/description/file (string-typed)
+    and confidence (numeric-typed) via _as_text/_as_confidence rather than
+    finding.get(field, default) -- the latter only substitutes the default
+    when the key is ABSENT, so an explicit `null` (present-but-None) passes
+    the raw None through to a regex match or numeric comparison.
+
+    Pre-fix, a null title reaches heuristic 7 (`_first_match(title_re,
+    title)`, i.e. `re.search(pattern, None)`) uncaught -- this is a genuine
+    crash (TypeError), not a silent divergence: the honest "red" proof for
+    this class is the test itself raising TypeError before the fix lands,
+    not an assertion failure. (Verified by reverting the fix and watching
+    test_survives_all_null_typed_fields raise TypeError -- see the PR's
+    mutation-testing notes.)
+    """
+
+    def test_survives_all_null_typed_fields(self):
+        finding = _make_finding(
+            title=None,
+            description="This finding intentionally omits identifying fields to exercise the typed-field coercion at scan time.",
+            file=None,
+            confidence=None,
+        )
+        passed, eliminated = apply_injection_filter([finding])
+        # file coerces to "" -> heuristic 9 (empty file path) still correctly
+        # fires -- the finding is eliminated for a real, expected reason, not
+        # a crash, and the reason text uses the coerced "" (Python !r -> "''"),
+        # never the stringified "None" the pre-fix path produced.
+        self.assertEqual(len(passed), 0)
+        self.assertEqual(len(eliminated), 1)
+        self.assertIn(
+            "file path is empty or contains template markers: ''",
+            eliminated[0]["elimination_reason"],
+        )
+
+    def test_null_confidence_does_not_crash_heuristic_4(self):
+        """Pre-fix, `confidence = finding.get("confidence", 0)` returns the
+        raw None (present, not absent), and heuristic 4's `confidence >= 85`
+        raises TypeError comparing None to an int. Post-fix, _as_confidence
+        defaults a non-numeric confidence to 0, so a short description with a
+        null confidence is NOT treated as suspiciously-short-and-high-
+        confidence."""
+        finding = _make_finding(
+            title="Real bug",
+            description="Too short",
+            file="src/real.py",
+            confidence=None,
+        )
+        passed, eliminated = apply_injection_filter([finding])
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+
+    def test_null_title_does_not_match_placeholder_pattern(self):
+        """A null title coerces to "" and must never match the placeholder
+        title patterns (heuristic 7) the way a stringified "None" text
+        could."""
+        finding = _make_finding(
+            title=None,
+            description="A perfectly ordinary description with no injection content whatsoever in it.",
+            file="src/ordinary.py",
+        )
+        passed, eliminated = apply_injection_filter([finding])
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+
+
 # ---------------------------------------------------------------------------
 # detect_disagreement
 # ---------------------------------------------------------------------------
@@ -2226,6 +2375,35 @@ class TestDetectDisagreement(unittest.TestCase):
         self.assertIn("conv-1", active_ids)
         self.assertNotIn("bug-1", active_ids)
 
+    def test_suppression_intentional_survives_null_title(self):
+        """#266: suppression rule 1's `conv_finding.get("description", "") +
+        " " + conv_finding.get("title", "")` concatenation crashes pre-fix
+        with TypeError when the conventions finding's title is an explicit
+        null (present, not absent, so .get's default never kicks in) --
+        `str + " " + None` raises. Post-fix, _as_text coerces the null title
+        to "", the concatenation succeeds, and suppression still fires off
+        the description alone."""
+        bug = _make_finding(
+            id="bug-null-title",
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+        )
+        conv = _make_finding(
+            id="conv-null-title",
+            file="a.py",
+            line_start=12,
+            agent="conventions-and-intent",
+            title=None,
+            description="This is intentional and by design for backward compatibility",
+        )
+        active, suppressed, _ = detect_disagreement([bug, conv])
+        suppressed_ids = [s["id"] for s in suppressed]
+        self.assertIn("bug-null-title", suppressed_ids)
+        active_ids = [a["id"] for a in active]
+        self.assertIn("conv-null-title", active_ids)
+        self.assertNotIn("bug-null-title", active_ids)
+
     def test_suppression_generated(self):
         test_f = _make_finding(
             id="test-1",
@@ -2245,6 +2423,35 @@ class TestDetectDisagreement(unittest.TestCase):
         self.assertIn("test-1", suppressed_ids)
         active_ids = [a["id"] for a in active]
         self.assertNotIn("test-1", active_ids)
+
+    def test_suppression_generated_survives_null_title(self):
+        """#266: suppression rule 2's `conv_finding.get("description", "") +
+        " " + conv_finding.get("title", "")` concatenation crashes pre-fix
+        with TypeError when the conventions finding's title is an explicit
+        null (present, not absent) -- `str + " " + None` raises. Post-fix,
+        _as_text coerces the null title to "", the concatenation succeeds,
+        and suppression still fires off the description alone. This is
+        RULE 2's own site, distinct from RULE 1's already-fixed
+        test_suppression_intentional_survives_null_title."""
+        test_f = _make_finding(
+            id="test-null-title",
+            file="a.py",
+            line_start=10,
+            agent="test-analyzer",
+        )
+        conv = _make_finding(
+            id="conv-null-title",
+            file="a.py",
+            line_start=12,
+            agent="conventions-and-intent",
+            title=None,
+            description="This code is auto-generated scaffolding for the test framework",
+        )
+        active, suppressed, _ = detect_disagreement([test_f, conv])
+        suppressed_ids = [s["id"] for s in suppressed]
+        self.assertIn("test-null-title", suppressed_ids)
+        active_ids = [a["id"] for a in active]
+        self.assertNotIn("test-null-title", active_ids)
 
     def test_security_escalation(self):
         sec = _make_finding(
@@ -2451,6 +2658,51 @@ class TestIsTestCorrectnessFinding(unittest.TestCase):
         )
         self.assertFalse(_is_test_correctness_finding(f))
 
+    def test_null_title_does_not_crash_and_description_alone_still_matches(self):
+        """#266: title/description are read via _as_text, not
+        finding.get(field, ""), which only substitutes the default when the
+        key is ABSENT. A null title must not stop a real match living in the
+        description alone."""
+        f = _make_finding(
+            title=None,
+            description="the retry counter always passes even under concurrent load",
+        )
+        self.assertTrue(_is_test_correctness_finding(f))
+
+    def test_array_title_does_not_leak_stringified_text_into_the_scan(self):
+        """Mirrors the JS twin's divergence pin (filter_unit.test.js): pre-fix,
+        Python's f-string renders a list title as its repr (`"['logic']"`),
+        whose surrounding punctuation breaks the `\\blogic[\\s]+error\\b`
+        adjacency the same way `finding.get("title", "")`'s raw pass-through
+        would for JS's bare array-to-string coercion (`"logic"`, no
+        punctuation) -- so JS's UNCOERCED path incorrectly promotes this
+        finding to main while Python's happens to stay a suggestion by
+        accident of formatting, not by design. Post-fix, _as_text coerces the
+        non-string title to "" in both twins, so neither the accidental
+        Python non-match nor a hypothetical Python match depends on repr
+        punctuation -- the description's real content, with no correctness
+        keyword, is genuinely a suggestion in both languages."""
+        f = _make_finding(
+            title=["logic"],
+            description="error is not caught anywhere in this path, so it silently swallows exceptions",
+        )
+        self.assertFalse(_is_test_correctness_finding(f))
+
+    def test_array_title_whose_own_phrase_matches_is_still_rejected(self):
+        """A Python-specific discriminator: unlike the split-adjacency case
+        above, a keyword PHRASE living entirely inside one list element
+        survives Python's `str(["race condition"])` repr intact (the
+        brackets/quotes land outside the phrase, not inside it), so pre-fix
+        this title alone -- with no correctness signal anywhere in the
+        description -- incorrectly promotes to main. Post-fix, _as_text
+        coerces the non-string title to "" regardless of what text it
+        contains."""
+        f = _make_finding(
+            title=["race condition"],
+            description="unrelated commentary with no correctness keywords at all",
+        )
+        self.assertFalse(_is_test_correctness_finding(f))
+
 
 # ---------------------------------------------------------------------------
 # consolidate_cross_agent / group_by_proximity
@@ -2601,6 +2853,66 @@ class TestConsolidateCrossAgent(unittest.TestCase):
         findings, count = consolidate_cross_agent([f1, f2])
         self.assertEqual(len(findings), 2)
         self.assertEqual(count, 0)
+
+    def test_null_description_does_not_crash_winner_key(self):
+        """#266: the winner key's `len(f.get("description", ""))` tie-break
+        reads every co-located finding's description unconditionally to build
+        the sort key, even when the field never decides the outcome (a core
+        dimension already wins here). Pre-fix, a null description raises
+        `TypeError: object of type 'NoneType' has no len()` the moment
+        `sorted()` calls the key function -- it is not enough for the
+        eventual winner's own description to be well-typed."""
+        bug = _make_finding(
+            id="bug-null-desc",
+            file="a.py",
+            line_start=10,
+            agent="bug-detector",
+            dimension="bug",
+            confidence=80,
+            description=None,
+        )
+        test = _make_finding(
+            id="test-1",
+            file="a.py",
+            line_start=12,
+            agent="test-analyzer",
+            dimension="test_coverage",
+            confidence=60,
+            description="a perfectly normal description",
+        )
+        findings, count = consolidate_cross_agent([bug, test])
+        self.assertEqual(len(findings), 2)
+        self.assertEqual(count, 2)
+        self.assertTrue(bug["consolidation_primary"])  # core dimension still wins
+
+    def test_array_description_does_not_win_the_tiebreak_on_item_count(self):
+        """Discriminating companion to the null-description crash oracle: a
+        non-string description must not contribute `len()` of its item count
+        as a stand-in for string length. Pre-fix, a 5-element list
+        out-scores a 4-character string in the tie-break (both non-core,
+        same confidence) and wins primary; post-fix, _as_text coerces the
+        list to "" (length 0), so the real 4-character string wins."""
+        f1 = _make_finding(
+            id="f1",
+            file="n.py",
+            line_start=20,
+            agent="test-analyzer",
+            dimension="test_coverage",
+            confidence=60,
+            description=["a", "b", "c", "d", "e"],
+        )
+        f2 = _make_finding(
+            id="f2",
+            file="n.py",
+            line_start=21,
+            agent="code-simplifier",
+            dimension="simplification",
+            confidence=60,
+            description="tiny",
+        )
+        consolidate_cross_agent([f1, f2])
+        self.assertTrue(f2["consolidation_primary"])
+        self.assertFalse(f1["consolidation_primary"])
 
     def test_three_way_group_core_wins_primary(self):
         # Three agents at same location: core dimension wins the primary stamp,
@@ -2967,6 +3279,70 @@ class TestConsolidateCrossAgent(unittest.TestCase):
 
             os.unlink(tmppath)
 
+    def test_stats_exclusions_removed_counts_eliminated_finding(self):
+        """#267: stats["exclusions_removed"] counts a finding eliminated by
+        apply_exclusions -- exclusions only run when the config carries
+        `ignore` patterns, so (unlike the other stats tests above, which need
+        no --review-md) this drives main() with a temp REVIEW.md whose
+        code-gauntlet config block sets an `ignore` pattern, matching the
+        finding's title exactly."""
+        matching = _make_finding(
+            id="excl-1", title="Debug statement present in production code"
+        )
+        clean = _make_finding(
+            id="excl-2",
+            title="Real bug",
+            description="Null pointer dereference in the request handler when the upstream service returns an empty response body.",
+        )
+
+        import json
+        import tempfile
+
+        review_md_text = (
+            "# Review config\n\n"
+            "```yaml\n"
+            "# code-gauntlet\n"
+            "ignore:\n"
+            '  - "Debug statement present"\n'
+            "```\n"
+        )
+
+        with (
+            tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f,
+            tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as rf,
+        ):
+            json.dump({"findings": [matching, clean]}, f)
+            tmppath = f.name
+            rf.write(review_md_text)
+            reviewpath = rf.name
+        try:
+            import contextlib
+            import io
+            from unittest.mock import patch as mock_patch
+
+            from scripts.filter_findings import main as filter_main
+
+            buf = io.StringIO()
+            with (
+                mock_patch(
+                    "sys.argv",
+                    ["filter_findings.py", tmppath, "--review-md", reviewpath],
+                ),
+                contextlib.redirect_stdout(buf),
+            ):
+                filter_main()
+            result = json.loads(buf.getvalue())
+            self.assertEqual(result["stats"]["exclusions_removed"], 1)
+            eliminated_ids = {f["id"] for f in result["eliminated"]}
+            self.assertIn("excl-1", eliminated_ids)
+            filtered_ids = {f["id"] for f in result["filtered"]}
+            self.assertIn("excl-2", filtered_ids)
+        finally:
+            import os
+
+            os.unlink(tmppath)
+            os.unlink(reviewpath)
+
     def test_stats_spec_texts_removed_counts_stripped_finding(self):
         """#213: stats["spec_texts_removed"] counts a finding whose spec_text
         was stripped by the injection scan (kept, not eliminated)."""
@@ -3118,6 +3494,28 @@ class TestApplyExclusions(unittest.TestCase):
         (isinstance check, not .get(..., "")) -- matches JS's typeof check so
         neither twin renders "None" into the scanned text (#62)."""
         findings = [_make_finding(suggestion=None)]
+        passed, eliminated = apply_exclusions(findings, ["None"])
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+
+    def test_none_title_no_crash_no_match(self):
+        """#266: a null title is string-typed via _as_text, contributing an
+        empty segment to the combined text -- not the stringified "None" an
+        f-string would otherwise render. Pre-fix, `title = finding.get(
+        "title", "")` returns the raw None (present, not absent), and the
+        f-string silently renders "None", which a REVIEW.md ignore pattern of
+        literally "None" (a plausible pattern over code discussing Python's
+        None) would then spuriously match -- eliminating every null-title
+        finding. This does not crash pre-fix (str formatting of None never
+        raises); it silently over-eliminates."""
+        findings = [_make_finding(title=None)]
+        passed, eliminated = apply_exclusions(findings, ["None"])
+        self.assertEqual(len(passed), 1)
+        self.assertEqual(len(eliminated), 0)
+
+    def test_none_description_no_crash_no_match(self):
+        """#266: same coercion, for description."""
+        findings = [_make_finding(description=None)]
         passed, eliminated = apply_exclusions(findings, ["None"])
         self.assertEqual(len(passed), 1)
         self.assertEqual(len(eliminated), 0)
@@ -3303,6 +3701,38 @@ class TestUnionWhitespaceClassMembership(unittest.TestCase):
 
 
 class TestRouteByDimension(unittest.TestCase):
+    def test_null_title_and_description_do_not_crash_and_route_by_default(self):
+        """#266: _route_by_dimension's conditional-suggestion branch builds
+        `combined = f"{title}\\n{description}"` from finding.get(field, "")
+        -- an explicit null title/description does not crash here (f-string
+        formatting of None never raises), but pre-fix it renders the literal
+        text "None" into `combined`. Post-fix, _as_text coerces both to "",
+        so a convention finding with no title/description text at all falls
+        through to the suggestion default."""
+        f = _make_finding(dimension="convention", title=None, description=None)
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
+    def test_non_string_title_does_not_leak_its_repr_into_the_keyword_scan(self):
+        """#266: a non-string, non-null title (e.g. a list, reachable via the
+        retained CLI's unvalidated --input or a replayed checkpoint) is not
+        caught by a `.get(field, "")` default -- the raw list passes through
+        to the f-string, which renders its Python repr verbatim, INCLUDING
+        any keyword text the list happens to contain. Pre-fix, this list
+        title's repr `"['race condition detected']"` still contains the
+        literal substring "race condition", so TEST_CORRECTNESS_PATTERNS
+        matches by accident and test_coverage gets promoted to "main". Post-
+        fix, _as_text coerces the non-string list to "", the accidental
+        substring match disappears, and the dimension falls through to its
+        suggestion default -- this is the mutation-provable case (unlike a
+        bare None title, whose "None" stringification never collides with
+        any keyword in the current tables)."""
+        f = _make_finding(
+            dimension="test_coverage",
+            title=["race condition detected"],
+            description="",
+        )
+        self.assertEqual(_route_by_dimension(f), "suggestion")
+
     # --- Core dimensions always route to main ---
 
     def test_bug_dimension_routes_main(self):

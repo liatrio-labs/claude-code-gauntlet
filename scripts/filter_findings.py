@@ -37,6 +37,7 @@ Output JSON schema:
             "total":                   N,   # total input findings
             "passed_threshold":        N,   # passed confidence + severity threshold
             "contested_count":         N,   # findings that bypassed threshold via validator contestation
+            "exclusions_removed":      N,   # removed by exclusion filter (REVIEW.md ignore / false-positive-exclusions.md)
             "injections_removed":      N,   # removed by injection filter
             "suggestions_removed":     N,   # kept findings whose suggestion field was stripped by injection scan
             "claude_md_rules_removed": N,   # kept findings whose claude_md_rule field was stripped by injection scan
@@ -85,6 +86,7 @@ No external Python dependencies -- stdlib only.
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -106,6 +108,53 @@ def die(msg):
 
 def warn(msg):
     print(f"WARNING: {msg}", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
+# Typed-field coercion (#266)
+# ---------------------------------------------------------------------------
+#
+# A scanned finding field must contribute a value of its expected type or
+# that type's default -- never a stringified null, never a crash. Applied at
+# every scan/concat/sort-key/threshold site that reads title/description/
+# file/severity (string-typed) or confidence (numeric-typed) from a finding
+# whose provenance is not schema-validated: the retained Python CLI's
+# unvalidated --input/checkpoint resume, and a replayed checkpoint from an
+# earlier pipeline version. Before this, `finding.get(field, "")` only
+# substitutes the default when the KEY IS ABSENT -- an explicit `null` (the
+# common shape) passes the raw None through, which raises TypeError the
+# moment it reaches `re.search`, a `+` string concatenation, a `.lower()`
+# call, or an ordering comparison (`<`), or renders as the literal text
+# "None" in an f-string. `severity` additionally keeps its historical
+# "default to low" fallback: `_as_text(value) or "low"`, not a bare
+# `_as_text(value)`, so an empty or non-string severity still becomes "low"
+# rather than "". Mirrors the JS twin's `asText`/`asConfidence`
+# (workflows/src/filterFindings.js).
+
+
+def _as_text(value):
+    """Return value unchanged if it is a str, else "" -- the shared string-
+    typed coercion for a scanned title/description/file field."""
+    return value if isinstance(value, str) else ""
+
+
+def _as_confidence(value):
+    """Return value unchanged if it is a real numeric type (int/float,
+    excluding bool -- Python's bool is an int subclass but is never a
+    legitimate confidence score), else 0 -- the shared numeric-typed
+    coercion for a scanned confidence field. NaN is also mapped to 0 (a
+    NaN passes the isinstance(float) check but fails every ordering
+    comparison, which would otherwise let a "malformed" confidence dodge
+    both the injection heuristics and the threshold filter silently) --
+    mirrors the JS twin's `asConfidence` (workflows/src/filterFindings.js),
+    whose `!Number.isNaN(value)` guard this brings Python to parity with."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and math.isnan(value):
+            return 0
+        return value
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -343,8 +392,8 @@ def apply_threshold_filter(findings, config):
     )
 
     for finding in findings:
-        confidence = finding.get("confidence", 0)
-        severity = finding.get("severity", "low").lower()
+        confidence = _as_confidence(finding.get("confidence"))
+        severity = (_as_text(finding.get("severity")) or "low").lower()
         dimensions = (
             [finding.get("dimension", "").lower()] if finding.get("dimension") else []
         )
@@ -841,10 +890,10 @@ def _injection_scan_core(findings, include_h4):
         return finding
 
     for finding in findings:
-        title = finding.get("title", "")
-        description = finding.get("description", "")
-        filepath = finding.get("file", "")
-        confidence = finding.get("confidence", 0)
+        title = _as_text(finding.get("title"))
+        description = _as_text(finding.get("description"))
+        filepath = _as_text(finding.get("file"))
+        confidence = _as_confidence(finding.get("confidence"))
         combined = f"{title}\n{description}"
 
         reasons = []
@@ -1060,9 +1109,9 @@ def detect_disagreement(findings):
         if _AGENT_BUG_DETECTOR in agent_map and _AGENT_CONVENTIONS in agent_map:
             for conv_finding in agent_map[_AGENT_CONVENTIONS]:
                 conv_text = (
-                    conv_finding.get("description", "")
+                    _as_text(conv_finding.get("description"))
                     + " "
-                    + conv_finding.get("title", "")
+                    + _as_text(conv_finding.get("title"))
                 ).lower()
                 if re.search(
                     r"\bintentional\b|\bby[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+design\b|\bexpected[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+behavior\b|\bdeliberate\b",
@@ -1087,9 +1136,9 @@ def detect_disagreement(findings):
         if _AGENT_TEST_ANALYZER in agent_map and _AGENT_CONVENTIONS in agent_map:
             for conv_finding in agent_map[_AGENT_CONVENTIONS]:
                 conv_text = (
-                    conv_finding.get("description", "")
+                    _as_text(conv_finding.get("description"))
                     + " "
-                    + conv_finding.get("title", "")
+                    + _as_text(conv_finding.get("title"))
                 ).lower()
                 if re.search(
                     r"\bgenerated\b|\bscaffolding\b|\bauto[-\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]?generated\b|\bboilerplate\b",
@@ -1295,8 +1344,8 @@ def _route_by_dimension(finding):
 
     # Conditional suggestion dimensions with keyword-based promotion
     if dimension in _CONDITIONAL_SUGGESTION_DIMENSIONS:
-        title = finding.get("title", "")
-        description = finding.get("description", "")
+        title = _as_text(finding.get("title"))
+        description = _as_text(finding.get("description"))
         combined = f"{title}\n{description}"
 
         if dimension == "test_coverage":
@@ -1427,8 +1476,8 @@ def _is_test_correctness_finding(finding):
     Decision test: "Does this finding describe a bug that exists today,
     or a test that should be written?"
     """
-    title = finding.get("title", "")
-    description = finding.get("description", "")
+    title = _as_text(finding.get("title"))
+    description = _as_text(finding.get("description"))
     combined = f"{title}\n{description}"
 
     return any(pattern.search(combined) for pattern in _TEST_CORRECTNESS_PATTERNS)
@@ -1507,7 +1556,7 @@ def consolidate_cross_agent(findings):
         dim = f.get("dimension", "").lower()
         is_core = dim in _CORE_DIMENSIONS
         conf = f.get("confidence", 0)
-        desc_len = len(f.get("description", ""))
+        desc_len = len(_as_text(f.get("description")))
         return (int(is_core), conf, desc_len)
 
     groups = group_by_proximity(findings, line_proximity=LINE_PROXIMITY)
@@ -1719,8 +1768,8 @@ def apply_exclusions(findings, exclusion_patterns):
     eliminated = []
 
     for finding in findings:
-        title = finding.get("title", "")
-        description = finding.get("description", "")
+        title = _as_text(finding.get("title"))
+        description = _as_text(finding.get("description"))
         raw_suggestion = finding.get("suggestion")
         suggestion = raw_suggestion if isinstance(raw_suggestion, str) else ""
         combined = f"{title}\n{description}\n{suggestion}"
@@ -1842,6 +1891,7 @@ def main():
     # Step 2: exclusion filter (before injection so explicit overrides take priority)
     findings, elim_exclusions = apply_exclusions(findings, exclusion_patterns)
     all_eliminated.extend(elim_exclusions)
+    exclusions_removed = len(elim_exclusions)
 
     # Step 3: injection filter
     findings, elim_injection = apply_injection_filter(findings)
@@ -1890,6 +1940,7 @@ def main():
             "total": total,
             "passed_threshold": passed_threshold,
             "contested_count": contested_count,
+            "exclusions_removed": exclusions_removed,
             "injections_removed": injections_removed,
             # Spliced, not hand-listed: prose_fields_removed's keys/order are exactly
             # _INJECTION_STRIPPED_PROSE_FIELDS's (dict comprehension, insertion-ordered),

@@ -1,0 +1,35 @@
+{
+  "consolidated_count": 0,
+  "main_count": 1,
+  "suggestion_count": 1,
+  "tagged": [
+    {
+      "agent": "test-analyzer",
+      "confidence": 70,
+      "description": "the retry counter always passes even under concurrent load, masking a race condition in the worker pool",
+      "file": "src/worker.py",
+      "id": "TA1",
+      "line_start": 40,
+      "promoted_from": "test-analyzer",
+      "promotion_reason": "test-analyzer finding describes a functional correctness issue that exists today (not a missing-coverage gap)",
+      "report_destination": "main",
+      "report_tag": "main",
+      "severity": "medium",
+      "title": null
+    },
+    {
+      "agent": "test-analyzer",
+      "confidence": 65,
+      "description": "error is not caught anywhere in this path, so it silently swallows exceptions",
+      "file": "src/handler.py",
+      "id": "TA2",
+      "line_start": 80,
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "severity": "medium",
+      "title": [
+        "logic"
+      ]
+    }
+  ]
+}
