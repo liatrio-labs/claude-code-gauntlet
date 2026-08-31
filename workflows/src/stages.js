@@ -3603,33 +3603,138 @@ export function readCheckpoints(ctx, args) {
 }
 
 // checkpointDiscardGap(topLevelCheckpoints) -> a 0-or-1-element `checkpoint-discarded:`
-// gaps array (issue #268). readCheckpoints's fallback chain silently treats an unusable
-// `args.checkpoints` exactly like an absent one -- correct behavior (a malformed resume
-// input must not abort a review that never needed to resume), but previously undisclosed:
-// an operator who stamped a real (if malformed) checkpoints value got a fresh full-pipeline
-// run with no signal that their resume attempt was discarded rather than honored.
+// gaps array (issue #268, extended by #270 below). readCheckpoints's fallback chain
+// silently treats an unusable `args.checkpoints` exactly like an absent one -- correct
+// behavior (a malformed resume input must not abort a review that never needed to
+// resume), but previously undisclosed: an operator who stamped a real (if malformed)
+// checkpoints value got a fresh full-pipeline run with no signal that their resume
+// attempt was discarded rather than honored.
 //
 // `checkpoints: undefined` (never stamped, OR a stamped `null` -- normalizeArgsReport
 // already dropped that to absent on the NULLABLE_TOP_LEVEL allowlist, upstream of this
 // call) is deliberately NOT a discard: nothing was tolerated, nothing was lost, exactly the
 // same "previously valid and silent" reasoning F4-3 pins for null_arg gaps
-// (pipeline_run.test.js). Everything else `unwrapCheckpointMap` rejects -- a non-plain-object
-// top level, or a plain top level with a non-plain-object `.phases` -- WAS a real value the
-// operator supplied, reduced to a fresh run with no resume, so it earns a disclosure.
+// (pipeline_run.test.js). A non-plain-object top level, or a plain top level with a
+// non-plain-object `.phases`, is what `unwrapCheckpointMap` REJECTS outright (`null`) --
+// WAS a real value the operator supplied, reduced to a fresh run with no resume, so it
+// earns the disclosure below.
 //
 // Names the failing POSITION (`checkpoints` at the top level, or `checkpoints.phases` for a
 // malformed wrapper) and reads describeCheckpointShape AT THAT POSITION: describing the
 // wrapper object itself for a `{phases: 'x'}`-class value would print the useless
 // "(got object)" instead of naming what is actually wrong (the `.phases` value).
+//
+// Issue #270: unwrapCheckpointMap REJECTING isn't the only no-resume outcome an operator
+// gets zero disclosure for. It can also SUCCEED to something inert:
+//   Arm A (zero-recognized non-empty map) -- the classic case is a fed-back return's
+//   `checkpoints` field re-supplied as the next run's `checkpoints` argument, which
+//   SKILL.md documents as a real return and headless auto-resume reads
+//   `return.checkpoints` directly. `{completed, truncated: true}` IS buildResumeCheckpoints'
+//   own FAILURE-path return, once the in-memory phase map would exceed the return budget.
+//   A bare `{completed}` (no truncated, no phases) is NOT that helper's output at all --
+//   buildResumeCheckpoints only ever returns `{phases, completed}` or `{completed,
+//   truncated: true}`; bare `{completed}` is the ok:true SUCCESS return's own compact form
+//   (built once the writer has persisted -- see the `checkpoints: writeOut.partial ? ... :
+//   { completed }` success-path assignment below), naming only the phases that ran. Either
+//   way its keys ('completed', 'truncated') are not phase names, so the direct-return
+//   unwrap branch hands it straight through as a "resolved map" that recognizes nothing --
+//   every phase re-runs, silently. Also catches plain garbage like `{foo: 1}`.
+//   Arm B (empty-.phases masking) -- `{phases: {}, challenge: {...}}`: the unwrap reads
+//   ONLY `.phases` (empty), so the real `challenge` output sitting right next to it at the
+//   wrapper's top level is silently ignored. Deliberately narrow to the wholly-empty
+//   `.phases` case -- a NON-empty `.phases` resuming real work (`{phases: {challenge:
+//   ...}, summarize: {...}}`) never reaches this arm, even though a sibling key is still
+//   being ignored: partial masking is not this arm's problem to catch (see the comment at
+//   the arm itself), because a legitimate producer for that shape does not exist and the
+//   phase(s) that DO resume are real, not silently dropped.
+// Both arms require the resolved/`.phases` map to actually be EMPTY of recognized content
+// (checked via CHECKPOINT_PHASE_SHAPE_TABLE's key set -- safe to derive from the table here
+// because checkpoint_shape_gate.test.js's ALL_PHASES container-test loop independently pins
+// the table's completeness over all eight phases), so `{}` and `{phases: {}}` alone --
+// legitimately empty, nothing was ever supplied to lose -- stay silent, and so does any map
+// carrying at least one recognized phase key (that key resumes normally; #270 is only about
+// a resume attempt that resolves to NOTHING).
+//
+// All #270 message text below is FIXED pipeline-authored vocabulary: it never interpolates
+// a caller-supplied key name or byte. `args.checkpoints` is PR-author-reachable, and a key
+// named after a G3 bench sentinel echoed into a gap would flip that gate.
 function checkpointDiscardGap(topLevelCheckpoints) {
   if (topLevelCheckpoints === undefined) return [];
-  if (unwrapCheckpointMap(topLevelCheckpoints) !== null) return [];
-  const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
-  const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
-  const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
-  return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
-    + 'the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
-    + 'if no checkpoints had been supplied.'];
+
+  const resolved = unwrapCheckpointMap(topLevelCheckpoints);
+
+  if (resolved === null) {
+    const atTopLevel = !isPlainCheckpointObject(topLevelCheckpoints);
+    const position = atTopLevel ? 'checkpoints' : 'checkpoints.phases';
+    const offending = atTopLevel ? topLevelCheckpoints : topLevelCheckpoints.phases;
+    return [`checkpoint-discarded: ${position} must be a plain object, got ${describeCheckpointShape(offending)} -- `
+      + 'the supplied checkpoints argument was discarded entirely; nothing was resumed, exactly as '
+      + 'if no checkpoints had been supplied.'];
+  }
+
+  const recognizedPhaseNames = Object.keys(CHECKPOINT_PHASE_SHAPE_TABLE);
+  const resolvedKeys = Object.keys(resolved);
+  // Deliberately KEY-PRESENCE (Object.keys + includes), not a truthiness/value check on
+  // `resolved[k]` -- a recognized phase key can legitimately carry any JSON-safe value
+  // (including one the shape gate below will still refuse), and `undefined` cannot arrive
+  // through the JSON waist at all, so there is no "recognized key present but empty" case
+  // this would need to distinguish.
+  const hasRecognizedKey = resolvedKeys.some((k) => recognizedPhaseNames.includes(k));
+
+  // Arm A: the unwrap succeeded to a NON-EMPTY map recognizing none of it.
+  if (resolvedKeys.length > 0 && !hasRecognizedKey) {
+    // Truthiness, not `'truncated' in resolved` -- a stamped `truncated: false` sits right
+    // next to `completed` in a real buildResumeCheckpoints success-path return and must NOT
+    // be misread as the truncated sub-case just because the key exists.
+    if (resolved.truncated) {
+      return ['checkpoint-discarded: the supplied checkpoints value is a truncated failure-path return '
+        + '(phase names only, no phase outputs) -- nothing in it is resumable; re-run without the '
+        + 'checkpoints argument to start the review fresh.'];
+    }
+    if (resolvedKeys.includes('completed')) {
+      // Split on whether `completed` is actually non-empty: a real compact-return producer
+      // (the ok:true success path's `{ completed }`) always names at least one phase, so a
+      // non-empty array is the only shape that could have come from an on-disk-backed run --
+      // the on-disk pointer sentence is correct there. An empty (or non-array) `completed`
+      // instead matches makeCheckpointShapeRejectEnvelope's OWN refusal envelope
+      // (`{ completed: [] }`, `artifactPaths: {}` -- nothing was ever persisted for it to
+      // point at), so pointing at artifactPaths.checkpoints there would send the operator to
+      // a path that was never written.
+      if (Array.isArray(resolved.completed) && resolved.completed.length > 0) {
+        return ['checkpoint-discarded: the supplied checkpoints value looks like a compact return rather '
+          + 'than a checkpoint artifact -- it carries no phase outputs to resume from; the on-disk resume '
+          + 'state from that run lives at artifactPaths.checkpoints.'];
+      }
+      return ['checkpoint-discarded: the supplied checkpoints value looks like a return envelope rather '
+        + 'than a checkpoint artifact -- it carries no phase outputs to resume from; re-run without the '
+        + 'checkpoints argument to start the review fresh.'];
+    }
+    return ['checkpoint-discarded: the supplied checkpoints value contains none of the eight recognized '
+      + 'phase names (summarize, discover, merge, verify, validate, filter, challenge, report) -- '
+      + 'nothing was resumed, exactly as if no checkpoints had been supplied.'];
+  }
+
+  // Arm B: the unwrap took the `.phases` branch to an EMPTY map while the wrapper itself
+  // still carries a recognized phase name at its own top level, right next to `.phases`.
+  // `resolvedKeys.length === 0` is load-bearing, not redundant with `tookPhasesBranch`: a
+  // NON-empty `.phases` resuming real work, sitting next to an ignored top-level sibling
+  // (`{phases: {challenge: ...}, summarize: {...}}`), must NOT fire this arm. Partial
+  // masking of that shape is a deliberate NON-GOAL -- there is no legitimate producer that
+  // emits a real `.phases` resume plus a stray top-level phase key, and the phase(s) inside
+  // `.phases` are genuinely being resumed, not silently dropped, so there is nothing to
+  // disclose about them.
+  const tookPhasesBranch = isPlainCheckpointObject(topLevelCheckpoints)
+    && topLevelCheckpoints.phases !== undefined
+    && isPlainCheckpointObject(topLevelCheckpoints.phases);
+  const wrapperHasRecognizedKey = isPlainCheckpointObject(topLevelCheckpoints)
+    && Object.keys(topLevelCheckpoints).some((k) => recognizedPhaseNames.includes(k));
+  if (tookPhasesBranch && resolvedKeys.length === 0 && wrapperHasRecognizedKey) {
+    return ['checkpoint-discarded: checkpoints.phases is empty and a value under a recognized phase name '
+      + "at the wrapper's top level was ignored -- re-supply it as the .phases map, or as a bare phase "
+      + 'map, to attempt resuming from it.'];
+  }
+
+  return [];
 }
 
 // --- Checkpoint shape gate (#248 + #250) -------------------------------------
@@ -3723,9 +3828,12 @@ function describeCheckpointShape(v) {
 // version-delta replay (an older checkpoint predating a newer field) keeps working -- the
 // one exception is CHECKPOINT_REQUIRED_CONTENT_FIELD, whose absence IS itself a violation
 // (see that table's own comment). Unknown checkpoint keys (not one of the eight phase
-// names) are inert and unvalidated. Collects every violation rather than stopping at the
-// first, so a caller sees the whole shape of the damage in one refusal instead of fixing
-// it one field at a time.
+// names) are still unvalidated here -- this function never inspects them -- but they are
+// no longer silent when they are the ONLY keys present: checkpointDiscardGap (issue #270,
+// computed by runWith from the top-level `args.checkpoints` before this function ever
+// runs) discloses that case as a no-op resume. Collects every violation rather than
+// stopping at the first, so a caller sees the whole shape of the damage in one refusal
+// instead of fixing it one field at a time.
 export function checkpointShapeErrors(resolvedCheckpoints) {
   const cp = isPlainCheckpointObject(resolvedCheckpoints) ? resolvedCheckpoints : {};
   const violations = [];
@@ -3794,7 +3902,13 @@ const CHECKPOINT_SHAPE_RECOVERY_LINE = 'Repair or delete the corrupt checkpoint 
 // taken on that path alone; reaching both a discard AND a violation needs a garbage
 // `args.checkpoints` PLUS a malformed `ctx.checkpoints` fallback seam), but one line buys
 // consistency with this envelope's own nullArgGaps/contextSizeGap rationale rather than a
-// silent gap-channel gap should that combination ever become reachable.
+// silent gap-channel gap should that combination ever become reachable. The #270 arms
+// specifically (checkpointDiscardGap's zero-recognized and empty-.phases-masking cases,
+// as opposed to #268's unwrap-rejection case) can never co-occur with a shape violation at
+// all: both #270 arms require unwrapCheckpointMap to have SUCCEEDED to a resolved map whose
+// keys checkpointShapeErrors -- which runs immediately after, on that same resolved map --
+// never inspects (unrecognized names, or nothing at the top level of `.phases`), so a #270
+// disclosure and a shape violation are always mutually exclusive on the SAME resolved map.
 function makeCheckpointShapeRejectEnvelope(violations, nullArgGaps = [], contextSizeGap = [], discardGap = []) {
   const extra = violations.length - 1;
   const error = extra > 0
