@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v3.23.1 (2026-08-31)
+
+### Bug Fixes
+
+- **pipeline**: Derive the strict-row test loop from the exported shape table
+  ([#264](https://github.com/liatrio-labs/claude-code-gauntlet/pull/264),
+  [`2662a6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2662a6c3908dc49ac7c51b0a05849a92897239f5))
+
+- **pipeline,filter**: Shape-gate replayed checkpoints pre-dispatch, pin the citation-scan decline
+  (#248, #250, #247) ([#264](https://github.com/liatrio-labs/claude-code-gauntlet/pull/264),
+  [`2662a6c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2662a6c3908dc49ac7c51b0a05849a92897239f5))
+
+
 ## v3.23.0 (2026-08-28)
 
 ### Bug Fixes
