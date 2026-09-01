@@ -4,7 +4,11 @@ Use this template for the unified review report. Adapt section headers based on 
 
 **Zero findings:** If all findings are eliminated during the pipeline, produce a clean report that includes the executive summary (showing 0 findings) and the Review Methodology section. Omit empty severity sections entirely. The clean outcome is meaningful — it confirms the pipeline ran and found nothing.
 
-**Emoji format:** Always use Unicode emoji characters (🔴 🟠 🟡 💡), never GitHub shortcodes (`:red_circle:`, `:orange_circle:`). Shortcodes don't render in terminal/chat output.
+<!-- generated-from-registry-identity:severity_legend — do not edit; run scripts/generate_contract_requirements.py -->
+Product mark: ⚔️ (Code Gauntlet). Severity emoji: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
+Always use the Unicode characters, never GitHub shortcodes (`:red_circle:`) — shortcodes do
+not render in terminal/chat output.
+<!-- /generated-from-registry-identity:severity_legend -->
 
 ## GitHub Permalink Format
 
@@ -233,6 +237,10 @@ the content, you place it.) Column reference:
 
 ## PR Comment Format (abbreviated)
 
+<!-- generated-from-registry-identity:summary_header — do not edit; run scripts/generate_contract_requirements.py -->
+### ⚔️ Code Gauntlet
+<!-- /generated-from-registry-identity:summary_header -->
+
 When posting as a PR comment, use this shorter format:
 
 ```markdown
@@ -299,8 +307,11 @@ render site — see below:]
 
 ```
 
-`{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the severity uppercased,
-and `{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits
+<!-- generated-from-registry-identity:inline_legend — do not edit; run scripts/generate_contract_requirements.py -->
+`{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the severity uppercased.
+<!-- /generated-from-registry-identity:inline_legend -->
+
+`{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits
 no permalink and no confidence footer — those belong to the report markdown, not to inline
 comments.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the dispatch-requirement sentences in agent contracts from the registry.
+"""Generate the registry-derived blocks in agent contracts, references, and the delivery renderer.
 
 WHY THIS EXISTS — issue #238.
 
@@ -43,6 +43,28 @@ MARKER_CLOSE = "<!-- /generated-from-registry -->"
 
 REPORT_FORMAT_REL = "skills/code-gauntlet/references/report-format.md"
 
+_IDENTITY_TAG = "generated-from-registry-identity"
+_IDENTITY_HINT = "do not edit; run scripts/generate_contract_requirements.py"
+# Recognizes EITHER marker in EITHER comment syntax (Python `#`, Markdown `<!--`), so an
+# orphan pair naming a symbol no target declares is reported rather than silently left to rot.
+_IDENTITY_MARKER_RE = re.compile(
+    rf"^\s*(?:#|<!--)\s*(?P<close>/)?{re.escape(_IDENTITY_TAG)}:(?P<symbol>[A-Za-z0-9_]+)"
+)
+
+# {rel_path: [symbol, ...]} — the fences this file must carry, exactly once each.
+IDENTITY_FENCES = {
+    "scripts/post_review.py": ["constants"],
+    REPORT_FORMAT_REL: ["severity_legend", "inline_legend", "summary_header"],
+    "skills/code-gauntlet/references/delivery-guide.md": [
+        "severity_legend",
+        "summary_header",
+    ],
+    # D9's chat convention names the mark in prose. A hand-authored fourth copy would
+    # break the one-edit property (a registry edit + a generator run + a hand edit
+    # nothing turns red on), so it is generated like the rest.
+    "skills/code-gauntlet/SKILL.md": ["chat_identity"],
+}
+
 # English phrasing for fields that carry a dimension-conditional requirement. Not derivable
 # from the registry (it has no room for prose nouns) — kept as the one small hand-authored
 # table the templates below parameterize on.
@@ -65,6 +87,9 @@ def load_registry(repo_root=REPO_ROOT):
         "    requiredWhenDimension: d.requiredWhenDimension || [],"
         "    extraFields: Object.keys(d.schemaExtra || {}),"
         "  })),"
+        "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
+        "  severityEmoji: m.SEVERITY_EMOJI,"
+        "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
         "})))"
     )
     out = subprocess.run(
@@ -280,28 +305,207 @@ def rewrite_required_column(text, registry):
     return text_out
 
 
+# --- identity fences ---------------------------------------------------------
+#
+# The per-symbol marker-fence idiom of `scripts/generate_filter_patterns.py`
+# (`_MARKER_RE` / `find_marker_pairs` / `fill_fences`), applied to the product
+# identity declared once in `workflows/src/registry.js`. One file may carry several
+# fences, so the pairs are validated per symbol rather than by a whole-file marker
+# count.
+
+
+def identity_marker_lines(symbol, rel_path):
+    """The (open, close) marker lines for `symbol`, in `rel_path`'s comment syntax."""
+    if rel_path.endswith(".py"):
+        return (
+            f"# {_IDENTITY_TAG}:{symbol} — {_IDENTITY_HINT}",
+            f"# /{_IDENTITY_TAG}:{symbol}",
+        )
+    return (
+        f"<!-- {_IDENTITY_TAG}:{symbol} — {_IDENTITY_HINT} -->",
+        f"<!-- /{_IDENTITY_TAG}:{symbol} -->",
+    )
+
+
+def _severity_pairs(identity):
+    """[(emoji, severity), ...] in registry declaration order."""
+    return [(emoji, name) for name, emoji in identity["severityEmoji"].items()]
+
+
+def identity_body(rel_path, symbol, identity):
+    """The generated lines for one fence — keyed by BOTH file and symbol.
+
+    `severity_legend` renders differently in report-format.md and delivery-guide.md
+    (the first also carries the no-shortcodes rule), so the body is a function of the
+    pair, not of the symbol alone.
+    """
+    mark = identity["brand"]["mark"]
+    name = identity["brand"]["name"]
+    pairs = _severity_pairs(identity)
+    commas = ", ".join(f"{emoji} {severity}" for emoji, severity in pairs)
+    slashes = " / ".join(f"{emoji} {severity}" for emoji, severity in pairs)
+    key = (rel_path, symbol)
+    if symbol == "constants":
+        lines = [
+            f'BRAND_MARK = "{mark}"',
+            f'BRAND_NAME = "{name}"',
+            "SEVERITY_EMOJI = {",
+        ]
+        lines += [f'    "{severity}": "{emoji}",' for emoji, severity in pairs]
+        lines += [
+            "}",
+            f'SEVERITY_EMOJI_FALLBACK = "{identity["severityEmojiFallback"]}"',
+        ]
+        return lines
+    if symbol == "summary_header":
+        return [f"### {mark} {name}"]
+    if symbol == "chat_identity":
+        return [
+            f"The final delivery summary opens with `{mark} {name}` on its first line and "
+            "carries no other",
+            "emoji, except severity emoji when listing findings.",
+        ]
+    if symbol == "inline_legend":
+        return [
+            f"`{{emoji}}` is {slashes}, `{{SEVERITY}}` is the severity uppercased.",
+        ]
+    if key == (REPORT_FORMAT_REL, "severity_legend"):
+        return [
+            f"Product mark: {mark} ({name}). Severity emoji: {commas}.",
+            "Always use the Unicode characters, never GitHub shortcodes (`:red_circle:`) — "
+            "shortcodes do",
+            "not render in terminal/chat output.",
+        ]
+    if symbol == "severity_legend":
+        return [f"Product mark: {mark} ({name}). Severity emojis: {commas}."]
+    raise SystemExit(
+        f"generate_contract_requirements: no identity body for {symbol!r} in {rel_path}"
+    )
+
+
+def find_identity_pairs(lines, rel_path):
+    """{symbol: (open_index, close_index)} for every identity marker pair in `lines`.
+
+    Hard-fails PER SYMBOL, not on a whole-file marker count: a file carrying several
+    independent pairs is the normal case here. What is malformed: a symbol whose open
+    and close markers do not appear exactly once each, in that order, without another
+    pair opening in between.
+    """
+    opens = {}
+    closes = {}
+    for index, line in enumerate(lines):
+        match = _IDENTITY_MARKER_RE.match(line)
+        if not match:
+            continue
+        bucket = closes if match.group("close") else opens
+        symbol = match.group("symbol")
+        if symbol in bucket:
+            raise SystemExit(
+                f"{rel_path}: duplicate {'close' if match.group('close') else 'open'} "
+                f"identity marker for {symbol} (lines {bucket[symbol] + 1} and "
+                f"{index + 1}) — expected exactly one matched pair per symbol; fix by hand"
+            )
+        bucket[symbol] = index
+    unmatched = sorted(set(opens) ^ set(closes))
+    if unmatched:
+        raise SystemExit(
+            f"{rel_path}: unmatched identity marker(s) for {', '.join(unmatched)} — an "
+            "orphaned marker would make --check call the file current while real debris "
+            "sits in it; fix by hand"
+        )
+    pairs = {}
+    for symbol, open_index in opens.items():
+        close_index = closes[symbol]
+        if close_index <= open_index:
+            raise SystemExit(
+                f"{rel_path}: close identity marker for {symbol} precedes its open marker "
+                f"(lines {close_index + 1} and {open_index + 1}); fix by hand"
+            )
+        pairs[symbol] = (open_index, close_index)
+    for symbol, (open_index, close_index) in pairs.items():
+        for other, (other_open, _) in pairs.items():
+            if other != symbol and open_index < other_open < close_index:
+                raise SystemExit(
+                    f"{rel_path}: {other}'s identity fence is nested inside {symbol}'s "
+                    f"(lines {open_index + 1}-{close_index + 1}); fix by hand"
+                )
+    return pairs
+
+
+def fill_identity_fences(text, rel_path, identity):
+    """Rewrite every declared identity fence in `text` from the registry.
+
+    Both directions fail loudly: a declared symbol with no fence (which would silently
+    ship an unmaintained hand-written copy) and a fence naming no declared symbol
+    (stale debris a later --check would call current).
+    """
+    lines = text.split("\n")
+    pairs = find_identity_pairs(lines, rel_path)
+    expected = set(IDENTITY_FENCES[rel_path])
+    missing = sorted(expected - set(pairs))
+    if missing:
+        raise SystemExit(
+            f"{rel_path}: no marker pair for identity symbol(s) {', '.join(missing)} — "
+            "place an empty pair where the declaration belongs, then rerun"
+        )
+    orphans = sorted(set(pairs) - expected)
+    if orphans:
+        raise SystemExit(
+            f"{rel_path}: identity marker pair(s) {', '.join(orphans)} match no declared "
+            "symbol — remove the fence or add it to IDENTITY_FENCES"
+        )
+    for symbol in sorted(pairs, key=lambda s: pairs[s][0], reverse=True):
+        open_index, close_index = pairs[symbol]
+        lines[open_index + 1 : close_index] = identity_body(rel_path, symbol, identity)
+    return "\n".join(lines)
+
+
 def compute_targets(repo_root):
+    """{rel_path: [(kind, anchor, payload), ...]} — MANY ops per file, in order.
+
+    One file legitimately carries more than one generated region: report-format.md
+    owns both the Required-column rewrite and its identity fences. A one-op-per-file
+    mapping would let the second assignment silently destroy the first, and it would
+    fail silently — the surviving op keeps the file current, so `--check` stays green
+    while the dropped region quietly goes stale.
+    """
     registry = load_registry(repo_root)
     targets = {}
+
+    def add(rel_path, op):
+        targets.setdefault(rel_path, []).append(op)
+
     for rel_path, sentence in single_dimension_targets(registry).items():
-        anchor = _SINGLE_SENTENCE_ANCHOR
-        targets[rel_path] = ("splice", anchor, sentence)
+        add(rel_path, ("splice", _SINGLE_SENTENCE_ANCHOR, sentence))
     ci_path, ci_body = conventions_and_intent_target(registry)
-    targets[ci_path] = ("splice", _CONDITIONAL_ANCHOR, ci_body)
-    targets[REPORT_FORMAT_REL] = ("table", None, registry)
+    add(ci_path, ("splice", _CONDITIONAL_ANCHOR, ci_body))
+    add(REPORT_FORMAT_REL, ("table", None, registry))
+    for rel_path in IDENTITY_FENCES:
+        add(rel_path, ("fence", None, registry))
     return targets
+
+
+def _apply_one(text, rel_path, kind, anchor, payload):
+    if kind == "splice":
+        return splice(text, anchor, payload)
+    if kind == "table":
+        return rewrite_required_column(text, payload)
+    if kind == "fence":
+        return fill_identity_fences(text, rel_path, payload)
+    raise SystemExit(
+        f"generate_contract_requirements: unknown target kind {kind!r} for {rel_path}"
+    )
 
 
 def apply_targets(repo_root, check_only=False):
     stale = []
-    for rel_path, (kind, anchor, payload) in compute_targets(repo_root).items():
+    for rel_path, ops in compute_targets(repo_root).items():
         abs_path = os.path.join(repo_root, rel_path)
         with open(abs_path, encoding="utf-8") as handle:
             current = handle.read()
-        if kind == "splice":
-            expected = splice(current, anchor, payload)
-        else:
-            expected = rewrite_required_column(current, payload)
+        expected = current
+        for kind, anchor, payload in ops:
+            expected = _apply_one(expected, rel_path, kind, anchor, payload)
         if expected == current:
             continue
         stale.append(rel_path)
@@ -323,11 +527,11 @@ def main(argv=None):
 
     stale = apply_targets(args.repo_root, check_only=args.check)
     if not stale:
-        print("contract requirement sentences are current")
+        print("generated registry blocks are current")
         return 0
     if args.check:
         sys.stderr.write(
-            f"stale generated contract requirements: {', '.join(stale)}\n"
+            f"stale generated registry blocks: {', '.join(stale)}\n"
             "run: python3 scripts/generate_contract_requirements.py\n"
         )
         return 1

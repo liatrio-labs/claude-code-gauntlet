@@ -943,6 +943,33 @@ class TestRenderCommentBody(unittest.TestCase):
         self.assertIn("\U0001f4a1", body)  # 💡 fallback
         self.assertIn("[UNKNOWN]", body)
 
+    def test_the_rendered_emoji_is_read_from_the_generated_constants(self):
+        """The delivered byte comes THROUGH SEVERITY_EMOJI, not from a local literal.
+
+        The severity tests above pin characters with hard-coded escapes, which is the
+        second oracle — but they stay green if the renderer re-inlines its own
+        `emoji_map`, and the delivered emoji then diverges silently from the generated
+        constants and from every generated legend. Substituting a sentinel the repo
+        renders nowhere is what pins the wire itself.
+        """
+        for severity, emoji in post_review.SEVERITY_EMOJI.items():
+            with self.subTest(severity=severity):
+                body = render_comment_body(
+                    {"severity": severity, "title": "t", "body": "b"}
+                )
+                self.assertIn(emoji, body)
+        sentinel = "\u26a1"  # HIGH VOLTAGE SIGN — in no legend, in no severity map
+        with patch.dict(post_review.SEVERITY_EMOJI, {"medium": sentinel}):
+            self.assertIn(
+                sentinel,
+                render_comment_body({"severity": "medium", "title": "t", "body": "b"}),
+            )
+        with patch.object(post_review, "SEVERITY_EMOJI_FALLBACK", sentinel):
+            self.assertIn(
+                sentinel,
+                render_comment_body({"severity": "nope", "title": "t", "body": "b"}),
+            )
+
     def test_empty_suggested_fix_code_treated_as_absent(self):
         finding = {
             "severity": "high",

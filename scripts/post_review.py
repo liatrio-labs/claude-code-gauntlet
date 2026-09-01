@@ -1490,6 +1490,24 @@ def _print_fix_summary():
     print(f"  {downgraded} suggested fix(es) downgraded to prose.")
 
 
+# generated-from-registry-identity:constants — do not edit; run scripts/generate_contract_requirements.py
+BRAND_MARK = "⚔️"
+BRAND_NAME = "Code Gauntlet"
+SEVERITY_EMOJI = {
+    "critical": "🔴",
+    "high": "🟠",
+    "medium": "🟡",
+    "low": "💡",
+}
+SEVERITY_EMOJI_FALLBACK = "💡"
+# /generated-from-registry-identity:constants
+# One mark per delivered SURFACE, never per element: an inline comment/discussion body
+# carries the trailer once at the end; the summary body carries the header instead, and the
+# skipped-findings entries inside it are rendered unbranded.
+BRAND_TRAILER = f"{BRAND_MARK} *{BRAND_NAME}*"
+BRAND_SUMMARY_HEADER = f"### {BRAND_MARK} {BRAND_NAME}"
+
+
 def render_comment_body(finding, *, fence_offsets=None):
     """Build the markdown comment body for a finding.
 
@@ -1500,13 +1518,7 @@ def render_comment_body(finding, *, fence_offsets=None):
     is caller-supplied.
     """
     severity = finding.get("severity", "medium").lower()
-    emoji_map = {
-        "critical": "🔴",
-        "high": "🟠",
-        "medium": "🟡",
-        "low": "💡",
-    }
-    emoji = emoji_map.get(severity, "💡")
+    emoji = SEVERITY_EMOJI.get(severity, SEVERITY_EMOJI_FALLBACK)
 
     title = finding.get("title", "Finding")
     body = finding.get("body", "")

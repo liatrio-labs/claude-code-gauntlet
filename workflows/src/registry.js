@@ -198,6 +198,27 @@ export const AGENT_LABELS = {
   'code-gauntlet:code-simplifier': 'Code Simplification',
 };
 
+// --- Product identity -------------------------------------------------------
+// The ONE hand-authored copy of the brand mark, the display name, and the severity
+// emoji map. Every other copy is GENERATED from here by
+// scripts/generate_contract_requirements.py (--check in CI): the Python mirror in
+// scripts/post_review.py and the legends in references/report-format.md and
+// references/delivery-guide.md. Do not hand-edit a mirror.
+//
+// PRODUCT ("code-gauntlet", scripts/review_marker.py:89) is deliberately NOT here and is
+// NOT a mirror of BRAND_NAME: that is a machine-parsed wire slug pinned by
+// docs/machine-parsed-strings.md; this is presentation. A product rename moves both,
+// separately, on purpose.
+export const BRAND_MARK = '\u2694\uFE0F';   // CROSSED SWORDS U+2694 + VS16 U+FE0F
+export const BRAND_NAME = 'Code Gauntlet';
+export const SEVERITY_EMOJI = {
+  critical: '\u{1F534}', high: '\u{1F7E0}', medium: '\u{1F7E1}', low: '\u{1F4A1}',
+};
+// The mark rendered for a severity the schema does not forbid (`severity` is declared
+// `string`, not an enum) — a constant, not a repeated literal. Pinned by
+// tests/test_post_review.py::test_unknown_severity_falls_back_to_bulb.
+export const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
+
 // The stage agents' models, restating each one's `model:` frontmatter explicitly so a
 // dispatch pins a full model ID instead of inheriting the session variant (see MODEL_IDS
 // below). No entry currently deviates from its frontmatter, and all five match

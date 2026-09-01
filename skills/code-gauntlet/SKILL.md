@@ -562,6 +562,11 @@ and, under `main_only`, whether the pipeline already withheld them from the payl
 `references/phase8-delivery.md`, `references/report-format.md`, and `references/delivery-guide.md` for the
 templates and posting mechanics.
 
+<!-- generated-from-registry-identity:chat_identity — do not edit; run scripts/generate_contract_requirements.py -->
+The final delivery summary opens with `⚔️ Code Gauntlet` on its first line and carries no other
+emoji, except severity emoji when listing findings.
+<!-- /generated-from-registry-identity:chat_identity -->
+
 > **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting.** The
 > PR-comment set is that payload verbatim on every path — there is no selection UI to narrow it.
 >
