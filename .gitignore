@@ -21,6 +21,9 @@ Thumbs.db
 __pycache__/
 *.pyc
 
+# uv resolver lockfile (CI tooling only; removed once already in #213)
+uv.lock
+
 # Coverage data + reports (CI/dev only; see pyproject.toml [tool.coverage])
 .coverage
 .coverage.*
