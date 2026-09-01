@@ -1,0 +1,31 @@
+{
+  "consolidated_count": 2,
+  "findings": [
+    {
+      "agent": "bug-detector",
+      "confidence": 80,
+      "consolidation_key": "n.py:10",
+      "consolidation_primary": true,
+      "description": "xxxxxx",
+      "dimension": "bug",
+      "file": "n.py",
+      "id": "C1",
+      "line_start": "\ufeff12",
+      "severity": "high",
+      "title": "x"
+    },
+    {
+      "agent": "security-auditor",
+      "confidence": 70,
+      "consolidation_key": "n.py:10",
+      "consolidation_primary": false,
+      "description": "yy",
+      "dimension": "security",
+      "file": "n.py",
+      "id": "C2",
+      "line_start": "\u008512",
+      "severity": "high",
+      "title": "y"
+    }
+  ]
+}

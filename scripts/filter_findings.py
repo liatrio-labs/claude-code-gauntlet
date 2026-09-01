@@ -157,6 +157,66 @@ def _as_confidence(value):
     return 0
 
 
+# Gate for the string branch of `_py_int_or_none` (#244 (b)). Python's own
+# `int(str)` strips a wider whitespace set than JS `parseInt` and accepts
+# non-ASCII decimal digits and PEP-515 `_` separators, so the two twins bucketed
+# the same `line_start` differently. This pins the string form to the ONE union
+# whitespace class + ASCII `[0-9]`, and `int()` runs on the CAPTURE (never the
+# raw string), matching the JS twin's `parseInt(m[1], 10)`. Registry-sourced (an
+# INLINE_SITES row); INERT (no `\d`/`\w`/`\s`), so no re.ASCII is required.
+_INT_COERCE_RE = re.compile(
+    r"^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([+-]?[0-9]+)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*$"
+)
+
+# Leading/trailing trim of the union whitespace class (#244 (a)). ONE constant
+# shared by four call sites: the dedup-signature title strip AND the three
+# review-line strips (load_exclusions' fenced block + bullet fallback, and
+# parse_review_md's ignore item), all of which had a per-line `str.strip()` whose
+# JS twin `trim()` disagreed on the same six codepoints -- silently zeroing a
+# user exclusion/ignore pattern that carried one. `.sub` is inherently global;
+# the JS twin uses `.replace(/.../g, '')`. Registry-sourced (an INLINE_SITES row).
+_WS_TRIM_RE = re.compile(
+    r"^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$"
+)
+
+
+def _py_int_or_none(value):
+    """Python int() truncation semantics for the value types plausibly found on
+    ``line_start``, mirroring the JS twin ``pyIntOrNull`` branch-for-branch:
+    bool -> 0/1 (checked BEFORE int, since bool is an int subclass), int -> the
+    value, float -> trunc toward zero when finite else None, str -> the
+    ``_INT_COERCE_RE`` gate then ``int()`` of the CAPTURE, anything else -> None
+    (a ``TypeError`` from Python's own ``int()``). Returns None on "would raise"
+    so ``_line_bucket`` falls back to 0 exactly like the old
+    ``except (TypeError, ValueError): return 0``. Also type-guards a non-str
+    ``line_start`` (float/None/bool) that a bare ``.strip()`` would crash on."""
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return math.trunc(value) if math.isfinite(value) else None
+    if isinstance(value, str):
+        m = _INT_COERCE_RE.match(value)
+        return int(m.group(1)) if m else None
+    return None
+
+
+def _line_bucket(line, proximity):
+    """Round ``line`` to the nearest multiple of ``proximity`` to group nearby
+    findings, sharing ONE coercion path across ``detect_disagreement``
+    (proximity 10) and ``group_by_proximity`` / ``consolidate_cross_agent``
+    (proximity 5). The JS twin ``lineBucket`` already had a single path; this
+    converges Python's two former nested closures (``_line_bucket`` and
+    ``_bucket``) onto it, so no bucket site can drift again. ``round()`` is
+    Python's native banker's rounding, matching the JS ``pyRound`` half-to-even
+    port."""
+    n = _py_int_or_none(line)
+    if n is None:
+        return 0
+    return round(n / proximity) * proximity
+
+
 # ---------------------------------------------------------------------------
 # Input normalization (BF-14)
 # ---------------------------------------------------------------------------
@@ -411,7 +471,7 @@ def parse_review_md(path):
     ignore_section = _REVIEW_IGNORE_RE.search(block_text)
     if ignore_section:
         for line in _split_review_lines(ignore_section.group(1)):
-            item = _REVIEW_IGNORE_ITEM_RE.sub("", line).strip()
+            item = _WS_TRIM_RE.sub("", _REVIEW_IGNORE_ITEM_RE.sub("", line))
             if item:
                 config["ignore"].append(_strip_matching_quotes(item))
 
@@ -1088,10 +1148,18 @@ def _injection_scan_core(findings, include_h4):
         # 10. Duplicate signature (title+file+line_start). Deliberately built
         # on the UNFOLDED title: heuristic 7 scans folded text (#242), but this
         # signature keeps HEAD's raw title, so two fold-identical titles still
-        # hash to distinct signatures exactly as at HEAD (dedup never folded).
-        # Respelling it to a folded/whitespace-normalized key is #244's change,
-        # not S3's.
-        sig = (title.lower().strip(), filepath, finding.get("line_start"))
+        # hash to distinct signatures exactly as at HEAD (dedup never folded --
+        # the h7-folded / h10-unfolded split is intentional). The title strip is
+        # the union whitespace class via `_WS_TRIM_RE.sub` (#244 (a), the shared
+        # union-trim constant), so the two twins anchor-strip the same six
+        # codepoints Python `str.strip()` and JS `trim()` disagreed on;
+        # `line_start` stays RAW in the signature, NOT routed through
+        # `_line_bucket` (mechanism (b) is a separate site).
+        sig = (
+            _WS_TRIM_RE.sub("", title.lower()),
+            filepath,
+            finding.get("line_start"),
+        )
         if sig in seen_signatures:
             reasons.append(f"duplicate of finding {seen_signatures[sig]!r}")
         else:
@@ -1208,16 +1276,9 @@ def detect_disagreement(findings):
     # -----------------------------------------------------------------------
     # Phase 1: Group findings by (file, line_bucket) for co-location checks
     # -----------------------------------------------------------------------
-    def _line_bucket(line):
-        """Round line to nearest 10 to group nearby findings."""
-        try:
-            return round(int(line) / 10) * 10
-        except (TypeError, ValueError):
-            return 0
-
     location_groups = {}
     for finding in findings:
-        key = (finding.get("file", ""), _line_bucket(finding.get("line_start", 0)))
+        key = (finding.get("file", ""), _line_bucket(finding.get("line_start", 0), 10))
         location_groups.setdefault(key, []).append(finding)
 
     # -----------------------------------------------------------------------
@@ -1305,7 +1366,7 @@ def detect_disagreement(findings):
     consensus_groups = {}
     for finding in active:
         file_ = finding.get("file", "")
-        line = _line_bucket(finding.get("line_start", 0))
+        line = _line_bucket(finding.get("line_start", 0), 10)
         degraded = finding.get("origin", "") == "unknown"
         group_key = (file_, line, degraded)
         consensus_groups.setdefault(group_key, []).append(finding)
@@ -1643,16 +1704,10 @@ def group_by_proximity(findings, line_proximity=5):
     are matched to findings by id, not by proximity.)
     """
 
-    def _bucket(line, proximity):
-        try:
-            return round(int(line) / proximity) * proximity
-        except (TypeError, ValueError):
-            return 0
-
     groups = {}
     for finding in findings:
         fpath = finding.get("file", "")
-        bucket = _bucket(finding.get("line_start", 0), line_proximity)
+        bucket = _line_bucket(finding.get("line_start", 0), line_proximity)
         groups.setdefault((fpath, bucket), []).append(finding)
 
     return groups
@@ -1871,7 +1926,7 @@ def load_exclusions(path):
     block_match = _REVIEW_EXCL_BLOCK_RE.search(text)
     if block_match:
         for line in _split_review_lines(block_match.group(1)):
-            line = line.strip()
+            line = _WS_TRIM_RE.sub("", line)
             if line and not line.startswith("#"):
                 patterns.append(line)
         return patterns
@@ -1882,7 +1937,7 @@ def load_exclusions(path):
     for line in _split_review_lines(text):
         m = _REVIEW_EXCL_BULLET_RE.match(line)
         if m:
-            patterns.append(m.group(1).strip())
+            patterns.append(_WS_TRIM_RE.sub("", m.group(1)))
 
     return patterns
 

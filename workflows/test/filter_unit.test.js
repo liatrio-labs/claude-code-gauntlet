@@ -5,6 +5,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   pyRound,
+  pyIntOrNull,
+  lineBucket,
+  WS_TRIM_RE,
   applyFilterPipeline,
   applyThresholdFilter,
   applyInjectionFilter,
@@ -791,6 +794,63 @@ for (const sep of [NEL, FS, GS, RS, US, NBSP, FEFF]) {
 test('#211/table: countWords shared cross-twin behavioral table', () => {
   for (const [text, expected] of WORD_SPLIT_BEHAVIOR_TABLE) {
     assert.equal(countWords(text), expected, `countWords(${JSON.stringify(text)})`);
+  }
+});
+
+// Shared cross-twin behavioral table for the #244 line_start coercion
+// (mechanism (b)). Mirrors tests/test_filter_findings.py's
+// LINE_START_COERCE_TABLE row-for-row (see its docstring). Columns:
+// [input, pyIntOrNull, bucket_p10, bucket_p5].
+const LINE_START_COERCE_TABLE = [
+  ['\x1c12', 12, 10, 10], // U+001C FS
+  ['\x1d12', 12, 10, 10], // U+001D GS
+  ['\x1e12', 12, 10, 10], // U+001E RS
+  ['\x1f12', 12, 10, 10], // U+001F US
+  ['\x8512', 12, 10, 10], // U+0085 NEL (Python-only before)
+  ['﻿12', 12, 10, 10], // U+FEFF BOM (JS-only before)
+  // JS NaN-regression row: raw parseInt('\x1c99', 10) is NaN; the capture -> 99.
+  ['\x1c99', 99, 100, 100],
+  // digit-class convergence: non-ASCII digits + PEP-515 '_' now rejected.
+  ['١٢', null, 0, 0], // Arabic-Indic ١٢
+  ['１２', null, 0, 0], // fullwidth １２
+  ['1_2', null, 0, 0], // PEP-515 underscore
+  // raw-number path: MUST be unchanged by #244.
+  [25.7, 25, 20, 25],
+  [20, 20, 20, 20],
+  [null, null, 0, 0],
+  [true, 1, 0, 0], // bool checked BEFORE number
+  [false, 0, 0, 0],
+];
+
+test('#244/coerce-table: pyIntOrNull/lineBucket shared cross-twin table', () => {
+  for (const [value, expectedInt, bucket10, bucket5] of LINE_START_COERCE_TABLE) {
+    const label = JSON.stringify(value);
+    assert.equal(pyIntOrNull(value), expectedInt, `pyIntOrNull(${label})`);
+    assert.ok(!Number.isNaN(lineBucket(value, 10)), `lineBucket(${label},10) is not NaN`);
+    assert.equal(lineBucket(value, 10), bucket10, `lineBucket(${label},10)`);
+    assert.equal(lineBucket(value, 5), bucket5, `lineBucket(${label},5)`);
+  }
+});
+
+// Shared cross-twin behavioral table for the #244 dedup-signature title strip
+// (mechanism (a)). Mirrors tests/test_filter_findings.py's TITLE_STRIP_TABLE
+// row-for-row. Interior union codepoints are PRESERVED (leading/trailing only).
+const TITLE_STRIP_TABLE = [
+  ['', ''],
+  ['   ', ''],
+  ['\x1c\x1d\x1e\x1f\x85﻿', ''], // all six divergent codepoints -> empty
+  ['alpha', 'alpha'],
+  ['\x1calpha', 'alpha'], // U+001C leading
+  ['alpha\x85', 'alpha'], // U+0085 trailing
+  ['﻿alpha﻿', 'alpha'], // U+FEFF both ends
+  ['\x1d alpha bravo \x1e', 'alpha bravo'], // GS/RS ends, interior space kept
+  ['a\x1cb', 'a\x1cb'], // interior codepoint PRESERVED
+  ['mixed\x85 case﻿', 'mixed\x85 case'], // interior union kept, tail cut
+];
+
+test('#244/strip-table: WS_TRIM_RE shared cross-twin table', () => {
+  for (const [text, expected] of TITLE_STRIP_TABLE) {
+    assert.equal(text.replace(WS_TRIM_RE, ''), expected, `strip(${JSON.stringify(text)})`);
   }
 });
 

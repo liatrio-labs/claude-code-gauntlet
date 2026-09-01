@@ -363,7 +363,15 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
         # `text.split("\n")` comprehension before -- a str method, invisible to
         # the `re.<attr>` rule -- and is now a `re.split` call site (a transform,
         # inert, no `.test(` twin), so 42 -> 43.
-        self.assertEqual(len(self.calls), 43, len(self.calls))
+        # #244: +2 for two new module-level `re.compile` constants --
+        # `_INT_COERCE_RE` (the line_start string-coercion gate, mechanism (b))
+        # and `_WS_TRIM_RE` (the shared union-whitespace trim, mechanism (a),
+        # used at the dedup-signature title strip AND the three review-line strips).
+        # Both are inert (union class + `[0-9]`, no `\d`/`\w`/`\s`), so neither
+        # requires re.ASCII (assertion (ii) exempts inert calls); the `.match`/
+        # `.sub` methods on the two constants are attribute calls on a Name, not
+        # `re.<attr>`, so they add nothing. 43 -> 45.
+        self.assertEqual(len(self.calls), 45, len(self.calls))
 
     def test_no_first_party_pattern_contains_bare_whitespace_class(self):
         """(i) No first-party finding-text pattern contains \\s or \\S -- they

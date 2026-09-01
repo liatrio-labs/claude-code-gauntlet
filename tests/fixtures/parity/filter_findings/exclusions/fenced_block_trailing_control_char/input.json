@@ -1,0 +1,4 @@
+{
+  "fn": "load_exclusions",
+  "markdown": "# Exclusions\n\n```\n﻿mypattern\u001e\nplain-pattern\n```\n"
+}

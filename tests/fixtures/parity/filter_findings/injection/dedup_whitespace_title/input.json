@@ -1,0 +1,27 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "S1",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "n.py",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Duplicate bug here",
+      "description": "dd"
+    },
+    {
+      "id": "S2",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "n.py",
+      "line_start": 10,
+      "severity": "high",
+      "confidence": 80,
+      "title": "﻿Duplicate bug here",
+      "description": "dd"
+    }
+  ]
+}

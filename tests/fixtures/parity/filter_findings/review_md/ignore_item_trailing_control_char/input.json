@@ -1,0 +1,4 @@
+{
+  "fn": "parse_review_md",
+  "markdown": "```yaml\n# code-gauntlet\nignore:\n  - mypattern\u001e\n  - other-pattern\n```\n"
+}

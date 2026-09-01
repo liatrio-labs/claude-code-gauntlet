@@ -34,12 +34,15 @@ from scripts.filter_findings import (
     _INJECTION_STRIPPED_PROSE_FIELDS,
     _SINGLETON_PENALTY,
     _WORD_SPLIT_RE,
+    _WS_TRIM_RE,
     DEFAULT_CONFIDENCE_THRESHOLD,
     DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD,
     DEFAULT_SECURITY_MIN_CONFIDENCE,
     _as_confidence,
     _count_words,
     _is_test_correctness_finding,
+    _line_bucket,
+    _py_int_or_none,
     _route_by_dimension,
     _split_review_lines,
     apply_exclusions,
@@ -3885,6 +3888,85 @@ class TestCountWordsBehaviorTable(unittest.TestCase):
         for i, (text, expected) in enumerate(WORD_SPLIT_BEHAVIOR_TABLE):
             with self.subTest(row=i, text=repr(text)):
                 self.assertEqual(_count_words(text), expected)
+
+
+# Shared cross-twin behavioral table for the #244 line_start coercion (mechanism
+# (b), third-oracle -- hand-typed literals, the #234 pattern). The SAME rows are
+# hardcoded independently here and in workflows/test/filter_unit.test.js's
+# '#244/coerce-table' test, so a divergence in either engine's coercion surfaces
+# as a one-sided failure, not a silently-agreeing wrong answer. Columns:
+# (input, _py_int_or_none, bucket_p10, bucket_p5) -- the two bucket columns pin
+# BOTH _line_bucket call paths (detect_disagreement p10, group_by_proximity /
+# consolidate_cross_agent p5). The JS twin ports pyIntOrNull/lineBucket.
+LINE_START_COERCE_TABLE = [
+    # -- the six divergent codepoints: all now coerce to 12 -> bucket 10 in BOTH
+    #    twins. Before #244: PY U+001C/1D/1E/1F/FEFF=0, U+0085=10; JS U+FEFF=10,
+    #    the other five=0. (U+001C-U+001F were convergent-0 before, convergent-10
+    #    now -- a deliberate live change to four codepoints, both engines.)
+    ("\x1c12", 12, 10, 10),  # U+001C FS
+    ("\x1d12", 12, 10, 10),  # U+001D GS
+    ("\x1e12", 12, 10, 10),  # U+001E RS
+    ("\x1f12", 12, 10, 10),  # U+001F US
+    ("\x8512", 12, 10, 10),  # U+0085 NEL (Python-only before)
+    ("﻿12", 12, 10, 10),  # U+FEFF BOM (JS-only before)
+    # -- JS NaN-regression row: `parseInt('\x1c99', 10)` is NaN (parseInt skips
+    #    only the JS trim set); capturing the digits makes it 99 -> bucket 100.
+    #    A NaN here would stamp a corrupt 'file:NaN' consolidation_key.
+    ("\x1c99", 99, 100, 100),
+    # -- digit-class convergence: non-ASCII decimal digits and a PEP-515 `_`
+    #    separator are now REJECTED in both twins (before: Python int() accepted
+    #    them -> bucket 10; JS rejected -> 0). Converged to JS-live semantics.
+    ("\u0661\u0662", None, 0, 0),  # Arabic-Indic digits U+0661 U+0662
+    ("\uff11\uff12", None, 0, 0),  # fullwidth digits U+FF11 U+FF12
+    ("1_2", None, 0, 0),  # PEP-515 underscore separator
+    # -- raw-number path: MUST be measurably unchanged by #244 --
+    (25.7, 25, 20, 25),  # float trunc 25; round(2.5)=2->20; round(5.0)=5->25
+    (20, 20, 20, 20),  # int
+    (None, None, 0, 0),  # missing -> None -> 0
+    (True, 1, 0, 0),  # bool True -> 1 (bool checked BEFORE int)
+    (False, 0, 0, 0),  # bool False -> 0
+]
+
+# Shared cross-twin behavioral table for the #244 dedup-signature title strip
+# (mechanism (a)). Mirrored row-for-row by '#244/strip-table' in filter_unit.
+# The strip is the union whitespace class stripped off both ends only; interior
+# union codepoints are PRESERVED, exactly like Python str.strip()/JS trim().
+TITLE_STRIP_TABLE = [
+    ("", ""),
+    ("   ", ""),
+    ("\x1c\x1d\x1e\x1f\x85﻿", ""),  # all six divergent codepoints -> empty
+    ("alpha", "alpha"),
+    ("\x1calpha", "alpha"),  # U+001C leading
+    ("alpha\x85", "alpha"),  # U+0085 trailing
+    ("﻿alpha﻿", "alpha"),  # U+FEFF both ends
+    ("\x1d alpha bravo \x1e", "alpha bravo"),  # GS/RS ends, interior space kept
+    ("a\x1cb", "a\x1cb"),  # interior codepoint PRESERVED
+    ("mixed\x85 case﻿", "mixed\x85 case"),  # interior union kept, tail cut
+]
+
+
+class TestLineStartCoerceBehaviorTable(unittest.TestCase):
+    """Mirrors workflows/test/filter_unit.test.js's '#244/coerce-table' test
+    row-for-row -- see LINE_START_COERCE_TABLE's docstring above (#244 (b))."""
+
+    def test_py_int_or_none_and_bucket(self):
+        for i, (value, expected_int, bucket10, bucket5) in enumerate(
+            LINE_START_COERCE_TABLE
+        ):
+            with self.subTest(row=i, value=repr(value)):
+                self.assertEqual(_py_int_or_none(value), expected_int)
+                self.assertEqual(_line_bucket(value, 10), bucket10)
+                self.assertEqual(_line_bucket(value, 5), bucket5)
+
+
+class TestTitleStripBehaviorTable(unittest.TestCase):
+    """Mirrors workflows/test/filter_unit.test.js's '#244/strip-table' test
+    row-for-row -- see TITLE_STRIP_TABLE's docstring above (#244 (a))."""
+
+    def test_sig_strip(self):
+        for i, (text, expected) in enumerate(TITLE_STRIP_TABLE):
+            with self.subTest(row=i, text=repr(text)):
+                self.assertEqual(_WS_TRIM_RE.sub("", text), expected)
 
 
 class TestUnionWhitespaceClassMembership(unittest.TestCase):

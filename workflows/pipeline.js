@@ -232,7 +232,7 @@ function parseReviewMd(text) {
   const ignoreSection = REVIEW_IGNORE_RE.exec(blockText);
   if (ignoreSection) {
     for (const line of splitReviewLines(ignoreSection[1])) {
-      const item = line.replace(REVIEW_IGNORE_ITEM_RE, '').trim();
+      const item = line.replace(REVIEW_IGNORE_ITEM_RE, '').replace(WS_TRIM_RE, '');
       if (item) config.ignore.push(stripMatchingQuotes(item));
     }
   }
@@ -781,14 +781,18 @@ function injectionScanCore(findings, includeH4) {
       reasons.push(`file path is empty or contains template markers: ${JSON.stringify(filepath)}`);
     }
 
-    // Signature key: mirrors Python's (title.lower().strip(), file, line_start)
-    // tuple key via JSON.stringify of the equivalent array -- structural equality,
-    // immune to collisions a hand-rolled string-concatenation key could hit.
-    // Deliberately built on the UNFOLDED title: heuristic 7 scans folded text
-    // (#242), but this signature keeps HEAD's raw title, so two fold-identical
-    // titles still hash distinct exactly as at HEAD (dedup never folded).
-    // Respelling it to a folded/whitespace-normalized key is #244's change.
-    const sig = JSON.stringify([title.toLowerCase().trim(), filepath, finding.line_start]);
+    // Signature key: mirrors Python's (_WS_TRIM_RE.sub("", title.lower()),
+    // file, line_start) tuple key via JSON.stringify of the equivalent array --
+    // structural equality, immune to collisions a hand-rolled string-
+    // concatenation key could hit. Deliberately built on the UNFOLDED title:
+    // heuristic 7 scans folded text (#242), but this signature keeps HEAD's raw
+    // title, so two fold-identical titles still hash distinct exactly as at HEAD
+    // (dedup never folded). The title strip is the union whitespace class via
+    // `WS_TRIM_RE.replace` (#244 (a), the shared union-trim constant, GLOBAL so
+    // both leading AND trailing runs go), matching Python's
+    // `str.strip()`-vs-JS-`trim()` six-codepoint skew; `line_start` stays RAW
+    // here, NOT routed through `lineBucket`.
+    const sig = JSON.stringify([title.toLowerCase().replace(WS_TRIM_RE, ''), filepath, finding.line_start]);
     if (seenSignatures.has(sig)) {
       reasons.push(`duplicate of finding ${JSON.stringify(seenSignatures.get(sig))}`);
     } else {
@@ -846,7 +850,7 @@ function loadExclusions(text) {
   const blockMatch = REVIEW_EXCL_BLOCK_RE.exec(text);
   if (blockMatch) {
     for (const rawLine of splitReviewLines(blockMatch[1])) {
-      const line = rawLine.trim();
+      const line = rawLine.replace(WS_TRIM_RE, '');
       if (line && !line.startsWith('#')) patterns.push(line);
     }
     return patterns;
@@ -860,7 +864,7 @@ function loadExclusions(text) {
   // and silently zeroed a user's exclusions on such input (issue #243).
   for (const line of splitReviewLines(text)) {
     const m = REVIEW_EXCL_BULLET_RE.exec(line);
-    if (m) patterns.push(m[1].trim());
+    if (m) patterns.push(m[1].replace(WS_TRIM_RE, ''));
   }
 
   return patterns;
@@ -910,6 +914,17 @@ function asConfidence(value) {
   return typeof value === 'number' && !Number.isNaN(value) ? value : 0;
 }
 
+// Leading/trailing trim of the union whitespace class (#244 (a)). ONE constant
+// shared by four call sites: the dedup-signature title strip AND the three
+// review-line strips (loadExclusions' fenced block + bullet fallback, and
+// parseReviewMd's ignore item), all of which had a per-line `trim()` whose
+// Python twin `str.strip()` disagreed on the same six codepoints -- silently
+// zeroing a user exclusion/ignore pattern that carried one. GLOBAL so both the
+// `^...` and `...$` runs go (a non-global replace would drop only the leading
+// run). Mirrors Python's module-level `_WS_TRIM_RE.sub("", ...)`;
+// registry-sourced (an INLINE_SITES row).
+const WS_TRIM_RE = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+|[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]+$/g;
+
 // Python round() is banker's rounding (half-to-even); JS Math.round is half-up.
 // detect_disagreement buckets on round(line/10)*10, so line_start in {5,15,25,...}
 // diverges unless we replicate half-to-even. (parity-map highest-risk fixture.)
@@ -929,8 +944,13 @@ function pyIntOrNull(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? Math.trunc(value) : null;
   if (typeof value === 'boolean') return value ? 1 : 0; // Python bool is an int subclass
   if (typeof value === 'string') {
-    const m = /^\s*[+-]?\d+\s*$/.exec(value); // Python int(str) rejects decimals
-    return m ? parseInt(value, 10) : null;
+    // #244 (b): the union whitespace class + ASCII [0-9], so this twin and the
+    // Python `_INT_COERCE_RE` accept/reject the same strings. parseInt runs on
+    // the CAPTURE m[1], never the raw value -- parseInt only skips the JS trim
+    // set, so a U+001C-U+001F/U+0085 prefix on the raw value yields NaN (then a
+    // 'file:NaN' consolidation_key); the digit capture sidesteps it entirely.
+    const m = /^[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([+-]?[0-9]+)[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*$/.exec(value);
+    return m ? parseInt(m[1], 10) : null;
   }
   return null; // null/undefined/object/array -> TypeError in Python
 }

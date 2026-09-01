@@ -1,0 +1,27 @@
+{
+  "fn": "consolidate_cross_agent",
+  "findings": [
+    {
+      "id": "C1",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "n.py",
+      "line_start": "﻿12",
+      "severity": "high",
+      "confidence": 80,
+      "title": "x",
+      "description": "xxxxxx"
+    },
+    {
+      "id": "C2",
+      "agent": "security-auditor",
+      "dimension": "security",
+      "file": "n.py",
+      "line_start": "12",
+      "severity": "high",
+      "confidence": 70,
+      "title": "y",
+      "description": "yy"
+    }
+  ]
+}

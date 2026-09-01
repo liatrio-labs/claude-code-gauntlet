@@ -427,4 +427,43 @@ INLINE_SITES = (
         py_flags=("ASCII",),
         js_flags=(),
     ),
+    # --- Non-regex whitespace/digit skew (issue #244) ------------------------
+    # Two first-party sites whose host-language string primitives (Python
+    # `str.strip()`/`int(str)` vs JS `trim()`/`parseInt`) disagreed on which
+    # codepoints count as whitespace, and (int only) on which digits count. Both
+    # are respelled onto the ONE union whitespace class + ASCII `[0-9]`, so the
+    # class stays registry-sourced and the two engines converge.
+    #
+    # (a) The union-whitespace trim. ONE constant (`_WS_TRIM_RE`/`WS_TRIM_RE`)
+    #     used at FOUR call sites that all trim the union whitespace class off
+    #     both ends: the dedup-signature title strip AND the three review-line
+    #     strips (load_exclusions' fenced-block + bullet-fallback, and
+    #     parse_review_md's ignore-item) whose per-line `str.strip()`/`trim()`
+    #     otherwise diverged on U+001C-U+001F/U+0085/U+FEFF -- the same six
+    #     codepoints the signature strip did -- silently zeroing a user
+    #     exclusion/ignore pattern carrying one of them. Python site is a
+    #     module-level `_WS_TRIM_RE = re.compile(...)` used with `.sub("", ...)`
+    #     (inherently global); the JS site is `.replace(/.../g, '')`, so it
+    #     carries the GLOBAL flag the Python `.sub` does not need -- the per-twin
+    #     flag split InlineSite exists for. The literal appears once per twin (the
+    #     constant declaration); the other three sites reuse it BY NAME.
+    InlineSite(
+        name="ws_trim",
+        anchor=r"]+|[",
+        pattern=r"^[{WS}]+|[{WS}]+$",
+        py_flags=(),
+        js_flags=("GLOBAL",),
+    ),
+    # (b) The line_start string-coercion gate. Python site is a module-level
+    #     `_INT_COERCE_RE = re.compile(...)` used with `.match`; the JS site is
+    #     inline in `pyIntOrNull` (`.exec`). No flags either side -- the pattern
+    #     is ASCII-explicit (`[0-9]`, the union class), so it is INERT and re.ASCII
+    #     would be a no-op. int()/parseInt run on the CAPTURE, never the raw string.
+    InlineSite(
+        name="line_start_int_coerce",
+        anchor=r"[+-]?[0-9]+",
+        pattern=r"^[{WS}]*([+-]?[0-9]+)[{WS}]*$",
+        py_flags=(),
+        js_flags=(),
+    ),
 )
