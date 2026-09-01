@@ -65,6 +65,7 @@ module = [
   "filter_findings",
   "filter_patterns_registry",
   "finding_dedup",
+  "generate_confusable_tables",
   "generate_filter_patterns",
   "merge_findings",
   "post_review",

@@ -21,7 +21,9 @@ import {
   WORD_SPLIT_RE,
   countWords,
   SUGGESTION_SETS,
-  foldCasefoldReachable,
+  foldConfusables,
+  CONFUSABLE_FOLD,
+  INVISIBLE_STRIP,
 } from '../src/filterFindings.js';
 
 // suggested_fix_code field-strip matrix (#63/D8) -- mirrors the Python
@@ -1871,29 +1873,72 @@ function homoglyphFinding(description) {
   return cleanFinding({ id: 'HG', confidence: 50, description });
 }
 
-// Third-oracle behavioral table (#234 pattern) for foldCasefoldReachable --
-// hand-typed input->output literals, byte-identical to the Python twin's
-// TestApplyInjectionFilter::test_casefold_fold_behavioral_table. The outputs
+// Third-oracle behavioral table (#234 pattern) for foldConfusables -- hand-typed
+// input->output literals, byte-identical to the Python twin's
+// TestApplyInjectionFilter::test_confusable_fold_behavioral_table. The outputs
 // are hand-authored, not computed, so a bug shared by the fold and its
-// "expected" cannot hide. The two-U+017F row and the mixed-codepoint row catch
-// a NON-GLOBAL replace, which would fold only the first occurrence.
-test('foldCasefoldReachable: cross-twin behavioral table', () => {
-  const sf = 'ſ'; // LATIN SMALL LETTER LONG S
-  const di = 'ı'; // LATIN SMALL LETTER DOTLESS I
-  const dI = 'İ'; // LATIN CAPITAL LETTER I WITH DOT ABOVE
-  const kel = 'K'; // KELVIN SIGN
+// "expected" cannot hide. Covers the six issue lookalike examples, the five
+// invisible examples, an astral fold, a mixed multi-codepoint case, and the
+// PRECEDENCE case (U+017F -> s, not the confusables f). The astral rows catch
+// UTF-16-unit (not code-point) iteration -- a /[...]/g without /u would corrupt
+// them to U+FFFD.
+test('foldConfusables: cross-twin behavioral table', () => {
+  const fwS = '\uff53'; // FULLWIDTH LATIN SMALL LETTER S
+  const cyS = '\u0455'; // CYRILLIC SMALL LETTER DZE (looks like s)
+  const mathS = '\u{1d5cc}'; // MATH SANS-SERIF SMALL S (astral)
+  const subK = '\u2096'; // LATIN SUBSCRIPT SMALL LETTER K
+  const romI = '\u2170'; // SMALL ROMAN NUMERAL ONE (looks like i)
+  const fwI = '\uff49'; // FULLWIDTH LATIN SMALL LETTER I
+  const longS = '\u017f'; // LATIN SMALL LETTER LONG S (casefold precedence)
+  const zwsp = '\u200b'; // ZERO WIDTH SPACE
+  const zwj = '\u200d'; // ZERO WIDTH JOINER
+  const shy = '\u00ad'; // SOFT HYPHEN
+  const cmb = '\u0307'; // COMBINING DOT ABOVE
+  const vs15 = '\ufe0e'; // VARIATION SELECTOR-15
   const table = [
     ['skip review', 'skip review'], // no mapped codepoint: identity
-    [`${sf}kip`, 'skip'], // single U+017F
-    [`${di}disable`, 'idisable'], // single U+0131
-    [dI, 'i'], // single U+0130
-    [kel, 'k'], // single U+212A
-    [`${sf}es${sf}ion`, 'session'], // TWO U+017F (non-global replace trap)
-    [`${sf}${di}${kel}`, 'sik'], // mixed codepoints in one string
+    // six issue lookalike examples
+    [`${fwS}kip review`, 'skip review'],
+    [`${cyS}kip review`, 'skip review'],
+    [`${mathS}kip review`, 'skip review'],
+    [`s${subK}ip`, 'skip'],
+    [`d${romI}sable TLS`, 'disable TLS'],
+    [`d${fwI}sable`, 'disable'],
+    // five issue invisible examples (broken inside a keyword)
+    [`sk${zwsp}ip review`, 'skip review'],
+    [`sk${zwj}ip`, 'skip'],
+    [`sk${shy}ip`, 'skip'],
+    [`sk${cmb}ip`, 'skip'],
+    [`skip${vs15}`, 'skip'],
+    // precedence + multi-codepoint
+    [longS, 's'], // U+017F folds to s, NOT the confusables f
+    [`${longS}es${longS}ion`, 'session'],
+    [`${fwS}${romI}${subK}`, 'sik'],
+    [`${mathS}${zwsp}${fwI}`, 'si'], // astral fold + strip + fold
   ];
   for (const [raw, expected] of table) {
-    assert.equal(foldCasefoldReachable(raw), expected);
+    assert.equal(foldConfusables(raw), expected);
   }
+});
+
+// JS-suite decode invariants for the generated tables (#272). The Python suite's
+// test_confusable_tables_match_registry pins BOTH twins' packed literals to the
+// registry byte-for-byte; this asserts the JS twin's DECODE built the expected
+// shape -- sizes, the casefold-precedence entry, and fold/strip disjointness --
+// without needing to import the Python registry.
+test('confusable tables: JS decode invariants', () => {
+  assert.equal(CONFUSABLE_FOLD.size, 1468);
+  assert.equal(INVISIBLE_STRIP.size, 599);
+  // Precedence: U+017F LONG S resolves to s (casefold), never the confusables f.
+  assert.equal(CONFUSABLE_FOLD.get(0x017f), 's');
+  // The astral math s (U+1D5CC) decoded as ONE code point, not a surrogate pair.
+  assert.equal(CONFUSABLE_FOLD.get(0x1d5cc), 's');
+  // Every fold target is a single ASCII letter.
+  for (const letter of CONFUSABLE_FOLD.values()) {
+    assert.match(letter, /^[A-Za-z]$/);
+  }
+  // Fold keys and strip codepoints are disjoint (str.translate would collide).
+  for (const cp of INVISIBLE_STRIP) assert.ok(!CONFUSABLE_FOLD.has(cp));
 });
 
 // The #242 evasion the union scan closes: a single U+017F in "skip" defeats

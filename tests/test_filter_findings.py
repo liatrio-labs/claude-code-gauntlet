@@ -694,43 +694,124 @@ class TestApplyInjectionFilter(unittest.TestCase):
         _passed, eliminated = apply_injection_filter(findings)
         self.assertEqual(len(eliminated), 1)
 
-    def test_fold_table_matches_registry(self):
-        # The hand-written fold table pins to the registry's single source of
-        # truth (ASCII_CASEFOLD_REACHABLE) -- a codepoint added to the registry
-        # but not the twin (or vice versa) fails here, in BOTH directions.
-        import filter_findings
-        from filter_patterns_registry import ASCII_CASEFOLD_REACHABLE
+    def test_confusable_tables_match_registry(self):
+        # Both twins' generated fold+strip tables pin to the registry's single
+        # source of truth (CONFUSABLE_FOLD_PACKED / INVISIBLE_STRIP_PACKED), in
+        # BOTH directions -- a codepoint hand-edited into a fence but not the
+        # registry (or vice versa) fails here. The Python twin's decoded
+        # translate table is compared directly; the JS twin's packed literal is
+        # read off disk and decoded so this one test pins both twins to the
+        # registry (the JS suite carries its own decode-invariants test).
+        from pathlib import Path
 
-        self.assertEqual(
-            filter_findings._CASEFOLD_REACHABLE_FOLD,
-            {cp: ch for cp, ch in ASCII_CASEFOLD_REACHABLE},
+        import filter_findings
+        from filter_patterns_registry import (
+            CONFUSABLE_FOLD_PACKED,
+            INVISIBLE_STRIP_PACKED,
         )
 
-    def test_casefold_fold_behavioral_table(self):
+        def decode_fold(packed):
+            table = {}
+            chars = iter(packed)
+            for src in chars:
+                table[ord(src)] = next(chars)
+            return table
+
+        reg_fold = decode_fold(CONFUSABLE_FOLD_PACKED)
+        reg_strip = {ord(c) for c in INVISIBLE_STRIP_PACKED}
+        reg_table = {**reg_fold, **dict.fromkeys(reg_strip, None)}
+
+        # Python twin: the runtime translate table is fold + strip(mapped to None).
+        self.assertEqual(filter_findings._FOLD_AND_STRIP_TABLE, reg_table)
+
+        # JS twin: pull each packed const off disk and decode its \u / \u{...}
+        # escapes, so a JS-only fence edit that skipped the registry is caught.
+        js_src = (
+            Path(__file__).resolve().parents[1]
+            / "workflows"
+            / "src"
+            / "filterFindings.js"
+        ).read_text(encoding="utf-8")
+
+        def js_const(name):
+            m = re.search(rf"const {name} =\n((?:  '[^']*'[^\n]*\n)+)", js_src)
+            self.assertIsNotNone(m, name)
+            return "".join(re.findall(r"'([^']*)'", m.group(1)))
+
+        def decode_js_escapes(text):
+            out = []
+            i = 0
+            while i < len(text):
+                if text[i] == "\\" and text[i + 1] == "u":
+                    if text[i + 2] == "{":
+                        j = text.index("}", i)
+                        out.append(chr(int(text[i + 3 : j], 16)))
+                        i = j + 1
+                    else:
+                        out.append(chr(int(text[i + 2 : i + 6], 16)))
+                        i += 6
+                else:
+                    out.append(text[i])
+                    i += 1
+            return "".join(out)
+
+        self.assertEqual(
+            decode_fold(decode_js_escapes(js_const("CONFUSABLE_FOLD_PACKED"))),
+            reg_fold,
+        )
+        self.assertEqual(
+            {ord(c) for c in decode_js_escapes(js_const("INVISIBLE_STRIP_PACKED"))},
+            reg_strip,
+        )
+
+    def test_confusable_fold_behavioral_table(self):
         # Third-oracle behavioral table (#234 pattern): hand-typed
         # input->output literals, byte-identical to the JS twin's
-        # `foldCasefoldReachable` table in workflows/test/filter_unit.test.js.
-        # The outputs are hand-authored, not computed from the map, so a bug in
-        # BOTH the fold and the "expected" derivation cannot hide. The
-        # multi-occurrence row (two U+017F) and the mixed-codepoint row catch a
-        # non-global JS replace, which would fold only the first occurrence.
+        # `foldConfusables` table in workflows/test/filter_unit.test.js. The
+        # outputs are hand-authored, not computed from the map, so a bug in BOTH
+        # the fold and the "expected" derivation cannot hide. Covers the six
+        # issue lookalike examples, the five invisible examples, an astral fold,
+        # a mixed multi-codepoint case, and the PRECEDENCE case (U+017F -> s, not
+        # the confusables f). The two-occurrence and mixed rows catch a decode
+        # that pairs codepoints wrong; the astral rows catch UTF-16-unit (not
+        # code-point) iteration.
         import filter_findings
 
-        sf = chr(0x17F)  # U+017F LATIN SMALL LETTER LONG S
-        di = chr(0x131)  # U+0131 LATIN SMALL LETTER DOTLESS I
-        dI = chr(0x130)  # U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE
-        kel = chr(0x212A)  # U+212A KELVIN SIGN
+        fw_s = chr(0xFF53)  # FULLWIDTH LATIN SMALL LETTER S
+        cy_s = chr(0x0455)  # CYRILLIC SMALL LETTER DZE (looks like s)
+        math_s = chr(0x1D5CC)  # MATH SANS-SERIF SMALL S (astral)
+        sub_k = chr(0x2096)  # LATIN SUBSCRIPT SMALL LETTER K
+        rom_i = chr(0x2170)  # SMALL ROMAN NUMERAL ONE (looks like i)
+        fw_i = chr(0xFF49)  # FULLWIDTH LATIN SMALL LETTER I
+        long_s = chr(0x017F)  # LATIN SMALL LETTER LONG S (casefold precedence)
+        zwsp = chr(0x200B)  # ZERO WIDTH SPACE
+        zwj = chr(0x200D)  # ZERO WIDTH JOINER
+        shy = chr(0x00AD)  # SOFT HYPHEN
+        cmb = chr(0x0307)  # COMBINING DOT ABOVE
+        vs15 = chr(0xFE0E)  # VARIATION SELECTOR-15
         table = [
             ("skip review", "skip review"),  # no mapped codepoint: identity
-            (f"{sf}kip", "skip"),  # single U+017F
-            (f"{di}disable", "idisable"),  # single U+0131
-            (dI, "i"),  # single U+0130
-            (kel, "k"),  # single U+212A
-            (f"{sf}es{sf}ion", "session"),  # TWO U+017F (non-global replace trap)
-            (f"{sf}{di}{kel}", "sik"),  # mixed codepoints in one string
+            # -- six issue lookalike examples --
+            (f"{fw_s}kip review", "skip review"),  # fullwidth s
+            (f"{cy_s}kip review", "skip review"),  # cyrillic dze
+            (f"{math_s}kip review", "skip review"),  # astral math s
+            (f"s{sub_k}ip", "skip"),  # subscript k
+            (f"d{rom_i}sable TLS", "disable TLS"),  # roman numeral i
+            (f"d{fw_i}sable", "disable"),  # fullwidth i
+            # -- five issue invisible examples (broken inside a keyword) --
+            (f"sk{zwsp}ip review", "skip review"),  # zero-width space
+            (f"sk{zwj}ip", "skip"),  # zero-width joiner
+            (f"sk{shy}ip", "skip"),  # soft hyphen
+            (f"sk{cmb}ip", "skip"),  # combining mark
+            (f"skip{vs15}", "skip"),  # variation selector
+            # -- precedence + multi-codepoint --
+            (long_s, "s"),  # U+017F folds to s, NOT the confusables f
+            (f"{long_s}es{long_s}ion", "session"),  # two U+017F
+            (f"{fw_s}{rom_i}{sub_k}", "sik"),  # mixed lookalikes in one string
+            (f"{math_s}{zwsp}{fw_i}", "si"),  # astral fold + strip + fold
         ]
         for raw, expected in table:
-            self.assertEqual(filter_findings._fold_casefold_reachable(raw), expected)
+            self.assertEqual(filter_findings._fold_confusables(raw), expected)
 
     def test_bypass_nel_separator_eliminated(self):
         # The one LIVE evasion #211 closes: JS's pre-fix \s (25 members) does
