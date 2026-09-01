@@ -451,10 +451,40 @@ export function countWords(text) {
   return (text || '').split(WORD_SPLIT_RE).filter(Boolean).length;
 }
 
-// Port of _first_match: the pattern SOURCE of the first regex that matches, or null.
-function firstMatch(patterns, text) {
+// Casefold-reachable homoglyph fold map (#242): the four codepoints that
+// case-fold to a plain ASCII letter, mapped to that letter. Hand-copied from
+// scripts/filter_patterns_registry.py's ASCII_CASEFOLD_REACHABLE (and pinned to
+// it by workflows/test/filter_unit.test.js), mirroring the Python twin's
+// _CASEFOLD_REACHABLE_FOLD -- an NFKC/normalize pre-pass would diverge the twins
+// (Node ICU vs CPython UCD ship different Unicode versions), so the map is
+// hand-pinned, not derived.
+// \u escapes, not literal glyphs: U+212A KELVIN SIGN is byte-indistinguishable
+// from an ASCII 'K' in source, and U+0130/U+0131 from each other at a glance.
+const CASEFOLD_REACHABLE_FOLD = { '\u017f': 's', '\u0131': 'i', '\u0130': 'i', '\u212a': 'k' };
+
+// Port of _fold_casefold_reachable. The /g literal folds EVERY occurrence -- a
+// non-global replace would fold only the first (caught by the multi-occurrence
+// row of the shared behavioral table). A `.replace()` literal, never an inline
+// boolean-test literal: the filter-twin unicode guard pins that census at 3.
+export function foldCasefoldReachable(text) {
+  return text.replace(/[\u017f\u0131\u0130\u212a]/g, (c) => CASEFOLD_REACHABLE_FOLD[c]);
+}
+
+// Port of _first_match + the #242 UNION scan: the pattern SOURCE of the first
+// regex matching the RAW `text`, or -- only if `folded` is a distinct
+// casefold-reachable-folded copy of `text` -- the first matching the FOLDED
+// text. The raw pass wins reason selection, so a finding that already matched
+// at HEAD keeps its exact reason and the fold can only ADD detections. The
+// scanned regexes carry no `g` flag, so `.test()` is stateless and safe to run
+// twice per pattern.
+function firstMatch(patterns, text, folded) {
   for (const rx of patterns) {
     if (rx.test(text)) return rx.source;
+  }
+  if (folded !== undefined && folded !== text) {
+    for (const rx of patterns) {
+      if (rx.test(folded)) return rx.source;
+    }
   }
   return null;
 }
@@ -543,8 +573,9 @@ function stripInjectedProseFields(finding) {
     }
     const value = typeof kept[field] === 'string' ? kept[field] : '';
     if (!value) continue;
+    const valueFolded = foldCasefoldReachable(value);
     for (const [phrase, patterns] of SUGGESTION_SETS) {
-      const m = firstMatch(patterns, value);
+      const m = firstMatch(patterns, value, valueFolded);
       if (m) {
         kept = { ...kept };
         delete kept[field];
@@ -678,20 +709,24 @@ function injectionScanCore(findings, includeH4) {
     const filepath = asText(finding.file);
     const confidence = asConfidence(finding.confidence);
     const combined = `${title}\n${description}`;
+    // #242 union scan: fold each scanned text ONCE per finding; the content
+    // sets below scan raw-then-folded via firstMatch.
+    const combinedFolded = foldCasefoldReachable(combined);
+    const titleFolded = foldCasefoldReachable(title);
 
     const reasons = [];
 
-    let m = firstMatch(INJECTION_SHELL_PATTERNS, combined);
+    let m = firstMatch(INJECTION_SHELL_PATTERNS, combined, combinedFolded);
     if (m) reasons.push(`contains shell command pattern: ${JSON.stringify(m)}`);
 
     // 2a/2b: combined title+description (#252 Finding 1 -- see doc comment above).
-    m = firstMatch(INJECTION_URL_PATTERNS, combined);
+    m = firstMatch(INJECTION_URL_PATTERNS, combined, combinedFolded);
     if (m) reasons.push(`contains visit-URL pattern: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_ENCODED_PATTERNS, combined);
+    m = firstMatch(INJECTION_ENCODED_PATTERNS, combined, combinedFolded);
     if (m) reasons.push(`contains encoded payload pattern: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_BYPASS_PATTERNS, combined);
+    m = firstMatch(INJECTION_BYPASS_PATTERNS, combined, combinedFolded);
     if (m) reasons.push(`contains bypass/auto-approve instruction: ${JSON.stringify(m)}`);
 
     if (includeH4) {
@@ -701,16 +736,16 @@ function injectionScanCore(findings, includeH4) {
       }
     }
 
-    m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, combined);
+    m = firstMatch(INJECTION_INSTRUCTIONAL_PATTERNS, combined, combinedFolded);
     if (m) reasons.push(`uses instructional tone: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_VULN_INTRO_PATTERNS, combined);
+    m = firstMatch(INJECTION_VULN_INTRO_PATTERNS, combined, combinedFolded);
     if (m) reasons.push(`recommends introducing vulnerability: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_TITLE_PATTERNS, title);
+    m = firstMatch(INJECTION_TITLE_PATTERNS, title, titleFolded);
     if (m) reasons.push(`title matches placeholder pattern: ${JSON.stringify(m)}`);
 
-    m = firstMatch(INJECTION_BODY_PATTERNS, combined);
+    m = firstMatch(INJECTION_BODY_PATTERNS, combined, combinedFolded);
     if (m) reasons.push(`matches injection marker: ${JSON.stringify(m)}`);
 
     if (!filepath || /<[^\n]*?>|\{[^\n]*?\}/.test(filepath)) {
@@ -720,6 +755,10 @@ function injectionScanCore(findings, includeH4) {
     // Signature key: mirrors Python's (title.lower().strip(), file, line_start)
     // tuple key via JSON.stringify of the equivalent array -- structural equality,
     // immune to collisions a hand-rolled string-concatenation key could hit.
+    // Deliberately built on the UNFOLDED title: heuristic 7 scans folded text
+    // (#242), but this signature keeps HEAD's raw title, so two fold-identical
+    // titles still hash distinct exactly as at HEAD (dedup never folded).
+    // Respelling it to a folded/whitespace-normalized key is #244's change.
     const sig = JSON.stringify([title.toLowerCase().trim(), filepath, finding.line_start]);
     if (seenSignatures.has(sig)) {
       reasons.push(`duplicate of finding ${JSON.stringify(seenSignatures.get(sig))}`);

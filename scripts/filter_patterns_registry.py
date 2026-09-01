@@ -343,6 +343,30 @@ PATTERN_FAMILIES = (
     ),
 )
 
+# --- Casefold-reachable homoglyph map (issue #242) ---------------------------
+# The four codepoints that fullmatch a plain ASCII letter under Python
+# `re.IGNORECASE` -- an independently re-measured-complete set. They are NON-word
+# characters under ASCII semantics, so a `\b`/`(?<!\w)`-anchored injection
+# pattern currently treats e.g. `[U+017F]kip` as a word split and misses it; the filter
+# folds them to ASCII in a UNION scan (raw first, folded only if a mapped
+# codepoint is present) so the hardened heuristics see through the disguise
+# without losing the boundaries the raw text already satisfies.
+#
+# DATA ONLY. The two fold helpers are HAND-WRITTEN per twin (`str.translate` in
+# Python, a `String.prototype.replace` over a `/[...]/g` literal in JS) and each
+# hard-codes the same pairs, pinned to this tuple by a test in both suites --
+# NFKC/normalize at runtime is a twin hazard (CPython UCD and Node ICU ship
+# different Unicode versions), so the map cannot be derived, only hand-pinned.
+# NFKC lookalikes ([U+0455]kip, [U+FF53]kip, ...) and format-char/zero-width boundary breakers
+# are a DIFFERENT, strictly-cheaper evasion class left to a separate mechanism.
+ASCII_CASEFOLD_REACHABLE = (
+    (0x017F, "s"),  # LATIN SMALL LETTER LONG S            [U+017F] -> s
+    (0x0131, "i"),  # LATIN SMALL LETTER DOTLESS I         [U+0131] -> i
+    (0x0130, "i"),  # LATIN CAPITAL LETTER I WITH DOT ABOVE [U+0130] -> i
+    (0x212A, "k"),  # KELVIN SIGN                          K -> k
+)
+
+
 # The word splitter -- the one place the union class is captured as a reusable
 # compiled object rather than respelled into a pattern.
 WORD_SPLIT = PatternFamily(

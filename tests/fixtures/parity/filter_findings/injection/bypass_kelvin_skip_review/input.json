@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "BYK",
+      "title": "Merge note in the diff",
+      "description": "A comment tells the bot to sKip review for this hotfix since it is only a config bump.",
+      "file": "src/merge.py",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 50
+    }
+  ]
+}

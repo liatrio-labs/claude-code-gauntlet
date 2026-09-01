@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "VLC",
+      "title": "TLS setting flagged capital",
+      "description": "A third note asks to dİsable TLS verification while debugging the certificate chain issue.",
+      "file": "src/net3.py",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 50
+    }
+  ]
+}

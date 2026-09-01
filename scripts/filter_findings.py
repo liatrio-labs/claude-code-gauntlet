@@ -760,6 +760,29 @@ _CONTENT_PATTERN_SETS = (
 # /generated-from-filter-pattern-registry:_CONTENT_PATTERN_SETS
 
 
+# Casefold-reachable homoglyph fold table (#242): the four codepoints that
+# case-fold to a plain ASCII letter, mapped to that letter. Hand-copied from
+# scripts/filter_patterns_registry.py's ASCII_CASEFOLD_REACHABLE (and pinned to
+# it by tests/test_filter_findings.py) -- an NFKC/normalize pre-pass would
+# diverge the twins (CPython UCD vs Node ICU ship different Unicode versions),
+# so the map is hand-pinned, not derived. The injection scan folds the SCANNED
+# text with this and unions the result with the raw scan (see _first_match); it
+# is never used to REPLACE the scanned text, because [U+017F]/[U+0131]/[U+0130]/K are non-word under
+# ASCII and folding them in place would flip the `\b`/`(?<!\w)` boundaries the
+# raw text already satisfies and DESTROY detections HEAD makes.
+_CASEFOLD_REACHABLE_FOLD = {0x017F: "s", 0x0131: "i", 0x0130: "i", 0x212A: "k"}
+
+
+def _fold_casefold_reachable(text):
+    """Fold the four casefold-reachable homoglyphs to their ASCII letters.
+
+    `str.translate` over the fold table -- deliberately NO `re.*` call here (the
+    filter-twin unicode guard pins this module's `re.*` call census; a regex in
+    this helper would break `test_discovery_finds_the_known_shape`).
+    """
+    return text.translate(_CASEFOLD_REACHABLE_FOLD)
+
+
 def _injection_scan_core(findings, include_h4):
     """
     Shared core behind apply_injection_filter/apply_replay_injection_scan
@@ -865,11 +888,23 @@ def _injection_scan_core(findings, include_h4):
         re.compile(p, re.IGNORECASE | re.ASCII) for p in _INJECTION_TITLE_PATTERNS
     ]
 
-    def _first_match(patterns, text):
-        """Return the pattern of the first regex that matches text, or None."""
+    def _first_match(patterns, text, folded=None):
+        """Return the pattern of the first regex that matches `text`, or None.
+
+        #242 UNION scan: the RAW text is scanned first; only if `folded` is a
+        distinct casefold-reachable-folded copy of `text` is the folded text
+        scanned as a second pass. The RAW pass wins reason selection, so a
+        finding that already matched at HEAD keeps its exact reason string and
+        the fold can only ADD detections, never move or lose one. Passing no
+        `folded` (or one equal to `text`) is a plain raw scan.
+        """
         for rx in patterns:
             if rx.search(text):
                 return rx.pattern
+        if folded is not None and folded != text:
+            for rx in patterns:
+                if rx.search(folded):
+                    return rx.pattern
         return None
 
     # suggestion (and, since #213, claude_md_rule/spec_text) is rendered into
@@ -911,8 +946,9 @@ def _injection_scan_core(findings, include_h4):
             value = kept.get(field, "")
             if not value:
                 continue
+            value_folded = _fold_casefold_reachable(value)
             for phrase, patterns in _SUGGESTION_SETS:
-                m = _first_match(patterns, value)
+                m = _first_match(patterns, value, value_folded)
                 if m:
                     kept = dict(kept)
                     del kept[field]
@@ -980,11 +1016,15 @@ def _injection_scan_core(findings, include_h4):
         filepath = _as_text(finding.get("file"))
         confidence = _as_confidence(finding.get("confidence"))
         combined = f"{title}\n{description}"
+        # #242 union scan: fold each scanned text ONCE per finding; the content
+        # sets below scan raw-then-folded via _first_match.
+        combined_folded = _fold_casefold_reachable(combined)
+        title_folded = _fold_casefold_reachable(title)
 
         reasons = []
 
         # 1. Shell commands anywhere in the combined text
-        m = _first_match(shell_re, combined)
+        m = _first_match(shell_re, combined, combined_folded)
         if m:
             reasons.append(f"contains shell command pattern: {m!r}")
 
@@ -992,17 +1032,17 @@ def _injection_scan_core(findings, include_h4):
         # a decode/exfil directive in title and the URL/blob in description
         # must be caught together, since the rendered comment concatenates
         # them into one instruction).
-        m = _first_match(url_re, combined)
+        m = _first_match(url_re, combined, combined_folded)
         if m:
             reasons.append(f"contains visit-URL pattern: {m!r}")
 
         # 2b. Encoded payloads -- combined title+description (same rationale).
-        m = _first_match(encoded_re, combined)
+        m = _first_match(encoded_re, combined, combined_folded)
         if m:
             reasons.append(f"contains encoded payload pattern: {m!r}")
 
         # 3. Bypass / auto-approve instructions anywhere in the combined text
-        m = _first_match(bypass_re, combined)
+        m = _first_match(bypass_re, combined, combined_folded)
         if m:
             reasons.append(f"contains bypass/auto-approve instruction: {m!r}")
 
@@ -1019,23 +1059,23 @@ def _injection_scan_core(findings, include_h4):
                 )
 
         # 5. Instructional tone anywhere in the combined text
-        m = _first_match(instruct_re, combined)
+        m = _first_match(instruct_re, combined, combined_folded)
         if m:
             reasons.append(f"uses instructional tone: {m!r}")
 
         # 6. Recommends introducing vulnerability or disabling security
         # features, anywhere in the combined text
-        m = _first_match(vuln_re, combined)
+        m = _first_match(vuln_re, combined, combined_folded)
         if m:
             reasons.append(f"recommends introducing vulnerability: {m!r}")
 
         # 7. Title matches placeholder patterns
-        m = _first_match(title_re, title)
+        m = _first_match(title_re, title, title_folded)
         if m:
             reasons.append(f"title matches placeholder pattern: {m!r}")
 
         # 8. Combined text contains XML-like injection markers
-        m = _first_match(body_marker_re, combined)
+        m = _first_match(body_marker_re, combined, combined_folded)
         if m:
             reasons.append(f"matches injection marker: {m!r}")
 
@@ -1045,7 +1085,12 @@ def _injection_scan_core(findings, include_h4):
                 f"file path is empty or contains template markers: {filepath!r}"
             )
 
-        # 10. Duplicate signature (title+file+line_start)
+        # 10. Duplicate signature (title+file+line_start). Deliberately built
+        # on the UNFOLDED title: heuristic 7 scans folded text (#242), but this
+        # signature keeps HEAD's raw title, so two fold-identical titles still
+        # hash to distinct signatures exactly as at HEAD (dedup never folded).
+        # Respelling it to a folded/whitespace-normalized key is #244's change,
+        # not S3's.
         sig = (title.lower().strip(), filepath, finding.get("line_start"))
         if sig in seen_signatures:
             reasons.append(f"duplicate of finding {seen_signatures[sig]!r}")
