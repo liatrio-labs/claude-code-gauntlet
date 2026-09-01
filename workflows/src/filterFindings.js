@@ -114,11 +114,11 @@ const REVIEW_BLOCK_PATTERNS = [
 // /generated-from-filter-pattern-registry:REVIEW_BLOCK_PATTERNS
 // generated-from-filter-pattern-registry:REVIEW_CONFIDENCE_RE do not edit; run scripts/generate_filter_patterns.py
 const REVIEW_CONFIDENCE_RE =
-  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})/i;
+  /(?:^|\n)[ \t]*confidence_threshold[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
 // /generated-from-filter-pattern-registry:REVIEW_CONFIDENCE_RE
 // generated-from-filter-pattern-registry:REVIEW_SECURITY_RE do not edit; run scripts/generate_filter_patterns.py
 const REVIEW_SECURITY_RE =
-  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})/i;
+  /(?:^|\n)[ \t]*security_min_confidence[\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*[:=][\t\n\x0b\x0c\r \x1c-\x1f\x85\xa0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*([0-9]{1,3})(?![0-9])/i;
 // /generated-from-filter-pattern-registry:REVIEW_SECURITY_RE
 // generated-from-filter-pattern-registry:REVIEW_SEVERITY_RE do not edit; run scripts/generate_filter_patterns.py
 const REVIEW_SEVERITY_RE =

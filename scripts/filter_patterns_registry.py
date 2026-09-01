@@ -287,7 +287,9 @@ PATTERN_FAMILIES = (
         kind="compile_single",
         flags=("IGNORECASE", "ASCII"),
         js_export=False,
-        patterns=(r"(?:^|\n)[ \t]*confidence_threshold[{WS}]*[:=][{WS}]*([0-9]{1,3})",),
+        patterns=(
+            r"(?:^|\n)[ \t]*confidence_threshold[{WS}]*[:=][{WS}]*([0-9]{1,3})(?![0-9])",
+        ),
     ),
     PatternFamily(
         python_name="_REVIEW_SECURITY_RE",
@@ -296,7 +298,7 @@ PATTERN_FAMILIES = (
         flags=("IGNORECASE", "ASCII"),
         js_export=False,
         patterns=(
-            r"(?:^|\n)[ \t]*security_min_confidence[{WS}]*[:=][{WS}]*([0-9]{1,3})",
+            r"(?:^|\n)[ \t]*security_min_confidence[{WS}]*[:=][{WS}]*([0-9]{1,3})(?![0-9])",
         ),
     ),
     PatternFamily(

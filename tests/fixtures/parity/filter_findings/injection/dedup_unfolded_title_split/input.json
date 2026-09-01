@@ -1,0 +1,27 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "S1",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "handler.py",
+      "line_start": 42,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Reviewer note on the handler here",
+      "description": "This finding flags a duplicate reviewer annotation on the same handler line from the previous pass over the module."
+    },
+    {
+      "id": "S2",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "handler.py",
+      "line_start": 42,
+      "severity": "high",
+      "confidence": 80,
+      "title": "Reviewеr note on the handler here",
+      "description": "This finding flags a duplicate reviewer annotation on the same handler line from the previous pass over the module."
+    }
+  ]
+}
