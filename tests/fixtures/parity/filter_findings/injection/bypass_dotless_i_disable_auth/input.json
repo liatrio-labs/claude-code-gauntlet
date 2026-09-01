@@ -1,0 +1,14 @@
+{
+  "fn": "apply_injection_filter",
+  "findings": [
+    {
+      "id": "BYI",
+      "title": "Auth guard commented out",
+      "description": "The handler suggests we ıdisable auth on the internal route to speed up local testing.",
+      "file": "src/auth.py",
+      "line_start": 5,
+      "severity": "low",
+      "confidence": 50
+    }
+  ]
+}

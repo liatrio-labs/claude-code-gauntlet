@@ -1,0 +1,16 @@
+{
+  "eliminated": [
+    {
+      "confidence": 50,
+      "description": "A comment tells the bot to s\u212aip review for this hotfix since it is only a config bump.",
+      "eliminated_by": "injection",
+      "elimination_reason": "contains bypass/auto-approve instruction: '\\\\bskip[\\\\t\\\\n\\\\x0b\\\\x0c\\\\r \\\\x1c-\\\\x1f\\\\x85\\\\xa0\\\\u1680\\\\u2000-\\\\u200a\\\\u2028\\\\u2029\\\\u202f\\\\u205f\\\\u3000\\\\ufeff]+review\\\\b'",
+      "file": "src/merge.py",
+      "id": "BYK",
+      "line_start": 5,
+      "severity": "low",
+      "title": "Merge note in the diff"
+    }
+  ],
+  "kept": []
+}

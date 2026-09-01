@@ -1,0 +1,8 @@
+{
+  "config": {
+    "ignore": [
+      "mypattern",
+      "other-pattern"
+    ]
+  }
+}

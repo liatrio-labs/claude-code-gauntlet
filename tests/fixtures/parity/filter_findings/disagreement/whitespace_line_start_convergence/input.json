@@ -1,0 +1,27 @@
+{
+  "fn": "detect_disagreement",
+  "findings": [
+    {
+      "id": "W1",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "file": "n.py",
+      "line_start": "﻿12",
+      "severity": "high",
+      "confidence": 70,
+      "title": "a",
+      "description": "aa"
+    },
+    {
+      "id": "W2",
+      "agent": "security-auditor",
+      "dimension": "security",
+      "file": "n.py",
+      "line_start": "12",
+      "severity": "high",
+      "confidence": 70,
+      "title": "b",
+      "description": "bb"
+    }
+  ]
+}

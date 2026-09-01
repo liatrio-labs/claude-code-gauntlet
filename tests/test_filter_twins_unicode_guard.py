@@ -14,12 +14,24 @@ its flags.
 
 JS side: a line-oriented scan of workflows/src/filterFindings.js for
 ``NAME = [ ... ]`` regex-literal arrays and ``NAME =\\n  /pattern/flags;``
-single-pattern consts, keyed off the SAME family names the Python side
-discovered (leading-underscore stripped) -- never a hardcoded pair list.
+single-pattern consts, keyed off the SAME family names the byte-identity
+walk uses -- never a hardcoded pair list.
 Array-bracket matching alone is not used to find element boundaries (a
 bracket count is broken by ``]`` inside a character class); each array
 element is instead recognized by the whole-line shape
 ``^\\s*(/.*/[a-z]*),?$``.
+
+Family names for the byte-identity walk come from
+``scripts/filter_patterns_registry.py`` (#241) -- the declarative source both
+twins are GENERATED from -- not from an ``_INJECTION_``-prefix rule plus a
+hardcoded tuple of the three remaining names. That keeps the module's
+"discovery by shape, compared against a source of truth" promise intact
+rather than trading it for a name allowlist: the pattern TEXT still comes
+from an ``ast`` walk of the live twin and a line scan of the live JS, and
+the registry only says which names must be compared. A family added to the
+twins but not to the registry is caught from the other side by
+``test_discovered_families_match_the_registry_in_both_directions`` below, so
+neither source can silently gain a family the other does not know about.
 
 Scope ("first-party finding-text pattern") is structural, not a positive
 allowlist of what to check:
@@ -29,10 +41,6 @@ allowlist of what to check:
   arbitrary-script finding text; re.ASCII there breaks legitimate folding
   (e.g. "café" no longer matching "CAFÉ"), pinned separately by the
   exclusions/case_fold_unicode_cafe parity fixture.
-- NAMED-EXEMPT (out of #211 scope entirely, adjacent issue): call sites
-  enclosed by ``parse_review_md`` or ``load_exclusions`` -- these parse
-  REVIEW.md / exclusions-md file FORMAT (config block markers, bullet
-  lines), not attacker-controlled finding text.
 - INERT-EXEMPT (re.ASCII would be a structural no-op): a call whose
   resolved pattern text contains none of ``\\b \\B \\w \\W \\d \\D \\s \\S`` AND
   whose flags carry no ``re.IGNORECASE`` -- re.ASCII changes the meaning of
@@ -51,12 +59,17 @@ immediately, without anyone updating an allowlist.
 
 import ast
 import re
+import sys
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 PY_SRC = REPO / "scripts" / "filter_findings.py"
 JS_SRC = REPO / "workflows" / "src" / "filterFindings.js"
+
+sys.path.insert(0, str(REPO / "scripts"))
+
+from filter_patterns_registry import PATTERN_FAMILIES  # noqa: E402
 
 _METACHAR_RE = re.compile(r"[\\\[\]()|+*?{}.^$]")
 _ASCII_SENSITIVE_TOKEN_RE = re.compile(r"\\[bBwWdDsS]")
@@ -73,6 +86,14 @@ _REGEX_CALL_METHODS = {
     "fullmatch",
 }
 
+# Boolean-test-shaped methods: a JS inline `/re/.test(...)` corresponds to one of
+# these on the Python side. The inline byte-identity assertion (v) compares
+# Python inline literals against JS `.test(` literals, so it scopes itself to
+# these methods -- a transform call like the `_split_review_lines` re.split (a
+# structural line splitter, #243/#243-followup) has no `.test(` counterpart by
+# construction and is pinned for cross-twin identity separately, not here.
+_TEST_SHAPED_METHODS = {"search", "match", "fullmatch"}
+
 # Call sites enclosed by these functions match USER-AUTHORED, arbitrary-script
 # patterns over finding text (#211 decision item 1) -- MUST NOT carry re.ASCII.
 _ASCII_FORBIDDEN_FUNCS = {
@@ -82,15 +103,12 @@ _ASCII_FORBIDDEN_FUNCS = {
     ),
 }
 
-# Call sites enclosed by these functions parse REVIEW.md / exclusions-md file
-# FORMAT (config block markers, bullet-list lines), not attacker-controlled
-# finding text -- out of #211's scope (tracked: "parse_review_md regex family
-# audit" adjacent issue). Exempt from BOTH the re.ASCII and the \s-respell
-# requirements below.
-_NAMED_EXEMPT_FUNCS = {
-    "parse_review_md": "parses REVIEW.md config block markers, not finding text",
-    "load_exclusions": "parses exclusions-md file FORMAT, not finding text",
-}
+# parse_review_md / load_exclusions were NAMED-EXEMPT until #243 converged the
+# config-parser twins (union class, re.ASCII, bounded ASCII digits, `(?:^|\n)`
+# anchors, a shared line splitter). Their patterns are now GENERATED from
+# scripts/filter_patterns_registry.py and carry re.ASCII like the rest of the
+# family, so no name carve-out remains -- they default to REQUIRED, and the
+# INERT-EXEMPT content rule below covers the flagless bullet/fence literals.
 
 
 class _Discovery(ast.NodeVisitor):
@@ -148,6 +166,7 @@ class _Discovery(ast.NodeVisitor):
             self.calls.append(
                 {
                     "func": self._current_func(),
+                    "method": node.func.attr,
                     "has_ascii": has_ascii,
                     "has_ignorecase": has_ignorecase,
                     "pattern_text": pattern_text,
@@ -176,6 +195,19 @@ def _discover_python():
     d = _Discovery()
     d.visit(tree)
     return d.list_families, d.calls
+
+
+def _find_assign(tree, name):
+    """The `name = ...` assignment node in `tree`, or None."""
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        ):
+            return node
+    return None
 
 
 def _is_inert(call):
@@ -292,8 +324,6 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
     def _scope(self, func):
         if func in _ASCII_FORBIDDEN_FUNCS:
             return "forbidden"
-        if func in _NAMED_EXEMPT_FUNCS:
-            return "named_exempt"
         return "in_scope"
 
     def test_discovery_finds_the_known_shape(self):
@@ -306,36 +336,52 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             if name.startswith("_INJECTION_")
         }
         self.assertEqual(len(injection_lists), 8, sorted(injection_lists))
-        self.assertIn("block_patterns", self.list_families)
-        self.assertEqual(
-            self.list_families["block_patterns"]["func"], "parse_review_md"
-        )
-        # 25 TEST_CORRECTNESS compiles + 2 keyword-set compiles + 1 word-split
-        # compile (func=None, module level) = 28, + 2 list-comp compiles (#215
-        # round-1 parity-F4/F5 collapsed the seven _CONTENT_PATTERN_SETS
-        # compiles into ONE re.compile call site inside apply_injection_filter's
-        # generator expression -- one AST node compiling all seven sets, still
-        # carrying the same literal re.IGNORECASE | re.ASCII flags this guard
-        # checks per call site, so nothing is unprotected; title_re's own
-        # list-comp compile stays separate) + 1 file-path search
-        # (func=apply_injection_filter) = 3, + 2 suppression
-        # (func=detect_disagreement), + parse_review_md's 6, + load_exclusions'
-        # 2, + apply_exclusions' 1 = 42
-        self.assertEqual(len(self.calls), 42, len(self.calls))
+        # #243 renamed parse_review_md's function-local `block_patterns`
+        # str-list to the module-level `_REVIEW_BLOCK_PATTERNS` (func=None): it
+        # stays a str_list so visit_Assign still discovers it (a compile_list
+        # hoist would have made it vanish, like _TEST_CORRECTNESS_PATTERNS).
+        self.assertIn("_REVIEW_BLOCK_PATTERNS", self.list_families)
+        self.assertIsNone(self.list_families["_REVIEW_BLOCK_PATTERNS"]["func"])
+        # Call total is UNCHANGED at 42 across #243 (derived by running
+        # _discover_python on the hoisted source). Breakdown:
+        #   25 TEST_CORRECTNESS compiles + 2 keyword-set compiles + 1 word-split
+        #   compile = 28, + 2 list-comp compiles (#215 collapsed the seven
+        #   _CONTENT_PATTERN_SETS compiles into ONE call site inside
+        #   apply_injection_filter's generator, + title_re's own list-comp
+        #   compile) + 1 file-path search (apply_injection_filter) = 3, + 2
+        #   suppression (detect_disagreement), + 1 apply_exclusions = 34.
+        # #243 delta nets to zero: parse_review_md's 6 in-function re.* calls
+        # drop to 1 (only the block-loop `re.search(pattern, ...)` survives; the
+        # 4 directive searches + the ignore-item re.sub become
+        # `_REVIEW_*_RE.<method>` const calls, invisible to the `re.<attr>`
+        # rule), load_exclusions' 2 drop to 0, and 7 new module-level
+        # `re.compile` constants appear (_REVIEW_{CONFIDENCE,SECURITY,SEVERITY,
+        # IGNORE,IGNORE_ITEM,EXCL_BLOCK,EXCL_BULLET}_RE): -5 -2 +1 +7 = +1 -1
+        # nets 0, i.e. 34 + 1 (block-loop) + 7 (module compiles) = 42.
+        # #243 followup: +1 for the `re.split(r"\r\n|\r|\n", text)` in the
+        # converged `_split_review_lines` (universal-newline splitter). It was a
+        # `text.split("\n")` comprehension before -- a str method, invisible to
+        # the `re.<attr>` rule -- and is now a `re.split` call site (a transform,
+        # inert, no `.test(` twin), so 42 -> 43.
+        # #244: +2 for two new module-level `re.compile` constants --
+        # `_INT_COERCE_RE` (the line_start string-coercion gate, mechanism (b))
+        # and `_WS_TRIM_RE` (the shared union-whitespace trim, mechanism (a),
+        # used at the dedup-signature title strip AND the three review-line strips).
+        # Both are inert (union class + `[0-9]`, no `\d`/`\w`/`\s`), so neither
+        # requires re.ASCII (assertion (ii) exempts inert calls); the `.match`/
+        # `.sub` methods on the two constants are attribute calls on a Name, not
+        # `re.<attr>`, so they add nothing. 43 -> 45.
+        self.assertEqual(len(self.calls), 45, len(self.calls))
 
     def test_no_first_party_pattern_contains_bare_whitespace_class(self):
         """(i) No first-party finding-text pattern contains \\s or \\S -- they
         must use the explicit union class instead."""
         offenders = []
         for name, fam in self.list_families.items():
-            if fam["func"] in _NAMED_EXEMPT_FUNCS:
-                continue
             for p in fam["patterns"]:
                 if "\\s" in p or "\\S" in p:
                     offenders.append(f"{name}: {p!r}")
         for call in self.calls:
-            if call["func"] in _NAMED_EXEMPT_FUNCS:
-                continue
             text = call["pattern_text"]
             if text is None:
                 continue
@@ -352,7 +398,7 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
         missing = []
         for call in self.calls:
             scope = self._scope(call["func"])
-            if scope in ("forbidden", "named_exempt"):
+            if scope == "forbidden":
                 continue
             if _is_inert(call):
                 continue
@@ -380,104 +426,100 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
                 f"{_ASCII_FORBIDDEN_FUNCS[call['func']]}",
             )
 
+    def test_discovered_families_match_the_registry_in_both_directions(self):
+        """The registry's `str_list` rows and the families this module's own
+        ``ast`` walk finds in the live twin name exactly the same set.
+
+        Byte-identity is now driven by the registry (#241), so the registry
+        supplying a name is what makes a family get compared. `discovered` is
+        EVERY string-list-of-metachars the ast walk finds (the 8 `_INJECTION_`
+        lists plus `_REVIEW_BLOCK_PATTERNS`, #243) -- not an `_INJECTION_`-prefix
+        subset -- and it must equal the registry's `str_list` rows exactly. This
+        closes the other direction: a family hand-added to
+        scripts/filter_findings.py and never registered would otherwise be
+        compared against nothing, and a registry row whose family was deleted
+        from the twin would silently stop meaning anything."""
+        discovered = set(self.list_families)
+        registered = {
+            row.python_name for row in PATTERN_FAMILIES if row.kind == "str_list"
+        }
+        self.assertEqual(
+            discovered,
+            registered,
+            "string-list pattern families found in scripts/filter_findings.py differ "
+            "from scripts/filter_patterns_registry.py's rows -- a family was added or "
+            "removed on one side only",
+        )
+
     def test_first_party_families_are_byte_identical_across_twins(self):
         """(iii) Each first-party pattern family is element-wise byte-identical
         between the Python and JS twins (after de-quoting each side's own
-        string/regex-literal syntax)."""
-        mismatches = []
+        string/regex-literal syntax).
 
-        # The 8 _INJECTION_* lists -- Python name minus leading underscore is
-        # the JS array name, by construction (both sides are hand-paired by
-        # this exact naming convention throughout filterFindings.js).
-        for py_name, fam in self.list_families.items():
-            if not py_name.startswith("_INJECTION_"):
-                continue
-            js_name = py_name[1:]
-            js_elements = _find_js_list(js_name)
-            if js_elements is None:
-                mismatches.append(f"{js_name}: not found in JS source")
-                continue
-            py_texts = [_py_pattern_text(p) for p in fam["patterns"]]
-            js_texts = [_js_literal_to_regex_text(e) for e in js_elements]
+        The (python_name, js_name) pairs come from
+        scripts/filter_patterns_registry.py -- the declarative source both twins
+        are generated from -- and nothing else: no ``_INJECTION_`` prefix rule,
+        no hardcoded tuple of the leftovers. Adding a family therefore costs one
+        registry row, not an edit here. The pattern TEXT still comes from the
+        live twins (an ``ast`` walk on one side, a line scan on the other), so
+        this remains a comparison of the shipped source against the source of
+        truth rather than of the registry against itself."""
+        mismatches = []
+        tree = ast.parse(PY_SRC.read_text(encoding="utf-8"), filename=str(PY_SRC))
+
+        for row in PATTERN_FAMILIES:
+            py_name, js_name = row.python_name, row.js_name
+
+            if row.kind == "str_list":
+                # Lists of plain pattern strings: already captured by
+                # visit_Assign's "list of string Constants" shape rule.
+                fam = self.list_families.get(py_name)
+                if fam is None:
+                    mismatches.append(f"{py_name}: not found by Python discovery")
+                    continue
+                py_texts = [_py_pattern_text(p) for p in fam["patterns"]]
+            else:
+                # `NAME = re.compile(...)` and `NAME = [re.compile(...), ...]`
+                # assignments: their elements are Call nodes, not Constants, so
+                # visit_Assign's rule does not reach them and self.calls has no
+                # "these N, in this order" anchor (module scope holds unrelated
+                # compiles too). The assignment literal is that anchor; find it
+                # by target name and read arg 0 of each compile.
+                assign_node = _find_assign(tree, py_name)
+                self.assertIsNotNone(
+                    assign_node, f"could not locate {py_name}'s assignment"
+                )
+                if row.kind == "compile_single":
+                    # Python's parser has already merged any adjacent-string
+                    # concatenation into one ast.Constant.
+                    self.assertIsInstance(assign_node.value, ast.Call)
+                    self.assertIsInstance(assign_node.value.args[0], ast.Constant)
+                    py_texts = [assign_node.value.args[0].value]
+                else:
+                    py_texts = []
+                    for elt in assign_node.value.elts:
+                        self.assertIsInstance(elt, ast.Call)
+                        self.assertIsInstance(elt.args[0], ast.Constant)
+                        py_texts.append(elt.args[0].value)
+
+            if row.kind == "compile_single":
+                js_literal = _find_js_const_pattern(js_name)
+                if js_literal is None:
+                    mismatches.append(f"{js_name}: not found in JS source")
+                    continue
+                js_literals = [js_literal]
+            else:
+                js_elements = _find_js_list(js_name)
+                if js_elements is None:
+                    mismatches.append(f"{js_name}: not found in JS source")
+                    continue
+                js_literals = js_elements
+
+            js_texts = [_js_literal_to_regex_text(e) for e in js_literals]
             if py_texts != js_texts:
                 mismatches.append(
                     f"{py_name}/{js_name}: element mismatch\n  py={py_texts}\n  js={js_texts}"
                 )
-
-        # FUNCTIONAL_VIOLATION_KEYWORDS / TYPE_SAFETY_BUG_KEYWORDS: single
-        # compiled alternation patterns (Python: adjacent-string-literal
-        # concatenation already merged into one ast.Constant by the parser).
-        # Located directly by assignment target name (same technique as the
-        # _TEST_CORRECTNESS_PATTERNS lookup below), not by pattern-text
-        # sniffing, since these are `NAME = re.compile(...)` assignments, not
-        # list elements this class's other discovery rules already capture.
-        tree = ast.parse(PY_SRC.read_text(encoding="utf-8"), filename=str(PY_SRC))
-        for py_name in ("_FUNCTIONAL_VIOLATION_KEYWORDS", "_TYPE_SAFETY_BUG_KEYWORDS"):
-            js_name = py_name[1:]
-            assign_node = None
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Assign)
-                    and len(node.targets) == 1
-                    and isinstance(node.targets[0], ast.Name)
-                    and node.targets[0].id == py_name
-                ):
-                    assign_node = node
-                    break
-            self.assertIsNotNone(
-                assign_node, f"could not locate {py_name}'s assignment"
-            )
-            self.assertIsInstance(assign_node.value, ast.Call)
-            self.assertIsInstance(assign_node.value.args[0], ast.Constant)
-            py_text = assign_node.value.args[0].value
-
-            js_pattern = _find_js_const_pattern(js_name)
-            self.assertIsNotNone(js_pattern, f"{js_name}: not found in JS source")
-            js_text = _js_literal_to_regex_text(js_pattern)
-            if py_text != js_text:
-                mismatches.append(
-                    f"{py_name}/{js_name}: mismatch\n  py={py_text}\n  js={js_text}"
-                )
-
-        # _TEST_CORRECTNESS_PATTERNS: 25 module-level re.compile(...) calls,
-        # in source order, vs the JS array of the same length in the same order.
-        # Located by re-walking the AST list directly (module-level Call list,
-        # not caught by visit_Assign's "list of Constants" rule since its
-        # elements are Call nodes, not Constants), rather than filtering
-        # self.calls -- module scope holds other compiles too (FUNCTIONAL_
-        # VIOLATION_KEYWORDS, TYPE_SAFETY_BUG_KEYWORDS, WORD_SPLIT_RE), and
-        # this list literal is the only structural anchor for "these 25, in
-        # this order".
-        tree = ast.parse(PY_SRC.read_text(encoding="utf-8"), filename=str(PY_SRC))
-        tc_node = None
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], ast.Name)
-                and node.targets[0].id == "_TEST_CORRECTNESS_PATTERNS"
-            ):
-                tc_node = node
-                break
-        self.assertIsNotNone(
-            tc_node, "could not locate _TEST_CORRECTNESS_PATTERNS assignment"
-        )
-        py_tc_texts = []
-        for elt in tc_node.value.elts:
-            self.assertIsInstance(elt, ast.Call)
-            self.assertIsInstance(elt.args[0], ast.Constant)
-            py_tc_texts.append(elt.args[0].value)
-
-        js_tc_elements = _find_js_list("TEST_CORRECTNESS_PATTERNS")
-        self.assertIsNotNone(
-            js_tc_elements, "TEST_CORRECTNESS_PATTERNS: not found in JS source"
-        )
-        js_tc_texts = [_js_literal_to_regex_text(e) for e in js_tc_elements]
-        if py_tc_texts != js_tc_texts:
-            mismatches.append(
-                f"_TEST_CORRECTNESS_PATTERNS/TEST_CORRECTNESS_PATTERNS: element mismatch\n"
-                f"  py={py_tc_texts}\n  js={js_tc_texts}"
-            )
 
         self.assertEqual(mismatches, [], "\n".join(mismatches))
 
@@ -502,6 +544,7 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
             for c in self.calls
             if c["func"] is not None
             and self._scope(c["func"]) == "in_scope"
+            and c["method"] in _TEST_SHAPED_METHODS
             and c["pattern_text"] is not None
         ]
         js_texts = [
@@ -509,6 +552,30 @@ class TestFilterTwinsUnicodeGuard(unittest.TestCase):
         ]
         self.assertEqual(len(py_texts), 3, py_texts)
         self.assertEqual(py_texts, js_texts)
+
+    def test_review_line_splitter_is_byte_identical_across_twins(self):
+        """The converged universal-newline line splitter (#243) is a
+        hand-written helper, not a registry-generated family, so no other
+        byte-identity assertion in this class reaches it. It is a `re.split`
+        transform with no JS `.test(` counterpart (scoped out of assertion (v)
+        above), so pin its cross-twin spelling directly: both twins must split
+        on the exact alternation ``\\r\\n|\\r|\\n`` (\\r\\n first). A twin-only
+        edit -- dropping the \\r branch, or reordering the alternation so \\r\\n
+        stops collapsing to one break -- diverges the two engines and fails
+        here."""
+        alternation = r"\r\n|\r|\n"
+        py_text = PY_SRC.read_text(encoding="utf-8")
+        js_text = JS_SRC.read_text(encoding="utf-8")
+        self.assertIn(
+            f're.split(r"{alternation}", text)',
+            py_text,
+            "converged splitter re.split spelling not found in filter_findings.py",
+        )
+        self.assertIn(
+            f"text.split(/{alternation}/)",
+            js_text,
+            "converged splitter split spelling not found in filterFindings.js",
+        )
 
     def test_union_class_constant_is_byte_identical_across_twins(self):
         """(iv) The union whitespace class constant appears with the same

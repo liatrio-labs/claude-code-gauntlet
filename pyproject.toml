@@ -63,13 +63,17 @@ module = [
   "diff_lines",
   "ensure_output_dir",
   "filter_findings",
+  "filter_patterns_registry",
   "finding_dedup",
+  "generate_confusable_tables",
+  "generate_filter_patterns",
   "merge_findings",
   "post_review",
   "profile_run",
   "review_marker",
   "runner.*",
   "script_io",
+  "test_filter_twins_unicode_guard",
   "verify_findings",
 ]
 ignore_missing_imports = true
