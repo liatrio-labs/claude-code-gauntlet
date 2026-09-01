@@ -2,6 +2,21 @@
 
 <!-- version list -->
 
+## v3.24.0 (2026-09-01)
+
+### Chores
+
+- **deps**: Bump github/codeql-action/upload-sarif in the actions group
+  ([#263](https://github.com/liatrio-labs/claude-code-gauntlet/pull/263),
+  [`dac6634`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/dac6634d43bb0fc8050f0d4e3ca3a77f52f4633c))
+
+### Features
+
+- **filter**: Pattern registry + config/homoglyph/whitespace/confusables twin convergence
+  (#241-#244, #272) ([#273](https://github.com/liatrio-labs/claude-code-gauntlet/pull/273),
+  [`2cb9104`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/2cb91045f4b6839c84d2623155fe9ad32035c159))
+
+
 ## v3.23.3 (2026-08-31)
 
 ### Bug Fixes
