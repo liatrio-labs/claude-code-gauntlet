@@ -282,8 +282,9 @@ does not perform is the exact defect class issue #47 was filed for.
 Every field-backed section after the description is emitted **only when its field is present**; `null`, `""`
 and whitespace-only all count as absent, and no heading is emitted at all.
 
-```markdown
-**{emoji} [{SEVERITY}] {title}**
+<!-- generated-from-registry-identity:inline_sample — do not edit; run scripts/generate_contract_requirements.py -->
+````markdown
+**{emoji} [SEVERITY] {finding.title}**
 
 {body}
 
@@ -291,19 +292,15 @@ and whitespace-only all count as absent, and no heading is emitted at all.
 {suggestion}
 
 **Cited rule:**
-> {claude_md_rule, falling back to spec_text when there is no surviving rule — blockquoted, one `>` line per source line}
+> {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}
 
-[If suggested_fix_code is present AND passes delivery's deterministic apply-check at this
-render site — see below:]
 ```suggestion
 {suggested_fix_code}
 ```
 
-<!-- generated-from-registry-identity:inline_trailer — do not edit; run scripts/generate_contract_requirements.py -->
 ⚔️ *Code Gauntlet*
-<!-- /generated-from-registry-identity:inline_trailer -->
-
-```
+````
+<!-- /generated-from-registry-identity:inline_sample -->
 
 The identity trailer is the one section that is NOT conditional: every rendered comment body
 ends with it, once — one mark per delivered surface. Never hand-type it.
@@ -315,7 +312,5 @@ ends with it, once — one mark per delivered surface. Never hand-type it.
 `{body}` is the v2 alias of `description` applied at the persist boundary. The renderer emits
 no permalink and no confidence footer — those belong to the report markdown, not to inline
 comments.
-
-```
 
 **`suggested_fix_code` field:** Delivery gates this field on `scripts/post_review.py`'s deterministic apply-check (field must be a string, non-empty after redaction, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff (issue #229 — reported under the same no-oracle reason), land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The renderer strips this field and its two removal stamps itself (`stripReportExcludedFields` in `workflows/src/renderReport.js`), so there is no report-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`post_review._gated_finding`) over the pinned Phase 2 diff, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.

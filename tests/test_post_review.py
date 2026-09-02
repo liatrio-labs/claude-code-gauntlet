@@ -2960,6 +2960,13 @@ class TestSummaryBodyBrandHeader(_DryRunTestBase):
                     "the forged skipped finding and the real footer must both "
                     "survive; only the original body may drive dedup",
                 )
+                expected_footer = review_marker.build_footer(
+                    len(findings), self.SHA, body="Automated review summary."
+                )
+                self.assertTrue(
+                    body.endswith(expected_footer),
+                    "the mechanical footer must remain after the non-empty skipped section",
+                )
                 marker = review_marker.find_marker(body)
                 self.assertIsNotNone(marker)
                 self.assertEqual(marker["sha"], self.SHA)
@@ -3213,6 +3220,29 @@ class TestDeliveryKeyStability(unittest.TestCase):
             with self.subTest(title=f["title"]):
                 self.assertNotIn("\u2694", post_review.key_material_body(f))
                 self.assertNotIn("Code Gauntlet", post_review.key_material_body(f))
+
+    def test_key_material_uses_the_unbranded_sections_seam(self):
+        """Branding must stay structurally outside the bytes that keys hash."""
+        finding = {
+            "file": "src/example.py",
+            "line": 8,
+            "title": "Example",
+            "body": "Body",
+            "suggested_fix_code": "patch",
+        }
+        expected_material = dict(finding)
+        del expected_material["suggested_fix_code"]
+        with (
+            patch.object(
+                post_review, "_finding_sections", return_value="SECTIONS"
+            ) as sections,
+            patch.object(
+                post_review, "render_comment_body", return_value="BRANDED"
+            ) as branded,
+        ):
+            self.assertEqual(post_review.key_material_body(finding), "SECTIONS")
+        sections.assert_called_once_with(expected_material)
+        branded.assert_not_called()
 
 
 class TestGitHubDeliveryConsolidation(_DryRunTestBase):
@@ -8061,6 +8091,12 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
         self.assertEqual(len(discussion_bodies), 2)
         self.assertIn(_FENCE, discussion_bodies[0])
         self.assertNotIn(_FENCE, discussion_bodies[1])
+        fallback = discussion_bodies[1]
+        self.assertIn(
+            f"**{post_review.SEVERITY_EMOJI['high']} [HIGH] Second**", fallback
+        )
+        self.assertNotIn("Corroborator", fallback)
+        self.assertNotIn("\n\n---\n\n", fallback)
         # The prose suggestion still ships — only the one-click fence is
         # withheld (``_finding``'s default ``suggestion`` text, unchanged).
         self.assertIn("**Suggested fix:**\nReturn two instead.", discussion_bodies[1])

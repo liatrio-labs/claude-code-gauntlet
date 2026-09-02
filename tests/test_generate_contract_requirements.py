@@ -305,7 +305,25 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "`{emoji}` is C critical / L low, `{SEVERITY}` is the severity uppercased."
         ),
         (gen.REPORT_FORMAT_REL, "summary_header"): "### MARK NAME",
-        (gen.REPORT_FORMAT_REL, "inline_trailer"): "MARK *NAME*",
+        (gen.REPORT_FORMAT_REL, "inline_sample"): (
+            "````markdown\n"
+            "**{emoji} [SEVERITY] {finding.title}**\n"
+            "\n"
+            "{body}\n"
+            "\n"
+            "**Suggested fix:**\n"
+            "{suggestion}\n"
+            "\n"
+            "**Cited rule:**\n"
+            "> {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}\n"
+            "\n"
+            "```suggestion\n"
+            "{suggested_fix_code}\n"
+            "```\n"
+            "\n"
+            "MARK *NAME*\n"
+            "````"
+        ),
         (
             "skills/code-gauntlet/references/delivery-guide.md",
             "severity_legend",
@@ -316,8 +334,26 @@ class TestIdentityFenceGuards(unittest.TestCase):
         ): "### MARK NAME",
         (
             "skills/code-gauntlet/references/delivery-guide.md",
-            "inline_trailer",
-        ): "MARK *NAME*",
+            "inline_sample",
+        ): (
+            "````markdown\n"
+            "**{emoji} [SEVERITY] {finding.title}**\n"
+            "\n"
+            "{body}\n"
+            "\n"
+            "**Suggested fix:**\n"
+            "{suggestion}\n"
+            "\n"
+            "**Cited rule:**\n"
+            "> {claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}\n"
+            "\n"
+            "```suggestion\n"
+            "{suggested_fix_code}\n"
+            "```\n"
+            "\n"
+            "MARK *NAME*\n"
+            "````"
+        ),
         (
             "skills/code-gauntlet/references/delivery-guide.md",
             "delivery_identity",

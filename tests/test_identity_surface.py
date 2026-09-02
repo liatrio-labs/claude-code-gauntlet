@@ -74,7 +74,7 @@ class TestIdentitySurface(unittest.TestCase):
         ): ("## PR Comment Format (abbreviated)", "## Inline PR Comment Format"),
         (
             "skills/code-gauntlet/references/report-format.md",
-            "inline_trailer",
+            "inline_sample",
         ): ("## Inline PR Comment Format", "**`suggested_fix_code` field:**"),
         (
             "skills/code-gauntlet/references/delivery-guide.md",
@@ -82,7 +82,7 @@ class TestIdentitySurface(unittest.TestCase):
         ): ("**Script behavior:**", "### Findings metadata footer"),
         (
             "skills/code-gauntlet/references/delivery-guide.md",
-            "inline_trailer",
+            "inline_sample",
         ): ("### Comment body format", "**Script behavior:**"),
         (
             "skills/code-gauntlet/references/delivery-guide.md",
@@ -225,8 +225,9 @@ class TestIdentitySurface(unittest.TestCase):
 
         The header is a second spelling of the `summary_header` fence body, so it is
         asserted EQUAL to that body rather than to a copy of it — one invariant, not
-        two literals that can drift the moment S2 posts them. The trailer has no
-        generated twin, so its bytes are pinned outright.
+        two literals that can drift the moment S2 posts them. The trailer is generated
+        inside the documentation sample, so its exact wire bytes are pinned by the
+        renderer-output sample test below.
         """
         self.assertEqual(
             post_review.BRAND_SUMMARY_HEADER,
@@ -242,6 +243,23 @@ class TestIdentitySurface(unittest.TestCase):
             _codepoints(post_review.BRAND_TRAILER),
             _codepoints("\u2694\ufe0f *Code Gauntlet*"),
         )
+
+    def test_inline_samples_match_renderer_output_without_generator_markers(self):
+        """The copyable samples are renderer bytes, not fence metadata."""
+        expected = gen.render_inline_comment_sample(self.registry)
+        for rel_path in (
+            "skills/code-gauntlet/references/report-format.md",
+            "skills/code-gauntlet/references/delivery-guide.md",
+        ):
+            text = _read_text(rel_path)
+            lines = text.split("\n")
+            open_index, close_index = gen.find_identity_pairs(lines, rel_path)[
+                "inline_sample"
+            ]
+            sample = "\n".join(lines[open_index + 1 : close_index])
+            with self.subTest(path=rel_path):
+                self.assertEqual(sample, expected)
+                self.assertNotIn("generated-from-registry-identity", sample)
 
     def test_the_doc_legends_are_the_generated_bytes(self):
         """T-DOCFENCE: every markdown mirror carries the generator's exact fence.

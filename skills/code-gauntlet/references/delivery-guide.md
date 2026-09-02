@@ -17,8 +17,9 @@ Implementation details for each delivery method in Phase 8, interactive and head
 **You do not compose the comment body.** `scripts/post_review.py::render_comment_body` builds it
 from the fields you supply. Its output, for reference:
 
-```
-**{emoji} [{SEVERITY}] {finding.title}**
+<!-- generated-from-registry-identity:inline_sample — do not edit; run scripts/generate_contract_requirements.py -->
+````markdown
+**{emoji} [SEVERITY] {finding.title}**
 
 {body}
 
@@ -32,11 +33,9 @@ from the fields you supply. Its output, for reference:
 {suggested_fix_code}
 ```
 
-<!-- generated-from-registry-identity:inline_trailer — do not edit; run scripts/generate_contract_requirements.py -->
 ⚔️ *Code Gauntlet*
-<!-- /generated-from-registry-identity:inline_trailer -->
-
-```
+````
+<!-- /generated-from-registry-identity:inline_sample -->
 
 Every field-backed section after `{body}` is emitted only when its field is present — `null`, `""` and
 whitespace-only all count as absent and produce no heading.
@@ -49,7 +48,7 @@ match this render site's actual apply range, differ from the current text, and s
 size bound. Any failure strips the field before render and the finding falls back to the prose
 `suggestion`, with the reason recorded via `warn_skip`. This used to be documented as a
 per-finding judgement call ("if `suggestion` looks like code, fence it"), which is precisely the
-wrong shape: a ```suggestion fence is a one-click APPLY button, so turning prose into one on a
+wrong shape: a```suggestion fence is a one-click APPLY button, so turning prose into one on a
 hunch writes the guess straight into the author's branch. The rule is still structural — a fence
 comes from a field that exists to be a patch, or it does not appear — the apply-check is the
 mechanism that keeps that promise now that agents populate the field too.
@@ -82,6 +81,7 @@ Product mark: ⚔️ (Code Gauntlet). Severity emojis: 🔴 critical, 🟠 high,
 **Do NOT post PR comments via direct `gh api` or `glab api` calls.** Use the bundled `scripts/post_review.py` script instead. It handles platform detection, diff validation, and API calls deterministically.
 
 **Usage:**
+
 ```bash
 python3 {plugin_root}/scripts/post_review.py <findings_json_path>
 ```

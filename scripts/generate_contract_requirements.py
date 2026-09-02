@@ -58,13 +58,13 @@ IDENTITY_FENCES = {
         "severity_legend",
         "inline_legend",
         "summary_header",
-        "inline_trailer",
+        "inline_sample",
         "full_report_template",
     ],
     "skills/code-gauntlet/references/delivery-guide.md": [
         "severity_legend",
         "summary_header",
-        "inline_trailer",
+        "inline_sample",
         "delivery_identity",
     ],
     # D9's chat convention names the mark in prose. A hand-authored fourth copy would
@@ -429,6 +429,57 @@ def render_template_block(repo_root, identity):
     return "````markdown\n" + out.stdout + "\n````"
 
 
+_INLINE_SAMPLE_FINDING = {
+    "severity": "severity",
+    "title": "{finding.title}",
+    "body": "{body}",
+    "suggestion": "{suggestion}",
+    "claude_md_rule": (
+        "{claude_md_rule, falling back to spec_text — blockquoted, one `>` line per source line}"
+    ),
+    "suggested_fix_code": "{suggested_fix_code}",
+}
+
+
+def render_inline_comment_sample(identity):
+    """Render the copyable inline-comment sample through the real Python renderer.
+
+    The finding values are placeholders so the result documents the renderer's shape,
+    while the severity map and brand constants are temporarily supplied by *identity*
+    for the isolated generator tests. The marker fence surrounds this whole block in
+    the reference docs; it therefore cannot make generator control comments part of
+    the sample a reader copies.
+    """
+    source_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if source_root not in sys.path:
+        sys.path.insert(0, source_root)
+    from scripts import post_review
+
+    saved = {
+        name: getattr(post_review, name)
+        for name in (
+            "BRAND_MARK",
+            "BRAND_NAME",
+            "BRAND_TRAILER",
+            "SEVERITY_EMOJI",
+            "SEVERITY_EMOJI_FALLBACK",
+        )
+    }
+    try:
+        post_review.BRAND_MARK = identity["brand"]["mark"]
+        post_review.BRAND_NAME = identity["brand"]["name"]
+        post_review.BRAND_TRAILER = (
+            f"{post_review.BRAND_MARK} *{post_review.BRAND_NAME}*"
+        )
+        post_review.SEVERITY_EMOJI = {"severity": "{emoji}"}
+        post_review.SEVERITY_EMOJI_FALLBACK = "{emoji}"
+        rendered = post_review.render_comment_body(_INLINE_SAMPLE_FINDING)
+    finally:
+        for name, value in saved.items():
+            setattr(post_review, name, value)
+    return "````markdown\n" + rendered + "\n````"
+
+
 def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
     """The generated lines for one fence — keyed by BOTH file and symbol.
 
@@ -458,8 +509,8 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
         return lines
     if symbol == "summary_header":
         return [f"### {mark} {name}"]
-    if symbol == "inline_trailer":
-        return [f"{mark} *{name}*"]
+    if symbol == "inline_sample":
+        return render_inline_comment_sample(identity).split("\n")
     if symbol == "delivery_identity":
         return [
             f"- **Identity:** prepends `### {mark} {name}` to `review_body` and appends "
