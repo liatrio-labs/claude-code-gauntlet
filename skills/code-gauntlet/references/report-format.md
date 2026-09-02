@@ -116,7 +116,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 #### {finding.title}
 
 - **Location:** `{finding.file}:{finding.line_start}-{finding.line_end}`
-- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Dimension:** {finding.dimension}
 - **Origin:** surfaced — pre-existing, surfaced by this change
 - **Contested:** the challenger could not confirm the cited location
 
@@ -146,7 +146,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 
 - **Cross-file refs:** {finding.cross_file_refs}
 
-- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, confidence {corroboration.confidence}) — {corroboration.title}
+- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, confidence ) — {corroboration.title}
   {corroboration.description}
 
 ### 🟠 High
@@ -154,7 +154,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 #### {finding.title}
 
 - **Location:** `{finding.file}:{finding.line_start}`
-- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Dimension:** {finding.dimension}
 
 {finding.description}
 
@@ -163,7 +163,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 #### {finding.title}
 
 - **Location:** `{finding.file}:{finding.line_start}`
-- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Dimension:** {finding.dimension}
 
 {finding.description}
 
@@ -172,7 +172,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 #### {finding.title}
 
 - **Location:** `{finding.file}:{finding.line_start}`
-- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Dimension:** {finding.dimension}
 - **Routing:** improvement suggestion
 
 {finding.description}
@@ -186,7 +186,7 @@ These did not clear the full pipeline (a stage was skipped or failed) and carry 
 #### {finding.title}
 
 - **Location:** `{finding.file}:{finding.line_start}`
-- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Dimension:** {finding.dimension}
 - **Unverified because:** the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
 {finding.description}

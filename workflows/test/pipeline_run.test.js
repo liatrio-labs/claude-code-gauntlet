@@ -383,6 +383,39 @@ test('resume replaying a non-empty legacy report checkpoint still persists fresh
   assert.ok(out.gaps.includes('legacy report gap'), 'replayed report gaps are preserved');
 });
 
+test('replayed malformed challenge findings are coerced before report persistence', async () => {
+  const malformed = {
+    id: 'BAD',
+    file: 'bad.js',
+    line_start: 7,
+    line_end: 7,
+    severity: 5,
+    title: { kind: 'object title' },
+    description: null,
+    evidence: 123,
+    confidence: 90,
+    dimension: 'bug',
+    origin: 'new',
+    corroborations: 'not-an-array',
+  };
+  const args = validArgs({
+    checkpoints: {
+      challenge: { findings: [malformed, makeFinding('GOOD')], unverified: [], eliminated: [], stats: {} },
+    },
+  });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+
+  assert.equal(out.ok, true, 'malformed finding must not escape runWith as a crash');
+  assert.ok(persisted && typeof persisted.report === 'string', 'report was persisted');
+  assert.ok(persisted.report.startsWith('# \u2694\uFE0F Code Gauntlet:'), 'canonical title is present');
+  assert.ok(persisted.report.includes('### \u{1F4A1} 5'), 'non-string severity is rendered under unknown severity');
+  assert.ok(persisted.report.includes('#### [object Object]'), 'object title is string-coerced');
+  assert.ok(persisted.report.includes('\n```\n123\n```'), 'numeric evidence is string-coerced');
+  assert.ok(!persisted.report.includes('not-an-array'), 'non-array corroborations are omitted');
+  assert.ok(!persisted.report.includes('null'), 'null description is omitted');
+});
+
 // --- Top-level catch --------------------------------------------------------
 
 test('a throw in a core stage (discover) is caught by the top-level try/catch', async () => {

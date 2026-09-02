@@ -71,8 +71,8 @@ function severityBreakdown(rowFindings) {
 
 export function dimensionsSummaryTable(input) {
   const inp = input || {};
-  const dispatchedSet = new Set(inp.dispatched || []);
-  const degradedSet = new Set(inp.degraded || []);
+  const dispatchedSet = new Set((Array.isArray(inp.dispatched) ? inp.dispatched : []).map(reportAsText));
+  const degradedSet = new Set((Array.isArray(inp.degraded) ? inp.degraded : []).map(reportAsText));
   const owner = dimensionOwnerMap();
 
   const byAgent = new Map(AGENTS.map((a) => [a, []]));
@@ -189,6 +189,101 @@ export function reportExtraFields() {
     .sort();
 }
 
+// Replayed checkpoints are object-shaped but may predate the finding schema's field types.
+// Coerce at this renderer boundary so every downstream report read sees the same safe view:
+// text fields stringify non-null values, null/undefined text is omitted, and confidence keeps
+// only finite numbers. The catch arms make even hostile object coercion total.
+function reportAsText(value) {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'string') return value;
+  try {
+    return String(value);
+  } catch {
+    return '';
+  }
+}
+
+function reportOptionalText(value) {
+  return value === undefined || value === null ? undefined : reportAsText(value);
+}
+
+function reportAsConfidence(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function reportRiskLevel(value) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'number' || typeof value === 'string') return value;
+  const text = reportAsText(value);
+  return text || undefined;
+}
+
+function reportCorroboration(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const out = {};
+  for (const key of ['agent', 'dimension', 'title', 'description']) {
+    let raw;
+    try {
+      raw = value[key];
+    } catch {
+      continue;
+    }
+    const text = reportOptionalText(raw);
+    if (text !== undefined) out[key] = text;
+  }
+  let confidence;
+  try {
+    confidence = reportAsConfidence(value.confidence);
+  } catch {
+    confidence = undefined;
+  }
+  if (confidence !== undefined) out.confidence = confidence;
+  return out;
+}
+
+function coerceReportFinding(finding) {
+  const out = {};
+  let keys;
+  try {
+    keys = Object.keys(finding);
+  } catch {
+    return out;
+  }
+  for (const key of keys) {
+    let raw;
+    try {
+      raw = finding[key];
+    } catch {
+      continue;
+    }
+    let value;
+    if (key === 'confidence') {
+      value = reportAsConfidence(raw);
+    } else if (key === 'corroborations') {
+      value = Array.isArray(raw) ? raw.map(reportCorroboration) : undefined;
+    } else if (key === 'consolidation_primary' || key === 'challenge_contested') {
+      value = raw;
+    } else if (key === 'risk_level') {
+      value = reportRiskLevel(raw);
+    } else {
+      value = reportOptionalText(raw);
+    }
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
+
+// Exported for the run seam that ranks the selected delivery before invoking renderReport.
+// Keeping this projection here means replayed malformed findings cannot reach a raw rankKey.
+export function coerceReportFindings(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((finding) => (
+    finding && typeof finding === 'object' && !Array.isArray(finding)
+      ? coerceReportFinding(finding)
+      : {}
+  ));
+}
+
 // 'failure_scenario' -> 'Failure scenario'
 function fieldLabel(key) {
   const words = String(key).replaceAll('_', ' ');
@@ -198,13 +293,13 @@ function fieldLabel(key) {
 // A fence at least one backtick longer than the longest run inside text, minimum 3.
 function fenceFor(text) {
   let longest = 0;
-  for (const match of String(text).matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
+  for (const match of reportAsText(text).matchAll(/`+/g)) longest = Math.max(longest, match[0].length);
   return '`'.repeat(Math.max(3, longest + 1));
 }
 
 // Bullet values, heading interpolations and the identity line are single-line positions.
 function oneLine(value) {
-  return String(value == null ? '' : value).replace(/\r?\n+/g, ' ').replace(/ +/g, ' ').trim();
+  return reportAsText(value).replace(/\r?\n+/g, ' ').replace(/ +/g, ' ').trim();
 }
 
 function isPresent(value) {
@@ -214,11 +309,10 @@ function isPresent(value) {
   return true;
 }
 
-const severityMark = (severity) => SEVERITY_EMOJI[String(severity || '').toLowerCase()] || SEVERITY_EMOJI_FALLBACK;
+const severityMark = (severity) => SEVERITY_EMOJI[reportAsText(severity).toLowerCase()] || SEVERITY_EMOJI_FALLBACK;
 
 function normalizeFindings(value) {
-  if (!Array.isArray(value)) return [];
-  return value.map((finding) => (finding && typeof finding === 'object' && !Array.isArray(finding) ? finding : {}));
+  return coerceReportFindings(value);
 }
 
 // Collect protected evidence offsets while composing, then neutralize comment openers
@@ -228,13 +322,13 @@ function reportBuilder() {
   const evidenceRanges = [];
   const add = (line = '') => {
     if (text.length) text += '\n';
-    text += String(line);
+    text += reportAsText(line);
   };
   const addEvidence = (evidence) => {
     const fence = fenceFor(evidence);
     const start = text.length + (text.length ? 1 : 0);
     add(fence);
-    add(String(evidence));
+    add(reportAsText(evidence));
     add(fence);
     evidenceRanges.push([start, text.length]);
   };
@@ -299,7 +393,7 @@ function renderFinding(builder, finding, unverified) {
   }
   if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
 
-  if (isPresent(finding.description)) blocks.push(() => builder.add(String(finding.description)));
+  if (isPresent(finding.description)) blocks.push(() => builder.add(reportAsText(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
       builder.add('**Evidence:**');
@@ -317,7 +411,7 @@ function renderFinding(builder, finding, unverified) {
     blocks.push(() => {
       builder.add('**Suggested fix:**');
       builder.add();
-      builder.add(String(finding.suggestion));
+      builder.add(reportAsText(finding.suggestion));
     });
   }
 
@@ -326,7 +420,7 @@ function renderFinding(builder, finding, unverified) {
     blocks.push(() => {
       builder.add('**Cited rule:**');
       builder.add();
-      builder.add(String(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
+      builder.add(reportAsText(citedRule).split(/\r?\n/).map((line) => `> ${line}`).join('\n'));
     });
   }
 
@@ -343,7 +437,7 @@ function renderFinding(builder, finding, unverified) {
         const title = oneLine(corroboration.title);
         builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
         if (isPresent(corroboration.description)) {
-          builder.add(String(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          builder.add(reportAsText(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
       }
     });
@@ -359,7 +453,7 @@ function severityKey(finding) {
   return (oneLine(finding.severity) || 'unknown').toLowerCase();
 }
 
-function renderSeverityBuckets(builder, findings, unverified) {
+function severityView(findings) {
   const ranked = rankFindings(findings);
   const buckets = new Map();
   for (const finding of ranked) {
@@ -369,32 +463,26 @@ function renderSeverityBuckets(builder, findings, unverified) {
   }
   const known = SEVERITY_ORDER.filter((severity) => buckets.has(severity));
   const rest = [...buckets.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity));
-  for (const severity of [...known, ...rest]) {
+  return { buckets, order: [...known, ...rest] };
+}
+
+function renderSeverityBuckets(builder, view, unverified) {
+  for (const severity of view.order) {
     builder.add();
     builder.add(`### ${severityMark(severity)} ${fieldLabel(severity)}`);
-    for (const finding of buckets.get(severity)) {
+    for (const finding of view.buckets.get(severity)) {
       builder.add();
       renderFinding(builder, finding, unverified);
     }
   }
 }
 
-function countsSentence(findings, rawCount, unverified) {
+function countsSentence(findings, rawCount, unverified, view) {
   const count = findings.length;
   let sentence = count === rawCount
     ? `${count} finding(s) after the gauntlet`
     : `${count} reported issue(s) from ${rawCount} finding(s) after the gauntlet`;
-  const severityCounts = new Map();
-  for (const finding of findings) {
-    const severity = severityKey(finding);
-    severityCounts.set(severity, (severityCounts.get(severity) || 0) + 1);
-  }
-  const orderedSeverities = [
-    ...SEVERITY_ORDER.filter((severity) => severityCounts.has(severity)),
-    ...[...severityCounts.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity)),
-  ];
-  const breakdown = orderedSeverities
-    .map((severity) => `${severityCounts.get(severity)} ${severity}`);
+  const breakdown = view.order.map((severity) => `${view.buckets.get(severity).length} ${severity}`);
   sentence += count > 0 && breakdown.length ? ` — ${breakdown.join(', ')}.` : '.';
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
   if (suggestions) sentence += ` ${suggestions} routed as improvement suggestion(s).`;
@@ -410,6 +498,8 @@ export function renderReport(input) {
   const rawUnverified = normalizeFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
+  const findingsView = severityView(findings);
+  const unverifiedView = severityView(unverified);
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)
     ? inp.prIdentity
     : null;
@@ -439,15 +529,15 @@ export function renderReport(input) {
   builder.add('## Summary');
   builder.add();
   if (isPresent(inp.summary)) {
-    builder.add(String(inp.summary));
+    builder.add(reportAsText(inp.summary));
     builder.add();
   }
-  builder.add(countsSentence(findings, rawFindings.length, unverified));
+  builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
 
   if (findings.length) {
     builder.add();
     builder.add('## Findings');
-    renderSeverityBuckets(builder, findings, false);
+    renderSeverityBuckets(builder, findingsView, false);
   }
 
   if (unverified.length) {
@@ -455,7 +545,7 @@ export function renderReport(input) {
     builder.add('## Unverified / pipeline-degraded findings');
     builder.add();
     builder.add('These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. They are not confirmed findings.');
-    renderSeverityBuckets(builder, unverified, true);
+    renderSeverityBuckets(builder, unverifiedView, true);
   }
 
   const dimensionsTable = dimensionsSummaryTable({

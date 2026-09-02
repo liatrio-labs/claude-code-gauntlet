@@ -71,8 +71,10 @@ test('T-SEV: registry severity headings are sparse and unknown severities trail 
     finding('H', { severity: 'high' }),
     finding('M', { severity: 'medium' }),
     finding('L', { severity: 'low' }),
-    finding('X', { severity: 'exotic' }),
-    finding('Y', { severity: 'strange' }),
+    // Confidence deliberately reverses input order so headings and counts must use
+    // the same ranked severity view.
+    finding('X', { severity: 'exotic', confidence: 50 }),
+    finding('Y', { severity: 'strange', confidence: 90 }),
   ];
   const report = rendered({ findings });
   assert.deepEqual(
@@ -82,11 +84,11 @@ test('T-SEV: registry severity headings are sparse and unknown severities trail 
       `### ${SEVERITY_EMOJI.high} High`,
       `### ${SEVERITY_EMOJI.medium} Medium`,
       `### ${SEVERITY_EMOJI.low} Low`,
-      `### ${SEVERITY_EMOJI_FALLBACK} Exotic`,
       `### ${SEVERITY_EMOJI_FALLBACK} Strange`,
+      `### ${SEVERITY_EMOJI_FALLBACK} Exotic`,
     ],
   );
-  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low, 1 exotic, 1 strange.');
+  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low, 1 strange, 1 exotic.');
   const sparse = rendered({ findings: [finding('L', { severity: 'low' })] });
   assert.ok(sparse.includes(`### ${SEVERITY_EMOJI.low} Low`));
   assert.ok(!sparse.includes(`### ${SEVERITY_EMOJI.high} High`));

@@ -22,7 +22,7 @@ import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
-import { renderReport } from './renderReport.js';
+import { renderReport, coerceReportFindings } from './renderReport.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -2043,7 +2043,11 @@ export function selectDelivery(survivors, cap, tier) {
   const pool = tier === 'main_only'
     ? (survivors || []).filter((f) => (f.report_tag ?? f.report_destination) === 'main')
     : (survivors || []);
-  const ranked = rankFindings(pool);
+  // Rank the renderer-owned tolerant projection, then map back to the original entries so
+  // persistence keeps its byte/identity relationship with the challenge output.
+  const rankable = coerceReportFindings(pool);
+  const originalByRankable = new Map(rankable.map((finding, index) => [finding, pool[index]]));
+  const ranked = rankFindings(rankable).map((finding) => originalByRankable.get(finding));
   if (cap === undefined || cap === null) return ranked;
   return ranked.slice(0, Math.max(0, cap));
 }
@@ -3561,22 +3565,12 @@ export function buildResumeCheckpoints(phaseOutputs) {
 // and the `unverified` bucket that selectDelivery, the report input, and writeArtifacts read
 // BY VALUE — replaying it is what makes the delivered set on a resume verbatim-identical.
 //
-// `filter` is deliberately NOT persisted (issue #38, P1). Its only resume consumers are
-// `postFilterCount` (the empty-report guard) and `filterOut.stats` (report input + envelope),
-// and on a resume from the persisted checkpoint `summarize`/`discover`/`verify`/`validate`
-// re-run anyway (they were never persisted) — so `filter`, a PURE agent-free JS function
-// (filterStage -> applyFilterPipeline), simply re-runs too at ZERO dispatch cost and both
-// consumers are computed from the freshly re-derived set. Persisting it bought nothing and
-// cost 35% of the checkpoint artifact's bytes in the profiled run.
-//
-// CONSEQUENCE FOR THE EMPTY-REPORT GUARD (issue #38, L2-1/L5-3): because filter re-runs
-// while challenge is REPLAYED, on a resume `postFilterCount` describes a freshly
-// rediscovered set, NOT the set being delivered. A resume that rediscovers nothing has
-// postFilterCount 0 while the replayed challenge still carries real findings — so the guard
-// in runWith keys on the UNION of postFilterCount and the delivered challenge count. Do not
-// narrow it back to postFilterCount alone. Every OTHER phase
-// contributes only a count/stat to the final envelope on a resume
-// (discovered/merged/verified/validate.stats/filter.stats), never its findings bulk.
+// `filter` is deliberately NOT persisted (issue #38, P1). On a resume from the persisted
+// checkpoint, summarize/discover/verify/validate/filter re-run, while challenge carries the
+// delivered findings and unverified bucket by value. Filter is a PURE agent-free JS function,
+// so it re-runs at ZERO dispatch cost and its fresh stats feed the report input and envelope.
+// Persisting it bought nothing and cost 35% of the checkpoint artifact's bytes in the profiled
+// run. Every other phase contributes only a count/stat on resume, never its findings bulk.
 const PERSISTED_RESUME_PHASES = ['challenge'];
 
 // phaseFindingCount(out) -> the count summarizing one phase's output for the slim checkpoint
@@ -3954,8 +3948,8 @@ export async function runWith(ctx, rawArgs) {
     //       delivered one. So a totally re-degraded fresh discovery on such a resume must
     //       NOT abort — it stays degraded-but-disclosed (the per-agent gaps and
     //       stats.degraded above still say so) and the run proceeds to replay and deliver
-    //       the prior challenge output; the empty-report guard downstream is what protects
-    //       that replayed delivery if it were ever somehow empty.
+    //       the prior challenge output; the pure renderer below rebuilds the persisted report
+    //       from that output, including the zero-finding case.
     if (allActiveDimensionsDegraded(discoverOut.dispatched, discoverOut.degraded)
       && (discoverOut.findings || []).length === 0
       && checkpoints.challenge === undefined) {
@@ -4091,14 +4085,10 @@ export async function runWith(ctx, rawArgs) {
     // uncaught throw -- so the belt still guards itself to a no-op when challengeOut is
     // not an object, exactly as before.
     //
-    // Two empty-report-guard corners this belt touches (documented, not changed --
-    // findingsAtRisk below is pre-existing and out of #253's scope): (a) a resume where
-    // fresh discovery degrades to 0 AND the belt eliminates every replayed finding now
-    // legitimately yields an empty ok:true report -- intended, disclosed via the gap
-    // line below, not a guard bug; (b) the postFilterCount>0 replay corner (see
-    // postFilterCount's own doc comment further down) is pre-existing and unchanged, but
-    // this belt increases how often it is reachable, since it is one more way for
-    // challengeOut.findings to shrink below postFilterCount on a replay.
+    // The belt may remove replayed findings while preserving their disclosure in the
+    // replay-filter gap and eliminated bucket. If it removes the whole delivered set, the
+    // pure renderer still produces the canonical zero-finding report; no second report
+    // decision is needed here.
     if (challengeOut && typeof challengeOut === 'object') {
       const findingsResult = beltPartitionList(challengeOut.findings);
       const unverifiedResult = beltPartitionList(challengeOut.unverified);
@@ -4206,6 +4196,9 @@ export async function runWith(ctx, rawArgs) {
     // live agent never re-filters or re-ranks. Challenge-removed (challengeOut.eliminated) and
     // challenge-skipped (challengeOut.unverified) are already absent here, so they stay excluded.
     const deliveryTier = A.delivery && A.delivery.tier;
+    // selectDelivery ranks through the renderer-owned tolerant projection, while retaining
+    // the original finding objects for persistence. renderReport applies the projection again
+    // to its own input, so malformed replay findings cannot reach a raw rankKey.
     const postReview = selectDelivery(challengeOut.findings, limits.deliveryCap, deliveryTier);
 
     const reportInput = {

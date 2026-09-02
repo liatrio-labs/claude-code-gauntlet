@@ -14,15 +14,27 @@
 // gate after draining the microtask queue and the test asserts the valve never fired.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { runWith, verifyStage, slimPersistedCheckpoints, parseWriterPayload } from '../src/stages.js';
 import { makeFinding, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { deltaEnvelope, sliceInputRecorder } from './helpers/verifyDelta.js';
+
+const STAGES_SOURCE = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'stages.js'), 'utf8');
 
 // Drain the microtask queue far enough that a SEQUENTIAL implementation has provably
 // parked on the gate (it can make no further progress without it).
 async function drainMicrotasks(n = 100) {
   for (let i = 0; i < n; i += 1) await Promise.resolve();
 }
+
+test('report replay comments contain no retired empty-report flow terminology', () => {
+  const retiredTerms = ['postFilter' + 'Count', 'findings' + 'AtRisk', 'empty_' + 'report', 'empty-' + 'report guard'];
+  for (const term of retiredTerms) {
+    assert.ok(!STAGES_SOURCE.includes(term), `stages.js must not mention retired ${term}`);
+  }
+});
 
 // --- D2.1: the persisted checkpoint drops `filter` --------------------------
 
@@ -69,8 +81,8 @@ test('D2.1: a resume with ONLY challenge persisted still delivers the replayed c
   assert.equal(out2.phaseReached, 'report');
   assert.ok(!ctx2.calls.some((c) => (c.label || '').startsWith('challenge-')), 'challenge replayed, not re-dispatched');
   assert.equal(out2.stats.highConfidence, 2, 'the replayed challenge findings are delivered unchanged');
-  // The empty-report guard's postFilterCount comes from the freshly re-derived filter set.
-  assert.ok(!out2.gaps.some((g) => /empty_report/.test(g)), `no empty_report gap, got: ${out2.gaps}`);
+  // The replayed challenge output is delivered, and the pure renderer rebuilds the report
+  // from that output on every resume.
   assert.equal(typeof out2.artifactPaths.report, 'string', 'a real report persisted');
 });
 
