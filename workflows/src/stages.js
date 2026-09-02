@@ -22,6 +22,7 @@ import { applyValidations, pyIntStrict } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
+import { renderReport } from './renderReport.js';
 
 // Runtime globals are injected by the workflow host; under node:test they are absent,
 // so ctx must be supplied. defaultCtx lets the shipped pipeline call stages without wiring.
@@ -39,9 +40,9 @@ function modelFor(agentType, policy) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
 
-// Shared char budget for a single agent's by-value PROMPT payload. Above it, stages
-// that carry findings by value (report generation, verify slice-input writing) segment
-// into multiple dispatches to stay under the receiving agent's context.
+// Shared char budget for a single agent's by-value PROMPT payload. Above it, verify
+// slice-input writing segments into multiple dispatches to stay under the receiving
+// agent's context.
 //
 // It does NOT bound the workflow's RETURN — that is RETURN_CHAR_BUDGET below. One
 // constant used to do both jobs, the second by analogy with the first, and the analogy
@@ -157,8 +158,7 @@ export function sharedContextLine(inp) {
 
 // Greedy pack: accumulate items into a chunk until adding the next would exceed
 // `budget` serialized chars, then start a new chunk. A single oversized item still
-// goes in a chunk of its own (never dropped). Shared by report segmentation and
-// verify slice-input writing.
+// goes in a chunk of its own (never dropped). Used by verify slice-input writing.
 function chunkBySerializedSize(items, budget) {
   const chunks = [];
   let cur = [];
@@ -499,36 +499,6 @@ function dropSuggestedFixCode(f) {
   if (!('suggested_fix_code' in f)) return false;
   delete f.suggested_fix_code;
   return true;
-}
-
-// Fields the report path never sees. suggested_fix_code itself (no apply-check oracle
-// exists at report time, see stripReportExcludedFields below) plus the two stamps
-// filterFindings.js/filter_findings.py leave behind when IT stripped suggested_fix_code
-// earlier in the pipeline (suggested_fix_code_removed_by / _removal_reason) — dangling
-// metadata for a field the report-writer never sees either way (#220 review). A list,
-// not a single field check, so adding a future report-excluded field is a one-line edit
-// here rather than a second copy of stripReportExcludedFields's iteration.
-export const REPORT_EXCLUDED_FIELDS = [
-  'suggested_fix_code',
-  'suggested_fix_code_removed_by',
-  'suggested_fix_code_removal_reason',
-];
-
-// stripReportExcludedFields(findings) -> new array, same finding objects EXCEPT a
-// shallow copy wherever any REPORT_EXCLUDED_FIELDS key was present. Used ONLY on the
-// report path (reportStage): the report-writer is a sampled model and no apply-check
-// oracle exists at report time, so suggested_fix_code must never reach a report-path
-// prompt, and its removal stamps are meaningless without it. selectDelivery /
-// writerPayload read the SAME finding objects reportStage was called with, unstripped —
-// delivery keeps every field for its own live-oracle apply-check (scripts/post_review.py).
-export function stripReportExcludedFields(findings) {
-  return (findings || []).map((f) => {
-    if (!f || typeof f !== 'object') return f;
-    if (!REPORT_EXCLUDED_FIELDS.some((key) => key in f)) return f;
-    const copy = { ...f };
-    for (const key of REPORT_EXCLUDED_FIELDS) delete copy[key];
-    return copy;
-  });
 }
 
 // discover(ctx, input) -> { findings, gaps, degraded, dispatched }
@@ -1011,7 +981,7 @@ export async function verifyStage(ctx, input) {
       //
       // The closing clause states only what was actually established: "proven against
       // dispatch" is a claim the unprovable slice has no right to make, and a
-      // disclosure that overstates its evidence is the report-writer defect this
+      // disclosure that overstates its evidence is the reporting defect this
       // pipeline exists to prevent.
       const provenClause = expectedInputChecksum == null
         ? 'no cross-runtime proof was computable for this slice; verdicts trusted on the remaining guards'
@@ -2078,366 +2048,6 @@ export function selectDelivery(survivors, cap, tier) {
   return ranked.slice(0, Math.max(0, cap));
 }
 
-// --- Phase 8: Report --------------------------------------------------------
-
-const REPORT_SCHEMA = { type: 'object', properties: { report: { type: 'string' } }, required: ['report'] };
-
-// dimensionsSummaryTable({ dispatched, degraded, findings, unverified }) -> markdown string
-//
-// Computes the Review Dimensions Summary table (report-format.md) in CODE, as a pure
-// function of pipeline stats, instead of asking the Phase 8 model to classify each
-// dimension itself (issue #89). Before this, the table was never rendered at all:
-// reportPrompt never asked for it and reportInput never carried discoverOut.degraded /
-// discoverOut.dispatched. One row per DISCOVERY AGENT (registry AGENTS order), not per
-// dimension — a multi-dimension agent (conventions-and-intent) aggregates all of its
-// dimensions' findings into one row. Output starts at the header row (no leading
-// `## Review Dimensions Summary` heading) — heading placement is the caller's concern.
-//
-// Row classification (N = high-confidence finding count for the agent, M = unverified
-// count, evaluated in this fixed priority order so at most one rule ever fires):
-//   1. not dispatched (scope-skipped, e.g. light-scope agentFlags.deep=false) -> Skipped
-//   2. degraded (one of its dimensions is in `degraded`) with N+M==0 -> agent never
-//      returned usable coverage
-//   3. degraded with N+M>0 -> partial coverage
-//   4. dispatched, not degraded, N+M==0 -> clean run, genuinely zero findings
-//   5. N>0, not degraded -> the normal case; Notes carries a severity breakdown
-//   6. N==0, M>0, not degraded -> every finding this agent produced was routed to the
-//      unverified/pipeline-degraded bucket
-//
-// SEVERITY_ORDER is imported from filterFindings.js (its single owner, per that file's
-// own note — a second top-level declaration collides at bundle time).
-
-// Findings with a missing/unknown `dimension` are silently excluded from every row's
-// count: the discovery contracts pin `dimension` to one of the nine registry names, so
-// an unmapped value here is belt-and-braces, never a live path.
-function dimensionOwnerMap() {
-  const owner = {};
-  for (const d of DIMENSIONS) owner[d.dimension] = d.agentType;
-  return owner;
-}
-
-// "2 high, 1 low" — counted over the agent's HIGH-CONFIDENCE findings only, in a fixed
-// severity order (critical, high, medium, low first; any other value the schema does not
-// forbid — `severity` is declared `string`, not an enum — trails in first-seen order so
-// no finding is silently dropped from the count). Empty string when no finding in the row
-// carries a severity value at all.
-function severityBreakdown(rowFindings) {
-  const counts = new Map();
-  for (const f of rowFindings) {
-    if (!f || !f.severity) continue;
-    counts.set(f.severity, (counts.get(f.severity) || 0) + 1);
-  }
-  if (counts.size === 0) return '';
-  const known = SEVERITY_ORDER.filter((s) => counts.has(s));
-  const rest = [...counts.keys()].filter((s) => !SEVERITY_ORDER.includes(s));
-  return [...known, ...rest].map((s) => `${counts.get(s)} ${s}`).join(', ');
-}
-
-export function dimensionsSummaryTable(input) {
-  const inp = input || {};
-  const dispatchedSet = new Set(inp.dispatched || []);
-  const degradedSet = new Set(inp.degraded || []);
-  const owner = dimensionOwnerMap();
-
-  const byAgent = new Map(AGENTS.map((a) => [a, []]));
-  const unverifiedByAgent = new Map(AGENTS.map((a) => [a, []]));
-  for (const f of (inp.findings || [])) {
-    const agentType = owner[f && f.dimension];
-    if (agentType && byAgent.has(agentType)) byAgent.get(agentType).push(f);
-  }
-  for (const f of (inp.unverified || [])) {
-    const agentType = owner[f && f.dimension];
-    if (agentType && unverifiedByAgent.has(agentType)) unverifiedByAgent.get(agentType).push(f);
-  }
-
-  const rows = AGENTS.map((agentType) => {
-    const rowFindings = byAgent.get(agentType);
-    const rowUnverified = unverifiedByAgent.get(agentType);
-    const n = rowFindings.length;
-    const m = rowUnverified.length;
-    const dims = DIMENSIONS.filter((d) => d.agentType === agentType).map((d) => d.dimension);
-    const isDegraded = dims.some((d) => degradedSet.has(d));
-    const isDispatched = dispatchedSet.has(agentType);
-    const label = AGENT_LABELS[agentType] || agentType;
-    const agentShort = agentType.split(':').pop();
-
-    let findingsCell;
-    let notes;
-    if (!isDispatched) {
-      findingsCell = '—';
-      notes = 'Skipped — not dispatched in this run';
-    } else if (isDegraded && n + m === 0) {
-      findingsCell = '—';
-      notes = 'No results — agent did not complete';
-    } else if (isDegraded) {
-      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
-      notes = 'Partial — agent may not have completed';
-    } else if (n + m === 0) {
-      findingsCell = '0';
-      notes = 'Clean — no findings returned';
-    } else if (n > 0) {
-      findingsCell = m > 0 ? `${n} (+${m} unverified)` : `${n}`;
-      notes = severityBreakdown(rowFindings);
-    } else {
-      findingsCell = `0 (+${m} unverified)`;
-      notes = 'Unverified findings only — see secondary section';
-    }
-
-    return `| ${label} | ${agentShort} | ${findingsCell} | ${notes} |`;
-  });
-
-  return ['| Dimension | Agent | Findings | Notes |', '|-----------|-------|----------|-------|', ...rows].join('\n');
-}
-
-// Groups findings by `consolidation_key` before they reach the report writer
-// (or the minimalReport fallback) — #22 D2, same grouping rule
-// `consolidate_delivery` applies to the posted comment payload, applied here to
-// the report's findings list instead: non-primary group members are folded
-// into the primary's `corroborations` array rather than listed as separate
-// top-level findings. A finding with no (falsy) `consolidation_key` passes
-// through unchanged — older artifacts / pre-consolidation findings render
-// exactly as before.
-function consolidateForReport(findings) {
-  const list = findings || [];
-  const groups = [];
-  const keyToGroup = new Map();
-  for (const f of list) {
-    const key = f && f.consolidation_key;
-    if (!key) {
-      groups.push({ primary: f, corroborators: [] });
-      continue;
-    }
-    let group = keyToGroup.get(key);
-    if (!group) {
-      group = { primary: null, corroborators: [] };
-      keyToGroup.set(key, group);
-      groups.push(group);
-    }
-    if (f.consolidation_primary) {
-      if (!group.primary) group.primary = f;
-      // A second consolidation_primary in the same group must not overwrite
-      // (and drop) the first — demote it to corroborator.
-      else group.corroborators.push(f);
-    } else group.corroborators.push(f);
-  }
-  return groups.map((group) => {
-    // Reachable only for hand-assembled payloads: filterFindings.js always
-    // stamps exactly one consolidation_primary per group. If a caller's data
-    // has none, fall back to the first-seen member rather than surfacing `null`.
-    const primary = group.primary || group.corroborators.shift();
-    if (!group.corroborators.length) return primary;
-    return {
-      ...primary,
-      corroborations: group.corroborators.map((c) => ({
-        agent: c.agent,
-        dimension: c.dimension,
-        confidence: c.confidence,
-        title: c.title,
-        description: c.description,
-      })),
-    };
-  });
-}
-
-// reportStage(ctx, input) -> { report, gaps }
-// Dispatches the report-writer agent to render the review markdown from the
-// high-confidence + unverified buckets (carried BY VALUE in the prompt — the
-// workflow script has no disk). Each agent() call is wrapped in try/catch: a bare
-// agent() THROWS on schema-retry-exhaustion / unknown agentType (Phase 0), so the
-// catch is what makes the "minimal report" degradation reachable — a bare
-// `null -> minimal` check could never fire because the throw would escape first.
-// On throw OR a null/empty result, a deterministic minimal report is assembled
-// from the pipeline stats and a gap is recorded; report failure is NON-FATAL.
-//
-// Segmentation: when the serialized findings payload exceeds
-// PROMPT_SEGMENT_CHAR_BUDGET the findings are chunked and one report-writer is
-// dispatched PER chunk (through parallel(), each with the same try/catch), then
-// the per-chunk reports are concatenated under titled segment headings. Any single
-// chunk that fails degrades to its own minimal section — the rest still render.
-// parallel() preserves INPUT order, so the `## Report segment i of n` concatenation
-// and the gap ordering are byte-identical to the old sequential loop regardless of
-// which segments answer first (issue #38, S2).
-export async function reportStage(ctx, input) {
-  const c = ctx || defaultCtx();
-  const parsed = typeof input === 'string' ? JSON.parse(input) : (input || {});
-  // Strip REPORT_EXCLUDED_FIELDS before ANY report-path consumer reads findings/unverified
-  // (dimensionsTable, consolidateForReport, the oversized-payload size check, chunking,
-  // dispatchReportSegment's segInp, minimalReport, reportPrompt) — the report-writer is
-  // a sampled model, so no apply-check oracle exists at report time to vet a rendered
-  // patch. stripReportExcludedFields copies; the caller's original finding objects (and
-  // therefore selectDelivery/writerPayload) are untouched and still carry every field for
-  // delivery's own live-oracle apply-check (issue #220).
-  const inp = { ...parsed, findings: stripReportExcludedFields(parsed.findings), unverified: stripReportExcludedFields(parsed.unverified) };
-  const policy = inp.policy || {};
-  const model = modelFor('code-gauntlet:report-writer', policy);
-
-  const rawFindings = inp.findings || [];
-  // Computed once over the WHOLE run (not per-chunk), and over the RAW (pre-
-  // consolidation) findings so per-dimension counts are unaffected by grouping —
-  // threaded to segment 0 only (below).
-  const dimensionsTable = dimensionsSummaryTable({
-    ...(inp.dimensions || {}), findings: rawFindings, unverified: inp.unverified || [],
-  });
-  // Grouped for the rendered findings list itself (#22 D2) — see
-  // consolidateForReport. Findings without a consolidation_key are unaffected.
-  const findings = consolidateForReport(rawFindings);
-  const oversized = JSON.stringify(findings).length > PROMPT_SEGMENT_CHAR_BUDGET;
-  if (!oversized) {
-    return dispatchReportSegment(c, model, inp, findings, null, dimensionsTable);
-  }
-
-  // Segment: one dispatch per chunk through parallel(), titled sections joined IN INDEX
-  // ORDER. dispatchReportSegment already owns its try/catch and never throws, so no member
-  // can be nulled by parallel(); the null branch below is defense-in-depth only.
-  const chunks = chunkBySerializedSize(findings, PROMPT_SEGMENT_CHAR_BUDGET);
-  const thunks = chunks.map((chunk, i) => () => dispatchReportSegment(c, model, inp, chunk, { index: i, total: chunks.length }, dimensionsTable));
-  const results = await c.parallel(thunks);
-  const parts = [];
-  const gaps = [];
-  for (let i = 0; i < chunks.length; i += 1) {
-    const out = results[i] || {
-      // Table belongs to segment 0 only, same as the dispatchReportSegment path below —
-      // this null-isolated fallback is defense-in-depth and must honor the same rule so
-      // a member nulled by parallel() cannot duplicate the section into a later segment.
-      report: minimalReport({ ...inp, findings: chunks[i], dimensionsTable: i === 0 ? dimensionsTable : '' }),
-      gaps: [`report segment ${i}: dispatch produced no result — assembled a minimal report from pipeline stats`],
-    };
-    parts.push(`## Report segment ${i + 1} of ${chunks.length}\n\n${out.report}`);
-    gaps.push(...out.gaps);
-  }
-  return { report: parts.join('\n\n'), gaps };
-}
-
-// One report-writer dispatch over `findings` (a whole set or one segment). Owns
-// the try/catch + minimal-section fallback. `seg` (or null) labels the dispatch
-// and tags the gap so a segmented failure is traceable to its chunk. `dimensionsTable`
-// is scoped to segment 0 (or the unsegmented dispatch) here — every downstream read of
-// `segInp.dimensionsTable` (reportPrompt, minimalReport) is a plain truthiness check
-// with no segment-awareness of its own, so the section can never render twice.
-async function dispatchReportSegment(c, model, inp, findings, seg, dimensionsTable) {
-  const tag = seg ? ` segment ${seg.index}` : '';
-  const segInp = { ...inp, findings, dimensionsTable: (!seg || seg.index === 0) ? dimensionsTable : '' };
-  try {
-    const result = await c.agent(reportPrompt(segInp, seg), {
-      label: seg ? `report-writer-${seg.index}` : 'report-writer',
-      agentType: 'code-gauntlet:report-writer',
-      model,
-      schema: REPORT_SCHEMA,
-    });
-    const report = unwrapWrappedReport(result && result.report);
-    if (!report) {
-      return { report: minimalReport(segInp), gaps: [`report${tag}: writer returned no report — assembled a minimal report from pipeline stats`] };
-    }
-    return { report, gaps: [] };
-  } catch (e) {
-    return { report: minimalReport(segInp), gaps: [`report${tag}: writer agent threw (${(e && e.message) || 'unknown'}) — assembled a minimal report from pipeline stats`] };
-  }
-}
-
-// The report-writer intermittently returns its markdown ALREADY WRAPPED as a JSON
-// document: the string in its `report` field is literally `{"report": "# Code Gauntlet
-// Report..."}` instead of the markdown. The artifact-writer then persists that wrapper
-// verbatim — correctly, its contract is to write the text exactly as given — so
-// report.md holds JSON where every non-Phase-8 consumer expects markdown. Measured
-// across dated runs since 2026-07-22: roughly 15 of 25, i.e. long-standing and FLAKY,
-// not a regression of any one change.
-//
-// Fixed here, at the point the string is FIRST received, so the single-dispatch and the
-// segmented paths (both go through dispatchReportSegment) are covered by one rule and
-// the persisted artifact — not just the delivered one — is markdown.
-//
-// Phase 8 ALSO unwraps this shape at delivery time (references/phase8-delivery.md).
-// That is deliberate belt-and-braces, not a dead duplicate: this fix repairs the
-// PERSISTED artifact, Phase 8's repairs a report that reached it by any other route
-// (a resumed run, a hand-edited file, an older artifact). Neither makes the other
-// unnecessary; removing this one silently restores the corrupt-on-disk behaviour.
-//
-// Conservative by construction — a legitimate markdown report may well open with `{`.
-// Unwrapping requires ALL of: a successful JSON.parse, a plain object (not an array,
-// not a bare JSON string), a STRING `report` member, and no other meaningful content.
-// Anything else is returned byte-for-byte untouched. One level only, never a loop.
-function unwrapWrappedReport(s) {
-  if (typeof s !== 'string' || s === '') return s;
-  const trimmed = s.trim();
-  if (trimmed.charAt(0) !== '{') return s; // cheap reject before any parse attempt
-  let parsed;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return s; // not JSON at all — ordinary markdown that happens to start with a brace
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return s;
-  if (typeof parsed.report !== 'string') return s;
-  // "Only meaningful content": tolerate a null/empty sibling key (an agent echoing an
-  // empty envelope field), but never discard real data by unwrapping past it.
-  for (const [k, v] of Object.entries(parsed)) {
-    if (k === 'report') continue;
-    if (v !== null && v !== undefined && v !== '') return s;
-  }
-  return parsed.report;
-}
-
-// Deterministic fallback report (no agent, no wall-clock) built from what the
-// pipeline already knows. Never throws — this is the last-resort degradation.
-function minimalReport(inp) {
-  const findings = inp.findings || [];
-  const unverified = inp.unverified || [];
-  const lines = [
-    '# Code Gauntlet (minimal report)',
-    '',
-    'The report-writer agent was unavailable; this fallback was assembled deterministically from pipeline results.',
-    '',
-    `- High-confidence findings: ${findings.length}`,
-    `- Unverified / pipeline-degraded findings: ${unverified.length}`,
-  ];
-  if (inp.summary) lines.push('', '## Change summary', '', String(inp.summary));
-  if (findings.length) {
-    lines.push('', '## Findings');
-    for (const f of findings) {
-      lines.push(`- [${(f.severity || 'unknown').toUpperCase()}] ${f.title || f.id || 'finding'} (${f.file || '?'}:${f.line_start != null ? f.line_start : '?'})`);
-      // Non-primary consolidation-group members (#22 D2) — folded in by
-      // consolidateForReport as `corroborations` rather than listed as
-      // separate top-level findings.
-      if (Array.isArray(f.corroborations)) {
-        for (const c of f.corroborations) {
-          lines.push(`  - Corroborating: ${c.agent || 'unknown'} (${c.dimension || 'unknown'}, confidence ${c.confidence != null ? c.confidence : '?'}) — ${c.title || 'finding'}`);
-        }
-      }
-    }
-  }
-  // Present only when the caller scoped it in (segment 0 / unsegmented dispatch — see
-  // dispatchReportSegment) — this fallback survives even when the Phase 8 model itself
-  // never ran, so the table is never lost to a report-writer outage.
-  if (inp.dimensionsTable) lines.push('', '## Review Dimensions Summary', '', inp.dimensionsTable);
-  return lines.join('\n');
-}
-
-// The report-writer is deliberately NOT given the shared context path (issue #38, R1):
-// its contract renders entirely from the by-value { summary, findings, unverified, stats }
-// below, and references/report-format.md sources its code snippet from finding.evidence —
-// also carried by value. In the profiled run the writer spent 5.7 s Reading the 95 KB
-// context file, got a TRUNCATED read back, and then said it had enough context without it.
-// Dropping the read removes that latency and the truncated-read exposure for this agent.
-function reportPrompt(inp, seg) {
-  const segLine = seg ? `This is report segment ${seg.index + 1} of ${seg.total}; render only the findings in this segment. ` : '';
-  const body = JSON.stringify({
-    summary: inp.summary || '',
-    findings: inp.findings || [],
-    unverified: (!seg || seg.index === 0) ? (inp.unverified || []) : [], // render the unverified bucket once, in segment 0
-    stats: inp.stats || {},
-    // Pre-scoped to segment 0 by the caller (dispatchReportSegment) — '' on every later
-    // segment, so this is a plain truthiness check, not a second segment-index test.
-    ...(inp.dimensionsTable ? { dimensionsTable: inp.dimensionsTable } : {}),
-  });
-  // Verbatim-paste instruction (issue #89): the table is generated in code, not
-  // classified by this model — pasting it unmodified is what removes the capability to
-  // get the classification wrong. Only present when dimensionsTable is (segment 0).
-  const dimensionsInstruction = inp.dimensionsTable
-    ? ' The `dimensionsTable` field is the complete, pre-rendered Review Dimensions Summary table — paste it verbatim, unmodified, as the "## Review Dimensions Summary" section; never reconstruct, reclassify, or edit its rows.'
-    : '';
-  return `${segLine}Write the code-gauntlet report as markdown for these results. Put high-confidence findings in the main section and unverified/pipeline-degraded findings in a clearly-labelled secondary section.${dimensionsInstruction} Results JSON:\n${body}\nReturn { report } where report is the full markdown document.`;
-}
-
 // --- Persistence: writeArtifacts --------------------------------------------
 
 const WRITER_SCHEMA = {
@@ -2605,7 +2215,7 @@ function writerEchoCoversPaths(echoed, paths) {
 //   LEGACY (no persist waist, or the id-integrity guard refused). One artifact-writer
 //     dispatch carrying all four artifacts by value. Unchanged.
 //
-// Wrapped in its own try/catch (like reportStage): a throw OR null result degrades to
+// Wrapped in its own try/catch: a throw OR null result degrades to
 // a partial-artifacts gap with null paths and is NON-FATAL — it never bubbles to the
 // top-level catch. The try covers the WHOLE body, not just the dispatches: the derived
 // path computes the plan and the primaries (JSON.stringify over caller-supplied objects,
@@ -4100,6 +3710,23 @@ function stripEliminatedList(list) {
     : list;
 }
 
+// #181: merge()'s per-agent channel/dedup/validation-warning granularity — the only
+// place it exists — reaches a consumer on the compact return. Count fields ride as-is; free-text
+// warning ARRAYS ride as lengths, so the compact-return principle (names/counts, never bulk)
+// holds. Adding a methodology COUNT field is one edit in mergeFindings.js; adding a
+// FREE-TEXT one is two — that entry plus one name here. Stated plainly rather than made
+// clever: a heuristic that guessed at array-of-strings would silently truncate a future
+// count array.
+export const METHODOLOGY_COUNT_ONLY_FIELDS = ['truncation_warnings', 'validation_warnings'];
+export function compactMethodology(m) {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return {};
+  const out = {};
+  for (const [k, v] of Object.entries(m)) {
+    out[k] = METHODOLOGY_COUNT_ONLY_FIELDS.includes(k) && Array.isArray(v) ? v.length : v;
+  }
+  return out;
+}
+
 // --- Full orchestration: runWith --------------------------------------------
 
 // runWith(ctx, rawArgs) -> compact envelope.
@@ -4108,10 +3735,10 @@ function stripEliminatedList(list) {
 // ok:false, no dispatch), then threads summarize -> discover -> merge -> verify ->
 // validate -> filter -> challenge -> report inside ONE top-level try/catch, checking
 // checkpoints before each phase and persisting via writeArtifacts at the end. Every
-// stage's gaps aggregate into the final envelope. reportStage / writeArtifacts each
-// catch their OWN agent throws (degrading to a minimal report / partial-artifacts gap),
-// so the top-level catch is the last resort for unexpected throws in the deterministic
-// glue — it returns { ok:false, error, phaseReached } and NEVER lets a throw escape.
+// stage's gaps aggregate into the final envelope. writeArtifacts catches its own agent
+// throws (degrading to a partial-artifacts gap), so the top-level catch is the last
+// resort for unexpected throws in the deterministic glue — it returns
+// { ok:false, error, phaseReached } and NEVER lets a throw escape.
 // The return is compact by design: counts + artifact paths + gaps, never the raw
 // findings bulk.
 export async function runWith(ctx, rawArgs) {
@@ -4592,65 +4219,38 @@ export async function runWith(ctx, rawArgs) {
         challenge: challengeOut.stats,
       },
       // discover()'s own fan-out list and degraded-dimensions list (issue #89) — feeds
-      // dimensionsSummaryTable inside reportStage. `dispatched` already excludes any
+      // dimensionsSummaryTable inside renderReport. `dispatched` already excludes any
       // agent scope-gated out via agentFlags (agentSpecs().filter(agentActive) runs
       // before discover() builds its spec list), so a light-scope run's skipped agents
       // are absent from `dispatched`, not merely present-but-empty.
       dimensions: { dispatched: discoverOut.dispatched || [], degraded: discoverOut.degraded || [] },
-      // No context at all (issue #38, R1): the report-writer renders from the by-value
-      // { summary, findings, unverified, stats } above and never needs the shared context
-      // file. No stage is ever given contextPath; of the prebuilt contextLine, only
-      // summarize, discover and validate get one — merge, verify, filter and challenge
-      // get none either.
-      policy, generatedAt: A.generatedAt,
+      headShaShort: A.headShaShort,
+      generatedAt: A.generatedAt,
+      prIdentity: (A.delivery || {}).prIdentity || null,
     };
-    let reportOut = await runPhase('report', () => reportStage(c, reportInput));
+    // Phase 8's report is a PURE FUNCTION of the pipeline's own output (issue #36) — no
+    // agent, no prompt, no schema, no segmentation, no fallback. Four measured failure
+    // modes died with the dispatch: a title that was never twice the same (0 of 115
+    // persisted reports matched the documented format, 66 distinct first lines), a
+    // markdown document returned JSON-wrapped, fields the contract named rendered
+    // stochastically (evidence 9-13%), and headline counts the model computed wrong
+    // (2 of 6). The renderer's section list is pinned to references/report-format.md by
+    // a generated fence.
+    //
+    // It deliberately renders NO Review Methodology section and NO `Headless config:`
+    // block: the orchestrator composes those at delivery (issue #182 owns that seam).
+    let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
     gaps.push(...(reportOut.gaps || []));
 
-    // Empty-report guard (false-negative defense). A report that is empty/absent while
-    // findings survived the filter is a false negative — most often a RESUME replaying the
-    // degenerate empty-report stub a crashed run left in its checkpoint. Never ship or
-    // persist it silently:
-    //   1) if it came from a replayed checkpoint, re-run report from scratch (a resume must
-    //      re-run report+persist, not skip past the crashed stub); and
-    //   2) if it is STILL empty with findings present, keep ok:true but record an explicit
-    //      'empty_report' gap and null the report artifact path — never a silent empty report.
-    //
-    // "findings present" is the UNION of THREE counts, not postFilterCount alone (issue #38,
-    // L2-1/L5-3/F2-1). Since `filter` was dropped from the persisted checkpoint (P1), a resume
-    // RE-RUNS summarize/discover/verify/validate/filter while REPLAYING challenge — so
-    // postFilterCount is a freshly recomputed number about a set the run is not delivering,
-    // while the delivered set comes from the replayed challenge output. A resume that
-    // rediscovers nothing has postFilterCount 0, and the guard would go blind to a real
-    // delivered set behind an empty report. deliveredCount (challengeOut.findings — exactly
-    // what selectDelivery and the writer consume) closes that hole, and unverifiedCount
-    // (challengeOut.unverified — the challenge-skipped / cap-overflow bucket the report is
-    // CONTRACTUALLY required to render in its secondary section) closes the remaining one: a
-    // replayed challenge can route every finding to that bucket, leaving both other counts 0
-    // while the report still has real content to lose.
-    // The union is a strict SUPERSET of the old condition, so it can never fire less often
-    // than before: on a FRESH run challenge only ever removes findings, so postFilterCount >=
-    // deliveredCount and the union reduces to postFilterCount > 0 with the message unchanged.
-    const postFilterCount = (filterOut.filtered || []).length;
-    const deliveredCount = (challengeOut.findings || []).length;
-    const unverifiedCount = (challengeOut.unverified || []).length;
-    const findingsAtRisk = postFilterCount > 0 || deliveredCount > 0 || unverifiedCount > 0;
+    // A replayed empty report checkpoint is real resume state: re-render it before
+    // persistence rather than shipping the crashed run's degenerate stub. A fresh render
+    // is total and always non-empty, so the former empty_report gap and path-nulling
+    // capability are structurally unreachable and have been removed.
     const reportIsEmpty = (out) => !out || typeof out.report !== 'string' || out.report.trim() === '';
-    if (reportIsEmpty(reportOut) && findingsAtRisk && checkpoints.report !== undefined) {
-      reportOut = await reportStage(c, reportInput);
+    if (checkpoints.report !== undefined && reportIsEmpty(reportOut)) {
+      reportOut = { report: renderReport(reportInput), gaps: [] };
       phaseOutputs.report = reportOut;
       gaps.push(...(reportOut.gaps || []));
-    }
-    const emptyReport = reportIsEmpty(reportOut) && findingsAtRisk;
-    if (emptyReport) {
-      // Word the gap from whichever count is actually non-zero: the fresh-run wording is
-      // byte-identical to before, and the resume case names BOTH replayed buckets (delivered
-      // and unverified) rather than reporting a misleading "0 survived the filter" — the
-      // operator needs to know which one is at risk, since either can be the sole reason the
-      // guard fired.
-      gaps.push(postFilterCount > 0
-        ? `empty_report: report stage produced no report while ${postFilterCount} finding(s) survived the filter — refusing to ship a silent empty report`
-        : `empty_report: report stage produced no report while ${deliveredCount} finding(s) replayed from the resumed challenge checkpoint would be delivered and ${unverifiedCount} would be reported as unverified/pipeline-degraded — refusing to ship a silent empty report`);
     }
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
@@ -4679,9 +4279,6 @@ export async function runWith(ctx, rawArgs) {
       policy,
     });
     gaps.push(...(writeOut.gaps || []));
-    // On an empty report the findings/checkpoints still persist, but the report path is
-    // nulled so no consumer mistakes an empty stub for a real review (envelope contract).
-    if (emptyReport && writeOut.artifactPaths) writeOut.artifactPaths = { ...writeOut.artifactPaths, report: null };
 
     return {
       ok: true,
@@ -4689,6 +4286,7 @@ export async function runWith(ctx, rawArgs) {
       stats: {
         discovered: (discoverOut.findings || []).length,
         merged: (mergeOut.findings || []).length,
+        merge: compactMethodology(mergeOut.methodology),
         verified: verifyOut.verified,
         // The slice-input proof ledger (issue #69 / #25 req 4-6). `verified` is one
         // boolean about the whole stage; this says how many slices were PROVEN to have

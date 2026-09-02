@@ -1,8 +1,11 @@
 # Code Gauntlet Report Format
 
-Use this template for the unified review report. Adapt section headers based on what was actually found — don't include empty sections.
+The workflow renders the unified review report in code. Its section order is fixed; empty finding
+sections and empty severity groups are omitted.
 
-**Zero findings:** If all findings are eliminated during the pipeline, produce a clean report that includes the executive summary (showing 0 findings) and the Review Methodology section. Omit empty severity sections entirely. The clean outcome is meaningful — it confirms the pipeline ran and found nothing.
+**Zero findings:** The renderer still emits the title, identity line, Summary (showing 0 findings),
+and Review Dimensions Summary. The clean outcome is meaningful — it confirms the pipeline ran
+and found nothing. The orchestrator appends Review Methodology at delivery.
 
 <!-- generated-from-registry-identity:severity_legend — do not edit; run scripts/generate_contract_requirements.py -->
 Product mark: ⚔️ (Code Gauntlet). Severity emoji: 🔴 critical, 🟠 high, 🟡 medium, 💡 low.
@@ -27,6 +30,9 @@ https://gitlab.com/{group}/{project}/-/blob/{full_sha}/{path}#L{start}-L{end}
 ```
 
 For self-hosted instances, replace the hostname with the one detected from the git remote URL. See `references/phase2-triage.md` § "2a. Detect VCS Platform" for VCS detection and Phase 8 (Stage 0) for permalink format details.
+
+The report renders plain `` `file:line` `` code spans, not permalinks — `prIdentity` carries no
+platform.
 
 **Rules:**
 
@@ -58,7 +64,7 @@ The pipeline's declaration lives in `workflows/src/registry.js`. A field this ta
 | `suggestion` | string | no | Prose fix advice; rendered by `post_review.py` as a "Suggested fix:" block. |
 | `claude_md_rule` | string | conditional | The cited project rule, quoted with its source file; required by contract for convention findings; OMITTED (never null) when no rule applies. |
 | `cross_file_refs` | array | no | Other files involved in the finding |
-| `suggested_fix_code` | string | no | Exact replacement source for `file:line_start-line_end`, emitted by discovery agents only when the fix is a byte-exact, drop-in replacement for exactly those lines. The report body never carries this field — the pipeline strips it from the report-writer's input before dispatch (`stripReportExcludedFields` in `workflows/src/stages.js`). Delivery renders it as a committable GitHub/GitLab `suggestion` block after `scripts/post_review.py`'s deterministic apply-check (one-click apply) — non-string, stale, wrong-range, wrong-anchor, or oversized fails the check and the finding downgrades to the prose `suggestion` instead; on GitLab, the render-site apply range is the discussion anchor plus offsets, not the stated range directly, so a span the anchor and offsets can't realize within GitLab's cap downgrades the same way. A fence that passes every per-finding check can still be withheld when an earlier, higher-priority kept fence claims an overlapping apply range in the same file (`overlaps_kept_fence`), because the platforms refuse or mis-apply batches with overlapping suggestions. The report *path* renders the kept patches only through `scripts/report_patches.py`'s sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — a read-only apply-check over the pinned diff, run once at Phase 8; platform render-site constraints and the set-level overlap withholding are not applied there, so a patch listed in that artifact may still downgrade at delivery. |
+| `suggested_fix_code` | string | no | Exact replacement source for `file:line_start-line_end`, emitted by discovery agents only when the fix is a byte-exact, drop-in replacement for exactly those lines. The report body never carries this field — the renderer strips it itself (`stripReportExcludedFields` in `workflows/src/renderReport.js`). Delivery renders it as a committable GitHub/GitLab `suggestion` block after `scripts/post_review.py`'s deterministic apply-check (one-click apply) — non-string, stale, wrong-range, wrong-anchor, or oversized fails the check and the finding downgrades to the prose `suggestion` instead; on GitLab, the render-site apply range is the discussion anchor plus offsets, not the stated range directly, so a span the anchor and offsets can't realize within GitLab's cap downgrades the same way. A fence that passes every per-finding check can still be withheld when an earlier, higher-priority kept fence claims an overlapping apply range in the same file (`overlaps_kept_fence`), because the platforms refuse or mis-apply batches with overlapping suggestions. The report *path* renders the kept patches only through `scripts/report_patches.py`'s sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — a read-only apply-check over the pinned diff, run once at Phase 8; platform render-site constraints and the set-level overlap withholding are not applied there, so a patch listed in that artifact may still downgrade at delivery. |
 
 ### Per-dimension fields
 
@@ -79,145 +85,135 @@ Required is tri-state. A `yes` field is appended to that dimension's dispatch re
 
 ## Full Report Template
 
-This template interpolates **canonical** finding fields (`description`, `line_start`, …).
-Delivery JSON and the Inline PR Comment Format below use the v2 aliases (`body`, `line`, …).
+The report is rendered in code by `renderReport()` in `workflows/src/renderReport.js`. What follows
+is that function's literal output over a placeholder fixture, emitted by
+`scripts/generate_contract_requirements.py` (`--check` in CI). A template that promises a
+rendering the code does not perform is the exact defect class issues #47/#67 were filed for.
 
-```markdown
-# Code Gauntlet: {title}
+<!-- generated-from-registry-identity:full_report_template — do not edit; run scripts/generate_contract_requirements.py -->
+````markdown
+# ⚔️ Code Gauntlet: {pr_title}
 
-**Date:** {date}
-**Scope:** {PR #N | Branch comparison: base...head | Local changes}
-**Files reviewed:** {N} ({high_risk} high-risk, {med_risk} medium, {low_risk} low)
-**Lines changed:** +{additions} / -{deletions}
-**Dimensions checked:** {comma-separated list of dimensions that ran}
+Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 
----
+## Summary
 
-## Change Summary
+{summary}
 
-{A brief, structured overview of what this change does. This section helps readers quickly understand the scope before diving into findings.}
+4 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low. 1 routed as improvement suggestion(s). 1 unverified / pipeline-degraded.
 
-- **What changed:** {1-2 sentences describing the functional change}
-- **Key files:** {list the 3-5 most important files changed, with one-line descriptions}
-- **Patterns observed:** {e.g., "New API endpoints added", "Refactor of auth module", "Database migration + model update"}
+## Findings
 
----
+### 🔴 Critical
 
-## Executive Summary
+#### {finding.title}
 
-{2-3 sentences: what was reviewed, key finding themes, and the finding count.
-Example: "This PR adds JWT-based authentication to the API layer. The token validation has a critical bypass path and the error handling in the auth middleware silently swallows connection failures. 3 findings require attention before merge."}
-
-**Blocking issues:** {N} (critical + high-security)
-**Action items:** {N} (high + medium)
-**Suggestions:** {N} (see Improvement Suggestions section)
-
----
-
-## 🔴 Critical Issues
-
-{These MUST be fixed before merge. Include only findings with severity=critical and confidence>=80.}
-
-### {finding.id}: {finding.title}
-
-**File:** `{finding.file}:{finding.line_start}` | [permalink](https://github.com/{owner}/{repo}/blob/{full_sha}/{finding.file}#L{line_start-1}-L{line_end+1})
-**Dimension:** {finding.dimension} | **Confidence:** {finding.confidence}%
-**Flagged by:** {list of agents that found this}
+- **Location:** `{finding.file}:{finding.line_start}-{finding.line_end}`
+- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Origin:** surfaced — pre-existing, surfaced by this change
+- **Contested:** the challenger could not confirm the cited location
 
 {finding.description}
 
 **Evidence:**
-```
-
-{finding.evidence — the actual code snippet or behavior demonstrating the issue}
 
 ```
+{finding.evidence}
+```
+
+- **Affected consumers:** {finding.affected_consumers}
+- **Attack vector:** {finding.attack_vector}
+- **Behavior preserved:** {finding.behavior_preserved}
+- **Criticality:** {finding.criticality}
+- **Failure scenario:** {finding.failure_scenario}
+- **Hidden errors:** {finding.hidden_errors}
+- **Invalid state example:** {finding.invalid_state_example}
 
 **Suggested fix:**
+
 {finding.suggestion}
 
-{If finding.claude_md_rule or finding.spec_text is present — the rule the finding is measured
-against. `agents/report-writer.md` instructs the same:}
-**Cited rule:** {finding.claude_md_rule or finding.spec_text}
+**Cited rule:**
 
----
+> {finding.claude_md_rule}
 
-## 🟠 High-Priority Issues
+- **Cross-file refs:** {finding.cross_file_refs}
 
-{Should be fixed. Same format as Critical, but with severity=high.}
+- **Corroborated by** `{corroboration.agent}` (`{corroboration.dimension}`, confidence {corroboration.confidence}) — {corroboration.title}
+  {corroboration.description}
 
----
+### 🟠 High
 
-## 🟡 Medium Issues
+#### {finding.title}
 
-{Worth addressing. Briefer format:}
+- **Location:** `{finding.file}:{finding.line_start}`
+- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
 
-| # | File | Issue | Dimension | Confidence |
-|---|------|-------|-----------|------------|
-| {id} | [`{file}:{line_start}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line_start-1}-L{line_end+1}) | {title} | {dimension} | {confidence}% |
+{finding.description}
 
-{For each, a brief 1-2 sentence description below the table, or expand inline if the issue is nuanced.}
+### 🟡 Medium
 
----
+#### {finding.title}
 
-## 💡 Low-Priority Suggestions
+- **Location:** `{finding.file}:{finding.line_start}`
+- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
 
-{Nice to have. Bullet list format:}
+{finding.description}
 
-- **{id}**: [`{file}:{line_start}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line_start-1}-L{line_end+1}) — {title} ({dimension}, {confidence}%)
+### 💡 Low
 
----
+#### {finding.title}
 
-## Surfaced Findings
+- **Location:** `{finding.file}:{finding.line_start}`
+- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Routing:** improvement suggestion
 
-{Pre-existing issues surfaced by this PR's changes. These were not introduced by this PR
-but interact with it. Consider addressing them, but they are not blocking.
-Severity has been downgraded one level from the original classification (see the Verify stage's new/surfaced classification).}
+{finding.description}
 
-| # | File | Issue | Dimension | Confidence | Originally from |
-|---|------|-------|-----------|------------|-----------------|
-| {id} | `{file}:{line}` | {title} | {dimension} | {confidence}% | {blame info — author, date} |
+## Unverified / pipeline-degraded findings
 
----
+These did not clear the full pipeline (a stage was skipped or failed) and carry lower confidence. They are not confirmed findings.
 
-## Improvement Suggestions
+### 🟡 Medium
 
-{Findings from test-analyzer, conventions-and-intent comment accuracy pass, and code-simplifier. These render in this dedicated section rather than the severity-grouped totals above (the `report_tag` governs report presentation). Whether they are ALSO posted as PR comments depends on the delivery tier (`args.delivery.tier`, resolved from `CODE_GAUNTLET_DELIVERY_TIER`): under `all` (the default) the pipeline's `selectDelivery` includes every challenge-survivor regardless of tag, so suggestions post as PR inline comments alongside main findings (subject to `limits.deliveryCap`); under `main_only` they stay in this report section and are not posted. The report always lists them either way.}
+#### {finding.title}
 
-### Test Coverage
+- **Location:** `{finding.file}:{finding.line_start}`
+- **Dimension:** {finding.dimension} · **Confidence:** {finding.confidence}%
+- **Unverified because:** the verify slice could not be proven against the dispatched document; the challenge cap was reached, so this finding was not challenge-verified
 
-{Findings from test-analyzer, if any. Omit sub-section if empty.}
+{finding.description}
 
-- **{id}**: [`{file}:{line_start}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line_start-1}-L{line_end+1}) — {title} ({confidence}%)
+**Evidence:**
 
-### Documentation
-
-{Findings from conventions-and-intent comment accuracy pass, if any. Omit sub-section if empty.}
-
-- **{id}**: [`{file}:{line_start}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line_start-1}-L{line_end+1}) — {title} ({confidence}%)
-
-### Code Quality
-
-{Findings from code-simplifier, if any. Omit sub-section if empty.}
-
-- **{id}**: [`{file}:{line_start}`](https://github.com/{owner}/{repo}/blob/{full_sha}/{file}#L{line_start-1}-L{line_end+1}) — {title} ({confidence}%)
-
----
+```
+{finding.evidence}
+```
 
 ## Review Dimensions Summary
 
-This table is generated in code by `dimensionsSummaryTable()` in `workflows/src/stages.js`
-and delivered to you pre-rendered, as the `dimensionsTable` field of the dispatch input.
-Paste it here **verbatim, unmodified** — never reconstruct, reclassify, or edit its rows.
-(The same treatment the footer/marker gets from `scripts/post_review.py`: the code owns
-the content, you place it.) Column reference:
+| Dimension | Agent | Findings | Notes |
+|-----------|-------|----------|-------|
+| Correctness & Error Handling | bug-detector | 0 | Clean — no findings returned |
+| Security | security-reviewer | 0 | Clean — no findings returned |
+| Cross-file Impact | cross-file-impact | 0 | Clean — no findings returned |
+| Test Coverage | test-analyzer | 0 | Clean — no findings returned |
+| Conventions & Intent | conventions-and-intent | 0 | Clean — no findings returned |
+| Type Design | type-design-analyzer | 0 | Clean — no findings returned |
+| Code Simplification | code-simplifier | 0 | Clean — no findings returned |
+````
+<!-- /generated-from-registry-identity:full_report_template -->
+
+The renderer appends the Review Dimensions Summary as the document's last section. The table is
+generated by `dimensionsSummaryTable()` in `workflows/src/renderReport.js`; its columns are:
 
 | Dimension | Agent | Findings | Notes |
 |-----------|-------|----------|-------|
 
 ## Review Methodology
 
-{Composed by the orchestrator at delivery from the "Methodology inputs" in phase8-delivery.md; the report-writer never writes this section.}
+Composed by the orchestrator at delivery and appended to `report.md` after the persisted bytes —
+the renderer never emits it. Making it code-rendered is issue #182.
 
 | Aspect | Details |
 |--------|---------|
@@ -228,12 +224,8 @@ the content, you place it.) Column reference:
 | **Disagreement detection** | {N consensus (boosted), M singletons (passed through), K contradictions (routed to challenge), J suppressed} |
 | **Blind challenge round** | {N findings blind-challenged, M downgraded, K boosted, J contested} |
 | **Failed/skipped agents** | {list or "none"} |
-| **Total review time** | {duration from Phase 1 to Phase 8} |
+| **Total review time** | {orchestrator-derived duration from Phase 1 to Phase 8} |
 | **Prompt injection** | {N injection artifacts detected and discarded, or "none detected"} |
-
-```
-
----
 
 ## PR Comment Format (abbreviated)
 
@@ -326,4 +318,4 @@ comments.
 
 ```
 
-**`suggested_fix_code` field:** Delivery gates this field on `scripts/post_review.py`'s deterministic apply-check (field must be a string, non-empty after redaction, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff (issue #229 — reported under the same no-oracle reason), land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The report-writer never reaches this field at all — the pipeline strips it, and its two removal stamps, from the report-writer's input before dispatch (`stripReportExcludedFields` in `workflows/src/stages.js`), so there is no report-writer-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`post_review._gated_finding`) over the pinned Phase 2 diff, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.
+**`suggested_fix_code` field:** Delivery gates this field on `scripts/post_review.py`'s deterministic apply-check (field must be a string, non-empty after redaction, ship a matching `line_end`, match a valid diff range, not have its finding path collide with its `a/`/`b/`-stripped form as two distinct real files in the diff (issue #229 — reported under the same no-oracle reason), land at this render site's actual apply range, differ from the current text, and stay within the size bound — on GitLab that render-site range is the discussion anchor plus the `-m+n` offsets the poster derives from it, capped by GitLab's own offset limit; any failure strips the field from the render and the finding falls back to the prose `suggestion` field, with the reason recorded via `warn_skip`). Delivery can also withhold a fence that passed every per-finding check when an earlier, higher-priority kept fence claims an overlapping apply range in the same file — the same downgrade path, reason `overlaps_kept_fence` (see `references/delivery-guide.md`). The renderer strips this field and its two removal stamps itself (`stripReportExcludedFields` in `workflows/src/renderReport.js`), so there is no report-path render to gate. The report *path* instead renders the kept patches through a separate read-only apply-check, `scripts/report_patches.py`, into the sibling artifact `code-gauntlet-patches-{head_sha_short}.md` — it reuses the same gate (`post_review._gated_finding`) over the pinned Phase 2 diff, with no platform render-site constraints and no set-level overlap withholding applied, so a patch listed there is not a guarantee delivery will also keep it. See `references/delivery-guide.md` for the findings JSON schema used by `post_review.py`.

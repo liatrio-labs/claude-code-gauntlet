@@ -426,6 +426,7 @@ class TestRulesFileQuotations(unittest.TestCase):
             path
             for path in paths
             if path.endswith(".md")
+            and (REPO / path).is_file()
             and (
                 path.startswith("skills/")
                 or (path.startswith("agents/") and path.count("/") == 1)

@@ -14,19 +14,19 @@
 //    (discover) bubbles to the top-level catch -> { ok:false, error, phaseReached }.
 //    run() NEVER throws. (Agent member failures null-isolate; single-dispatch stages
 //    catch their own throws — so a parallel() failure is the realistic catch trigger.)
-//  - reportStage / writeArtifacts each wrap their own agent() in try/catch, so an
-//    agent throw there degrades to a minimal report / partial-artifacts gap with
-//    ok:true — report/persistence failure is non-fatal.
+//  - writeArtifacts wraps its own agent() in try/catch, so a writer throw degrades
+//    to a partial-artifacts gap with ok:true — persistence failure is non-fatal.
 //  - argsVersion mismatch is rejected up front with an ok:false envelope.
 //  - A present checkpoint for a phase skips that phase's dispatch entirely.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  runWith, summarize, reportStage, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
-  coarsenLimits, plannedArtifactPaths, deriveAgentFlags,
+  runWith, summarize, writeArtifacts, checkpointPath, readCheckpoints, buildResumeCheckpoints,
+  coarsenLimits, plannedArtifactPaths, deriveAgentFlags, compactMethodology,
 } from '../src/stages.js';
 import { makeFinding, makeFindings, validArgs, makeCtx } from './helpers/pipelineMock.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
+import { dimensionsSummaryTable } from '../src/renderReport.js';
 
 // Node/browser host globals the workflow runtime SANDBOX does not provide (but node:test
 // does). Deleting them makes the pipeline run under sandbox-parity conditions, so a
@@ -60,9 +60,61 @@ test('happy path: full pipeline returns ok:true, phaseReached=report, artifact p
   // phases map (that lives in the persisted artifact at artifactPaths.checkpoints).
   assert.ok(Array.isArray(out.checkpoints.completed));
   assert.ok(!('phases' in out.checkpoints), 'success return must not carry the phases bulk');
-  // Every stage dispatched: summarize + 7 discover + verify + validate + challenge + report + writer.
-  assert.ok(ctx.calls.some((t) => t.label === 'report-writer'));
+  // Every dispatched stage ran; Report itself is now a pure function.
   assert.ok(ctx.calls.some((t) => t.label === 'artifact-writer'));
+});
+
+test('test_runWith_dispatches_exactly_this_agentType_inventory', async () => {
+  const args = validArgs();
+  const ctx = makeCtx(args);
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(ctx.calls.map((call) => call.agentType).sort(), [
+    'code-gauntlet:artifact-writer',
+    'code-gauntlet:artifact-writer',
+    'code-gauntlet:bug-detector',
+    'code-gauntlet:challenger',
+    'code-gauntlet:challenger',
+    'code-gauntlet:change-summarizer',
+    'code-gauntlet:code-simplifier',
+    'code-gauntlet:conventions-and-intent',
+    'code-gauntlet:cross-file-impact',
+    'code-gauntlet:executor',
+    'code-gauntlet:security-reviewer',
+    'code-gauntlet:test-analyzer',
+    'code-gauntlet:type-design-analyzer',
+    'code-gauntlet:validator',
+  ]);
+});
+
+test('test_stats_carries_both_merged_count_and_merge_methodology', async () => {
+  const args = validArgs();
+  const out = await runWith(makeCtx(args), args);
+  assert.equal(typeof out.stats.merged, 'number');
+  assert.equal(typeof out.stats.merge, 'object');
+  assert.deepEqual(out.stats.merge.findings_per_channel, { ndjson: 2, text_fallback: 0 });
+  assert.equal(typeof out.stats.merge.truncation_warnings, 'number');
+  assert.equal(typeof out.stats.merge.validation_warnings, 'number');
+  assert.equal(out.stats.merge.truncation_warnings, 0);
+  assert.equal(out.stats.merge.validation_warnings, 0);
+
+  for (const value of [undefined, null, [], 'not an object']) {
+    assert.deepEqual(compactMethodology(value), {});
+  }
+  const methodology = {
+    agents_dispatched: ['a'],
+    findings_per_channel: { ndjson: 3, text_fallback: 1 },
+    duplicates_resolved: 2,
+    dropped_no_id: 4,
+    truncation_warnings: ['one', 'two'],
+    validation_warnings: ['three'],
+    future_count: [1, 2, 3],
+  };
+  assert.deepEqual(compactMethodology(methodology), {
+    ...methodology,
+    truncation_warnings: 2,
+    validation_warnings: 1,
+  });
 });
 
 test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true)', async () => {
@@ -114,7 +166,7 @@ test('partially-degraded verify: one failed slice keeps origin=unknown; healthy 
   // Downstream stages still ran on the mixed-origin array.
   assert.ok(ctx.calls.some((c) => (c.label || '').startsWith('validate-batch-')), 'validate ran');
   assert.ok(ctx.calls.some((c) => (c.label || '').startsWith('challenge-')), 'challenge ran');
-  assert.ok(ctx.calls.some((c) => c.label === 'report-writer'), 'report ran');
+  assert.equal(typeof out.artifactPaths.report, 'string', 'the pure report render persisted');
   assert.ok(persisted, 'artifact-writer received a payload');
   const byId = Object.fromEntries((persisted.findings || []).map((f) => [f.id, f]));
   for (const id of ['F0', 'F1']) {
@@ -302,59 +354,20 @@ test('a long description survives merge->verify->validate->filter->challenge->pe
   );
 });
 
-// --- Empty-report false-negative guard --------------------------------------
-
-test('empty report while findings survive the filter -> ok:true, empty_report gap, report path nulled', async () => {
-  // A report-writer that returns whitespace-only content is a false negative: the pipeline
-  // must NOT ship it silently. ok stays true, findings still persist, but the report path
-  // is nulled and an explicit empty_report gap is recorded.
-  const args = validArgs();
-  const ctx = makeCtx(args, { reportText: '   ' });
-  const out = await runWith(ctx, args);
-
-  assert.equal(out.ok, true);
-  assert.equal(out.stats.highConfidence, 2, 'findings survived the filter/challenge');
-  assert.ok(out.gaps.some((g) => /empty_report/.test(g)), `expected an empty_report gap, got: ${out.gaps}`);
-  assert.equal(out.artifactPaths.report, null, 'the empty report path is nulled');
-  assert.equal(typeof out.artifactPaths.findings, 'string', 'findings are still persisted');
-});
-
-test('the fresh-run empty_report wording is unchanged by the union guard (output-preserving)', async () => {
-  // The guard now fires on the UNION of postFilterCount and the delivered challenge count.
-  // On a FRESH run challenge only removes findings, so postFilterCount >= deliveredCount and
-  // the union must reduce to exactly the old condition AND the old message, byte for byte.
-  // Whitespace-only (not ''): a falsy report is caught by reportStage's own minimal-report
-  // fallback, so the guard under test is exercised with a truthy-but-blank report.
-  const args = validArgs();
-  const ctx = makeCtx(args, { reportText: '   ' });
-  const out = await runWith(ctx, args);
-  const gap = out.gaps.find((g) => /empty_report/.test(g));
-  assert.ok(gap, `expected an empty_report gap, got: ${out.gaps}`);
-  assert.equal(
-    gap,
-    'empty_report: report stage produced no report while 2 finding(s) survived the filter — refusing to ship a silent empty report',
-  );
-});
-
-test('a non-empty report on a run with findings records NO empty_report gap (guard stays narrow)', async () => {
-  const args = validArgs();
-  const out = await runWith(makeCtx(args), args);
-  assert.ok(!out.gaps.some((g) => /empty_report/.test(g)), `got: ${out.gaps}`);
-  assert.equal(typeof out.artifactPaths.report, 'string');
-});
+// --- Replayed empty-report recovery -----------------------------------------
 
 test('resume replaying an empty report checkpoint re-runs report+persist (not skipped)', async () => {
   // The crashed-persist false negative: a prior run left an empty report in its checkpoint.
   // On resume, runPhase would normally REUSE it — the guard must instead re-run report from
   // scratch so a real report persists, rather than shipping the degenerate empty stub.
   const args = validArgs({ checkpoints: { report: { report: '', gaps: [] } } });
-  const ctx = makeCtx(args);
+  let persisted = null;
+  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
   const out = await runWith(ctx, args);
 
   assert.equal(out.ok, true);
-  assert.ok(ctx.calls.some((c) => c.label === 'report-writer'), 'report was re-dispatched, not skipped');
+  assert.ok(persisted.report.startsWith('# \u2694\uFE0F Code Gauntlet:'), 'the empty checkpoint was re-rendered before persistence');
   assert.equal(typeof out.artifactPaths.report, 'string', 'a real report persisted');
-  assert.ok(!out.gaps.some((g) => /empty_report/.test(g)), 'recovered cleanly — no empty_report gap remains');
 });
 
 // --- Top-level catch --------------------------------------------------------
@@ -430,7 +443,6 @@ test('issue #178 regression: every discovery agent null -> ok:false, no downstre
   // Nothing downstream of discover was ever dispatched.
   assert.ok(!ctx.calls.some((c) => c.label.startsWith('validate-batch-')), 'validate was not dispatched');
   assert.ok(!ctx.calls.some((c) => c.label.startsWith('challenge-')), 'challenge was not dispatched');
-  assert.ok(!ctx.calls.some((c) => c.label === 'report-writer' || c.label.startsWith('report-writer-')), 'report-writer was not dispatched');
   assert.ok(!ctx.calls.some((c) => c.label === 'artifact-writer'), 'the persist writer was not dispatched');
 });
 
@@ -446,7 +458,6 @@ test('issue #178 partial-degradation pin: one discovery agent null stays degrade
   assert.ok(!out.gaps.some((g) => g.startsWith('all-degraded:')), 'partial degradation must not trip the all-degraded guard');
   // Report/persist behavior unchanged: a real report is produced and persisted.
   assert.equal(typeof out.artifactPaths.report, 'string');
-  assert.ok(ctx.calls.some((c) => c.label === 'report-writer'));
   assert.ok(ctx.calls.some((c) => c.label === 'artifact-writer'));
 });
 
@@ -537,110 +548,6 @@ test('issue #178 finding 2: version-skew partial replay WITH findings keeps deli
   assert.equal(out.phaseReached, 'report');
   assert.ok(!out.gaps.some((g) => g.startsWith('all-degraded:')), 'the guard must not fire while findings are non-empty');
   assert.ok(!ctx.calls.some((c) => c.label.startsWith('code-gauntlet:')), 'discovery was replayed, not re-dispatched');
-});
-
-// --- Report degradation (non-fatal) -----------------------------------------
-
-test('a reportStage agent() throw degrades to ok:true with a minimal report + gap', async () => {
-  const args = validArgs();
-  const ctx = makeCtx(args, { agentThrowLabel: 'report-writer' });
-  const out = await runWith(ctx, args);
-
-  assert.equal(out.ok, true, 'report failure is non-fatal');
-  assert.equal(out.phaseReached, 'report');
-  assert.ok(out.gaps.some((g) => /report/i.test(g)), `expected a report gap, got: ${out.gaps}`);
-  // Persistence still ran after the degraded report.
-  assert.equal(typeof out.artifactPaths.report, 'string');
-});
-
-test('reportStage in isolation: a bare agent() throw yields a minimal report + gap', async () => {
-  const ctx = {
-    agent: async () => { throw new Error('boom'); },
-    parallel: async () => [],
-  };
-  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {}, generatedAt: '2026-07-18T00:00:00Z' });
-  assert.equal(typeof out.report, 'string');
-  assert.ok(out.report.length > 0, 'minimal report assembled from stats');
-  assert.ok(out.gaps.some((g) => /report/i.test(g)));
-});
-
-// --- Report JSON-wrapper unwrap (measured: ~15 of 25 runs since 2026-07-22) --
-//
-// The report-writer intermittently returns its markdown ALREADY WRAPPED as a JSON
-// document: the string in its `report` field is literally `{"report": "# Code
-// Gauntlet..."}`. The artifact-writer then persists that wrapper verbatim (correctly —
-// its contract is to write the text as given), so every non-Phase-8 consumer of
-// report.md gets JSON where markdown belongs. reportStage unwraps at the point the
-// string is first received, so the persisted artifact is markdown.
-
-test('reportStage unwraps a report the writer returned JSON-wrapped', async () => {
-  const md = '# Code Gauntlet Report\n\nOne finding.\n';
-  const ctx = {
-    agent: async () => ({ report: JSON.stringify({ report: md }) }),
-    parallel: async () => [],
-  };
-  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
-  assert.equal(out.report, md, 'the persisted report must be the markdown, not the wrapper');
-  assert.deepEqual(out.gaps, []);
-});
-
-test('reportStage unwraps a pretty-printed / whitespace-padded wrapper too', async () => {
-  const md = '# Code Gauntlet Report\n\n- [HIGH] something (a.js:1)\n';
-  const ctx = {
-    agent: async () => ({ report: `\n  ${JSON.stringify({ report: md }, null, 2)}\n` }),
-    parallel: async () => [],
-  };
-  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
-  assert.equal(out.report, md);
-});
-
-test('reportStage leaves a legitimate markdown report starting with a brace ALONE', async () => {
-  // Conservative by construction: unwrapping requires a successful JSON.parse AND an
-  // object AND a string `report` member. Markdown that merely opens with `{` is not JSON.
-  const md = '{ this is prose } \n\n# Code Gauntlet Report\n';
-  const ctx = {
-    agent: async () => ({ report: md }),
-    parallel: async () => [],
-  };
-  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
-  assert.equal(out.report, md);
-});
-
-test('reportStage does not unwrap JSON that is not a {report:string} wrapper', async () => {
-  const cases = [
-    JSON.stringify({ report: { markdown: '# nope' } }),   // report is not a string
-    JSON.stringify({ summary: '# nope' }),                 // no report member
-    JSON.stringify(['# nope']),                            // array, not object
-    JSON.stringify('# nope'),                              // bare JSON string
-    JSON.stringify({ report: '# md', findings: [1, 2] }),  // extra MEANINGFUL content
-  ];
-  for (const raw of cases) {
-    const ctx = { agent: async () => ({ report: raw }), parallel: async () => [] };
-    const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
-    assert.equal(out.report, raw, `must be left verbatim: ${raw}`);
-  }
-});
-
-test('reportStage unwraps on the SEGMENTED path as well', async () => {
-  const big = [];
-  for (let i = 0; i < 80; i += 1) big.push(makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
-  const ctx = {
-    agent: async (prompt, opts) => ({ report: JSON.stringify({ report: `body for ${opts.label}` }) }),
-    parallel: async (thunks) => Promise.all(thunks.map((t) => t())),
-  };
-  const out = await reportStage(ctx, { findings: big, unverified: [], stats: {} });
-  assert.ok(!/\{"report"/.test(out.report), `segments must be unwrapped: ${out.report.slice(0, 200)}`);
-  assert.match(out.report, /body for report-writer-0/);
-});
-
-test('a wrapper whose report member is EMPTY degrades to the minimal report', async () => {
-  const ctx = {
-    agent: async () => ({ report: JSON.stringify({ report: '' }) }),
-    parallel: async () => [],
-  };
-  const out = await reportStage(ctx, { findings: [makeFinding('F1')], stats: {} });
-  assert.match(out.report, /minimal report/i);
-  assert.ok(out.gaps.some((g) => /report/i.test(g)), out.gaps);
 });
 
 // --- writeArtifacts degradation (non-fatal) ---------------------------------
@@ -872,7 +779,7 @@ test('checkpoint round-trip: persisted checkpoint is SLIM — only the resume-co
   assert.equal(out2.phaseReached, 'report');
   assert.ok(!ctx2.calls.some((c) => c.label.startsWith('challenge-')), 'challenge reused from checkpoint (not re-dispatched)');
   assert.ok(ctx2.calls.some((c) => c.label.startsWith('code-gauntlet:bug-detector')), 'a non-preserved phase (discover) re-ran');
-  assert.ok(ctx2.calls.some((c) => c.label === 'report-writer'), 'report re-ran');
+  assert.equal(typeof out2.artifactPaths.report, 'string', 'report re-rendered and persisted');
   assert.ok(ctx2.calls.some((c) => c.label === 'artifact-writer'), 'the writer ran');
   // The delivered high-confidence set is reproduced exactly across the resume.
   assert.equal(out2.stats.highConfidence, 2, 'the preserved challenge findings are delivered unchanged');
@@ -894,31 +801,6 @@ test('slimPersistedCheckpoints keeps only challenge full, counts every phase, an
   assert.ok(!('filter' in persisted.checkpoints.phases), 'filter output is not persisted');
   assert.equal(typeof persisted.checkpoints.counts.filter, 'number', 'the filter COUNT is still recorded');
   assert.ok(persisted.checkpoints.counts, 'per-phase counts present');
-});
-
-// --- Report segmentation (oversized findings payload) -----------------------
-
-test('reportStage segments an oversized findings payload into >1 dispatch and joins sections', async () => {
-  // ~80 findings x ~2000-char description >> PROMPT_SEGMENT_CHAR_BUDGET (100k).
-  const big = [];
-  for (let i = 0; i < 80; i += 1) big.push(makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
-
-  const calls = [];
-  const ctx = {
-    agent: async (prompt, opts) => { calls.push(opts); return { report: `segment body for ${opts.label}` }; },
-    // Segment dispatches now fan out through parallel() (issue #38, S2); it preserves input
-    // order and nulls a failed member in place.
-    parallel: async (thunks) => Promise.all(thunks.map(async (t) => {
-      try { return await t(); } catch { return null; }
-    })),
-  };
-  const out = await reportStage(ctx, { findings: big, unverified: [], stats: {}, generatedAt: '2026-07-18T00:00:00Z' });
-
-  assert.ok(calls.length > 1, `expected >1 report-writer dispatch, got ${calls.length}`);
-  assert.ok(calls.every((t) => t.agentType === 'code-gauntlet:report-writer'));
-  assert.match(out.report, /Report segment 1 of/);
-  assert.match(out.report, new RegExp(`Report segment ${calls.length} of ${calls.length}`));
-  assert.equal(out.gaps.length, 0, 'all segments rendered cleanly');
 });
 
 // --- buildResumeCheckpoints truncation (compact-return principle) ------------
@@ -955,17 +837,6 @@ test('buildResumeCheckpoints carries a phases map that only the PROMPT budget wo
   assert.ok(!cp.truncated);
 });
 
-test('reportStage under the budget stays a single dispatch', async () => {
-  const calls = [];
-  const ctx = {
-    agent: async (prompt, opts) => { calls.push(opts); return { report: 'one report' }; },
-    parallel: async () => [],
-  };
-  const out = await reportStage(ctx, { findings: makeFindings(), unverified: [], stats: {} });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].label, 'report-writer');
-  assert.equal(out.report, 'one report');
-});
 
 // --- Structural dispatch-contract sweep (masking-proof) ---------------------
 
@@ -977,7 +848,7 @@ test('sweep: runWith drives every stage with STRING prompts + valid JSON Schemas
   assert.deepEqual(ctx.violations, [], `dispatch-contract violations: ${ctx.violations.join('; ')}`);
   // Every dispatch label family was exercised (so the assertions actually ran on each).
   const seen = ctx.calls.map((c) => c.label);
-  for (const family of ['summarize', 'code-gauntlet:bug-detector', 'verify-input-writer', 'verify-slice-', 'validate-batch-', 'challenge-', 'report-writer', 'artifact-writer']) {
+  for (const family of ['summarize', 'code-gauntlet:bug-detector', 'verify-input-writer', 'verify-slice-', 'validate-batch-', 'challenge-', 'artifact-writer']) {
     assert.ok(seen.some((l) => l === family || l.startsWith(family)), `swept dispatch family: ${family}`);
   }
   // And every recorded dispatch carried a string prompt + an object schema.
@@ -1049,7 +920,7 @@ test('non-firstParty provider: resolvedPolicy reports conditionalSchema:false re
   assert.equal(out.resolvedPolicy.conditionalSchema, false);
 });
 
-test('sweep: bucketed summarize + segmented report emit only contract-valid dispatches', async () => {
+test('sweep: bucketed summarize emits only contract-valid dispatches', async () => {
   const args = validArgs();
   // Bucketed summarize (parallel thunks + merge): >500 lines AND more files than the bucket.
   const files = Array.from({ length: 50 }, (_, i) => `f${i}.js`);
@@ -1058,35 +929,30 @@ test('sweep: bucketed summarize + segmented report emit only contract-valid disp
   assert.deepEqual(sctx.violations, [], `summarize violations: ${sctx.violations.join('; ')}`);
   assert.ok(sctx.calls.some((c) => c.label.startsWith('summarize-bucket-')));
   assert.ok(sctx.calls.some((c) => c.label === 'summarize-merge'));
-
-  // Segmented report (parallel per-chunk dispatches).
-  const big = Array.from({ length: 80 }, (_, i) => makeFinding(`F${i}`, { description: 'x'.repeat(2000) }));
-  const rctx = makeCtx(args);
-  await reportStage(rctx, { findings: big, unverified: [], stats: {}, policy: {} });
-  assert.deepEqual(rctx.violations, [], `report violations: ${rctx.violations.join('; ')}`);
-  assert.ok(rctx.calls.filter((c) => c.label.startsWith('report-writer-')).length > 1);
 });
 
 // Issue #89: discover()'s own dispatched/degraded lists flow through reportInput
-// (stages.js ~3366) into the dimensionsSummaryTable dispatched to the report-writer.
+// into the dimensionsSummaryTable appended by the pure renderer.
 // makeCtx's default fixture dispatches every one of the 7 AGENTS (agentFlags={}), only
 // bug-detector returns findings (the 2-element makeFindings() set — both survive to
 // challengeOut.findings, confirmed by the happy-path test's `highConfidence === 2`), and
 // no discovery agent throws — so the expected end state is dispatched=AGENTS, degraded=[].
 test('happy path: discoverOut.dispatched/degraded reach the final Review Dimensions Summary table via reportInput', async () => {
   const args = validArgs();
-  const ctx = makeCtx(args);
+  let persisted = null;
+  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
   const out = await runWith(ctx, args);
   assert.equal(out.ok, true);
 
-  const reportCall = ctx.calls.find((c) => c.label === 'report-writer');
-  assert.ok(reportCall, 'the tiny fixture must dispatch a single unsegmented report-writer call');
-  const m = /Results JSON:\n([\s\S]*)\nReturn \{ report \}/.exec(reportCall.prompt);
-  assert.ok(m, 'the report-writer prompt carries a Results JSON body');
-  const body = JSON.parse(m[1]);
-  assert.ok(body.dimensionsTable, 'dimensionsTable is present on the segment-0 dispatch');
+  const expectedTable = dimensionsSummaryTable({
+    dispatched: AGENTS,
+    degraded: [],
+    findings: makeFindings(),
+    unverified: [],
+  });
+  assert.ok(persisted.report.includes(expectedTable), 'the persisted report carries the exact code-rendered table');
 
-  const rows = body.dimensionsTable.split('\n').slice(2)
+  const rows = expectedTable.split('\n').slice(2)
     .map((line) => line.split('|').slice(1, -1).map((c) => c.trim()));
   assert.equal(rows.length, AGENTS.length);
   const bugRow = rows.find((r) => r[1] === 'bug-detector');

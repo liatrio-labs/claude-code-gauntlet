@@ -22,7 +22,7 @@ const OUT = join(HERE, 'pipeline.js');
 // pipeline_entry.js is emitted LAST (its run() references everything above).
 const ORDER = [
   'findingDedup.js', 'filterFindings.js', 'mergeFindings.js',
-  'applyValidations.js', 'applyChallenges.js', 'registry.js', 'args.js',
+  'applyValidations.js', 'applyChallenges.js', 'registry.js', 'renderReport.js', 'args.js',
   'stages.js', 'pipeline_entry.js',
 ];
 

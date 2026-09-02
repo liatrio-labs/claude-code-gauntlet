@@ -29,10 +29,9 @@ test('resolvePolicy returns only { model } — provenance lives in resolvedPolic
   assert.deepEqual(Object.keys(resolvePolicy('code-gauntlet:bug-detector', { subagentModelEnv: 'claude-haiku-4-5' })), ['model']);
   assert.deepEqual(Object.keys(resolvePolicy('code-gauntlet:bug-detector', {})), ['model']);
 });
-test('report-writer / artifact-writer suffixes bind to STAGE_DEFAULTS (not the bare "report" key)', () => {
-  // The split(':').pop() suffix is the full 'report-writer'/'artifact-writer', so the
-  // tunable must be keyed by that or it silently never binds. Both resolve to sonnet.
-  assert.equal(resolvePolicy('code-gauntlet:report-writer', {}).model, 'claude-sonnet-5');
+test('artifact-writer suffix binds to STAGE_DEFAULTS (not the bare "artifact" key)', () => {
+  // The split(':').pop() suffix is the full 'artifact-writer', so the tunable must be
+  // keyed by that or it silently never binds.
   assert.equal(resolvePolicy('code-gauntlet:artifact-writer', {}).model, 'claude-sonnet-5');
 });
 

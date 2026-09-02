@@ -1291,13 +1291,13 @@ class TestDeliveryVocabularySurfaces(unittest.TestCase):
 
 class TestFullReportTemplateRenderInstructions(unittest.TestCase):
     """Pins the Full Report Template's render instructions to the report-path
-    mechanism: fields the pipeline strips before the report-writer's dispatch must
-    not be interpolated or referenced by the template that writer follows."""
+    mechanism: fields the renderer strips from its own input must
+    not be interpolated or referenced by the generated template."""
 
     def test_full_report_template_never_instructs_a_suggested_fix_code_render(self):
         """Pins the docs to the #220 mechanism: the report path structurally strips
-        suggested_fix_code (stripReportExcludedFields in workflows/src/stages.js)
-        before the report-writer ever sees it, so no template instruction may ask
+        suggested_fix_code (stripReportExcludedFields in workflows/src/renderReport.js)
+        before rendering, so no template instruction may ask
         for a render — a reintroduced instruction here would tell a model to do
         something the field can no longer supply.
         """
@@ -1306,8 +1306,8 @@ class TestFullReportTemplateRenderInstructions(unittest.TestCase):
             "suggested_fix_code",
             region,
             "Full Report Template must not interpolate or reference suggested_fix_code "
-            "— the field never reaches the report-writer's input (stripped by "
-            "stripReportExcludedFields before dispatch); the read-only report-side "
+            "— the field never reaches the renderer's output (stripped by "
+            "stripReportExcludedFields before rendering); the read-only report-side "
             "apply-check (scripts/report_patches.py) renders kept patches into a "
             "sibling artifact instead.",
         )

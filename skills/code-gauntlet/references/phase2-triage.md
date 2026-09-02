@@ -197,7 +197,7 @@ Only stamp `scopeAnswer` when this gate actually fired (every file low-risk AND 
 
 ## 2f. Change Summary (now the workflow's Summarize stage)
 
-The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet) and threads the result to the report writer. The skill neither dispatches a summarizer nor writes the summary into the context file.
+The semantic change summary is no longer produced in Phase 2. The workflow's **Summarize** stage dispatches the `change-summarizer` agent internally (its model comes from `resolvePolicy` — Sonnet) and threads the result to `renderReport()`. The skill neither dispatches a summarizer nor writes the summary into the context file.
 
 For reference, the Summarize stage produces a 3–5 sentence summary of what the change *claims* to do, its rationale, and its risk profile, framed strictly as claims (never "clean", "correct", "safe", "straightforward", "trivial", or "verbatim" — the summary must never conclude a refactoring is correct). The change-summarizer agent definition holds the authoritative framing rules.
 
@@ -232,7 +232,7 @@ Never use `find` or `grep` from Bash for test discovery.
 
 ## 2h. Docs/Specs Context
 
-If `docs/`, `specs/`, `research/` exist, read relevant files. Send only to conventions-and-intent agent and Phase 8 report generation — NOT all agents (avoids biasing toward confirming intent rather than finding bugs).
+If `docs/`, `specs/`, `research/` exist, read relevant files. Send only to the conventions-and-intent agent — NOT all agents (avoids biasing toward confirming intent rather than finding bugs).
 
 **Tool instructions for file discovery:**
 
@@ -318,7 +318,7 @@ This is a deliberate asymmetry with `contextLines`/`contextChars` below, which *
 
 **Ordering is load-bearing, not cosmetic.** All four pieces above must be concatenated into `content` — the exact string measured for `contextLines`/`contextChars` below — *before* that measurement runs, never appended to the file afterward. `contextReadPlan` sizes every agent's `Read` plan strictly from those two stamped numbers; a project-rules block folded in after the count is taken is a block those numbers don't describe, so the plan built from them stops short of the file's true end — silently reopening issue #48 for exactly the reason a partial `Read` looks identical to a complete one. Build the full `content` string first, in the order above, *then* measure it, *then* write it — never write-then-append, and never measure a string that is still missing a piece.
 
-The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to the report writer. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
+The **change summary** is no longer written into the context file — the workflow's Summarize stage produces it internally and threads it to `renderReport()`. The NDJSON `## Validator` section is likewise dropped: v3 agents return findings through structured output, not by appending NDJSON, so there is no per-agent validator step to record. (The emission machinery still ships — its removal is the deferred S8 migration.)
 
 ### Measure it (issue #48)
 
@@ -362,7 +362,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 | `riskTable` | the Phase 2e per-file risk classification, by value, as `[{ path, risk }]` — `path` set must equal `changedFiles` exactly (missing or extra paths fail loud; see Phase 2e's risk-level table for the `risk` contract) |
 | `policy` | `{ tier, subagentModel, provider, gateway }` — see below |
 | `limits` | pass only genuine overrides — a REVIEW.md-set value, or the env-threaded `deliveryCap` — never the full table. `normalizeArgs` fills `summarizeBucketSize`/`validateBatch`/`challengeCap`/`verifySliceSize` from `LIMIT_DEFAULTS` (`workflows/src/args.js`) for any key you leave absent; stamp `{}` (or just `{ deliveryCap }`) rather than restating those numbers here. `deliveryCap`/`discoveryCap` are never defaulted — their absence/`null` is meaningful, not a hole waiting to be filled |
-| `delivery` | `{ tier: "all" \| "main_only" }` — which challenge-survivors reach the delivery payload (default `all`); optional (absent ⇒ `all`) |
+| `delivery` | `{ tier: "all" \| "main_only", prIdentity: { owner, repo, pr_number, sha_full, title? } }` — which challenge-survivors reach the delivery payload (default `all`), plus the PR/MR identity the report title and the post-review wrapper are built from; whole field optional (absent ⇒ tier `all`, no identity), `prIdentity.title` optional within it |
 
 `limits.deliveryCap` is the Phase 8 PR-comment cap, threaded from `CODE_GAUNTLET_PR_COMMENT_CAP` (the same knob echoed as `pr_comment_cap`; headless default `6`, bench `25`) — the **workflow cannot read `process.env`**, so passing it through the waist is the only path. `delivery.tier` resolves identically in both modes from `CODE_GAUNTLET_DELIVERY_TIER` (default `all`) — no user answer feeds it since issue #35 removed the Phase 1 tier question; same env-blindness as `deliveryCap`, same reason it rides the waist. The Challenge stage hands every survivor to the workflow's `selectDelivery(survivors, deliveryCap, tier)`, which applies the tier (`all` keeps every survivor, `main_only` keeps main-tagged only), ranks, and keeps the top `deliveryCap` as the persisted post-review payload (`artifactPaths.postReview`) Phase 8 posts verbatim. Omit `deliveryCap` (or leave it `null`) to deliver uncapped; omit `delivery` to default the tier to `all`.
 

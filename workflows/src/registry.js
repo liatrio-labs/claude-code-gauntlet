@@ -69,8 +69,8 @@ export const FINDING_PROP_TYPES = {
   // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
   // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
   // to delivery with this field set is not a guarantee the fence ships. The pipeline also
-  // strips the field from the report-writer's input (stripReportExcludedFields in
-  // stages.js), so delivery is the only surface it is ever rendered on. The read-only
+  // strips the field itself (stripReportExcludedFields in renderReport.js), so delivery
+  // is the only surface it is ever rendered on. The read-only
   // report-side apply-check (scripts/report_patches.py) renders the KEPT patches into a
   // sibling artifact instead — see report-format.md.
   suggested_fix_code: 'string',
@@ -178,15 +178,14 @@ export const DIMENSIONS = [
 export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 
 // Per-agent display label for the Review Dimensions Summary table (issue #89):
-// dimensionsSummaryTable (stages.js) renders ONE row per discovery agent — a
+// dimensionsSummaryTable (renderReport.js) renders ONE row per discovery agent — a
 // multi-dimension agent (conventions-and-intent) gets a single label for its whole
 // aggregated row, not one per dimension — so this is keyed by agentType directly
 // rather than living on DIMENSIONS rows, which would force every one of a
 // multi-dimension agent's rows to repeat the identical value (the trap promptExtra's
 // comment above already documents for a genuinely per-agent value). This map is the
-// single source of truth for the display strings — report-format.md's template
-// deliberately no longer lists them, it tells Phase 8 to paste the rendered table
-// verbatim. Extending: one
+// single source of truth for the display strings — the renderer appends the table as
+// the report's last section. Extending: one
 // entry here when AGENTS gains a member — registry.test.js pins the key set to AGENTS.
 export const AGENT_LABELS = {
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
@@ -221,13 +220,13 @@ export const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
 
 // The stage agents' models, restating each one's `model:` frontmatter explicitly so a
 // dispatch pins a full model ID instead of inheriting the session variant (see MODEL_IDS
-// below). No entry currently deviates from its frontmatter, and all five match
+// below). No entry currently deviates from its frontmatter, and all four match
 // resolvePolicy's own 'sonnet' fallback — this is the one place to change when one should.
 // Keys are matched against `agentType.split(':').pop()`, so they must be the FULL
-// suffix — 'report-writer'/'artifact-writer', not 'report' — or the tunable never binds.
+// suffix — 'artifact-writer', not 'artifact' — or the tunable never binds.
 const STAGE_DEFAULTS = {
   validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
-  'report-writer': 'sonnet', 'artifact-writer': 'sonnet',
+  'artifact-writer': 'sonnet',
 };
 
 // Explicit full model IDs. Aliases like 'sonnet' resolve against the SESSION's model

@@ -59,6 +59,7 @@ IDENTITY_FENCES = {
         "inline_legend",
         "summary_header",
         "inline_trailer",
+        "full_report_template",
     ],
     "skills/code-gauntlet/references/delivery-guide.md": [
         "severity_legend",
@@ -97,6 +98,7 @@ def load_registry(repo_root=REPO_ROOT):
         "  brand: { mark: m.BRAND_MARK, name: m.BRAND_NAME },"
         "  severityEmoji: m.SEVERITY_EMOJI,"
         "  severityEmojiFallback: m.SEVERITY_EMOJI_FALLBACK,"
+        "  agents: m.AGENTS,"
         "})))"
     )
     out = subprocess.run(
@@ -339,7 +341,95 @@ def _severity_pairs(identity):
     return [(emoji, name) for name, emoji in identity["severityEmoji"].items()]
 
 
-def identity_body(rel_path, symbol, identity):
+# A placeholder fixture whose every field value is its own placeholder, run through the REAL
+# renderer, so the documented template IS the renderer's literal output. The critical finding
+# carries every optional field; the other severity examples stay minimal.
+_TEMPLATE_FINDING = {
+    "id": "{finding.id}",
+    "file": "{finding.file}",
+    "line_start": "{finding.line_start}",
+    "title": "{finding.title}",
+    "description": "{finding.description}",
+    "confidence": "{finding.confidence}",
+    "dimension": "{finding.dimension}",
+}
+
+_TEMPLATE_FIXTURE = {
+    "summary": "{summary}",
+    "findings": [
+        {
+            **_TEMPLATE_FINDING,
+            "severity": "critical",
+            "line_end": "{finding.line_end}",
+            "origin": "surfaced",
+            "evidence": "{finding.evidence}",
+            "suggestion": "{finding.suggestion}",
+            "claude_md_rule": "{finding.claude_md_rule}",
+            "spec_text": "{finding.spec_text}",
+            "cross_file_refs": "{finding.cross_file_refs}",
+            "affected_consumers": "{finding.affected_consumers}",
+            "attack_vector": "{finding.attack_vector}",
+            "behavior_preserved": "{finding.behavior_preserved}",
+            "criticality": "{finding.criticality}",
+            "failure_scenario": "{finding.failure_scenario}",
+            "hidden_errors": "{finding.hidden_errors}",
+            "invalid_state_example": "{finding.invalid_state_example}",
+            "challenge_contested": True,
+            "corroborations": [
+                {
+                    "agent": "{corroboration.agent}",
+                    "dimension": "{corroboration.dimension}",
+                    "confidence": "{corroboration.confidence}",
+                    "title": "{corroboration.title}",
+                    "description": "{corroboration.description}",
+                }
+            ],
+        },
+        {**_TEMPLATE_FINDING, "severity": "high"},
+        {**_TEMPLATE_FINDING, "severity": "medium"},
+        {**_TEMPLATE_FINDING, "severity": "low", "report_tag": "suggestion"},
+    ],
+    "unverified": [
+        {
+            **_TEMPLATE_FINDING,
+            "severity": "medium",
+            "origin": "unknown",
+            "challenge": "skipped",
+            "evidence": "{finding.evidence}",
+        }
+    ],
+    "dimensions": {"dispatched": [], "degraded": []},
+    "generatedAt": "{generatedAt}",
+    "headShaShort": "{head_sha_short}",
+    "prIdentity": {
+        "owner": "{owner}",
+        "repo": "{repo}",
+        "pr_number": "{n}",
+        "sha_full": "{full_sha}",
+        "title": "{pr_title}",
+    },
+}
+
+
+def render_template_block(repo_root, identity):
+    """Run the placeholder fixture through the real report renderer."""
+    fixture = json.loads(json.dumps(_TEMPLATE_FIXTURE))
+    fixture["dimensions"]["dispatched"] = identity["agents"]
+    node_src = (
+        "import('./workflows/src/renderReport.js').then(m => "
+        "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
+    )
+    out = subprocess.run(
+        ["node", "--input-type=module", "-e", node_src],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return "````markdown\n" + out.stdout + "\n````"
+
+
+def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
     """The generated lines for one fence — keyed by BOTH file and symbol.
 
     `severity_legend` renders differently in report-format.md and delivery-guide.md
@@ -352,6 +442,8 @@ def identity_body(rel_path, symbol, identity):
     commas = ", ".join(f"{emoji} {severity}" for emoji, severity in pairs)
     slashes = " / ".join(f"{emoji} {severity}" for emoji, severity in pairs)
     key = (rel_path, symbol)
+    if key == (REPORT_FORMAT_REL, "full_report_template"):
+        return render_template_block(repo_root, identity).split("\n")
     if symbol == "constants":
         lines = [
             f'BRAND_MARK = "{mark}"',
@@ -447,7 +539,7 @@ def find_identity_pairs(lines, rel_path):
     return pairs
 
 
-def fill_identity_fences(text, rel_path, identity):
+def fill_identity_fences(text, rel_path, identity, repo_root=REPO_ROOT):
     """Rewrite every declared identity fence in `text` from the registry.
 
     Both directions fail loudly: a declared symbol with no fence (which would silently
@@ -471,7 +563,9 @@ def fill_identity_fences(text, rel_path, identity):
         )
     for symbol in sorted(pairs, key=lambda s: pairs[s][0], reverse=True):
         open_index, close_index = pairs[symbol]
-        lines[open_index + 1 : close_index] = identity_body(rel_path, symbol, identity)
+        lines[open_index + 1 : close_index] = identity_body(
+            rel_path, symbol, identity, repo_root
+        )
     return "\n".join(lines)
 
 
@@ -496,7 +590,7 @@ def compute_targets(repo_root):
     add(ci_path, ("splice", _CONDITIONAL_ANCHOR, ci_body))
     add(REPORT_FORMAT_REL, ("table", None, registry))
     for rel_path in IDENTITY_FENCES:
-        add(rel_path, ("fence", None, registry))
+        add(rel_path, ("fence", repo_root, registry))
     return targets
 
 
@@ -506,7 +600,7 @@ def _apply_one(text, rel_path, kind, anchor, payload):
     if kind == "table":
         return rewrite_required_column(text, payload)
     if kind == "fence":
-        return fill_identity_fences(text, rel_path, payload)
+        return fill_identity_fences(text, rel_path, payload, anchor)
     raise SystemExit(
         f"generate_contract_requirements: unknown target kind {kind!r} for {rel_path}"
     )

@@ -346,7 +346,8 @@ class TestIdentityFenceGuards(unittest.TestCase):
             for rel_path, symbols in gen.IDENTITY_FENCES.items()
             for symbol in symbols
         }
-        self.assertEqual(set(self.EXPECTED_BODIES), declared)
+        renderer_owned = {(gen.REPORT_FORMAT_REL, "full_report_template")}
+        self.assertEqual(set(self.EXPECTED_BODIES) | renderer_owned, declared)
         for (rel_path, symbol), expected in self.EXPECTED_BODIES.items():
             with self.subTest(path=rel_path, symbol=symbol):
                 self.assertEqual(
@@ -435,6 +436,10 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         for rel in [
             *gen.compute_targets(str(REPO)).keys(),
             "workflows/src/registry.js",
+            "workflows/src/renderReport.js",
+            "workflows/src/filterFindings.js",
+            "workflows/src/applyChallenges.js",
+            "workflows/src/applyValidations.js",
         ]:
             src = REPO / rel
             dst = root / rel
