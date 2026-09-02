@@ -184,7 +184,9 @@ CODEX_CAP_BYTES = 32_768
 # above: every floor bump must be citable to the measurement that justified it.
 # Raised 21_446 -> 21_536 (2026-08-31, #271): the same shape again — the lines/branches
 # ratchet to 98.2/87.3 cites the #271 PR CI measurement (99.11/88.21) in the history line.
-AGENTS_SET_BUDGET_BYTES = 21_536
+# Raised 21_536 -> 21_545 (2026-09-02, #36): the exact S4.5 floor-policy sentence adds
+# nine bytes and names the required "with the reason" convention. Not derivable from code.
+AGENTS_SET_BUDGET_BYTES = 21_545
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

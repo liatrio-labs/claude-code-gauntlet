@@ -38,7 +38,7 @@ whatever plugin version they happened to run):
   config-marker fallback).
 
 The ``findings`` payload key is a reserved, writer-supported extension slot owned
-by issue #36: supply ``findings=`` and it is emitted last; omit it (always, today)
+by #TBD (adjacent issue filed at #36 close-out): supply ``findings=`` and it is emitted last; omit it (always, today)
 and the key is absent — byte-identical to the legacy payload.
 
 A SECOND, separate wire format lives here too: the per-finding delivery marker

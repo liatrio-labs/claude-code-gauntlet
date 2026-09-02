@@ -39,6 +39,41 @@ BRAND_MARK = "\u2694\ufe0f"
 # mark's machine-parsed row a real invariant instead of an ambiguous substring.
 WARNING_SIGN = "\u26a0\ufe0f"
 
+# S4.2's allowlist is deliberately hard-coded by relative path and exact stripped line. All
+# currently carrying lines in the scan set are generated identity material; the report-format
+# identity paragraph mentions severity by name but carries no emoji codepoint of its own, so it
+# contributes no exception here. A future deliberate exception belongs in this map, with its
+# reason, rather than in the scanner's predicate.
+EMOJI_ALLOW: dict[tuple[str, str], str] = {}
+
+CHAT_SCAN_ROOT = os.path.join(REPO_ROOT, "skills", "code-gauntlet")
+
+
+def _chat_scan_paths():
+    """The exact S4.2 scan set: SKILL.md plus the reference Markdown files."""
+    root = os.path.join(CHAT_SCAN_ROOT, "references")
+    return [
+        os.path.join(CHAT_SCAN_ROOT, "SKILL.md"),
+        *[
+            os.path.join(root, name)
+            for name in sorted(os.listdir(root))
+            if name.endswith(".md")
+        ],
+    ]
+
+
+def _carries_emoji(line):
+    """Apply S4.2's exact codepoint rule, including BMP codepoint + VS16."""
+    return any(
+        ord(char) >= 0x1F000
+        or (
+            ord(char) < 0x10000
+            and index + 1 < len(line)
+            and ord(line[index + 1]) == 0xFE0F
+        )
+        for index, char in enumerate(line)
+    )
+
 
 def _tracked_files():
     """Every git-tracked path — the same scope docs/test registries use."""
@@ -277,6 +312,35 @@ class TestIdentitySurface(unittest.TestCase):
                     open_line, close_line = gen.identity_marker_lines(symbol, rel_path)
                     body = gen.identity_body(rel_path, symbol, self.registry)
                     self.assertIn("\n".join([open_line, *body, close_line]), text)
+
+    def test_emoji_appear_only_inside_generated_fences_or_on_allowlisted_lines(self):
+        """T-CHAT: decorative emoji cannot leak into orchestrator prose.
+
+        A line carries an emoji iff it contains a codepoint >= U+1F000, or a BMP codepoint
+        immediately followed by U+FE0F (VS16). This intentionally excludes arrows and other
+        symbols in the reference material. Generated identity fences own their lines; every
+        other carrying line must be an exact, reasoned entry in EMOJI_ALLOW.
+        """
+        unfenced = []
+        for path in _chat_scan_paths():
+            rel_path = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+            inside_identity_fence = False
+            with open(path, encoding="utf-8") as handle:
+                for line_number, line in enumerate(handle.read().split("\n"), 1):
+                    marker = gen._IDENTITY_MARKER_RE.match(line)
+                    if marker:
+                        inside_identity_fence = not bool(marker.group("close"))
+                        continue
+                    if _carries_emoji(line) and not inside_identity_fence:
+                        unfenced.append((rel_path, line.strip(), line_number))
+
+        actual = {(rel_path, line) for rel_path, line, _ in unfenced}
+        self.assertEqual(
+            actual,
+            set(EMOJI_ALLOW),
+            "unfenced emoji lines must be allowlisted by exact line and reason: "
+            f"{unfenced}",
+        )
 
 
 if __name__ == "__main__":

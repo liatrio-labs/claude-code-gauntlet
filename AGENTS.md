@@ -84,8 +84,8 @@ the #251 PR CI measurement: 99.02/87.47/98.51, then branches 2026-08-27 to 86.6 
 the #255 PR CI measurement: 87.60, then branches 2026-08-31 to 87.0 from the #269 PR CI
 measurement: 87.99, then lines/branches 2026-08-31 to 98.2/87.3 from the #271 PR CI
 measurement: 99.11/88.21). Policy: a floor sits no more than 1.0 pp below the CI
-measurement for that gate; lower a floor only in the PR that causes the drop,
-reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
+measurement for that gate; lower a floor only in the PR that causes the drop, with
+the reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
 multi-point JS drop usually means a deleted fixture group or an unloaded
 module (presence check); a sudden multi-point Python drop means broken
 subprocess capture — fix capture, do not lower.

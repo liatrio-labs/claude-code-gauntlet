@@ -566,6 +566,7 @@ templates and posting mechanics.
 The final delivery summary opens with `⚔️ Code Gauntlet` on its first line and carries no other
 emoji, except severity emoji when listing findings.
 <!-- /generated-from-registry-identity:chat_identity -->
+Never decorate a machine-parsed block (`references/report-format.md`).
 
 > **MANDATORY GATE: Do not re-filter or re-rank the pipeline's `postReview` payload before posting.** The
 > PR-comment set is that payload verbatim on every path — there is no selection UI to narrow it.
