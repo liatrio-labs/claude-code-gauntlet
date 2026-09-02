@@ -370,6 +370,19 @@ test('resume replaying an empty report checkpoint re-runs report+persist (not sk
   assert.equal(typeof out.artifactPaths.report, 'string', 'a real report persisted');
 });
 
+test('resume replaying a non-empty legacy report checkpoint still persists freshly rendered bytes', async () => {
+  const args = validArgs({ checkpoints: { report: { report: 'OLD PRE-S3 REPORT', gaps: ['legacy report gap'] } } });
+  let persisted = null;
+  const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.ok(persisted.report.startsWith('# \u2694\uFE0F Code Gauntlet:'), 'the legacy report was replaced by the canonical renderer');
+  assert.ok(persisted.report.includes('## Summary'));
+  assert.ok(!persisted.report.includes('OLD PRE-S3 REPORT'));
+  assert.ok(out.gaps.includes('legacy report gap'), 'replayed report gaps are preserved');
+});
+
 // --- Top-level catch --------------------------------------------------------
 
 test('a throw in a core stage (discover) is caught by the top-level try/catch', async () => {

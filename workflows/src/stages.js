@@ -491,10 +491,10 @@ function findingSchema(spec, policy) {
   };
 }
 
-// Shared by the two discover-side drop branches below (and only those — the
-// report path's stripReportExcludedFields iterates its own field list): a dropped
-// suggested_fix_code is always the same operation (delete-and-report-whether-it-
-// was-there), only the reason for dropping it differs between call sites.
+// Shared by the two discover-side drop branches below: a dropped suggested_fix_code is
+// always the same operation (delete-and-report-whether-it-was-there), only the reason for
+// dropping it differs between call sites. The report renderer owns its separate exclusion
+// list through reportExtraFields().
 function dropSuggestedFixCode(f) {
   if (!('suggested_fix_code' in f)) return false;
   delete f.suggested_fix_code;
@@ -906,8 +906,8 @@ export async function verifyStage(ctx, input) {
   // Materialize each slice's --input JSON on disk BEFORE the executor loop. The
   // executor reads ${inputPathBase}.slice{i}.json, but the workflow script has no disk
   // access and the merged findings exist only mid-workflow (the skill CANNOT pre-write
-  // them). One or more artifact-writer dispatches (segmented like the report stage when
-  // the payload is large) write them by value. A writer GROUP that fails takes only the
+  // them). One or more artifact-writer dispatches (segmented when the payload is large)
+  // write them by value. A writer GROUP that fails takes only the
   // slices IT carried to the UNVERIFIED path — never fabricate a verification for a
   // slice whose input is not provably on disk, and never punish the slices whose input is.
   const materialized = await materializeVerifySlices(c, inp, slices, policy);
@@ -3371,8 +3371,8 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 // the dimensions summary table), so a string there raw-TypeErrors the same way. Element
 // tolerance is otherwise reserved for challenge.unverified, whose null-element tolerance is
 // a pinned, correct, fully-delivering degradation (stages_delivery.test.js:514-542: the
-// belt's `{raw: el}` positions, stripReportExcludedFields, and dimensionsSummaryTable are
-// all null-safe for that one field). challenge.eliminated is deliberately ABSENT from
+// belt's `{raw: el}` positions and dimensionsSummaryTable are all null-safe for that one
+// field). challenge.eliminated is deliberately ABSENT from
 // this table -- it never reaches rankFindings, and the belt owns its own malformed
 // shapes with a disclosed drop path (`stats.replay_belt_dropped`, the `replay-filter:`
 // gap) -- so it is wholly ungated here, by omission, not by an explicit skip.
@@ -4240,18 +4240,14 @@ export async function runWith(ctx, rawArgs) {
     // It deliberately renders NO Review Methodology section and NO `Headless config:`
     // block: the orchestrator composes those at delivery (issue #182 owns that seam).
     let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
-    gaps.push(...(reportOut.gaps || []));
-
-    // A replayed empty report checkpoint is real resume state: re-render it before
-    // persistence rather than shipping the crashed run's degenerate stub. A fresh render
-    // is total and always non-empty, so the former empty_report gap and path-nulling
-    // capability are structurally unreachable and have been removed.
-    const reportIsEmpty = (out) => !out || typeof out.report !== 'string' || out.report.trim() === '';
-    if (checkpoints.report !== undefined && reportIsEmpty(reportOut)) {
-      reportOut = { report: renderReport(reportInput), gaps: [] };
-      phaseOutputs.report = reportOut;
-      gaps.push(...(reportOut.gaps || []));
-    }
+    const reportGaps = reportOut.gaps || [];
+    gaps.push(...reportGaps);
+    // A replayed report checkpoint is legacy input, never a substitute for rendering.
+    // Rebuild the persisted bytes from the current pipeline data while carrying forward
+    // any gaps the checkpoint disclosed. Fresh reports are rebuilt too, keeping the
+    // phaseOutputs invariant explicit at this seam.
+    reportOut = { report: renderReport(reportInput), gaps: reportGaps };
+    phaseOutputs.report = reportOut;
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
     // writer failure degrades to a partial-artifacts gap rather than the top-level catch.

@@ -2515,7 +2515,7 @@ const FINDING_PROP_TYPES = {
   // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
   // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
   // to delivery with this field set is not a guarantee the fence ships. The pipeline also
-  // strips the field itself (stripReportExcludedFields in renderReport.js), so delivery
+  // excludes the field itself through reportExtraFields in renderReport.js, so delivery
   // is the only surface it is ever rendered on. The read-only
   // report-side apply-check (scripts/report_patches.py) renders the KEPT patches into a
   // sibling artifact instead — see report-format.md.
@@ -2734,43 +2734,24 @@ function resolvePolicy(agentType, opts = {}) {
 // Keep every import on ONE line: workflows/build.js deliberately rejects imports its
 // line-based bundle stripper cannot remove safely.
 
-// Fields the report path never sees. suggested_fix_code itself (no apply-check oracle
-// exists at report time, see stripReportExcludedFields below) plus the two stamps
-// filterFindings.js/filter_findings.py leave behind when IT stripped suggested_fix_code
-// earlier in the pipeline (suggested_fix_code_removed_by / _removal_reason) — dangling
-// metadata for a field the report renderer never sees either way (#220 review). A list,
-// not a single field check, so adding a future report-excluded field is a one-line edit
-// here rather than a second copy of stripReportExcludedFields's iteration.
+// Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
+// exists at report time) plus the two stamps filterFindings.js/filter_findings.py leave
+// behind when IT stripped suggested_fix_code earlier in the pipeline
+// (suggested_fix_code_removed_by / _removal_reason) are dangling metadata for a field the
+// report renderer never sees either way (#220 review). A list, not a single field check, so
+// adding a future report-excluded field is a one-line edit here.
 const REPORT_EXCLUDED_FIELDS = [
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',
 ];
 
-// stripReportExcludedFields(findings) -> new array, same finding objects EXCEPT a
-// shallow copy wherever any REPORT_EXCLUDED_FIELDS key was present. Used ONLY on the
-// report path: the report renderer has no apply-check oracle at report time, so
-// suggested_fix_code must never reach the report body, and its removal stamps are
-// meaningless without it. selectDelivery / writerPayload read the SAME finding objects
-// renderReport was called with, unstripped — delivery keeps every field for its own
-// live-oracle apply-check (scripts/post_review.py).
-function stripReportExcludedFields(findings) {
-  return (findings || []).map((f) => {
-    if (!f || typeof f !== 'object') return f;
-    if (!REPORT_EXCLUDED_FIELDS.some((key) => key in f)) return f;
-    const copy = { ...f };
-    for (const key of REPORT_EXCLUDED_FIELDS) delete copy[key];
-    return copy;
-  });
-}
-
 // dimensionsSummaryTable({ dispatched, degraded, findings, unverified }) -> markdown string
 //
 // Computes the Review Dimensions Summary table (report-format.md) in CODE, as a pure
-// function of pipeline stats, instead of asking a Phase 8 model to classify each
-// dimension itself (issue #89). Before this, the table was never rendered at all:
-// reportPrompt never asked for it and reportInput never carried discoverOut.degraded /
-// discoverOut.dispatched. One row per DISCOVERY AGENT (registry AGENTS order), not per
+// function of pipeline stats, instead of asking a model to classify each dimension
+// itself (issue #89). Before this, the table was never rendered at all: report inputs
+// did not carry discoverOut.degraded / discoverOut.dispatched. One row per DISCOVERY AGENT (registry AGENTS order), not per
 // dimension — a multi-dimension agent (conventions-and-intent) aggregates all of its
 // dimensions' findings into one row. Output starts at the header row (no leading
 // `## Review Dimensions Summary` heading) — heading placement is the caller's concern.
@@ -3132,13 +3113,16 @@ function countsSentence(findings, rawCount, unverified) {
   let sentence = count === rawCount
     ? `${count} finding(s) after the gauntlet`
     : `${count} reported issue(s) from ${rawCount} finding(s) after the gauntlet`;
-  const severityCounts = new Map(SEVERITY_ORDER.map((severity) => [severity, 0]));
+  const severityCounts = new Map();
   for (const finding of findings) {
     const severity = severityKey(finding);
-    if (severityCounts.has(severity)) severityCounts.set(severity, severityCounts.get(severity) + 1);
+    severityCounts.set(severity, (severityCounts.get(severity) || 0) + 1);
   }
-  const breakdown = SEVERITY_ORDER
-    .filter((severity) => severityCounts.get(severity) > 0)
+  const orderedSeverities = [
+    ...SEVERITY_ORDER.filter((severity) => severityCounts.has(severity)),
+    ...[...severityCounts.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity)),
+  ];
+  const breakdown = orderedSeverities
     .map((severity) => `${severityCounts.get(severity)} ${severity}`);
   sentence += count > 0 && breakdown.length ? ` — ${breakdown.join(', ')}.` : '.';
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
@@ -3151,8 +3135,8 @@ function countsSentence(findings, rawCount, unverified) {
 // no clock, dispatch, prompt, schema, segmentation or fallback participates.
 function renderReport(input) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(stripReportExcludedFields(normalizeFindings(inp.findings)));
-  const rawUnverified = normalizeFindings(stripReportExcludedFields(normalizeFindings(inp.unverified)));
+  const rawFindings = normalizeFindings(inp.findings);
+  const rawUnverified = normalizeFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)
@@ -4668,10 +4652,10 @@ function findingSchema(spec, policy) {
   };
 }
 
-// Shared by the two discover-side drop branches below (and only those — the
-// report path's stripReportExcludedFields iterates its own field list): a dropped
-// suggested_fix_code is always the same operation (delete-and-report-whether-it-
-// was-there), only the reason for dropping it differs between call sites.
+// Shared by the two discover-side drop branches below: a dropped suggested_fix_code is
+// always the same operation (delete-and-report-whether-it-was-there), only the reason for
+// dropping it differs between call sites. The report renderer owns its separate exclusion
+// list through reportExtraFields().
 function dropSuggestedFixCode(f) {
   if (!('suggested_fix_code' in f)) return false;
   delete f.suggested_fix_code;
@@ -5083,8 +5067,8 @@ async function verifyStage(ctx, input) {
   // Materialize each slice's --input JSON on disk BEFORE the executor loop. The
   // executor reads ${inputPathBase}.slice{i}.json, but the workflow script has no disk
   // access and the merged findings exist only mid-workflow (the skill CANNOT pre-write
-  // them). One or more artifact-writer dispatches (segmented like the report stage when
-  // the payload is large) write them by value. A writer GROUP that fails takes only the
+  // them). One or more artifact-writer dispatches (segmented when the payload is large)
+  // write them by value. A writer GROUP that fails takes only the
   // slices IT carried to the UNVERIFIED path — never fabricate a verification for a
   // slice whose input is not provably on disk, and never punish the slices whose input is.
   const materialized = await materializeVerifySlices(c, inp, slices, policy);
@@ -7548,8 +7532,8 @@ function checkpointDiscardGap(topLevelCheckpoints) {
 // the dimensions summary table), so a string there raw-TypeErrors the same way. Element
 // tolerance is otherwise reserved for challenge.unverified, whose null-element tolerance is
 // a pinned, correct, fully-delivering degradation (stages_delivery.test.js:514-542: the
-// belt's `{raw: el}` positions, stripReportExcludedFields, and dimensionsSummaryTable are
-// all null-safe for that one field). challenge.eliminated is deliberately ABSENT from
+// belt's `{raw: el}` positions and dimensionsSummaryTable are all null-safe for that one
+// field). challenge.eliminated is deliberately ABSENT from
 // this table -- it never reaches rankFindings, and the belt owns its own malformed
 // shapes with a disclosed drop path (`stats.replay_belt_dropped`, the `replay-filter:`
 // gap) -- so it is wholly ungated here, by omission, not by an explicit skip.
@@ -8417,18 +8401,14 @@ async function runWith(ctx, rawArgs) {
     // It deliberately renders NO Review Methodology section and NO `Headless config:`
     // block: the orchestrator composes those at delivery (issue #182 owns that seam).
     let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
-    gaps.push(...(reportOut.gaps || []));
-
-    // A replayed empty report checkpoint is real resume state: re-render it before
-    // persistence rather than shipping the crashed run's degenerate stub. A fresh render
-    // is total and always non-empty, so the former empty_report gap and path-nulling
-    // capability are structurally unreachable and have been removed.
-    const reportIsEmpty = (out) => !out || typeof out.report !== 'string' || out.report.trim() === '';
-    if (checkpoints.report !== undefined && reportIsEmpty(reportOut)) {
-      reportOut = { report: renderReport(reportInput), gaps: [] };
-      phaseOutputs.report = reportOut;
-      gaps.push(...(reportOut.gaps || []));
-    }
+    const reportGaps = reportOut.gaps || [];
+    gaps.push(...reportGaps);
+    // A replayed report checkpoint is legacy input, never a substitute for rendering.
+    // Rebuild the persisted bytes from the current pipeline data while carrying forward
+    // any gaps the checkpoint disclosed. Fresh reports are rebuilt too, keeping the
+    // phaseOutputs invariant explicit at this seam.
+    reportOut = { report: renderReport(reportInput), gaps: reportGaps };
+    phaseOutputs.report = reportOut;
 
     // Persistence is a post-phase step: writeArtifacts owns its try/catch, so a
     // writer failure degrades to a partial-artifacts gap rather than the top-level catch.

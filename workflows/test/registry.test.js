@@ -1,7 +1,7 @@
 // registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, STAGE_DEFAULTS, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
 import { intersectRequiredExtra, agentSpecs } from '../src/stages.js';
 
 test('7 unique discovery agents', () => { assert.equal(AGENTS.length, 7); });
@@ -34,6 +34,7 @@ test('artifact-writer suffix binds to STAGE_DEFAULTS (not the bare "artifact" ke
   // keyed by that or it silently never binds.
   assert.equal(resolvePolicy('code-gauntlet:artifact-writer', {}).model, 'claude-sonnet-5');
 });
+test('STAGE_DEFAULTS has no deleted report-writer policy row', () => { assert.ok(!('report-writer' in STAGE_DEFAULTS)); });
 
 // V3.1 orchestrator-model waist: resolvePolicy pins explicit FULL model IDs so no agent
 // pin can cascade the orchestrator session's model variant (measured on bench: a child

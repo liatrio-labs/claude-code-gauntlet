@@ -69,7 +69,7 @@ export const FINDING_PROP_TYPES = {
   // committable ```suggestion fence, and downgrades to the prose `suggestion` on any failure
   // (non-string, stale/no-op, wrong range, wrong anchor, oversized, ...). A finding surviving
   // to delivery with this field set is not a guarantee the fence ships. The pipeline also
-  // strips the field itself (stripReportExcludedFields in renderReport.js), so delivery
+  // excludes the field itself through reportExtraFields in renderReport.js, so delivery
   // is the only surface it is ever rendered on. The read-only
   // report-side apply-check (scripts/report_patches.py) renders the KEPT patches into a
   // sibling artifact instead — see report-format.md.
@@ -224,7 +224,7 @@ export const SEVERITY_EMOJI_FALLBACK = SEVERITY_EMOJI.low;
 // resolvePolicy's own 'sonnet' fallback — this is the one place to change when one should.
 // Keys are matched against `agentType.split(':').pop()`, so they must be the FULL
 // suffix — 'artifact-writer', not 'artifact' — or the tunable never binds.
-const STAGE_DEFAULTS = {
+export const STAGE_DEFAULTS = {
   validator: 'sonnet', challenger: 'sonnet', executor: 'sonnet',
   'artifact-writer': 'sonnet',
 };

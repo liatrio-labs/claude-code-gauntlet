@@ -5,43 +5,24 @@ import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
 import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK } from './registry.js';
 
-// Fields the report path never sees. suggested_fix_code itself (no apply-check oracle
-// exists at report time, see stripReportExcludedFields below) plus the two stamps
-// filterFindings.js/filter_findings.py leave behind when IT stripped suggested_fix_code
-// earlier in the pipeline (suggested_fix_code_removed_by / _removal_reason) — dangling
-// metadata for a field the report renderer never sees either way (#220 review). A list,
-// not a single field check, so adding a future report-excluded field is a one-line edit
-// here rather than a second copy of stripReportExcludedFields's iteration.
+// Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
+// exists at report time) plus the two stamps filterFindings.js/filter_findings.py leave
+// behind when IT stripped suggested_fix_code earlier in the pipeline
+// (suggested_fix_code_removed_by / _removal_reason) are dangling metadata for a field the
+// report renderer never sees either way (#220 review). A list, not a single field check, so
+// adding a future report-excluded field is a one-line edit here.
 export const REPORT_EXCLUDED_FIELDS = [
   'suggested_fix_code',
   'suggested_fix_code_removed_by',
   'suggested_fix_code_removal_reason',
 ];
 
-// stripReportExcludedFields(findings) -> new array, same finding objects EXCEPT a
-// shallow copy wherever any REPORT_EXCLUDED_FIELDS key was present. Used ONLY on the
-// report path: the report renderer has no apply-check oracle at report time, so
-// suggested_fix_code must never reach the report body, and its removal stamps are
-// meaningless without it. selectDelivery / writerPayload read the SAME finding objects
-// renderReport was called with, unstripped — delivery keeps every field for its own
-// live-oracle apply-check (scripts/post_review.py).
-export function stripReportExcludedFields(findings) {
-  return (findings || []).map((f) => {
-    if (!f || typeof f !== 'object') return f;
-    if (!REPORT_EXCLUDED_FIELDS.some((key) => key in f)) return f;
-    const copy = { ...f };
-    for (const key of REPORT_EXCLUDED_FIELDS) delete copy[key];
-    return copy;
-  });
-}
-
 // dimensionsSummaryTable({ dispatched, degraded, findings, unverified }) -> markdown string
 //
 // Computes the Review Dimensions Summary table (report-format.md) in CODE, as a pure
-// function of pipeline stats, instead of asking a Phase 8 model to classify each
-// dimension itself (issue #89). Before this, the table was never rendered at all:
-// reportPrompt never asked for it and reportInput never carried discoverOut.degraded /
-// discoverOut.dispatched. One row per DISCOVERY AGENT (registry AGENTS order), not per
+// function of pipeline stats, instead of asking a model to classify each dimension
+// itself (issue #89). Before this, the table was never rendered at all: report inputs
+// did not carry discoverOut.degraded / discoverOut.dispatched. One row per DISCOVERY AGENT (registry AGENTS order), not per
 // dimension — a multi-dimension agent (conventions-and-intent) aggregates all of its
 // dimensions' findings into one row. Output starts at the header row (no leading
 // `## Review Dimensions Summary` heading) — heading placement is the caller's concern.
@@ -403,13 +384,16 @@ function countsSentence(findings, rawCount, unverified) {
   let sentence = count === rawCount
     ? `${count} finding(s) after the gauntlet`
     : `${count} reported issue(s) from ${rawCount} finding(s) after the gauntlet`;
-  const severityCounts = new Map(SEVERITY_ORDER.map((severity) => [severity, 0]));
+  const severityCounts = new Map();
   for (const finding of findings) {
     const severity = severityKey(finding);
-    if (severityCounts.has(severity)) severityCounts.set(severity, severityCounts.get(severity) + 1);
+    severityCounts.set(severity, (severityCounts.get(severity) || 0) + 1);
   }
-  const breakdown = SEVERITY_ORDER
-    .filter((severity) => severityCounts.get(severity) > 0)
+  const orderedSeverities = [
+    ...SEVERITY_ORDER.filter((severity) => severityCounts.has(severity)),
+    ...[...severityCounts.keys()].filter((severity) => !SEVERITY_ORDER.includes(severity)),
+  ];
+  const breakdown = orderedSeverities
     .map((severity) => `${severityCounts.get(severity)} ${severity}`);
   sentence += count > 0 && breakdown.length ? ` — ${breakdown.join(', ')}.` : '.';
   const suggestions = findings.filter((finding) => (finding.report_tag ?? finding.report_destination) === 'suggestion').length;
@@ -422,8 +406,8 @@ function countsSentence(findings, rawCount, unverified) {
 // no clock, dispatch, prompt, schema, segmentation or fallback participates.
 export function renderReport(input) {
   const inp = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
-  const rawFindings = normalizeFindings(stripReportExcludedFields(normalizeFindings(inp.findings)));
-  const rawUnverified = normalizeFindings(stripReportExcludedFields(normalizeFindings(inp.unverified)));
+  const rawFindings = normalizeFindings(inp.findings);
+  const rawUnverified = normalizeFindings(inp.unverified);
   const findings = consolidateForReport(rawFindings);
   const unverified = consolidateForReport(rawUnverified);
   const identity = inp.prIdentity && typeof inp.prIdentity === 'object' && !Array.isArray(inp.prIdentity)

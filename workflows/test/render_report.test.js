@@ -72,6 +72,7 @@ test('T-SEV: registry severity headings are sparse and unknown severities trail 
     finding('M', { severity: 'medium' }),
     finding('L', { severity: 'low' }),
     finding('X', { severity: 'exotic' }),
+    finding('Y', { severity: 'strange' }),
   ];
   const report = rendered({ findings });
   assert.deepEqual(
@@ -82,8 +83,10 @@ test('T-SEV: registry severity headings are sparse and unknown severities trail 
       `### ${SEVERITY_EMOJI.medium} Medium`,
       `### ${SEVERITY_EMOJI.low} Low`,
       `### ${SEVERITY_EMOJI_FALLBACK} Exotic`,
+      `### ${SEVERITY_EMOJI_FALLBACK} Strange`,
     ],
   );
+  assert.equal(countSentence(report), '6 finding(s) after the gauntlet — 1 critical, 1 high, 1 medium, 1 low, 1 exotic, 1 strange.');
   const sparse = rendered({ findings: [finding('L', { severity: 'low' })] });
   assert.ok(sparse.includes(`### ${SEVERITY_EMOJI.low} Low`));
   assert.ok(!sparse.includes(`### ${SEVERITY_EMOJI.high} High`));
@@ -142,7 +145,7 @@ test('T-ROUTE: severity wins over suggestion routing', () => {
   assert.ok(!report.includes('## Improvement Suggestions'));
 });
 
-test('T-STRIP: the renderer strips report-excluded fields without mutating its caller', () => {
+test('T-STRIP: the renderer excludes report-excluded fields without mutating its caller', () => {
   const source = finding('S', {
     suggested_fix_code: 'SECRET_PATCH',
     suggested_fix_code_removed_by: 'SECRET_STAMP',
@@ -228,6 +231,10 @@ test('T-COUNTS: the computed sentence follows rendered blocks and preserves pre-
   assert.equal(
     countSentence(rendered({ findings: [finding('C', { severity: 'critical' })] })),
     '1 finding(s) after the gauntlet — 1 critical.',
+  );
+  assert.equal(
+    countSentence(rendered({ findings: [finding('X', { severity: 'exotic' }), finding('Y', { severity: 'strange' })] })),
+    '2 finding(s) after the gauntlet — 1 exotic, 1 strange.',
   );
   assert.equal(
     countSentence(rendered({ findings: ['critical', 'high', 'medium', 'low'].map((severity) => finding(severity, { severity })) })),
