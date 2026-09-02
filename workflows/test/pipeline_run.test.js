@@ -383,7 +383,7 @@ test('resume replaying a non-empty legacy report checkpoint still persists fresh
   assert.ok(out.gaps.includes('legacy report gap'), 'replayed report gaps are preserved');
 });
 
-test('replayed malformed challenge findings are coerced before report persistence', async () => {
+test('replayed malformed challenge findings are refused before delivery persistence', async () => {
   const malformed = {
     id: 'BAD',
     file: 'bad.js',
@@ -406,14 +406,14 @@ test('replayed malformed challenge findings are coerced before report persistenc
   let persisted = null;
   const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
 
-  assert.equal(out.ok, true, 'malformed finding must not escape runWith as a crash');
-  assert.ok(persisted && typeof persisted.report === 'string', 'report was persisted');
-  assert.ok(persisted.report.startsWith('# \u2694\uFE0F Code Gauntlet:'), 'canonical title is present');
-  assert.ok(persisted.report.includes('### \u{1F4A1} 5'), 'non-string severity is rendered under unknown severity');
-  assert.ok(persisted.report.includes('#### [object Object]'), 'object title is string-coerced');
-  assert.ok(persisted.report.includes('\n```\n123\n```'), 'numeric evidence is string-coerced');
-  assert.ok(!persisted.report.includes('not-an-array'), 'non-array corroborations are omitted');
-  assert.ok(!persisted.report.includes('null'), 'null description is omitted');
+  assert.equal(out.ok, false);
+  assert.equal(out.failingPhase, 'checkpoints');
+  assert.equal(out.phaseReached, 'checkpoints');
+  const shapeGap = out.gaps.find((gap) => gap.startsWith('checkpoint-shape:'));
+  assert.ok(shapeGap, `expected checkpoint-shape refusal, got: ${JSON.stringify(out.gaps)}`);
+  assert.ok(shapeGap.includes('challenge.findings[0].severity'), shapeGap);
+  assert.ok(out.error.includes(shapeGap), `error must carry the first shape gap, got: ${out.error}`);
+  assert.equal(persisted, null, 'checkpoint refusal must not write a post-review payload');
 });
 
 // --- Top-level catch --------------------------------------------------------

@@ -12,12 +12,15 @@
 //   every phase                 : gaps (array, elements NOT checked — container-only)
 //   discover                    : additionally dispatched, degraded (array, container-only)
 //   discover/merge/verify/validate: findings (array, elements plain objects, REQUIRED
-//                                  whenever the phase key is present)
-//   filter                       : filtered (array, elements plain objects, REQUIRED)
+//                                  whenever the phase key is present); each finding's
+//                                  ranking/delivery field types are checked too
+//   filter                       : filtered (array, elements plain objects, REQUIRED,
+//                                  with the same finding field checks)
 //   challenge                    : findings (array, elements plain objects, strict,
-//                                  REQUIRED); unverified (array, elements TOLERATED,
-//                                  optional); eliminated is WHOLLY ungated (not in the
-//                                  table at all)
+//                                  REQUIRED, with the same finding field checks);
+//                                  unverified (array, elements TOLERATED, optional, but
+//                                  object elements get the same finding field checks);
+//                                  eliminated is WHOLLY ungated (not in the table at all)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -222,6 +225,56 @@ for (const [phase, field] of CHECKPOINT_STRICT_FIELDS) {
     );
   });
 }
+
+test('checkpointShapeErrors: every findings-family row rejects malformed ranking and delivery field types', () => {
+  const malformed = {
+    ...makeFinding('BAD'),
+    severity: 5,
+    title: { kind: 'object title' },
+    description: null,
+    file: { kind: 'object file' },
+    line: '10',
+    line_start: 10.5,
+    line_end: '10',
+    end_line: null,
+    confidence: '90',
+    corroborations: 'not-an-array',
+  };
+  const fields = ['severity', 'title', 'description', 'file', 'line', 'line_start', 'line_end', 'end_line', 'confidence', 'corroborations'];
+  for (const [phase, field] of [
+    ['discover', 'findings'],
+    ['merge', 'findings'],
+    ['verify', 'findings'],
+    ['validate', 'findings'],
+    ['filter', 'filtered'],
+    ['challenge', 'findings'],
+    ['challenge', 'unverified'],
+  ]) {
+    const base = wellFormedCheckpoints();
+    const cp = { ...base, [phase]: { ...base[phase], [field]: [malformed] } };
+    const errors = checkpointShapeErrors(cp);
+    for (const name of fields) {
+      assert.ok(
+        errors.some((error) => error.startsWith('checkpoint-shape:') && error.includes(`${phase}.${field}[0].${name}`)),
+        `expected ${phase}.${field}.${name} to be rejected, got: ${JSON.stringify(errors)}`,
+      );
+    }
+  }
+});
+
+test('checkpointShapeErrors: body is the accepted legacy description alias and corroborations must contain objects', () => {
+  const legacy = makeFinding('LEGACY');
+  delete legacy.description;
+  legacy.body = 'legacy body';
+  const accepted = checkpointShapeErrors({ challenge: { findings: [legacy] } });
+  assert.deepEqual(accepted, []);
+
+  legacy.body = 42;
+  legacy.corroborations = [null];
+  const errors = checkpointShapeErrors({ challenge: { findings: [legacy] } });
+  assert.ok(errors.some((error) => error.includes('challenge.findings[0].body')));
+  assert.ok(errors.some((error) => error.includes('challenge.findings[0].corroborations[0]')));
+});
 
 // --- checkpointShapeErrors: acceptance pins ----------------------------------
 

@@ -4629,6 +4629,13 @@ class TestGitlabPositionGate(_GitlabLiveRunBase):
             post_review.build_finding_marker("a" * 40, _member_key(unanchored)),
             "".join(note_bodies),
         )
+        note = next(body for body in note_bodies if "Corroborator A" in body)
+        marker = post_review.build_finding_marker("a" * 40, _member_key(unanchored))
+        self.assertEqual(note.count(post_review.BRAND_TRAILER), 1)
+        self.assertTrue(
+            note[: note.index(marker)].rstrip().endswith(post_review.BRAND_TRAILER),
+            "the position-less note must end with the identity trailer before its marker",
+        )
         self.assertIn("  1 inline discussion(s) already on the MR", run.out)
         self.assertIn("  1 inline discussion(s) posted.", run.out)
 

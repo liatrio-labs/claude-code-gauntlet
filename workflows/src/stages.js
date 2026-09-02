@@ -3434,6 +3434,52 @@ function describeCheckpointShape(v) {
   return typeof v;
 }
 
+const CHECKPOINT_FINDING_FIELDS = new Set(['findings', 'filtered', 'unverified']);
+const CHECKPOINT_FINDING_STRING_FIELDS = ['severity', 'title', 'file'];
+const CHECKPOINT_FINDING_INTEGER_FIELDS = ['line', 'line_start', 'line_end', 'end_line'];
+
+function checkpointFindingShapeErrors(finding, path) {
+  const violations = [];
+  for (const field of CHECKPOINT_FINDING_STRING_FIELDS) {
+    if (typeof finding[field] !== 'string') {
+      violations.push(`checkpoint-shape: ${path}.${field} must be a string, got ${describeCheckpointShape(finding[field])}`);
+    }
+  }
+
+  const hasDescription = finding.description !== undefined;
+  const hasBody = finding.body !== undefined;
+  if (!hasDescription && !hasBody) {
+    violations.push(`checkpoint-shape: ${path} must contain a string description or body`);
+  }
+  for (const field of ['description', 'body']) {
+    if (finding[field] !== undefined && typeof finding[field] !== 'string') {
+      violations.push(`checkpoint-shape: ${path}.${field} must be a string, got ${describeCheckpointShape(finding[field])}`);
+    }
+  }
+
+  for (const field of CHECKPOINT_FINDING_INTEGER_FIELDS) {
+    if (finding[field] !== undefined && !Number.isInteger(finding[field])) {
+      violations.push(`checkpoint-shape: ${path}.${field} must be an integer, got ${describeCheckpointShape(finding[field])}`);
+    }
+  }
+  if (finding.confidence !== undefined && (typeof finding.confidence !== 'number' || !Number.isFinite(finding.confidence))) {
+    violations.push(`checkpoint-shape: ${path}.confidence must be a number, got ${describeCheckpointShape(finding.confidence)}`);
+  }
+
+  if (finding.corroborations !== undefined) {
+    if (!Array.isArray(finding.corroborations)) {
+      violations.push(`checkpoint-shape: ${path}.corroborations must be an array, got ${describeCheckpointShape(finding.corroborations)}`);
+    } else {
+      finding.corroborations.forEach((corroboration, idx) => {
+        if (!isPlainCheckpointObject(corroboration)) {
+          violations.push(`checkpoint-shape: ${path}.corroborations[${idx}] must be a plain object, got ${describeCheckpointShape(corroboration)}`);
+        }
+      });
+    }
+  }
+  return violations;
+}
+
 // checkpointShapeErrors(resolvedCheckpoints) -> string[] of `checkpoint-shape:`-prefixed
 // violations (registered in docs/machine-parsed-strings.md). Takes the OUTPUT of
 // readCheckpoints -- already `.phases`-unwrapped, already defaulted to {} for a
@@ -3470,10 +3516,15 @@ export function checkpointShapeErrors(resolvedCheckpoints) {
         violations.push(`checkpoint-shape: phases.${phase}.${field} must be an array, got ${describeCheckpointShape(arrVal)}`);
         continue;
       }
-      if (fields[field] !== CHECKPOINT_ARRAY_STRICT) continue;
       arrVal.forEach((el, idx) => {
         if (!isPlainCheckpointObject(el)) {
-          violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
+          if (fields[field] === CHECKPOINT_ARRAY_STRICT) {
+            violations.push(`checkpoint-shape: phases.${phase}.${field}[${idx}] must be a plain object, got ${describeCheckpointShape(el)}`);
+          }
+          return;
+        }
+        if (CHECKPOINT_FINDING_FIELDS.has(field)) {
+          violations.push(...checkpointFindingShapeErrors(el, `phases.${phase}.${field}[${idx}]`));
         }
       });
     }
