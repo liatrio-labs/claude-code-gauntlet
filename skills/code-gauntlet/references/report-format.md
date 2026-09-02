@@ -237,15 +237,17 @@ the content, you place it.) Column reference:
 
 ## PR Comment Format (abbreviated)
 
+The summary comment always opens with the product's identity header, which
+`scripts/post_review.py::compose_review_body` writes:
+
 <!-- generated-from-registry-identity:summary_header — do not edit; run scripts/generate_contract_requirements.py -->
 ### ⚔️ Code Gauntlet
 <!-- /generated-from-registry-identity:summary_header -->
 
-When posting as a PR comment, use this shorter format:
+`scripts/post_review.py` prepends that brand header — never hand-type one. Compose only the body
+below it, in this shorter format:
 
 ```markdown
-### Code Gauntlet
-
 Found {N} issues ({critical} critical, {high} high, {medium} medium):
 
 {For each critical/high issue:}
@@ -285,7 +287,7 @@ them. What follows is a transcription of that function's output so you can predi
 comment, and it must be kept in step with it — a template that promises a rendering the code
 does not perform is the exact defect class issue #47 was filed for.
 
-Every section after the description is emitted **only when its field is present**; `null`, `""`
+Every field-backed section after the description is emitted **only when its field is present**; `null`, `""`
 and whitespace-only all count as absent, and no heading is emitted at all.
 
 ```markdown
@@ -305,7 +307,14 @@ render site — see below:]
 {suggested_fix_code}
 ```
 
+<!-- generated-from-registry-identity:inline_trailer — do not edit; run scripts/generate_contract_requirements.py -->
+⚔️ *Code Gauntlet*
+<!-- /generated-from-registry-identity:inline_trailer -->
+
 ```
+
+The identity trailer is the one section that is NOT conditional: every rendered comment body
+ends with it, once — one mark per delivered surface. Never hand-type it.
 
 <!-- generated-from-registry-identity:inline_legend — do not edit; run scripts/generate_contract_requirements.py -->
 `{emoji}` is 🔴 critical / 🟠 high / 🟡 medium / 💡 low, `{SEVERITY}` is the severity uppercased.

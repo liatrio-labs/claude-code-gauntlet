@@ -1130,7 +1130,10 @@ class TestRenderCommentBody(unittest.TestCase):
             "suggestion": "Explain the fix in words.",
             "suggested_fix_code": "return None",
         }
-        body = render_comment_body(finding)
+        # The SECTIONS, not the wire body: the identity trailer follows them (T-TRAIL
+        # owns that), and this test's claim is about where the fence sits among the
+        # sections.
+        body = post_review._finding_sections(finding)
         self.assertIn("**Suggested fix:**", body)
         self.assertIn("Explain the fix in words.", body)
         self.assertIn("```suggestion", body)
@@ -1142,7 +1145,7 @@ class TestRenderCommentBody(unittest.TestCase):
             fence_idx,
             "the prose suggestion block must come before the fence",
         )
-        # The fence is still the last thing in the body.
+        # The fence is still the last of the sections.
         self.assertTrue(body.rstrip("\n").endswith("```"))
 
     def test_multiline_suggestion_renders_without_corrupting_markdown(self):
@@ -1173,13 +1176,17 @@ class TestRenderCommentBody(unittest.TestCase):
     def test_no_new_fields_produces_byte_identical_output(self):
         """Regression pin: a finding with none of the new fields must produce
         exactly the same output as before this change, so the addition cannot
-        silently reflow an ordinary comment."""
+        silently reflow an ordinary comment.
+
+        Pinned on the SECTIONS: the identity trailer is appended after them and is
+        pinned separately (T-TRAIL), so this literal stays the pre-#122 bytes.
+        """
         finding = {
             "severity": "high",
             "title": "SQL Injection",
             "body": "User input is not sanitized before being passed to the database query.",
         }
-        body = render_comment_body(finding)
+        body = post_review._finding_sections(finding)
         self.assertEqual(
             body,
             "**\U0001f7e0 [HIGH] SQL Injection**\n\n"
@@ -1286,6 +1293,31 @@ class TestRenderCommentBody(unittest.TestCase):
             self.assertNotIn(
                 sentinel, body, f"{sentinel!r} leaked into the comment body"
             )
+
+    def test_render_comment_body_ends_with_exactly_one_brand_trailer(self):
+        """The identity trailer is the LAST line of a delivered comment body, and it
+        is there exactly once — one mark per delivered SURFACE, never per element.
+
+        Pinned by codepoint (U+2694 U+FE0F), never by a pasted glyph. The header line
+        must stay byte-unchanged: ``bench/runner/score.py``'s ``_SEVERITY_RE`` reads
+        ``[SEVERITY]`` out of it, so a trailer that reflowed the header would move a
+        machine-parsed string.
+        """
+        trailer = "\u2694\ufe0f *Code Gauntlet*"
+        finding = {
+            "severity": "high",
+            "title": "SQL Injection",
+            "body": "User input is not sanitized.",
+        }
+        body = render_comment_body(finding)
+        self.assertEqual(body.count(trailer), 1)
+        self.assertEqual(body.splitlines()[-1], trailer)
+        self.assertTrue(body.endswith(f"\n\n{trailer}"))
+        self.assertEqual(
+            body.splitlines()[0],
+            "**\U0001f7e0 [HIGH] SQL Injection**",
+            "the severity header line is machine-parsed — it must not move",
+        )
 
 
 class TestOutboundRenderBounding(unittest.TestCase):
@@ -2512,7 +2544,7 @@ def _member_key(member):
         member["file"],
         member["line"],
         member["title"],
-        post_review.render_comment_body(material),
+        post_review._finding_sections(material),
     )
 
 
@@ -2810,6 +2842,131 @@ class TestDryRunGitLab(_DryRunTestBase):
         self.assertEqual(disc["position"]["new_line"], 2)
 
 
+class TestSummaryBodyBrandHeader(_DryRunTestBase):
+    """D6: ``compose_review_body`` owns the summary comment's opening bytes on BOTH
+    posters, and the mechanical footer keeps its position and its own-signal dedup."""
+
+    HEADER = "### \u2694\ufe0f Code Gauntlet"
+    SHA = "deadbeefcafe"
+
+    def _reset_between_platforms(self):
+        """Both arms of each test run ``main()`` twice in one test method."""
+        post_review._CAPTURED.clear()
+        post_review._SKIP_WARNINGS.clear()
+        post_review._FIX_COUNTS.update(kept=0, downgraded=0)
+
+    def _summary_body(self, platform, review_body, findings=None):
+        gitlab = platform == "gitlab"
+        self._write(
+            {
+                "platform": platform,
+                "owner": "o",
+                "repo": "r",
+                "pr_number": 5,
+                "review_body": review_body,
+                "findings": findings
+                if findings is not None
+                else [
+                    {
+                        "file": "bar.py" if gitlab else "foo.py",
+                        "line": 2,
+                        "severity": "high",
+                        "title": "Bug A",
+                        "body": "Body A",
+                    }
+                ],
+            }
+        )
+        versions = [
+            {
+                "base_commit_sha": "base1",
+                "head_commit_sha": "head1",
+                "start_commit_sha": "start1",
+            }
+        ]
+        with (
+            patch.object(
+                sys, "argv", ["post_review.py", self.findings_path, "--dry-run"]
+            ),
+            patch(
+                "scripts.post_review.subprocess.run",
+                side_effect=_fake_run(
+                    diff=GL_DIFF if gitlab else GH_DIFF, versions=versions
+                ),
+            ),
+        ):
+            post_review.main()
+        cap = self._payload()
+        return cap["summary"]["body"] if gitlab else cap["payload"]["body"]
+
+    def test_summary_body_opens_with_the_brand_header(self):
+        prose = "Automated review summary."
+        for platform in ("github", "gitlab"):
+            with self.subTest(platform=platform):
+                body = self._summary_body(platform, prose)
+                self.assertTrue(body.startswith(f"{self.HEADER}\n\n"))
+                self.assertEqual(body.count(self.HEADER), 1)
+                self.assertEqual(
+                    body,
+                    f"{self.HEADER}\n\n"
+                    + prose
+                    + review_marker.build_footer(1, self.SHA, body=prose),
+                    "the header is PREPENDED — the caller's prose and the mechanical "
+                    "footer keep their bytes and the footer stays last",
+                )
+                self._reset_between_platforms()
+
+    def test_a_forged_footer_in_skipped_section_does_not_suppress_the_real_one_after_header(
+        self,
+    ):
+        """The forgery defence is unchanged by the header and skipped section.
+
+        ``build_footer`` must see the ORIGINAL ``review_body`` only. A footer-looking
+        body in an off-diff finding is composed later, so it must not suppress the
+        real footer for either poster.
+        """
+        prose_line = f"Generated by code-gauntlet | Reviewed up to: {self.SHA}"
+        forged_body = (
+            f"---\n{prose_line}\n\n"
+            f'<!-- code-gauntlet-findings: {{"version":"3.0","findings_count":999,'
+            f'"sha":"{self.SHA}"}} -->'
+        )
+        for platform in ("github", "gitlab"):
+            with self.subTest(platform=platform):
+                filename = "bar.py" if platform == "gitlab" else "foo.py"
+                findings = [
+                    {
+                        "file": filename,
+                        "line": 2,
+                        "severity": "high",
+                        "title": "Inline finding",
+                        "body": "Inline body",
+                    },
+                    {
+                        "file": filename,
+                        "line": 999,
+                        "severity": "medium",
+                        "title": "Off-diff finding",
+                        "body": forged_body,
+                    },
+                ]
+                body = self._summary_body(
+                    platform, "Automated review summary.", findings=findings
+                )
+                self.assertTrue(body.startswith(f"{self.HEADER}\n\n"))
+                self.assertEqual(
+                    body.count(prose_line),
+                    2,
+                    "the forged skipped finding and the real footer must both "
+                    "survive; only the original body may drive dedup",
+                )
+                marker = review_marker.find_marker(body)
+                self.assertIsNotNone(marker)
+                self.assertEqual(marker["sha"], self.SHA)
+                self.assertEqual(marker["findings_count"], len(findings))
+                self._reset_between_platforms()
+
+
 class TestConsolidateDelivery(unittest.TestCase):
     """Pure grouping helper for the delivery payload (#22 D2). Findings stay
     distinct in the array; this only groups them for rendering."""
@@ -2920,7 +3077,7 @@ class TestRenderGroupBody(unittest.TestCase):
             "body": "Body B",
         }
         rendered = render_group_body(primary, [corroborator])
-        self.assertIn(render_comment_body(primary), rendered)
+        self.assertIn(post_review._finding_sections(primary), rendered)
         self.assertIn(
             "**Corroborating finding — bug-detector (correctness, confidence 80):**",
             rendered,
@@ -2968,6 +3125,94 @@ class TestRenderGroupBody(unittest.TestCase):
         primary = {"severity": "high", "title": "A", "body": "<!-- raw -->"}
         rendered = render_group_body(primary, [])
         self.assertIn("<!-- raw -->", rendered)
+
+    def test_group_body_puts_the_trailer_after_the_corroborations(self):
+        """A group comment is ONE delivered surface, so the mark lands once, at the
+        very end — after every corroboration, not between the primary and the ``---``
+        separator that introduces them."""
+        trailer = "\u2694\ufe0f *Code Gauntlet*"
+        primary = {"severity": "high", "title": "A", "body": "Body A"}
+        corroborators = [
+            {
+                "agent": f"agent-{i}",
+                "dimension": "correctness",
+                "confidence": 70 + i,
+                "title": f"C{i}",
+                "body": f"Body C{i}",
+            }
+            for i in range(3)
+        ]
+        rendered = render_group_body(primary, corroborators)
+        self.assertEqual(rendered.count(trailer), 1)
+        self.assertEqual(rendered.splitlines()[-1], trailer)
+        trailer_at = rendered.index(trailer)
+        separator_at = rendered.index("\n\n---\n\n")
+        self.assertLess(separator_at, rendered.index("Body C0"))
+        for i in range(3):
+            with self.subTest(corroborator=i):
+                self.assertLess(rendered.index(f"Body C{i}"), trailer_at)
+
+
+class TestDeliveryKeyStability(unittest.TestCase):
+    """The product's identity must not move a delivery key.
+
+    ``EXPECTED_KEYS`` was computed at ``f33ffd5`` — the commit BEFORE the brand
+    trailer existed — and is hard-coded here on purpose: a key derived by calling the
+    code under test proves nothing (the same reasoning
+    ``TestGitlabInlineDiscussionIdempotency`` states for its own literals). If these
+    literals have to change, every finding already delivered on every open PR/MR
+    re-keys and is reposted — a repost wave, not a cosmetic change.
+    """
+
+    KEY_FINDINGS: ClassVar[list[dict]] = [
+        {
+            "file": "src/alpha.py",
+            "line": 10,
+            "title": "Unchecked index",
+            "body": "The loop reads one past the end.",
+            "severity": "high",
+        },
+        {
+            "file": "src/beta.py",
+            "line": 22,
+            "title": "Rule violation",
+            "body": "This bypasses the documented gate.",
+            "severity": "medium",
+            "suggestion": "Call the gate instead of inlining the check.",
+            "claude_md_rule": "Always route through the gate.",
+        },
+        {
+            "file": "src/gamma.py",
+            "line": 3,
+            "title": "Off-by-one",
+            "body": "Range end is exclusive.",
+            "severity": "low",
+            "suggested_fix_code": "-for i in range(n + 1):\n+for i in range(n):\n",
+        },
+    ]
+    EXPECTED_KEYS: ClassVar[list[str]] = [
+        "c6dbc10300a69daf",
+        "0c5f42fa8a664b7f",
+        "0cf7f5fb032bd562",
+    ]
+
+    def test_delivery_keys_are_unchanged_by_the_identity_trailer(self):
+        keys = [
+            post_review.finding_key(
+                f["file"], f["line"], f["title"], post_review.key_material_body(f)
+            )
+            for f in self.KEY_FINDINGS
+        ]
+        self.assertEqual(keys, self.EXPECTED_KEYS)
+        self.assertEqual(len(set(keys)), 3, "the three findings must not collide")
+
+    def test_key_material_carries_no_identity_bytes(self):
+        """Structural, not suffix-stripping: the key material is the SECTIONS, so no
+        part of the mark can reach it however the trailer is later composed."""
+        for f in self.KEY_FINDINGS:
+            with self.subTest(title=f["title"]):
+                self.assertNotIn("\u2694", post_review.key_material_body(f))
+                self.assertNotIn("Code Gauntlet", post_review.key_material_body(f))
 
 
 class TestGitHubDeliveryConsolidation(_DryRunTestBase):
@@ -4637,7 +4882,7 @@ class TestGitlabInlineDiscussionIdempotency(_GitlabLiveRunBase):
         values, and the three findings must not collide onto one key."""
         keys = [
             post_review.finding_key(
-                f["file"], f["line"], f["title"], render_comment_body(f)
+                f["file"], f["line"], f["title"], post_review.key_material_body(f)
             )
             for f in GL_CONTRACT_FINDINGS
         ]
@@ -4811,7 +5056,7 @@ class TestBuildSkippedSection(unittest.TestCase):
         self.assertIn("following 1 finding(s)", section)
         self.assertIn("`src/app.py:216`", section)
         self.assertIn("SQL injection risk", section)
-        self.assertIn(render_comment_body(finding), section)
+        self.assertIn(post_review._finding_sections(finding), section)
 
     def test_no_line_finding_renders_bare_path(self):
         finding = {"file": "src/app.py", "title": "No line", "body": "b"}
@@ -4832,6 +5077,24 @@ class TestBuildSkippedSection(unittest.TestCase):
         section = build_skipped_section([("src/app.py", 5, finding)], 0)
         self.assertIn("[REDACTED]", section)
         self.assertNotIn("ghp_" + "a" * 36, section)
+
+    def test_skipped_section_entries_carry_no_trailer(self):
+        """The section rides INSIDE the summary comment, whose body already carries
+        the brand header. One mark per delivered surface means zero here — four
+        entries must contribute zero trailers, not four."""
+        trailer = "\u2694\ufe0f *Code Gauntlet*"
+        entries = [
+            (
+                "src/app.py",
+                10 + i,
+                {"severity": "high", "title": f"T{i}", "body": f"B{i}"},
+            )
+            for i in range(4)
+        ]
+        section = build_skipped_section(entries, 4)
+        for i in range(4):
+            self.assertIn(f"T{i}", section)
+        self.assertEqual(section.count(trailer), 0)
 
 
 class TestGitHubSkippedFindingsDegrade(_DryRunTestBase):
@@ -7026,6 +7289,10 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
     PLATFORM = "gitlab"
     DIFF = GL_DIFF_INDENTED
 
+    # Computed from the pre-S2 render and pinned independently of the key helper under test.
+    RANGE_BUG_KEY = "1422e1e3b48521d1"
+    PRIMARY_A_KEY = "3c008a7625ca81b2"
+
     VERSIONS: ClassVar[list] = [
         {
             "base_commit_sha": "base1",
@@ -7170,14 +7437,10 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         rendered, so the gate still runs and still counts. Saying "posted" there
         was a false claim."""
         finding = self._finding(end_line=2, suggested_fix_code="    return 2")
-        key = post_review.finding_key(
-            "foo.py",
-            2,
-            finding["title"],
-            render_comment_body(post_review._key_material_finding(finding)),
-        )
         run = self._run(
-            [finding], dry_run=False, prior=(True, {key}, frozenset(), None)
+            [finding],
+            dry_run=False,
+            prior=(True, {self.RANGE_BUG_KEY}, frozenset(), None),
         )
         self.assertIn("  0 inline discussion(s) posted.", run.out)
         self.assertIn("  1 suggested fix(es) passed the apply-check.", run.out)
@@ -7259,14 +7522,10 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
         strips the field unconditionally, so the standing marker still matches
         and the discussion is not posted a second time (#132)."""
         finding = self._finding()
-        key = post_review.finding_key(
-            "foo.py",
-            2,
-            finding["title"],
-            render_comment_body(post_review._key_material_finding(finding)),
-        )
         run = self._run(
-            [finding], dry_run=False, prior=(True, {key}, frozenset(), None)
+            [finding],
+            dry_run=False,
+            prior=(True, {self.RANGE_BUG_KEY}, frozenset(), None),
         )
         self.assertIn("  0 inline discussion(s) posted.", run.out)
         self.assertIn("  1 inline discussion(s) already on the MR", run.out)
@@ -7341,18 +7600,20 @@ class TestGitLabSuggestedFixGate(_FixGateRunBase):
             "consolidation_primary": False,
             "suggested_fix_code": "    # replaced",
         }
-        primary_key = post_review.finding_key(
-            "foo.py", 2, "A", render_comment_body(primary)
-        )
         payloads = []
         self._run(
             [primary, unanchored],
             dry_run=False,
             payloads=payloads,
-            prior=(True, {primary_key}, frozenset(), None),
+            prior=(True, {self.PRIMARY_A_KEY}, frozenset(), None),
         )
         notes = [p["body"] for p in payloads if "position" not in p]
-        self.assertTrue(any("Unanchored" in b for b in notes))
+        unanchored_notes = [b for b in notes if "Unanchored" in b]
+        self.assertEqual(len(unanchored_notes), 1)
+        unanchored_note = unanchored_notes[0]
+        trailer = "\u2694\ufe0f *Code Gauntlet*"
+        self.assertEqual(unanchored_note.count(trailer), 1)
+        self.assertIn(f"{trailer}\n\n<!-- code-gauntlet-finding-key:", unanchored_note)
         self.assertNotIn(_FENCE, "".join(notes))
 
     def test_body_section_entries_lose_the_fence(self):
@@ -7566,6 +7827,13 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
     PLATFORM = "gitlab"
     DIFF = GL_DIFF_OVERLAP
 
+    # Computed from the pre-S2 render and pinned independently of key_material_body.
+    FIRST_KEY = "4e747ece3feb9629"
+    CORROBORATOR_KEY = "5e05d974eb959dd6"
+    PRIMARY_KEY = "680eba8695bad92c"
+    REACTIVE_CORROBORATOR_KEY = "db44929d16839554"
+    SECOND_KEY = "46708f208c1414bf"
+
     VERSIONS: ClassVar[list] = [
         {
             "base_commit_sha": "base1",
@@ -7716,17 +7984,11 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             end_line=5,
             suggested_fix_code="    b3\n    b4\n    b5",
         )
-        key_a = post_review.finding_key(
-            "foo.py",
-            2,
-            "First",
-            render_comment_body(post_review._key_material_finding(a)),
-        )
         payloads = []
         run = self._run(
             [a, b],
             dry_run=False,
-            prior=(True, {key_a}, frozenset(), None),
+            prior=(True, {self.FIRST_KEY}, frozenset(), None),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -7783,19 +8045,13 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             "confidence": 70,
             "consolidation_key": "k1",
         }
-        key_corroborator = post_review.finding_key(
-            "foo.py",
-            6,
-            "Corroborator",
-            render_comment_body(post_review._key_material_finding(corroborator)),
-        )
         payloads = []
         run = self._run(
             [a, p, corroborator],
             dry_run=False,
             # Only the corroborator's key is already delivered — P's own key
             # is not, so k1's "some but not all" branch delivers P alone.
-            prior=(True, {key_corroborator}, frozenset(), None),
+            prior=(True, {self.CORROBORATOR_KEY}, frozenset(), None),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -7836,19 +8092,7 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             suggested_fix_code="    b3\n    b4\n    b5",
             consolidation_key="k1",
         )
-        key_primary = post_review.finding_key(
-            "foo.py",
-            2,
-            "Primary",
-            render_comment_body(post_review._key_material_finding(primary)),
-        )
-        key_corroborator = post_review.finding_key(
-            "foo.py",
-            3,
-            "Corroborator",
-            render_comment_body(post_review._key_material_finding(corroborator)),
-        )
-        self.assertNotEqual(key_primary, key_corroborator)
+        self.assertNotEqual(self.PRIMARY_KEY, self.REACTIVE_CORROBORATOR_KEY)
         payloads = []
         run = self._run(
             [primary, corroborator],
@@ -7856,7 +8100,7 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             # Primary already delivered; corroborator is not — the "some but
             # not all" split that routes the corroborator through
             # deliver_corroborator instead of the group's own discussion.
-            prior=(True, {key_primary}, frozenset(), None),
+            prior=(True, {self.PRIMARY_KEY}, frozenset(), None),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)
@@ -7903,12 +8147,6 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             suggested_fix_code="    fixed5",
             consolidation_key="k2",
         )
-        key_p = post_review.finding_key(
-            "foo.py",
-            3,
-            "Second",
-            render_comment_body(post_review._key_material_finding(p)),
-        )
         payloads = []
         run = self._run(
             [a, p, corroborator],
@@ -7916,7 +8154,7 @@ class TestGitLabOverlapDemotion(_FixGateRunBase):
             # P's own key is already delivered — its group never re-renders,
             # but the corroborator's key is not, so it splits off through
             # deliver_corroborator.
-            prior=(True, {key_p}, frozenset(), None),
+            prior=(True, {self.SECOND_KEY}, frozenset(), None),
             payloads=payloads,
         )
         self.assertIsNone(run.exit_code)

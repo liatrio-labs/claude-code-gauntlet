@@ -54,10 +54,17 @@ _IDENTITY_MARKER_RE = re.compile(
 # {rel_path: [symbol, ...]} — the fences this file must carry, exactly once each.
 IDENTITY_FENCES = {
     "scripts/post_review.py": ["constants"],
-    REPORT_FORMAT_REL: ["severity_legend", "inline_legend", "summary_header"],
+    REPORT_FORMAT_REL: [
+        "severity_legend",
+        "inline_legend",
+        "summary_header",
+        "inline_trailer",
+    ],
     "skills/code-gauntlet/references/delivery-guide.md": [
         "severity_legend",
         "summary_header",
+        "inline_trailer",
+        "delivery_identity",
     ],
     # D9's chat convention names the mark in prose. A hand-authored fourth copy would
     # break the one-edit property (a registry edit + a generator run + a hand edit
@@ -359,6 +366,14 @@ def identity_body(rel_path, symbol, identity):
         return lines
     if symbol == "summary_header":
         return [f"### {mark} {name}"]
+    if symbol == "inline_trailer":
+        return [f"{mark} *{name}*"]
+    if symbol == "delivery_identity":
+        return [
+            f"- **Identity:** prepends `### {mark} {name}` to `review_body` and appends "
+            f"`{mark} *{name}*` to every rendered comment body — one mark per delivered "
+            "surface, never one per finding. Never hand-type either."
+        ]
     if symbol == "chat_identity":
         return [
             f"The final delivery summary opens with `{mark} {name}` on its first line and "

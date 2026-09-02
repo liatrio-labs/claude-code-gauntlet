@@ -354,7 +354,7 @@ def build_reference_github_payload(
     total = len(findings) + len(skip_warnings)
     skipped_section = post_review.build_skipped_section(skipped_entries, len(comments))
     footer = post_review.build_footer(total, _GH_SHA, body=review_body)
-    body = review_body + skipped_section + footer
+    body = post_review.compose_review_body(review_body, skipped_section, footer)
     payload = {"body": body, "event": "COMMENT", "comments": comments}
     cmd_prefix = [
         "gh",
@@ -484,7 +484,7 @@ def build_reference_gitlab_payload(
     total = len(findings)
     skipped_section = post_review.build_skipped_section(skipped_entries)
     footer = post_review.build_footer(total, _GH_SHA, body=review_body)
-    body = review_body + skipped_section + footer
+    body = post_review.compose_review_body(review_body, skipped_section, footer)
     notes_cmd = [
         "glab",
         "api",
@@ -1297,7 +1297,10 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             "This fence's range overlaps the first finding's and demotes "
             "to prose.\n\n"
             "**Suggested fix:**\n"
-            "Apply the equivalent three-line change by hand.",
+            "Apply the equivalent three-line change by hand."
+            # The identity trailer is part of the wire body — one mark per
+            # delivered surface. Escapes, never a pasted glyph.
+            "\n\n\u2694\ufe0f *Code Gauntlet*",
         )
         self.assertNotIn("```suggestion", comments[2]["body"])
 
@@ -1373,7 +1376,10 @@ class TestRealPosterMatchesPayloadMirror(_RealPosterTestCase):
             "**\U0001f7e1 [MEDIUM] Second single-line fix**\n\n"
             "A second finding anchored at the SAME line as the first.\n\n"
             "**Suggested fix:**\n"
-            "Apply the same one-line change by hand.",
+            "Apply the same one-line change by hand."
+            # The identity trailer is part of the wire body — one mark per
+            # delivered surface. Escapes, never a pasted glyph.
+            "\n\n\u2694\ufe0f *Code Gauntlet*",
         )
         self.assertNotIn("```suggestion", discussions[1]["body"])
         # discussions[2] and [3]: the touching-disjoint pair — BOTH keep

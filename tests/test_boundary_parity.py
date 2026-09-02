@@ -332,6 +332,12 @@ class TestPostReviewBoundary(unittest.TestCase):
             rule = finding.get("claude_md_rule") or finding.get("spec_text")
             if rule:
                 self.assertIn(rule, bodies)
+        # And the identity trailer reaches the wire through the REAL poster — one per
+        # delivered comment, last line, pinned by codepoint rather than by glyph.
+        trailer = "\u2694\ufe0f *Code Gauntlet*"
+        for comment in comments:
+            self.assertEqual(comment["body"].splitlines()[-1], trailer)
+            self.assertEqual(comment["body"].count(trailer), 1)
 
     def test_the_posted_comment_omits_the_artifact_only_fields(self):
         # criticality / failure_scenario ride the schema end to end but are deliberately

@@ -22,6 +22,7 @@ import os
 import subprocess
 import sys
 import unittest
+from typing import ClassVar
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -66,6 +67,33 @@ def _codepoints(text):
 
 
 class TestIdentitySurface(unittest.TestCase):
+    IDENTITY_OWNING_SECTIONS: ClassVar[dict[tuple[str, str], tuple[str, str]]] = {
+        (
+            "skills/code-gauntlet/references/report-format.md",
+            "summary_header",
+        ): ("## PR Comment Format (abbreviated)", "## Inline PR Comment Format"),
+        (
+            "skills/code-gauntlet/references/report-format.md",
+            "inline_trailer",
+        ): ("## Inline PR Comment Format", "**`suggested_fix_code` field:**"),
+        (
+            "skills/code-gauntlet/references/delivery-guide.md",
+            "summary_header",
+        ): ("**Script behavior:**", "### Findings metadata footer"),
+        (
+            "skills/code-gauntlet/references/delivery-guide.md",
+            "inline_trailer",
+        ): ("### Comment body format", "**Script behavior:**"),
+        (
+            "skills/code-gauntlet/references/delivery-guide.md",
+            "delivery_identity",
+        ): ("**Script behavior:**", "### Findings metadata footer"),
+        ("skills/code-gauntlet/SKILL.md", "chat_identity"): (
+            "### Deliver",
+            "### Print methodology",
+        ),
+    }
+
     @classmethod
     def setUpClass(cls):
         cls.registry = gen.load_registry(REPO_ROOT)
@@ -122,12 +150,29 @@ class TestIdentitySurface(unittest.TestCase):
                 continue
             for line in text.split("\n"):
                 match = gen._IDENTITY_MARKER_RE.match(line)
-                if match and not match.group("close"):
-                    discovered.setdefault(rel_path, []).append(match.group("symbol"))
+                if match:
+                    discovered.setdefault(rel_path, set()).add(match.group("symbol"))
         self.assertEqual(
-            {rel: sorted(symbols) for rel, symbols in discovered.items()},
-            {rel: sorted(symbols) for rel, symbols in gen.IDENTITY_FENCES.items()},
+            {rel: set(symbols) for rel, symbols in discovered.items()},
+            {rel: set(symbols) for rel, symbols in gen.IDENTITY_FENCES.items()},
         )
+
+    def test_identity_fences_stay_under_their_owning_headings(self):
+        """T-PLACEMENT: section-scoped identity prose cannot move to another section."""
+        for (rel_path, symbol), (start, end) in self.IDENTITY_OWNING_SECTIONS.items():
+            text = _read_text(rel_path)
+            open_line, _ = gen.identity_marker_lines(symbol, rel_path)
+            with self.subTest(path=rel_path, symbol=symbol):
+                self.assertLess(
+                    text.index(start),
+                    text.index(open_line),
+                    "identity fence moved above its owning section",
+                )
+                self.assertLess(
+                    text.index(open_line),
+                    text.index(end),
+                    "identity fence moved below its owning section",
+                )
 
     def test_the_severity_map_is_the_repo_severity_order(self):
         """Key order is the render order of every generated legend, and the key SET

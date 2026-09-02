@@ -275,7 +275,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
     IDENTITY: ClassVar[dict] = {
         "brand": {"mark": "MARK", "name": "NAME"},
         "severityEmoji": {"critical": "C", "low": "L"},
-        "severityEmojiFallback": "L",
+        "severityEmojiFallback": "F",
     }
 
     # Every declared fence body, hand-typed against the placeholder IDENTITY above.
@@ -293,7 +293,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '    "critical": "C",\n'
             '    "low": "L",\n'
             "}\n"
-            'SEVERITY_EMOJI_FALLBACK = "L"'
+            'SEVERITY_EMOJI_FALLBACK = "F"'
         ),
         (gen.REPORT_FORMAT_REL, "severity_legend"): (
             "Product mark: MARK (NAME). Severity emoji: C critical, L low.\n"
@@ -305,6 +305,7 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "`{emoji}` is C critical / L low, `{SEVERITY}` is the severity uppercased."
         ),
         (gen.REPORT_FORMAT_REL, "summary_header"): "### MARK NAME",
+        (gen.REPORT_FORMAT_REL, "inline_trailer"): "MARK *NAME*",
         (
             "skills/code-gauntlet/references/delivery-guide.md",
             "severity_legend",
@@ -313,6 +314,18 @@ class TestIdentityFenceGuards(unittest.TestCase):
             "skills/code-gauntlet/references/delivery-guide.md",
             "summary_header",
         ): "### MARK NAME",
+        (
+            "skills/code-gauntlet/references/delivery-guide.md",
+            "inline_trailer",
+        ): "MARK *NAME*",
+        (
+            "skills/code-gauntlet/references/delivery-guide.md",
+            "delivery_identity",
+        ): (
+            "- **Identity:** prepends `### MARK NAME` to `review_body` and appends "
+            "`MARK *NAME*` to every rendered comment body — one mark per delivered "
+            "surface, never one per finding. Never hand-type either."
+        ),
         ("skills/code-gauntlet/SKILL.md", "chat_identity"): (
             "The final delivery summary opens with `MARK NAME` on its first line and "
             "carries no other\n"

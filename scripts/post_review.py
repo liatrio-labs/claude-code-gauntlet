@@ -1322,6 +1322,10 @@ def _key_material_finding(finding):
     Prior-delivery dedup (#132/#208) is retry-safe only while keys are stable
     across runs and across delivery shapes; making the GATE deterministic would
     not be enough, because the gate's inputs (the diff, the render site) are not.
+
+    The brand trailer is excluded the same way and for the same reason — it is not a
+    field, so it is excluded structurally by :func:`key_material_body` calling
+    :func:`_finding_sections`, never by stripping a suffix.
     """
     if not isinstance(finding, dict) or "suggested_fix_code" not in finding:
         return finding
@@ -1508,8 +1512,10 @@ BRAND_TRAILER = f"{BRAND_MARK} *{BRAND_NAME}*"
 BRAND_SUMMARY_HEADER = f"### {BRAND_MARK} {BRAND_NAME}"
 
 
-def render_comment_body(finding, *, fence_offsets=None):
-    """Build the markdown comment body for a finding.
+def _finding_sections(finding, *, fence_offsets=None):
+    """The finding's rendered sections — byte-identical to what ``render_comment_body``
+    returned before the brand trailer existed. This is the KEY MATERIAL: a delivery key
+    must not move when the product's identity does (see :func:`key_material_body`).
 
     *fence_offsets* is passed through to the suggestion fence and is meaningful
     only where a platform reads one (GitLab, #219). It is a parameter rather
@@ -1564,6 +1570,24 @@ def render_comment_body(finding, *, fence_offsets=None):
         parts += ["", open_f, suggested_fix, close_f]
 
     return "\n".join(parts)
+
+
+def render_comment_body(finding, *, fence_offsets=None):
+    """The sections plus the identity trailer — what actually goes on the wire."""
+    return (
+        _finding_sections(finding, fence_offsets=fence_offsets) + f"\n\n{BRAND_TRAILER}"
+    )
+
+
+def key_material_body(finding):
+    """The bytes ``finding_key`` hashes: sections only, no trailer, ``suggested_fix_code``
+    stripped (:func:`_key_material_finding`).
+
+    Byte-equal to every key already on a live PR/MR — changing this function re-keys
+    every delivered finding on every open PR/MR, which is a repost wave, not a cosmetic
+    change.
+    """
+    return _finding_sections(_key_material_finding(finding))
 
 
 def consolidate_delivery(findings):
@@ -1633,9 +1657,11 @@ def _render_corroboration(finding):
 def render_group_body(primary, corroborators, *, fence_offsets=None):
     """Build the markdown comment body for one consolidation group.
 
-    Renders *primary* exactly as ``render_comment_body`` always has — with no
-    *corroborators* this is byte-identical to today, which is what keeps
-    unstamped findings (older artifacts, degraded pipelines) unaffected.
+    Renders *primary* through ``_finding_sections`` and appends the identity
+    trailer ONCE, after the corroborations — one mark per delivered SURFACE, never
+    one per element. With no *corroborators* the result is byte-identical to
+    ``render_comment_body``, which is what keeps unstamped findings (older
+    artifacts, degraded pipelines) unaffected.
     *fence_offsets* reaches the primary's fence only: a corroborator never
     renders one (see :func:`_render_corroboration`), so a group body carries at
     most the one header, measured from the anchor the group is posted at.
@@ -1645,12 +1671,12 @@ def render_group_body(primary, corroborators, *, fence_offsets=None):
     render is deliberately left alone, matching its existing raw-on-the-wire
     behavior.
     """
-    body = render_comment_body(primary, fence_offsets=fence_offsets)
+    body = _finding_sections(primary, fence_offsets=fence_offsets)
     if not corroborators:
-        return body
+        return f"{body}\n\n{BRAND_TRAILER}"
     section = "\n\n".join(_render_corroboration(c) for c in corroborators)
     section = section.replace("<!--", "&lt;!--")
-    return f"{body}\n\n---\n\n{section}"
+    return f"{body}\n\n---\n\n{section}\n\n{BRAND_TRAILER}"
 
 
 def build_skipped_section(skipped, inline_count=None):
@@ -1684,6 +1710,10 @@ def build_skipped_section(skipped, inline_count=None):
     in the WHOLE composed section — headings included, not just each finding's
     rendered body — is neutralized to ``&lt;!--`` in one pass at the end, closing
     every field (present or future) by construction rather than per-field.
+
+    Entries render through ``_finding_sections``, i.e. UNBRANDED: this section rides
+    inside the summary comment, whose own body already carries the brand header, and
+    the mark is one per delivered surface.
     """
     if not skipped:
         return ""
@@ -1714,8 +1744,25 @@ def build_skipped_section(skipped, inline_count=None):
     ]
     for filepath, line, finding in skipped:
         location = f"{filepath}:{line}" if line is not None else str(filepath or "?")
-        lines += ["", f"#### `{location}`", "", render_comment_body(finding)]
+        lines += ["", f"#### `{location}`", "", _finding_sections(finding)]
     return "\n".join(lines).replace("<!--", "&lt;!--")
+
+
+def compose_review_body(review_body, skipped_section, footer):
+    """The complete summary-comment body: brand header, the caller's prose, the
+    unanchored-findings section, then the mechanical footer.
+
+    ONE owner so the two posters and the benchmark's payload mirror cannot drift (the
+    same extraction precedent as ``_gated_finding`` / ``_github_apply_range``). The
+    *footer* is computed by the CALLER against the ORIGINAL *review_body* — the forgery
+    defence documented at ``post_github``'s partition comment — and passed in here
+    already built.
+
+    Deliberately NOT idempotent-by-regex: a hand-typed heading in *review_body* from a
+    stale orchestrator yields two headings once and self-heals on the next run, whereas
+    a phrase-sniffing stripper would make the identity depend on counting prose.
+    """
+    return f"{BRAND_SUMMARY_HEADER}\n\n{review_body}{skipped_section}{footer}"
 
 
 def finding_key(filepath, line, title, body):
@@ -1909,7 +1956,7 @@ def post_github(data, valid_lines, line_texts):
     sha = resolve_marker_sha(data)
     review_body = data.get("review_body", "")
     footer = build_footer(len(findings), sha, body=review_body)
-    review_body += skipped_section + footer
+    review_body = compose_review_body(review_body, skipped_section, footer)
 
     payload = {
         "body": review_body,
@@ -2155,7 +2202,8 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
     # Footer computed against the ORIGINAL body — see the matching comment in
     # post_github for why a skipped finding's raw text must not be able to suppress it.
     footer = build_footer(len(findings), sha, body=review_body)
-    review_body += build_skipped_section(skipped_entries) + footer
+    skipped_section = build_skipped_section(skipped_entries)
+    review_body = compose_review_body(review_body, skipped_section, footer)
 
     # Post the review summary as a top-level MR note first
     summary_payload = {"body": review_body}
@@ -2210,7 +2258,7 @@ def post_gitlab(data, valid_lines, new_files, old_paths, line_texts):
             filepath,
             line,
             m.get("title", ""),
-            render_comment_body(_key_material_finding(m)),
+            key_material_body(m),
         )
 
     def deliver(f, filepath, line, make_body, keys):
