@@ -209,8 +209,9 @@ def _within(path, root):
 
 
 def _normalise_relative(path):
-    """Changed entries arrive with forward slashes; realpath does the rest of the
-    normalising for both the directory walk and the marker."""
+    """Convert Windows-style backslashes in a changed entry to forward slashes, so
+    the directory walk and the modified-in-diff marker both compare against realpath
+    output consistently; realpath does the rest of the normalising."""
     return str(path).replace("\\", "/")
 
 
@@ -560,6 +561,12 @@ def _gaps(collector):
     return gaps
 
 
+def _sources_without_text(sources):
+    """The receipt's view of a collected source: every field but the rule text,
+    which lives in --out. One definition serves the success and failure receipts."""
+    return [{k: v for k, v in s.items() if k != "text"} for s in sources]
+
+
 def _receipt(*, ok, out, sources, skipped, total_bytes, truncated, gaps):
     """Canonical receipt shape for stdout (and for _emit fallback)."""
     return {
@@ -658,10 +665,7 @@ def main(argv=None):
             _receipt(
                 ok=True,
                 out=args.out,
-                sources=[
-                    {k: v for k, v in s.items() if k != "text"}
-                    for s in collector.sources
-                ],
+                sources=_sources_without_text(collector.sources),
                 skipped=collector.skipped,
                 total_bytes=collector.total_bytes,
                 truncated=collector.truncated,
@@ -677,12 +681,7 @@ def main(argv=None):
             _receipt(
                 ok=False,
                 out=args.out,
-                sources=[
-                    {k: v for k, v in s.items() if k != "text"}
-                    for s in collector.sources
-                ]
-                if collector
-                else [],
+                sources=_sources_without_text(collector.sources) if collector else [],
                 skipped=collector.skipped if collector else [],
                 total_bytes=0,
                 truncated=False,
