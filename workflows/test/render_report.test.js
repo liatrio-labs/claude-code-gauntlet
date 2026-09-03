@@ -187,23 +187,44 @@ test('T-CORR: consolidation folds every non-primary and renders corroborator des
   assert.ok(report.includes('  Second-primary description.'));
 });
 
+test('T-ORIGIN: surfaced findings render their origin bullet only when surfaced', () => {
+  const bullet = '- **Origin:** surfaced — pre-existing, surfaced by this change';
+  const surfaced = rendered({ findings: [finding('S', { origin: 'surfaced' })] });
+  const newFinding = rendered({ findings: [finding('N', { origin: 'new' })] });
+  assert.ok(surfaced.includes(bullet));
+  assert.ok(!newFinding.includes(bullet));
+});
+
+test('T-CONTESTED: contested findings render their challenger bullet only when true', () => {
+  const bullet = '- **Contested:** the challenger could not confirm the cited location';
+  const contested = rendered({ findings: [finding('C', { challenge_contested: true })] });
+  const falseValue = rendered({ findings: [finding('F', { challenge_contested: false })] });
+  const absent = rendered({ findings: [finding('A')] });
+  assert.ok(contested.includes(bullet));
+  assert.ok(!falseValue.includes(bullet));
+  assert.ok(!absent.includes(bullet));
+});
+
 test('T-UNVER: unverified reasons distinguish verify gaps from challenge-cap skips', () => {
   const verifyClause = 'the verify slice could not be proven against the dispatched document';
   const challengeClause = 'the challenge cap was reached, so this finding was not challenge-verified';
+  const fallbackClause = 'a pipeline stage was skipped or failed';
   const report = rendered({
     findings: [finding('M')],
     unverified: [
       finding('U1', { origin: 'unknown' }),
       finding('U2', { challenge: 'skipped' }),
       finding('U3', { origin: 'unknown', challenge: 'skipped' }),
+      finding('U4'),
     ],
   });
   const [main, unverified] = report.split('## Unverified / pipeline-degraded findings');
   assert.ok(!main.includes('**Unverified because:**'));
-  assert.equal((unverified.match(/\*\*Unverified because:\*\*/g) || []).length, 3);
+  assert.equal((unverified.match(/\*\*Unverified because:\*\*/g) || []).length, 4);
   assert.ok(unverified.includes(`- **Unverified because:** ${verifyClause}`));
   assert.ok(unverified.includes(`- **Unverified because:** ${challengeClause}`));
   assert.ok(unverified.includes(`- **Unverified because:** ${verifyClause}; ${challengeClause}`));
+  assert.ok(unverified.includes(`- **Unverified because:** ${fallbackClause}`));
 });
 
 test('T-TABLE: the raw pre-consolidation dimensions table is the final section exactly once', () => {
