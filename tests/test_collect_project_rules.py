@@ -35,19 +35,22 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, REPO_ROOT)
 
+from scripts import collect_project_rules  # noqa: E402
 from scripts.collect_project_rules import (  # noqa: E402
     DEFAULT_MAX_FILES,
     MAX_IMPORT_DEPTH,
     PROJECT_RULE_FILENAMES,
-    _Collector,
+    _changed_path_sets,
     _find_imports,
     _strip_code,
     _within,
     main,
+    render,
 )
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "collect_project_rules.py")
@@ -455,6 +458,25 @@ class TestDiscovery(_RepoCase):
         _, _, body = self.run_script("--changed-files", changed)
         self.assertIn("DIR-RULE", body)
 
+    def test_windows_style_changed_entry_discovers_nested_rules(self):
+        self.write("pkg/sub/AGENTS.md", "NESTED-RULE\n")
+        changed = self.write("../changed.json", json.dumps([r"pkg\sub\x.py"]))
+        _, receipt, body = self.run_script("--changed-files", changed)
+        self.assertTrue(receipt["ok"])
+        self.assertIn("NESTED-RULE", body)
+
+    def test_windows_style_changed_entry_marks_nested_rule_modified(self):
+        self.write("pkg/sub/AGENTS.md", "NESTED-RULE\n")
+        changed = self.write("../changed.json", json.dumps([r"pkg\sub\AGENTS.md"]))
+        _, receipt, _ = self.run_script("--changed-files", changed)
+        self.assertEqual(
+            {
+                source["path"]: source["modified_in_diff"]
+                for source in receipt["sources"]
+            },
+            {"pkg/sub/AGENTS.md": True},
+        )
+
     def test_changed_files_rejects_malformed_input_without_crashing(self):
         self.write("CLAUDE.md", "ROOT-RULE\n")
         self.write("pkg/storage/AGENTS.md", "DIR-RULE\n")
@@ -496,7 +518,7 @@ class TestProvenance(_RepoCase):
                 body,
             )
             self.assertIn(f"### {path}\n", body)
-        self.assertIn("ROOT-RULE\n</project-rules>", body)
+        self.assertIn("ROOT-RULE\n\n</project-rules>", body)
         self.assertIn("AGENT-RULE\n</project-rules>", body)
         self.assertEqual(body[-1], "\n")
         self.assertTrue(all("text" not in source for source in receipt["sources"]))
@@ -550,7 +572,7 @@ class TestProvenance(_RepoCase):
             importer_body,
         )
 
-    def test_cal_com_symlink_changed_by_its_lexical_name_marks_displayed_source(self):
+    def test_cal_com_symlink_changed_by_claude_path_marks_displayed_source(self):
         self.write("AGENTS.md", "SYMLINK-RULE\n")
         os.symlink("AGENTS.md", os.path.join(self.repo, "CLAUDE.md"))
         changed = self.write("../changed.json", json.dumps(["CLAUDE.md"]))
@@ -563,22 +585,18 @@ class TestProvenance(_RepoCase):
             '<project-rules path="AGENTS.md" modified-in-this-diff="true">', body
         )
 
-    def test_lexical_alias_match_is_used_when_realpath_match_is_unavailable(self):
+    def test_cal_com_symlink_changed_by_agents_path_marks_displayed_source(self):
         self.write("AGENTS.md", "SYMLINK-RULE\n")
-        symlink = os.path.join(self.repo, "CLAUDE.md")
-        os.symlink("AGENTS.md", symlink)
-        collector = _Collector(self.repo, 65536, 131072, 512, ["CLAUDE.md"])
-        collector.changed_realpaths.clear()
-        real = os.path.realpath(os.path.join(self.repo, "AGENTS.md"))
-        collector.visit(
-            real,
-            "direct",
-            0,
-            (),
-            os.path.join(collector.repo_root, "CLAUDE.md"),
+        os.symlink("AGENTS.md", os.path.join(self.repo, "CLAUDE.md"))
+        changed = self.write("../changed.json", json.dumps(["AGENTS.md"]))
+        _, receipt, body = self.run_script("--changed-files", changed)
+        source = next(
+            source for source in receipt["sources"] if source["path"] == "AGENTS.md"
         )
-        self.assertEqual(collector.lexical_candidates[real], {"CLAUDE.md"})
-        self.assertTrue(collector.sources[0]["modified_in_diff"])
+        self.assertTrue(source["modified_in_diff"])
+        self.assertIn(
+            '<project-rules path="AGENTS.md" modified-in-this-diff="true">', body
+        )
 
     def test_changed_entries_accept_prefixes_and_dicts_and_ignore_deleted_files(self):
         self.write("CLAUDE.md", "ROOT-RULE\n")
@@ -588,6 +606,36 @@ class TestProvenance(_RepoCase):
         )
         _, receipt, _ = self.run_script("--changed-files", changed)
         self.assertTrue(receipt["sources"][0]["modified_in_diff"])
+
+    def test_deleted_changed_entry_keeps_existing_source_unmodified(self):
+        self.write("AGENTS.md", "AGENT-RULE\n")
+        changed = self.write("../changed.json", json.dumps(["deleted-file.md"]))
+        _, receipt, _ = self.run_script("--changed-files", changed)
+        self.assertFalse(receipt["sources"][0]["modified_in_diff"])
+
+    def test_render_preserves_extra_trailing_newlines(self):
+        rendered = render([{"path": "p", "text": "A\n\n"}])
+        self.assertIn("### p\nA\n\n</project-rules>", rendered)
+
+    def test_failure_receipt_includes_collected_source_projection(self):
+        self.write("CLAUDE.md", "ROOT-RULE\n")
+        calls = []
+        real_write = collect_project_rules.write_text_atomic
+
+        def fail_once(path, text):
+            calls.append((path, text))
+            if len(calls) == 1:
+                raise OSError("write failed")
+            return real_write(path, text)
+
+        with mock.patch.object(collect_project_rules, "write_text_atomic", fail_once):
+            code, receipt, _ = self.run_script()
+
+        self.assertEqual(code, 1)
+        self.assertFalse(receipt["ok"])
+        self.assertEqual(1, len(receipt["sources"]))
+        self.assertIn("modified_in_diff", receipt["sources"][0])
+        self.assertNotIn("text", receipt["sources"][0])
 
     def test_receipt_modified_flags_match_every_rendered_attribute(self):
         self.write("CLAUDE.md", "ROOT-RULE\n")
@@ -692,6 +740,19 @@ class TestDisclosureContract(_RepoCase):
 
 
 class TestPureHelpers(unittest.TestCase):
+    def test_changed_realpaths_exclude_entries_outside_repo(self):
+        base = tempfile.mkdtemp(prefix="cpr-boundary-")
+        self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        repo = os.path.join(base, "repo")
+        os.makedirs(repo)
+        outside = os.path.join(base, "outside.md")
+        with open(outside, "w") as handle:
+            handle.write("OUTSIDE\n")
+
+        realpaths = _changed_path_sets(repo, ["../outside.md"])
+
+        self.assertEqual(set(), realpaths)
+
     def test_strip_code_blanks_fences_and_spans(self):
         text = "a `@x.md` b\n```\n@y.md\n```\n@z.md\n"
         stripped = _strip_code(text)
