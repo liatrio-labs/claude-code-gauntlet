@@ -519,8 +519,10 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
         ]
     if symbol == "chat_identity":
         return [
-            f"The final delivery summary opens with `{mark} {name}` on its first line and "
-            "carries no other",
+            (
+                f"The final delivery summary opens with `{mark} {name}` on its first line and "
+                + "carries no other"
+            ),
             "emoji, except severity emoji when listing findings.",
         ]
     if symbol == "inline_legend":
@@ -530,8 +532,10 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
     if key == (REPORT_FORMAT_REL, "severity_legend"):
         return [
             f"Product mark: {mark} ({name}). Severity emoji: {commas}.",
-            "Always use the Unicode characters, never GitHub shortcodes (`:red_circle:`) — "
-            "shortcodes do",
+            (
+                "Always use the Unicode characters, never GitHub shortcodes (`:red_circle:`) — "
+                + "shortcodes do"
+            ),
             "not render in terminal/chat output.",
         ]
     if symbol == "severity_legend":
