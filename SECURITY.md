@@ -75,7 +75,9 @@ split is deliberate; it was decided on issue #82 (2026-08-02).
   crafted rule file that gets content *out* of the pipeline — into a posted comment, a report, or a shell — is
   the in-scope case below, which is why `REVIEW.md` appears on both sides of this split. If
   suppression through rule text is ever observed in a real run, the recorded escalation is to read rule files
-  from the merge base instead of the PR head; it is held in reserve, not implemented.
+  from the merge base instead of the PR head; it is held in reserve, not implemented. The ingested block is
+  code-tagged per source with its path and whether the diff under review modifies it, so an agent can weigh
+  provenance; this is provenance, not a filter.
 - **Anything that leaves the pipeline is untrusted, whatever its source.** Repository-derived text that reaches a
   posted PR/MR comment, a rendered report, or a shell invocation stays fully inside the in-scope injection
   classes below.

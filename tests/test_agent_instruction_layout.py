@@ -190,7 +190,10 @@ CODEX_CAP_BYTES = 32_768
 # 92.9 -> 93.5, JS branches 87.3 -> 88.3) extended the floors-and-provenance paragraph
 # to name the #276 PR CI measurement (94.52 / 89.39) — same policy, same shape as the
 # raises above.
-AGENTS_SET_BUDGET_BYTES = 21_674
+# Raised 21_674 -> 21_803 (2026-09-03, #283): the coverage floor ratchet (scripts
+# 93.5 -> 93.6, JS branches 88.3 -> 88.4) names the #283 PR CI measurement
+# (94.62 / 89.48) in the same paragraph, same shape as the raises above.
+AGENTS_SET_BUDGET_BYTES = 21_803
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
