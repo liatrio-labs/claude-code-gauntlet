@@ -193,6 +193,7 @@ smoke:        $21.11–$32.04 across 14 runs (mean ~$27, 16–22 min/PR)
 mini-subset:  $84.18 (custom-20260723-070640-c1dd46f)
               $77.73 (custom-20260723-102149-381e9ff, of record: recall 19/30=0.6333, noise 0.2233)
               $54.92 (mini-20260901-170531-2cb9104, v3.24 post-#273 check: recall 19/30=0.6333, noise 0.1786)
+              $51.02 (mini-20260903-204424-e8b3af7, post-#283 check: recall 20/30=0.6667, noise 0.1379)
 full-15:      $190.72–$229.88
 holdout:      $169.34 (holdout-20260721-085348-eec15be, recall 0.7407, noise 0.2095 — sealed for V3.2)
 scoring:      ~$2/run;  M4 trivial fixture: ~$3
