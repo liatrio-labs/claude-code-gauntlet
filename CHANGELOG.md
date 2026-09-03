@@ -2,6 +2,41 @@
 
 <!-- version list -->
 
+## v3.26.0 (2026-09-03)
+
+### Bug Fixes
+
+- **rules**: Realpath-only marker, verbatim text, normalised changed entries, failure receipt
+  sources ([#283](https://github.com/liatrio-labs/claude-code-gauntlet/pull/283),
+  [`e8b3af7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e8b3af723456d0626e1387d254dcd796fdc8a629))
+
+### Chores
+
+- **ci**: Ratchet coverage floors from the #283 CI measurement
+  ([#283](https://github.com/liatrio-labs/claude-code-gauntlet/pull/283),
+  [`e8b3af7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e8b3af723456d0626e1387d254dcd796fdc8a629))
+
+### Features
+
+- **rules**: Code-emitted provenance wrapper on project-rules sources
+  ([#283](https://github.com/liatrio-labs/claude-code-gauntlet/pull/283),
+  [`e8b3af7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e8b3af723456d0626e1387d254dcd796fdc8a629))
+
+- **rules**: Code-emitted provenance wrapper on project-rules sources (#82)
+  ([#283](https://github.com/liatrio-labs/claude-code-gauntlet/pull/283),
+  [`e8b3af7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e8b3af723456d0626e1387d254dcd796fdc8a629))
+
+### Refactoring
+
+- **rules**: Drop dead normpath in changed-entry normalisation
+  ([#283](https://github.com/liatrio-labs/claude-code-gauntlet/pull/283),
+  [`e8b3af7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e8b3af723456d0626e1387d254dcd796fdc8a629))
+
+- **rules**: Single receipt-source projection, clearer normalise docstring
+  ([#283](https://github.com/liatrio-labs/claude-code-gauntlet/pull/283),
+  [`e8b3af7`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/e8b3af723456d0626e1387d254dcd796fdc8a629))
+
+
 ## v3.25.0 (2026-09-03)
 
 ### Bug Fixes
