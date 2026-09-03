@@ -63,7 +63,9 @@ With neither `--out-json` nor `--out-md`, both are printed to stdout. `RUN_ID` i
   `merge`/`filter` transform phases (no agent — see `workflows/src/stages.js`
   `runPhase('merge', ...)` / `runPhase('filter', ...)`; only observable as the gap
   between the stages either side), `verify-input-writer-*`, `verify-slice-*`,
-  `validate-batch-*`, `challenge-*`, `report-writer`, `artifact-writer`. `avg
+  `validate-batch-*`, `challenge-*`, `report-writer`, `artifact-writer`. No
+  `report-writer` bucket exists in runs after v3.25 — the Report stage dispatches
+  nothing. The bucket is kept so the archived corpus still profiles. `avg
   concurrency` = agent-seconds used / stage span (how "full" the stage was on
   average); `max concurrency` is the actual peak overlap from a sweep-line over each
   agent's `[startedAt, startedAt+durationMs]` interval (closed; a touching start/end

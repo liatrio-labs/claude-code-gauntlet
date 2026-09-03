@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, LIMIT_DEFAULTS,
-  resolveReviewConfig, computeLightEligible,
+  resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys,
 } from '../src/args.js';
 
 const good = {
@@ -129,6 +129,37 @@ test('validateArgs rejects a malformed delivery.prIdentity (shape-checked when p
   const r2 = validateArgs({ ...good, delivery: { prIdentity: 'org/repo#310' } });
   assert.equal(r2.ok, false);
   assert.match(r2.errors.join(' '), /prIdentity must be an object/);
+});
+test('T-ARGS: prIdentity.title is optional, shape-checked, and null-stripped without caller mutation', () => {
+  const id = { owner: 'o', repo: 'r', pr_number: 310, sha_full: 'deadbeefcafe' };
+  assert.deepEqual(
+    validateArgs({ ...good, delivery: { prIdentity: { ...id, title: 'A useful title' } } }),
+    { ok: true, errors: [] },
+  );
+  assert.deepEqual(
+    validateArgs({ ...good, delivery: { prIdentity: id } }),
+    { ok: true, errors: [] },
+  );
+  for (const title of [5, '  ']) {
+    const result = validateArgs({ ...good, delivery: { prIdentity: { ...id, title } } });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.includes('delivery.prIdentity.title must be a non-empty string when present'));
+  }
+
+  const caller = { ...good, delivery: { prIdentity: { ...id, title: null } } };
+  const beforeIdentity = caller.delivery.prIdentity;
+  const { args: stripped, dropped } = stripNullOptionalsReport(caller);
+  assert.deepEqual(dropped, ['delivery.prIdentity.title']);
+  assert.deepEqual(stripped.delivery.prIdentity, id);
+  assert.equal(caller.delivery.prIdentity, beforeIdentity);
+  assert.equal(caller.delivery.prIdentity.title, null);
+  assert.match(nullToleranceGap('delivery.prIdentity.title'), /falls back to owner\/repo#N/);
+});
+test('T-ARGS-NULL: a two-level null probe is rejected and disclosed', () => {
+  assert.deepEqual(
+    nullToleranceRejectedKeys(good, ['delivery.prIdentity.title']),
+    ['delivery.prIdentity.title'],
+  );
 });
 // Entry-args guard (live-run L1; superseded by issue #27's classified refusal design —
 // see entry_guard.test.js): a raw-string invocation ("PR 310") must throw an actionable

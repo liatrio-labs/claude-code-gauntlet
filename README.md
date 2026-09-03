@@ -151,9 +151,8 @@ The rationale behind these choices — concern decomposition, blind challenge, c
 ```
 claude-code-gauntlet/
 ├── .claude-plugin/            # Plugin + marketplace manifests
-├── agents/                    # 13 named subagents: 7 discovery, change-summarizer,
-│                              #   validator, challenger, executor, report-writer,
-│                              #   artifact-writer
+├── agents/                    # **12** named subagents: 7 discovery, change-summarizer,
+│                              #   validator, challenger, executor, artifact-writer
 ├── workflows/                 # Review pipeline: src/ (ESM modules), build.js (bundler),
 │                              #   pipeline.js (generated bundle), test/ (node --test)
 ├── scripts/                   # Stdlib-only Python: verify_findings.py and

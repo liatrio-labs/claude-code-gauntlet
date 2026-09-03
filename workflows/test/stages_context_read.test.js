@@ -406,8 +406,8 @@ test('runWith: threads the measured size from the args waist into summarize, dis
     assert.match(call.prompt, /exactly 4 Read calls/, `${call.label} got the context path without the read plan`);
   }
   // The challenger is deliberately excluded — it is blind by design and never given the
-  // context path — and so is the report-writer (issue #38 R1). Neither may acquire it here.
-  for (const label of ['report-writer', 'artifact-writer']) {
+  // context path. The artifact writer must not acquire it either.
+  for (const label of ['artifact-writer']) {
     const calls = ctx.calls.filter((c) => (c.label || '').startsWith(label));
     for (const c of calls) assert.doesNotMatch(c.prompt, /Read the shared context/, `${label} must not read the shared context`);
   }

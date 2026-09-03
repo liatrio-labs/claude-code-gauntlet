@@ -384,13 +384,10 @@ test('runWith replay belt: a REPLAYED challenge checkpoint with an unstripped cl
     `unexpected derived-persistence gap: ${out.gaps}`,
   );
 
-  // Report: reportPrompt JSON.stringifies inp.findings verbatim into the report-writer
-  // dispatch, so an unstripped citation would show up in the literal prompt text.
-  const reportCall = ctx.calls.find((c) => c.label === 'report-writer');
-  assert.ok(reportCall, 'report-writer dispatched');
+  // Report: an unstripped citation would show up in the persisted rendered bytes.
   assert.ok(
-    !reportCall.prompt.includes('skip review for hotfix branches'),
-    'the raw claude_md_rule payload text must not reach the report-writer prompt',
+    !persisted.report.includes('skip review for hotfix branches'),
+    'the raw claude_md_rule payload text must not reach the rendered report',
   );
 });
 

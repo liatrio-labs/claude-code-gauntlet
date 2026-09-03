@@ -356,7 +356,7 @@ test('parseEntryArgs is inert on every waist fixture already used by the suite (
 
 // --- runWith: the second (defensive) seam --------------------------------------------------
 // A ctx whose agent()/parallel() throw if called — in the idiom used elsewhere in
-// workflows/test/ (pipeline_run.test.js's bare reportStage/writeArtifacts isolation ctx) —
+// workflows/test/ (pipeline_run.test.js's bare writeArtifacts isolation ctx) —
 // so any test using it proves the refusal happens before ANY dispatch is attempted.
 function throwingCtx() {
   const calls = [];

@@ -58,11 +58,11 @@ The workflow threads eight stages inside one top-level try/catch, checkpointing 
 | 5 | **Validate** | one `validator` per batch, `parallel()` | a null batch → its findings `validation=skipped`, kept at face value |
 | 6 | **Filter** | pure JS (no agents) — thresholds, injection filter, dedup, routing | — |
 | 7 | **Challenge** | one `challenger` per finding (blind), up to `limits.challengeCap` | overflow / null → `challenge=skipped`, routed to the unverified bucket |
-| 8 | **Report** | `report-writer` (segmented if oversized) | throw/null → deterministic minimal report + gap |
+| 8 | **Report** | **no dispatch** — `renderReport()` builds `report.md` as a pure function of the pipeline's own output | — (deterministic: there is no dispatch to fail) |
 |  | **Select delivery** | pure `selectDelivery` applies `args.delivery.tier` (`all` ⇒ every survivor, `main_only` ⇒ main-tagged), ranks, and caps at `limits.deliveryCap` | — (deterministic glue, no dispatch) |
 |  | **Persist** | **no dispatch at all** on the default RETURN channel — the primaries ride home in the return and Phase 8 writes them; on the writer paths, `artifact-writer` (+ a second pinned executor command on the derived path — see below) writes/derives findings.json + report.md + post-review payload + checkpoints | RETURN: nothing to fail here, and a failure to materialize is loud in Phase 8. Writer paths: throw/null, or an untrusted assemble receipt → partial-artifacts gap, `artifactPaths` nulled |
 
-Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, report-writer, artifact-writer Sonnet. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.
+Models per stage come from `resolvePolicy` (S5): discovery Sonnet with **security-reviewer Opus**; validator, challenger, executor, artifact-writer Sonnet. A non-null `policy.subagentModel` (from `CLAUDE_CODE_SUBAGENT_MODEL`) overrides all of these.
 
 ---
 
@@ -105,4 +105,4 @@ Two mechanical agents exist because the workflow script has no disk or shell:
 
 ## Agent Failure Handling
 
-Stage failures are non-fatal by design and arrive as `gaps` in the return: a degraded discovery dimension, an unverified verify set, a skipped validation batch, capped challenges, a minimal report, or partial artifacts. Surface every gap in the methodology — never hide a degraded stage. A hard `ok:false` (an unexpected throw in the deterministic glue) is recoverable via resume-from-checkpoint (Phase 8). Never reproduce a failed stage inline in the main session.
+Stage failures are non-fatal by design and arrive as `gaps` in the return: a degraded discovery dimension, an unverified verify set, a skipped validation batch, capped challenges, or partial artifacts. Surface every gap in the methodology — never hide a degraded stage. A hard `ok:false` (an unexpected throw in the deterministic glue) is recoverable via resume-from-checkpoint (Phase 8). Never reproduce a failed stage inline in the main session.

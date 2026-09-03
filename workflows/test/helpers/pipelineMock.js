@@ -131,14 +131,12 @@ export function validArgs(over = {}) {
 // makeCtx(args, opts) — platform-contract mock. Every agent() dispatch asserts the
 // contract (recording any breach in ctx.violations so the sweep test surfaces even a
 // null-isolated one). Records each dispatch's opts on `calls`. Options:
-//   - agentThrowLabel: agent() throws when opts.label === this (report/writer tests)
+//   - agentThrowLabel: agent() throws when opts.label === this (writer tests)
 //   - parallelThrows: parallel() itself throws (simulates a platform/glue failure —
 //     the ONLY realistic way a throw reaches runWith's top-level catch, since member
 //     failures null-isolate and every single-dispatch stage catches its own throw)
 //   - onPersist(payload): called with the parsed writer payload at the artifact-writer
 //     dispatch (lets a test/recorder capture the REAL persisted findings/checkpoints)
-//   - reportText: when present, the report-writer returns this exact string (drives the
-//     empty-report guard — e.g. '' or '   ' for a whitespace-only false-negative report)
 //   - findings: replaces the default makeFindings() set that bug-detector discovers. Under
 //     the delta echo (issue #25 PR2) the verify-slice executor never receives or returns the
 //     finding itself — only a per-id DECISION — so a specific finding shape (e.g. a long
@@ -225,11 +223,6 @@ export function makeCtx(args, opts = {}) {
     }
     if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };
-    if (label === 'report-writer' || label.startsWith('report-writer-')) {
-      // reportText override lets a test drive the empty-report guard (e.g. a
-      // whitespace-only report the writer returned as a false negative).
-      return { report: 'reportText' in opts ? opts.reportText : `# Code Gauntlet\n\nrendered ${label}` };
-    }
     if (label === 'artifact-writer') {
       if (opts.onPersist) opts.onPersist(parseWriterPayload(prompt));
       // Faithful writer: echo the exact planned paths so writeArtifacts' write-proof gate

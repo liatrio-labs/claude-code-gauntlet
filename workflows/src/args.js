@@ -141,6 +141,7 @@ const NULL_TOLERANCE_CONSEQUENCE = {
   delivery: 'delivery falls back to tier "all" with no PR identity',
   'delivery.tier': 'delivery falls back to tier "all", so a narrowing intent is lost',
   'delivery.prIdentity': 'the post-review artifact is persisted as a bare findings array instead of the post_review-ready wrapper',
+  'delivery.prIdentity.title': 'the report title falls back to owner/repo#N (or "local changes")',
   checkpoints: 'no resume state is replayed — every phase re-runs from scratch',
   persist: 'the artifact-writer takes the legacy full by-value persist path',
   scopeAnswer: 'the scope gate is treated as never having been asked, so deriveAgentFlags cannot honour a light answer',
@@ -174,18 +175,26 @@ export function nullToleranceRejectedKeys(cleanArgs, dropped) {
   return dropped.filter((key) => validateArgs(withNullAt(cleanArgs, key)).errors.length > baseline);
 }
 
-// The stripped waist with ONE dropped null put back, addressed by the same key spelling
-// stripNullOptionalsReport reports (`delivery.tier` / `delivery.prIdentity` are the only
-// nested forms today).
+// The stripped waist with ONE dropped null put back, addressed by the same full dotted
+// path spelling stripNullOptionalsReport reports. Every traversed level is shallow-copied,
+// so an arbitrarily deep optional can be probed without mutating the caller's waist.
 function withNullAt(args, key) {
   const base = (args && typeof args === 'object' && !Array.isArray(args)) ? args : {};
-  const dot = key.indexOf('.');
-  if (dot === -1) return { ...base, [key]: null };
-  const parent = key.slice(0, dot);
-  const child = key.slice(dot + 1);
-  const parentValue = base[parent];
-  const parentObject = (parentValue && typeof parentValue === 'object' && !Array.isArray(parentValue)) ? parentValue : {};
-  return { ...base, [parent]: { ...parentObject, [child]: null } };
+  const parts = key.split('.');
+  const out = { ...base };
+  let source = base;
+  let target = out;
+  for (const part of parts.slice(0, -1)) {
+    const value = source && typeof source === 'object' && !Array.isArray(source)
+      ? source[part]
+      : undefined;
+    const copy = value && typeof value === 'object' && !Array.isArray(value) ? { ...value } : {};
+    target[part] = copy;
+    target = copy;
+    source = value;
+  }
+  target[parts.at(-1)] = null;
+  return out;
 }
 
 // stripNullOptionalsReport(args) -> { args, dropped }
@@ -206,6 +215,17 @@ export function stripNullOptionalsReport(args) {
   if (out.delivery && typeof out.delivery === 'object' && !Array.isArray(out.delivery)) {
     const delivery = { ...out.delivery };
     if (delivery.prIdentity === null) { delete delivery.prIdentity; dropped.push('delivery.prIdentity'); }
+    if (
+      delivery.prIdentity
+      && typeof delivery.prIdentity === 'object'
+      && !Array.isArray(delivery.prIdentity)
+      && delivery.prIdentity.title === null
+    ) {
+      const id = { ...delivery.prIdentity };
+      delete id.title;
+      delivery.prIdentity = id;
+      dropped.push('delivery.prIdentity.title');
+    }
     if (delivery.tier === null) { delete delivery.tier; dropped.push('delivery.tier'); }
     out.delivery = delivery;
   }
@@ -789,12 +809,15 @@ export function validateArgs(args) {
       const id = args.delivery.prIdentity;
       if (id !== undefined) {
         if (id === null || typeof id !== 'object' || Array.isArray(id)) {
-          errors.push('delivery.prIdentity must be an object { owner, repo, pr_number, sha_full } when present');
+          errors.push('delivery.prIdentity must be an object { owner, repo, pr_number, sha_full[, title] } when present');
         } else {
           if (typeof id.owner !== 'string' || !id.owner) errors.push('delivery.prIdentity.owner must be a non-empty string');
           if (typeof id.repo !== 'string' || !id.repo) errors.push('delivery.prIdentity.repo must be a non-empty string');
           if (typeof id.pr_number !== 'number') errors.push('delivery.prIdentity.pr_number must be a number');
           if (typeof id.sha_full !== 'string' || !id.sha_full) errors.push('delivery.prIdentity.sha_full must be a non-empty string');
+          if (id.title !== undefined && (typeof id.title !== 'string' || !id.title.trim())) {
+            errors.push('delivery.prIdentity.title must be a non-empty string when present');
+          }
         }
       }
     }

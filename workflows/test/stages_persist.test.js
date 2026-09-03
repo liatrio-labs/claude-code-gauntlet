@@ -68,6 +68,38 @@ function persistInput(over = {}) {
   return { ...base, ...over, findings };
 }
 
+test('test_prIdentity_title_never_reaches_the_post_review_wrapper', () => {
+  const finding = makeFinding('F1');
+  const payload = writerPayload({
+    findings: [finding],
+    postReview: [finding],
+    report: '# report',
+    checkpoints: {},
+    prIdentity: {
+      owner: 'acme',
+      repo: 'widget',
+      pr_number: 36,
+      sha_full: 'deadbeefcafe',
+      title: 'Must not leak',
+    },
+  });
+  assert.deepEqual(payload.postReview, {
+    owner: 'acme',
+    repo: 'widget',
+    pr_number: 36,
+    sha: 'deadbeefcafe',
+    review_body: '',
+    findings: [
+      {
+        ...finding,
+        line: finding.line_start,
+        end_line: finding.line_end,
+        body: finding.description,
+      },
+    ],
+  });
+});
+
 // The receipt an HONEST assemble_artifacts.py run would return for `plan`: it echoes the
 // plan's own checksum and the plan's own expectations. Built from the plan the writer was
 // actually handed, because trustAssembleReceipt now grades the receipt against the values

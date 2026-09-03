@@ -18,7 +18,11 @@ function runTool(lcovPath, overrideScopePath) {
 }
 
 function trackedFiles() {
-  const result = spawnSync('git', ['ls-files', '-z'], { cwd: repo, encoding: 'buffer' });
+  const result = spawnSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    { cwd: repo, encoding: 'buffer' },
+  );
   assert.equal(result.status, 0, result.stderr?.toString());
   return result.stdout.toString('utf8').split('\0').filter(Boolean);
 }

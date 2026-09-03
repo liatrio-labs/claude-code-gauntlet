@@ -20,7 +20,11 @@ if (!lcovPath) {
 }
 
 function gitLsFiles() {
-  const r = spawnSync('git', ['ls-files', '-z'], { cwd: REPO, encoding: 'buffer' });
+  const r = spawnSync(
+    'git',
+    ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
+    { cwd: REPO, encoding: 'buffer' },
+  );
   if (r.status !== 0) {
     process.stderr.write(r.stderr?.toString() || 'git ls-files failed\n');
     process.exit(2);
