@@ -2,6 +2,77 @@
 
 <!-- version list -->
 
+## v3.25.0 (2026-09-03)
+
+### Bug Fixes
+
+- **checkpoints**: Refuse schema-malformed replayed findings at the shape gate; pin the footer-label
+  ban and the position-less trailer
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **report**: Always render on replay; one exclusion mechanism; unknown-severity counts
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **report**: Total renderer over malformed replayed findings; one severity order for headings and
+  counts ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **review**: Address the PR #276 gauntlet findings (doc typo, three renderer test gaps, placeholder
+  issue ref) ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+### Chores
+
+- **ci**: Ratchet scripts and JS-branches floors from the #276 CI measurement; explicit
+  concatenation in identity bodies
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+### Documentation
+
+- **bench**: Record the v3.24 post-#273 paired mini; ignore uv.lock
+  ([#274](https://github.com/liatrio-labs/claude-code-gauntlet/pull/274),
+  [`672a512`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/672a51238d0e86a78be7cbc3b17b407cca0ef658))
+
+### Features
+
+- **conventions**: Chat emoji convention, headless line-anchor guard, adjacent retargets
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **delivery**: Brand the inline comment trailer and the summary comment header
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **identity**: One canonical source for the brand mark and severity emoji
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **report**: Render the report in code, brand every delivered surface (#36, #67, #181)
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **report**: Render the report in code; delete the report-writer agent (#36, #67, #181)
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+### Testing
+
+- **delivery**: Harden the S2 review-round-2 pins; generate the inline-comment doc samples
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **guards**: Exact STAGE_DEFAULTS table pin; instruction-layout guard fails loudly on a missing
+  tracked file ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+- **layout**: Raise the AGENTS.md size ratchet for the #276 floor-history sentence
+  ([#276](https://github.com/liatrio-labs/claude-code-gauntlet/pull/276),
+  [`d617c56`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/d617c568dc52ba3a43d1985e8e152e7473de37b2))
+
+
 ## v3.24.0 (2026-09-01)
 
 ### Chores
