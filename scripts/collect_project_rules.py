@@ -209,8 +209,9 @@ def _within(path, root):
 
 
 def _normalise_relative(path):
-    """Normalise a repository-relative path for changed-file comparisons."""
-    return os.path.normpath(str(path).replace("\\", "/"))
+    """Changed entries arrive with forward slashes; realpath does the rest of the
+    normalising for both the directory walk and the marker."""
+    return str(path).replace("\\", "/")
 
 
 def _changed_path_sets(repo_root, changed_files):
