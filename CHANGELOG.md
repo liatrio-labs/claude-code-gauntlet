@@ -2,6 +2,49 @@
 
 <!-- version list -->
 
+## v3.27.0 (2026-09-04)
+
+### Bug Fixes
+
+- **review**: Address the code-gauntlet LOWs on #285
+  ([#285](https://github.com/liatrio-labs/claude-code-gauntlet/pull/285),
+  [`58d5c2c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/58d5c2c2759ce598924c6fea04edf6cd7b2a2577))
+
+### Chores
+
+- **bench**: Ledger row for mini-20260903-204424-e8b3af7
+  ([#284](https://github.com/liatrio-labs/claude-code-gauntlet/pull/284),
+  [`9874b9e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9874b9eeb89b5dba0464aa353b0c3118b7d4f086))
+
+- **ci**: Ratchet coverage floors from the #285 CI measurement (Python 93.7, JS branches 88.6)
+  ([#285](https://github.com/liatrio-labs/claude-code-gauntlet/pull/285),
+  [`58d5c2c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/58d5c2c2759ce598924c6fea04edf6cd7b2a2577))
+
+### Documentation
+
+- **agents**: Compress the coverage-floor history to stay inside the AGENTS.md budget
+  ([#285](https://github.com/liatrio-labs/claude-code-gauntlet/pull/285),
+  [`58d5c2c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/58d5c2c2759ce598924c6fea04edf6cd7b2a2577))
+
+- **apply_validations**: Describe the optional reachability field in the bridge docstrings
+  ([#285](https://github.com/liatrio-labs/claude-code-gauntlet/pull/285),
+  [`58d5c2c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/58d5c2c2759ce598924c6fea04edf6cd7b2a2577))
+
+- **readme**: Point the latest-measurement paragraph at the 2026-09-03 mini
+  ([#284](https://github.com/liatrio-labs/claude-code-gauntlet/pull/284),
+  [`9874b9e`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/9874b9eeb89b5dba0464aa353b0c3118b7d4f086))
+
+### Features
+
+- **validate**: Structured reachability replaces the validator 65 cap (#115)
+  ([#285](https://github.com/liatrio-labs/claude-code-gauntlet/pull/285),
+  [`58d5c2c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/58d5c2c2759ce598924c6fea04edf6cd7b2a2577))
+
+- **validate**: Structured reachability replaces the validator's 65 cap
+  ([#285](https://github.com/liatrio-labs/claude-code-gauntlet/pull/285),
+  [`58d5c2c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/58d5c2c2759ce598924c6fea04edf6cd7b2a2577))
+
+
 ## v3.26.0 (2026-09-03)
 
 ### Bug Fixes
