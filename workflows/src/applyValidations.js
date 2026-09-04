@@ -2,7 +2,7 @@
 // (apply_validations). Merges validator confidence adjustments into a list
 // of findings in place: matches by id, clamps confidence to [0, 100], sets
 // original_confidence once (first validation only), and copies a truthy
-// justification.
+// justification plus a known reachability classification.
 
 // Replicate Python int(): accepts a JS number (truncate toward zero, matching
 // Python's int(float) truncation direction -- confirmed against the running
@@ -27,6 +27,8 @@ export function pyIntStrict(v) {
   return null; // None/object -> skip (int(None) raises TypeError in Python;
   // a plain object has no int() coercion path either).
 }
+
+export const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 
 export function applyValidations(findings, validations) {
   // Build id -> finding index for O(n) lookup (matches Python's finding_by_id).
@@ -66,6 +68,8 @@ export function applyValidations(findings, validations) {
 
     const justification = 'justification' in validation ? validation.justification : undefined;
     if (justification) finding.validation_justification = justification;
+    const reachability = 'reachability' in validation ? validation.reachability : undefined;
+    if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
 
     adjustedCount += 1;
   }

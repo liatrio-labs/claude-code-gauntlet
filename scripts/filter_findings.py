@@ -46,6 +46,7 @@ Output JSON schema:
             "consensus_boosted":       N,   # confidence boosted for co-location (same file + 10-line bucket, any agent)
             "singleton_penalized":     N,   # singleton findings penalized -15 confidence (non-core dims)
             "dimension_routed":        N,   # findings routed to suggestion by dimension (BF-15a)
+            "reachability_demoted":    N,   # findings stamped by reachability demotion
             "cross_agent_consolidated": N,   # cross-agent findings stamped (never dropped) with consolidation_key
             "test_analyzer_promoted":  N,   # test-analyzer findings promoted to main report
             "tagged_main":             N,   # tagged for main report
@@ -72,6 +73,9 @@ Each filtered finding includes:
     # "suggested_fix_code" itself may be absent after filtering -- it is
     # deleted, not nulled, whenever suggested_fix_code_removed_by is present
     # (#63/D8, mirrors the suggestion contract above).
+    "original_severity": <severity before a reachability demotion, when changed>
+    "demoted_by": "reachability"  # present for future_change_only validator findings
+    "demotion_reason": "validator found no code path that reaches this issue without a future change"
 
 REVIEW.md parsing:
     Looks for a fenced code block or YAML-style section containing:
@@ -585,6 +589,40 @@ def apply_threshold_filter(findings, config):
         passed.append(finding)
 
     return passed, eliminated, contested_count
+
+
+# ---------------------------------------------------------------------------
+# Filter: validator reachability demotion
+# ---------------------------------------------------------------------------
+
+
+_REACHABILITY_DEMOTION_REASON = (
+    "validator found no code path that reaches this issue without a future change"
+)
+
+
+def apply_reachability_demotion(findings):
+    """Demote future-change-only findings to low severity without eliminating them.
+
+    Every matching finding receives the reachability stamps, including a finding
+    already at low severity. ``original_severity`` is recorded only when the
+    severity value changes.
+
+    Returns (findings, demoted_count); the input list and its findings are
+    mutated in place.
+    """
+    demoted_count = 0
+    for finding in findings:
+        if finding.get("reachability") != "future_change_only":
+            continue
+        if finding.get("severity") != "low":
+            if "severity" in finding:
+                finding["original_severity"] = finding["severity"]
+            finding["severity"] = "low"
+        finding["demoted_by"] = "reachability"
+        finding["demotion_reason"] = _REACHABILITY_DEMOTION_REASON
+        demoted_count += 1
+    return findings, demoted_count
 
 
 # ---------------------------------------------------------------------------
@@ -1988,13 +2026,16 @@ def tag_findings(findings):
     consolidation_key and one consolidation_primary, chosen by core-dimension,
     then confidence, then description length (see consolidate_cross_agent).
 
-    Step 2 — Dimension-based routing (BF-15a): Check the finding's dimension field
+    Step 2 — Reachability routing: a reachability-demoted finding always routes to
+    suggestion and receives ``routed_by="reachability"``.
+
+    Step 3 — Dimension-based routing (BF-15a): Check the finding's dimension field
     first. Dimensions like bug/security/cross_file_impact/intent always route to main.
     Dimensions like comment_accuracy always route to suggestion. Conditional dimensions
     (test_coverage, convention, type_design) route to suggestion unless functional-
     violation keywords are present.
 
-    Step 3 — Agent-based routing (fallback): If dimension routing returned None
+    Step 4 — Agent-based routing (fallback): If dimension routing returned None
     (unknown or missing dimension), fall back to agent-based rules:
 
       Agent routing:
@@ -2038,42 +2079,46 @@ def tag_findings(findings):
             else set()
         )
 
-        # Step 2: Try dimension-based routing first (BF-15a)
-        dim_route = _route_by_dimension(finding)
-        if dim_route is not None:
-            destination = dim_route
-            if dim_route == "suggestion":
-                finding["routed_by"] = "dimension"
+        # Step 2: Reachability demotion takes precedence over every other route.
+        if finding.get("demoted_by") == "reachability":
+            destination = "suggestion"
+            finding["routed_by"] = "reachability"
         else:
-            # Step 3: Fall back to agent-based routing
-            if agent in _MAIN_REPORT_AGENTS:
-                destination = "main"
-
-            elif agent == _CONVENTIONS_AGENT:
-                # Pass 3 (comment accuracy) -> suggestion; passes 1-2 -> main
-                if dimensions & _COMMENT_ACCURACY_DIMENSIONS:
-                    destination = "suggestion"
-                else:
+            # Step 3: Try dimension-based routing first (BF-15a)
+            dim_route = _route_by_dimension(finding)
+            if dim_route is not None:
+                destination = dim_route
+                if dim_route == "suggestion":
+                    finding["routed_by"] = "dimension"
+            else:
+                # Step 4: Fall back to agent-based routing
+                if agent in _MAIN_REPORT_AGENTS:
                     destination = "main"
 
-            elif agent in _SUGGESTION_AGENTS:
-                if agent == _AGENT_TEST_ANALYZER:
-                    # Promotion rule: functional correctness bugs -> main report
-                    if _is_test_correctness_finding(finding):
+                elif agent == _CONVENTIONS_AGENT:
+                    # Pass 3 (comment accuracy) -> suggestion; passes 1-2 -> main
+                    if dimensions & _COMMENT_ACCURACY_DIMENSIONS:
+                        destination = "suggestion"
+                    else:
                         destination = "main"
-                        finding["promoted_from"] = "test-analyzer"
-                        finding["promotion_reason"] = (
-                            "test-analyzer finding describes a functional correctness issue "
-                            "that exists today (not a missing-coverage gap)"
-                        )
+
+                elif agent in _SUGGESTION_AGENTS:
+                    if agent == _AGENT_TEST_ANALYZER:
+                        # Promotion rule: functional correctness bugs -> main report
+                        if _is_test_correctness_finding(finding):
+                            destination = "main"
+                            finding["promoted_from"] = "test-analyzer"
+                            finding["promotion_reason"] = (
+                                "test-analyzer finding describes a functional correctness issue "
+                                "that exists today (not a missing-coverage gap)"
+                            )
+                        else:
+                            destination = "suggestion"
                     else:
                         destination = "suggestion"
                 else:
-                    destination = "suggestion"
-
-            else:
-                # Unknown agent — conservative fallback: route to main
-                destination = "main"
+                    # Unknown agent — conservative fallback: route to main
+                    destination = "main"
 
         finding["report_destination"] = destination
         finding["report_tag"] = destination  # backward-compat alias
@@ -2279,17 +2324,20 @@ def main():
     # ------------------------------------------------------------------
     all_eliminated = []
 
-    # Step 1: threshold filter (with contestation)
+    # Step 1: reachability demotion (before threshold so the user's severity rule applies)
+    findings, _ = apply_reachability_demotion(findings)
+
+    # Step 2: threshold filter (with contestation)
     findings, elim_threshold, contested_count = apply_threshold_filter(findings, config)
     all_eliminated.extend(elim_threshold)
     passed_threshold = len(findings)
 
-    # Step 2: exclusion filter (before injection so explicit overrides take priority)
+    # Step 3: exclusion filter (before injection so explicit overrides take priority)
     findings, elim_exclusions = apply_exclusions(findings, exclusion_patterns)
     all_eliminated.extend(elim_exclusions)
     exclusions_removed = len(elim_exclusions)
 
-    # Step 3: injection filter
+    # Step 4: injection filter
     findings, elim_injection = apply_injection_filter(findings)
     all_eliminated.extend(elim_injection)
     injections_removed = len(elim_injection)
@@ -2306,11 +2354,11 @@ def main():
         1 for f in findings if f.get("suggested_fix_code_removed_by") == "injection"
     )
 
-    # Step 4: disagreement detection (returns active findings, suppressed, boosted_count)
+    # Step 5: disagreement detection (returns active findings, suppressed, boosted_count)
     findings, elim_suppressed, consensus_boosted = detect_disagreement(findings)
     all_eliminated.extend(elim_suppressed)
 
-    # Step 5: tag for output routing (also applies cross-agent consolidation)
+    # Step 6: tag for output routing (also applies cross-agent consolidation)
     findings, cross_agent_consolidated, tagged_main, tagged_suggestion = tag_findings(
         findings
     )
@@ -2322,6 +2370,9 @@ def main():
 
     # Count dimension-routed and singleton-penalized findings (BF-15)
     dimension_routed = sum(1 for f in findings if f.get("routed_by") == "dimension")
+    reachability_demoted = sum(
+        1 for f in findings + all_eliminated if f.get("demoted_by") == "reachability"
+    )
     singleton_penalized = sum(
         1 for f in findings + all_eliminated if f.get("singleton_penalty")
     )
@@ -2347,6 +2398,7 @@ def main():
             "consensus_boosted": consensus_boosted,
             "singleton_penalized": singleton_penalized,
             "dimension_routed": dimension_routed,
+            "reachability_demoted": reachability_demoted,
             "cross_agent_consolidated": cross_agent_consolidated,
             "test_analyzer_promoted": promoted_count,
             "tagged_main": tagged_main,

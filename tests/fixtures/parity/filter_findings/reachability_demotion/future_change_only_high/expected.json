@@ -1,0 +1,18 @@
+{
+  "demoted_count": 1,
+  "findings": [
+    {
+      "confidence": 90,
+      "demoted_by": "reachability",
+      "demotion_reason": "validator found no code path that reaches this issue without a future change",
+      "description": "The future caller would trigger this issue.",
+      "file": "src/future.py",
+      "id": "R1",
+      "line_start": 10,
+      "original_severity": "high",
+      "reachability": "future_change_only",
+      "severity": "low",
+      "title": "future bug"
+    }
+  ]
+}

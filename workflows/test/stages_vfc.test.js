@@ -97,6 +97,25 @@ test('validate accepts the .md-shaped validator output (finding_id -> id)', asyn
   assert.equal(out.stats.adjusted, 1);
 });
 
+test('validate copies a known reachability classification from validator output', async () => {
+  const findings = [vFinding('F1')];
+  const ctx = validateCtx({ byBatch: () => [{ finding_id: 'F1', confidence: 80, reachability: 'future_change_only' }] });
+  const out = await validateStage(ctx, { findings, limits: { validateBatch: 10 }, policy: {} });
+  assert.equal(out.findings[0].reachability, 'future_change_only');
+});
+
+test('validate schema and prompt descriptor derive reachability property and enum', async () => {
+  const ctx = validateCtx();
+  await validateStage(ctx, { findings: [vFinding('F1')], limits: { validateBatch: 10 }, policy: {} });
+  const item = ctx.calls[0].schema.properties.validations.items;
+  assert.deepEqual(item.properties.reachability.enum, ['current', 'future_change_only', 'uncertain']);
+  assert.ok(!item.required.includes('reachability'));
+  const prompt = ctx.calls[0].prompt;
+  for (const name of Object.keys(item.properties)) assert.ok(prompt.includes(name), `${name} missing from prompt`);
+  for (const value of item.properties.reachability.enum) assert.ok(prompt.includes(value), `${value} missing from prompt`);
+  assert.ok(prompt.includes('Return { validations: [{ finding_id, confidence, justification, reachability (current | future_change_only | uncertain) }] }'));
+});
+
 test('validate: empty finding set dispatches nothing', async () => {
   const ctx = validateCtx();
   const out = await validateStage(ctx, { findings: [], limits: { validateBatch: 10 }, policy: {} });

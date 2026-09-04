@@ -1,0 +1,34 @@
+{
+  "fn": "apply_reachability_demotion",
+  "findings": [
+    {
+      "id": "R2",
+      "severity": "high",
+      "confidence": 90,
+      "reachability": "current",
+      "title": "current bug",
+      "description": "The committed code has this issue.",
+      "file": "src/current.py",
+      "line_start": 20
+    },
+    {
+      "id": "R3",
+      "severity": "medium",
+      "confidence": 80,
+      "reachability": "uncertain",
+      "title": "uncertain bug",
+      "description": "The reachability assessment is uncertain.",
+      "file": "src/uncertain.py",
+      "line_start": 30
+    },
+    {
+      "id": "R4",
+      "severity": "critical",
+      "confidence": 70,
+      "title": "missing classification",
+      "description": "Older validation output omitted reachability.",
+      "file": "src/old.py",
+      "line_start": 40
+    }
+  ]
+}

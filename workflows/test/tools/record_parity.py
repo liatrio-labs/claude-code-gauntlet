@@ -87,6 +87,9 @@ def _filter_findings(inp):
             "eliminated": eliminated,
             "contested_count": contested_count,
         }
+    if fn == "apply_reachability_demotion":
+        findings, demoted_count = ff.apply_reachability_demotion(inp["findings"])
+        return {"findings": findings, "demoted_count": demoted_count}
     if fn == "apply_injection_filter":
         kept, eliminated = ff.apply_injection_filter(inp["findings"])
         return {"kept": kept, "eliminated": eliminated}

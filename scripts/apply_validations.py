@@ -33,7 +33,8 @@ Input — validations_json:
     [{
         "id":         "bug-1",        # required
         "confidence": 72,             # required
-        "justification": "..."        # optional — preserved on the finding
+        "justification": "...",       # optional — preserved on the finding
+        "reachability": "current|future_change_only|uncertain"  # optional — known values copied
     }, ...]
     or:
     {"validations": [...]}
@@ -60,6 +61,7 @@ Output JSON:
                                                            new == old)
         "validator_confidence": <score from validations_json>
         "validation_justification": <justification string, if present>
+        "reachability":              <known validator reachability value, if present>
 
 No external Python dependencies — stdlib only.
 """
@@ -72,6 +74,8 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 from script_io import write_result
+
+VALID_REACHABILITY = frozenset(("current", "future_change_only", "uncertain"))
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -232,6 +236,10 @@ def apply_validations(findings, validations):
         justification = validation.get("justification")
         if justification:
             finding["validation_justification"] = justification
+
+        reachability = validation.get("reachability")
+        if isinstance(reachability, str) and reachability in VALID_REACHABILITY:
+            finding["reachability"] = reachability
 
         adjusted_count += 1
 

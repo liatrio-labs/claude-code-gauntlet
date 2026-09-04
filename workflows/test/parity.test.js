@@ -10,6 +10,7 @@ import {
   normalizeFieldNames,
   parseReviewMd,
   applyThresholdFilter,
+  applyReachabilityDemotion,
   applyInjectionFilter,
   applyReplayInjectionScan,
   loadExclusions,
@@ -255,6 +256,11 @@ for (const c of loadCases('filter_findings')) {
       assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
       assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
       assert.equal(contestedCount, c.expected.contested_count);
+      return;
+    }
+    if (fn === 'apply_reachability_demotion') {
+      const { findings, demotedCount } = applyReachabilityDemotion(c.input.findings);
+      assert.deepEqual({ findings, demoted_count: demotedCount }, c.expected);
       return;
     }
     if (fn === 'apply_injection_filter') {

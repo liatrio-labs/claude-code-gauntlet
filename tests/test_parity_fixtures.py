@@ -123,6 +123,14 @@ class TestFilterFindingsParity(unittest.TestCase):
                         },
                         expected,
                     )
+                elif fn == "apply_reachability_demotion":
+                    findings, demoted_count = ff.apply_reachability_demotion(
+                        inp["findings"]
+                    )
+                    self.assertEqual(
+                        {"findings": findings, "demoted_count": demoted_count},
+                        expected,
+                    )
                 elif fn == "apply_injection_filter":
                     kept, eliminated = ff.apply_injection_filter(inp["findings"])
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)

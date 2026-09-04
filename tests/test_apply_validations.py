@@ -9,7 +9,8 @@ Covers:
   - apply_validations: confidence updated, original_confidence saved, justification
     copied, pass-through for unmatched findings, unmatched validation ids,
     confidence clamping (0-100), missing id in validation, missing confidence
-    in validation, non-integer confidence
+    in validation, non-integer confidence, known reachability copied and unknown
+    reachability ignored
   - main() CLI integration: stdout output, --output file, unmatched warnings,
     envelope key preservation (eliminated, batches)
 """
@@ -236,6 +237,23 @@ class TestApplyValidations(unittest.TestCase):
         validations = [{"id": "bug-1", "confidence": 72}]
         apply_validations(findings, validations)
         self.assertNotIn("validation_justification", findings[0])
+
+    def test_known_reachability_is_copied(self):
+        findings = [_make_finding(id="bug-1")]
+        apply_validations(
+            findings,
+            [{"id": "bug-1", "confidence": 72, "reachability": "future_change_only"}],
+        )
+        self.assertEqual(findings[0]["reachability"], "future_change_only")
+
+    def test_unknown_or_non_string_reachability_is_ignored(self):
+        for value in ("later", 42, ["current"], None):
+            with self.subTest(value=value):
+                findings = [_make_finding(id="bug-1")]
+                apply_validations(
+                    findings, [{"id": "bug-1", "confidence": 72, "reachability": value}]
+                )
+                self.assertNotIn("reachability", findings[0])
 
     def test_pass_through_for_unvalidated_finding(self):
         """Findings without a matching validation are returned unchanged."""

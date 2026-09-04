@@ -388,6 +388,9 @@ function renderFinding(builder, finding, unverified) {
   if ((finding.report_tag ?? finding.report_destination) === 'suggestion') {
     bullets.push('- **Routing:** improvement suggestion');
   }
+  if (finding.demoted_by === 'reachability') {
+    bullets.push('- **Reachability:** only under a future change (severity demoted to low)');
+  }
   if (finding.challenge_contested === true) {
     bullets.push('- **Contested:** the challenger could not confirm the cited location');
   }

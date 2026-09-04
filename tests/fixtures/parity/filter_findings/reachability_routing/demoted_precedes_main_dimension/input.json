@@ -1,0 +1,18 @@
+{
+  "fn": "tag_findings",
+  "findings": [
+    {
+      "id": "R6",
+      "agent": "bug-detector",
+      "dimension": "bug",
+      "severity": "low",
+      "confidence": 90,
+      "reachability": "future_change_only",
+      "demoted_by": "reachability",
+      "title": "hypothetical bug",
+      "description": "A future caller would reach this issue.",
+      "file": "src/route.py",
+      "line_start": 60
+    }
+  ]
+}
