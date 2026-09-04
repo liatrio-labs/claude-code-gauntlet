@@ -864,6 +864,14 @@ class EchoReceiptSourceTest(InvokeTestBase):
         self.assertEqual(res.status, "ok")
         self.assertTrue(res.echo_ok)
 
+    def test_echo_ok_still_scans_any_markdown_filename(self):
+        receipt = "\n".join(
+            f"{key}={value}" for key, value in invoke.EXPECTED_ECHO.items()
+        )
+        with tempfile.TemporaryDirectory(prefix="echo-report-") as tmp:
+            (Path(tmp) / "deep-review-report.md").write_text(receipt, encoding="utf-8")
+            self.assertTrue(invoke._echo_ok("", {}, (tmp,)))
+
     def test_partial_block_everywhere_is_invalid(self):
         # badecho emits a partial block in BOTH stdout and .result (no report .md).
         res = self._run("badecho")
@@ -1304,6 +1312,65 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         got = invoke.extract_identity_receipt("", env, ())
         self.assertEqual(got["plugin_root"], "/abs/plugin")
         self.assertEqual(got["pipeline_version"], "3.1.3")
+
+    def test_extract_identity_receipt_prefers_envelope_result_over_stdout(self):
+        envelope = {
+            "type": "result",
+            "result": (
+                "Headless config:\n"
+                "  pipeline_version=envelope-version (bundle)\n"
+                "  plugin_root=/envelope/plugin (resolved)\n"
+            ),
+        }
+        got = invoke.extract_identity_receipt(
+            "Headless config:\n"
+            "  pipeline_version=stdout-version (bundle)\n"
+            "  plugin_root=/stdout/plugin (resolved)\n",
+            envelope,
+            (),
+        )
+        self.assertEqual(
+            got,
+            {"pipeline_version": "envelope-version", "plugin_root": "/envelope/plugin"},
+        )
+
+    def test_extract_identity_receipt_prefers_code_rendered_report_over_other_sources(
+        self,
+    ):
+        report = (
+            "## Review Methodology\n```text\n"
+            "Resolved config:\n"
+            "  pipeline_version=3.26.0 (bundle)\n"
+            "  plugin_root=/code-owned/plugin (resolved)\n"
+            "```\n"
+        )
+        envelope = {
+            "type": "result",
+            "result": "pipeline_version=model-typed (bundle)\nplugin_root=/model/plugin (resolved)",
+        }
+        wrong_context = (
+            "## Review Context\n```text\n"
+            "pipeline_version=context-version (bundle)\n"
+            "plugin_root=/context/plugin (resolved)\n"
+            "```\n"
+        )
+        with tempfile.TemporaryDirectory(prefix="identity-report-") as tmp:
+            # This sorts before the report and proves context/patch artifacts cannot
+            # outrank the code-owned rendered report.
+            (Path(tmp) / "code-gauntlet-context-deadbeef.md").write_text(
+                wrong_context, encoding="utf-8"
+            )
+            (Path(tmp) / "code-gauntlet-report-deadbeef.md").write_text(
+                report, encoding="utf-8"
+            )
+            got = invoke.extract_identity_receipt(
+                "pipeline_version=stdout-typed (bundle)\nplugin_root=/stdout/plugin (resolved)",
+                envelope,
+                (tmp,),
+            )
+        self.assertEqual(
+            got, {"pipeline_version": "3.26.0", "plugin_root": "/code-owned/plugin"}
+        )
 
 
 class ScriptPathMatchesRepoTest(unittest.TestCase):

@@ -126,6 +126,39 @@ def _individually_classified_rows_section():
 
 
 class TestDocsRegistry(unittest.TestCase):
+    def test_config_receipt_examples_follow_registry_order(self):
+        """Every skill example must render knobs in the source registry's mode order."""
+        args_source = (REPO / "workflows" / "src" / "args.js").read_text()
+        descriptors = re.findall(
+            r"\{ key: '([^']+)', modes: \[([^\]]+)\]",
+            args_source,
+        )
+        self.assertTrue(descriptors, "KNOB_REGISTRY descriptors not found")
+        expected = {}
+        for key, modes_text in descriptors:
+            for mode in re.findall(r"'([^']+)'", modes_text):
+                expected.setdefault(mode, []).append(key)
+
+        block_pattern = re.compile(
+            r"(?m)^(Headless|Resolved) config:\n((?:^  [^\n]+\n?)+)"
+        )
+        seen_blocks = []
+        for path in (REPO / "skills").rglob("*.md"):
+            text = path.read_text()
+            for match in block_pattern.finditer(text):
+                mode = "headless" if match.group(1) == "Headless" else "interactive"
+                keys = re.findall(r"^  ([A-Za-z_]+)=", match.group(2), re.MULTILINE)
+                knob_keys = [key for key in keys if key in expected[mode]]
+                self.assertEqual(
+                    knob_keys,
+                    expected[mode],
+                    f"{path}: {match.group(1)} config example is not in registry order",
+                )
+                seen_blocks.append((path, mode))
+        self.assertGreaterEqual(
+            len(seen_blocks), 4, "expected all receipt examples in skills/"
+        )
+
     def test_every_tracked_docs_file_is_allowlisted(self):
         offenders = []
         for path in tracked("docs"):

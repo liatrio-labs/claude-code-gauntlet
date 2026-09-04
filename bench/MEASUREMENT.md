@@ -110,21 +110,22 @@ A red checker does **not** by itself mean the change under test is broken. Two
 failure modes fire on clean code and both have been observed on branches that
 were otherwise correct, so triage the reason before drawing a conclusion.
 
-**`config_echo_mismatch` — 6 of 140 collected children (4.3%).** Reason
-distribution across all 30 retained run dirs: `ok` 130, `config_echo_mismatch`
-6, `plugin_mutated_by_child` 3, `is_error(success)` 1. The child renders the
-Phase 1 identity receipt as prose in its final message (e.g.
-`**plugin 3.2.2 · PIPELINE_VERSION 3.2.2**`) instead of the machine-readable
-`pipeline_version=… (bundle)` / `plugin_root=… (resolved)` lines
-`_echo_ok` parses from stdout, the `.result` envelope, or the report `.md`.
-The review itself can be complete underneath it — on
-`smoke-20260728-144630-a162ecd` the affected child returned `ok:true`, all 8
-phases, zero gaps, a full artifact set and a captured dry-run payload. Confirm
-that before re-running: an `invalid` with a complete artifact set is a
-formatting miss, not a pipeline failure. (Distinct from
+**`config_echo_mismatch` — the eight/nine-knob echo floor.** This label means
+the runner did not find every expected configuration knob in any accepted source;
+it is separate from the G4 identity check for `pipeline_version` and `plugin_root`.
+The report now carries the code-rendered knob receipt, so once the report is
+materialized this floor is expected to die; Smoke B observes whether any
+non-materialized path still needs the stdout or envelope fallback. Historically,
+the child could complete the review while omitting one knob from its prose, so an
+`invalid` with a complete artifact set was a formatting miss, not a pipeline
+failure. (Distinct from
 `workflow_backgrounded`, which the runner labels in
 `bench/runner/invoke.py`'s `_workflow_backgrounded` — a status distinct from
 any of `check.py`'s G1–G5 gates.)
+
+The prose identity receipt symptom belongs to **G4**, not this floor: G4 checks
+that the code-owned `pipeline_version=… (bundle)` and `plugin_root=… (resolved)`
+lines identify the active plugin, with Workflow `scriptPath` as defense in depth.
 
 **`origin=unknown` from artifact-writer transcription drift.** The writer is a
 sampled agent, not a function (see CLAUDE.md, "The by-value writer is not

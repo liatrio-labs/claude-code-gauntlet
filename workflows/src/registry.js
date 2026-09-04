@@ -185,7 +185,8 @@ export const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 // multi-dimension agent's rows to repeat the identical value (the trap promptExtra's
 // comment above already documents for a genuinely per-agent value). This map is the
 // single source of truth for the display strings — the renderer appends the table as
-// the report's last section. Extending: one
+// the report's dimensions section. Review Methodology follows it as the report's last section.
+// Extending: one
 // entry here when AGENTS gains a member — registry.test.js pins the key set to AGENTS.
 export const AGENT_LABELS = {
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',

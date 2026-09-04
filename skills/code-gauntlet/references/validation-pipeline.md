@@ -109,7 +109,7 @@ After thresholds it re-runs cross-agent consolidation (re-stamps `consolidation_
 
 # Report stage (`renderReport`)
 
-Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, a pure, total function of the high-confidence + unverified buckets, the change summary, the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer emits no Review Methodology section (issue #182). The `artifact-writer` then persists findings.json + report.md + the pre-selected post-review payload + the checkpoint artifact to `{output_dir}` (SKILL.md's artifact-writer output list has the exact filenames, including the optional derived-path `persist-plan-*.json`).
+Renders `report.md` in code — `renderReport()` in `workflows/src/renderReport.js`, a pure, total function of the high-confidence + unverified buckets, the change summary, the dimension stats and the run identity. No dispatch, no segmentation, no fallback: there is nothing to throw and nothing to degrade, so the stage emits no gaps. `evidence` renders for every finding that carries one, in both buckets. The renderer also appends the code-owned Review Methodology section, including the machine-parsed identity receipt, as the report's last section. The `artifact-writer` then persists findings.json + report.md + the pre-selected post-review payload + the checkpoint artifact to `{output_dir}` (SKILL.md's artifact-writer output list has the exact filenames, including the optional derived-path `persist-plan-*.json`).
 
 ---
 

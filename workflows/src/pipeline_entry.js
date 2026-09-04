@@ -26,7 +26,7 @@ const PIPELINE_VERSION = '3.27.0';
 // stage sequence, checkpoint resume, and the compact return. Kept minimal so the
 // orchestration is exercised through the importable, test-driven runWith seam.
 async function run(rawArgs) {
-  return runWith(undefined, rawArgs);
+  return runWith({ pipelineVersion: PIPELINE_VERSION }, rawArgs);
 }
 
 // parseEntryArgs THROWS on a refusal (absent args, a review-target reference like a bare

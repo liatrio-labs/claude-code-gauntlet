@@ -27,6 +27,14 @@ const good = {
   changedFiles: ['a.js'], changedLines: 1,
   reviewConfigPath: null, riskTable: [{ path: 'a.js', risk: 'medium' }],
   policy: { tier: 'optimized', subagentModel: null },
+  configEcho: {
+    model_tier: { value: 'optimized', source: 'fixed' },
+    delivery_tier: { value: 'all', source: 'default' },
+    pr_comment_cap: { value: 'null', source: 'default' },
+    review_md: { value: 'absent', source: 'discovery' },
+  },
+  pluginRoot: '/plugin',
+  reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
   limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 },
 };
 

@@ -472,6 +472,7 @@ class TestCliAgainstRealRegistry(unittest.TestCase):
         for rel in [
             *gen.compute_targets(str(REPO)).keys(),
             "workflows/src/registry.js",
+            "workflows/src/args.js",
             "workflows/src/renderReport.js",
             "workflows/src/filterFindings.js",
             "workflows/src/applyChallenges.js",

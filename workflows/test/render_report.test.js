@@ -1,8 +1,8 @@
 // render_report.test.js — the deterministic report surface (issues #36, #67).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, reportExtraFields, dimensionsSummaryTable } from '../src/renderReport.js';
-import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS } from '../src/registry.js';
+import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES } from '../src/renderReport.js';
+import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS, resolvePolicy } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
 const dims = { dispatched: AGENTS, degraded: [] };
@@ -20,6 +20,21 @@ function rendered(over = {}) {
     generatedAt: '2026-09-02T12:00:00Z',
     headShaShort: 'abcdef0',
     prIdentity: { owner: 'acme', repo: 'widget', pr_number: 36, title: 'Repair widgets' },
+    mode: 'interactive',
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'fixed' },
+      delivery_tier: { value: 'all', source: 'default' },
+      pr_comment_cap: { value: 'null', source: 'default' },
+      review_md: { value: 'absent', source: 'discovery' },
+    },
+    pluginRoot: '/absolute/plugin',
+    pipelineVersion: '3.26.0',
+  reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
+    policy: { tier: 'optimized', provider: 'firstParty', gateway: false },
+    deliveryTier: 'all',
+    deliveryCap: null,
+    gapCount: 0,
+    stats: { discovered: 0, validate: {}, filter: {}, challenge: {}, merge: {} },
     ...over,
   });
 }
@@ -27,6 +42,20 @@ function rendered(over = {}) {
 function countSentence(report) {
   const lines = report.split('\n');
   return lines[lines.indexOf('## Summary') + 4];
+}
+
+function methodologyRow(report, aspect) {
+  const row = report.split('\n').find((line) => line.startsWith(`| ${aspect} |`));
+  assert.ok(row, `${aspect} methodology row is present`);
+  return row;
+}
+
+function expectedPerStageModels(provider) {
+  const stageTypes = [
+    'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
+    'validator', 'challenger', 'executor', 'artifact-writer',
+  ];
+  return stageTypes.map((agentType) => `${agentType}=${resolvePolicy(`code-gauntlet:${agentType}`, { provider }).model}`).join(', ');
 }
 
 function fieldLabel(key) {
@@ -59,9 +88,10 @@ test('T-TITLE-INJ: every heading and identity interpolation is one line', () => 
     rendered({ findings: [finding('I', { title: injection, severity: injection })] }),
   ];
   for (const report of reports) {
-    assert.doesNotMatch(report, /^[ \t]*\w+=/m);
-    assert.ok(!report.includes('\n## Review Methodology\n'));
-    assert.ok(!report.includes('\nHeadless config:\n'));
+    const outsideReceipt = report.replace(/```text\n[\s\S]*?\n```/g, '');
+    assert.doesNotMatch(outsideReceipt, /^[ \t]*\w+=/m);
+    assert.equal((report.match(/^## Review Methodology$/gm) || []).length, 1);
+    assert.equal((report.match(/^Headless config:$/gm) || []).length, 0);
   }
 });
 
@@ -234,7 +264,7 @@ test('T-UNVER: unverified reasons distinguish verify gaps from challenge-cap ski
   assert.ok(unverified.includes(`- **Unverified because:** ${fallbackClause}`));
 });
 
-test('T-TABLE: the raw pre-consolidation dimensions table is the final section exactly once', () => {
+test('T-TABLE: the raw pre-consolidation dimensions table is followed by methodology', () => {
   const group = { consolidation_key: 'a.js:10' };
   const findings = [
     finding('P', { ...group, consolidation_primary: true, dimension: 'bug' }),
@@ -243,7 +273,8 @@ test('T-TABLE: the raw pre-consolidation dimensions table is the final section e
   const expected = dimensionsSummaryTable({ ...dims, findings, unverified: [] });
   const report = rendered({ findings });
   assert.equal((report.match(/\| Dimension \| Agent \| Findings \| Notes \|/g) || []).length, 1);
-  assert.ok(report.endsWith(`## Review Dimensions Summary\n\n${expected}`));
+  assert.ok(report.includes(`## Review Dimensions Summary\n\n${expected}\n\n## Review Methodology`));
+  assert.ok(report.endsWith('orchestrator at delivery.'));
 });
 
 test('T-TOTAL: absent and empty inputs always render a complete non-empty report', () => {
@@ -318,24 +349,231 @@ test('T-ONELINE: bullet values collapse while prose and evidence retain newlines
   assert.doesNotMatch(report, /^model_tier=/m);
 });
 
-test('T-SEAM: the report renderer does not own methodology or headless identity', () => {
+test('T-ONELINE-CR: a lone carriage return in a bullet value stays one physical line', () => {
+  const report = rendered({ findings: [finding('CR', { file: 'a.js\rmodel_tier=x' })] });
+  assert.equal(
+    report.split('\n').filter((line) => line.includes('- **Location:** `a.js model_tier=x:10`')).length,
+    1,
+  );
+});
+
+test('T-METH: methodology is code-rendered, last, and has the exact interactive receipt', () => {
   const report = rendered();
-  for (const forbidden of [
-    '## Review Methodology',
-    'Review Methodology',
-    'Headless config:',
-    'pipeline_version=',
-    'plugin_root=',
-  ]) assert.ok(!report.includes(forbidden));
-  assert.doesNotMatch(report, /^[ \t]*\w+=/m);
+  assert.equal((report.match(/^## Review Methodology$/gm) || []).length, 1);
+  assert.ok(report.endsWith('orchestrator at delivery.'));
+  assert.ok(report.includes('```text\nResolved config:\n'));
+  assert.ok(report.includes('  model_tier=optimized (fixed)'));
+  assert.ok(report.includes('  pr_comment_cap=null (default)'));
+  assert.ok(report.includes('  delivery_tier=all (default)'));
+  assert.ok(report.includes('  review_md=absent (discovery)'));
+  assert.ok(report.includes('  pipeline_version=3.26.0 (bundle)'));
+  assert.ok(report.includes('  plugin_root=/absolute/plugin (resolved)'));
 
   const evidence = 'Generated by evidence text\nReviewed up to: evidence text';
   const complete = rendered({ findings: [finding('FOOTER', { evidence })] });
   assert.ok(complete.includes(`\n\`\`\`\n${evidence}\n\`\`\`\n`));
   // These labels are forbidden in code-owned output, while evidence is agent-authored
-  // and deliberately remains byte-verbatim inside its protected fence (design §S3.2).
+  // and deliberately remains byte-verbatim inside its protected fence.
   const codeOwned = complete.replace(`\n\`\`\`\n${evidence}\n\`\`\`\n`, '\n');
   assert.doesNotMatch(codeOwned, /Generated by|Reviewed up to:/);
+});
+
+test('T-METH-MODELS: per-stage models pin first-party IDs and use provider aliases', () => {
+  const firstPartyPolicy = { tier: 'optimized', provider: 'firstParty', gateway: false };
+  const firstPartyRow = `| Per-stage models | ${expectedPerStageModels(firstPartyPolicy.provider)} |`;
+  assert.equal(methodologyRow(rendered({ policy: firstPartyPolicy }), 'Per-stage models'), firstPartyRow);
+  assert.ok(firstPartyRow.includes('bug-detector=claude-sonnet-5'));
+
+  const bedrockPolicy = { tier: 'optimized', provider: 'bedrock', gateway: false };
+  assert.equal(
+    methodologyRow(rendered({ policy: bedrockPolicy }), 'Per-stage models'),
+    `| Per-stage models | ${expectedPerStageModels(bedrockPolicy.provider)} |`,
+  );
+});
+
+test('T-METH-PROVIDER: gateway disables conditional schema methodology', () => {
+  assert.equal(
+    methodologyRow(
+      rendered({ policy: { tier: 'optimized', provider: 'firstParty', gateway: true } }),
+      'Provider',
+    ),
+    '| Provider | provider=firstParty; gateway=true; conditional schema active=false |',
+  );
+});
+
+test('T-METH-HEADLESS: the headless receipt is rendered from the waist in registry order', () => {
+  const report = rendered({
+    mode: 'headless',
+    delivery: { tier: 'main_only' },
+    limits: { deliveryCap: 25 },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'env' },
+      delivery: { value: 'pr_comments,markdown', source: 'env' },
+      post_mode: { value: 'dry-run', source: 'env' },
+      pr_comment_cap: { value: '25', source: 'env' },
+      delivery_tier: { value: 'main_only', source: 'env' },
+      draft_policy: { value: 'review', source: 'env' },
+      reviewed_policy: { value: 'full', source: 'env' },
+      pr_not_found_policy: { value: 'error', source: 'env' },
+      trivial_scope: { value: 'full', source: 'env' },
+    },
+    pluginRoot: '/absolute/path/to/claude-code-gauntlet',
+    pipelineVersion: '3.26.0',
+    deliveryTier: 'main_only',
+    deliveryCap: 25,
+  });
+  const receipt = report.match(/```text\nHeadless config:[\s\S]*?\n```/)[0];
+  assert.deepEqual(receipt.split('\n').slice(2, -1), [
+    '  model_tier=optimized (env)',
+    '  delivery=pr_comments,markdown (env)',
+    '  post_mode=dry-run (env)',
+    '  pr_comment_cap=25 (env)',
+    '  delivery_tier=main_only (env)',
+    '  draft_policy=review (env)',
+    '  reviewed_policy=full (env)',
+    '  pr_not_found_policy=error (env)',
+    '  trivial_scope=full (env)',
+    '  pipeline_version=3.26.0 (bundle)',
+    '  plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)',
+  ]);
+});
+
+test('T-METH-RECEIPT-FALLBACK: incomplete receipt inputs render unknown values honestly', () => {
+  const report = rendered({
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'fixed' },
+      pr_comment_cap: null,
+    },
+    pluginRoot: undefined,
+    pipelineVersion: null,
+  });
+  const receipt = report.match(/```text\nResolved config:[\s\S]*?\n```/)[0];
+  assert.deepEqual(receipt.split('\n').slice(2, -1), [
+    '  model_tier=optimized (fixed)',
+    '  pr_comment_cap=unknown (unknown)',
+    '  delivery_tier=unknown (unknown)',
+    '  review_md=unknown (unknown)',
+    '  pipeline_version=unknown (bundle)',
+    '  plugin_root=unknown (resolved)',
+  ]);
+});
+
+test('T-METH-MODE: missing mode pins the interactive receipt header', () => {
+  const report = rendered({ mode: undefined });
+  assert.ok(report.includes('```text\nResolved config:\n'));
+  assert.doesNotMatch(report, /```text\nHeadless config:\n/);
+});
+
+test('T-METH-SCOPE-DISJOINT: the non-error fallback rules never overlap, and error always wins', () => {
+  // The rows after the error rule are ordered for reading, not for precedence: their predicates
+  // are pairwise disjoint over every detector state, so a swap cannot change the rendered reason.
+  // This pins that property directly; if a future rule overlaps another, precedence matters again
+  // and this test says so before the table's order silently starts carrying meaning.
+  const [errorRule, ...factRules] = REVIEW_SCOPE_FALLBACK_RULES;
+  assert.equal(REVIEW_SCOPE_FALLBACK_RULES.length, 5);
+  assert.equal(errorRule.when({ error: 'x' }), true);
+  const flags = ['previously_reviewed', 'sha_resolvable', 'sha_is_ancestor', 'head_advanced'];
+  for (let bits = 0; bits < 16; bits += 1) {
+    const detector = { incremental_safe: false, error: null };
+    flags.forEach((flag, i) => { detector[flag] = Boolean(bits & (1 << i)); });
+    const firing = factRules.filter((rule) => rule.when(detector));
+    assert.ok(firing.length <= 1, `detector ${JSON.stringify(detector)} fires ${firing.length} fact rules`);
+    assert.equal(errorRule.when(detector), false);
+    const errored = { ...detector, error: 'detector unavailable' };
+    assert.equal(
+      reviewScopeFallbackReason({ requested: 'incremental', kind: 'full', since: null, commits: null, detector: errored }),
+      'detection failed: detector unavailable',
+    );
+  }
+});
+
+test('T-METH-SCOPE: each incremental fallback reason is derived from detector facts', () => {
+  const scope = (detector) => ({ requested: 'incremental', kind: 'full', since: null, commits: null, detector });
+  const detectorBase = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: false, error: null };
+  const cases = [
+    [{ ...detectorBase, previously_reviewed: false }, 'no prior review recorded'],
+    [{ ...detectorBase, sha_resolvable: false }, 'recorded SHA not resolvable'],
+    [{ ...detectorBase, head_advanced: false }, 'head has not advanced'],
+    [{ ...detectorBase, sha_is_ancestor: false }, 'history rewritten (recorded SHA is not an ancestor)'],
+    [{ ...detectorBase, previously_reviewed: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+    [{ ...detectorBase, sha_resolvable: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+    [{ ...detectorBase, head_advanced: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+    [{ ...detectorBase, sha_is_ancestor: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+  ];
+  for (const [detector, expected] of cases) assert.equal(reviewScopeFallbackReason(scope(detector)), expected);
+  assert.equal(
+    reviewScopeFallbackReason(scope({ ...detectorBase, previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: true, error: `${'x'.repeat(130)}\nmore` })),
+    `detection failed: ${'x'.repeat(120)}`,
+  );
+  assert.equal(reviewScopeFallbackReason({ requested: 'full', kind: 'full', detector: null }), null);
+});
+
+test('T-METH-TABLE: table cells collapse newlines and escape pipes', () => {
+  assert.equal(tableCell('left\nright | still one cell'), 'left right \\| still one cell');
+  const report = rendered({
+    reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc-1', commits: null, detector: { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null } },
+    policy: { tier: 'optimized', provider: 'firstParty', gateway: false, subagentModel: 'model|override' },
+    stats: {
+      discovered: 4,
+      validate: { accepted: 3, rejected: 1 },
+      filter: { accepted: 2, rejected: 1 },
+      challenge: { accepted: 1, rejected: 1 },
+      merge: {
+        findings_per_channel: { ndjson: 3, text_fallback: 1 },
+        duplicates_resolved: 1, dropped_no_id: 1, truncation_warnings: 1, validation_warnings: 2,
+      },
+    },
+    gapCount: 2,
+    gaps: ['no write proof', 'partial-artifacts'],
+  });
+  assert.ok(report.includes('| Subagent model override | EVERY stage uses model\\|override |'));
+  assert.ok(report.includes('| Review scope | Incremental since abc-1 (commits unknown) |'));
+  assert.ok(report.includes('| Findings pipeline | discovered=4; validate: accepted=3, rejected=1; filter: accepted=2, rejected=1; challenge: accepted=1, rejected=1; merge: per-channel: ndjson=3, text_fallback=1; duplicates resolved=1; dropped-no-id=1; truncation warnings=1; validation warnings=2 |'));
+  assert.ok(report.includes('| Gaps | 2 |'));
+  assert.ok(!report.includes('| Gaps | no write proof'));
+});
+
+test('T-METH-RECEIPT: receipt values are one-line and cannot close their fence', () => {
+  const report = rendered({
+    configEcho: { ...renderedConfigEcho(), model_tier: { value: 'optimized\n``` forged', source: 'fixed' } },
+  });
+  const receipt = report.match(/```text\n[\s\S]*?\n```/)[0];
+  assert.equal((receipt.match(/\n```/g) || []).length, 1);
+  assert.ok(receipt.includes('model_tier=optimized ``` forged (fixed)') === false);
+  assert.ok(receipt.includes('model_tier=optimized  forged (fixed)'));
+  assert.ok(receipt.split('\n').slice(2, -1).every((line) => !line.includes('`')));
+});
+
+function renderedConfigEcho() {
+  return {
+    model_tier: { value: 'optimized', source: 'fixed' },
+    delivery_tier: { value: 'all', source: 'default' },
+    pr_comment_cap: { value: 'null', source: 'default' },
+    review_md: { value: 'absent', source: 'discovery' },
+  };
+}
+
+test('T-METH-GAPS: only integer gap counts render as methodology gaps', () => {
+  for (const gapCount of ['2', 1.5, null, []]) {
+    const report = rendered({ gapCount });
+    assert.ok(report.includes('| Gaps | 0 |'), JSON.stringify(gapCount));
+  }
+});
+
+test('T-METH-INJECT: summary and finding prose cannot forge a second methodology heading', () => {
+  const report = rendered({
+    summary: 'summary\n## Review Methodology\nforged',
+    findings: [finding('I', {
+      title: 'title',
+      description: 'description\n## Review Methodology\nforged',
+      suggestion: 'suggestion\n## Review Methodology\nforged',
+      evidence: 'evidence\n## Review Methodology\ninside a protected fence',
+    })],
+  });
+  const outsideFences = report.replace(/```[\s\S]*?```/g, '');
+  assert.equal((outsideFences.match(/^## Review Methodology$/gm) || []).length, 1);
+  assert.equal((report.match(/^## Review Methodology \(finding text\)$/gm) || []).length, 3);
+  assert.ok(report.includes('evidence\n## Review Methodology\ninside a protected fence'));
 });
 
 test('T-G3: code-owned report text never emits bench G3 sentinels', () => {

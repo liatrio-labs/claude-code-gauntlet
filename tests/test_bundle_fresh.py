@@ -1,3 +1,4 @@
+import json
 import re
 import subprocess
 import unittest
@@ -28,6 +29,15 @@ class TestBundleFresh(unittest.TestCase):
                 f"bundle contains an import: {line!r}",
             )
             self.assertNotIn("require(", line)
+
+    def test_plugin_version_matches_source_pipeline_version(self):
+        source = (REPO / "workflows" / "src" / "pipeline_entry.js").read_text()
+        match = re.search(r"const PIPELINE_VERSION = ['\"]([^'\"]+)['\"]", source)
+        self.assertIsNotNone(match)
+        plugin_version = json.loads(
+            (REPO / ".claude-plugin" / "plugin.json").read_text()
+        )["version"]
+        self.assertEqual(plugin_version, match.group(1))
 
     def test_bundle_begins_with_meta_and_exposes_version(self):
         text = BUNDLE.read_text()

@@ -107,7 +107,7 @@ export function makeFindings() {
 // having to stamp scopeAnswer.
 export function validArgs(over = {}) {
   const changedFiles = over.changedFiles || ['a.js'];
-  return {
+  const base = {
     argsVersion: 1,
     mode: 'headless',
     repoRoot: '/repo',
@@ -117,13 +117,36 @@ export function validArgs(over = {}) {
     generatedAt: '2026-07-18T00:00:00Z',
     diffPath: '/repo/.code-gauntlet/diff.patch',
     changedFilesPath: '/repo/.code-gauntlet/changed.txt',
-    changedFiles: ['a.js'],
+    changedFiles,
     changedLines: 1,
     riskTable: changedFiles.map((path) => ({ path, risk: 'medium' })),
     policy: {},
-    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20 },
-    ...over,
+    limits: { validateBatch: 25, verifySliceSize: 100, challengeCap: 40, summarizeBucketSize: 20, deliveryCap: 25 },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'default' },
+      delivery: { value: 'markdown', source: 'default' },
+      post_mode: { value: 'dry-run', source: 'default' },
+      pr_comment_cap: { value: '25', source: 'default' },
+      delivery_tier: { value: 'all', source: 'default' },
+      draft_policy: { value: 'review', source: 'default' },
+      reviewed_policy: { value: 'full', source: 'default' },
+      pr_not_found_policy: { value: 'error', source: 'default' },
+      trivial_scope: { value: 'full', source: 'default' },
+    },
+    pluginRoot: '/plugin',
+    reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
   };
+  const args = { ...base, ...over, limits: { ...base.limits, ...(over.limits || {}) } };
+  if (!Object.hasOwn(over, 'configEcho')) {
+    const cap = args.limits.deliveryCap;
+    args.configEcho = {
+      ...base.configEcho,
+      pr_comment_cap: { value: cap == null ? 'null' : String(cap), source: 'default' },
+      delivery_tier: { value: args.delivery && args.delivery.tier ? args.delivery.tier : 'all', source: 'default' },
+      trivial_scope: { value: args.scopeAnswer || 'full', source: 'default' },
+    };
+  }
+  return args;
 }
 
 // --- Mock ctx ---------------------------------------------------------------

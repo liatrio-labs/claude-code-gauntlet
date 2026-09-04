@@ -119,8 +119,8 @@ The values below are an example — substitute the resolved ones:
 ```text
 Resolved config:
   model_tier=optimized (fixed)
-  delivery_tier=all (default)
   pr_comment_cap=null (default)
+  delivery_tier=all (default)
   review_md=absent (discovery)
 ```
 
@@ -215,6 +215,16 @@ Local/branch targets: drop the `owner_repo`/`prior_review` sections entirely (no
 - `previously_reviewed: true`, `sha_resolvable: true`, `last_reviewed_sha == head_sha` → `DEFERRED`. Run the unconditional truncate loop as a follow-up **only if** the user answers "Yes — review again" to the template in `references/phase1-preflight.md` → "Previously-Reviewed Gate"; a "No — skip" answer stops the review here with the files intact.
 
 After this call: interpret `prior_review`'s JSON per `references/phase1-preflight.md` → "Previously-Reviewed Gate" (branch order, question templates, degradations — unchanged). **Incremental** stores `last_reviewed_sha` for Composite B's incremental diff branch below. **Skip** stops the run here.
+
+Stamp `reviewScope` from this resolved state before assembling the waist. For local or branch targets,
+stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`. For a PR/MR,
+copy these detector values into `detector` without rewriting them: `previously_reviewed`, `sha_resolvable`,
+`head_advanced`, `sha_is_ancestor`, and `incremental_safe`; set `error` to the first `prior_review.errors`
+value or `null`. The interactive `requested` value is the recorded gate answer, or `"full"` when no prior
+review existed. In headless mode it is `configEcho.reviewed_policy.value`, except `"skip"` records
+`requested: "full"`. Use `kind: "incremental"` only for an incremental answer with
+`detector.incremental_safe: true` and the detector's safe `last_reviewed_sha` as `since`; otherwise use
+`kind: "full"` and retain the detector so the renderer can derive the fallback explanation.
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `prior_review` section still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). A `DEFERRED` truncation resolves the same way it does interactively: run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
 
@@ -357,6 +367,11 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   riskTable: [ ...{ path, risk } per changed file, from Phase 2e... ],  // REQUIRED, path set === changedFiles
   scopeAnswer: "light" | "full",  // ONLY when the 2e trivial-scope gate asked; omit otherwise
   policy: { tier, subagentModel, provider, gateway },
+  configEcho: { key: { value, source } },  // REQUIRED; exact resolved knob receipt, in registry order when rendered
+  pluginRoot,  // REQUIRED absolute plugin root; script paths must stay under {pluginRoot}/scripts/
+  reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
+                 commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
+                 head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED; copied from prior-review state
   limits: { deliveryCap },  // pass ONLY genuine overrides — a REVIEW.md-set value, or the
                              // env-threaded deliveryCap — never the full table:
                              // normalizeArgs fills summarizeBucketSize/validateBatch/
@@ -519,9 +534,9 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
    - If resume is declined or fails again, deliver whatever `artifactPaths.report` exists (if any) markdown-only — report the path plus a short chat summary — and report the `gaps`.
    - **A partial-artifacts run may still carry non-null `artifactPaths.findings`/`.report`.** Those are the primaries whose bytes the assemble script content-proved against the payload the writer was handed, named in the gap text; `postReview`/`checkpoints` are always null here because nothing derived them. Read and deliver them — they are as trustworthy as on a clean run, which is the whole point of the proof. This is not a successful persist: keep the gap, and never post PR comments from a salvaged `findings.json` without the pipeline's `postReview` selection (deliver markdown-only, or resume/re-run to get a real delivery payload).
    - On any mid-run workflow **crash** (a thrown `error` with no return value, a killed background task, or a lost compact return), follow `references/crash-recovery.md` — **`resumeFromRunId` first** (replays completed agents from cache at zero re-billed cost), journal-first diagnosis (`failingPhase` names the stage that threw), and only then the checkpoint paths above.
-3. **Surface `gaps`** in the methodology regardless of `ok` — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
+3. **Surface the integer gap count in report methodology regardless of `ok`**; at delivery, include the full `gaps` entries in chat as post-report gap details. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
 
-> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion** (this is what produces the `config_echo_mismatch`/no-payload symptom when skipped). deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier (`CODE_GAUNTLET_DELIVERY_TIER`, default `all` → every survivor posts) and ranked+capped it at `limits.deliveryCap` (fed from `$CODE_GAUNTLET_PR_COMMENT_CAP`), so never re-filter or re-rank and never re-apply the cap; posting obeys `$CODE_GAUNTLET_POST_MODE` (`dry-run` passes `--dry-run` to `post_review.py`). The task board (Stage 2) is skipped and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The final summary message **and** the report methodology section must each repeat the Phase 1 `Headless config:` block verbatim. See `references/headless-mode.md`.
+> **Headless hard rules (`CODE_GAUNTLET_HEADLESS=1`):** **the Phase 3 wait protocol is non-negotiable here** — this is where the ceiling actually bites: a `-p` child that yields its turn has its still-running workflow terminated once `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS` (default 600000 ms) elapses, so headless runs must **hold the turn and await a terminal result with `await_workflow.py` before Phase 8, never assume completion**. Deliver per `CODE_GAUNTLET_DELIVERY` regardless of PR state; PR comments are the pipeline's pre-selected `artifactPaths.postReview` payload posted **verbatim** — the workflow already applied the delivery tier and cap, so never re-filter, re-rank, or re-apply them; posting obeys `$CODE_GAUNTLET_POST_MODE`. The task board (Stage 2) is skipped and REVIEW.md is never written. **Resume is never offered interactively in headless mode:** on `ok:false`/partial, auto-resume **once** if `return.checkpoints` carries a `.phases` map, else (truncated, or the retry also fails) deliver the partial report + `gaps` and stop — never prompt. The report carries the code-rendered `Headless config:` receipt. The final message repeats that block only as a fallback when the report never materialized. See `references/headless-mode.md`.
 
 > Re-check eligibility before delivery — `references/phase8-delivery.md` Stage 1 has the full flow (interactive: if closed/merged, deliver markdown-only — report the path plus a short chat summary).
 >
@@ -579,7 +594,11 @@ Never decorate a machine-parsed block (`references/report-format.md`).
 
 ### Print methodology
 
-After delivery, print the review methodology: **plugin version** (`.claude-plugin/plugin.json` `version`), **PIPELINE_VERSION** (the `PIPELINE_VERSION` constant in `workflows/pipeline.js`), **per-stage models** (derived from `resolvedPolicy` — `subagentModel` override if present, else the S5 defaults: discovery Sonnet with security-reviewer Opus, validator/challenger/executor Sonnet; when `resolvedPolicy.provider` is not `firstParty`, note that agents dispatched bare aliases resolved by the provider's deployment mapping rather than pinned first-party model IDs), **conditional schema enforcement** (derived from `resolvedPolicy.conditionalSchema` — when `false`, note that the conventions-and-intent dispatch used the flat schema this run: per-dimension `claude_md_rule`/`spec_text` enforcement was contract-only, not schema-enforced, because the run was a third-party provider or `resolvedPolicy.gateway` was `true`; conditional per-dimension schema enforcement is first-party-direct only), the **effective config** (delivery, limits), the **review scope** (`Full`, or `Incremental since {sha} (N commits)`), the **findings pipeline** (`stats.merge` — per-channel counts, duplicates resolved, dropped-no-id, and the truncation/validation warning counts `merge()` recorded), and the `stats`/`gaps` from the return. If `CLAUDE_CODE_SUBAGENT_MODEL` was set, disclose it prominently — it overrode every per-stage model.
+The report's last section is the code-rendered Review Methodology. After delivery, point the chat
+methodology at that section and add only the materialization proof, patches path, delivery outcome,
+post-report gaps, and wall-clock duration known to the orchestrator. If the report never
+materialized, the final message repeats only the resolved config receipt block from the return.
+It must not recreate policy, per-stage models, scope, stats, gaps, or dimensions.
 
 ---
 

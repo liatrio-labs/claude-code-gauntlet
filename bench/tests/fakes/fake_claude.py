@@ -2,7 +2,7 @@
 """Fake ``claude`` binary for invoke.py tests. Placed on PATH as ``claude``.
 
 Behavior is selected by env ``FAKE_CLAUDE_MODE``:
-  ok             -> canned "Headless config:" echo (8 bench knobs) + a success result
+  ok             -> canned "Headless config:" echo (9 bench knobs) + a success result
                     envelope (total_cost_usd 1.23, modelUsage, usage, empty
                     permission_denials), and a fake post-review-payload.json under
                     $CODE_GAUNTLET_OUTPUT_DIR.
@@ -74,6 +74,7 @@ def echo_lines(plugin_root=None, pipeline_version=None):
         "  delivery=pr_comments,markdown (env)",
         "  post_mode=dry-run (env)",
         "  pr_comment_cap=25 (env)",
+        "  delivery_tier=all (default)",
         "  draft_policy=review (env)",
         "  reviewed_policy=full (env)",
         "  pr_not_found_policy=error (env)",
@@ -193,7 +194,7 @@ def _write_report(lines):
         return
     os.makedirs(output_dir, exist_ok=True)
     body = ["# Deep Review Report", "", "## Methodology", "", "```", *lines, "```", ""]
-    with open(os.path.join(output_dir, "deep-review-report.md"), "w") as fh:
+    with open(os.path.join(output_dir, "code-gauntlet-report-fake.md"), "w") as fh:
         fh.write("\n".join(body) + "\n")
 
 
