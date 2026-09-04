@@ -109,11 +109,14 @@ Headless config:
   plugin_root=/absolute/path/to/claude-code-gauntlet (resolved)
 ```
 
-The nine echoed knobs are every variable except the master switch `CODE_GAUNTLET_HEADLESS`. Two additional **identity receipt** lines follow: `pipeline_version` (the `PIPELINE_VERSION` constant from `{plugin_root}/workflows/pipeline.js`, source `(bundle)`) and `plugin_root` (absolute path resolved from this SKILL.md — two levels up from `skills/code-gauntlet/`, source `(resolved)`). Runners parse these to reject wrong-plugin children. Emit them every headless run; keep all three copies byte-identical.
+The nine echoed knobs are every variable except the master switch `CODE_GAUNTLET_HEADLESS`. Two additional **identity receipt** lines follow: `pipeline_version` (the `PIPELINE_VERSION` constant from `{plugin_root}/workflows/pipeline.js`, source `(bundle)`) and `plugin_root` (absolute path resolved from this SKILL.md — two levels up from `skills/code-gauntlet/`, source `(resolved)`). The report copy is the receipt of record, rendered in code from the validated args waist. Phase 1 stdout remains the Phase 2 gate input, and the final-message copy is only the fallback when the report never materialized.
 
 The example shows a bench-configured run (env overrides throughout) except `delivery_tier`, which bench leaves unset so it resolves to the `all` default — the benchmark posts every challenge-survivor, which is the intended default. A run relying on headless defaults would show e.g. `delivery=markdown (default)` and `pr_comment_cap=6 (default)`, and a REVIEW.md-sourced value would show e.g. `delivery=chat (review_md)`.
 
-**Emit the block in three places, verbatim and identical:** (1) Phase 1 stdout (as above); (2) the markdown report's methodology section; and (3) the **final response message** of the run. The three copies must be byte-identical. The final-response copy is the machine-parsed receipt for `-p --output-format json` runs: intermediate-turn stdout is not captured in the result envelope, so only the last message survives in `.result`. A runner that cannot see Phase 1 stdout therefore recovers the receipt from the final message, or from the collected report markdown — all three carry the same block so the receipt is verifiable regardless of which output the runner can observe.
+The pipeline renders the block in the report's last `Review Methodology` section. At delivery,
+point the chat methodology to that section and include the materialization proof, patches path,
+delivery outcome, post-report gaps, and duration. If no report materializes, repeat the block in
+the final message as the fallback receipt; do not claim the three surfaces are byte-identical.
 
 ---
 

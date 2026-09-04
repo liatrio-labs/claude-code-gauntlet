@@ -16,7 +16,6 @@ from bench.runner import invoke  # noqa: E402
 
 DOC_ECHO_VALUES = {
     **invoke.EXPECTED_ECHO,
-    "delivery_tier": "all",
     "pipeline_version": "3.1.3",
     "plugin_root": "/absolute/path/to/claude-code-gauntlet",
 }
@@ -35,7 +34,7 @@ class HeadlessEchoIdentityContractTest(unittest.TestCase):
         return m.group(1)
 
     def test_the_bench_shaped_example_satisfies_the_runners_echo_matcher(self):
-        """T-ECHO: the bench-configured example satisfies the runner's eight-key receipt."""
+        """T-ECHO: the bench-configured example satisfies the runner's nine-key receipt."""
         block = self._echo_block()
         self.assertTrue(invoke._echo_in_text(block))
 
@@ -59,6 +58,20 @@ class HeadlessEchoIdentityContractTest(unittest.TestCase):
         above.
         """
         block = self._echo_block()
+        self.assertEqual(
+            set(invoke.EXPECTED_ECHO),
+            {
+                "model_tier",
+                "delivery",
+                "post_mode",
+                "pr_comment_cap",
+                "delivery_tier",
+                "draft_policy",
+                "reviewed_policy",
+                "pr_not_found_policy",
+                "trivial_scope",
+            },
+        )
         substituted = []
         seen = set()
         for line in block.splitlines():
@@ -75,6 +88,9 @@ class HeadlessEchoIdentityContractTest(unittest.TestCase):
             _, source = after.split(" (", 1)
             substituted.append(f"{before}{knob}={DOC_ECHO_VALUES[knob]} ({source}")
 
+        self.assertEqual(
+            set(invoke.EXPECTED_ECHO) | {"pipeline_version", "plugin_root"}, seen
+        )
         self.assertEqual(set(DOC_ECHO_VALUES), seen)
         with patch.object(invoke, "EXPECTED_ECHO", DOC_ECHO_VALUES):
             self.assertTrue(invoke._echo_in_text("\n".join(substituted)))

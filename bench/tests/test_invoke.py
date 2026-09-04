@@ -1305,6 +1305,32 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         self.assertEqual(got["plugin_root"], "/abs/plugin")
         self.assertEqual(got["pipeline_version"], "3.1.3")
 
+    def test_extract_identity_receipt_prefers_code_rendered_report_over_other_sources(
+        self,
+    ):
+        report = (
+            "## Review Methodology\n```text\n"
+            "Resolved config:\n"
+            "  pipeline_version=3.26.0 (bundle)\n"
+            "  plugin_root=/code-owned/plugin (resolved)\n"
+            "```\n"
+        )
+        envelope = {
+            "type": "result",
+            "result": "pipeline_version=model-typed (bundle)\nplugin_root=/model/plugin (resolved)",
+        }
+        with tempfile.TemporaryDirectory(prefix="identity-report-") as tmp:
+            path = Path(tmp) / "report.md"
+            path.write_text(report, encoding="utf-8")
+            got = invoke.extract_identity_receipt(
+                "pipeline_version=stdout-typed (bundle)\nplugin_root=/stdout/plugin (resolved)",
+                envelope,
+                (tmp,),
+            )
+        self.assertEqual(
+            got, {"pipeline_version": "3.26.0", "plugin_root": "/code-owned/plugin"}
+        )
+
 
 class ScriptPathMatchesRepoTest(unittest.TestCase):
     def test_relative_paths_are_repo_relative_not_cwd_relative(self):

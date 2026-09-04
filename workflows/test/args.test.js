@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {
   ARGS_VERSION, normalizeArgs, validateArgs, parseEntryArgs,
   stripNullOptionalsReport, normalizeArgsReport, nullToleranceGap, LIMIT_DEFAULTS,
-  resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys,
+  resolveReviewConfig, computeLightEligible, nullToleranceRejectedKeys, KNOB_REGISTRY,
 } from '../src/args.js';
 
 const good = {
@@ -16,6 +16,14 @@ const good = {
   // scopeAnswer needed) the same way it always was ({} agentFlags == full scope).
   reviewConfigPath: null, riskTable: [{ path: 'a.js', risk: 'medium' }],
   policy: { tier: 'optimized', subagentModel: null },
+  configEcho: {
+    model_tier: { value: 'optimized', source: 'fixed' },
+    delivery_tier: { value: 'all', source: 'default' },
+    pr_comment_cap: { value: 'null', source: 'default' },
+    review_md: { value: 'absent', source: 'discovery' },
+  },
+  pluginRoot: '/plugin',
+  reviewScope: { kind: 'full', since: null, commits: null, reason: null },
   limits: {
     summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
     maxLineSpan: 100,
@@ -30,6 +38,160 @@ test('normalizeArgs passes an object through (workflow-nesting form)', () => {
 });
 test('validateArgs accepts a well-formed waist', () => {
   assert.deepEqual(validateArgs(good), { ok: true, errors: [] });
+});
+
+test('T182-ARGS: required receipt has the registry-defined mode key sets and render order', () => {
+  assert.deepEqual(
+    KNOB_REGISTRY.filter((d) => d.modes.includes('headless')).map((d) => d.key),
+    ['model_tier', 'delivery', 'post_mode', 'pr_comment_cap', 'delivery_tier', 'draft_policy', 'reviewed_policy', 'pr_not_found_policy', 'trivial_scope'],
+  );
+  assert.deepEqual(
+    KNOB_REGISTRY.filter((d) => d.modes.includes('interactive')).map((d) => d.key),
+    ['model_tier', 'pr_comment_cap', 'delivery_tier', 'review_md'],
+  );
+  for (const field of ['configEcho', 'pluginRoot', 'reviewScope']) {
+    const a = { ...good }; delete a[field];
+    const result = validateArgs(a);
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.includes(`missing required field: ${field}`)));
+  }
+});
+
+test('T182-ARGS: every receipt value rule, source rule, and keyed shape is fail-closed', () => {
+  const headless = {
+    ...good,
+    mode: 'headless',
+    delivery: { tier: 'all', prIdentity: { owner: 'o', repo: 'r', pr_number: 1, sha_full: 's' } },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'env' },
+      delivery: { value: 'chat,pr_comments,markdown', source: 'review_md' },
+      post_mode: { value: 'live', source: 'default' },
+      pr_comment_cap: { value: '1', source: 'env' },
+      delivery_tier: { value: 'all', source: 'default' },
+      draft_policy: { value: 'skip', source: 'env' },
+      reviewed_policy: { value: 'incremental', source: 'default' },
+      pr_not_found_policy: { value: 'local', source: 'env' },
+      trivial_scope: { value: 'full', source: 'default' },
+    },
+    limits: { ...good.limits, deliveryCap: 1 },
+  };
+  assert.equal(validateArgs(headless).ok, true);
+  const missingKey = { ...headless, configEcho: { ...headless.configEcho } };
+  delete missingKey.configEcho.delivery;
+  assert.equal(validateArgs(missingKey).ok, false);
+  const extraKey = { ...headless, configEcho: { ...headless.configEcho, unexpected: { value: 'x', source: 'default' } } };
+  assert.equal(validateArgs(extraKey).ok, false);
+  const malformedEntry = { ...headless, configEcho: { ...headless.configEcho, model_tier: { value: 'optimized', source: 'env', extra: true } } };
+  assert.equal(validateArgs(malformedEntry).ok, false);
+
+  const invalidValues = [
+    ['model_tier', 'standard'], ['delivery', 'chat,chat'], ['delivery', 'chat,unknown'],
+    ['post_mode', 'later'], ['pr_comment_cap', '0'], ['delivery_tier', 'branch_only'],
+    ['draft_policy', 'defer'], ['reviewed_policy', 'partial'], ['pr_not_found_policy', 'ignore'],
+    ['trivial_scope', 'none'],
+  ];
+  for (const [key, value] of invalidValues) {
+    const result = validateArgs({ ...headless, configEcho: { ...headless.configEcho, [key]: { value, source: 'default' } } });
+    assert.equal(result.ok, false, `${key}=${value} must be rejected`);
+    assert.ok(result.errors.some((error) => error.includes(`configEcho.${key}.value`)), result.errors.join('; '));
+  }
+  for (const value of ['1\n2', 'value`']) {
+    const result = validateArgs({ ...headless, configEcho: { ...headless.configEcho, model_tier: { value, source: 'env' } } });
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.includes('model_tier.value')));
+  }
+  const badSource = { ...headless.configEcho, delivery: { value: 'chat', source: 'fixed' } };
+  assert.equal(validateArgs({ ...headless, configEcho: badSource }).ok, false);
+
+  const interactive = {
+    ...good,
+    mode: 'interactive',
+    limits: { ...good.limits, deliveryCap: 0 },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'fixed' },
+      delivery_tier: { value: 'all', source: 'default' },
+      pr_comment_cap: { value: '0', source: 'env' },
+      review_md: { value: 'absent', source: 'discovery' },
+    },
+  };
+  assert.equal(validateArgs(interactive).ok, true);
+  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: 'null', source: 'env' } } }).ok, false);
+  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, pr_comment_cap: { value: '1', source: 'default' } } }).ok, false);
+  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, model_tier: { value: 'optimized', source: 'env' } } }).ok, false);
+  assert.equal(validateArgs({ ...interactive, configEcho: { ...interactive.configEcho, review_md: { value: 'present', source: 'discovery' } } }).ok, false);
+});
+
+test('T182-ARGS: receipt lockstep rejects mismatches before any stage can dispatch', () => {
+  const deliveryMismatch = validateArgs({ ...good, delivery: { tier: 'main_only' } });
+  assert.equal(deliveryMismatch.ok, false);
+  assert.ok(deliveryMismatch.errors.some((error) => error.includes('delivery_tier')));
+
+  const capMismatch = validateArgs({ ...good, limits: { ...good.limits, deliveryCap: 24 } });
+  assert.equal(capMismatch.ok, false);
+  assert.ok(capMismatch.errors.some((error) => error.includes('pr_comment_cap')));
+
+  const nullDeletedDelivery = normalizeArgs({ ...good, delivery: null });
+  assert.equal(validateArgs(nullDeletedDelivery).ok, true, 'null delivery uses effective tier all');
+  assert.equal(validateArgs({ ...nullDeletedDelivery, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } }).ok, false);
+
+  const scopeMismatch = validateArgs({
+    ...good,
+    mode: 'headless',
+    riskTable: [{ path: 'a.js', risk: 'low' }],
+    scopeAnswer: 'light',
+    configEcho: { ...good.configEcho, trivial_scope: { value: 'full', source: 'default' } },
+  });
+  assert.ok(scopeMismatch.errors.some((error) => error.includes('scopeAnswer')));
+
+  const noIdentity = validateArgs({
+    ...good,
+    mode: 'headless',
+    delivery: { tier: 'all' },
+    limits: { ...good.limits, deliveryCap: 25 },
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'default' },
+      delivery: { value: 'pr_comments', source: 'env' },
+      post_mode: { value: 'dry-run', source: 'default' },
+      pr_comment_cap: { value: '25', source: 'default' },
+      delivery_tier: { value: 'all', source: 'default' },
+      draft_policy: { value: 'review', source: 'default' },
+      reviewed_policy: { value: 'full', source: 'default' },
+      pr_not_found_policy: { value: 'error', source: 'default' },
+      trivial_scope: { value: 'full', source: 'default' },
+    },
+  });
+  assert.ok(noIdentity.errors.some((error) => error.includes('prIdentity')));
+});
+
+test('T182-ARGS: pluginRoot and reviewScope enforce path trust and prior-review shape', () => {
+  for (const bad of ['relative/plugin', '/plugin\nroot', '/plugin`root']) {
+    const result = validateArgs({ ...good, pluginRoot: bad });
+    assert.equal(result.ok, false, `${bad} must be rejected`);
+    assert.ok(result.errors.some((error) => error.includes('pluginRoot')));
+  }
+  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/other/scripts/assemble_artifacts.py' } }).ok, false);
+  assert.equal(validateArgs({ ...good, verify: { scriptPath: '/other/scripts/verify_findings.py' } }).ok, false);
+  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
+
+  const incremental = { kind: 'incremental', since: 'abc-1._x', commits: null, reason: 'prior receipt unavailable' };
+  assert.equal(validateArgs({ ...good, reviewScope: incremental }).ok, true);
+  for (const bad of [
+    { kind: 'incremental', since: 'bad sha!', commits: null, reason: null },
+    { kind: 'incremental', since: 'abc', commits: -1, reason: null },
+    { kind: 'full', since: 'abc', commits: null, reason: null },
+    { kind: 'full', since: null, commits: 1, reason: null },
+    { kind: 'full', since: null, commits: null, reason: 'x'.repeat(201) },
+    { kind: 'full', since: null, commits: null, reason: 'line\nbreak' },
+    { kind: 'full', since: null, commits: null, reason: null, extra: true },
+  ]) {
+    assert.equal(validateArgs({ ...good, reviewScope: bad }).ok, false, JSON.stringify(bad));
+  }
+});
+
+test('T182-ARGS: policy.tier is checked when present but omitted fixture policy remains valid', () => {
+  assert.equal(validateArgs(good).ok, true);
+  assert.equal(validateArgs({ ...good, policy: { tier: 'standard' } }).ok, false);
+  assert.equal(validateArgs({ ...good, policy: { tier: 'optimized' } }).ok, true);
 });
 test('validateArgs rejects an unknown argsVersion loudly', () => {
   const r = validateArgs({ ...good, argsVersion: 2 });
@@ -68,7 +230,7 @@ test('validateArgs treats the delivery selector as optional (absent is fine)', (
 });
 test('validateArgs accepts delivery.tier "all" and "main_only"', () => {
   assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'all' } }), { ok: true, errors: [] });
-  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'main_only' } }), { ok: true, errors: [] });
+  assert.deepEqual(validateArgs({ ...good, delivery: { tier: 'main_only' }, configEcho: { ...good.configEcho, delivery_tier: { value: 'main_only', source: 'default' } } }), { ok: true, errors: [] });
 });
 test('validateArgs accepts an empty delivery object (tier defaults to all downstream)', () => {
   assert.deepEqual(validateArgs({ ...good, delivery: {} }), { ok: true, errors: [] });

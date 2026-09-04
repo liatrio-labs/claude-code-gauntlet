@@ -30,13 +30,9 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 - `artifactPaths.findings` — the full persisted findings JSON (every high-confidence survivor). It carries the **union schema**: the v2 aliases `line`/`end_line`/`body` alongside the canonical `line_start`/`line_end`/`description`, so `post_review.py` consumes it unchanged. Delivery never selects from this full file: the posted set is `artifactPaths.postReview`, posted verbatim.
 - `artifactPaths.report` — the rendered report markdown, produced **in code** by
   `renderReport()` (`workflows/src/renderReport.js`): title, identity line, Summary, Findings
-  by severity, the Unverified/pipeline-degraded section, and the Review Dimensions Summary.
-  The renderer emits **no** Review Methodology section and **no** `Headless config:` block;
-  the orchestrator composes and appends that section at delivery (see "Methodology inputs"
-  below), **after** the bytes the persist content-proof covers. `references/headless-mode.md`
-  and `SKILL.md` require the `Headless config:` block to appear in that appended section — a
-  requirement satisfied today only by improvisation, with no documented write step. Making the
-  section code-rendered is **issue #182**.
+  by severity, the Unverified/pipeline-degraded section, the Review Dimensions Summary, and
+  the last-section Review Methodology with its code-rendered identity receipt and methodology
+  table. The report is complete when materialized; the orchestrator never appends to `report.md`.
 - The return's own `checkpoints` is just `{ completed: [...] }` (phase names). A **slim** resume checkpoint (`{ phases, completed, phaseReached, counts }` — full output only for the resume-consumed `challenge` phase, plus a per-phase `counts` map for every phase including `filter`) is persisted at `artifactPaths.checkpoints`. Read that file if a later re-run needs to resume a successful-but-superseded run: it reuses the delivered `challenge` findings verbatim and re-runs the upstream phases (discover/verify/validate/**filter**/report) — `filter` is deliberately not persisted: it is a pure, agent-free JS function, so re-running it on resume costs nothing (issue #38, P1). The fast full-skip resume map still rides back **in-memory** on the failure path below.
 
 **On `ok: false`, or `ok: true` with a partial-artifacts gap** (writer failed, `artifactPaths` empty/null): the run reached `phaseReached` but did not finish, and nothing was persisted — so the resume state rides back **in the return's `checkpoints` field**, not on disk. Offer **resume-from-checkpoint** before delivering anything partial:
@@ -50,13 +46,19 @@ Never hand-write an artifact from `persistReturn`'s contents. The whole channel 
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): never prompt. Auto-resume **once** when `return.checkpoints` has a `.phases` map; otherwise (truncated, or the retry also fails) deliver the partial report + `gaps` and stop. See `references/headless-mode.md`.
 
-**Surface `gaps` in the methodology regardless of `ok`** — each entry is a degraded/skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
+**Surface the integer gap count in report methodology regardless of `ok`**; at delivery, include the full `gaps` entries in chat as post-report gap details. Each entry names a degraded or skipped stage (unverified findings, skipped validation batch, capped challenges, partial artifacts).
 
 Read `references/report-format.md` for the PR comment format.
 
 ### Methodology inputs
 
-The methodology section must disclose: **plugin version** (`.claude-plugin/plugin.json` `version`), **PIPELINE_VERSION** (the `PIPELINE_VERSION` constant in `workflows/pipeline.js`), **per-stage models** (from `resolvedPolicy` — a `subagentModel` override if present, else the S5 defaults; when `resolvedPolicy.provider` is not `firstParty`, note that agents dispatched bare aliases resolved by the provider's deployment mapping rather than pinned first-party model IDs), **conditional schema enforcement** (`resolvedPolicy.conditionalSchema` — `false` means the conventions-and-intent dispatch used the flat schema, so per-dimension `claude_md_rule`/`spec_text` enforcement was contract-only on this run), the **effective config** (delivery, limits), the **review scope** (`Full`, or `Incremental since {sha} (N commits)` — the workflow's Report stage has no knowledge of the previously-reviewed gate, so the orchestrator appends this line at delivery, not the pipeline), the **findings pipeline** (`stats.merge` — per-channel counts, duplicates resolved, dropped-no-id, and the truncation/validation warning counts `merge()` recorded), and `stats`/`gaps`. If `resolvedPolicy.subagentModel` is set, disclose it prominently — `CLAUDE_CODE_SUBAGENT_MODEL` overrode every per-stage model.
+The renderer owns the methodology section and receives its inputs through the args waist: plugin
+and pipeline version, resolved policy and per-stage models, effective delivery selection,
+review scope, stage and merge statistics, the integer gap count, and dispatched/degraded
+dimensions. The chat methodology at delivery points to this report section and adds only what
+the orchestrator knows after the report stage: materialization proof, the patches path, delivery
+outcome, post-report gaps, and wall-clock duration. It never reconstructs or appends report
+content.
 
 ### Permalinks
 

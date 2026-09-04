@@ -987,6 +987,7 @@ test('happy path: discoverOut.dispatched/degraded reach the final Review Dimensi
   const args = validArgs();
   let persisted = null;
   const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
+  ctx.pipelineVersion = '3.26.0';
   const out = await runWith(ctx, args);
   assert.equal(out.ok, true);
 
@@ -1008,6 +1009,9 @@ test('happy path: discoverOut.dispatched/degraded reach the final Review Dimensi
     otherRows.every((r) => r[2] === '0' && r[3] === 'Clean — no findings returned'),
     `every other dispatched agent must read Clean/0: ${JSON.stringify(otherRows)}`,
   );
+  assert.equal((persisted.report.match(/^## Review Methodology$/gm) || []).length, 1);
+  assert.ok(persisted.report.endsWith('orchestrator at delivery.'));
+  assert.ok(persisted.report.includes('pipeline_version=3.26.0 (bundle)'));
 });
 
 // --- Issue #24 req 1/3/4/5 (PR3): deterministic agentFlags derivation ------------------

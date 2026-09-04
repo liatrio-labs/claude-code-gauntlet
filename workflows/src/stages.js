@@ -31,6 +31,7 @@ function defaultCtx() {
     agent: typeof agent === 'function' ? agent : undefined,
     parallel: typeof parallel === 'function' ? parallel : undefined,
     pipeline: typeof pipeline === 'function' ? pipeline : undefined,
+    pipelineVersion: null,
   };
 }
 
@@ -3840,7 +3841,9 @@ export async function runWith(ctx, rawArgs) {
     );
   }
 
-  const c = ctx || defaultCtx();
+  // The bundle entry injects only pipelineVersion; retain the host globals from the default
+  // context while allowing source tests and callers to override any seam explicitly.
+  const c = { ...defaultCtx(), ...(ctx || {}) };
   // Agent-count guard: coarsenLimits is applied at the two points its inputs exist.
   // The changed-file count is known at entry (bounds the summarize term); the finding
   // count exists only after merge, where the verify/validate/challenge terms get
@@ -4271,6 +4274,7 @@ export async function runWith(ctx, rawArgs) {
         validate: validateOut.stats,
         filter: filterOut.stats,
         challenge: challengeOut.stats,
+        merge: compactMethodology(mergeOut.methodology),
       },
       // discover()'s own fan-out list and degraded-dimensions list (issue #89) — feeds
       // dimensionsSummaryTable inside renderReport. `dispatched` already excludes any
@@ -4281,6 +4285,15 @@ export async function runWith(ctx, rawArgs) {
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
       prIdentity: (A.delivery || {}).prIdentity || null,
+      mode: A.mode,
+      configEcho: A.configEcho,
+      pluginRoot: A.pluginRoot,
+      pipelineVersion: c.pipelineVersion,
+      reviewScope: A.reviewScope,
+      policy,
+      deliveryTier: deliveryTier ?? 'all',
+      deliveryCap: limits.deliveryCap ?? null,
+      gapCount: gaps.length,
     };
     // Phase 8's report is a PURE FUNCTION of the pipeline's own output (issue #36) — no
     // agent, no prompt, no schema, no segmentation, no fallback. Four measured failure
@@ -4291,8 +4304,8 @@ export async function runWith(ctx, rawArgs) {
     // (2 of 6). The renderer's section list is pinned to references/report-format.md by
     // a generated fence.
     //
-    // It deliberately renders NO Review Methodology section and NO `Headless config:`
-    // block: the orchestrator composes those at delivery (issue #182 owns that seam).
+    // Review Methodology, including the identity receipt, is rendered by renderReport as
+    // part of the report primary. Nothing after materialization appends to report.md.
     let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
     const reportGaps = reportOut.gaps || [];
     gaps.push(...reportGaps);

@@ -28,7 +28,7 @@ const NASTY = 'the executor wrote \\"receipt\\" to C:\\tmp\\out — 😀 𝕏 �
 const args = validArgs({
   outputDir,
   nonce: nonce || 'nonce-return-channel',
-  persist: { assembleScriptPath: 'scripts/assemble_artifacts.py', returnPrimaries: true },
+  persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py', returnPrimaries: true },
 });
 const ctx = makeCtx(args, {
   reportText: `# Code Gauntlet\n\n${NASTY}\n\n- one\n- two\n`,

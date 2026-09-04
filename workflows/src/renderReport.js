@@ -3,7 +3,8 @@
 // line-based bundle stripper cannot remove safely.
 import { SEVERITY_ORDER } from './filterFindings.js';
 import { rankFindings } from './applyChallenges.js';
-import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK } from './registry.js';
+import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, resolvePolicy, conditionalSchemaActive } from './registry.js';
+import { KNOB_REGISTRY } from './args.js';
 
 // Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
 // exists at report time) plus the two stamps filterFindings.js/filter_findings.py leave
@@ -299,7 +300,22 @@ function fenceFor(text) {
 
 // Bullet values, heading interpolations and the identity line are single-line positions.
 function oneLine(value) {
-  return reportAsText(value).replace(/\r?\n+/g, ' ').replace(/ +/g, ' ').trim();
+  return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
+}
+
+// Finding prose is deliberately multiline, but a model-controlled line must not become a
+// second code-owned section heading. Evidence is excluded because it is placed in a fenced
+// block and must remain byte-for-byte verbatim.
+function safeProse(value) {
+  return reportAsText(value).replace(/^## Review Methodology[ \t]*$/gm, '## Review Methodology (finding text)');
+}
+
+// Table cells are a separate primitive from receipt lines: methodology details are prose
+// assembled by the pipeline, but a replayed reason or provider value can still contain a
+// newline or pipe. Keep each row physically one line and keep Markdown's column boundary
+// intact.
+export function tableCell(value) {
+  return oneLine(value).replaceAll('|', '\\|');
 }
 
 function isPresent(value) {
@@ -396,7 +412,7 @@ function renderFinding(builder, finding, unverified) {
   }
   if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
 
-  if (isPresent(finding.description)) blocks.push(() => builder.add(reportAsText(finding.description)));
+  if (isPresent(finding.description)) blocks.push(() => builder.add(safeProse(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
       builder.add('**Evidence:**');
@@ -414,7 +430,7 @@ function renderFinding(builder, finding, unverified) {
     blocks.push(() => {
       builder.add('**Suggested fix:**');
       builder.add();
-      builder.add(reportAsText(finding.suggestion));
+      builder.add(safeProse(finding.suggestion));
     });
   }
 
@@ -440,7 +456,7 @@ function renderFinding(builder, finding, unverified) {
         const title = oneLine(corroboration.title);
         builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
         if (isPresent(corroboration.description)) {
-          builder.add(reportAsText(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          builder.add(safeProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
       }
     });
@@ -493,6 +509,134 @@ function countsSentence(findings, rawCount, unverified, view) {
   return sentence;
 }
 
+const RECEIPT_DEFAULTS = {
+  model_tier: ['optimized', 'default'],
+  delivery: ['markdown', 'default'],
+  post_mode: ['dry-run', 'default'],
+  pr_comment_cap: ['6', 'default'],
+  delivery_tier: ['all', 'default'],
+  draft_policy: ['review', 'default'],
+  reviewed_policy: ['full', 'default'],
+  pr_not_found_policy: ['error', 'default'],
+  trivial_scope: ['full', 'default'],
+  review_md: ['absent', 'discovery'],
+};
+
+function receiptSafe(value, fallback = 'unknown') {
+  const cleaned = oneLine(value).replaceAll('`', '');
+  return cleaned || fallback;
+}
+
+function receiptLines(input) {
+  const mode = input.mode === 'headless' ? 'headless' : 'interactive';
+  const echo = input.configEcho && typeof input.configEcho === 'object' && !Array.isArray(input.configEcho)
+    ? input.configEcho
+    : {};
+  const lines = [mode === 'headless' ? 'Headless config:' : 'Resolved config:'];
+  for (const descriptor of KNOB_REGISTRY) {
+    if (!descriptor.modes.includes(mode)) continue;
+    const entry = echo[descriptor.key];
+    const fallback = RECEIPT_DEFAULTS[descriptor.key] || ['unknown', 'default'];
+    const value = entry && typeof entry.value === 'string' ? entry.value : fallback[0];
+    const source = entry && typeof entry.source === 'string'
+      ? entry.source
+      : descriptor.allowedSources[mode][0] || fallback[1];
+    lines.push(`  ${descriptor.key}=${receiptSafe(value)} (${receiptSafe(source)})`);
+  }
+  lines.push(`  pipeline_version=${receiptSafe(input.pipelineVersion)} (bundle)`);
+  lines.push(`  plugin_root=${receiptSafe(input.pluginRoot, '/unknown/plugin')} (resolved)`);
+  return lines;
+}
+
+function countSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
+  const entries = Object.entries(value).map(([key, item]) => {
+    const count = Array.isArray(item) ? item.length : item;
+    return `${key}=${tableCell(count)}`;
+  });
+  return entries.length ? entries.join(', ') : 'none';
+}
+
+function methodologyRows(input, rawFindings) {
+  const policy = input.policy && typeof input.policy === 'object' && !Array.isArray(input.policy)
+    ? input.policy
+    : {};
+  const provider = policy.provider || 'firstParty';
+  const gateway = policy.gateway === true;
+  const conditional = conditionalSchemaActive({ ...policy, provider });
+  const rows = [];
+  const version = receiptSafe(input.pipelineVersion);
+  rows.push(['Version', `${version} (plugin and pipeline)`]);
+  rows.push(['Provider', `provider=${provider}; gateway=${gateway}; conditional schema active=${conditional}`]);
+
+  if (policy.subagentModel) {
+    rows.push(['Subagent model override', `EVERY stage uses ${receiptSafe(policy.subagentModel)}`]);
+  }
+  const stageTypes = [
+    'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
+    'validator', 'challenger', 'executor', 'artifact-writer',
+  ];
+  const models = stageTypes.map((agentType) => {
+    const model = resolvePolicy(`code-gauntlet:${agentType}`, {
+      subagentModelEnv: policy.subagentModel,
+      provider,
+    }).model;
+    return `${agentType}=${model}`;
+  }).join(', ');
+  rows.push(['Per-stage models', models]);
+
+  const tier = input.deliveryTier ?? 'all';
+  const cap = typeof input.deliveryCap === 'number' ? String(input.deliveryCap) : 'uncapped';
+  rows.push(['Delivery selection', `selection policy: tier=${tier}, cap=${cap}`]);
+
+  const scope = input.reviewScope && typeof input.reviewScope === 'object' ? input.reviewScope : { kind: 'full' };
+  if (scope.kind === 'incremental') {
+    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${scope.commits} commits`;
+    const reason = scope.reason ? `; reason: ${scope.reason}` : '';
+    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})${reason}`]);
+  } else {
+    rows.push(['Review scope', scope.reason ? `Full; reason: ${scope.reason}` : 'Full']);
+  }
+
+  const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};
+  const merge = stats.merge && typeof stats.merge === 'object' ? stats.merge : {};
+  const channels = merge.findings_per_channel && typeof merge.findings_per_channel === 'object'
+    ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
+    : 'ndjson=0, text_fallback=0';
+  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  rows.push([
+    'Findings pipeline',
+    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}`,
+  ]);
+
+  const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
+  rows.push(['Gaps', String(gapCount)]);
+  const dispatched = Array.isArray(input.dimensions && input.dimensions.dispatched) ? input.dimensions.dispatched.length : 0;
+  const degraded = Array.isArray(input.dimensions && input.dimensions.degraded) ? input.dimensions.degraded.length : 0;
+  rows.push(['Dimensions', `dispatched=${dispatched}; degraded=${degraded}`]);
+  return rows;
+}
+
+function renderMethodology(builder, input, rawFindings) {
+  builder.add();
+  builder.add('## Review Methodology');
+  builder.add();
+  const receipt = receiptLines(input);
+  const receiptText = receipt.join('\n');
+  const fence = fenceFor(receiptText);
+  builder.add(`${fence}text`);
+  builder.add(receiptText);
+  builder.add(fence);
+  builder.add();
+  builder.add('| Aspect | Details |');
+  builder.add('|--------|---------|');
+  for (const [aspect, details] of methodologyRows(input, rawFindings)) {
+    builder.add(`| ${tableCell(aspect)} | ${tableCell(details)} |`);
+  }
+  builder.add();
+  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported by the orchestrator at delivery.');
+}
+
 // Complete report.md with no trailing newline. Pure and total for absent/empty input:
 // no clock, dispatch, prompt, schema, segmentation or fallback participates.
 export function renderReport(input) {
@@ -532,7 +676,7 @@ export function renderReport(input) {
   builder.add('## Summary');
   builder.add();
   if (isPresent(inp.summary)) {
-    builder.add(reportAsText(inp.summary));
+    builder.add(safeProse(inp.summary));
     builder.add();
   }
   builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
@@ -560,5 +704,6 @@ export function renderReport(input) {
   builder.add('## Review Dimensions Summary');
   builder.add();
   builder.add(dimensionsTable);
+  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings);
   return builder.finish();
 }

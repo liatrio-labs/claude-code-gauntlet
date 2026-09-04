@@ -2667,7 +2667,8 @@ const AGENTS = [...new Set(DIMENSIONS.map((d) => d.agentType))];
 // multi-dimension agent's rows to repeat the identical value (the trap promptExtra's
 // comment above already documents for a genuinely per-agent value). This map is the
 // single source of truth for the display strings — the renderer appends the table as
-// the report's last section. Extending: one
+// the report's dimensions section. Review Methodology follows it as the report's last section.
+// Extending: one
 // entry here when AGENTS gains a member — registry.test.js pins the key set to AGENTS.
 const AGENT_LABELS = {
   'code-gauntlet:bug-detector': 'Correctness & Error Handling',
@@ -3064,7 +3065,22 @@ function fenceFor(text) {
 
 // Bullet values, heading interpolations and the identity line are single-line positions.
 function oneLine(value) {
-  return reportAsText(value).replace(/\r?\n+/g, ' ').replace(/ +/g, ' ').trim();
+  return reportAsText(value).replace(/[\r\n]+/g, ' ').replace(/ +/g, ' ').trim();
+}
+
+// Finding prose is deliberately multiline, but a model-controlled line must not become a
+// second code-owned section heading. Evidence is excluded because it is placed in a fenced
+// block and must remain byte-for-byte verbatim.
+function safeProse(value) {
+  return reportAsText(value).replace(/^## Review Methodology[ \t]*$/gm, '## Review Methodology (finding text)');
+}
+
+// Table cells are a separate primitive from receipt lines: methodology details are prose
+// assembled by the pipeline, but a replayed reason or provider value can still contain a
+// newline or pipe. Keep each row physically one line and keep Markdown's column boundary
+// intact.
+function tableCell(value) {
+  return oneLine(value).replaceAll('|', '\\|');
 }
 
 function isPresent(value) {
@@ -3161,7 +3177,7 @@ function renderFinding(builder, finding, unverified) {
   }
   if (bullets.length) blocks.push(() => bullets.forEach(builder.add));
 
-  if (isPresent(finding.description)) blocks.push(() => builder.add(reportAsText(finding.description)));
+  if (isPresent(finding.description)) blocks.push(() => builder.add(safeProse(finding.description)));
   if (isPresent(finding.evidence)) {
     blocks.push(() => {
       builder.add('**Evidence:**');
@@ -3179,7 +3195,7 @@ function renderFinding(builder, finding, unverified) {
     blocks.push(() => {
       builder.add('**Suggested fix:**');
       builder.add();
-      builder.add(reportAsText(finding.suggestion));
+      builder.add(safeProse(finding.suggestion));
     });
   }
 
@@ -3205,7 +3221,7 @@ function renderFinding(builder, finding, unverified) {
         const title = oneLine(corroboration.title);
         builder.add(`- **Corroborated by** \`${agent}\` (\`${dimension}\`, confidence ${confidence}) — ${title}`);
         if (isPresent(corroboration.description)) {
-          builder.add(reportAsText(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
+          builder.add(safeProse(corroboration.description).split(/\r?\n/).map((line) => `  ${line}`).join('\n'));
         }
       }
     });
@@ -3258,6 +3274,134 @@ function countsSentence(findings, rawCount, unverified, view) {
   return sentence;
 }
 
+const RECEIPT_DEFAULTS = {
+  model_tier: ['optimized', 'default'],
+  delivery: ['markdown', 'default'],
+  post_mode: ['dry-run', 'default'],
+  pr_comment_cap: ['6', 'default'],
+  delivery_tier: ['all', 'default'],
+  draft_policy: ['review', 'default'],
+  reviewed_policy: ['full', 'default'],
+  pr_not_found_policy: ['error', 'default'],
+  trivial_scope: ['full', 'default'],
+  review_md: ['absent', 'discovery'],
+};
+
+function receiptSafe(value, fallback = 'unknown') {
+  const cleaned = oneLine(value).replaceAll('`', '');
+  return cleaned || fallback;
+}
+
+function receiptLines(input) {
+  const mode = input.mode === 'headless' ? 'headless' : 'interactive';
+  const echo = input.configEcho && typeof input.configEcho === 'object' && !Array.isArray(input.configEcho)
+    ? input.configEcho
+    : {};
+  const lines = [mode === 'headless' ? 'Headless config:' : 'Resolved config:'];
+  for (const descriptor of KNOB_REGISTRY) {
+    if (!descriptor.modes.includes(mode)) continue;
+    const entry = echo[descriptor.key];
+    const fallback = RECEIPT_DEFAULTS[descriptor.key] || ['unknown', 'default'];
+    const value = entry && typeof entry.value === 'string' ? entry.value : fallback[0];
+    const source = entry && typeof entry.source === 'string'
+      ? entry.source
+      : descriptor.allowedSources[mode][0] || fallback[1];
+    lines.push(`  ${descriptor.key}=${receiptSafe(value)} (${receiptSafe(source)})`);
+  }
+  lines.push(`  pipeline_version=${receiptSafe(input.pipelineVersion)} (bundle)`);
+  lines.push(`  plugin_root=${receiptSafe(input.pluginRoot, '/unknown/plugin')} (resolved)`);
+  return lines;
+}
+
+function countSummary(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return 'none';
+  const entries = Object.entries(value).map(([key, item]) => {
+    const count = Array.isArray(item) ? item.length : item;
+    return `${key}=${tableCell(count)}`;
+  });
+  return entries.length ? entries.join(', ') : 'none';
+}
+
+function methodologyRows(input, rawFindings) {
+  const policy = input.policy && typeof input.policy === 'object' && !Array.isArray(input.policy)
+    ? input.policy
+    : {};
+  const provider = policy.provider || 'firstParty';
+  const gateway = policy.gateway === true;
+  const conditional = conditionalSchemaActive({ ...policy, provider });
+  const rows = [];
+  const version = receiptSafe(input.pipelineVersion);
+  rows.push(['Version', `${version} (plugin and pipeline)`]);
+  rows.push(['Provider', `provider=${provider}; gateway=${gateway}; conditional schema active=${conditional}`]);
+
+  if (policy.subagentModel) {
+    rows.push(['Subagent model override', `EVERY stage uses ${receiptSafe(policy.subagentModel)}`]);
+  }
+  const stageTypes = [
+    'change-summarizer', ...AGENTS.map((agentType) => agentType.split(':').pop()),
+    'validator', 'challenger', 'executor', 'artifact-writer',
+  ];
+  const models = stageTypes.map((agentType) => {
+    const model = resolvePolicy(`code-gauntlet:${agentType}`, {
+      subagentModelEnv: policy.subagentModel,
+      provider,
+    }).model;
+    return `${agentType}=${model}`;
+  }).join(', ');
+  rows.push(['Per-stage models', models]);
+
+  const tier = input.deliveryTier ?? 'all';
+  const cap = typeof input.deliveryCap === 'number' ? String(input.deliveryCap) : 'uncapped';
+  rows.push(['Delivery selection', `selection policy: tier=${tier}, cap=${cap}`]);
+
+  const scope = input.reviewScope && typeof input.reviewScope === 'object' ? input.reviewScope : { kind: 'full' };
+  if (scope.kind === 'incremental') {
+    const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${scope.commits} commits`;
+    const reason = scope.reason ? `; reason: ${scope.reason}` : '';
+    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})${reason}`]);
+  } else {
+    rows.push(['Review scope', scope.reason ? `Full; reason: ${scope.reason}` : 'Full']);
+  }
+
+  const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};
+  const merge = stats.merge && typeof stats.merge === 'object' ? stats.merge : {};
+  const channels = merge.findings_per_channel && typeof merge.findings_per_channel === 'object'
+    ? `ndjson=${merge.findings_per_channel.ndjson ?? 0}, text_fallback=${merge.findings_per_channel.text_fallback ?? 0}`
+    : 'ndjson=0, text_fallback=0';
+  const mergeCounts = `per-channel: ${channels}; duplicates resolved=${merge.duplicates_resolved ?? 0}; dropped-no-id=${merge.dropped_no_id ?? 0}; truncation warnings=${merge.truncation_warnings ?? 0}; validation warnings=${merge.validation_warnings ?? 0}`;
+  rows.push([
+    'Findings pipeline',
+    `discovered=${stats.discovered ?? rawFindings.length}; validate: ${countSummary(stats.validate)}; filter: ${countSummary(stats.filter)}; challenge: ${countSummary(stats.challenge)}; merge: ${mergeCounts}`,
+  ]);
+
+  const gapCount = Number.isInteger(input.gapCount) ? input.gapCount : 0;
+  rows.push(['Gaps', String(gapCount)]);
+  const dispatched = Array.isArray(input.dimensions && input.dimensions.dispatched) ? input.dimensions.dispatched.length : 0;
+  const degraded = Array.isArray(input.dimensions && input.dimensions.degraded) ? input.dimensions.degraded.length : 0;
+  rows.push(['Dimensions', `dispatched=${dispatched}; degraded=${degraded}`]);
+  return rows;
+}
+
+function renderMethodology(builder, input, rawFindings) {
+  builder.add();
+  builder.add('## Review Methodology');
+  builder.add();
+  const receipt = receiptLines(input);
+  const receiptText = receipt.join('\n');
+  const fence = fenceFor(receiptText);
+  builder.add(`${fence}text`);
+  builder.add(receiptText);
+  builder.add(fence);
+  builder.add();
+  builder.add('| Aspect | Details |');
+  builder.add('|--------|---------|');
+  for (const [aspect, details] of methodologyRows(input, rawFindings)) {
+    builder.add(`| ${tableCell(aspect)} | ${tableCell(details)} |`);
+  }
+  builder.add();
+  builder.add('This section covers the pipeline up to the report stage; persistence, delivery, and duration are reported by the orchestrator at delivery.');
+}
+
 // Complete report.md with no trailing newline. Pure and total for absent/empty input:
 // no clock, dispatch, prompt, schema, segmentation or fallback participates.
 function renderReport(input) {
@@ -3297,7 +3441,7 @@ function renderReport(input) {
   builder.add('## Summary');
   builder.add();
   if (isPresent(inp.summary)) {
-    builder.add(reportAsText(inp.summary));
+    builder.add(safeProse(inp.summary));
     builder.add();
   }
   builder.add(countsSentence(findings, rawFindings.length, unverified, findingsView));
@@ -3325,6 +3469,7 @@ function renderReport(input) {
   builder.add('## Review Dimensions Summary');
   builder.add();
   builder.add(dimensionsTable);
+  renderMethodology(builder, { ...inp, mode: inp.mode || 'interactive' }, rawFindings);
   return builder.finish();
 }
 
@@ -3361,7 +3506,7 @@ const ARGS_VERSION = 1;
 // REQUIRED so the skill's `git rev-parse --show-toplevel` stamp remains in the persisted
 // waist for forensics, not because any stage consumes it. changedFilesPath is on-disk
 // provenance the workflow never opens.
-const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits'];
+const REQUIRED = ['mode', 'repoRoot', 'outputDir', 'headShaShort', 'nonce', 'generatedAt', 'diffPath', 'changedFiles', 'changedLines', 'riskTable', 'policy', 'limits', 'configEcho', 'pluginRoot', 'reviewScope'];
 
 // The nonce is interpolated into the verify executor command argv (the verify stage
 // derives one per slice as `${nonce}.${i}`), so it must be a single AST-safe,
@@ -3384,6 +3529,34 @@ const DELIVERY_TIERS = ['all', 'main_only'];
 // than inside this enum because it answers a different question (does input_schema reach an
 // unmeasured backend verbatim?), not which model-ID arm resolvePolicy takes.
 const POLICY_PROVIDERS = ['firstParty', 'bedrock', 'vertex', 'foundry'];
+
+// The single code-owned methodology receipt registry. It owns the mode-specific key set,
+// source vocabulary, validation rule, and render order. Add a knob here once; args validation
+// and renderReport both consume the same declaration.
+const CONTROL_RE = /[\u0000-\u001F\u007F]/;
+const deliveryValue = (value) => {
+  if (typeof value !== 'string' || value === '') return false;
+  const parts = value.split(',');
+  return parts.length > 0
+    && parts.every((part) => ['chat', 'pr_comments', 'markdown'].includes(part))
+    && new Set(parts).size === parts.length;
+};
+const digits = (value) => typeof value === 'string' && /^\d+$/.test(value);
+const positiveDigits = (value) => digits(value) && !/^0+$/.test(value);
+const safeReceiptValue = (value) => typeof value === 'string' && !CONTROL_RE.test(value) && !value.includes('`');
+
+const KNOB_REGISTRY = [
+  { key: 'model_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['fixed'] }, valueRule: (value) => value === 'optimized' },
+  { key: 'delivery', modes: ['headless'], allowedSources: { headless: ['env', 'review_md', 'default'] }, valueRule: deliveryValue },
+  { key: 'post_mode', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['dry-run', 'live'].includes(value) },
+  { key: 'pr_comment_cap', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value, mode) => mode === 'headless' ? positiveDigits(value) : (value === 'null' || digits(value)) },
+  { key: 'delivery_tier', modes: ['headless', 'interactive'], allowedSources: { headless: ['env', 'default'], interactive: ['env', 'default'] }, valueRule: (value) => DELIVERY_TIERS.includes(value) },
+  { key: 'draft_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['review', 'skip'].includes(value) },
+  { key: 'reviewed_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['incremental', 'full', 'skip'].includes(value) },
+  { key: 'pr_not_found_policy', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => ['local', 'error'].includes(value) },
+  { key: 'trivial_scope', modes: ['headless'], allowedSources: { headless: ['env', 'default'] }, valueRule: (value) => SCOPE_ANSWERS.includes(value) },
+  { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value) },
+];
 
 // Shared with PATH_CONTROL_RE further down (declared locally there because it sits inside
 // validateArgs); duplicated at module scope here so the reviewMd[].path guard above — which
@@ -3659,6 +3832,47 @@ const REVIEW_TARGET_LABEL = {
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+function configEchoValue(args, key) {
+  const entry = args && isPlainObject(args.configEcho) ? args.configEcho[key] : undefined;
+  return isPlainObject(entry) && typeof entry.value === 'string' ? entry.value : undefined;
+}
+
+function validateConfigEcho(args, errors) {
+  if (args.configEcho === undefined) return;
+  if (!isPlainObject(args.configEcho)) {
+    errors.push('configEcho must be an object keyed by methodology knob');
+    return;
+  }
+  const mode = args.mode;
+  const descriptors = KNOB_REGISTRY.filter((descriptor) => descriptor.modes.includes(mode));
+  const expected = descriptors.map((descriptor) => descriptor.key);
+  const actual = Object.keys(args.configEcho);
+  const extra = actual.filter((key) => !expected.includes(key));
+  const missing = expected.filter((key) => !actual.includes(key));
+  if (extra.length) errors.push(`configEcho has unexpected key(s): ${extra.join(', ')}`);
+  if (missing.length) errors.push(`configEcho is missing key(s): ${missing.join(', ')}`);
+
+  for (const descriptor of descriptors) {
+    const entry = args.configEcho[descriptor.key];
+    if (!isPlainObject(entry)) {
+      errors.push(`configEcho.${descriptor.key} must be { value, source }`);
+      continue;
+    }
+    const entryKeys = Object.keys(entry);
+    const entryExtra = entryKeys.filter((key) => key !== 'value' && key !== 'source');
+    if (entryExtra.length) errors.push(`configEcho.${descriptor.key} has unexpected key(s): ${entryExtra.join(', ')}`);
+    if (typeof entry.value !== 'string') {
+      errors.push(`configEcho.${descriptor.key}.value must be a string`);
+    } else {
+      if (!safeReceiptValue(entry.value)) errors.push(`configEcho.${descriptor.key}.value must be single-line and contain no controls or backticks`);
+      if (!descriptor.valueRule(entry.value, mode)) errors.push(`configEcho.${descriptor.key}.value is invalid for ${mode}`);
+    }
+    if (typeof entry.source !== 'string' || !descriptor.allowedSources[mode].includes(entry.source)) {
+      errors.push(`configEcho.${descriptor.key}.source is invalid for ${mode}`);
+    }
+  }
+}
+
 // How many JSON layers to peel looking for the waist. The documented "session tool-call
 // form" wraps it once; the harness quirk this file already guards for wraps it twice.
 // Bounded because peeling is free work a caller could hand us without limit, and because an
@@ -3849,6 +4063,7 @@ function validateArgs(args) {
   if (args.argsVersion !== ARGS_VERSION) errors.push(`unsupported argsVersion ${args.argsVersion} (expected ${ARGS_VERSION})`);
   for (const k of REQUIRED) if (args[k] === undefined) errors.push(`missing required field: ${k}`);
   if (args.mode && !['interactive', 'headless'].includes(args.mode)) errors.push(`invalid mode: ${args.mode}`);
+  validateConfigEcho(args, errors);
   // Only charset-check a present nonce (absence is already a REQUIRED error above).
   if (args.nonce !== undefined && (typeof args.nonce !== 'string' || !NONCE_RE.test(args.nonce))) {
     errors.push(`invalid nonce: must match ${NONCE_RE} (AST-safe, non-splitting — interpolated into the verify command argv per slice)`);
@@ -3873,7 +4088,7 @@ function validateArgs(args) {
   // `git rev-parse --show-toplevel`, the absolute output dir from ensure_output_dir.py,
   // `git rev-parse --short=8 HEAD`, and a `{output_dir}/….patch` path.
   const PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
-  for (const field of ['repoRoot', 'outputDir', 'headShaShort', 'diffPath']) {
+  for (const field of ['repoRoot', 'outputDir', 'headShaShort', 'diffPath', 'pluginRoot']) {
     const v = args[field];
     if (v === undefined) continue;
     if (typeof v !== 'string' || v.trim() === '') {
@@ -3882,6 +4097,10 @@ function validateArgs(args) {
     }
     if (PATH_CONTROL_RE.test(v)) {
       errors.push(`${field} must not contain a control character`);
+      continue;
+    }
+    if (field === 'pluginRoot' && v.includes('`')) {
+      errors.push('pluginRoot must not contain a backtick');
       continue;
     }
     // headShaShort reaches the verify executor's --head-sha argv (verifyCommand). Path
@@ -3894,7 +4113,7 @@ function validateArgs(args) {
     }
     // Issues #86 / #81: reject relative outputDir / repoRoot. Fail loud — do not resolve;
     // do not probe the filesystem (shape only; repoRoot is unread provenance).
-    if ((field === 'outputDir' || field === 'repoRoot') && !v.startsWith('/')) {
+    if ((field === 'outputDir' || field === 'repoRoot' || field === 'pluginRoot') && !v.startsWith('/')) {
       errors.push(`${field} must be an absolute path (POSIX /-prefix)`);
     }
   }
@@ -3979,6 +4198,9 @@ function validateArgs(args) {
     && args.policy.provider !== undefined && args.policy.provider !== null
     && !POLICY_PROVIDERS.includes(args.policy.provider)) {
     errors.push(`invalid policy.provider: ${args.policy.provider} (expected one of ${POLICY_PROVIDERS.join(', ')})`);
+  }
+  if (isPlainObject(args.policy) && args.policy.tier !== undefined && args.policy.tier !== 'optimized') {
+    errors.push(`invalid policy.tier: ${args.policy.tier} (expected optimized)`);
   }
   // policy.gateway gates registry.js's conditionalSchemaActive (issue #218) — a non-boolean
   // would silently coerce (e.g. the string "false" is truthy), so shape-check it the same
@@ -4180,6 +4402,21 @@ function validateArgs(args) {
       }
     }
   }
+
+  // pluginRoot is the trust boundary for every script path the workflow delegates back to
+  // Phase 8. A path outside this root would make the receipt identify one plugin while the
+  // executor ran another plugin's script.
+  if (typeof args.pluginRoot === 'string' && args.pluginRoot.startsWith('/')) {
+    const scriptPrefix = `${args.pluginRoot}/scripts/`;
+    if (isPlainObject(args.persist) && typeof args.persist.assembleScriptPath === 'string'
+      && !args.persist.assembleScriptPath.startsWith(scriptPrefix)) {
+      errors.push(`persist.assembleScriptPath must start with ${scriptPrefix}`);
+    }
+    if (isPlainObject(args.verify) && typeof args.verify.scriptPath === 'string'
+      && !args.verify.scriptPath.startsWith(scriptPrefix)) {
+      errors.push(`verify.scriptPath must start with ${scriptPrefix}`);
+    }
+  }
   // limits (REQUIRED — see REQUIRED above; the skill always stamps {} at worst, and
   // normalizeArgs fills the LIMIT_DEFAULTS keys before validateArgs ever runs on a
   // real waist). Every OTHER key is a hard error: issue #24's motivating incident was a
@@ -4224,6 +4461,70 @@ function validateArgs(args) {
         && (!Number.isSafeInteger(args.limits.discoveryCap) || args.limits.discoveryCap <= 0)) {
         errors.push('limits.discoveryCap must be a positive safe integer when present');
       }
+    }
+  }
+
+  // Review scope is stamped by the prior-review gate and is deliberately required even for
+  // local/branch targets: those targets stamp the explicit full form rather than leaving the
+  // renderer to infer provenance.
+  if (args.reviewScope !== undefined) {
+    if (!isPlainObject(args.reviewScope)) {
+      errors.push('reviewScope must be { kind, since, commits, reason }');
+    } else {
+      const scopeKeys = Object.keys(args.reviewScope);
+      const scopeExtra = scopeKeys.filter((key) => !['kind', 'since', 'commits', 'reason'].includes(key));
+      if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
+      const { kind, since, commits, reason } = args.reviewScope;
+      if (!['full', 'incremental'].includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
+      if (kind === 'incremental') {
+        if (typeof since !== 'string' || !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
+        if (commits !== null && (!Number.isSafeInteger(commits) || commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
+      } else if (kind === 'full') {
+        if (since !== null) errors.push('reviewScope.since must be null for full scope');
+        if (commits !== null) errors.push('reviewScope.commits must be null for full scope');
+      }
+      if (reason !== null && (typeof reason !== 'string' || CONTROL_RE.test(reason) || reason.length > 200)) {
+        errors.push('reviewScope.reason must be null or a single-line string of at most 200 characters');
+      }
+    }
+  }
+
+  // The receipt is a structured copy of the same resolved decisions that drive the stages.
+  // Compare only well-formed values so malformed fields produce their focused shape errors
+  // above rather than a cascade of misleading coherence errors.
+  const deliveryTierEcho = configEchoValue(args, 'delivery_tier');
+  if (deliveryTierEcho !== undefined && (args.delivery === undefined || args.delivery === null || isPlainObject(args.delivery))) {
+    const effectiveTier = isPlainObject(args.delivery) && args.delivery.tier != null ? args.delivery.tier : 'all';
+    if (deliveryTierEcho === 'all' || deliveryTierEcho === 'main_only') {
+      if (deliveryTierEcho !== effectiveTier) errors.push('configEcho.delivery_tier does not match delivery.tier');
+    }
+  }
+  const capEcho = configEchoValue(args, 'pr_comment_cap');
+  if (capEcho !== undefined && isPlainObject(args.limits)) {
+    if (args.mode === 'headless' && typeof args.limits.deliveryCap !== 'number') {
+      errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
+    } else if (typeof args.limits.deliveryCap === 'number' && capEcho !== String(args.limits.deliveryCap)) {
+      errors.push('configEcho.pr_comment_cap does not match limits.deliveryCap');
+    } else if (args.mode === 'interactive' && (args.limits.deliveryCap === null || args.limits.deliveryCap === undefined) && capEcho !== 'null') {
+      errors.push('configEcho.pr_comment_cap must be null when limits.deliveryCap is absent or null');
+    }
+  }
+  if (args.mode === 'headless') {
+    const trivialEcho = configEchoValue(args, 'trivial_scope');
+    if (args.scopeAnswer !== undefined && trivialEcho !== undefined && args.scopeAnswer !== trivialEcho) {
+      errors.push('scopeAnswer does not match configEcho.trivial_scope');
+    }
+    const deliveryEcho = configEchoValue(args, 'delivery');
+    if (deliveryEcho && deliveryEcho.split(',').includes('pr_comments')
+      && (!isPlainObject(args.delivery) || args.delivery.prIdentity === undefined || args.delivery.prIdentity === null)) {
+      errors.push('delivery.prIdentity is required when configEcho.delivery contains pr_comments');
+    }
+  }
+  if (args.mode === 'interactive') {
+    const reviewMdEcho = configEchoValue(args, 'review_md');
+    if (reviewMdEcho !== undefined) {
+      const expectedReviewMd = args.reviewConfigPath != null ? 'present' : 'absent';
+      if (reviewMdEcho !== expectedReviewMd) errors.push('configEcho.review_md does not match reviewConfigPath');
     }
   }
   return { ok: errors.length === 0, errors };
@@ -4321,6 +4622,7 @@ function defaultCtx() {
     agent: typeof agent === 'function' ? agent : undefined,
     parallel: typeof parallel === 'function' ? parallel : undefined,
     pipeline: typeof pipeline === 'function' ? pipeline : undefined,
+    pipelineVersion: null,
   };
 }
 
@@ -8130,7 +8432,9 @@ async function runWith(ctx, rawArgs) {
     );
   }
 
-  const c = ctx || defaultCtx();
+  // The bundle entry injects only pipelineVersion; retain the host globals from the default
+  // context while allowing source tests and callers to override any seam explicitly.
+  const c = { ...defaultCtx(), ...(ctx || {}) };
   // Agent-count guard: coarsenLimits is applied at the two points its inputs exist.
   // The changed-file count is known at entry (bounds the summarize term); the finding
   // count exists only after merge, where the verify/validate/challenge terms get
@@ -8561,6 +8865,7 @@ async function runWith(ctx, rawArgs) {
         validate: validateOut.stats,
         filter: filterOut.stats,
         challenge: challengeOut.stats,
+        merge: compactMethodology(mergeOut.methodology),
       },
       // discover()'s own fan-out list and degraded-dimensions list (issue #89) — feeds
       // dimensionsSummaryTable inside renderReport. `dispatched` already excludes any
@@ -8571,6 +8876,15 @@ async function runWith(ctx, rawArgs) {
       headShaShort: A.headShaShort,
       generatedAt: A.generatedAt,
       prIdentity: (A.delivery || {}).prIdentity || null,
+      mode: A.mode,
+      configEcho: A.configEcho,
+      pluginRoot: A.pluginRoot,
+      pipelineVersion: c.pipelineVersion,
+      reviewScope: A.reviewScope,
+      policy,
+      deliveryTier: deliveryTier ?? 'all',
+      deliveryCap: limits.deliveryCap ?? null,
+      gapCount: gaps.length,
     };
     // Phase 8's report is a PURE FUNCTION of the pipeline's own output (issue #36) — no
     // agent, no prompt, no schema, no segmentation, no fallback. Four measured failure
@@ -8581,8 +8895,8 @@ async function runWith(ctx, rawArgs) {
     // (2 of 6). The renderer's section list is pinned to references/report-format.md by
     // a generated fence.
     //
-    // It deliberately renders NO Review Methodology section and NO `Headless config:`
-    // block: the orchestrator composes those at delivery (issue #182 owns that seam).
+    // Review Methodology, including the identity receipt, is rendered by renderReport as
+    // part of the report primary. Nothing after materialization appends to report.md.
     let reportOut = await runPhase('report', () => ({ report: renderReport(reportInput), gaps: [] }));
     const reportGaps = reportOut.gaps || [];
     gaps.push(...reportGaps);
@@ -8715,7 +9029,7 @@ async function runWith(ctx, rawArgs) {
 // stage sequence, checkpoint resume, and the compact return. Kept minimal so the
 // orchestration is exercised through the importable, test-driven runWith seam.
 async function run(rawArgs) {
-  return runWith(undefined, rawArgs);
+  return runWith({ pipelineVersion: PIPELINE_VERSION }, rawArgs);
 }
 
 // parseEntryArgs THROWS on a refusal (absent args, a review-target reference like a bare

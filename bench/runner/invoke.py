@@ -69,13 +69,14 @@ BENCH_ENV = {
 }
 
 # The resolved-config receipt the runner asserts against (Task 3 echo format). Keys are
-# the 8 knob lines under the "Headless config:" header; CODE_GAUNTLET_HEADLESS itself is
+# the 9 knob lines under the "Headless config:" header; CODE_GAUNTLET_HEADLESS itself is
 # the master switch and is not echoed as a knob. Values are the bench expectations.
 EXPECTED_ECHO = {
     "model_tier": "optimized",
     "delivery": "pr_comments,markdown",
     "post_mode": "dry-run",
     "pr_comment_cap": "25",
+    "delivery_tier": "all",
     "draft_policy": "review",
     "reviewed_policy": "full",
     "pr_not_found_policy": "error",
@@ -818,19 +819,12 @@ def parse_identity_echo(text):
 def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
     """Return ``{pipeline_version, plugin_root}`` from any echo source, or None.
 
-    Requires BOTH fields in the same source text. Scans stdout, envelope
-    ``.result``, then report ``*.md`` files (same order spirit as ``_echo_ok``).
+    Requires BOTH fields in the same source text. Prefer a collected report copy because it
+    is code-rendered, then the envelope ``.result``, then raw stdout. The latter two remain
+    useful fallbacks for runs whose report never materialized.
     """
-    texts = [raw_text or ""]
-    if isinstance(envelope, dict):
-        result = envelope.get("result")
-        if isinstance(result, str):
-            texts.append(result)
-    for t in texts:
-        got = parse_identity_echo(t)
-        if "pipeline_version" in got and "plugin_root" in got:
-            return got
-    # reports
+    # Reports are the source of record once materialized. A model can type a plausible
+    # identity into stdout or the envelope, but it cannot outrank the code-owned report.
     seen = set()
     for base in report_dirs or ():
         if not base:
@@ -849,6 +843,17 @@ def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
                 continue
             if "pipeline_version" in got and "plugin_root" in got:
                 return got
+
+    texts = []
+    if isinstance(envelope, dict):
+        result = envelope.get("result")
+        if isinstance(result, str):
+            texts.append(result)
+    texts.append(raw_text or "")
+    for t in texts:
+        got = parse_identity_echo(t)
+        if "pipeline_version" in got and "plugin_root" in got:
+            return got
     return None
 
 

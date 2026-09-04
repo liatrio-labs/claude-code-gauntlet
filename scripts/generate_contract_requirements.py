@@ -32,6 +32,7 @@ import os
 import re
 import subprocess
 import sys
+from typing import Any
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -354,7 +355,21 @@ _TEMPLATE_FINDING = {
     "dimension": "{finding.dimension}",
 }
 
-_TEMPLATE_FIXTURE = {
+_TEMPLATE_FIXTURE: dict[str, Any] = {
+    "mode": "interactive",
+    "configEcho": {
+        "model_tier": {"value": "optimized", "source": "fixed"},
+        "delivery_tier": {"value": "all", "source": "default"},
+        "pr_comment_cap": {"value": "null", "source": "default"},
+        "review_md": {"value": "absent", "source": "discovery"},
+    },
+    "pluginRoot": "/absolute/path/to/claude-code-gauntlet",
+    "pipelineVersion": "{pipeline_version}",
+    "reviewScope": {"kind": "full", "since": None, "commits": None, "reason": None},
+    "policy": {"tier": "optimized", "provider": "firstParty", "gateway": False},
+    "deliveryTier": "all",
+    "deliveryCap": None,
+    "gapCount": 0,
     "summary": "{summary}",
     "findings": [
         {
@@ -404,6 +419,31 @@ _TEMPLATE_FIXTURE = {
         }
     ],
     "dimensions": {"dispatched": [], "degraded": []},
+    "stats": {
+        "discovered": "{stats.discovered}",
+        "validate": {
+            "accepted": "{stats.validate.accepted}",
+            "rejected": "{stats.validate.rejected}",
+        },
+        "filter": {
+            "accepted": "{stats.filter.accepted}",
+            "rejected": "{stats.filter.rejected}",
+        },
+        "challenge": {
+            "accepted": "{stats.challenge.accepted}",
+            "rejected": "{stats.challenge.rejected}",
+        },
+        "merge": {
+            "findings_per_channel": {
+                "ndjson": "{stats.merge.ndjson}",
+                "text_fallback": "{stats.merge.text_fallback}",
+            },
+            "duplicates_resolved": "{stats.merge.duplicates_resolved}",
+            "dropped_no_id": "{stats.merge.dropped_no_id}",
+            "truncation_warnings": "{stats.merge.truncation_warnings}",
+            "validation_warnings": "{stats.merge.validation_warnings}",
+        },
+    },
     "generatedAt": "{generatedAt}",
     "headShaShort": "{head_sha_short}",
     "prIdentity": {

@@ -41,6 +41,7 @@ sys.path.insert(0, str(REPO))
 
 import scripts.post_review as post_review  # noqa: E402
 import scripts.report_patches as report_patches  # noqa: E402
+from bench.runner import invoke  # noqa: E402
 
 RECORDER = REPO / "workflows" / "test" / "tools" / "emit_persisted_findings.mjs"
 
@@ -502,6 +503,93 @@ class TestReportPatchesBoundary(unittest.TestCase):
         )
         self.assertEqual(receipt["kept"], 0)
         self.assertEqual(receipt["reasons"], {"missing_end_line": len(patched)})
+
+
+class TestReportMethodologyRuntimeParity(unittest.TestCase):
+    """The Python receipt consumers accept the real JS renderer output in both modes."""
+
+    def _render(self, mode):
+        if mode == "headless":
+            echo = {
+                "model_tier": {"value": "optimized", "source": "env"},
+                "delivery": {"value": "pr_comments,markdown", "source": "env"},
+                "post_mode": {"value": "dry-run", "source": "env"},
+                "pr_comment_cap": {"value": "25", "source": "env"},
+                "delivery_tier": {"value": "all", "source": "default"},
+                "draft_policy": {"value": "review", "source": "env"},
+                "reviewed_policy": {"value": "full", "source": "env"},
+                "pr_not_found_policy": {"value": "error", "source": "env"},
+                "trivial_scope": {"value": "full", "source": "env"},
+            }
+            expected = dict(invoke.EXPECTED_ECHO)
+        else:
+            echo = {
+                "model_tier": {"value": "optimized", "source": "fixed"},
+                "delivery_tier": {"value": "all", "source": "default"},
+                "pr_comment_cap": {"value": "null", "source": "default"},
+                "review_md": {"value": "absent", "source": "discovery"},
+            }
+            expected = {
+                "model_tier": "optimized",
+                "delivery_tier": "all",
+                "pr_comment_cap": "null",
+                "review_md": "absent",
+            }
+        fixture = {
+            "mode": mode,
+            "configEcho": echo,
+            "pluginRoot": "/absolute/path/to/claude-code-gauntlet",
+            "pipelineVersion": "3.26.0",
+            "reviewScope": {
+                "kind": "full",
+                "since": None,
+                "commits": None,
+                "reason": None,
+            },
+            "policy": {"tier": "optimized", "provider": "firstParty", "gateway": False},
+            "deliveryTier": "all",
+            "deliveryCap": None if mode == "interactive" else 25,
+            "gapCount": 0,
+            "summary": "summary",
+            "findings": [],
+            "unverified": [],
+            "dimensions": {"dispatched": [], "degraded": []},
+            "stats": {
+                "discovered": 0,
+                "validate": {},
+                "filter": {},
+                "challenge": {},
+                "merge": {},
+            },
+        }
+        node = (
+            "import('./workflows/src/renderReport.js').then(m => "
+            "process.stdout.write(m.renderReport(" + json.dumps(fixture) + ")))"
+        )
+        proc = subprocess.run(
+            ["node", "--input-type=module", "-e", node],
+            cwd=str(REPO),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout, expected
+
+    def test_both_receipt_modes_cross_the_bench_parsers(self):
+        for mode in ("headless", "interactive"):
+            report, expected = self._render(mode)
+            with patch.object(invoke, "EXPECTED_ECHO", expected):
+                self.assertTrue(invoke._echo_in_text(report), mode)
+            identity = invoke._IDENTITY_LINE_RE.findall(report)
+            self.assertEqual(
+                {key: value for key, value in identity},
+                {
+                    "pipeline_version": "3.26.0",
+                    "plugin_root": "/absolute/path/to/claude-code-gauntlet",
+                },
+                mode,
+            )
 
 
 if __name__ == "__main__":
