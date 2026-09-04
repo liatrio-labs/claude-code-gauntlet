@@ -267,6 +267,23 @@ test('T182-ARGS: incremental reviewScope accepts only a safe detector-backed sco
   assert.ok(validateArgs({ ...good, reviewScope: { ...incremental, since: 'bad sha!' } }).errors.some((error) => error.includes('reviewScope.since')));
 });
 
+test('T182-ARGS: reviewScope requested/kind and incremental detector safety stay in lockstep', () => {
+  const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
+  const incremental = { requested: 'incremental', kind: 'incremental', since: 'abc-1._x', commits: null, detector };
+  assert.equal(validateArgs({ ...good, reviewScope: incremental }).ok, true);
+  const mismatch = validateArgs({ ...good, reviewScope: { ...incremental, requested: 'full' } });
+  assert.equal(mismatch.ok, false);
+  assert.ok(mismatch.errors.some((error) => error.includes('kind incremental requires requested incremental')));
+
+  const unsafe = validateArgs({ ...good, reviewScope: { ...incremental, detector: { ...detector, incremental_safe: false } } });
+  assert.equal(unsafe.ok, false);
+  assert.ok(unsafe.errors.some((error) => error.includes('detector.incremental_safe true')));
+
+  const missing = validateArgs({ ...good, reviewScope: { ...incremental, detector: null } });
+  assert.equal(missing.ok, false);
+  assert.ok(missing.errors.some((error) => error.includes('detector.incremental_safe true')));
+});
+
 test('T182-ARGS: reviewScope incremental commits validation is standalone', () => {
   const detector = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null };
   const result = validateArgs({ ...good, reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc', commits: -1, detector } });

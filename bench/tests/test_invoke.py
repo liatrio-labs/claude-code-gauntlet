@@ -1305,6 +1305,27 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
         self.assertEqual(got["plugin_root"], "/abs/plugin")
         self.assertEqual(got["pipeline_version"], "3.1.3")
 
+    def test_extract_identity_receipt_prefers_envelope_result_over_stdout(self):
+        envelope = {
+            "type": "result",
+            "result": (
+                "Headless config:\n"
+                "  pipeline_version=envelope-version (bundle)\n"
+                "  plugin_root=/envelope/plugin (resolved)\n"
+            ),
+        }
+        got = invoke.extract_identity_receipt(
+            "Headless config:\n"
+            "  pipeline_version=stdout-version (bundle)\n"
+            "  plugin_root=/stdout/plugin (resolved)\n",
+            envelope,
+            (),
+        )
+        self.assertEqual(
+            got,
+            {"pipeline_version": "envelope-version", "plugin_root": "/envelope/plugin"},
+        )
+
     def test_extract_identity_receipt_prefers_code_rendered_report_over_other_sources(
         self,
     ):

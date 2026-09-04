@@ -335,6 +335,14 @@ test('T-ONELINE: bullet values collapse while prose and evidence retain newlines
   assert.doesNotMatch(report, /^model_tier=/m);
 });
 
+test('T-ONELINE-CR: a lone carriage return in a bullet value stays one physical line', () => {
+  const report = rendered({ findings: [finding('CR', { file: 'a.js\rmodel_tier=x' })] });
+  assert.equal(
+    report.split('\n').filter((line) => line.includes('- **Location:** `a.js model_tier=x:10`')).length,
+    1,
+  );
+});
+
 test('T-METH: methodology is code-rendered, last, and has the exact interactive receipt', () => {
   const report = rendered();
   assert.equal((report.match(/^## Review Methodology$/gm) || []).length, 1);
@@ -393,6 +401,32 @@ test('T-METH-HEADLESS: the headless receipt is rendered from the waist in regist
   ]);
 });
 
+test('T-METH-RECEIPT-FALLBACK: incomplete receipt inputs render unknown values honestly', () => {
+  const report = rendered({
+    configEcho: {
+      model_tier: { value: 'optimized', source: 'fixed' },
+      pr_comment_cap: null,
+    },
+    pluginRoot: undefined,
+    pipelineVersion: null,
+  });
+  const receipt = report.match(/```text\nResolved config:[\s\S]*?\n```/)[0];
+  assert.deepEqual(receipt.split('\n').slice(2, -1), [
+    '  model_tier=optimized (fixed)',
+    '  pr_comment_cap=unknown (unknown)',
+    '  delivery_tier=unknown (unknown)',
+    '  review_md=unknown (unknown)',
+    '  pipeline_version=unknown (bundle)',
+    '  plugin_root=unknown (resolved)',
+  ]);
+});
+
+test('T-METH-MODE: missing mode pins the interactive receipt header', () => {
+  const report = rendered({ mode: undefined });
+  assert.ok(report.includes('```text\nResolved config:\n'));
+  assert.doesNotMatch(report, /```text\nHeadless config:\n/);
+});
+
 test('T-METH-SCOPE: each incremental fallback reason is derived from detector facts', () => {
   const scope = (detector) => ({ requested: 'incremental', kind: 'full', since: null, commits: null, detector });
   const detectorBase = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: false, error: null };
@@ -401,9 +435,10 @@ test('T-METH-SCOPE: each incremental fallback reason is derived from detector fa
     [{ ...detectorBase, sha_resolvable: false }, 'recorded SHA not resolvable'],
     [{ ...detectorBase, head_advanced: false }, 'head has not advanced'],
     [{ ...detectorBase, sha_is_ancestor: false }, 'history rewritten (recorded SHA is not an ancestor)'],
-    [{ ...detectorBase, previously_reviewed: false, error: 'detector unavailable' }, 'no prior review recorded'],
-    [{ ...detectorBase, previously_reviewed: true, sha_resolvable: false, error: 'detector unavailable' }, 'recorded SHA not resolvable'],
-    [{ ...detectorBase, previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: true, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+    [{ ...detectorBase, previously_reviewed: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+    [{ ...detectorBase, sha_resolvable: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+    [{ ...detectorBase, head_advanced: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+    [{ ...detectorBase, sha_is_ancestor: false, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
   ];
   for (const [detector, expected] of cases) assert.equal(reviewScopeFallbackReason(scope(detector)), expected);
   assert.equal(

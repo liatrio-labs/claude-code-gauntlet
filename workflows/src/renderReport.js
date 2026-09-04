@@ -509,21 +509,8 @@ function countsSentence(findings, rawCount, unverified, view) {
   return sentence;
 }
 
-const RECEIPT_DEFAULTS = {
-  model_tier: ['optimized', 'default'],
-  delivery: ['markdown', 'default'],
-  post_mode: ['dry-run', 'default'],
-  pr_comment_cap: ['6', 'default'],
-  delivery_tier: ['all', 'default'],
-  draft_policy: ['review', 'default'],
-  reviewed_policy: ['full', 'default'],
-  pr_not_found_policy: ['error', 'default'],
-  trivial_scope: ['full', 'default'],
-  review_md: ['absent', 'discovery'],
-};
-
 function receiptSafe(value, fallback = 'unknown') {
-  if (value === null) return 'null';
+  if (value === undefined || value === null) return fallback;
   const cleaned = oneLine(value).replaceAll('`', '');
   return cleaned || fallback;
 }
@@ -537,15 +524,14 @@ function receiptLines(input) {
   for (const descriptor of KNOB_REGISTRY) {
     if (!descriptor.modes.includes(mode)) continue;
     const entry = echo[descriptor.key];
-    const fallback = RECEIPT_DEFAULTS[descriptor.key] || ['unknown', 'default'];
-    const value = entry && typeof entry.value === 'string' ? entry.value : fallback[0];
-    const source = entry && typeof entry.source === 'string'
-      ? entry.source
-      : descriptor.allowedSources[mode][0] || fallback[1];
+    const validEntry = entry && typeof entry === 'object' && !Array.isArray(entry)
+      && typeof entry.value === 'string' && typeof entry.source === 'string';
+    const value = validEntry ? entry.value : 'unknown';
+    const source = validEntry ? entry.source : 'unknown';
     lines.push(`  ${descriptor.key}=${receiptSafe(value)} (${receiptSafe(source)})`);
   }
   lines.push(`  pipeline_version=${receiptSafe(input.pipelineVersion)} (bundle)`);
-  lines.push(`  plugin_root=${receiptSafe(input.pluginRoot, '/unknown/plugin')} (resolved)`);
+  lines.push(`  plugin_root=${receiptSafe(input.pluginRoot)} (resolved)`);
   return lines;
 }
 
@@ -562,11 +548,11 @@ function countSummary(value) {
 // precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
 // head, but they are materially different operator outcomes.
 const REVIEW_SCOPE_FALLBACK_RULES = [
+  { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
   { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
   { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false, reason: () => 'recorded SHA not resolvable' },
   { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === true && detector.head_advanced === false, reason: () => 'head has not advanced' },
   { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === false, reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
-  { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
 ];
 
 export function reviewScopeFallbackReason(scope) {

@@ -597,8 +597,8 @@ Never decorate a machine-parsed block (`references/report-format.md`).
 The report's last section is the code-rendered Review Methodology. After delivery, point the chat
 methodology at that section and add only the materialization proof, patches path, delivery outcome,
 post-report gaps, and wall-clock duration known to the orchestrator. If the report never
-materialized, the final message is the fallback receipt: print the resolved config block and the
-same methodology inputs available from the return.
+materialized, the final message repeats only the resolved config receipt block from the return.
+It must not recreate policy, per-stage models, scope, stats, gaps, or dimensions.
 
 ---
 

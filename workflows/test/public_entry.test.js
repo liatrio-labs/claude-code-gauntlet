@@ -27,7 +27,7 @@ test('public built entry injects the source pipeline version into persisted repo
   assert.ok(persisted.report.includes(`pipeline_version=${version} (bundle)`));
 });
 
-test('source runWith default context pins null pipeline version as the receipt fallback', async () => {
+test('source runWith default context pins unknown pipeline version as the receipt fallback', async () => {
   const args = validArgs();
   let persisted = null;
   const ctx = makeCtx(args, { onPersist: (payload) => { persisted = payload; } });
@@ -44,5 +44,5 @@ test('source runWith default context pins null pipeline version as the receipt f
       else globalThis[key] = value;
     }
   }
-  assert.ok(persisted.report.includes('pipeline_version=null (bundle)'));
+  assert.ok(persisted.report.includes('pipeline_version=unknown (bundle)'));
 });
