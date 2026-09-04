@@ -5665,7 +5665,6 @@ async function verifyStage(ctx, input) {
   const fanoutBounds = (() => {
     const maxFindings = Math.max(1, sliceSize || findings.length || 1);
     const maxChars = Math.max(1, VERIFY_INLINE_CHAR_BUDGET);
-    const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: baseBranch }).length;
     let countBound = false;
     let budgetBound = false;
     for (let i = 0; i + 1 < slices.length; i += 1) {
