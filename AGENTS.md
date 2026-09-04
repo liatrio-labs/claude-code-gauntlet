@@ -56,7 +56,7 @@ repo tree (an in-tree data file trips the bench plugin-mutation guard):
 
 ```bash
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest tests/ -q \
-  --cov=scripts --cov=.github --cov-fail-under=93.6
+  --cov=scripts --cov=.github --cov-fail-under=93.7
 
 COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
   --cov=bench --cov-fail-under=87.5
@@ -65,7 +65,7 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   --test-coverage-include='workflows/src/*.js' \
   --test-coverage-include='workflows/build.js' \
   --test-coverage-lines=98.2 \
-  --test-coverage-branches=88.4 \
+  --test-coverage-branches=88.6 \
   --test-coverage-functions=97.6 \
   --test-reporter=spec --test-reporter-destination=stdout \
   --test-reporter=lcov --test-reporter-destination="$LCOV" \
@@ -73,11 +73,11 @@ LCOV="$(mktemp -d)/js-coverage.lcov" && node --test --experimental-test-coverage
   && node workflows/test/tools/check_coverage_presence.mjs "$LCOV"
 ```
 
-Floors: Python 93.6 / 87.5 (scripts raised 2026-08-19 from the #219 PR CI measurement:
+Floors: Python 93.7 / 87.5 (scripts raised 2026-08-19 from the #219 PR CI measurement:
 93.37, then 2026-08-24 to 92.6 (#231: 93.54), to 92.7 (#236: 93.67), and 2026-08-25 to 92.9
 (#238: 93.84), and 2026-09-02 to 93.5 (#276 PR CI measurement: 94.52), and 2026-09-03 to 93.6 (#283 PR CI
-measurement: 94.62); bench raised 2026-08-19 from the #219 run:
-88.29); JS 98.2 / 88.4 / 97.6 (lines pinned
+measurement: 94.62), and 2026-09-04 to 93.7 (#285 PR CI measurement: 94.63); bench raised 2026-08-19 from the #219 run:
+88.29); JS 98.2 / 88.6 / 97.6 (lines pinned
 2026-08-03 from first green CI: 98.61; branches/functions raised 2026-08-18
 from the #62 PR measurement: 86.7/98.4, then 2026-08-26 to 98.1/86.3/97.5 from the #249 PR
 CI measurement: 99.01/87.25/98.48, then branches/functions 2026-08-27 to 86.5/97.6 from
@@ -86,7 +86,7 @@ the #255 PR CI measurement: 87.60, then branches 2026-08-31 to 87.0 from the #26
 measurement: 87.99, then lines/branches 2026-08-31 to 98.2/87.3 from the #271 PR CI
 measurement: 99.11/88.21, then branches 2026-09-02 to 88.3 from the #276 PR CI
 measurement: 89.39, then branches 2026-09-03 to 88.4 from the #283 PR CI measurement:
-89.48). Policy: a floor sits no more than 1.0 pp below the CI
+89.48, then branches 2026-09-04 to 88.6 from the #285 PR CI measurement: 89.57). Policy: a floor sits no more than 1.0 pp below the CI
 measurement for that gate; lower a floor only in the PR that causes the drop, with
 the reason in the body; raise when measured headroom exceeds 1.0 pp. A sudden
 multi-point JS drop usually means a deleted fixture group or an unloaded
