@@ -7,6 +7,7 @@ import {
   encodeInlineString,
   encodeSliceInline,
   planVerifySlices,
+  predictVerifySliceInlineLength,
   projectVerifySliceFinding,
   verifyStage,
   VERIFY_ATTEMPTS_PER_SLICE,
@@ -86,6 +87,32 @@ const inlineOf = (call) => {
   return argv[argv.indexOf('--input-inline') + 1];
 };
 const parsedInlineOf = (call) => JSON.parse(inlineOf(call));
+
+const RANDOM_TEXT_CHARS = ['a', 'B', ' ', '0', '/', "'", '\\', '%', '\n', '—', '😀'];
+
+function randomFindings(seed, count) {
+  let state = seed >>> 0;
+  const next = (limit) => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state % limit;
+  };
+  const text = (minimum, maximum) => {
+    const length = minimum + next(maximum - minimum + 1);
+    return Array.from({ length }, () => RANDOM_TEXT_CHARS[next(RANDOM_TEXT_CHARS.length)]).join('');
+  };
+  return Array.from({ length: count }, (_, i) => ({
+    id: `F${i}-${text(1, 8)}`,
+    file: `${text(2, 10)}.js`,
+    line_start: 1 + next(500),
+    line_end: 1 + next(500),
+    description: text(20, 100),
+    evidence: text(5, 50),
+    severity: ['low', 'medium', 'high'][next(3)],
+    confidence: next(101),
+    cross_file_refs: Array.from({ length: next(3) }, () => `${text(2, 8)}:${1 + next(90)}`),
+    origin: ['new', 'modified', 'unknown'][next(3)],
+  }));
+}
 
 test('inline encoder passes the safe alphabet and encodes every unsafe class', () => {
   const safe = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
@@ -306,7 +333,7 @@ test('verify fan-out disclosure names the bound that actually split the slices',
   }));
   const fatFindings = Array.from({ length: 60 }, (_, i) => ({
     id: `FAT${i}`, file: `f${i}.js`, line_start: 1, line_end: 1,
-    description: 'x'.repeat(4000), evidence: 'e', severity: 'high', confidence: 90,
+    description: 'x'.repeat(4100), evidence: 'e', severity: 'high', confidence: 90,
     cross_file_refs: [], origin: 'new',
   }));
   const run = async (findings) => {
@@ -403,6 +430,39 @@ test('planner is pure, count-bounded, budget-bounded, and isolates oversize find
     assert.ok(encodeSliceInline({ findings: slice.map(projectVerifySliceFinding), base_branch: 'main' }).length <= 100000);
   }
   assert.ok(VERIFY_INLINE_CHAR_BUDGET > 0);
+});
+
+test('planner predicts exact encoded lengths for random findings across branch lengths', () => {
+  const findings = randomFindings(275, 37);
+  const branches = ['b', 'main', `feature/${'b'.repeat(99)}`, 'b'.repeat(1000)];
+  for (const baseBranch of branches) {
+    const plan = planVerifySlices(findings, 7, 5000, baseBranch);
+    assert.deepEqual(plan.oversize, [], `unexpected oversize finding for branch length ${baseBranch.length}`);
+    for (const [i, slice] of plan.slices.entries()) {
+      const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
+      const actualLength = encodeSliceInline(content).length;
+      assert.equal(
+        actualLength,
+        predictVerifySliceInlineLength(slice, baseBranch),
+        `slice ${i} at branch length ${baseBranch.length}`,
+      );
+      assert.ok(actualLength <= 5000);
+    }
+  }
+});
+
+test('planner accepts a slice whose exact encoded length equals the budget', () => {
+  const baseBranch = 'b'.repeat(1000);
+  const findings = [
+    { id: 'fit-a', file: 'a.js', line_start: 1, origin: 'new', cross_file_refs: [], description: 'x'.repeat(100) },
+    { id: 'fit-b', file: 'b.js', line_start: 2, origin: 'new', cross_file_refs: [], description: 'y'.repeat(100) },
+  ];
+  const content = { findings: findings.map(projectVerifySliceFinding), base_branch: baseBranch };
+  const budget = encodeSliceInline(content).length;
+  assert.equal(predictVerifySliceInlineLength(findings, baseBranch), budget);
+  const plan = planVerifySlices(findings, 2, budget, baseBranch);
+  assert.deepEqual(plan.slices, [findings]);
+  assert.deepEqual(plan.oversize, []);
 });
 
 test('planner flushes a preceding slice before isolating an oversize finding', () => {

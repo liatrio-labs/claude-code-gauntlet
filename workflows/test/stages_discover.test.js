@@ -404,7 +404,7 @@ test('array-form guard and coarsening use the real long base branch for verify p
   assert.equal(baseBranch.length, 1000, 'the regression branch is exactly 1,000 characters');
   const findings = Array.from({ length: 800 }, (_, i) => ({
     id: `F${i}`,
-    description: (i % 2 ? 'y' : 'x').repeat(24400),
+    description: (i % 2 ? 'y' : 'x').repeat(24500),
   }));
   const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
   const plan = planVerifySlices(findings, limits.verifySliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);

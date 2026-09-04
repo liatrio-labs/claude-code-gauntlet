@@ -240,11 +240,25 @@ export function sharedContextLine(inp) {
 }
 
 // planVerifySlices(findings, sliceSize, budget, baseBranch) -> { slices, oversize }.
-// A finding's cost is measured through the real encoder once, and the greedy planner
-// keeps both the finding-count and inline-character bounds in one place. The empty
-// envelope is measured from the encoder as a fixed allowance rather than guessed, so
-// planner consumers and the dispatch assertion share the same accounting.
+// A projected finding's cost is its encoded object alone. A slice's exact cost is the
+// encoded empty envelope plus those object costs plus one comma for each additional
+// finding. The greedy planner keeps both the finding-count and inline-character bounds
+// in one place, and planner consumers and the dispatch assertion share this accounting.
 const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
+const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
+  envelopeLength + findingCost + Math.max(0, findingCount - 1);
+const projectedVerifyFindingInlineLength = (finding) =>
+  encodeSliceInline(projectVerifySliceFinding(finding)).length;
+
+// This is the planner's predicted length, exposed for the exact-accounting test and
+// kept on the same cost primitive as the greedy admission check above.
+export function predictVerifySliceInlineLength(slice, baseBranch = 'main') {
+  const branch = effectiveVerifyBaseBranch(baseBranch);
+  const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  let findingCost = 0;
+  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding);
+  return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
+}
 
 export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
   const source = Array.isArray(findings) ? findings : [];
@@ -255,26 +269,31 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main
   const slices = [];
   const oversize = [];
   let current = [];
-  let currentCost = 0;
+  let currentFindingCost = 0;
   const flush = () => {
     if (current.length > 0) slices.push(current);
     current = [];
-    currentCost = 0;
+    currentFindingCost = 0;
   };
 
   for (const finding of source) {
-    const single = { findings: [projectVerifySliceFinding(finding)], base_branch: branch };
-    const cost = encodeSliceInline(single).length;
-    if (cost > maxChars) {
+    const findingCost = projectedVerifyFindingInlineLength(finding);
+    const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
+    if (singleCost > maxChars) {
       flush();
       oversize.push(finding);
       continue;
     }
-    if (current.length > 0 && (current.length >= maxFindings || currentCost + cost + envelopeAllowance > maxChars)) {
+    const candidateCost = verifySliceLengthFromCosts(
+      envelopeAllowance,
+      currentFindingCost + findingCost,
+      current.length + 1,
+    );
+    if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
       flush();
     }
     current.push(finding);
-    currentCost += cost;
+    currentFindingCost += findingCost;
   }
   flush();
   return { slices, oversize };
@@ -985,8 +1004,8 @@ export async function verifyStage(ctx, input) {
 
   // Recompute only the boundaries that closed a planned slice. The public planner result
   // stays the compact `{ slices, oversize }` contract, while this tells the disclosure which
-  // bound actually caused the fan-out. A budget-bound split must not advise raising a count
-  // knob that cannot reduce it.
+  // exact cost bound caused the fan-out. The cost is the empty envelope plus projected
+  // finding-object lengths and one comma per additional finding.
   const fanoutBounds = (() => {
     const maxFindings = Math.max(1, sliceSize || findings.length || 1);
     const maxChars = Math.max(1, VERIFY_INLINE_CHAR_BUDGET);
@@ -996,19 +1015,10 @@ export async function verifyStage(ctx, input) {
     for (let i = 0; i + 1 < slices.length; i += 1) {
       const current = slices[i];
       const next = slices[i + 1][0];
-      const currentCost = current.reduce(
-        (sum, finding) => sum + encodeSliceInline({
-          findings: [projectVerifySliceFinding(finding)],
-          base_branch: baseBranch,
-        }).length,
-        0,
-      );
-      const nextCost = encodeSliceInline({
-        findings: [projectVerifySliceFinding(next)],
-        base_branch: baseBranch,
-      }).length;
+      const currentCost = predictVerifySliceInlineLength(current, baseBranch);
+      const nextCost = projectedVerifyFindingInlineLength(next);
       if (current.length >= maxFindings) countBound = true;
-      else if (currentCost + nextCost + envelopeAllowance > maxChars) budgetBound = true;
+      else if (currentCost + nextCost + 1 > maxChars) budgetBound = true;
     }
     return { countBound, budgetBound };
   })();
