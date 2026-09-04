@@ -1021,7 +1021,7 @@ export function validateArgs(args) {
         } else {
           const detectorKeys = ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'];
           const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
-          const detectorMissing = detectorKeys.filter((key) => !Object.prototype.hasOwnProperty.call(detector, key));
+          const detectorMissing = detectorKeys.filter((key) => !Object.hasOwn(detector, key));
           if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
           if (detectorMissing.length) errors.push(`reviewScope.detector is missing key(s): ${detectorMissing.join(', ')}`);
           for (const key of detectorKeys.slice(0, -1)) {

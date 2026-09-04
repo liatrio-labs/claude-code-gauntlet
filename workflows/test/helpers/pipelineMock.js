@@ -137,7 +137,7 @@ export function validArgs(over = {}) {
     reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
   };
   const args = { ...base, ...over, limits: { ...base.limits, ...(over.limits || {}) } };
-  if (!Object.prototype.hasOwnProperty.call(over, 'configEcho')) {
+  if (!Object.hasOwn(over, 'configEcho')) {
     const cap = args.limits.deliveryCap;
     args.configEcho = {
       ...base.configEcho,
