@@ -2,6 +2,46 @@
 
 <!-- version list -->
 
+## v3.28.0 (2026-09-04)
+
+### Bug Fixes
+
+- **report**: Code-derived review-scope fallback, focused waist tests, registry-order docs
+  ([#286](https://github.com/liatrio-labs/claude-code-gauntlet/pull/286),
+  [`f6b1f85`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6b1f85af98bdcd48edb9f4a67d8e2c5d0c0e3b6))
+
+- **report**: Detector error outranks every scope fallback rule; receipt renders unknown for missing
+  inputs ([#286](https://github.com/liatrio-labs/claude-code-gauntlet/pull/286),
+  [`f6b1f85`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6b1f85af98bdcd48edb9f4a67d8e2c5d0c0e3b6))
+
+- **review**: Identity scan reads only the code-rendered report; script paths must equal the trusted
+  basenames under pluginRoot; per-stage models row tested per provider
+  ([#286](https://github.com/liatrio-labs/claude-code-gauntlet/pull/286),
+  [`f6b1f85`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6b1f85af98bdcd48edb9f4a67d8e2c5d0c0e3b6))
+
+### Chores
+
+- **ci**: Object.hasOwn for Biome; ratchet JS branches floor 88.6 -> 89.3 from PR CI 90.30
+  ([#286](https://github.com/liatrio-labs/claude-code-gauntlet/pull/286),
+  [`f6b1f85`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6b1f85af98bdcd48edb9f4a67d8e2c5d0c0e3b6))
+
+### Features
+
+- **report**: Code-rendered Review Methodology and identity receipt
+  ([#286](https://github.com/liatrio-labs/claude-code-gauntlet/pull/286),
+  [`f6b1f85`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6b1f85af98bdcd48edb9f4a67d8e2c5d0c0e3b6))
+
+- **report**: Code-rendered Review Methodology and identity receipt (#182)
+  ([#286](https://github.com/liatrio-labs/claude-code-gauntlet/pull/286),
+  [`f6b1f85`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6b1f85af98bdcd48edb9f4a67d8e2c5d0c0e3b6))
+
+### Testing
+
+- **report**: Pin the scope fallback table as disjoint fact rules behind the error rule
+  ([#286](https://github.com/liatrio-labs/claude-code-gauntlet/pull/286),
+  [`f6b1f85`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/f6b1f85af98bdcd48edb9f4a67d8e2c5d0c0e3b6))
+
+
 ## v3.27.0 (2026-09-04)
 
 ### Bug Fixes
