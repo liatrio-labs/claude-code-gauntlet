@@ -864,6 +864,14 @@ class EchoReceiptSourceTest(InvokeTestBase):
         self.assertEqual(res.status, "ok")
         self.assertTrue(res.echo_ok)
 
+    def test_echo_ok_still_scans_any_markdown_filename(self):
+        receipt = "\n".join(
+            f"{key}={value}" for key, value in invoke.EXPECTED_ECHO.items()
+        )
+        with tempfile.TemporaryDirectory(prefix="echo-report-") as tmp:
+            (Path(tmp) / "deep-review-report.md").write_text(receipt, encoding="utf-8")
+            self.assertTrue(invoke._echo_ok("", {}, (tmp,)))
+
     def test_partial_block_everywhere_is_invalid(self):
         # badecho emits a partial block in BOTH stdout and .result (no report .md).
         res = self._run("badecho")
@@ -1340,9 +1348,21 @@ class IdentityReceiptHelpersTest(unittest.TestCase):
             "type": "result",
             "result": "pipeline_version=model-typed (bundle)\nplugin_root=/model/plugin (resolved)",
         }
+        wrong_context = (
+            "## Review Context\n```text\n"
+            "pipeline_version=context-version (bundle)\n"
+            "plugin_root=/context/plugin (resolved)\n"
+            "```\n"
+        )
         with tempfile.TemporaryDirectory(prefix="identity-report-") as tmp:
-            path = Path(tmp) / "report.md"
-            path.write_text(report, encoding="utf-8")
+            # This sorts before the report and proves context/patch artifacts cannot
+            # outrank the code-owned rendered report.
+            (Path(tmp) / "code-gauntlet-context-deadbeef.md").write_text(
+                wrong_context, encoding="utf-8"
+            )
+            (Path(tmp) / "code-gauntlet-report-deadbeef.md").write_text(
+                report, encoding="utf-8"
+            )
             got = invoke.extract_identity_receipt(
                 "pipeline_version=stdout-typed (bundle)\nplugin_root=/stdout/plugin (resolved)",
                 envelope,

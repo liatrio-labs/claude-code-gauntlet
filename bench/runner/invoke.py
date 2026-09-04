@@ -795,6 +795,7 @@ _PIPELINE_VERSION_RE = re.compile(r"const\s+PIPELINE_VERSION\s*=\s*['\"]([^'\"]+
 _IDENTITY_LINE_RE = re.compile(
     r"(?m)^[ \t]*(pipeline_version|plugin_root)=(.+?)\s*\((?:bundle|resolved)\)\s*$"
 )
+_CODE_RENDERED_REPORT_GLOB = "code-gauntlet-report-*.md"
 
 
 def read_pipeline_version(repo_root):
@@ -832,7 +833,7 @@ def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
         base = Path(base)
         if not base.exists():
             continue
-        for md in sorted(base.rglob("*.md")):
+        for md in sorted(base.rglob(_CODE_RENDERED_REPORT_GLOB)):
             resolved = md.resolve()
             if resolved in seen:
                 continue

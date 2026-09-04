@@ -357,6 +357,11 @@ const REVIEW_TARGET_LABEL = {
 
 const isPlainObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
+const TRUSTED_SCRIPT_BASENAMES = {
+  assemble: 'assemble_artifacts.py',
+  verify: 'verify_findings.py',
+};
+
 function configEchoValue(args, key) {
   const entry = args && isPlainObject(args.configEcho) ? args.configEcho[key] : undefined;
   return isPlainObject(entry) && typeof entry.value === 'string' ? entry.value : undefined;
@@ -626,6 +631,10 @@ export function validateArgs(args) {
     }
     if (field === 'pluginRoot' && v.includes('`')) {
       errors.push('pluginRoot must not contain a backtick');
+      continue;
+    }
+    if (field === 'pluginRoot' && v.split('/').includes('..')) {
+      errors.push('pluginRoot must not contain a .. path segment');
       continue;
     }
     // headShaShort reaches the verify executor's --head-sha argv (verifyCommand). Path
@@ -932,14 +941,19 @@ export function validateArgs(args) {
   // Phase 8. A path outside this root would make the receipt identify one plugin while the
   // executor ran another plugin's script.
   if (typeof args.pluginRoot === 'string' && args.pluginRoot.startsWith('/')) {
-    const scriptPrefix = `${args.pluginRoot}/scripts/`;
+    const root = args.pluginRoot.replace(/\/+$/, '') || '/';
+    const scriptRoot = root === '/' ? '/scripts' : `${root}/scripts`;
+    const expectedPaths = {
+      assemble: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.assemble}`,
+      verify: `${scriptRoot}/${TRUSTED_SCRIPT_BASENAMES.verify}`,
+    };
     if (isPlainObject(args.persist) && typeof args.persist.assembleScriptPath === 'string'
-      && !args.persist.assembleScriptPath.startsWith(scriptPrefix)) {
-      errors.push(`persist.assembleScriptPath must start with ${scriptPrefix}`);
+      && args.persist.assembleScriptPath !== expectedPaths.assemble) {
+      errors.push(`persist.assembleScriptPath must equal ${expectedPaths.assemble}`);
     }
     if (isPlainObject(args.verify) && typeof args.verify.scriptPath === 'string'
-      && !args.verify.scriptPath.startsWith(scriptPrefix)) {
-      errors.push(`verify.scriptPath must start with ${scriptPrefix}`);
+      && args.verify.scriptPath !== expectedPaths.verify) {
+      errors.push(`verify.scriptPath must equal ${expectedPaths.verify}`);
     }
   }
   // limits (REQUIRED — see REQUIRED above; the skill always stamps {} at worst, and

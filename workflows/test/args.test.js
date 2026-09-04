@@ -243,7 +243,7 @@ test('T182-ARGS: receipt lockstep rejects mismatches before any stage can dispat
 });
 
 test('T182-ARGS: pluginRoot enforces path trust and script coherence', () => {
-  for (const bad of ['relative/plugin', '/plugin\nroot', '/plugin`root']) {
+  for (const bad of ['relative/plugin', '/plugin\nroot', '/plugin`root', '/plugin/../other']) {
     const result = validateArgs({ ...good, pluginRoot: bad });
     assert.equal(result.ok, false, `${bad} must be rejected`);
     assert.ok(result.errors.some((error) => error.includes('pluginRoot')));
@@ -256,6 +256,9 @@ test('T182-ARGS: pluginRoot enforces path trust and script coherence', () => {
   assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/other/scripts/assemble_artifacts.py' } }).ok, false);
   assert.equal(validateArgs({ ...good, verify: { scriptPath: '/other/scripts/verify_findings.py' } }).ok, false);
   assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
+  assert.equal(validateArgs({ ...good, verify: { scriptPath: '/plugin/scripts/../verify_findings.py' } }).ok, false);
+  assert.equal(validateArgs({ ...good, pluginRoot: '/plugin/', persist: { assembleScriptPath: '/plugin/scripts/assemble_artifacts.py' }, verify: { scriptPath: '/plugin/scripts/verify_findings.py' } }).ok, true);
+  assert.equal(validateArgs({ ...good, persist: { assembleScriptPath: '/plugin/scripts/nested/assemble_artifacts.py' } }).ok, false);
 
 });
 
