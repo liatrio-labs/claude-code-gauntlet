@@ -105,6 +105,7 @@ from assemble_artifacts import (
     JsSerializationError,
     fnv1a32,
     js_stringify_pretty,
+    write_text_atomic,
 )
 from diff_lines import walk_diff
 
@@ -1247,17 +1248,20 @@ def decode_inline_slice(text):
 def _validate_input_shape(data, inline=False):
     reject = _inline_reject if inline else die
     if not isinstance(data, dict):
-        reject(
-            "root must be an object with a 'findings' key at $"
-        ) if inline else reject("Input JSON must be an object with a 'findings' key.")
+        if inline:
+            reject("root must be an object with a 'findings' key at $")
+        else:
+            reject("Input JSON must be an object with a 'findings' key.")
     if "findings" not in data:
-        reject("missing required 'findings' array at $") if inline else reject(
-            "Input JSON is missing required 'findings' array."
-        )
+        if inline:
+            reject("missing required 'findings' array at $")
+        else:
+            reject("Input JSON is missing required 'findings' array.")
     if not isinstance(data["findings"], list):
-        reject("'findings' must be an array at $") if inline else reject(
-            "'findings' must be an array."
-        )
+        if inline:
+            reject("'findings' must be an array at $")
+        else:
+            reject("'findings' must be an array.")
     return data
 
 
@@ -1323,13 +1327,19 @@ def load_input(findings_json_path):
     return data, recovery, checksum
 
 
-def _write_output(output, output_path):
-    """Write output JSON to file or stdout."""
+def _write_output(output, output_path, *, receipt=False):
+    """Write output JSON to file or stdout.
+
+    Receipt envelopes may contain legal lone surrogate code units from an inline slice.
+    Escape those on this output boundary; the legacy positional output keeps its existing
+    non-ASCII spelling.
+    """
+    text = json.dumps(output, indent=2, ensure_ascii=receipt)
     if output_path:
         with open(output_path, "w") as f:
-            json.dump(output, f, indent=2, ensure_ascii=False)
+            f.write(text)
     else:
-        print(json.dumps(output, indent=2, ensure_ascii=False))
+        print(text)
 
 
 def _resolve_head_sha():
@@ -1587,9 +1597,8 @@ def _run_receipt(args):
         try:
             input_text = js_stringify_pretty(data)
         except JsSerializationError:
-            input_text = json.dumps(data, indent=2, ensure_ascii=False)
-        with open(args.input, "w", encoding="utf-8", newline="") as input_file:
-            input_file.write(input_text)
+            input_text = json.dumps(data, indent=2, ensure_ascii=True)
+        write_text_atomic(args.input, input_text)
         for finding in data["findings"]:
             _coerce_numeric_fields(finding)
         findings = data["findings"]
@@ -1615,7 +1624,7 @@ def _run_receipt(args):
         }
     except Exception as e:  # noqa: BLE001 — honest failure is the contract
         envelope = {"status": "failed", "exitCode": 1, "stderr": str(e)}
-    _write_output(envelope, args.output)
+    _write_output(envelope, args.output, receipt=True)
 
 
 def main():

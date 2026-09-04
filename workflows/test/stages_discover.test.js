@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs,
+  summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, planVerifySlices,
+  VERIFY_ATTEMPTS_PER_SLICE, agentActive, agentSpecs,
   allActiveDimensionsDegraded, sharedContextLine,
 } from '../src/stages.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
@@ -396,6 +397,37 @@ test('worstCaseAgentCount uses the real inline planner for a findings array', ()
   const estimated = worstCaseAgentCount(limits, 0, findings.length);
   const planned = worstCaseAgentCount(limits, 0, findings);
   assert.equal(planned - estimated, 2, 'the budget split adds one slice and its retry');
+});
+
+test('array-form guard and coarsening use the real long base branch for verify planning', () => {
+  const baseBranch = `${'b'.repeat(250)}/${'b'.repeat(250)}/${'b'.repeat(250)}/${'b'.repeat(247)}`;
+  const findings = Array.from({ length: 800 }, (_, i) => ({
+    id: `F${i}`,
+    description: (i % 2 ? 'y' : 'x').repeat(21000),
+  }));
+  const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
+  const plan = planVerifySlices(findings, limits.verifySliceSize, 43000, baseBranch);
+  const nonVerify = 1 + AGENTS.length + 1 + 0 + 2;
+  assert.equal(
+    worstCaseAgentCount(limits, 0, findings, baseBranch) - nonVerify,
+    plan.slices.length * VERIFY_ATTEMPTS_PER_SLICE,
+  );
+  assert.notEqual(
+    plan.slices.length,
+    planVerifySlices(findings, limits.verifySliceSize, 43000, 'main').slices.length,
+    'the long branch must affect the measured envelope',
+  );
+
+  const coarse = coarsenLimits(limits, 0, findings, baseBranch);
+  const coarsePlan = planVerifySlices(findings, coarse.verifySliceSize, 43000, baseBranch);
+  const coarseNonVerify = 1 + AGENTS.length
+    + Math.ceil(findings.length / Math.max(1, coarse.validateBatch || findings.length || 1))
+    + Math.min(findings.length, coarse.challengeCap != null ? coarse.challengeCap : findings.length)
+    + 2;
+  assert.equal(
+    worstCaseAgentCount(coarse, 0, findings, baseBranch),
+    coarseNonVerify + coarsePlan.slices.length * VERIFY_ATTEMPTS_PER_SLICE,
+  );
 });
 
 test('coarsenLimits terminates when the array-form verify term is inline-budget-bound', () => {

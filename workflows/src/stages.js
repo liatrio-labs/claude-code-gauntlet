@@ -1578,10 +1578,10 @@ function findingCount(findings) {
   return Array.isArray(findings) ? findings.length : Math.max(0, findings || 0);
 }
 
-function verifyTerm(L, findings) {
+function verifyTerm(L, findings, baseBranch = 'main') {
   const count = findingCount(findings);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, baseBranch).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
@@ -1592,7 +1592,7 @@ function verifyTerm(L, findings) {
 // rather than restating the literal here.
 const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.maxLineSpan);
 
-// worstCaseAgentCount(limits, nFiles, findings) -> number
+// worstCaseAgentCount(limits, nFiles, findings, baseBranch) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate
 // batches + min(nFindings, challengeCap) challengers + 2 (report + writer).
 //
@@ -1603,18 +1603,18 @@ const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.
 // single retry, neither of which is counted here. That looseness is covered by the
 // headroom between AGENT_COUNT_GUARD and the platform ceiling; the verify term is the one
 // that scales with finding count, which is why it is the one made exact.
-export function worstCaseAgentCount(limits, nFiles, nFindings) {
+export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main') {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
-  const verifyCalls = verifyTerm(L, nFindings);
+  const verifyCalls = verifyTerm(L, nFindings, baseBranch);
   const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
 }
 
-// coarsenLimits(limits, nFiles, nFindings) -> limits
+// coarsenLimits(limits, nFiles, nFindings, baseBranch) -> limits
 // Iteratively pulls the worst-case count below the guard. A candidate that no longer
 // reduces its term is removed, which is required once the inline budget makes the
 // verify fan-out size-bound.
@@ -1628,13 +1628,13 @@ export function worstCaseAgentCount(limits, nFiles, nFindings) {
 // summarizeBucketSize / validateBatch / verifySliceSize rise monotonically while
 // challengeCap falls to CHALLENGE_CAP_FLOOR, so the chosen term is always reducible
 // whenever the count is still >= guard, guaranteeing termination.
-export function coarsenLimits(limits, nFiles, nFindings) {
+export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
   const L = { ...(limits || {}) };
   const files = Math.max(0, nFiles || 0);
   const findings = findingCount(nFindings);
   const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
 
-  while (worstCaseAgentCount(L, files, nFindings) >= AGENT_COUNT_GUARD && candidates.size > 0) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
     if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       // Double from the EFFECTIVE size (pinning a concrete value): doubling from a raw
@@ -1650,7 +1650,7 @@ export function coarsenLimits(limits, nFiles, nFindings) {
     // the count it is trying to pull down. With an array of actual findings, doubling
     // verifySliceSize can stop reducing the term once the inline budget binds; the update
     // below removes that candidate when its measured term does not change.
-    const currentVerifyTerm = verifyTerm(L, nFindings);
+    const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch);
     const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
     const choices = [
@@ -1666,7 +1666,7 @@ export function coarsenLimits(limits, nFiles, nFindings) {
       if (ceilDiv(findings, effectiveBatchSize(L, findings)) >= validateTerm) candidates.delete('validate');
     } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
-      if (verifyTerm(L, nFindings) >= currentVerifyTerm) candidates.delete('verify');
+      if (verifyTerm(L, nFindings, baseBranch) >= currentVerifyTerm) candidates.delete('verify');
     } else {
       // Halve the EFFECTIVE cap (min(cap, findings)) so C strictly decreases even when
       // the nominal cap already exceeds nFindings — or is absent (= findings).
@@ -3802,7 +3802,7 @@ export async function runWith(ctx, rawArgs) {
   // re-coarsened. At or below benchmark scale the worst case sits far under the guard,
   // so both calls return the limits values unchanged.
   const nChangedFiles = (A.changedFiles || []).length;
-  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0);
+  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   // The context file's own size, measured by the skill right after it writes the file
@@ -3991,7 +3991,7 @@ export async function runWith(ctx, rawArgs) {
 
     // The finding count now exists — re-coarsen so verify slices, validate batches,
     // and the challenge cap keep the remaining worst-case fan-out under the guard.
-    limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || []);
+    limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
 
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,

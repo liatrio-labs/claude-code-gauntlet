@@ -2970,6 +2970,101 @@ class TestSliceInputRecovery(unittest.TestCase):
             fnv1a32(js_stringify_pretty(doc)),
         )
 
+    def test_receipt_round_trips_lone_surrogates_and_escapes_receipt_output(self):
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        cases = {
+            "leading": "\ud800leading",
+            "embedded": "before\udfffafter",
+            "trailing": "trailing\ud800",
+            "unprovable": "value\ud800",
+        }
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                finding = self._receipt_findings()[0]
+                finding["description"] = value
+                doc = {"findings": [finding], "base_branch": "main"}
+                if name == "unprovable":
+                    finding["cross_file_refs"] = [1e21]
+                envelope = self._run_receipt_over(doc)
+                self.assertEqual(envelope["status"], "ok")
+                with open(self.receipt_input_path, "rb") as fh:
+                    input_bytes = fh.read()
+                with open(self.receipt_input_path, encoding="utf-8") as fh:
+                    self.assertEqual(json.load(fh), doc)
+                self.assertNotIn(value.encode("utf-8", "surrogatepass"), input_bytes)
+                if name == "unprovable":
+                    self.assertNotIn("input_checksum", envelope["receipt"])
+                else:
+                    self.assertEqual(
+                        envelope["receipt"]["input_checksum"],
+                        fnv1a32(js_stringify_pretty(doc)),
+                    )
+
+    def test_a_failing_receipt_input_write_leaves_the_destination_untouched(self):
+        import io
+
+        input_path = self._write("PREVIOUS CONTENT")
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            output_path = out_file.name
+        doc = {"findings": self._receipt_findings(), "base_branch": "main"}
+        try:
+            with (
+                patch(
+                    "scripts.assemble_artifacts.os.replace",
+                    side_effect=OSError("injected write failure"),
+                ),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "verify_findings.py",
+                        "--input",
+                        input_path,
+                        "--input-inline",
+                        js_encode_inline(doc),
+                        "--output",
+                        output_path,
+                    ],
+                ),
+            ):
+                from scripts.verify_findings import main
+
+                main()
+            with open(input_path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "PREVIOUS CONTENT")
+            with open(output_path, encoding="utf-8") as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "failed")
+            self.assertIn("injected write failure", envelope["stderr"])
+        finally:
+            os.unlink(output_path)
+
+    def test_receipt_argparse_requires_input_and_inline_as_a_pair(self):
+        cases = [
+            (
+                ["--input", "/tmp/destination.json"],
+                "--input requires --input-inline for receipt mode",
+            ),
+            (
+                ["--input-inline", "{}"],
+                "--input-inline requires --input for receipt mode",
+            ),
+        ]
+        for argv, diagnostic in cases:
+            with self.subTest(argv=argv):
+                proc = subprocess.run(
+                    [sys.executable, SCRIPT, *argv],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertEqual(
+                    proc.stderr.splitlines()[-1],
+                    f"verify_findings.py: error: {diagnostic}",
+                )
+
     def test_result_deltas_is_still_the_first_key_of_result(self):
         # The executor's Read of this file is length-capped with NO truncation notice,
         # so what it must echo has to sit at the front.
@@ -3033,6 +3128,13 @@ class TestInlineSliceDecoder(unittest.TestCase):
 
     def test_rejects_raw_backtick(self):
         self._assert_rejected('{"findings":[{"evidence":"`"}]}')
+
+    def test_rejects_raw_backtick_with_code_point_and_nested_json_path(self):
+        with self.assertRaises(InputError) as ctx:
+            decode_inline_slice('{"findings":[{"evidence":"`"}]}')
+        message = str(ctx.exception)
+        self.assertIn("raw U+0060", message)
+        self.assertIn("findings[0].evidence", message)
 
     def test_rejects_nonhex_percent_escape(self):
         self._assert_rejected('{"findings":[{"evidence":"%GG"}]}')

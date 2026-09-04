@@ -10,6 +10,7 @@ import {
   projectVerifySliceFinding,
   verifyStage,
   VERIFY_ATTEMPTS_PER_SLICE,
+  VERIFY_INLINE_SAFE,
   VERIFY_INLINE_CHAR_BUDGET,
   VERIFY_SLICE_FIELDS,
 } from '../src/stages.js';
@@ -88,6 +89,7 @@ const parsedInlineOf = (call) => JSON.parse(inlineOf(call));
 
 test('inline encoder passes the safe alphabet and encodes every unsafe class', () => {
   const safe = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
+  assert.equal(VERIFY_INLINE_SAFE, safe);
   assert.equal(encodeInlineString(safe), safe);
   assert.equal(encodeInlineString(''), '');
   assert.equal(encodeInlineString("'\\\"`%\n\r\t\0"), '%27%5C%22%60%25%0A%0D%09%00');
@@ -95,6 +97,15 @@ test('inline encoder passes the safe alphabet and encodes every unsafe class', (
   assert.equal(encodeInlineString('😀'), '%F0%9F%98%80');
   assert.equal(encodeInlineString(String.fromCharCode(0xD800)), '%uD800');
   assert.equal(encodeInlineString(String.fromCharCode(0xDC00)), '%uDC00');
+
+  const forbidden = [
+    '$', '`', ';', '(', ')', '&', '|', '<', '>', '#', '*', '?', '!', '~', '=', '+',
+    "'", '"', '\\', '%', '\n', '\r', '\t',
+  ];
+  for (const char of forbidden) {
+    const hex = char.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0');
+    assert.equal(encodeInlineString(char), `%${hex}`, JSON.stringify(char));
+  }
 });
 
 test('inline encoder deep-walks values and keys, preserves primitives, and is shell-safe', () => {

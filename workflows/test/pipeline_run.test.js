@@ -867,8 +867,9 @@ test('buildResumeCheckpoints truncates to names-only when the phases map exceeds
   assert.deepEqual(cp.completed, ['discover', 'verify']);
 });
 
-// The budget split (PROMPT_SEGMENT_CHAR_BUDGET vs RETURN_CHAR_BUDGET). This map is well
-// over the 100,000-char PROMPT budget the resume state used to be graded against by
+// The budget split between the historical 100,000-character prompt budget and
+// RETURN_CHAR_BUDGET. This map is well over the former prompt budget the resume state
+// used to be graded against by
 // analogy, and far under the return channel's own measured limit — so it must now survive.
 // Three recorded runs threw exactly this state away.
 test('buildResumeCheckpoints carries a phases map that only the PROMPT budget would have rejected', () => {

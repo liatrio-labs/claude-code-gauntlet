@@ -1,4 +1,4 @@
 {
-  "checksum": "fnv1a32:0x44bc4b28",
-  "encoded": "{\"findings\":[{\"id\":\"surrogates\",\"evidence\":\"%uD800leading middle%uDFFF trailing\"}],\"base_branch\":\"main\"}"
+  "checksum": "fnv1a32:0x4b13848f",
+  "encoded": "{\"findings\":[{\"id\":\"surrogates\",\"evidence\":\"%uD800leading middle%uDFFF trailing%uD800\"}],\"base_branch\":\"main\"}"
 }

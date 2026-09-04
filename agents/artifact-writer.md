@@ -45,6 +45,6 @@ array-vs-object:
 
 ## Output
 
-Return the structured object the prompt asks for — `{ written }` (final artifacts,
-slice inputs) or `{ artifactPaths }` (the legacy full payload) — echoing the paths you
-wrote. The echo is a write proof: never list a path you did not actually write.
+Return the structured object the prompt asks for — `{ written }` (final artifacts
+only) or `{ artifactPaths }` (the legacy full payload) — echoing the paths you wrote.
+The echo is a write proof: never list a path you did not actually write.
