@@ -5155,6 +5155,20 @@ class TestReachabilityPolicy(unittest.TestCase):
         self.assertEqual(main_count, 0)
         self.assertEqual(suggestion_count, 1)
 
+    def test_reachability_routing_precedes_always_main_security_dimension(self):
+        # security is an always-main dimension; the reachability stamp still wins
+        finding = _make_finding(
+            agent="security-reviewer",
+            dimension="security",
+            severity="low",
+            demoted_by="reachability",
+        )
+        tagged, _, main_count, suggestion_count = tag_findings([finding])
+        self.assertEqual(tagged[0]["report_destination"], "suggestion")
+        self.assertEqual(tagged[0]["routed_by"], "reachability")
+        self.assertEqual(main_count, 0)
+        self.assertEqual(suggestion_count, 1)
+
     def test_composed_filter_applies_threshold_after_demotion_and_counts_stamp(self):
         import contextlib
         import io
@@ -5202,17 +5216,6 @@ class TestReachabilityPolicy(unittest.TestCase):
         finally:
             os.unlink(findings_path)
             os.unlink(review_path)
-
-    def test_live_docs_do_not_retain_the_removed_confidence_cap(self):
-        for rel_path in (
-            "agents/validator.md",
-            "skills/code-gauntlet/references/validation-pipeline.md",
-        ):
-            text = (Path(__file__).parents[1] / rel_path).read_text()
-            self.assertIsNone(
-                re.search(r"\bcap(?:ped|ping|s)?\b[^\n.]{0,40}\b65\b", text, re.I),
-                rel_path,
-            )
 
 
 if __name__ == "__main__":

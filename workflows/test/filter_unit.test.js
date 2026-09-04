@@ -554,6 +554,19 @@ test('tagFindings routes reachability-demoted findings to suggestions before dim
   assert.equal(suggestionCount, 1);
 });
 
+test('tagFindings: reachability precedence also overrides the always-main security dimension', () => {
+  const finding = {
+    id: 'R8', agent: 'security-reviewer', dimension: 'security', severity: 'low', confidence: 90,
+    title: 'future-only exposure', description: 'a future caller could pass unsanitized input',
+    demoted_by: 'reachability',
+  };
+  const { tagged, mainCount, suggestionCount } = tagFindings([finding]);
+  assert.equal(tagged[0].report_destination, 'suggestion');
+  assert.equal(tagged[0].routed_by, 'reachability');
+  assert.equal(mainCount, 0);
+  assert.equal(suggestionCount, 1);
+});
+
 // Beyond the brief's pinned determinism check: a small end-to-end smoke test
 // that exercises every applyFilterPipeline stage in composition (threshold ->
 // exclusions -> injection -> disagreement -> tag), since no golden-fixture

@@ -1,0 +1,23 @@
+{
+  "consolidated_count": 0,
+  "main_count": 0,
+  "suggestion_count": 1,
+  "tagged": [
+    {
+      "agent": "security-reviewer",
+      "confidence": 90,
+      "demoted_by": "reachability",
+      "description": "A future caller could pass unsanitized input.",
+      "dimension": "security",
+      "file": "src/auth.py",
+      "id": "R8",
+      "line_start": 12,
+      "reachability": "future_change_only",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "routed_by": "reachability",
+      "severity": "low",
+      "title": "hypothetical exposure"
+    }
+  ]
+}

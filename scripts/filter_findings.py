@@ -2067,7 +2067,7 @@ def tag_findings(findings):
     # Step 1: Cross-agent consolidation (stamps, never drops -- #22 D1)
     findings, consolidated_count = consolidate_cross_agent(findings)
 
-    # Step 2 & 3: Dimension-based routing, then agent-based fallback
+    # Steps 2, 3 & 4: reachability routing, dimension-based routing, then agent-based fallback
     main_count = 0
     suggestion_count = 0
 
@@ -2320,7 +2320,7 @@ def main():
     exclusion_patterns = config.get("ignore", []) + load_exclusions(args.exclusions_md)
 
     # ------------------------------------------------------------------
-    # Pipeline: threshold -> exclusions -> injection -> disagreement -> tag
+    # Pipeline: reachability demotion -> threshold -> exclusions -> injection -> disagreement -> tag
     # ------------------------------------------------------------------
     all_eliminated = []
 
