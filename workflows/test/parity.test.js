@@ -22,7 +22,12 @@ import {
   INJECTION_STRIPPED_PROSE_FIELDS,
 } from '../src/filterFindings.js';
 import { applyChallenges } from '../src/applyChallenges.js';
-import { joinVerifyDeltas, deltaContentProof, fnv1a32 } from '../src/stages.js';
+import {
+  joinVerifyDeltas,
+  deltaContentProof,
+  fnv1a32,
+  encodeSliceInline,
+} from '../src/stages.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = join(HERE, '..', '..', 'tests', 'fixtures', 'parity');
@@ -380,16 +385,19 @@ for (const c of loadCases('verify_deltas')) {
   });
 }
 
-// --- slice_input_proof: the slice-input content proof's cross-runtime agreement ----
+// --- slice_input_proof: the persisted JSON content proof's cross-runtime agreement -
 //
-// The workflow computes the EXPECTED checksum over the content it dispatched
-// (materializeVerifySlices) and verify_findings.py computes the ACTUAL one over the
-// document it parsed off disk. Those two numbers are compared by trustSlice, so a
-// serializer divergence between the runtimes would not read as a bug — it would read as
-// a corrupt slice input, and degrade every slice of every run. Python (record_parity.py,
-// via verify_findings._input_checksum) owns one half; this block owns the other.
+// The legacy writer path remains covered by this golden. The inline path below additionally
+// pins the exact percent-encoded token, including its receipt proof.
 for (const c of loadCases('slice_input_proof')) {
   test(`slice_input_proof parity: ${c.name}`, () => {
+    assert.equal(fnv1a32(JSON.stringify(c.input.doc, null, 2)), c.expected.checksum);
+  });
+}
+
+for (const c of loadCases('slice_inline')) {
+  test(`slice_inline parity: ${c.name}`, () => {
+    assert.equal(encodeSliceInline(c.input.doc), c.expected.encoded);
     assert.equal(fnv1a32(JSON.stringify(c.input.doc, null, 2)), c.expected.checksum);
   });
 }

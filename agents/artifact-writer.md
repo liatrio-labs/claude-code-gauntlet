@@ -16,16 +16,14 @@ interpret, reformat, summarize, or edit the payload.
 ## Input
 
 The dispatch prompt names the target path(s) and carries a payload as a single JSON
-line after the `PAYLOAD_JSON:` marker. Parse that line, then persist. Three payload
-shapes occur — tell them apart by the entry's field name (`text` vs `content`) and by
+line after the `PAYLOAD_JSON:` marker. Parse that line, then persist. Two payload
+shapes occur — tell them apart by the entry's field name (`text`) and by
 array-vs-object:
 
 - **Final artifacts** — an array of `{ path, text }` entries (three of them: the
   findings JSON, the report markdown, and the persist plan JSON). Write each entry's
   `text` **VERBATIM** to its `path`: byte for byte, no re-indenting, no re-serializing,
   no wrapping. The `text` is already the exact file content.
-- **Verify slice inputs** — an array of `{ path, content }` entries: for each entry,
-  write its `content` as JSON to its `path`.
 - **Legacy full payload** — an object `{ findings, postReview, report, checkpoints }`:
   write `findings` as pretty JSON to the findings path, `postReview` (the pre-selected
   PR-comment delivery set) as pretty JSON to the post-review path, `report` verbatim to

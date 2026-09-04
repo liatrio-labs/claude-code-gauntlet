@@ -4,6 +4,7 @@ verify_findings.py — Deterministic finding verification for code-gauntlet Phas
 
 Usage:
     python3 verify_findings.py <findings_json> [--base-branch main] [--diff-file path]
+    python3 verify_findings.py --input <destination> --input-inline <slice-json> ...
 
 Input JSON schema. The workflow's verify stage dispatches a PROJECTION of each finding
 (VERIFY_SLICE_FIELDS in workflows/src/stages.js / _SLICE_INPUT_FIELDS below — one list in
@@ -48,15 +49,14 @@ Output JSON schema (legacy positional path — unchanged):
     Each finding in "eliminated" has an added "elimination_reason" field explaining
     why it was removed (e.g., "line not in diff", "evidence mismatch", etc.).
 
-Receipt mode (--input/--nonce/--head-sha) wraps that same result in the envelope the
-workflow's verify stage consumes, and adds the DELTA ECHO (issue #25 req 1/2):
+Receipt mode (--input/--input-inline/--nonce/--head-sha) wraps that same result in the
+envelope the workflow's verify stage consumes, and adds the DELTA ECHO (issue #25 req 1/2):
 
     {
       "status": "ok",
       "receipt": {"sha": ..., "n_in": N, "nonce": ...,
                   "deltas_checksum": "fnv1a32:0x...",
                   "input_checksum": "fnv1a32:0x..."},
-      "input_recovery": {"trailing_bytes": "}\n"},   <- ONLY when the input was recovered
       "result": {
         "deltas": [ {"id", "verified", "origin", "severity", "confidence",
                      "elimination_reason"?}, ... ],   <- FIRST key, see below
@@ -146,11 +146,10 @@ class InputError(Exception):
     It exists so the two CLI modes can answer it differently. ``die()`` used to call
     ``sys.exit(1)`` directly, which raises ``SystemExit`` — a BaseException, so it flew
     straight past ``_run_receipt``'s ``except Exception`` and the script exited having
-    written NO output file at all. The executor then found nothing to read and the slice
-    degraded with "no file" rather than the reason, on the one path whose entire job is to
-    report honestly. Measured on smoke-20260729-191253-8ae2ee3: the artifact-writer
-    appended one stray `}` after an otherwise complete slice-input document (the
-    transcription defect of issue #69), and the run said nothing about why.
+    written NO output file at all. The executor then found nothing to read and the receipt
+    path degraded with "no file" rather than the reason. The receipt path now catches
+    decoder, shape, and verification errors and writes an honest failed envelope; the
+    legacy path still converts the same exception back to exit 1.
 
     As an ordinary Exception it lands in the receipt path's honest failure envelope,
     carrying the real message; ``main()``'s legacy path converts it back to exit 1, so
@@ -1079,13 +1078,12 @@ def _coerce_numeric_fields(finding):
 
 
 def _input_checksum(doc):
-    """The slice-input content proof: ``fnv1a32(js_stringify_pretty(doc))``.
+    """The inline content proof: ``fnv1a32(js_stringify_pretty(doc))``.
 
     The workflow computes the SAME value over the content it dispatched
-    (``JSON.stringify(content, null, 2)`` in materializeVerifySlices), so a match proves
-    the bytes the writer put on disk carry the document this run asked for. That is the
-    proof the write-proof echo never was: an echoed path only ever said "I wrote
-    something here" (issue #25 requirements 4-6).
+    (``JSON.stringify(content, null, 2)`` before inline encoding), so a match proves
+    the decoded document is the one this run asked for. The receipt path writes that
+    decoded value to the destination before verification.
 
     It is a VALUE proof, not a byte proof, and deliberately so: the writer persists
     compact JSON, so a byte comparison against the pretty form would fail every real
@@ -1107,11 +1105,160 @@ def _input_checksum(doc):
 # The trailing-byte class this loader RECOVERS from: whitespace and unbalanced closing
 # punctuation only. Issue #69 — the artifact-writer is a sampled agent, not a function,
 # and on smoke-20260728-144630-a162ecd it appended exactly `}\n` after two otherwise
-# complete slice-input documents, costing 23 fully intact findings their verification.
+# complete legacy input documents, costing 23 fully intact findings their verification.
 # Recovering that class is deterministic; recovering anything wider is guessing. Matched
 # with fullmatch, so a document ending in real content can never sneak past on the
-# strength of a closing character.
+# strength of a closing character. This recovery is positional-CLI-only.
 _RECOVERABLE_TRAILING_RE = re.compile(r"[ \t\r\n}\]]*")
+
+_INLINE_SAFE = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-"
+)
+_INLINE_HEX = frozenset("0123456789ABCDEF")
+_INLINE_STRING_RE = re.compile(r"(?:[A-Za-z0-9 .,:/_-]|%[0-9A-F]{2}|%u[0-9A-F]{4})*")
+
+
+class _InlineObject(list):
+    """Temporary object marker retained through json.loads for deep validation."""
+
+
+def _inline_pairs(pairs):
+    keys = [key for key, _value in pairs]
+    if len(keys) != len(set(keys)):
+        duplicate = next(key for key in keys if keys.count(key) > 1)
+        raise ValueError(f"duplicate object key {duplicate!r}")
+    return _InlineObject(pairs)
+
+
+def _inline_reject(message):
+    raise InputError(f"inline slice-input rejected: {message}")
+
+
+def _inline_bad_char(char, path):
+    _inline_reject(f"raw U+{ord(char):04X} at {path}")
+
+
+def _decode_inline_string(value, path):
+    if not _INLINE_STRING_RE.fullmatch(value):
+        for char in value:
+            if char not in _INLINE_SAFE and char != "%":
+                _inline_bad_char(char, path)
+        _inline_reject(f"invalid percent escape at {path}")
+
+    out = []
+    i = 0
+    while i < len(value):
+        char = value[i]
+        if char in _INLINE_SAFE:
+            out.append(char)
+            i += 1
+            continue
+        if char != "%":
+            _inline_bad_char(char, path)
+        if i + 1 >= len(value):
+            _inline_reject(f"truncated percent escape at {path} (offending U+0025)")
+        if value[i + 1] == "u":
+            if i + 6 > len(value) or any(
+                digit not in _INLINE_HEX for digit in value[i + 2 : i + 6]
+            ):
+                offending = value[i + 1] if i + 1 < len(value) else "%"
+                _inline_reject(
+                    f"invalid %u escape at {path} (offending U+{ord(offending):04X})"
+                )
+            unit = int(value[i + 2 : i + 6], 16)
+            if not 0xD800 <= unit <= 0xDFFF:
+                _inline_reject(
+                    f"invalid %u escape U+{unit:04X} at {path} (only surrogates are allowed)"
+                )
+            out.append(chr(unit))
+            i += 6
+            continue
+
+        bytes_run = bytearray()
+        while (
+            i < len(value)
+            and value[i] == "%"
+            and i + 2 < len(value)
+            and value[i + 1] != "u"
+        ):
+            pair = value[i + 1 : i + 3]
+            if len(pair) != 2 or any(digit not in _INLINE_HEX for digit in pair):
+                _inline_reject(
+                    f"invalid percent escape at {path} (offending U+{ord(value[i + 1]):04X})"
+                )
+            byte = int(pair, 16)
+            if chr(byte) in _INLINE_SAFE:
+                _inline_reject(
+                    f"non-canonical percent escape %{pair} at {path} (byte is SAFE ASCII)"
+                )
+            bytes_run.append(byte)
+            i += 3
+        try:
+            out.append(bytes(bytes_run).decode("utf-8", "strict"))
+        except UnicodeDecodeError as exc:
+            _inline_reject(
+                f"invalid UTF-8 at {path} (offending bytes {bytes_run.hex().upper()}, {exc})"
+            )
+    return "".join(out)
+
+
+def _decode_inline_node(node, path="$", seen_keys=None):
+    if isinstance(node, _InlineObject):
+        decoded = {}
+        for raw_key, raw_value in node:
+            key = _decode_inline_string(raw_key, f"{path}.<key>")
+            if key in decoded:
+                _inline_reject(f"duplicate decoded object key {key!r} at {path}")
+            decoded[key] = _decode_inline_node(raw_value, f"{path}.{key}")
+        return decoded
+    if isinstance(node, list):
+        return [
+            _decode_inline_node(value, f"{path}[{index}]")
+            for index, value in enumerate(node)
+        ]
+    if isinstance(node, str):
+        return _decode_inline_string(node, path)
+    return node
+
+
+def decode_inline_slice(text):
+    """Strictly decode the percent-encoded JSON document carried by the executor."""
+    if not isinstance(text, str):
+        _inline_reject("payload is not text at $")
+    if "\\" in text:
+        _inline_reject(
+            "JSON escape sequences are not canonical at $ (offending U+005C)"
+        )
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=_inline_pairs,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite JSON constant {value}")
+            ),
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        _inline_reject(f"invalid JSON at $ ({exc})")
+    if not isinstance(parsed, _InlineObject):
+        _inline_reject("root must be an object at $")
+    return _decode_inline_node(parsed)
+
+
+def _validate_input_shape(data, inline=False):
+    reject = _inline_reject if inline else die
+    if not isinstance(data, dict):
+        reject(
+            "root must be an object with a 'findings' key at $"
+        ) if inline else reject("Input JSON must be an object with a 'findings' key.")
+    if "findings" not in data:
+        reject("missing required 'findings' array at $") if inline else reject(
+            "Input JSON is missing required 'findings' array."
+        )
+    if not isinstance(data["findings"], list):
+        reject("'findings' must be an array at $") if inline else reject(
+            "'findings' must be an array."
+        )
+    return data
 
 
 def load_input(findings_json_path):
@@ -1161,12 +1308,7 @@ def load_input(findings_json_path):
             )
         recovery = {"trailing_bytes": tail}
 
-    if not isinstance(data, dict):
-        die("Input JSON must be an object with a 'findings' key.")
-    if "findings" not in data:
-        die("Input JSON is missing required 'findings' array.")
-    if not isinstance(data["findings"], list):
-        die("'findings' must be an array.")
+    _validate_input_shape(data)
 
     # BEFORE the coercion below, on purpose. The workflow's expected checksum covers the
     # document it DISPATCHED, and coercion rewrites values ("10" -> 10); checksumming
@@ -1421,20 +1563,15 @@ def run_verification(findings, base_branch, diff_file=None, verbose=False):
 
 
 def _run_receipt(args):
-    """Receipt mode (Task 11): load findings, run the shared verification, and emit
+    """Receipt mode: decode the inline slice, write it, run verification, and emit
     the discriminated-union envelope the JS verify stage trusts.
 
     On success:  ``{status:'ok', receipt:{sha, n_in, nonce, deltas_checksum,
-    input_checksum}, input_recovery?, result:{deltas, verified, eliminated,
-    batches, stats}}``.
+    input_checksum}, result:{deltas, verified, eliminated, batches, stats}}``.
     On an uncaught exception during the body: ``{status:'failed', exitCode:1,
     stderr:str(e)}`` — written with exit 0 because an honest failure is
     schema-valid; the workflow routes it to the UNVERIFIED path rather than
     trusting a fabricated success under retry pressure.
-
-    `input_recovery` rides between the receipt and the result so `result.deltas` stays
-    near the front of the document — the executor's Read is length-capped with no
-    truncation notice, and what it must echo has to be a prefix.
 
     The result dict is REBUILT here with ``deltas`` first rather than mutated in
     place: the executor's Read of this file is length-capped with no truncation
@@ -1444,7 +1581,17 @@ def _run_receipt(args):
     """
     sha = args.head_sha or _resolve_head_sha() or ""
     try:
-        data, recovery, input_checksum = load_input(args.input)
+        data = decode_inline_slice(args.input_inline)
+        _validate_input_shape(data, inline=True)
+        input_checksum = _input_checksum(data)
+        try:
+            input_text = js_stringify_pretty(data)
+        except JsSerializationError:
+            input_text = json.dumps(data, indent=2, ensure_ascii=False)
+        with open(args.input, "w", encoding="utf-8", newline="") as input_file:
+            input_file.write(input_text)
+        for finding in data["findings"]:
+            _coerce_numeric_fields(finding)
         findings = data["findings"]
         base_branch = data.get("base_branch") or args.base_branch
         result = run_verification(findings, base_branch, args.diff_file, verbose=False)
@@ -1464,10 +1611,6 @@ def _run_receipt(args):
         envelope = {
             "status": "ok",
             "receipt": receipt,
-            # OMITTED when the parse was clean -- never emitted as null. The workflow
-            # keys its RECOVERED disclosure on this key's PRESENCE (stages.js), so a
-            # null here would mark every slice in every run as recovered.
-            **({"input_recovery": recovery} if recovery else {}),
             "result": {"deltas": deltas, **result},
         }
     except Exception as e:  # noqa: BLE001 — honest failure is the contract
@@ -1519,11 +1662,13 @@ def main():
         "--input",
         default=None,
         metavar="PATH",
-        help=(
-            "Receipt mode: path to input findings JSON (replaces the positional "
-            "argument). Emits a {status, receipt, result} envelope the workflow "
-            "verify stage trusts only when the receipt matches."
-        ),
+        help=("Receipt mode: code-written destination for the inline slice document."),
+    )
+    parser.add_argument(
+        "--input-inline",
+        default=None,
+        metavar="TEXT",
+        help="Receipt mode: the strict percent-encoded slice document to decode and write.",
     )
     parser.add_argument(
         "--nonce",
@@ -1545,7 +1690,12 @@ def main():
     )
     args = parser.parse_args()
 
-    # Receipt mode (Task 11) — discriminated-union envelope for the JS verify stage.
+    if args.input_inline is not None and args.input is None:
+        parser.error("--input-inline requires --input for receipt mode")
+    if args.input is not None and args.input_inline is None:
+        parser.error("--input requires --input-inline for receipt mode")
+
+    # Receipt mode — discriminated-union envelope for the JS verify stage.
     if args.input is not None:
         return _run_receipt(args)
 

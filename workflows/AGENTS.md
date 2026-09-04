@@ -60,12 +60,13 @@ rewriting long prose shorter, and nothing about a document predicts which fails.
 stage returns the three primaries at `persistReturn` and the *harness* serializes them —
 byte-exact at every size probed to 4 MB, against ~66 KB of unique content in the largest recorded
 run. **The content proof survives the move and now grades the harness-written copy; do not remove
-it, and do not try to fix transcription with a different encoding — re-encoding was measured and
-it does not work.**
+it. Respelling JSON backslash escapes on the persist wire was measured and did not fix
+transcription.**
 
-- The two budgets are unrelated and must not re-merge. `PROMPT_SEGMENT_CHAR_BUDGET` (100k) sizes
-  what a model reads; `RETURN_CHAR_BUDGET` (1M) sizes what the harness serializes. Grading resume
-  state or the returned primaries against the prompt budget throws away recoverable runs.
+- The two budgets are unrelated and must not re-merge. `VERIFY_INLINE_CHAR_BUDGET` (43k) sizes the
+  percent-encoded verify token handed to an executor; `RETURN_CHAR_BUDGET` (1M) sizes what the
+  harness serializes. Grading resume state or the returned primaries against the verify budget
+  throws away recoverable runs.
 - `fnv1a32` is defined over UTF-16 code units and **must agree between runtimes** — JS uses
   `charCodeAt` + `Math.imul`; Python reads `utf-16-le` pairs. `tests/test_assemble_artifacts.py`
   pins the parity over surrogates and control characters.
@@ -78,9 +79,18 @@ it does not work.**
   the primaries exceed `RETURN_CHAR_BUDGET`, the legacy by-value one is the safety net for
   pathological input. Do not delete either.
 
+Verify is the exception to the persist-wire encoding rule: its inline token uses a restricted
+percent-encoded alphabet with no escape semantics left for the model to normalize, measured exact
+in both of the two recorded executor copies at 43,636 characters. The input content proof remains
+the belt if the inline channel is ever transcribed incorrectly.
+
 ## The verify boundary
 
 The executor echoes a per-id delta, never findings.
+
+Verify hands each projected slice to the executor as one quoted `--input-inline` token. The token
+is planned under `VERIFY_INLINE_CHAR_BUDGET`; the executor reproduces it exactly, and the script
+decodes it and writes the destination path before verification.
 
 - `_DELTA_FIELDS` (Python) and `DELTA_VALUE_KEYS` (JS — `DELTA_KEYS` minus the structural
   `id`/`verified`) are one list in two runtimes, walked in the same order.

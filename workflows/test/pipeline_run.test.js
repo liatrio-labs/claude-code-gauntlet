@@ -71,7 +71,6 @@ test('test_runWith_dispatches_exactly_this_agentType_inventory', async () => {
   assert.equal(out.ok, true);
   assert.deepEqual(ctx.calls.map((call) => call.agentType).sort(), [
     'code-gauntlet:artifact-writer',
-    'code-gauntlet:artifact-writer',
     'code-gauntlet:bug-detector',
     'code-gauntlet:challenger',
     'code-gauntlet:challenger',
@@ -127,7 +126,7 @@ test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true
   // run()'s stats, not just computed and dropped — nothing else in this file touches
   // `stats.inputProof`, so deleting the `inputProof: verifyOut.inputProof` line from
   // run()'s stats block would otherwise pass the whole suite.
-  assert.deepEqual(out.stats.inputProof, { slices: 1, proven: 1, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+  assert.deepEqual(out.stats.inputProof, { slices: 1, proven: 1, mismatched: 0, missing: 0, unprovable: 0, oversize: 0, retried: 0 });
 });
 
 test('partially-degraded verify: one failed slice keeps origin=unknown; healthy slices and downstream stages survive', async () => {
@@ -894,7 +893,7 @@ test('sweep: runWith drives every stage with STRING prompts + valid JSON Schemas
   assert.deepEqual(ctx.violations, [], `dispatch-contract violations: ${ctx.violations.join('; ')}`);
   // Every dispatch label family was exercised (so the assertions actually ran on each).
   const seen = ctx.calls.map((c) => c.label);
-  for (const family of ['summarize', 'code-gauntlet:bug-detector', 'verify-input-writer', 'verify-slice-', 'validate-batch-', 'challenge-', 'artifact-writer']) {
+  for (const family of ['summarize', 'code-gauntlet:bug-detector', 'verify-slice-', 'validate-batch-', 'challenge-', 'artifact-writer']) {
     assert.ok(seen.some((l) => l === family || l.startsWith(family)), `swept dispatch family: ${family}`);
   }
   // And every recorded dispatch carried a string prompt + an object schema.

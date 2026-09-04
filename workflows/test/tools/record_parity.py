@@ -11,6 +11,7 @@ only as the explicit authoring command when a golden genuinely needs updating.
 """
 
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -233,15 +234,30 @@ def _apply_challenges(inp):
 
 
 def _slice_input_proof(inp):
-    # The slice-input content proof (issue #69 / #25 req 4-6). Python computes it over
-    # the document verify_findings.py parses off disk; the JS twin computes the same
-    # value over the content materializeVerifySlices dispatched, and trustSlice compares
-    # them. A divergence between the runtimes would present as a corrupt slice input
-    # rather than as a bug, so it is pinned by a golden rather than by each side
-    # agreeing with itself.
+    # The legacy file proof remains for the persisted JSON boundary.
     from verify_findings import _input_checksum
 
     return {"checksum": _input_checksum(inp["doc"])}
+
+
+def _slice_inline(inp):
+    """Record the exact JS inline token and its receipt checksum."""
+    from verify_findings import _input_checksum
+
+    source = (
+        "import { encodeSliceInline } from './workflows/src/stages.js'; "
+        "import fs from 'node:fs'; "
+        "process.stdout.write(encodeSliceInline(JSON.parse(fs.readFileSync(0, 'utf8'))));"
+    )
+    encoded = subprocess.run(
+        ["node", "--input-type=module", "-e", source],
+        input=json.dumps(inp["doc"], ensure_ascii=True),
+        capture_output=True,
+        text=True,
+        cwd=REPO,
+        check=True,
+    ).stdout
+    return {"encoded": encoded, "checksum": _input_checksum(inp["doc"])}
 
 
 # Registered per-script recorders. Later tasks append entries here.
@@ -253,6 +269,7 @@ RECORDERS = {
     "apply_challenges": _apply_challenges,
     "verify_deltas": _verify_deltas,
     "slice_input_proof": _slice_input_proof,
+    "slice_inline": _slice_inline,
 }
 
 

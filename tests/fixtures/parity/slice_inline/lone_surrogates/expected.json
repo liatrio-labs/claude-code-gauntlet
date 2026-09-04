@@ -1,0 +1,4 @@
+{
+  "checksum": "fnv1a32:0x44bc4b28",
+  "encoded": "{\"findings\":[{\"id\":\"surrogates\",\"evidence\":\"%uD800leading middle%uDFFF trailing\"}],\"base_branch\":\"main\"}"
+}

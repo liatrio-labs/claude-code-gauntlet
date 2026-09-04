@@ -14,6 +14,13 @@ Concern-parallel agents with context-pulling and deterministic verification. Whe
 
 The skill layer (this file) does three things: **prepare** (Phases 1–2 — gate, checkout, git artifacts, args), **run** (Phase 3 — a single `Workflow` tool call), and **deliver** (Phase 8 — read the persisted artifacts and run the delivery gates). The eight review stages themselves — Summarize, Discover, Merge, Verify, Validate, Filter, Challenge, Report — run **inside** the workflow (`workflows/pipeline.js`), which orchestrates them through injected `agent()`/`parallel()` runtime globals and returns a compact result. The workflow script has no disk, shell, or `process.env` access, so everything it needs arrives through the args object, and everything it produces is persisted by a writer agent to `{output_dir}`.
 
+Verify slices travel to their executor as one quoted, percent-encoded `--input-inline`
+token. The workflow plans the token under `VERIFY_INLINE_CHAR_BUDGET` (43k), while
+`RETURN_CHAR_BUDGET` (1M) remains the separate limit for harness serialization of Persist
+artifacts. The restricted inline alphabet leaves no escape semantics for a model to normalize;
+the content proof remains the belt. Persist's separate JSON backslash-respelling experiment is
+not a remedy for that wire.
+
 ---
 
 ## Phase 1: Pre-Flight

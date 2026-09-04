@@ -1,0 +1,11 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "surrogates",
+        "evidence": "\ud800leading middle\udfff trailing"
+      }
+    ],
+    "base_branch": "main"
+  }
+}

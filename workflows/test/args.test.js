@@ -25,7 +25,7 @@ const good = {
   pluginRoot: '/plugin',
   reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
   limits: {
-    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
+    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25,
     maxLineSpan: 100,
   },
 };
@@ -1084,7 +1084,7 @@ test('validateArgs accepts an absolute repoRoot (POSIX /-prefix)', () => {
 
 test('LIMIT_DEFAULTS covers exactly the five benchmarked/bound keys, never deliveryCap/discoveryCap', () => {
   assert.deepEqual(LIMIT_DEFAULTS, {
-    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200,
+    summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 25,
     maxLineSpan: 100,
   });
 });
@@ -1100,7 +1100,7 @@ test('normalizeArgs fills only the MISSING limits keys, leaving every provided v
   const out = normalizeArgs(raw);
   assert.deepEqual(out.limits, {
     summarizeBucketSize: 7, deliveryCap: 3,
-    validateBatch: 25, challengeCap: 40, verifySliceSize: 200, maxLineSpan: 100,
+    validateBatch: 25, challengeCap: 40, verifySliceSize: 25, maxLineSpan: 100,
   });
 });
 

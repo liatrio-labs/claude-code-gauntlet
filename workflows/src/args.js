@@ -140,7 +140,8 @@ export const LIMIT_DEFAULTS = {
   summarizeBucketSize: 20,
   validateBatch: 25,
   challengeCap: 40,
-  verifySliceSize: 200,
+  // Keep a bad inline transcription's blast radius small; a typical slice is about 30k chars.
+  verifySliceSize: 25,
   maxLineSpan: 100,
 };
 

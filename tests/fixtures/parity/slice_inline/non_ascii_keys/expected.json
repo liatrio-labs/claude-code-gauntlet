@@ -1,0 +1,4 @@
+{
+  "checksum": "fnv1a32:0x64836e39",
+  "encoded": "{\"findings\":[{\"id\":\"keys\",\"caf%C3%A9\":{\"na%C3%AFve key\":\"v%C3%A4rde\",\"nested\":[\"%E6%9D%B1%E4%BA%AC\",{\"%D0%BA%D0%BB%D1%8E%D1%87\":\"%D0%B7%D0%BD%D0%B0%D1%87%D0%B5%D0%BD%D0%B8%D0%B5\"}]}}],\"base_branch\":\"main\"}"
+}

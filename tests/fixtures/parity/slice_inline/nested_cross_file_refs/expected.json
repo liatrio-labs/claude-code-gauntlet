@@ -1,0 +1,4 @@
+{
+  "checksum": "fnv1a32:0xbd569234",
+  "encoded": "{\"findings\":[{\"id\":\"refs\",\"cross_file_refs\":[{\"file\":\"src/na%C3%AFve.py\",\"line_start\":3,\"note\":\"%E8%B7%A8%E6%96%87%E4%BB%B6\"},{\"file\":\"src/other.py\",\"metadata\":{\"owner\":\"%CE%B4%CE%BF%CE%BA%CE%B9%CE%BC%CE%AE\",\"enabled\":true}}]}],\"base_branch\":\"main\"}"
+}

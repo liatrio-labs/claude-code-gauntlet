@@ -18,7 +18,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { DIMENSIONS, FINDING_PROP_TYPES, FINDING_REQUIRED } from '../src/registry.js';
-import { agentSpecs, discover, verifyStage, parseWriterPayload } from '../src/stages.js';
+import { agentSpecs, discover, verifyStage } from '../src/stages.js';
 
 // The property NAME set findingItemSchema must produce for one agent: the canonical map
 // unioned with every dimension that agent covers.
@@ -244,16 +244,12 @@ test('the verify echo declares NO finding item at all — the registry union sto
   // (#25 requirement 1) in a single edit.
   //
   // Only the EXECUTOR dispatch's schema is under test here, so the mock is deliberately
-  // minimal: the slice-input writer echoes its paths so the write-proof gate passes, and the
-  // executor result is left unusable. A `null` result is untrusted, so the slice takes its
-  // one deterministic retry (VERIFY_ATTEMPTS_PER_SLICE=2) before verifyStage degrades to
+  // minimal: the executor result is left unusable. A `null` result is untrusted, so the
+  // slice takes its one retry (VERIFY_ATTEMPTS_PER_SLICE=2) before verifyStage degrades to
   // UNVERIFIED, which is fine — the schema was already handed to both dispatches by then.
   const execSchemas = [];
   const ctx = {
     agent: async (prompt, opts = {}) => {
-      if ((opts.label || '').startsWith('verify-input-writer')) {
-        return { written: (parseWriterPayload(prompt) || []).map((e) => e.path) };
-      }
       execSchemas.push(opts.schema);
       return null;
     },
@@ -273,9 +269,9 @@ test('the verify echo declares NO finding item at all — the registry union sto
       diffPath: '/out/code-gauntlet-diff-abc123.patch',
     },
   });
-  // A degraded slice dispatches its single deterministic retry (VERIFY_ATTEMPTS_PER_SLICE=2),
+  // A degraded slice dispatches its single retry (VERIFY_ATTEMPTS_PER_SLICE=2),
   // so a single slice whose executor result is untrusted on attempt 1 produces 2 dispatches.
-  assert.equal(execSchemas.length, 2, 'a degraded slice dispatches its one deterministic retry');
+  assert.equal(execSchemas.length, 2, 'a degraded slice dispatches its one retry');
   // The retry must carry the SAME schema as attempt 1 — the point of this test is that every
   // executor dispatch gets the same delta-only schema, not just the first one.
   assert.deepEqual(execSchemas[1], execSchemas[0], 'retry dispatch schema matches attempt 1');

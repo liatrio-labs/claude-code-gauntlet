@@ -1,0 +1,11 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "astral",
+        "evidence": "before 😀 after"
+      }
+    ],
+    "base_branch": "main"
+  }
+}

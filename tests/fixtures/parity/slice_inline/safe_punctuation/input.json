@@ -1,0 +1,13 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "safe-1",
+        "title": "Alpha .,:/_-",
+        "description": "a b C9",
+        "evidence": "safe"
+      }
+    ],
+    "base_branch": "main"
+  }
+}

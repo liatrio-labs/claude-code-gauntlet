@@ -387,6 +387,26 @@ test('coarsenLimits terminates starting from verifySliceSize:1 against a large f
   assert.ok(worstCaseAgentCount(coarse, 20, 5000) < 900);
 });
 
+test('worstCaseAgentCount uses the real inline planner for a findings array', () => {
+  const findings = [
+    { id: 'A', description: 'x'.repeat(30000) },
+    { id: 'B', description: 'y'.repeat(30000) },
+  ];
+  const limits = { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 };
+  const estimated = worstCaseAgentCount(limits, 0, findings.length);
+  const planned = worstCaseAgentCount(limits, 0, findings);
+  assert.equal(planned - estimated, 2, 'the budget split adds one slice and its retry');
+});
+
+test('coarsenLimits terminates when the array-form verify term is inline-budget-bound', () => {
+  const text = 'x'.repeat(22000);
+  const findings = Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, description: text }));
+  const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 5, verifySliceSize: 1 };
+  const coarse = coarsenLimits(limits, 0, findings);
+  assert.equal(coarse.verifySliceSize, 2, 'the verify candidate stops after doubling no longer reduces slices');
+  assert.ok(worstCaseAgentCount(coarse, 0, findings) >= 900, 'a size-bound term remains disclosed rather than looping forever');
+});
+
 test('absent size limits mirror stage defaults — the guard never goes NaN-silent', () => {
   // Math.max(1, undefined) is NaN; a NaN worst case made `NaN >= 900` false and
   // silently disabled coarsening. The guard now mirrors each stage's own default:

@@ -1,0 +1,10 @@
+{
+  "doc": {
+    "findings": [
+      {"id": "one", "evidence": "first"},
+      {"id": "two", "evidence": "second"},
+      {"id": "three", "evidence": "third"}
+    ],
+    "base_branch": "release/275"
+  }
+}
