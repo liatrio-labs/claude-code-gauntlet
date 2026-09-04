@@ -1,7 +1,7 @@
 // render_report.test.js — the deterministic report surface (issues #36, #67).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason } from '../src/renderReport.js';
+import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason, REVIEW_SCOPE_FALLBACK_RULES } from '../src/renderReport.js';
 import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
@@ -425,6 +425,29 @@ test('T-METH-MODE: missing mode pins the interactive receipt header', () => {
   const report = rendered({ mode: undefined });
   assert.ok(report.includes('```text\nResolved config:\n'));
   assert.doesNotMatch(report, /```text\nHeadless config:\n/);
+});
+
+test('T-METH-SCOPE-DISJOINT: the non-error fallback rules never overlap, and error always wins', () => {
+  // The rows after the error rule are ordered for reading, not for precedence: their predicates
+  // are pairwise disjoint over every detector state, so a swap cannot change the rendered reason.
+  // This pins that property directly; if a future rule overlaps another, precedence matters again
+  // and this test says so before the table's order silently starts carrying meaning.
+  const [errorRule, ...factRules] = REVIEW_SCOPE_FALLBACK_RULES;
+  assert.equal(REVIEW_SCOPE_FALLBACK_RULES.length, 5);
+  assert.equal(errorRule.when({ error: 'x' }), true);
+  const flags = ['previously_reviewed', 'sha_resolvable', 'sha_is_ancestor', 'head_advanced'];
+  for (let bits = 0; bits < 16; bits += 1) {
+    const detector = { incremental_safe: false, error: null };
+    flags.forEach((flag, i) => { detector[flag] = Boolean(bits & (1 << i)); });
+    const firing = factRules.filter((rule) => rule.when(detector));
+    assert.ok(firing.length <= 1, `detector ${JSON.stringify(detector)} fires ${firing.length} fact rules`);
+    assert.equal(errorRule.when(detector), false);
+    const errored = { ...detector, error: 'detector unavailable' };
+    assert.equal(
+      reviewScopeFallbackReason({ requested: 'incremental', kind: 'full', since: null, commits: null, detector: errored }),
+      'detection failed: detector unavailable',
+    );
+  }
 });
 
 test('T-METH-SCOPE: each incremental fallback reason is derived from detector facts', () => {

@@ -547,7 +547,7 @@ function countSummary(value) {
 // The detector facts are the only source for an incremental-to-full explanation. Keep the
 // precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
 // head, but they are materially different operator outcomes.
-const REVIEW_SCOPE_FALLBACK_RULES = [
+export const REVIEW_SCOPE_FALLBACK_RULES = [
   { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
   { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
   { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false, reason: () => 'recorded SHA not resolvable' },
