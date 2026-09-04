@@ -1,0 +1,39 @@
+{
+  "adjusted_count": 5,
+  "findings": [
+    {
+      "confidence": 80,
+      "id": "R7",
+      "original_confidence": 40,
+      "reachability": "current",
+      "validator_confidence": 80
+    },
+    {
+      "confidence": 81,
+      "id": "R8",
+      "original_confidence": 50,
+      "reachability": "future_change_only",
+      "validator_confidence": 81
+    },
+    {
+      "confidence": 82,
+      "id": "R9",
+      "original_confidence": 60,
+      "reachability": "uncertain",
+      "validator_confidence": 82
+    },
+    {
+      "confidence": 83,
+      "id": "R10",
+      "original_confidence": 70,
+      "validator_confidence": 83
+    },
+    {
+      "confidence": 84,
+      "id": "R11",
+      "original_confidence": 75,
+      "validator_confidence": 84
+    }
+  ],
+  "unmatched_ids": []
+}

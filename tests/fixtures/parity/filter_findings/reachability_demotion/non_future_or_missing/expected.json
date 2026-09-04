@@ -1,0 +1,34 @@
+{
+  "demoted_count": 0,
+  "findings": [
+    {
+      "confidence": 90,
+      "description": "The committed code has this issue.",
+      "file": "src/current.py",
+      "id": "R2",
+      "line_start": 20,
+      "reachability": "current",
+      "severity": "high",
+      "title": "current bug"
+    },
+    {
+      "confidence": 80,
+      "description": "The reachability assessment is uncertain.",
+      "file": "src/uncertain.py",
+      "id": "R3",
+      "line_start": 30,
+      "reachability": "uncertain",
+      "severity": "medium",
+      "title": "uncertain bug"
+    },
+    {
+      "confidence": 70,
+      "description": "Older validation output omitted reachability.",
+      "file": "src/old.py",
+      "id": "R4",
+      "line_start": 40,
+      "severity": "critical",
+      "title": "missing classification"
+    }
+  ]
+}

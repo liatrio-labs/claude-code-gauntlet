@@ -60,7 +60,7 @@ Before degrading, a slice gets **exactly one retry** (`VERIFY_ATTEMPTS_PER_SLICE
 
 Independent re-scoring by fresh Sonnet agents — **always Sonnet**. Discovery and validation sharing the same context produces correlated errors ~60% of the time; fresh agents assessing findings independently is what breaks that.
 
-The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification }]` (confidence 0–100). `applyValidations` merges the adjustments in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
+The stage batches findings into `limits.validateBatch` chunks and dispatches one `validator` per batch through `parallel()`. Each validator attempts to **disprove** each finding and returns `[{ id, confidence, justification, reachability }]` (confidence 0–100). Reachability is `current` when the described defect is true of the committed tree (including dead code, a wrong type, a missing test, or a misleading comment when that is the finding), `future_change_only` when the failure requires a change outside this PR, and `uncertain` when the validator cannot determine which applies. `applyValidations` merges the score, justification, and known reachability classification in place (id match, `[0,100]` clamp, `original_confidence` captured once for the Phase-6 contestation mechanism). The validator's shipped output uses `finding_id`; the stage accepts both `finding_id` and `id`.
 
 **Confidence rubric** (validator agent definition holds the authoritative copy):
 
@@ -72,8 +72,6 @@ The stage batches findings into `limits.validateBatch` chunks and dispatches one
 100  = definitely real
 ```
 
-If the only path to an issue requires a hypothetical future change (new caller, changed config, new code path), cap confidence at **65** — below the non-security threshold of 70.
-
 **Degradation.** A null/malformed batch means its findings went UNVALIDATED: they are kept at face value (never dropped, confidence untouched) and marked `validation='skipped'` with a loud gap. Attribution is by batch index so a degraded batch traces to its exact findings.
 
 ---
@@ -82,10 +80,11 @@ If the only path to an issue requires a hypothetical future change (new caller, 
 
 Pure, deterministic JS — no agents. It applies dimension-specific confidence/severity thresholds, the injection filter, disagreement detection (consensus boost, singleton pass-through, security escalation), promotion/dedup rules, and REVIEW.md overrides. `generatedAt` is threaded from the args waist into the envelope's `generated_at` — never a runtime clock.
 
+- **Reachability demotion.** Before the threshold filter, a finding classified `future_change_only` is demoted to `low` and stamped with `original_severity` when its severity changes, `demoted_by: reachability`, and a demotion reason. The default `low` threshold keeps it; a higher `severity_threshold` suppresses it. Missing or unknown classifications are left unchanged.
 - **Thresholds.** Removes findings below the dimension threshold. When REVIEW.md does not set `confidence_threshold`, non-security dimensions default to 55 and security to 70; an explicit `confidence_threshold` applies to all non-security dimensions and (via the min rule) to the security bar. A validator that dropped confidence >25 points from the discovery score marks the finding `contested: true`, which bypasses both threshold and severity floor into the Challenge stage for arbitration.
 - **Injection filter.** Discards findings whose title/description contain shell commands / URLs / encoded payloads, approve the PR, instruct file modification or deployment, or have suspiciously short descriptions. Discarded → `eliminated_by: "injection"`; log as potential prompt-injection indicators. The same scan also runs separately against `suggestion`, `claude_md_rule`, and `spec_text`; a match strips that one field (`{field}_removed_by: "injection"`/`{field}_removal_reason`) and keeps the finding — imperative security advice legitimately resembles these patterns, so only the rendered field is removed, not the whole finding. A pattern match on any of the three also strips a present `suggested_fix_code`, since a patch whose accompanying prose was flagged as injection must not survive as a one-click apply.
 - **Disagreement.** Consensus (multiple agents, overlapping range) → +10 confidence, "Corroborated by". Singleton → unchanged. Security-vs-safe → security wins. bug-vs-intentional and test-vs-scaffolding suppressions apply.
-- **Routing.** Each surviving finding gets `report_destination` (`"main"` or `"suggestion"`). test-analyzer / comment-accuracy / code-simplifier default to `"suggestion"`; a test-analyzer finding describing a bug-that-exists-today is promoted to `"main"`.
+- **Routing.** Each surviving finding gets `report_destination` (`"main"` or `"suggestion"`). Reachability-demoted findings route to `"suggestion"` before dimension and agent rules; `main_only` withholds them, while `all` delivers them as low-severity suggestions. test-analyzer / comment-accuracy / code-simplifier otherwise default to `"suggestion"`; a test-analyzer finding describing a bug-that-exists-today is promoted to `"main"`.
 
 `reviewConfig` and `exclusionPatterns` are the parsed REVIEW.md objects passed in the args waist (the workflow cannot read the file).
 

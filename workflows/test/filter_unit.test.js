@@ -10,6 +10,7 @@ import {
   WS_TRIM_RE,
   applyFilterPipeline,
   applyThresholdFilter,
+  applyReachabilityDemotion,
   applyInjectionFilter,
   applyExclusions,
   applyInjectedProseStrip,
@@ -498,6 +499,72 @@ test('applyFilterPipeline stamps generated_at from the injected value, never a w
   const cfg = { confidence_threshold: 70, security_min_confidence: 70, severity_threshold: 'low' };
   const out = applyFilterPipeline([], cfg, [], '2026-07-18T00:00:00Z');
   assert.equal(out.generated_at, '2026-07-18T00:00:00Z');
+});
+
+test('applyReachabilityDemotion stamps future-only findings and preserves already-low severity', () => {
+  const findings = [
+    { id: 'R1', severity: 'high', reachability: 'future_change_only' },
+    { id: 'R2', severity: 'low', reachability: 'future_change_only' },
+    { id: 'R3', severity: 'high', reachability: 'current' },
+    { id: 'R4', severity: 'medium', reachability: 'uncertain' },
+    { id: 'R5', severity: 'critical' },
+  ];
+  const { findings: demoted, demotedCount } = applyReachabilityDemotion(findings);
+  assert.equal(demotedCount, 2);
+  assert.equal(demoted[0].severity, 'low');
+  assert.equal(demoted[0].original_severity, 'high');
+  assert.equal(demoted[0].demoted_by, 'reachability');
+  assert.equal(demoted[0].demotion_reason, 'validator found no code path that reaches this issue without a future change');
+  assert.equal(demoted[1].severity, 'low');
+  assert.equal(demoted[1].original_severity, undefined);
+  assert.equal(demoted[1].demoted_by, 'reachability');
+  assert.equal(demoted[2].severity, 'high');
+  assert.equal(demoted[3].severity, 'medium');
+  assert.equal(demoted[4].severity, 'critical');
+  assert.equal(demoted[2].demoted_by, undefined);
+});
+
+test('reachability demotion runs before severity threshold and is counted in composed stats', () => {
+  const finding = {
+    id: 'R6', agent: 'bug-detector', dimension: 'bug', file: 'r.py', line_start: 1,
+    severity: 'high', confidence: 90, reachability: 'future_change_only',
+    title: 'future-only issue', description: 'a future caller would trigger this issue',
+  };
+  const out = applyFilterPipeline([finding], {
+    confidence_threshold: 50, security_min_confidence: 50, severity_threshold: 'medium', ignore: [],
+  }, [], '2026-07-18T00:00:00Z');
+  assert.equal(out.filtered.length, 0);
+  assert.equal(out.eliminated.length, 1);
+  assert.equal(out.eliminated[0].severity, 'low');
+  assert.equal(out.eliminated[0].demoted_by, 'reachability');
+  assert.equal(out.stats.reachability_demoted, 1);
+});
+
+test('tagFindings routes reachability-demoted findings to suggestions before dimensions', () => {
+  const finding = {
+    id: 'R7', agent: 'bug-detector', dimension: 'bug', severity: 'low', confidence: 90,
+    title: 'future-only issue', description: 'a future caller would trigger this issue',
+    demoted_by: 'reachability',
+  };
+  const { tagged, mainCount, suggestionCount } = tagFindings([finding]);
+  assert.equal(tagged[0].report_destination, 'suggestion');
+  assert.equal(tagged[0].report_tag, 'suggestion');
+  assert.equal(tagged[0].routed_by, 'reachability');
+  assert.equal(mainCount, 0);
+  assert.equal(suggestionCount, 1);
+});
+
+test('tagFindings: reachability precedence also overrides the always-main security dimension', () => {
+  const finding = {
+    id: 'R8', agent: 'security-reviewer', dimension: 'security', severity: 'low', confidence: 90,
+    title: 'future-only exposure', description: 'a future caller could pass unsanitized input',
+    demoted_by: 'reachability',
+  };
+  const { tagged, mainCount, suggestionCount } = tagFindings([finding]);
+  assert.equal(tagged[0].report_destination, 'suggestion');
+  assert.equal(tagged[0].routed_by, 'reachability');
+  assert.equal(mainCount, 0);
+  assert.equal(suggestionCount, 1);
 });
 
 // Beyond the brief's pinned determinism check: a small end-to-end smoke test

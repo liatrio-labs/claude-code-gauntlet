@@ -25,7 +25,12 @@ For each finding in your batch:
    - Is there documented intentional behavior that explains the pattern?
    - Are there other callers or entry points that make the assumption valid?
 
-3. **Assess reachability.** Ask: "Can you find a code path that actually triggers this today?" Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. If the issue is only reachable under hypothetical future changes — a new caller is added, a config value changes, a new code path is introduced — **cap confidence at 65**. Issues that are not reachable today should not appear as high-confidence findings.
+3. **Assess reachability.** Ask: "Can you find a code path that actually triggers this today?" Trace from entry points (public APIs, event handlers, CLI entry points, scheduled jobs) to the flagged location. Return exactly one of these classifications:
+   - `current`: the described defect exists in the code as committed. This includes dead or unused code when the finding is about that code being dead or unused, a wrong type, a missing test, or a misleading comment — anything true of the tree today.
+   - `future_change_only`: the described failure can occur only after a change not in this PR, such as a new caller, changed configuration value, or new code path.
+   - `uncertain`: you could not determine which classification applies.
+
+   Reachability describes whether the claim is true of the tree today, not merely whether a function is called today. A finding about dead code is `current` when the dead-code claim is true.
 
 4. **Use your tools.** Pull surrounding context via Read, Grep, Glob, and LSP to check for defensive patterns, framework guarantees, or type protections. Prefer LSP `findReferences` to check whether a function has callers that trigger the claimed issue, `goToDefinition` to trace what a symbol actually resolves to, and `hover` to verify type claims. Fall back to Grep if LSP is unavailable. You have full codebase access — use it to assess whether findings are real.
 
@@ -40,8 +45,7 @@ Confidence Rubric (use these anchors):
  75  = probably real — no meaningful counter-evidence found
 100  = definitely real — issue is clearly present with no mitigating factors
 
-Note: If the only path to this issue requires a hypothetical future change (new
-caller, changed config, new code path), cap at 65 regardless of the anchor above.
+Reachability is reported separately from confidence; score confidence on the merits of the claim.
 ```
 
 ## What you receive
@@ -87,7 +91,8 @@ Return ONLY a JSON object with a `validations` array, one entry per finding you 
     {
       "finding_id": "<id>",
       "confidence": <0-100>,
-      "justification": "<one-sentence explanation of your assessment>"
+      "justification": "<one-sentence explanation of your assessment>",
+      "reachability": "<current|future_change_only|uncertain>"
     }
   ]
 }

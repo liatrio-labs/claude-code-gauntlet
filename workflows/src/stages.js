@@ -18,7 +18,7 @@
 // No wall-clock, no import at runtime.
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { merge } from './mergeFindings.js';
-import { applyValidations, pyIntStrict } from './applyValidations.js';
+import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
 import { applyFilterPipeline, SEVERITY_ORDER, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
@@ -1743,6 +1743,7 @@ const VALIDATE_SCHEMA = {
           finding_id: { type: 'string' },
           confidence: { type: 'number' },
           justification: { type: 'string' },
+          reachability: { type: 'string', enum: REACHABILITY_VALUES },
         },
         required: ['finding_id', 'confidence'],
       },
@@ -1750,6 +1751,15 @@ const VALIDATE_SCHEMA = {
   },
   required: ['validations'],
 };
+
+function validateReturnDescriptor() {
+  return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
+    .map(([name, schema]) => {
+      const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
+      return `${name}${values}`;
+    })
+    .join(', ');
+}
 
 // validateStage(ctx, input) -> { findings, gaps, stats }
 // Batches findings into limits.validateBatch chunks and dispatches ONE validator per
@@ -1846,7 +1856,7 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}`;
   }).join('\n');
-  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ finding_id, confidence, justification }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
+  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
 }
 
 // --- Phase 6: Filter --------------------------------------------------------

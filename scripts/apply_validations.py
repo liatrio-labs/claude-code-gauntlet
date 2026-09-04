@@ -3,7 +3,8 @@
 apply_validations.py — Phase 5→6 bridge for code-gauntlet.
 
 Reads Phase 4 output (full findings with descriptions intact) from disk,
-applies validator confidence adjustments from a [{id, confidence}] JSON array,
+applies validator adjustments from a [{id, confidence, justification?,
+reachability?}] JSON array,
 and writes the updated findings back to disk.  Descriptions never leave disk —
 this eliminates the orchestrator description-compression that triggered the
 injection filter in the sentry benchmark.
@@ -33,7 +34,8 @@ Input — validations_json:
     [{
         "id":         "bug-1",        # required
         "confidence": 72,             # required
-        "justification": "..."        # optional — preserved on the finding
+        "justification": "...",       # optional — preserved on the finding
+        "reachability": "current|future_change_only|uncertain"  # optional — known values copied
     }, ...]
     or:
     {"validations": [...]}
@@ -60,6 +62,7 @@ Output JSON:
                                                            new == old)
         "validator_confidence": <score from validations_json>
         "validation_justification": <justification string, if present>
+        "reachability":              <known validator reachability value, if present>
 
 No external Python dependencies — stdlib only.
 """
@@ -72,6 +75,8 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(__file__))
 from script_io import write_result
+
+VALID_REACHABILITY = frozenset(("current", "future_change_only", "uncertain"))
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -172,6 +177,8 @@ def apply_validations(findings, validations):
     - Save original_confidence (always set, even when unchanged).
     - Update confidence to the validator's score.
     - Copy justification if present.
+    - Copy reachability when it is one of VALID_REACHABILITY (current,
+      future_change_only, uncertain); any other value is ignored.
 
     Findings without a matching validation pass through unchanged (but do NOT
     get original_confidence set — callers can detect un-validated findings by
@@ -233,6 +240,10 @@ def apply_validations(findings, validations):
         if justification:
             finding["validation_justification"] = justification
 
+        reachability = validation.get("reachability")
+        if isinstance(reachability, str) and reachability in VALID_REACHABILITY:
+            finding["reachability"] = reachability
+
         adjusted_count += 1
 
     return adjusted_count, unmatched_ids
@@ -260,7 +271,8 @@ def main():
     parser.add_argument(
         "validations_json",
         help=(
-            "Path to validator output JSON: [{id, confidence, justification?}, ...]."
+            "Path to validator output JSON: [{id, confidence, justification?, "
+            "reachability?}, ...]; reachability is current | future_change_only | uncertain."
         ),
     )
     parser.add_argument(

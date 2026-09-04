@@ -47,6 +47,7 @@ from scripts.filter_findings import (
     _split_review_lines,
     apply_exclusions,
     apply_injection_filter,
+    apply_reachability_demotion,
     apply_threshold_filter,
     consolidate_cross_agent,
     detect_disagreement,
@@ -5110,6 +5111,111 @@ class TestCombinedScanIsSupersetOfFieldwiseScans(unittest.TestCase):
         self.assertEqual(
             uncovered, [], f"pattern(s) with no covering synthetic: {uncovered}"
         )
+
+
+class TestReachabilityPolicy(unittest.TestCase):
+    def test_future_only_is_demoted_and_stamped(self):
+        finding = _make_finding(severity="high", reachability="future_change_only")
+        findings, demoted_count = apply_reachability_demotion([finding])
+        self.assertEqual(demoted_count, 1)
+        self.assertEqual(findings[0]["severity"], "low")
+        self.assertEqual(findings[0]["original_severity"], "high")
+        self.assertEqual(findings[0]["demoted_by"], "reachability")
+        self.assertEqual(
+            findings[0]["demotion_reason"],
+            "validator found no code path that reaches this issue without a future change",
+        )
+
+    def test_non_future_missing_and_already_low_cases(self):
+        findings = [
+            _make_finding(id="current", severity="high", reachability="current"),
+            _make_finding(id="uncertain", severity="medium", reachability="uncertain"),
+            _make_finding(id="missing", severity="critical"),
+            _make_finding(id="low", severity="low", reachability="future_change_only"),
+        ]
+        original = [dict(f) for f in findings]
+        findings, demoted_count = apply_reachability_demotion(findings)
+        self.assertEqual(demoted_count, 1)
+        for actual, expected in zip(findings[:3], original[:3], strict=True):
+            self.assertEqual(actual, expected)
+        self.assertEqual(findings[3]["severity"], "low")
+        self.assertNotIn("original_severity", findings[3])
+        self.assertEqual(findings[3]["demoted_by"], "reachability")
+
+    def test_reachability_routing_precedes_main_dimension(self):
+        finding = _make_finding(
+            agent="bug-detector",
+            dimension="bug",
+            severity="low",
+            demoted_by="reachability",
+        )
+        tagged, _, main_count, suggestion_count = tag_findings([finding])
+        self.assertEqual(tagged[0]["report_destination"], "suggestion")
+        self.assertEqual(tagged[0]["routed_by"], "reachability")
+        self.assertEqual(main_count, 0)
+        self.assertEqual(suggestion_count, 1)
+
+    def test_reachability_routing_precedes_always_main_security_dimension(self):
+        # security is an always-main dimension; the reachability stamp still wins
+        finding = _make_finding(
+            agent="security-reviewer",
+            dimension="security",
+            severity="low",
+            demoted_by="reachability",
+        )
+        tagged, _, main_count, suggestion_count = tag_findings([finding])
+        self.assertEqual(tagged[0]["report_destination"], "suggestion")
+        self.assertEqual(tagged[0]["routed_by"], "reachability")
+        self.assertEqual(main_count, 0)
+        self.assertEqual(suggestion_count, 1)
+
+    def test_composed_filter_applies_threshold_after_demotion_and_counts_stamp(self):
+        import contextlib
+        import io
+        from unittest.mock import patch
+
+        from scripts.filter_findings import main as filter_main
+
+        finding = _make_finding(
+            id="future",
+            agent="bug-detector",
+            dimension="bug",
+            severity="high",
+            confidence=90,
+            reachability="future_change_only",
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False
+        ) as findings_file:
+            json.dump({"findings": [finding]}, findings_file)
+            findings_path = findings_file.name
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".md", delete=False
+        ) as review_file:
+            review_file.write(
+                "confidence_threshold: 50\n"
+                "security_min_confidence: 50\n"
+                "severity_threshold: medium\n"
+            )
+            review_path = review_file.name
+        try:
+            output = io.StringIO()
+            with (
+                patch(
+                    "sys.argv",
+                    ["filter_findings.py", findings_path, "--review-md", review_path],
+                ),
+                contextlib.redirect_stdout(output),
+            ):
+                filter_main()
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["filtered"], [])
+            self.assertEqual(result["stats"]["reachability_demoted"], 1)
+            self.assertEqual(result["eliminated"][0]["severity"], "low")
+            self.assertEqual(result["eliminated"][0]["demoted_by"], "reachability")
+        finally:
+            os.unlink(findings_path)
+            os.unlink(review_path)
 
 
 if __name__ == "__main__":

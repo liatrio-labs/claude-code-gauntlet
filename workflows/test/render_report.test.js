@@ -147,6 +147,13 @@ test('T-ROUTE: severity wins over suggestion routing', () => {
   assert.ok(!report.includes('## Improvement Suggestions'));
 });
 
+test('T-REACHABILITY: demoted findings render the reachability explanation only when stamped', () => {
+  const demoted = rendered({ findings: [finding('R', { demoted_by: 'reachability', report_tag: 'suggestion' })] });
+  assert.ok(demoted.includes('- **Reachability:** only under a future change (severity demoted to low)'));
+  const ordinary = rendered({ findings: [finding('R')] });
+  assert.ok(!ordinary.includes('- **Reachability:**'));
+});
+
 test('T-STRIP: the renderer excludes report-excluded fields without mutating its caller', () => {
   const source = finding('S', {
     suggested_fix_code: 'SECRET_PATCH',

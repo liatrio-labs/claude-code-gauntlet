@@ -174,6 +174,7 @@ Reviewed head `{head_sha_short}` at {generatedAt} by Code Gauntlet.
 - **Location:** `{finding.file}:{finding.line_start}`
 - **Dimension:** {finding.dimension}
 - **Routing:** improvement suggestion
+- **Reachability:** only under a future change (severity demoted to low)
 
 {finding.description}
 

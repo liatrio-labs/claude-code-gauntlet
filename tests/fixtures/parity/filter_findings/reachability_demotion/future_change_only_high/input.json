@@ -1,0 +1,15 @@
+{
+  "fn": "apply_reachability_demotion",
+  "findings": [
+    {
+      "id": "R1",
+      "severity": "high",
+      "confidence": 90,
+      "reachability": "future_change_only",
+      "title": "future bug",
+      "description": "The future caller would trigger this issue.",
+      "file": "src/future.py",
+      "line_start": 10
+    }
+  ]
+}

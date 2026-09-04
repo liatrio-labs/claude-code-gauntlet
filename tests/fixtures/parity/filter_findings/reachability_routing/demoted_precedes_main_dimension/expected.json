@@ -1,0 +1,23 @@
+{
+  "consolidated_count": 0,
+  "main_count": 0,
+  "suggestion_count": 1,
+  "tagged": [
+    {
+      "agent": "bug-detector",
+      "confidence": 90,
+      "demoted_by": "reachability",
+      "description": "A future caller would reach this issue.",
+      "dimension": "bug",
+      "file": "src/route.py",
+      "id": "R6",
+      "line_start": 60,
+      "reachability": "future_change_only",
+      "report_destination": "suggestion",
+      "report_tag": "suggestion",
+      "routed_by": "reachability",
+      "severity": "low",
+      "title": "hypothetical bug"
+    }
+  ]
+}

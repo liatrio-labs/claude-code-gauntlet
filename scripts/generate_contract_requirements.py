@@ -387,7 +387,12 @@ _TEMPLATE_FIXTURE = {
         },
         {**_TEMPLATE_FINDING, "severity": "high"},
         {**_TEMPLATE_FINDING, "severity": "medium"},
-        {**_TEMPLATE_FINDING, "severity": "low", "report_tag": "suggestion"},
+        {
+            **_TEMPLATE_FINDING,
+            "severity": "low",
+            "report_tag": "suggestion",
+            "demoted_by": "reachability",
+        },
     ],
     "unverified": [
         {

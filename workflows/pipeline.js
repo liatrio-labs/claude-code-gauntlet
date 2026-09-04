@@ -322,6 +322,28 @@ function applyThresholdFilter(findings, config) {
   return { kept, eliminated, contestedCount };
 }
 
+// Demote validator findings whose claim is true only after a future change. The
+// step stamps every matching finding, including one already at low severity, but
+// never removes anything; applyThresholdFilter below applies the user's severity
+// threshold to the demoted result.
+const REACHABILITY_DEMOTION_REASON =
+  'validator found no code path that reaches this issue without a future change';
+
+function applyReachabilityDemotion(findings) {
+  let demotedCount = 0;
+  for (const finding of findings) {
+    if (finding.reachability !== 'future_change_only') continue;
+    if (finding.severity !== 'low') {
+      if ('severity' in finding) finding.original_severity = finding.severity;
+      finding.severity = 'low';
+    }
+    finding.demoted_by = 'reachability';
+    finding.demotion_reason = REACHABILITY_DEMOTION_REASON;
+    demotedCount += 1;
+  }
+  return { findings, demotedCount };
+}
+
 // --- Filter: injection artifact detection -----------------------------------
 
 // #254 (F13): the four (now five) "<word> finding" entries picked up the
@@ -1549,7 +1571,7 @@ const CONVENTIONS_AGENT = 'conventions-and-intent';
 const COMMENT_ACCURACY_DIMENSIONS = new Set(['comment-accuracy', 'documentation', 'doc-accuracy']);
 
 // Port of tag_findings. Step 1 (cross-agent consolidation, D1 -- stamps,
-// never drops) -> per-finding routeByDimension -> agent-based fallback.
+// never drops) -> reachability routing -> dimension routing -> agent fallback.
 // Returns { tagged, consolidatedCount, mainCount, suggestionCount }.
 function tagFindings(findings) {
   const { findings: tagged, consolidatedCount } = consolidateCrossAgent(findings);
@@ -1565,28 +1587,33 @@ function tagFindings(findings) {
     // `if finding.get("dimension")` (truthy, not presence) guard.
     const dimensions = finding.dimension ? new Set([String(finding.dimension).toLowerCase()]) : new Set();
 
-    const dimRoute = routeByDimension(finding);
     let destination;
-    if (dimRoute !== null) {
-      destination = dimRoute;
-      if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
-    } else if (MAIN_REPORT_AGENTS.has(agent)) {
-      destination = 'main';
-    } else if (agent === CONVENTIONS_AGENT) {
-      destination = [...dimensions].some((d) => COMMENT_ACCURACY_DIMENSIONS.has(d)) ? 'suggestion' : 'main';
-    } else if (SUGGESTION_AGENTS.has(agent)) {
-      if (agent === AGENT_TEST_ANALYZER && isTestCorrectnessFinding(finding)) {
-        destination = 'main';
-        finding.promoted_from = 'test-analyzer';
-        finding.promotion_reason =
-          'test-analyzer finding describes a functional correctness issue that exists today ' +
-          '(not a missing-coverage gap)';
-      } else {
-        destination = 'suggestion';
-      }
+    if (finding.demoted_by === 'reachability') {
+      destination = 'suggestion';
+      finding.routed_by = 'reachability';
     } else {
-      // Unknown agent -- conservative fallback: route to main.
-      destination = 'main';
+      const dimRoute = routeByDimension(finding);
+      if (dimRoute !== null) {
+        destination = dimRoute;
+        if (dimRoute === 'suggestion') finding.routed_by = 'dimension';
+      } else if (MAIN_REPORT_AGENTS.has(agent)) {
+        destination = 'main';
+      } else if (agent === CONVENTIONS_AGENT) {
+        destination = [...dimensions].some((d) => COMMENT_ACCURACY_DIMENSIONS.has(d)) ? 'suggestion' : 'main';
+      } else if (SUGGESTION_AGENTS.has(agent)) {
+        if (agent === AGENT_TEST_ANALYZER && isTestCorrectnessFinding(finding)) {
+          destination = 'main';
+          finding.promoted_from = 'test-analyzer';
+          finding.promotion_reason =
+            'test-analyzer finding describes a functional correctness issue that exists today ' +
+            '(not a missing-coverage gap)';
+        } else {
+          destination = 'suggestion';
+        }
+      } else {
+        // Unknown agent -- conservative fallback: route to main.
+        destination = 'main';
+      }
     }
 
     finding.report_destination = destination;
@@ -1609,6 +1636,8 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const total = findings.length;
 
   normalizeFieldNames(findings);
+
+  applyReachabilityDemotion(findings);
 
   // Python: `exclusion_patterns = config.get("ignore", []) + load_exclusions(...)`.
   const allExclusions = [...(config.ignore || []), ...(exclusionPatterns || [])];
@@ -1647,6 +1676,8 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
 
   const promotedCount = tagged.filter((f) => f.promoted_from === 'test-analyzer').length;
   const dimensionRouted = tagged.filter((f) => f.routed_by === 'dimension').length;
+  const reachabilityDemoted = [...tagged, ...allEliminated]
+    .filter((f) => f.demoted_by === 'reachability').length;
   const singletonPenalized = [...tagged, ...allEliminated].filter((f) => f.singleton_penalty).length;
 
   return {
@@ -1667,6 +1698,7 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
       consensus_boosted: consensusBoosted,
       singleton_penalized: singletonPenalized,
       dimension_routed: dimensionRouted,
+      reachability_demoted: reachabilityDemoted,
       cross_agent_consolidated: consolidatedCount,
       test_analyzer_promoted: promotedCount,
       tagged_main: mainCount,
@@ -2133,7 +2165,7 @@ function merge(ndjsonContents, textContents, meta) {
 // (apply_validations). Merges validator confidence adjustments into a list
 // of findings in place: matches by id, clamps confidence to [0, 100], sets
 // original_confidence once (first validation only), and copies a truthy
-// justification.
+// justification plus a known reachability classification.
 
 // Replicate Python int(): accepts a JS number (truncate toward zero, matching
 // Python's int(float) truncation direction -- confirmed against the running
@@ -2158,6 +2190,8 @@ function pyIntStrict(v) {
   return null; // None/object -> skip (int(None) raises TypeError in Python;
   // a plain object has no int() coercion path either).
 }
+
+const REACHABILITY_VALUES = ['current', 'future_change_only', 'uncertain'];
 
 function applyValidations(findings, validations) {
   // Build id -> finding index for O(n) lookup (matches Python's finding_by_id).
@@ -2197,6 +2231,8 @@ function applyValidations(findings, validations) {
 
     const justification = 'justification' in validation ? validation.justification : undefined;
     if (justification) finding.validation_justification = justification;
+    const reachability = 'reachability' in validation ? validation.reachability : undefined;
+    if (REACHABILITY_VALUES.includes(reachability)) finding.reachability = reachability;
 
     adjustedCount += 1;
   }
@@ -3116,6 +3152,9 @@ function renderFinding(builder, finding, unverified) {
   if (unverified) bullets.push(`- **Unverified because:** ${unverifiedReason(finding)}`);
   if ((finding.report_tag ?? finding.report_destination) === 'suggestion') {
     bullets.push('- **Routing:** improvement suggestion');
+  }
+  if (finding.demoted_by === 'reachability') {
+    bullets.push('- **Reachability:** only under a future change (severity demoted to low)');
   }
   if (finding.challenge_contested === true) {
     bullets.push('- **Contested:** the challenger could not confirm the cited location');
@@ -5994,6 +6033,7 @@ const VALIDATE_SCHEMA = {
           finding_id: { type: 'string' },
           confidence: { type: 'number' },
           justification: { type: 'string' },
+          reachability: { type: 'string', enum: REACHABILITY_VALUES },
         },
         required: ['finding_id', 'confidence'],
       },
@@ -6001,6 +6041,15 @@ const VALIDATE_SCHEMA = {
   },
   required: ['validations'],
 };
+
+function validateReturnDescriptor() {
+  return Object.entries(VALIDATE_SCHEMA.properties.validations.items.properties)
+    .map(([name, schema]) => {
+      const values = Array.isArray(schema.enum) ? ` (${schema.enum.join(' | ')})` : '';
+      return `${name}${values}`;
+    })
+    .join(', ');
+}
 
 // validateStage(ctx, input) -> { findings, gaps, stats }
 // Batches findings into limits.validateBatch chunks and dispatches ONE validator per
@@ -6097,7 +6146,7 @@ function validatePrompt(inp, batch) {
     const ev = f.evidence ? ` | evidence: ${f.evidence}` : '';
     return `- ${f.id} [${f.dimension || '?'}/${f.severity || '?'}] ${f.file || '?'}:${range} — ${f.description || ''}${ev}`;
   }).join('\n');
-  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ finding_id, confidence, justification }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
+  return `${ctxLine}Independently validate this batch of findings. For each, Read the code at the file and line range shown, attempt to disprove the claim, and score it. Findings:\n${block}\nReturn { validations: [{ ${validateReturnDescriptor()} }] } — confidence 0-100 (one entry per finding you scored; omit the rest).`;
 }
 
 // --- Phase 6: Filter --------------------------------------------------------

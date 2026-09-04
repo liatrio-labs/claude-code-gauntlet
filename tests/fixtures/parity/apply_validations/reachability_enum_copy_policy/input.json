@@ -1,0 +1,16 @@
+{
+  "findings": [
+    {"id": "R7", "confidence": 40},
+    {"id": "R8", "confidence": 50},
+    {"id": "R9", "confidence": 60},
+    {"id": "R10", "confidence": 70},
+    {"id": "R11", "confidence": 75}
+  ],
+  "validations": [
+    {"id": "R7", "confidence": 80, "reachability": "current"},
+    {"id": "R8", "confidence": 81, "reachability": "future_change_only"},
+    {"id": "R9", "confidence": 82, "reachability": "uncertain"},
+    {"id": "R10", "confidence": 83, "reachability": "later"},
+    {"id": "R11", "confidence": 84, "reachability": 42}
+  ]
+}

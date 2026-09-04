@@ -1,0 +1,17 @@
+{
+  "demoted_count": 1,
+  "findings": [
+    {
+      "confidence": 75,
+      "demoted_by": "reachability",
+      "demotion_reason": "validator found no code path that reaches this issue without a future change",
+      "description": "This finding is already at the target severity.",
+      "file": "src/low.py",
+      "id": "R5",
+      "line_start": 50,
+      "reachability": "future_change_only",
+      "severity": "low",
+      "title": "already low"
+    }
+  ]
+}

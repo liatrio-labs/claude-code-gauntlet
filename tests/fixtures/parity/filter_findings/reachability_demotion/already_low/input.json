@@ -1,0 +1,15 @@
+{
+  "fn": "apply_reachability_demotion",
+  "findings": [
+    {
+      "id": "R5",
+      "severity": "low",
+      "confidence": 75,
+      "reachability": "future_change_only",
+      "title": "already low",
+      "description": "This finding is already at the target severity.",
+      "file": "src/low.py",
+      "line_start": 50
+    }
+  ]
+}

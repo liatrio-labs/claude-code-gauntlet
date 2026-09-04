@@ -557,7 +557,7 @@ the post_review-ready wrapper (optionally fill its `review_body`, then pass the 
 legacy bare-array artifact still needs the hand-wrap with `review_body`/`owner`/`repo`/`pr_number`/`sha`
 (always set it). Never re-filter by tag, re-rank, or re-apply the cap yourself. Every finding in that
 payload is posted as a PR comment — suggestions are not a separate delivery destination. The `report_tag`
-is rendered as a Routing bullet; report findings remain grouped by severity
+is rendered as a Routing bullet; reachability-demoted findings are low-severity suggestions and are withheld by `main_only` but included by `all`. Report findings remain grouped by severity
 and, under `main_only`, whether the pipeline already withheld them from the payload. Read
 `references/phase8-delivery.md`, `references/report-format.md`, and `references/delivery-guide.md` for the
 templates and posting mechanics.
