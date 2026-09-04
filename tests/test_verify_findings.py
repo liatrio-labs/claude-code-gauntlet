@@ -2965,10 +2965,84 @@ class TestSliceInputRecovery(unittest.TestCase):
         with open(self.receipt_input_path, encoding="utf-8") as fh:
             written = json.load(fh)
         self.assertEqual(written, doc)
+        with open(self.receipt_input_path, "rb") as fh:
+            input_bytes = fh.read()
+        self.assertEqual(input_bytes, js_stringify_pretty(doc).encode("utf-8"))
+        self.assertEqual(
+            fnv1a32(input_bytes.decode("utf-8")),
+            envelope["receipt"]["input_checksum"],
+        )
         self.assertEqual(
             envelope["receipt"]["input_checksum"],
             fnv1a32(js_stringify_pretty(doc)),
         )
+
+    def test_receipt_pins_exact_ascii_fallback_bytes_when_js_spelling_is_unavailable(
+        self,
+    ):
+        finding = self._receipt_findings()[0]
+        finding["criticality"] = 7.5
+        finding["description"] = "café"
+        doc = {"findings": [finding], "base_branch": "main"}
+        envelope = self._run_receipt_over(doc)
+        self.assertEqual(envelope["status"], "ok")
+        self.assertNotIn("input_checksum", envelope["receipt"])
+        expected = (
+            b"{\n"
+            b'  "findings": [\n'
+            b"    {\n"
+            b'      "id": "bug-1",\n'
+            b'      "dimension": "bug",\n'
+            b'      "severity": "high",\n'
+            b'      "confidence": 75,\n'
+            b'      "file": "nope/does-not-exist-xyz.py",\n'
+            b'      "title": "t",\n'
+            b'      "description": "caf\\u00e9",\n'
+            b'      "evidence": "e",\n'
+            b'      "cross_file_refs": [],\n'
+            b'      "criticality": 7.5\n'
+            b"    }\n"
+            b"  ],\n"
+            b'  "base_branch": "main"\n'
+            b"}"
+        )
+        with open(self.receipt_input_path, "rb") as fh:
+            self.assertEqual(fh.read(), expected)
+
+    def test_receipt_checksum_is_before_numeric_coercion(self):
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        finding = self._receipt_findings()[0]
+        finding["line_start"] = "10"
+        finding["confidence"] = "85"
+        doc = {"findings": [finding], "base_branch": "main"}
+        envelope = self._run_receipt_over(doc)
+        post_coercion = copy.deepcopy(doc)
+        post_coercion["findings"][0]["line_start"] = 10
+        post_coercion["findings"][0]["confidence"] = 85
+        self.assertEqual(envelope["status"], "ok")
+        self.assertEqual(
+            envelope["receipt"]["input_checksum"],
+            fnv1a32(js_stringify_pretty(doc)),
+        )
+        self.assertNotEqual(
+            envelope["receipt"]["input_checksum"],
+            fnv1a32(js_stringify_pretty(post_coercion)),
+        )
+
+    def test_receipt_shape_validation_reports_named_inline_rejections(self):
+        cases = [
+            ({"base_branch": "main"}, "missing required 'findings' array"),
+            ({"findings": "xy", "base_branch": "main"}, "'findings' must be an array"),
+        ]
+        for doc, detail in cases:
+            with self.subTest(doc=doc):
+                envelope = self._run_receipt_over(doc)
+                self.assertEqual(envelope["status"], "failed")
+                self.assertIn(
+                    f"inline slice-input rejected: {detail}",
+                    envelope["stderr"],
+                )
 
     def test_receipt_round_trips_lone_surrogates_and_escapes_receipt_output(self):
         from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
@@ -3157,8 +3231,21 @@ class TestInlineSliceDecoder(unittest.TestCase):
     def test_rejects_duplicate_decoded_object_keys(self):
         self._assert_rejected('{"findings":[{"id":"a","%69d":"b"}]}')
 
+    def test_rejects_raw_duplicate_object_keys(self):
+        with self.assertRaises(InputError) as ctx:
+            decode_inline_slice('{"findings":[],"findings":[]}')
+        self.assertIn("inline slice-input rejected", str(ctx.exception))
+
+    def test_rejects_non_finite_json_constants(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                self._assert_rejected(f'{{"findings":[{{"confidence":{constant}}}]}}')
+
     def test_rejects_json_backslash_escape(self):
         self._assert_rejected('{"findings":[{"evidence":"\\n"}]}')
+
+    def test_rejects_json_unicode_escape_for_a_safe_character(self):
+        self._assert_rejected('{"findings":[{"evidence":"\\u0041"}]}')
 
     def test_rejects_non_object_root(self):
         self._assert_rejected("[]")
@@ -3232,7 +3319,7 @@ def _js_slice_input_fields(js_text):
 class TestSliceInputFieldsLockstep(unittest.TestCase):
     """_SLICE_INPUT_FIELDS (Python, this module's target) and VERIFY_SLICE_FIELDS
     (JS, workflows/src/stages.js) are ONE projection allowlist declared in two
-    runtimes -- materializeVerifySlices dispatches only these fields per finding,
+    runtimes -- the inline projection dispatches only these fields per finding,
     and every field verify_findings.py reads must be in the list (workflows/AGENTS.md:
     "one list in two runtimes, walked in the same order"). This pins the pair
     literally rather than trusting the prose comment to stay true.

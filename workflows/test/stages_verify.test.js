@@ -118,6 +118,11 @@ test('inline encoder deep-walks values and keys, preserves primitives, and is sh
   });
 });
 
+test('inline encoder postcondition rejects a custom toJSON result containing an apostrophe', () => {
+  const value = { toJSON: () => "'" };
+  assert.throws(() => encodeSliceInline({ value }), /non-printable or quoted payload/);
+});
+
 test('valid receipt -> findings verified, and no writer dispatch exists', async () => {
   const input = baseInput();
   const ctx = verifyCtx((_call, i) => okEnvelope(input.findings, { nonce: `n-1.${i}` }));
@@ -219,8 +224,26 @@ test('input checksum mismatch is retried and can succeed on the fresh attempt', 
   assert.equal(ctx.execCallsFor(0).length, 2);
   assert.equal(out.inputProof.mismatched, 0);
   assert.equal(out.inputProof.retried, 1);
+  assert.equal(out.inputProof.retriedMismatch, 1);
+  assert.equal(out.inputProof.retriedMissing, 0);
   assert.equal(out.gaps.length, 1);
   assert.match(out.gaps[0], /verify-slice-retry/);
+});
+
+test('missing first-attempt proof is counted on a trusted retry', async () => {
+  const input = baseInput();
+  const ctx = verifyCtx((_call, i, { attempt }) => {
+    const env = okEnvelope(input.findings, { nonce: `n-1.${i}${attempt === 2 ? '.r1' : ''}` });
+    if (attempt === 1) env.receipt.input_checksum = null;
+    return env;
+  });
+  const out = await verifyStage(ctx, input);
+  assert.equal(out.verified, true);
+  assert.equal(out.inputProof.missing, 0);
+  assert.equal(out.inputProof.mismatched, 0);
+  assert.equal(out.inputProof.retried, 1);
+  assert.equal(out.inputProof.retriedMismatch, 0);
+  assert.equal(out.inputProof.retriedMissing, 1);
 });
 
 test('two input checksum mismatches degrade after exactly the fresh retry', async () => {
@@ -245,12 +268,14 @@ test('oversize inline finding is degraded alone, disclosed, and never dispatched
   const input = baseInput({ findings, limits: { verifySliceSize: 2 } });
   const ctx = verifyCtx((_call, i) => okEnvelope([findings[1]], { nonce: `n-1.${i}`, n_in: 1 }));
   const out = await verifyStage(ctx, input);
+  const planned = planVerifySlices(findings, input.limits.verifySliceSize, VERIFY_INLINE_CHAR_BUDGET, input.verify.baseBranch);
   assert.equal(out.inputProof.oversize, 1);
+  assert.equal(out.inputProof.slices, planned.slices.length);
   assert.equal(ctx.execCalls().length, 1);
   assert.equal(ctx.execCalls()[0].label, 'verify-slice-0');
   assert.equal(out.findings[0].origin, 'unknown');
   assert.notEqual(out.findings[1].origin, 'unknown');
-  assert.ok(out.gaps.some((gap) => /encoded length .*VERIFY_INLINE_CHAR_BUDGET=43000/.test(gap)));
+  assert.ok(out.gaps.some((gap) => /encoded length .*VERIFY_INLINE_CHAR_BUDGET=50000/.test(gap)));
 });
 
 test('unprovable numeric values stay trusted and are counted unprovable', async () => {
@@ -267,7 +292,38 @@ test('unprovable numeric values stay trusted and are counted unprovable', async 
 
 test('empty inputProof is the complete zero-populated ledger', async () => {
   const out = await verifyStage(verifyCtx(() => { throw new Error('must not dispatch'); }), { ...baseInput(), findings: [] });
-  assert.deepEqual(out.inputProof, { slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0, retried: 0 });
+  assert.deepEqual(out.inputProof, {
+    slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
+    retried: 0, retriedMismatch: 0, retriedMissing: 0,
+  });
+});
+
+test('verify fan-out disclosure names the bound that actually split the slices', async () => {
+  const countFindings = Array.from({ length: 130 }, (_, i) => ({
+    id: `COUNT${i}`, file: `f${i}.js`, line_start: 1, line_end: 1,
+    description: 'x'.repeat(800), evidence: 'e', severity: 'high', confidence: 90,
+    cross_file_refs: [], origin: 'new',
+  }));
+  const fatFindings = Array.from({ length: 60 }, (_, i) => ({
+    id: `FAT${i}`, file: `f${i}.js`, line_start: 1, line_end: 1,
+    description: 'x'.repeat(4000), evidence: 'e', severity: 'high', confidence: 90,
+    cross_file_refs: [], origin: 'new',
+  }));
+  const run = async (findings) => {
+    const input = baseInput({ findings, limits: { verifySliceSize: 25 } });
+    const ctx = verifyCtx((call, i) => {
+      const dispatched = parsedInlineOf(call).findings;
+      return okEnvelope(dispatched, { nonce: `n-1.${i}`, n_in: dispatched.length });
+    });
+    return verifyStage(ctx, input);
+  };
+  const countGap = (await run(countFindings)).gaps.find((gap) => gap.startsWith('verify_fanout:'));
+  const budgetGap = (await run(fatFindings)).gaps.find((gap) => gap.startsWith('verify_fanout:'));
+  assert.match(countGap, /effective verifySliceSize=25/);
+  assert.match(countGap, /Raise verifySliceSize to reduce fan-out/);
+  assert.match(budgetGap, /effective verifySliceSize=25/);
+  assert.match(budgetGap, /inline character budget bound/);
+  assert.doesNotMatch(budgetGap, /Raise verifySliceSize to reduce fan-out/);
 });
 
 test('VERIFY_SCHEMA has no input_recovery and extra executor input_recovery is ignored', async () => {
@@ -347,4 +403,15 @@ test('planner is pure, count-bounded, budget-bounded, and isolates oversize find
     assert.ok(encodeSliceInline({ findings: slice.map(projectVerifySliceFinding), base_branch: 'main' }).length <= 100000);
   }
   assert.ok(VERIFY_INLINE_CHAR_BUDGET > 0);
+});
+
+test('planner flushes a preceding slice before isolating an oversize finding', () => {
+  const findings = [
+    { id: 'A', origin: 'new', cross_file_refs: [] },
+    { id: 'BIG', origin: 'new', cross_file_refs: [], description: 'x'.repeat(50000) },
+    { id: 'C', origin: 'new', cross_file_refs: [] },
+  ];
+  const plan = planVerifySlices(findings, 2, VERIFY_INLINE_CHAR_BUDGET);
+  assert.deepEqual(plan.slices.map((slice) => slice.map((finding) => finding.id)), [['A'], ['C']]);
+  assert.deepEqual(plan.oversize.map((finding) => finding.id), ['BIG']);
 });

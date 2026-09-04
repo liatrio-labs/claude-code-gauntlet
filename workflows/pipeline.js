@@ -4784,10 +4784,11 @@ function encodeSliceInline(content) {
   return encoded;
 }
 
-// The largest payload measured to copy exactly was 43,636 chars (2/2 sonnet executors);
-// anything above is unmeasured, so the budget is pinned just under the measurement (the
-// rest of the command adds ~300 chars). Linux MAX_ARG_STRLEN is 131,072, far above this.
-const VERIFY_INLINE_CHAR_BUDGET = 43000;
+// The largest payloads measured to copy exactly were 43,636 and 51,744 chars (2/2 sonnet
+// executors at each size); anything above 51,744 is unmeasured, so the budget is pinned
+// just under that measurement (the rest of the command adds ~300 chars). Linux
+// MAX_ARG_STRLEN is 131,072, far above this.
+const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Char budget for the workflow's RETURN value — the object the HARNESS serializes to
 // `tasks/<taskid>.output`. Measured 2026-07-30 with a zero-subagent probe: the on-disk
@@ -4899,11 +4900,14 @@ function sharedContextLine(inp) {
 // keeps both the finding-count and inline-character bounds in one place. The empty
 // envelope is measured from the encoder as a fixed allowance rather than guessed, so
 // planner consumers and the dispatch assertion share the same accounting.
+const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
+
 function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
   const source = Array.isArray(findings) ? findings : [];
+  const branch = effectiveVerifyBaseBranch(baseBranch);
   const maxFindings = Math.max(1, sliceSize || source.length || 1);
   const maxChars = Math.max(1, budget || VERIFY_INLINE_CHAR_BUDGET);
-  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: baseBranch }).length;
+  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
   const slices = [];
   const oversize = [];
   let current = [];
@@ -4915,7 +4919,7 @@ function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
   };
 
   for (const finding of source) {
-    const single = { findings: [projectVerifySliceFinding(finding)], base_branch: baseBranch };
+    const single = { findings: [projectVerifySliceFinding(finding)], base_branch: branch };
     const cost = encodeSliceInline(single).length;
     if (cost > maxChars) {
       flush();
@@ -5563,12 +5567,12 @@ const VERIFY_ATTEMPTS_PER_SLICE = 2;
 // legitimate mitigation for a transcription-fidelity failure (#25 req 1 — a smaller slice
 // means less content per executor round trip, less to transcribe faithfully, less to
 // mismatch), so clamping it upward here would remove the exact knob an operator reaches for
-// under that failure mode. Instead: degrade-and-disclose. When a configured verifySliceSize
+// under that failure mode. Instead: degrade-and-disclose. When the effective verifySliceSize
 // produces MORE than VERIFY_FANOUT_DISCLOSE_THRESHOLD slices, verifyStage pushes a gap
-// naming the configured size, the resulting slice count, and the dispatch ceiling
-// (slices * VERIFY_ATTEMPTS_PER_SLICE) — an operator who set verifySliceSize:1 on a
-// 500-finding run sees the cost of that choice instead of discovering it from a slow run or
-// a worstCaseAgentCount rejection.
+// naming the effective size, the resulting slice count, the dispatch ceiling
+// (slices * VERIFY_ATTEMPTS_PER_SLICE), and the bound that closed the slices — an operator
+// sees whether raising verifySliceSize can actually reduce the fan-out instead of discovering
+// the cost from a slow run or a worstCaseAgentCount rejection.
 const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
@@ -5631,20 +5635,54 @@ async function verifyStage(ctx, input) {
 
   const model = modelFor('code-gauntlet:executor', policy);
 
-  const baseBranch = verify.baseBranch || 'main';
+  const baseBranch = effectiveVerifyBaseBranch(verify.baseBranch);
   const plan = planVerifySlices(findings, sliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
   const slices = plan.slices;
+
+  // Recompute only the boundaries that closed a planned slice. The public planner result
+  // stays the compact `{ slices, oversize }` contract, while this tells the disclosure which
+  // bound actually caused the fan-out. A budget-bound split must not advise raising a count
+  // knob that cannot reduce it.
+  const fanoutBounds = (() => {
+    const maxFindings = Math.max(1, sliceSize || findings.length || 1);
+    const maxChars = Math.max(1, VERIFY_INLINE_CHAR_BUDGET);
+    const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: baseBranch }).length;
+    let countBound = false;
+    let budgetBound = false;
+    for (let i = 0; i + 1 < slices.length; i += 1) {
+      const current = slices[i];
+      const next = slices[i + 1][0];
+      const currentCost = current.reduce(
+        (sum, finding) => sum + encodeSliceInline({
+          findings: [projectVerifySliceFinding(finding)],
+          base_branch: baseBranch,
+        }).length,
+        0,
+      );
+      const nextCost = encodeSliceInline({
+        findings: [projectVerifySliceFinding(next)],
+        base_branch: baseBranch,
+      }).length;
+      if (current.length >= maxFindings) countBound = true;
+      else if (currentCost + nextCost + envelopeAllowance > maxChars) budgetBound = true;
+    }
+    return { countBound, budgetBound };
+  })();
 
   // Degrade-and-disclose (issue #72), not abort: a small verifySliceSize is a legitimate
   // transcription-fidelity mitigation, not a mistake to reject, but its dispatch cost is
   // real and otherwise invisible until the run runs long or worstCaseAgentCount rejects it
   // outright. Collected here rather than pushed straight into `gaps` so it lands ahead of
   // any per-slice degrade gap, in the order this stage discovers information.
+  const fanoutAdvice = fanoutBounds.budgetBound
+    ? 'The inline character budget bound this split; raising verifySliceSize will not reduce this fan-out.'
+    : fanoutBounds.countBound
+      ? 'Raise verifySliceSize to reduce fan-out.'
+      : 'The split bound could not be classified; inspect the effective slice size and inline budget.';
   const fanoutGaps = slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD
-    ? [`verify_fanout: verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
+    ? [`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
       + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
-      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. Raise verifySliceSize to reduce fan-out, `
-      + 'or keep it small deliberately if this run is mitigating a transcription-fidelity failure (issue #25).']
+      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. ${fanoutAdvice}`]
     : [];
 
   const out = [];
@@ -5716,7 +5754,11 @@ async function verifyStage(ctx, input) {
     }
     if (expectedInputChecksum == null) inputProof.unprovable += 1;
     else inputProof.proven += 1;
-    if (attempt.retried) inputProof.retried += 1;
+    if (attempt.retried) {
+      inputProof.retried += 1;
+      if (attempt.inputFault === 'mismatch') inputProof.retriedMismatch += 1;
+      else if (attempt.inputFault === 'missing') inputProof.retriedMissing += 1;
+    }
     // Trusted: this slice's OWN findings, enriched by the script's delta (origin
     // new/surfaced, the surfaced severity downgrade, the factual-verification confidence
     // re-score). Everything the script did not touch — description, evidence,
@@ -5747,9 +5789,14 @@ function degradedSlice(slice) {
 
 // The inline proof ledger. One object, one construction site, so a new path
 // cannot forget a key (issue #69 / #25 req 4-6). `retried` counts slices trusted only
-// on their second inline transcription attempt; `oversize` counts findings that could
-// not be dispatched within the measured command budget.
-const emptyInputProof = () => ({ slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0, retried: 0 });
+// on their second inline transcription attempt; `retriedMismatch`/`retriedMissing` are
+// disjoint subsets whose FIRST attempt had that input fault and whose second attempt was
+// trusted. `mismatched`/`missing` count only slices that still failed after the retry.
+// `oversize` counts findings that could not be dispatched within the measured command budget.
+const emptyInputProof = () => ({
+  slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
+  retried: 0, retriedMismatch: 0, retriedMissing: 0,
+});
 
 // The loud gap for one degraded slice. `detail` names the slice and carries the
 // underlying reason, so a reader can tell
@@ -5799,6 +5846,7 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaSho
       verified: second.verified,
       gap: `verify-slice-retry: slice ${i}'s first executor dispatch was untrusted (${first.reason}); a second dispatch was trusted and this slice's verified findings are from that attempt`,
       retried: true,
+      inputFault: first.inputFault,
     };
   }
   return {
@@ -6236,8 +6284,9 @@ function findingCount(findings) {
 
 function verifyTerm(L, findings, baseBranch = 'main') {
   const count = findingCount(findings);
+  const branch = effectiveVerifyBaseBranch(baseBranch);
   if (Array.isArray(findings)) {
-    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, baseBranch).slices.length
+    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, branch).slices.length
       * VERIFY_ATTEMPTS_PER_SLICE;
   }
   return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;

@@ -126,7 +126,10 @@ test('happy path: verify is trusted end-to-end (no UNVERIFIED gap, verified=true
   // run()'s stats, not just computed and dropped — nothing else in this file touches
   // `stats.inputProof`, so deleting the `inputProof: verifyOut.inputProof` line from
   // run()'s stats block would otherwise pass the whole suite.
-  assert.deepEqual(out.stats.inputProof, { slices: 1, proven: 1, mismatched: 0, missing: 0, unprovable: 0, oversize: 0, retried: 0 });
+  assert.deepEqual(out.stats.inputProof, {
+    slices: 1, proven: 1, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
+    retried: 0, retriedMismatch: 0, retriedMissing: 0,
+  });
 });
 
 test('partially-degraded verify: one failed slice keeps origin=unknown; healthy slices and downstream stages survive', async () => {

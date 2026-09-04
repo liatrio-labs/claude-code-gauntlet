@@ -67,7 +67,7 @@ run. **The content proof survives the move and now grades the harness-written co
 it. Respelling JSON backslash escapes on the persist wire was measured and did not fix
 transcription.**
 
-- The two budgets are unrelated and must not re-merge. `VERIFY_INLINE_CHAR_BUDGET` (43k) sizes the
+- The two budgets are unrelated and must not re-merge. `VERIFY_INLINE_CHAR_BUDGET` (50k) sizes the
   percent-encoded verify token handed to an executor; `RETURN_CHAR_BUDGET` (1M) sizes what the
   harness serializes. Grading resume state or the returned primaries against the verify budget
   throws away recoverable runs.
@@ -85,8 +85,9 @@ transcription.**
 
 Verify is the exception to the persist-wire encoding rule: its inline token uses a restricted
 percent-encoded alphabet with no escape semantics left for the model to normalize, measured exact
-in both of the two recorded executor copies at 43,636 characters. The input content proof remains
-the belt if the inline channel is ever transcribed incorrectly.
+in both of the two recorded executor copies at 43,636 characters and again in both copies at
+51,744 characters; larger payloads are unmeasured. The input content proof remains the belt if
+the inline channel is ever transcribed incorrectly.
 
 ## The verify boundary
 
