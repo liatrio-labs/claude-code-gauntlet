@@ -250,8 +250,10 @@ followed by an `Aspect`/`Details` table. The receipt lists the mode's resolved k
 order, then `pipeline_version` and `plugin_root`. The table covers the plugin and pipeline
 version, provider and conditional schema, per-stage models, any subagent override, delivery
 selection, review scope, findings and merge counts, the integer gap count, and dispatched and
-degraded dimensions. A closing line says that the section covers the pipeline through report;
-persistence, delivery, and duration are reported by the orchestrator at delivery.
+degraded dimensions. Incremental scope shows its safe `since` value and commit count; a full
+scope that was requested as incremental derives one of the detector-backed fallback reasons
+from `reviewScope.detector`. A closing line says that the section covers the pipeline through
+report; persistence, delivery, and duration are reported by the orchestrator at delivery.
 
 ## PR Comment Format (abbreviated)
 

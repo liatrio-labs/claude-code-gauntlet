@@ -1,7 +1,7 @@
 // render_report.test.js — the deterministic report surface (issues #36, #67).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell } from '../src/renderReport.js';
+import { renderReport, reportExtraFields, dimensionsSummaryTable, tableCell, reviewScopeFallbackReason } from '../src/renderReport.js';
 import { SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, AGENTS } from '../src/registry.js';
 import { makeFinding } from './helpers/pipelineMock.js';
 
@@ -29,7 +29,7 @@ function rendered(over = {}) {
     },
     pluginRoot: '/absolute/plugin',
     pipelineVersion: '3.26.0',
-    reviewScope: { kind: 'full', since: null, commits: null, reason: null },
+  reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
     policy: { tier: 'optimized', provider: 'firstParty', gateway: false },
     deliveryTier: 'all',
     deliveryCap: null,
@@ -341,8 +341,8 @@ test('T-METH: methodology is code-rendered, last, and has the exact interactive 
   assert.ok(report.endsWith('orchestrator at delivery.'));
   assert.ok(report.includes('```text\nResolved config:\n'));
   assert.ok(report.includes('  model_tier=optimized (fixed)'));
-  assert.ok(report.includes('  delivery_tier=all (default)'));
   assert.ok(report.includes('  pr_comment_cap=null (default)'));
+  assert.ok(report.includes('  delivery_tier=all (default)'));
   assert.ok(report.includes('  review_md=absent (discovery)'));
   assert.ok(report.includes('  pipeline_version=3.26.0 (bundle)'));
   assert.ok(report.includes('  plugin_root=/absolute/plugin (resolved)'));
@@ -393,10 +393,30 @@ test('T-METH-HEADLESS: the headless receipt is rendered from the waist in regist
   ]);
 });
 
+test('T-METH-SCOPE: each incremental fallback reason is derived from detector facts', () => {
+  const scope = (detector) => ({ requested: 'incremental', kind: 'full', since: null, commits: null, detector });
+  const detectorBase = { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: false, error: null };
+  const cases = [
+    [{ ...detectorBase, previously_reviewed: false }, 'no prior review recorded'],
+    [{ ...detectorBase, sha_resolvable: false }, 'recorded SHA not resolvable'],
+    [{ ...detectorBase, head_advanced: false }, 'head has not advanced'],
+    [{ ...detectorBase, sha_is_ancestor: false }, 'history rewritten (recorded SHA is not an ancestor)'],
+    [{ ...detectorBase, previously_reviewed: false, error: 'detector unavailable' }, 'no prior review recorded'],
+    [{ ...detectorBase, previously_reviewed: true, sha_resolvable: false, error: 'detector unavailable' }, 'recorded SHA not resolvable'],
+    [{ ...detectorBase, previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: true, error: 'detector unavailable' }, 'detection failed: detector unavailable'],
+  ];
+  for (const [detector, expected] of cases) assert.equal(reviewScopeFallbackReason(scope(detector)), expected);
+  assert.equal(
+    reviewScopeFallbackReason(scope({ ...detectorBase, previously_reviewed: true, sha_resolvable: true, sha_is_ancestor: true, head_advanced: true, error: `${'x'.repeat(130)}\nmore` })),
+    `detection failed: ${'x'.repeat(120)}`,
+  );
+  assert.equal(reviewScopeFallbackReason({ requested: 'full', kind: 'full', detector: null }), null);
+});
+
 test('T-METH-TABLE: table cells collapse newlines and escape pipes', () => {
   assert.equal(tableCell('left\nright | still one cell'), 'left right \\| still one cell');
   const report = rendered({
-    reviewScope: { kind: 'incremental', since: 'abc-1', commits: null, reason: 'reason\nwith | pipe' },
+    reviewScope: { requested: 'incremental', kind: 'incremental', since: 'abc-1', commits: null, detector: { previously_reviewed: true, sha_resolvable: true, head_advanced: true, sha_is_ancestor: true, incremental_safe: true, error: null } },
     policy: { tier: 'optimized', provider: 'firstParty', gateway: false, subagentModel: 'model|override' },
     stats: {
       discovered: 4,
@@ -412,10 +432,37 @@ test('T-METH-TABLE: table cells collapse newlines and escape pipes', () => {
     gaps: ['no write proof', 'partial-artifacts'],
   });
   assert.ok(report.includes('| Subagent model override | EVERY stage uses model\\|override |'));
-  assert.ok(report.includes('| Review scope | Incremental since abc-1 (commits unknown); reason: reason with \\| pipe |'));
+  assert.ok(report.includes('| Review scope | Incremental since abc-1 (commits unknown) |'));
   assert.ok(report.includes('| Findings pipeline | discovered=4; validate: accepted=3, rejected=1; filter: accepted=2, rejected=1; challenge: accepted=1, rejected=1; merge: per-channel: ndjson=3, text_fallback=1; duplicates resolved=1; dropped-no-id=1; truncation warnings=1; validation warnings=2 |'));
   assert.ok(report.includes('| Gaps | 2 |'));
   assert.ok(!report.includes('| Gaps | no write proof'));
+});
+
+test('T-METH-RECEIPT: receipt values are one-line and cannot close their fence', () => {
+  const report = rendered({
+    configEcho: { ...renderedConfigEcho(), model_tier: { value: 'optimized\n``` forged', source: 'fixed' } },
+  });
+  const receipt = report.match(/```text\n[\s\S]*?\n```/)[0];
+  assert.equal((receipt.match(/\n```/g) || []).length, 1);
+  assert.ok(receipt.includes('model_tier=optimized ``` forged (fixed)') === false);
+  assert.ok(receipt.includes('model_tier=optimized  forged (fixed)'));
+  assert.ok(receipt.split('\n').slice(2, -1).every((line) => !line.includes('`')));
+});
+
+function renderedConfigEcho() {
+  return {
+    model_tier: { value: 'optimized', source: 'fixed' },
+    delivery_tier: { value: 'all', source: 'default' },
+    pr_comment_cap: { value: 'null', source: 'default' },
+    review_md: { value: 'absent', source: 'discovery' },
+  };
+}
+
+test('T-METH-GAPS: only integer gap counts render as methodology gaps', () => {
+  for (const gapCount of ['2', 1.5, null, []]) {
+    const report = rendered({ gapCount });
+    assert.ok(report.includes('| Gaps | 0 |'), JSON.stringify(gapCount));
+  }
 });
 
 test('T-METH-INJECT: summary and finding prose cannot forge a second methodology heading', () => {

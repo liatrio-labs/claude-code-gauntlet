@@ -34,7 +34,7 @@ const good = {
     review_md: { value: 'absent', source: 'discovery' },
   },
   pluginRoot: '/plugin',
-  reviewScope: { kind: 'full', since: null, commits: null, reason: null },
+  reviewScope: { requested: 'full', kind: 'full', since: null, commits: null, detector: null },
   limits: { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 },
 };
 

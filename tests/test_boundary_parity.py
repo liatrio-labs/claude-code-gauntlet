@@ -541,10 +541,11 @@ class TestReportMethodologyRuntimeParity(unittest.TestCase):
             "pluginRoot": "/absolute/path/to/claude-code-gauntlet",
             "pipelineVersion": "3.26.0",
             "reviewScope": {
+                "requested": "full",
                 "kind": "full",
                 "since": None,
                 "commits": None,
-                "reason": None,
+                "detector": None,
             },
             "policy": {"tier": "optimized", "provider": "firstParty", "gateway": False},
             "deliveryTier": "all",

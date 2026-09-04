@@ -197,8 +197,8 @@ example — substitute the resolved ones:
 ```text
 Resolved config:
   model_tier=optimized (fixed)
-  delivery_tier=all (default)
   pr_comment_cap=null (default)
+  delivery_tier=all (default)
   review_md=absent (discovery)
 ```
 

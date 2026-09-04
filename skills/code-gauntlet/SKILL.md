@@ -119,8 +119,8 @@ The values below are an example — substitute the resolved ones:
 ```text
 Resolved config:
   model_tier=optimized (fixed)
-  delivery_tier=all (default)
   pr_comment_cap=null (default)
+  delivery_tier=all (default)
   review_md=absent (discovery)
 ```
 
@@ -215,6 +215,16 @@ Local/branch targets: drop the `owner_repo`/`prior_review` sections entirely (no
 - `previously_reviewed: true`, `sha_resolvable: true`, `last_reviewed_sha == head_sha` → `DEFERRED`. Run the unconditional truncate loop as a follow-up **only if** the user answers "Yes — review again" to the template in `references/phase1-preflight.md` → "Previously-Reviewed Gate"; a "No — skip" answer stops the review here with the files intact.
 
 After this call: interpret `prior_review`'s JSON per `references/phase1-preflight.md` → "Previously-Reviewed Gate" (branch order, question templates, degradations — unchanged). **Incremental** stores `last_reviewed_sha` for Composite B's incremental diff branch below. **Skip** stops the run here.
+
+Stamp `reviewScope` from this resolved state before assembling the waist. For local or branch targets,
+stamp `{ requested: "full", kind: "full", since: null, commits: null, detector: null }`. For a PR/MR,
+copy these detector values into `detector` without rewriting them: `previously_reviewed`, `sha_resolvable`,
+`head_advanced`, `sha_is_ancestor`, and `incremental_safe`; set `error` to the first `prior_review.errors`
+value or `null`. The interactive `requested` value is the recorded gate answer, or `"full"` when no prior
+review existed. In headless mode it is `configEcho.reviewed_policy.value`, except `"skip"` records
+`requested: "full"`. Use `kind: "incremental"` only for an incremental answer with
+`detector.incremental_safe: true` and the detector's safe `last_reviewed_sha` as `since`; otherwise use
+`kind: "full"` and retain the detector so the renderer can derive the fallback explanation.
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the `prior_review` section still runs — detection is read-only and safe under any `CODE_GAUNTLET_POST_MODE`. Apply `CODE_GAUNTLET_REVIEWED_POLICY` to its result instead of asking (`incremental` only when `incremental_safe`, else degrade to `full` and disclose; `skip` stops the run only when `previously_reviewed` AND `sha_is_ancestor` — never on rewritten history, where it degrades to `full` instead). A `DEFERRED` truncation resolves the same way it does interactively: run the unconditional truncate loop for every policy outcome except a `skip` that actually stops the run. See `references/headless-mode.md`.
 
@@ -359,7 +369,9 @@ Assemble the args waist (see `references/phase2-triage.md` for the full field li
   policy: { tier, subagentModel, provider, gateway },
   configEcho: { key: { value, source } },  // REQUIRED; exact resolved knob receipt, in registry order when rendered
   pluginRoot,  // REQUIRED absolute plugin root; script paths must stay under {pluginRoot}/scripts/
-  reviewScope: { kind: "full" | "incremental", since, commits, reason },  // REQUIRED; stamped by prior-review gate
+  reviewScope: { requested: "incremental" | "full", kind: "incremental" | "full", since: string | null,
+                 commits: integer | null, detector: null | { previously_reviewed, sha_resolvable,
+                 head_advanced, sha_is_ancestor, incremental_safe, error } },  // REQUIRED; copied from prior-review state
   limits: { deliveryCap },  // pass ONLY genuine overrides — a REVIEW.md-set value, or the
                              // env-threaded deliveryCap — never the full table:
                              // normalizeArgs fills summarizeBucketSize/validateBatch/

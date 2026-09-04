@@ -311,9 +311,9 @@ function safeProse(value) {
 }
 
 // Table cells are a separate primitive from receipt lines: methodology details are prose
-// assembled by the pipeline, but a replayed reason or provider value can still contain a
-// newline or pipe. Keep each row physically one line and keep Markdown's column boundary
-// intact.
+// assembled by the pipeline, but a replayed detector error or provider value can still
+// contain a newline or pipe. Keep each row physically one line and keep Markdown's column
+// boundary intact.
 export function tableCell(value) {
   return oneLine(value).replaceAll('|', '\\|');
 }
@@ -523,6 +523,7 @@ const RECEIPT_DEFAULTS = {
 };
 
 function receiptSafe(value, fallback = 'unknown') {
+  if (value === null) return 'null';
   const cleaned = oneLine(value).replaceAll('`', '');
   return cleaned || fallback;
 }
@@ -555,6 +556,29 @@ function countSummary(value) {
     return `${key}=${tableCell(count)}`;
   });
   return entries.length ? entries.join(', ') : 'none';
+}
+
+// The detector facts are the only source for an incremental-to-full explanation. Keep the
+// precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
+// head, but they are materially different operator outcomes.
+const REVIEW_SCOPE_FALLBACK_RULES = [
+  { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false, reason: () => 'recorded SHA not resolvable' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === true && detector.head_advanced === false, reason: () => 'head has not advanced' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === false, reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
+  { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
+];
+
+export function reviewScopeFallbackReason(scope) {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)
+    || scope.kind !== 'full' || scope.requested !== 'incremental'
+    || !scope.detector || typeof scope.detector !== 'object' || Array.isArray(scope.detector)) {
+    return null;
+  }
+  for (const rule of REVIEW_SCOPE_FALLBACK_RULES) {
+    if (rule.when(scope.detector)) return rule.reason(scope.detector);
+  }
+  return 'detection failed: unavailable';
 }
 
 function methodologyRows(input, rawFindings) {
@@ -592,10 +616,10 @@ function methodologyRows(input, rawFindings) {
   const scope = input.reviewScope && typeof input.reviewScope === 'object' ? input.reviewScope : { kind: 'full' };
   if (scope.kind === 'incremental') {
     const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${scope.commits} commits`;
-    const reason = scope.reason ? `; reason: ${scope.reason}` : '';
-    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})${reason}`]);
+    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})`]);
   } else {
-    rows.push(['Review scope', scope.reason ? `Full; reason: ${scope.reason}` : 'Full']);
+    const reason = reviewScopeFallbackReason(scope);
+    rows.push(['Review scope', reason ? `Full (incremental requested; ${reason})` : 'Full']);
   }
 
   const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};

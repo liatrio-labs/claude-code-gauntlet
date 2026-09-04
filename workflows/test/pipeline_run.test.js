@@ -1012,6 +1012,26 @@ test('happy path: discoverOut.dispatched/degraded reach the final Review Dimensi
   assert.equal((persisted.report.match(/^## Review Methodology$/gm) || []).length, 1);
   assert.ok(persisted.report.endsWith('orchestrator at delivery.'));
   assert.ok(persisted.report.includes('pipeline_version=3.26.0 (bundle)'));
+  const merge = out.stats.merge;
+  assert.ok(persisted.report.includes(
+    `merge: per-channel: ndjson=${merge.findings_per_channel.ndjson}, text_fallback=${merge.findings_per_channel.text_fallback}; duplicates resolved=${merge.duplicates_resolved}; dropped-no-id=${merge.dropped_no_id}; truncation warnings=${merge.truncation_warnings}; validation warnings=${merge.validation_warnings}`,
+  ));
+});
+
+test('report methodology Gaps row carries the pre-report gap count end to end', async () => {
+  const args = validArgs();
+  let persisted = null;
+  const ctx = makeCtx(args, {
+    onPersist: (payload) => { persisted = payload; },
+    nullAgentLabels: ['code-gauntlet:bug-detector'],
+  });
+  const out = await runWith(ctx, args);
+  assert.equal(out.ok, true);
+  assert.ok(out.gaps.length > 0);
+  assert.ok(out.gaps.some((gap) => /bug-detector/.test(gap)));
+  const row = persisted.report.match(/^\| Gaps \| (\d+) \|$/m);
+  assert.ok(row, 'persisted report has a numeric Gaps row');
+  assert.equal(Number(row[1]), out.gaps.length);
 });
 
 // --- Issue #24 req 1/3/4/5 (PR3): deterministic agentFlags derivation ------------------

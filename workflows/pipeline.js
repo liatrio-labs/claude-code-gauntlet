@@ -3076,9 +3076,9 @@ function safeProse(value) {
 }
 
 // Table cells are a separate primitive from receipt lines: methodology details are prose
-// assembled by the pipeline, but a replayed reason or provider value can still contain a
-// newline or pipe. Keep each row physically one line and keep Markdown's column boundary
-// intact.
+// assembled by the pipeline, but a replayed detector error or provider value can still
+// contain a newline or pipe. Keep each row physically one line and keep Markdown's column
+// boundary intact.
 function tableCell(value) {
   return oneLine(value).replaceAll('|', '\\|');
 }
@@ -3288,6 +3288,7 @@ const RECEIPT_DEFAULTS = {
 };
 
 function receiptSafe(value, fallback = 'unknown') {
+  if (value === null) return 'null';
   const cleaned = oneLine(value).replaceAll('`', '');
   return cleaned || fallback;
 }
@@ -3320,6 +3321,29 @@ function countSummary(value) {
     return `${key}=${tableCell(count)}`;
   });
   return entries.length ? entries.join(', ') : 'none';
+}
+
+// The detector facts are the only source for an incremental-to-full explanation. Keep the
+// precedence in one table: an unresolvable SHA and rewritten history both imply no advanced
+// head, but they are materially different operator outcomes.
+const REVIEW_SCOPE_FALLBACK_RULES = [
+  { when: (detector) => detector.previously_reviewed === false, reason: () => 'no prior review recorded' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === false, reason: () => 'recorded SHA not resolvable' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === true && detector.head_advanced === false, reason: () => 'head has not advanced' },
+  { when: (detector) => detector.previously_reviewed === true && detector.sha_resolvable === true && detector.sha_is_ancestor === false, reason: () => 'history rewritten (recorded SHA is not an ancestor)' },
+  { when: (detector) => typeof detector.error === 'string' && detector.error !== '', reason: (detector) => `detection failed: ${oneLine(detector.error).slice(0, 120)}` },
+];
+
+function reviewScopeFallbackReason(scope) {
+  if (!scope || typeof scope !== 'object' || Array.isArray(scope)
+    || scope.kind !== 'full' || scope.requested !== 'incremental'
+    || !scope.detector || typeof scope.detector !== 'object' || Array.isArray(scope.detector)) {
+    return null;
+  }
+  for (const rule of REVIEW_SCOPE_FALLBACK_RULES) {
+    if (rule.when(scope.detector)) return rule.reason(scope.detector);
+  }
+  return 'detection failed: unavailable';
 }
 
 function methodologyRows(input, rawFindings) {
@@ -3357,10 +3381,10 @@ function methodologyRows(input, rawFindings) {
   const scope = input.reviewScope && typeof input.reviewScope === 'object' ? input.reviewScope : { kind: 'full' };
   if (scope.kind === 'incremental') {
     const commits = scope.commits === null || scope.commits === undefined ? 'commits unknown' : `${scope.commits} commits`;
-    const reason = scope.reason ? `; reason: ${scope.reason}` : '';
-    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})${reason}`]);
+    rows.push(['Review scope', `Incremental since ${scope.since || 'unknown'} (${commits})`]);
   } else {
-    rows.push(['Review scope', scope.reason ? `Full; reason: ${scope.reason}` : 'Full']);
+    const reason = reviewScopeFallbackReason(scope);
+    rows.push(['Review scope', reason ? `Full (incremental requested; ${reason})` : 'Full']);
   }
 
   const stats = input.stats && typeof input.stats === 'object' ? input.stats : {};
@@ -4466,25 +4490,54 @@ function validateArgs(args) {
 
   // Review scope is stamped by the prior-review gate and is deliberately required even for
   // local/branch targets: those targets stamp the explicit full form rather than leaving the
-  // renderer to infer provenance.
+  // renderer to infer provenance. The detector facts are copied from the detector output;
+  // the renderer derives any fallback explanation from those facts instead of accepting
+  // orchestrator-authored prose.
   if (args.reviewScope !== undefined) {
     if (!isPlainObject(args.reviewScope)) {
-      errors.push('reviewScope must be { kind, since, commits, reason }');
+      errors.push('reviewScope must be { requested, kind, since, commits, detector }');
     } else {
       const scopeKeys = Object.keys(args.reviewScope);
-      const scopeExtra = scopeKeys.filter((key) => !['kind', 'since', 'commits', 'reason'].includes(key));
+      const scopeKeysExpected = ['requested', 'kind', 'since', 'commits', 'detector'];
+      const scopeExtra = scopeKeys.filter((key) => !scopeKeysExpected.includes(key));
       if (scopeExtra.length) errors.push(`reviewScope has unexpected key(s): ${scopeExtra.join(', ')}`);
-      const { kind, since, commits, reason } = args.reviewScope;
+      const { requested, kind, since, commits, detector } = args.reviewScope;
+      if (!['full', 'incremental'].includes(requested)) {
+        errors.push('reviewScope.requested must be full or incremental');
+      }
       if (!['full', 'incremental'].includes(kind)) errors.push(`reviewScope.kind must be full or incremental`);
       if (kind === 'incremental') {
+        if (requested !== 'incremental') errors.push('reviewScope.kind incremental requires requested incremental');
         if (typeof since !== 'string' || !NONCE_RE.test(since)) errors.push('reviewScope.since must be a NONCE_RE-safe string for incremental scope');
         if (commits !== null && (!Number.isSafeInteger(commits) || commits < 0)) errors.push('reviewScope.commits must be a non-negative safe integer or null');
       } else if (kind === 'full') {
         if (since !== null) errors.push('reviewScope.since must be null for full scope');
         if (commits !== null) errors.push('reviewScope.commits must be null for full scope');
       }
-      if (reason !== null && (typeof reason !== 'string' || CONTROL_RE.test(reason) || reason.length > 200)) {
-        errors.push('reviewScope.reason must be null or a single-line string of at most 200 characters');
+      if (detector !== null) {
+        if (!isPlainObject(detector)) {
+          errors.push('reviewScope.detector must be null or an object copied from detect_prior_review.py');
+        } else {
+          const detectorKeys = ['previously_reviewed', 'sha_resolvable', 'head_advanced', 'sha_is_ancestor', 'incremental_safe', 'error'];
+          const detectorExtra = Object.keys(detector).filter((key) => !detectorKeys.includes(key));
+          const detectorMissing = detectorKeys.filter((key) => !Object.prototype.hasOwnProperty.call(detector, key));
+          if (detectorExtra.length) errors.push(`reviewScope.detector has unexpected key(s): ${detectorExtra.join(', ')}`);
+          if (detectorMissing.length) errors.push(`reviewScope.detector is missing key(s): ${detectorMissing.join(', ')}`);
+          for (const key of detectorKeys.slice(0, -1)) {
+            if (typeof detector[key] !== 'boolean') errors.push(`reviewScope.detector.${key} must be a boolean`);
+          }
+          if (detector.error !== null && typeof detector.error !== 'string') {
+            errors.push('reviewScope.detector.error must be a string or null');
+          } else if (typeof detector.error === 'string' && CONTROL_RE.test(detector.error)) {
+            errors.push('reviewScope.detector.error must be single-line without control characters');
+          }
+        }
+      }
+      if (kind === 'incremental' && (!isPlainObject(detector) || detector.incremental_safe !== true)) {
+        errors.push('reviewScope.kind incremental requires detector.incremental_safe true');
+      }
+      if (kind === 'full' && requested === 'incremental' && detector === null) {
+        errors.push('reviewScope full fallback requires detector facts when incremental was requested');
       }
     }
   }
@@ -4501,7 +4554,11 @@ function validateArgs(args) {
   }
   const capEcho = configEchoValue(args, 'pr_comment_cap');
   if (capEcho !== undefined && isPlainObject(args.limits)) {
-    if (args.mode === 'headless' && typeof args.limits.deliveryCap !== 'number') {
+    const capValueWellFormed = capEcho === 'null' || digits(capEcho);
+    if (!capValueWellFormed) {
+      // The focused registry value error is sufficient for malformed receipt values;
+      // lockstep is only meaningful for a value that could represent a cap.
+    } else if (args.mode === 'headless' && typeof args.limits.deliveryCap !== 'number') {
       errors.push('headless limits.deliveryCap must be a number matching configEcho.pr_comment_cap');
     } else if (typeof args.limits.deliveryCap === 'number' && capEcho !== String(args.limits.deliveryCap)) {
       errors.push('configEcho.pr_comment_cap does not match limits.deliveryCap');
@@ -4510,6 +4567,13 @@ function validateArgs(args) {
     }
   }
   if (args.mode === 'headless') {
+    const reviewedPolicyEcho = configEchoValue(args, 'reviewed_policy');
+    if (isPlainObject(args.reviewScope) && ['incremental', 'full', 'skip'].includes(reviewedPolicyEcho)) {
+      const requestedScope = reviewedPolicyEcho === 'skip' ? 'full' : reviewedPolicyEcho;
+      if (args.reviewScope.requested !== requestedScope) {
+        errors.push('reviewScope.requested does not match configEcho.reviewed_policy');
+      }
+    }
     const trivialEcho = configEchoValue(args, 'trivial_scope');
     if (args.scopeAnswer !== undefined && trivialEcho !== undefined && args.scopeAnswer !== trivialEcho) {
       errors.push('scopeAnswer does not match configEcho.trivial_scope');
@@ -4522,7 +4586,7 @@ function validateArgs(args) {
   }
   if (args.mode === 'interactive') {
     const reviewMdEcho = configEchoValue(args, 'review_md');
-    if (reviewMdEcho !== undefined) {
+    if (['present', 'absent'].includes(reviewMdEcho)) {
       const expectedReviewMd = args.reviewConfigPath != null ? 'present' : 'absent';
       if (reviewMdEcho !== expectedReviewMd) errors.push('configEcho.review_md does not match reviewConfigPath');
     }
