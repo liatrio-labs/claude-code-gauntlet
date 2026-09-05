@@ -65,22 +65,19 @@ function baseInput(findings, over = {}) {
 }
 
 // executorImpl(sliceIndex, attempt, sliceNonce) -> the envelope that dispatch returns.
-// The slice-input writer always succeeds (its failure path is stages_verify.test.js's
-// subject), so every dispatch this harness sees is an executor dispatch.
+// Every dispatch this harness sees is an executor dispatch; its inline token is used to
+// stamp a matching input proof on happy-path envelopes.
 function ctxFor(executorImpl) {
   const calls = [];
   const rec = sliceInputRecorder();
   const agent = async (prompt, opts = {}) => {
     calls.push({ prompt, ...opts });
     const label = opts.label || '';
-    if (label.startsWith('verify-input-writer')) {
-      return rec.write(prompt);
-    }
     const m = /^verify-slice-(\d+)(-retry)?$/.exec(label);
     const i = m ? Number(m[1]) : -1;
     const attempt = m && m[2] ? 2 : 1;
     const nonce = (prompt.match(/--nonce (\S+)/) || [])[1];
-    return rec.stamp(await executorImpl(i, attempt, nonce), i);
+    return rec.stamp(await executorImpl(i, attempt, nonce), i, prompt);
   };
   return {
     calls,

@@ -43,10 +43,13 @@ from scripts.verify_findings import (
     _coerce_numeric_fields,
     _delta_confidence,
     _extract_symbols,
+    _input_checksum,
+    _validate_input_shape,
     _write_output,
     batch_findings,
     build_deltas,
     classify_blame,
+    decode_inline_slice,
     deltas_checksum,
     get_diff,
     is_line_in_diff,
@@ -66,6 +69,24 @@ from scripts.verify_findings import (
 SCRIPT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "scripts", "verify_findings.py")
 )
+
+
+def js_encode_inline(doc):
+    """Use the JS encoder as the authority for Python receipt tests."""
+    source = (
+        "import { encodeSliceInline } from './workflows/src/stages.js'; "
+        "import fs from 'node:fs'; "
+        "process.stdout.write(encodeSliceInline(JSON.parse(fs.readFileSync(0, 'utf8'))));"
+    )
+    proc = subprocess.run(
+        ["node", "--input-type=module", "-e", source],
+        input=json.dumps(doc, ensure_ascii=True),
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        check=True,
+    )
+    return proc.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -1797,12 +1818,15 @@ class TestReceipt(unittest.TestCase):
             with open(legacy_out) as fh:
                 legacy = json.load(fh)
 
-            # Receipt path: --input replaces the positional, --nonce/--head-sha echoed.
+            # Receipt path: --input is the destination the script rewrites, while the
+            # percent-encoded inline token is the authoritative slice document.
             self._run_main(
                 [
                     "verify_findings.py",
                     "--input",
                     findings_path,
+                    "--input-inline",
+                    js_encode_inline({"findings": findings, "base_branch": "main"}),
                     "--diff-file",
                     empty_diff,
                     "--output",
@@ -1817,8 +1841,7 @@ class TestReceipt(unittest.TestCase):
                 envelope = json.load(fh)
 
             # (a) envelope shape + receipt fields. deltas_checksum is the delta echo's
-            # content proof (issue #25 PR2) -- it now rides alongside sha/n_in/nonce.
-            # input_checksum is the slice-input content proof (issue #69, #25 req 4-6).
+            # content proof; input_checksum proves the inline slice document.
             self.assertEqual(envelope["status"], "ok")
             self.assertEqual(
                 set(envelope["receipt"].keys()),
@@ -1833,7 +1856,6 @@ class TestReceipt(unittest.TestCase):
             self.assertRegex(
                 envelope["receipt"]["input_checksum"], r"^fnv1a32:0x[0-9a-f]{8}$"
             )
-            # Clean parse: input_recovery must be absent entirely, never null.
             self.assertNotIn("input_recovery", envelope)
 
             # (b) result.verified is exactly what the legacy path produces
@@ -1869,6 +1891,8 @@ class TestReceipt(unittest.TestCase):
                         "verify_findings.py",
                         "--input",
                         findings_path,
+                        "--input-inline",
+                        js_encode_inline({"findings": findings}),
                         "--nonce",
                         "N",
                         "--head-sha",
@@ -1887,25 +1911,12 @@ class TestReceipt(unittest.TestCase):
         finally:
             os.unlink(findings_path)
 
-    def test_one_stray_closing_brace_now_recovers_instead_of_losing_the_slice(self):
-        """Issue #69, the case that motivated it: the artifact-writer appended one
-        stray `}` after an otherwise complete slice-input document. This used to reach
-        die() and produce a status:'failed' envelope, degrading every finding in the
-        slice to origin=unknown. It now RECOVERS — the leading document is used, the
-        verdicts are computed, and the trailing bytes are disclosed verbatim in
-        `input_recovery` so nothing about the tolerance is silent.
-
-        The die()-writes-an-envelope behaviour this test used to guard is still pinned,
-        by test_everything_outside_the_class_still_dies_as_before plus the receipt
-        envelope's own failure test above.
-        """
+    def test_receipt_inline_rejects_noncanonical_input(self):
+        """The receipt path accepts only the exact percent-encoded inline token."""
         import io
 
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
-            f.write(
-                json.dumps({"findings": self._findings(), "base_branch": "main"}) + "}"
-            )
-            corrupt_path = f.name
+            findings_path = f.name
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
             out_path = out_file.name
         try:
@@ -1917,7 +1928,9 @@ class TestReceipt(unittest.TestCase):
                     [
                         "verify_findings.py",
                         "--input",
-                        corrupt_path,
+                        findings_path,
+                        "--input-inline",
+                        '{"findings":[{"evidence":"`"}]}',
                         "--output",
                         out_path,
                         "--nonce",
@@ -1932,12 +1945,12 @@ class TestReceipt(unittest.TestCase):
                 main()
             with open(out_path) as fh:
                 envelope = json.load(fh)
-            self.assertEqual(envelope["status"], "ok")
-            self.assertEqual(envelope["receipt"]["n_in"], len(self._findings()))
-            self.assertEqual(len(envelope["result"]["deltas"]), len(self._findings()))
-            self.assertEqual(envelope["input_recovery"], {"trailing_bytes": "}"})
+            self.assertEqual(envelope["status"], "failed")
+            self.assertEqual(envelope["exitCode"], 1)
+            self.assertIn("inline slice-input rejected", envelope["stderr"])
+            self.assertIn("raw U+0060", envelope["stderr"])
         finally:
-            os.unlink(corrupt_path)
+            os.unlink(findings_path)
             os.unlink(out_path)
 
     def test_legacy_path_recovers_the_same_class_and_says_so_on_stderr(self):
@@ -2308,6 +2321,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                     SCRIPT,
                     "--input",
                     in_path,
+                    "--input-inline",
+                    js_encode_inline({"findings": findings, "base_branch": "main"}),
                     "--diff-file",
                     empty_diff,
                     "--output",
@@ -2405,6 +2420,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                     SCRIPT,
                     "--input",
                     in_path,
+                    "--input-inline",
+                    js_encode_inline({"findings": findings, "base_branch": "main"}),
                     "--diff-file",
                     empty_diff,
                     "--output",
@@ -2454,6 +2471,8 @@ class TestReceiptDeltaEchoEndToEnd(unittest.TestCase):
                     SCRIPT,
                     "--input",
                     in_path,
+                    "--input-inline",
+                    js_encode_inline({"findings": findings, "base_branch": "main"}),
                     "--diff-file",
                     empty_diff,
                     "--output",
@@ -2575,7 +2594,7 @@ class TestCoerceNumericFields(unittest.TestCase):
 
 class TestReceiptStringLineNumbers(unittest.TestCase):
     """Regression for the live-smoke verify crash: a slice written the way
-    verifyStage's writer prompt specifies ({findings, base_branch}) with quoted
+    verifyStage's inline-token contract specifies ({findings, base_branch}) with quoted
     numeric fields must NOT degrade the slice to a status='failed' envelope
     ('unsupported operand type(s) for -: 'str' and 'int'')."""
 
@@ -2630,6 +2649,8 @@ class TestReceiptStringLineNumbers(unittest.TestCase):
                     "verify_findings.py",
                     "--input",
                     in_path,
+                    "--input-inline",
+                    js_encode_inline(slice_input),
                     "--diff-file",
                     empty_diff,
                     "--output",
@@ -2700,13 +2721,7 @@ class TestEliminationReasonStamp(unittest.TestCase):
 
 
 class TestSliceInputRecovery(unittest.TestCase):
-    """Issue #69: the artifact-writer is a SAMPLED AGENT, and on
-    smoke-20260728-144630-a162ecd it appended exactly `}\\n` after two otherwise
-    complete slice-input documents. A strict json.load turned that one character into
-    a total loss of the verify stage for 23 intact findings. These pin the recovery on
-    the two byte-exact captures, and pin that everything outside that corruption class
-    still hard-fails with the message a strict parse produced.
-    """
+    """The legacy positional loader retains its historical trailing-byte recovery."""
 
     FIXTURES = os.path.join(
         os.path.dirname(os.path.abspath(__file__)),
@@ -2850,13 +2865,16 @@ class TestSliceInputRecovery(unittest.TestCase):
             }
         ]
 
-    def _run_receipt_over(self, text):
+    def _run_receipt_over(self, doc):
         import io
 
-        in_path = self._write(text)
+        in_path = self._write("")
+        inline = js_encode_inline(doc)
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
             out_path = out_file.name
         self.addCleanup(os.unlink, out_path)
+        self.receipt_input_path = in_path
+        self.receipt_output_path = out_path
         with (
             patch("sys.stderr", new_callable=io.StringIO),
             patch.object(
@@ -2866,6 +2884,8 @@ class TestSliceInputRecovery(unittest.TestCase):
                     "verify_findings.py",
                     "--input",
                     in_path,
+                    "--input-inline",
+                    inline,
                     "--output",
                     out_path,
                     "--nonce",
@@ -2916,7 +2936,7 @@ class TestSliceInputRecovery(unittest.TestCase):
         findings = self._receipt_findings()
         findings[0]["criticality"] = 7.5
         doc = {"findings": findings, "base_branch": "main"}
-        envelope = self._run_receipt_over(json.dumps(doc))
+        envelope = self._run_receipt_over(doc)
         self.assertEqual(envelope["status"], "ok")
         self.assertNotIn("input_checksum", envelope["receipt"])
 
@@ -2932,50 +2952,358 @@ class TestSliceInputRecovery(unittest.TestCase):
 
     def test_receipt_envelope_carries_the_checksum_and_omits_recovery_when_clean(self):
         doc = {"findings": self._receipt_findings(), "base_branch": "main"}
-        envelope = self._run_receipt_over(json.dumps(doc))
+        envelope = self._run_receipt_over(doc)
         self.assertEqual(envelope["status"], "ok")
         self.assertTrue(envelope["receipt"]["input_checksum"].startswith("fnv1a32:0x"))
-        # Omitted, never null: the workflow keys the RECOVERED disclosure on this key's
-        # PRESENCE, so a null on the clean path would make every slice look recovered.
+        # Inline receipt mode has no recovery disclosure at all.
         self.assertNotIn("input_recovery", envelope)
 
-    def test_receipt_envelope_discloses_recovery_with_the_exact_trailing_bytes(self):
-        doc = json.dumps({"findings": self._receipt_findings(), "base_branch": "main"})
-        envelope = self._run_receipt_over(doc + "}\n")
+    def test_receipt_writes_the_decoded_inline_document_before_coercion(self):
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        doc = {"findings": self._receipt_findings(), "base_branch": "main"}
+        envelope = self._run_receipt_over(doc)
+        with open(self.receipt_input_path, encoding="utf-8") as fh:
+            written = json.load(fh)
+        self.assertEqual(written, doc)
+        with open(self.receipt_input_path, "rb") as fh:
+            input_bytes = fh.read()
+        self.assertEqual(input_bytes, js_stringify_pretty(doc).encode("utf-8"))
+        self.assertEqual(
+            fnv1a32(input_bytes.decode("utf-8")),
+            envelope["receipt"]["input_checksum"],
+        )
+        self.assertEqual(
+            envelope["receipt"]["input_checksum"],
+            fnv1a32(js_stringify_pretty(doc)),
+        )
+
+    def test_receipt_pins_exact_ascii_fallback_bytes_when_js_spelling_is_unavailable(
+        self,
+    ):
+        finding = self._receipt_findings()[0]
+        finding["criticality"] = 7.5
+        finding["description"] = "café"
+        doc = {"findings": [finding], "base_branch": "main"}
+        envelope = self._run_receipt_over(doc)
         self.assertEqual(envelope["status"], "ok")
-        self.assertEqual(envelope["input_recovery"], {"trailing_bytes": "}\n"})
-        # The proof covers the LEADING document, not the file, so it is unaffected by
-        # the trailing bytes -- that equality is the whole reason recovery is safe.
-        _d, _r, expected = load_input(self._write(doc))
-        self.assertEqual(envelope["receipt"]["input_checksum"], expected)
+        self.assertNotIn("input_checksum", envelope["receipt"])
+        expected = (
+            b"{\n"
+            b'  "findings": [\n'
+            b"    {\n"
+            b'      "id": "bug-1",\n'
+            b'      "dimension": "bug",\n'
+            b'      "severity": "high",\n'
+            b'      "confidence": 75,\n'
+            b'      "file": "nope/does-not-exist-xyz.py",\n'
+            b'      "title": "t",\n'
+            b'      "description": "caf\\u00e9",\n'
+            b'      "evidence": "e",\n'
+            b'      "cross_file_refs": [],\n'
+            b'      "criticality": 7.5\n'
+            b"    }\n"
+            b"  ],\n"
+            b'  "base_branch": "main"\n'
+            b"}"
+        )
+        with open(self.receipt_input_path, "rb") as fh:
+            self.assertEqual(fh.read(), expected)
+
+    def test_receipt_checksum_is_before_numeric_coercion(self):
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        finding = self._receipt_findings()[0]
+        finding["line_start"] = "10"
+        finding["confidence"] = "85"
+        doc = {"findings": [finding], "base_branch": "main"}
+        envelope = self._run_receipt_over(doc)
+        post_coercion = copy.deepcopy(doc)
+        post_coercion["findings"][0]["line_start"] = 10
+        post_coercion["findings"][0]["confidence"] = 85
+        self.assertEqual(envelope["status"], "ok")
+        self.assertEqual(
+            envelope["receipt"]["input_checksum"],
+            fnv1a32(js_stringify_pretty(doc)),
+        )
+        self.assertNotEqual(
+            envelope["receipt"]["input_checksum"],
+            fnv1a32(js_stringify_pretty(post_coercion)),
+        )
+
+    def test_receipt_shape_validation_reports_named_inline_rejections(self):
+        cases = [
+            ({"base_branch": "main"}, "missing required 'findings' array"),
+            ({"findings": "xy", "base_branch": "main"}, "'findings' must be an array"),
+        ]
+        for doc, detail in cases:
+            with self.subTest(doc=doc):
+                envelope = self._run_receipt_over(doc)
+                self.assertEqual(envelope["status"], "failed")
+                self.assertIn(
+                    f"inline slice-input rejected: {detail}",
+                    envelope["stderr"],
+                )
+
+    def test_receipt_round_trips_lone_surrogates_and_escapes_receipt_output(self):
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        cases = {
+            "leading": "\ud800leading",
+            "embedded": "before\udfffafter",
+            "trailing": "trailing\ud800",
+            "unprovable": "value\ud800",
+        }
+        for name, value in cases.items():
+            with self.subTest(case=name):
+                finding = self._receipt_findings()[0]
+                finding["description"] = value
+                doc = {"findings": [finding], "base_branch": "main"}
+                if name == "unprovable":
+                    finding["cross_file_refs"] = [1e21]
+                envelope = self._run_receipt_over(doc)
+                self.assertEqual(envelope["status"], "ok")
+                with open(self.receipt_input_path, "rb") as fh:
+                    input_bytes = fh.read()
+                with open(self.receipt_input_path, encoding="utf-8") as fh:
+                    self.assertEqual(json.load(fh), doc)
+                self.assertNotIn(value.encode("utf-8", "surrogatepass"), input_bytes)
+                if name == "unprovable":
+                    self.assertNotIn("input_checksum", envelope["receipt"])
+                else:
+                    self.assertEqual(
+                        envelope["receipt"]["input_checksum"],
+                        fnv1a32(js_stringify_pretty(doc)),
+                    )
+
+    def test_receipt_escapes_lone_surrogate_in_delta_id(self):
+        finding = self._receipt_findings()[0]
+        finding["id"] = "bug-\ud800"
+        doc = {"findings": [finding], "base_branch": "main"}
+
+        envelope = self._run_receipt_over(doc)
+
+        self.assertEqual(envelope["status"], "ok")
+        self.assertEqual(envelope["result"]["deltas"][0]["id"], finding["id"])
+        with open(self.receipt_output_path, "rb") as fh:
+            output_bytes = fh.read()
+        self.assertIn(b'"id": "bug-\\ud800"', output_bytes)
+
+    def test_a_failing_receipt_input_write_leaves_the_destination_untouched(self):
+        import io
+
+        input_path = self._write("PREVIOUS CONTENT")
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as out_file:
+            output_path = out_file.name
+        doc = {"findings": self._receipt_findings(), "base_branch": "main"}
+        try:
+            with (
+                patch(
+                    "scripts.assemble_artifacts.os.replace",
+                    side_effect=OSError("injected write failure"),
+                ),
+                patch("sys.stderr", new_callable=io.StringIO),
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "verify_findings.py",
+                        "--input",
+                        input_path,
+                        "--input-inline",
+                        js_encode_inline(doc),
+                        "--output",
+                        output_path,
+                    ],
+                ),
+            ):
+                from scripts.verify_findings import main
+
+                main()
+            with open(input_path, encoding="utf-8") as fh:
+                self.assertEqual(fh.read(), "PREVIOUS CONTENT")
+            with open(output_path, encoding="utf-8") as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "failed")
+            self.assertIn("injected write failure", envelope["stderr"])
+        finally:
+            os.unlink(output_path)
+
+    def test_receipt_argparse_requires_input_and_inline_as_a_pair(self):
+        cases = [
+            (
+                ["--input", "/tmp/destination.json"],
+                "--input requires --input-inline for receipt mode",
+            ),
+            (
+                ["--input-inline", "{}"],
+                "--input-inline requires --input for receipt mode",
+            ),
+        ]
+        for argv, diagnostic in cases:
+            with self.subTest(argv=argv):
+                proc = subprocess.run(
+                    [sys.executable, SCRIPT, *argv],
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(proc.returncode, 0)
+                self.assertEqual(
+                    proc.stderr.splitlines()[-1],
+                    f"verify_findings.py: error: {diagnostic}",
+                )
 
     def test_result_deltas_is_still_the_first_key_of_result(self):
         # The executor's Read of this file is length-capped with NO truncation notice,
-        # so what it must echo has to sit at the front. Adding input_recovery to the
-        # envelope must not push deltas behind the two full finding arrays.
-        doc = json.dumps({"findings": self._receipt_findings(), "base_branch": "main"})
-        envelope = self._run_receipt_over(doc + "}\n")
+        # so what it must echo has to sit at the front.
+        doc = {"findings": self._receipt_findings(), "base_branch": "main"}
+        envelope = self._run_receipt_over(doc)
         self.assertEqual(next(iter(envelope["result"])), "deltas")
-        self.assertEqual(
-            list(envelope), ["status", "receipt", "input_recovery", "result"]
-        )
+        self.assertEqual(list(envelope), ["status", "receipt", "result"])
 
-    def test_receipt_mode_reports_the_honest_failure_envelope_on_unrecoverable_input(
-        self,
-    ):
-        # The half of the honest-failure contract that die()-inside-load_input still
-        # has to clear: an unrecoverable slice input (outside the trailing-bytes class)
-        # must still produce a schema-valid {status:'failed'} envelope on disk, not an
-        # uncaught exception that leaves the executor with no output file and no reason
-        # -- the exact smoke-20260729-191253-8ae2ee3 failure mode the InputError
-        # docstring documents. `_run_receipt_over` already writes the envelope on this
-        # path (main() unconditionally returns `_run_receipt(args)`'s write), so no
-        # separate helper is needed.
-        doc = json.dumps({"findings": [], "base_branch": "main"})
-        envelope = self._run_receipt_over(doc + "oops")
-        self.assertEqual(envelope["status"], "failed")
-        self.assertEqual(envelope["exitCode"], 1)
-        self.assertIn("Invalid JSON in findings file", envelope["stderr"])
+
+class TestInlineSliceDecoder(unittest.TestCase):
+    """The Python receipt decoder is strict, canonical, and cross-runtime tested."""
+
+    def test_parity_fixtures_round_trip_through_the_js_encoder(self):
+        fixture_root = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "fixtures",
+            "parity",
+            "slice_inline",
+        )
+        cases = []
+        for root, _dirs, files in os.walk(fixture_root):
+            if "input.json" in files:
+                with open(os.path.join(root, "input.json"), encoding="utf-8") as fh:
+                    cases.append((root, json.load(fh)))
+        self.assertEqual(len(cases), 10)
+        from scripts.assemble_artifacts import fnv1a32, js_stringify_pretty
+
+        for root, doc in sorted(cases):
+            with self.subTest(case=os.path.basename(root)):
+                encoded = js_encode_inline(doc)
+                self.assertEqual(decode_inline_slice(encoded), doc)
+                self.assertEqual(
+                    _input_checksum(doc), fnv1a32(js_stringify_pretty(doc))
+                )
+
+    def test_legacy_slice_input_proof_fixtures_also_round_trip(self):
+        fixture_root = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "fixtures",
+            "parity",
+            "slice_input_proof",
+        )
+        paths = []
+        for root, _dirs, files in os.walk(fixture_root):
+            if "input.json" in files:
+                paths.append(os.path.join(root, "input.json"))
+        self.assertGreater(len(paths), 0)
+        for path in sorted(paths):
+            with self.subTest(case=os.path.dirname(path)):
+                with open(path, encoding="utf-8") as fh:
+                    doc = json.load(fh)["doc"]
+                self.assertEqual(decode_inline_slice(js_encode_inline(doc)), doc)
+
+    def _assert_rejected(self, payload):
+        with self.assertRaises(InputError) as ctx:
+            decode_inline_slice(payload)
+        self.assertIn("inline slice-input rejected", str(ctx.exception))
+
+    def test_rejects_lowercase_percent_escape(self):
+        self._assert_rejected('{"findings":[{"evidence":"%5c"}]}')
+
+    def test_rejects_raw_backtick(self):
+        self._assert_rejected('{"findings":[{"evidence":"`"}]}')
+
+    def test_rejects_raw_backtick_with_code_point_and_nested_json_path(self):
+        with self.assertRaises(InputError) as ctx:
+            decode_inline_slice('{"findings":[{"evidence":"`"}]}')
+        message = str(ctx.exception)
+        self.assertIn("raw U+0060", message)
+        self.assertIn("findings[0].evidence", message)
+
+    def test_rejects_nonhex_percent_escape(self):
+        self._assert_rejected('{"findings":[{"evidence":"%GG"}]}')
+
+    def test_rejects_truncated_percent_escape(self):
+        self._assert_rejected('{"findings":[{"evidence":"%4"}]}')
+
+    def test_rejects_invalid_utf8(self):
+        self._assert_rejected('{"findings":[{"evidence":"%E2%28%A1"}]}')
+
+    def test_rejects_percent_escape_for_safe_ascii(self):
+        self._assert_rejected('{"findings":[{"evidence":"%41"}]}')
+
+    def test_rejects_non_surrogate_u_escape(self):
+        self._assert_rejected('{"findings":[{"evidence":"%u0041"}]}')
+
+    def test_rejects_unsafe_object_key(self):
+        self._assert_rejected('{"findings":[{"`":"ok"}]}')
+
+    def test_rejects_duplicate_decoded_object_keys(self):
+        self._assert_rejected('{"findings":[{"id":"a","%69d":"b"}]}')
+
+    def test_rejects_raw_duplicate_object_keys(self):
+        with self.assertRaises(InputError) as ctx:
+            decode_inline_slice('{"findings":[],"findings":[]}')
+        self.assertIn("inline slice-input rejected", str(ctx.exception))
+
+    def test_rejects_non_finite_json_constants(self):
+        for constant in ("NaN", "Infinity", "-Infinity"):
+            with self.subTest(constant=constant):
+                self._assert_rejected(f'{{"findings":[{{"confidence":{constant}}}]}}')
+
+    def test_rejects_json_backslash_escape(self):
+        self._assert_rejected('{"findings":[{"evidence":"\\n"}]}')
+
+    def test_rejects_json_unicode_escape_for_a_safe_character(self):
+        self._assert_rejected('{"findings":[{"evidence":"\\u0041"}]}')
+
+    def test_rejects_non_object_root(self):
+        self._assert_rejected("[]")
+
+    def test_rejects_missing_findings_after_decode(self):
+        with self.assertRaises(InputError) as ctx:
+            _validate_input_shape(decode_inline_slice("{}"), inline=True)
+        self.assertIn("missing required 'findings' array", str(ctx.exception))
+
+    def test_receipt_rejection_is_an_honest_failed_envelope(self):
+        import io
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as input_file:
+            input_path = input_file.name
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as output_file:
+            output_path = output_file.name
+        try:
+            with (
+                patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "verify_findings.py",
+                        "--input",
+                        input_path,
+                        "--input-inline",
+                        '{"findings":[{"evidence":"%E2%28%A1"}]}',
+                        "--output",
+                        output_path,
+                    ],
+                ),
+                patch("sys.stderr", new_callable=io.StringIO),
+            ):
+                from scripts.verify_findings import main
+
+                main()
+            with open(output_path, encoding="utf-8") as fh:
+                envelope = json.load(fh)
+            self.assertEqual(envelope["status"], "failed")
+            self.assertEqual(envelope["exitCode"], 1)
+            self.assertIn("invalid UTF-8", envelope["stderr"])
+        finally:
+            os.unlink(input_path)
+            os.unlink(output_path)
 
 
 # ---------------------------------------------------------------------------
@@ -3005,7 +3333,7 @@ def _js_slice_input_fields(js_text):
 class TestSliceInputFieldsLockstep(unittest.TestCase):
     """_SLICE_INPUT_FIELDS (Python, this module's target) and VERIFY_SLICE_FIELDS
     (JS, workflows/src/stages.js) are ONE projection allowlist declared in two
-    runtimes -- materializeVerifySlices dispatches only these fields per finding,
+    runtimes -- the inline projection dispatches only these fields per finding,
     and every field verify_findings.py reads must be in the list (workflows/AGENTS.md:
     "one list in two runtimes, walked in the same order"). This pins the pair
     literally rather than trusting the prose comment to stay true.

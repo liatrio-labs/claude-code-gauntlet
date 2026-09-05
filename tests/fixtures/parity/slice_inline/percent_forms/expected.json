@@ -1,0 +1,4 @@
+{
+  "checksum": "fnv1a32:0x8b20e89e",
+  "encoded": "{\"findings\":[{\"id\":\"percent-1\",\"evidence\":\"literal %25 and %2541 and %25u0041\"}],\"base_branch\":\"main\"}"
+}

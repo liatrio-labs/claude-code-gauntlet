@@ -1,0 +1,11 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "percent-1",
+        "evidence": "literal % and %41 and %u0041"
+      }
+    ],
+    "base_branch": "main"
+  }
+}

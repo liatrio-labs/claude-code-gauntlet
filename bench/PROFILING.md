@@ -62,7 +62,7 @@ With neither `--out-json` nor `--out-md`, both are printed to stdout. `RUN_ID` i
   `summarize`, `discover` (the 7 discovery agentTypes, grouped together), the pure-JS
   `merge`/`filter` transform phases (no agent — see `workflows/src/stages.js`
   `runPhase('merge', ...)` / `runPhase('filter', ...)`; only observable as the gap
-  between the stages either side), `verify-input-writer-*`, `verify-slice-*`,
+  between the stages either side), `verify-slice-*`,
   `validate-batch-*`, `challenge-*`, `report-writer`, `artifact-writer`. No
   `report-writer` bucket exists in runs after v3.25 — the Report stage dispatches
   nothing. The bucket is kept so the archived corpus still profiles. `avg
@@ -88,10 +88,10 @@ With neither `--out-json` nor `--out-md`, both are printed to stdout. `RUN_ID` i
   `tool_result` found — e.g. a final `StructuredOutput` call with no reply captured
   before the agent terminates) and unmatched `tool_result` counts are reported per
   agent so you can see when the split is on shakier ground.
-- **Output-byte accounting** — in practice only the `artifact-writer` and
-  `verify-input-writer` agents call `Write`, but the profiler records every
-  `Write` tool call's `content` byte length (UTF-8) and how long that specific
-  call took on any agent's transcript.
+- **Output-byte accounting** — current verify executors receive an inline token and
+  do not call `Write`; historical `verify-input-writer-*` labels may still appear in
+  archived journals. The profiler records every `Write` tool call's `content` byte
+  length (UTF-8) and how long that specific call took on any agent's transcript.
 - **Orchestrator phase spans** — Phase 1 ends at the first `AskUserQuestion` tool call
   (the REVIEW.md/delivery-target gate); the time the human takes to answer it is
   reported separately from Phase 1 itself. Phase 2 ends at the `Workflow` tool call

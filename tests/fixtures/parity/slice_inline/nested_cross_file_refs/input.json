@@ -1,0 +1,21 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "refs",
+        "cross_file_refs": [
+          {
+            "file": "src/naïve.py",
+            "line_start": 3,
+            "note": "跨文件"
+          },
+          {
+            "file": "src/other.py",
+            "metadata": {"owner": "δοκιμή", "enabled": true}
+          }
+        ]
+      }
+    ],
+    "base_branch": "main"
+  }
+}

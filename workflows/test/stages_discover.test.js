@@ -4,7 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, agentActive, agentSpecs,
+  summarize, discover, mergeStage, worstCaseAgentCount, coarsenLimits, planVerifySlices,
+  VERIFY_ATTEMPTS_PER_SLICE, VERIFY_INLINE_CHAR_BUDGET, agentActive, agentSpecs,
   allActiveDimensionsDegraded, sharedContextLine,
 } from '../src/stages.js';
 import { AGENTS, DIMENSIONS } from '../src/registry.js';
@@ -385,6 +386,73 @@ test('coarsenLimits terminates starting from verifySliceSize:1 against a large f
   const coarse = coarsenLimits(limits, 20, 5000);
   assert.ok(coarse.verifySliceSize > 1, 'coarsening must widen the slice size off the floor');
   assert.ok(worstCaseAgentCount(coarse, 20, 5000) < 900);
+});
+
+test('worstCaseAgentCount uses the real inline planner for a findings array', () => {
+  const findings = [
+    { id: 'A', description: 'x'.repeat(30000) },
+    { id: 'B', description: 'y'.repeat(30000) },
+  ];
+  const limits = { summarizeBucketSize: 20, validateBatch: 25, challengeCap: 40, verifySliceSize: 200 };
+  const estimated = worstCaseAgentCount(limits, 0, findings.length);
+  const planned = worstCaseAgentCount(limits, 0, findings);
+  assert.equal(planned - estimated, 2, 'the budget split adds one slice and its retry');
+});
+
+test('array-form guard and coarsening use the real long base branch for verify planning', () => {
+  const baseBranch = `${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(249)}/${'b'.repeat(250)}`; // exactly 1,000 characters
+  assert.equal(baseBranch.length, 1000, 'the regression branch is exactly 1,000 characters');
+  const findings = Array.from({ length: 800 }, (_, i) => ({
+    id: `F${i}`,
+    description: (i % 2 ? 'y' : 'x').repeat(24500),
+  }));
+  const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
+  const plan = planVerifySlices(findings, limits.verifySliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
+  const nonVerify = 1 + AGENTS.length + 1 + 0 + 2;
+  assert.equal(
+    worstCaseAgentCount(limits, 0, findings, baseBranch) - nonVerify,
+    plan.slices.length * VERIFY_ATTEMPTS_PER_SLICE,
+  );
+  assert.notEqual(
+    plan.slices.length,
+    planVerifySlices(findings, limits.verifySliceSize, VERIFY_INLINE_CHAR_BUDGET, 'main').slices.length,
+    'the long branch must affect the measured envelope',
+  );
+
+  const coarse = coarsenLimits(limits, 0, findings, baseBranch);
+  const coarsePlan = planVerifySlices(findings, coarse.verifySliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
+  const coarseNonVerify = 1 + AGENTS.length
+    + Math.ceil(findings.length / Math.max(1, coarse.validateBatch || findings.length || 1))
+    + Math.min(findings.length, coarse.challengeCap != null ? coarse.challengeCap : findings.length)
+    + 2;
+  assert.equal(
+    worstCaseAgentCount(coarse, 0, findings, baseBranch),
+    coarseNonVerify + coarsePlan.slices.length * VERIFY_ATTEMPTS_PER_SLICE,
+  );
+});
+
+test('empty base branch normalizes to main in planner and array-form guard', () => {
+  // 352 is deliberately between the empty-branch and `main` envelope costs for two
+  // 100-character findings; without normalization the planner would make different slices.
+  const findings = Array.from({ length: 4 }, (_, i) => ({ id: `F${i}`, description: 'x'.repeat(100) }));
+  const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 0, verifySliceSize: 25 };
+  assert.deepEqual(
+    planVerifySlices(findings, limits.verifySliceSize, 352, '').slices,
+    planVerifySlices(findings, limits.verifySliceSize, 352, 'main').slices,
+  );
+  assert.equal(
+    worstCaseAgentCount(limits, 0, findings, ''),
+    worstCaseAgentCount(limits, 0, findings, 'main'),
+  );
+});
+
+test('coarsenLimits terminates when the array-form verify term is inline-budget-bound', () => {
+  const text = 'x'.repeat(22000);
+  const findings = Array.from({ length: 1000 }, (_, i) => ({ id: `F${i}`, description: text }));
+  const limits = { summarizeBucketSize: 20, validateBatch: 5000, challengeCap: 5, verifySliceSize: 1 };
+  const coarse = coarsenLimits(limits, 0, findings);
+  assert.equal(coarse.verifySliceSize, 4, 'the verify candidate stops after doubling no longer reduces slices');
+  assert.ok(worstCaseAgentCount(coarse, 0, findings) >= 900, 'a size-bound term remains disclosed rather than looping forever');
 });
 
 test('absent size limits mirror stage defaults — the guard never goes NaN-silent', () => {

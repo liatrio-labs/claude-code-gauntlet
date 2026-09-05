@@ -210,13 +210,6 @@ export function makeCtx(args, opts = {}) {
     if (label === 'summarize' || label === 'summarize-merge' || label.startsWith('summarize-bucket-')) {
       return { summary: 'the PR changes X' };
     }
-    if (label.startsWith('verify-input-writer')) {
-      // Faithful slice-input writer: echo back the exact paths it was asked to write, so
-      // materializeVerifySlices' write-proof gate (written must cover the dispatched paths)
-      // passes on the happy path. The recorder also remembers each slice's content so the
-      // executor branch below can stamp a matching input_checksum onto its envelope.
-      return rec.write(prompt);
-    }
     if (label.startsWith('verify-slice-')) {
       // Per-slice DELTA receipt (issue #25 PR2): label carries the index (and optional
       // -retry); nonce is `${nonce}.${i}` on attempt 1 and `${nonce}.${i}.r1` on the retry.
@@ -242,7 +235,7 @@ export function makeCtx(args, opts = {}) {
         nonce: sliceNonce,
         n_in: slice.length,
         overrides: originOverrides,
-      }), sliceIndex);
+      }), sliceIndex, prompt);
     }
     if (label.startsWith('validate-batch-')) return { validations: [] }; // object-rooted { validations: [...] }
     if (label.startsWith('challenge-')) return { confidence_claim_is_correct: 80, justification: 'claim holds' };

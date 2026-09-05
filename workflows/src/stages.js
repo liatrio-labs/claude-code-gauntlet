@@ -41,16 +41,98 @@ function modelFor(agentType, policy) {
   return resolvePolicy(agentType, { subagentModelEnv: policy.subagentModel, provider: policy.provider }).model;
 }
 
-// Shared char budget for a single agent's by-value PROMPT payload. Above it, verify
-// slice-input writing segments into multiple dispatches to stay under the receiving
-// agent's context.
-//
-// It does NOT bound the workflow's RETURN — that is RETURN_CHAR_BUDGET below. One
-// constant used to do both jobs, the second by analogy with the first, and the analogy
-// is false: a prompt is read by a model and a return is serialized by the harness, so
-// the two have neither the same limit nor the same failure mode. Three recorded runs
-// threw their resume state away against a ceiling that was never measured for it.
-const PROMPT_SEGMENT_CHAR_BUDGET = 100000;
+// The verify boundary carries the slice as one percent-encoded, shell-inert token. The
+// alphabet is intentionally narrower than SHELL_SAFE_RE below: JSON punctuation remains
+// in the outer document, but no encoded string can contain a shell operator, quote, or
+// escape-bearing character.
+export const VERIFY_INLINE_SAFE = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:/_-';
+const VERIFY_INLINE_HEX = '0123456789ABCDEF';
+const VERIFY_INLINE_PRINTABLE_RE = /^[\x20-\x26\x28-\x7E]*$/;
+
+function appendInlineByte(out, byte) {
+  out.push(`%${VERIFY_INLINE_HEX[(byte >> 4) & 0x0F]}${VERIFY_INLINE_HEX[byte & 0x0F]}`);
+}
+
+function appendInlineUtf8(out, codePoint) {
+  if (codePoint <= 0x7F) {
+    appendInlineByte(out, codePoint);
+  } else if (codePoint <= 0x7FF) {
+    appendInlineByte(out, 0xC0 | (codePoint >> 6));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  } else if (codePoint <= 0xFFFF) {
+    appendInlineByte(out, 0xE0 | (codePoint >> 12));
+    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  } else {
+    appendInlineByte(out, 0xF0 | (codePoint >> 18));
+    appendInlineByte(out, 0x80 | ((codePoint >> 12) & 0x3F));
+    appendInlineByte(out, 0x80 | ((codePoint >> 6) & 0x3F));
+    appendInlineByte(out, 0x80 | (codePoint & 0x3F));
+  }
+}
+
+// encodeInlineString(s) -> a JSON-string-safe value with no JSON or shell escapes.
+// UTF-16 is walked deliberately: a well-formed surrogate pair becomes its four UTF-8
+// bytes, while a lone surrogate is represented as %uXXXX so Python can restore the exact
+// code unit rather than replacing it. A safe code unit passes through unchanged.
+export function encodeInlineString(s) {
+  const text = String(s);
+  const out = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const unit = text.charCodeAt(i);
+    const ch = text[i];
+    if (VERIFY_INLINE_SAFE.includes(ch)) {
+      out.push(ch);
+      continue;
+    }
+    if (unit >= 0xD800 && unit <= 0xDBFF) {
+      const next = i + 1 < text.length ? text.charCodeAt(i + 1) : 0;
+      if (next >= 0xDC00 && next <= 0xDFFF) {
+        appendInlineUtf8(out, 0x10000 + ((unit - 0xD800) << 10) + (next - 0xDC00));
+        i += 1;
+        continue;
+      }
+      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
+      continue;
+    }
+    if (unit >= 0xDC00 && unit <= 0xDFFF) {
+      out.push(`%u${unit.toString(16).toUpperCase().padStart(4, '0')}`);
+      continue;
+    }
+    appendInlineUtf8(out, unit);
+  }
+  return out.join('');
+}
+
+function encodeInlineValue(value) {
+  if (typeof value === 'string') return encodeInlineString(value);
+  if (Array.isArray(value)) return value.map(encodeInlineValue);
+  if (value && typeof value === 'object') {
+    const out = Object.create(null);
+    for (const [key, child] of Object.entries(value)) {
+      out[encodeInlineString(key)] = encodeInlineValue(child);
+    }
+    return out;
+  }
+  return value;
+}
+
+// encodeSliceInline(content) -> compact JSON whose only non-JSON punctuation is from
+// printable ASCII excluding apostrophe. This post-condition is the shell safety belt:
+// shellWord can therefore wrap the complete document in one POSIX single-quoted token.
+export function encodeSliceInline(content) {
+  const encoded = JSON.stringify(encodeInlineValue(content));
+  if (typeof encoded !== 'string' || !VERIFY_INLINE_PRINTABLE_RE.test(encoded)) {
+    throw new Error('encodeSliceInline produced a non-printable or quoted payload');
+  }
+  return encoded;
+}
+
+// The largest payloads measured to copy exactly were 43,636 and 51,744 chars (2/2 sonnet
+// executors at each size); anything above 51,744 is unmeasured, so the budget is pinned
+// just under that measurement (the rest of the command adds ~300 chars). Linux
+// MAX_ARG_STRLEN is 131,072, far above this.
+export const VERIFY_INLINE_CHAR_BUDGET = 50000;
 
 // Char budget for the workflow's RETURN value — the object the HARNESS serializes to
 // `tasks/<taskid>.output`. Measured 2026-07-30 with a zero-subagent probe: the on-disk
@@ -157,25 +239,70 @@ export function sharedContextLine(inp) {
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 
-// Greedy pack: accumulate items into a chunk until adding the next would exceed
-// `budget` serialized chars, then start a new chunk. A single oversized item still
-// goes in a chunk of its own (never dropped). Used by verify slice-input writing.
-function chunkBySerializedSize(items, budget) {
-  const chunks = [];
-  let cur = [];
-  let curSize = 0;
-  for (const it of items) {
-    const size = JSON.stringify(it).length;
-    if (cur.length && curSize + size > budget) {
-      chunks.push(cur);
-      cur = [];
-      curSize = 0;
+// planVerifySlices(findings, sliceSize, budget, baseBranch) -> { slices, oversize, closeReasons }.
+// A projected finding's cost is its encoded object alone. A slice's exact cost is the
+// encoded empty envelope plus those object costs plus one comma for each additional
+// finding. The greedy planner keeps both the finding-count and inline-character bounds
+// in one place, and planner consumers and the dispatch assertion share this accounting.
+// closeReasons is aligned with slices: a terminal slice has no following boundary and is
+// tagged null; every other closed slice names the bound that closed it.
+const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
+const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
+  envelopeLength + findingCost + Math.max(0, findingCount - 1);
+const projectedVerifyFindingInlineLength = (finding) =>
+  encodeSliceInline(projectVerifySliceFinding(finding)).length;
+
+// This is the planner's predicted length, exposed for the exact-accounting test and
+// kept on the same cost primitive as the greedy admission check above.
+export function predictVerifySliceInlineLength(slice, baseBranch = 'main') {
+  const branch = effectiveVerifyBaseBranch(baseBranch);
+  const envelopeLength = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  let findingCost = 0;
+  for (const finding of slice) findingCost += projectedVerifyFindingInlineLength(finding);
+  return verifySliceLengthFromCosts(envelopeLength, findingCost, slice.length);
+}
+
+export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main') {
+  const source = Array.isArray(findings) ? findings : [];
+  const branch = effectiveVerifyBaseBranch(baseBranch);
+  const maxFindings = Math.max(1, sliceSize || source.length || 1);
+  const maxChars = Math.max(1, budget || VERIFY_INLINE_CHAR_BUDGET);
+  const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
+  const slices = [];
+  const oversize = [];
+  const closeReasons = [];
+  let current = [];
+  let currentFindingCost = 0;
+  const flush = (reason = null) => {
+    if (current.length > 0) {
+      slices.push(current);
+      closeReasons.push(reason);
     }
-    cur.push(it);
-    curSize += size;
+    current = [];
+    currentFindingCost = 0;
+  };
+
+  for (const finding of source) {
+    const findingCost = projectedVerifyFindingInlineLength(finding);
+    const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
+    if (singleCost > maxChars) {
+      flush('oversize');
+      oversize.push(finding);
+      continue;
+    }
+    const candidateCost = verifySliceLengthFromCosts(
+      envelopeAllowance,
+      currentFindingCost + findingCost,
+      current.length + 1,
+    );
+    if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
+      flush(current.length >= maxFindings ? 'count' : 'budget');
+    }
+    current.push(finding);
+    currentFindingCost += findingCost;
   }
-  if (cur.length) chunks.push(cur);
-  return chunks.length ? chunks : [[]];
+  flush();
+  return { slices, oversize, closeReasons };
 }
 
 // --- Phase 1: Summarize -----------------------------------------------------
@@ -762,10 +889,9 @@ const VERIFY_SCHEMA = {
         // Optional in the SCHEMA, mandatory in trustSlice — an absent proof is a legal
         // thing for the executor to say and an untrusted thing for the workflow to act on.
         deltas_checksum: { type: 'string' },
-        // The slice-input content proof (issue #69 / #25 req 4-6): fnv1a32 over the
-        // document the script PARSED, compared in trustSlice against the checksum this
-        // stage computed over the content it dispatched. Optional in the SCHEMA,
-        // mandatory in trustSlice — same shape and same reason as deltas_checksum.
+        // The inline content proof: fnv1a32 over the document the script decoded,
+        // compared in trustSlice against the checksum this stage computed over the
+        // content it dispatched. Optional in the SCHEMA, mandatory in trustSlice.
         input_checksum: { type: 'string' },
       },
     },
@@ -789,25 +915,13 @@ const VERIFY_SCHEMA = {
         },
       },
     },
-    // Present ONLY when the script recovered a slice-input file whose sole defect was
-    // trailing closing punctuation. Never declared `required` at the TOP level (an absent
-    // object is a legal, common answer) — but `trailing_bytes` IS required WITHIN the
-    // object once it exists, because the RECOVERED disclosure keys on a usable string
-    // there, not on the object's mere presence: a schema-legal `input_recovery: {}` must
-    // not be answerable at all, or trustSlice's caller would have to distinguish "no
-    // recovery" from "a recovery that forgot to say what it recovered" on its own.
-    input_recovery: {
-      type: 'object',
-      properties: { trailing_bytes: { type: 'string' } },
-      required: ['trailing_bytes'],
-    },
     exitCode: { type: 'number' },
     stderr: { type: 'string' },
   },
   required: ['status'], // discriminated union: receipt/result only present on status:'ok'
 };
 
-// Dispatches per verify slice: the first executor call plus EXACTLY ONE deterministic
+// Dispatches per verify slice: the first executor call plus EXACTLY ONE fresh
 // re-dispatch when that call comes back untrusted (verifySliceWithRetry).
 //
 // It is a named constant because two independent things must agree with the retry
@@ -822,16 +936,16 @@ export const VERIFY_ATTEMPTS_PER_SLICE = 2;
 // legitimate mitigation for a transcription-fidelity failure (#25 req 1 — a smaller slice
 // means less content per executor round trip, less to transcribe faithfully, less to
 // mismatch), so clamping it upward here would remove the exact knob an operator reaches for
-// under that failure mode. Instead: degrade-and-disclose. When a configured verifySliceSize
+// under that failure mode. Instead: degrade-and-disclose. When the effective verifySliceSize
 // produces MORE than VERIFY_FANOUT_DISCLOSE_THRESHOLD slices, verifyStage pushes a gap
-// naming the configured size, the resulting slice count, and the dispatch ceiling
-// (slices * VERIFY_ATTEMPTS_PER_SLICE) — an operator who set verifySliceSize:1 on a
-// 500-finding run sees the cost of that choice instead of discovering it from a slow run or
-// a worstCaseAgentCount rejection.
+// naming the effective size, the resulting slice count, the dispatch ceiling
+// (slices * VERIFY_ATTEMPTS_PER_SLICE), and the bound that closed the slices — an operator
+// sees whether raising verifySliceSize can actually reduce the fan-out instead of discovering
+// the cost from a slow run or a worstCaseAgentCount rejection.
 export const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 
 // verifyStage(ctx, input) -> { findings, verified: boolean, gaps }
-// Slices findings into limits.verifySliceSize chunks and dispatches an `executor` agent
+// Slices findings into limits.verifySliceSize/budget-bounded chunks and dispatches an `executor` agent
 // per slice — one call, plus at most one retry (below) — SEQUENTIALLY (not parallel())
 // so each envelope pairs to its slice by order. Each executor runs the pinned
 // verify_findings.py receipt command and returns VERIFY_SCHEMA: the receipt plus a
@@ -843,8 +957,8 @@ export const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 // longer in the data path at all, only in the decision path.
 //
 // DEGRADATION IS PER SLICE (issue #54, and issue #25 requirement 3). An untrusted slice
-// — receipt mismatch, status:'failed', an agent() throw, or a slice whose --input file
-// was never provably written — degrades ONLY ITS OWN findings to the UNVERIFIED shape
+// — receipt mismatch, status:'failed', an agent() throw, or a transcription that changes
+// the inline document — degrades ONLY ITS OWN findings to the UNVERIFIED shape
 // (origin='unknown', surfaced-classification skipped) and the loop keeps going; slices
 // that verify cleanly keep their verified output. This replaced an all-or-nothing
 // `break` under which one transient hiccup on slice 0 cost EVERY slice its
@@ -858,8 +972,8 @@ export const VERIFY_FANOUT_DISCLOSE_THRESHOLD = 5;
 // missing, never silently upgraded. `verified` is true only when ZERO slices degraded, so
 // the one top-level boolean keeps meaning "this whole run's classification is trustworthy".
 //
-// ("this stage", not "trustSlice": an agent() throw is caught in dispatchVerifySlice and a
-// missing slice input in materializeVerifySlices — trustSlice never sees either.)
+// ("this stage", not "trustSlice": an agent() throw is caught in dispatchVerifySlice —
+// trustSlice never sees it.)
 //
 // The never-drop half is now structural rather than merely intended (#25 req 2, which
 // removed the qualifier that used to stand here). The findings this stage emits on the
@@ -879,6 +993,7 @@ export async function verifyStage(ctx, input) {
   const nonce = inp.nonce;
   const headShaShort = inp.headShaShort;
   const sliceSize = effectiveSliceSize(limits, findings.length);
+  const verify = inp.verify || {};
 
   // Empty set: nothing to verify, trivially trusted (no executor dispatched). The
   // counters are still emitted, zero-populated: a consumer that has to distinguish
@@ -889,55 +1004,88 @@ export async function verifyStage(ctx, input) {
 
   const model = modelFor('code-gauntlet:executor', policy);
 
-  const slices = [];
-  for (let i = 0; i < findings.length; i += sliceSize) slices.push(findings.slice(i, i + sliceSize));
+  const baseBranch = effectiveVerifyBaseBranch(verify.baseBranch);
+  const plan = planVerifySlices(findings, sliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
+  const slices = plan.slices;
+
+  // The planner records the actual bound that closed each slice. Read those tags directly:
+  // the next planned slice may begin after an oversize finding that was skipped, so its first
+  // finding cannot reliably reconstruct the boundary cause.
+  const fanoutBounds = { countBound: false, budgetBound: false, oversizeBound: false };
+  for (let i = 0; i + 1 < slices.length; i += 1) {
+    if (plan.closeReasons[i] === 'count') fanoutBounds.countBound = true;
+    else if (plan.closeReasons[i] === 'budget') fanoutBounds.budgetBound = true;
+    else if (plan.closeReasons[i] === 'oversize') fanoutBounds.oversizeBound = true;
+  }
 
   // Degrade-and-disclose (issue #72), not abort: a small verifySliceSize is a legitimate
   // transcription-fidelity mitigation, not a mistake to reject, but its dispatch cost is
   // real and otherwise invisible until the run runs long or worstCaseAgentCount rejects it
   // outright. Collected here rather than pushed straight into `gaps` so it lands ahead of
   // any per-slice degrade gap, in the order this stage discovers information.
+  let fanoutAdvice;
+  if (fanoutBounds.budgetBound) {
+    fanoutAdvice = 'The inline character budget bound this split; raising verifySliceSize will not reduce this fan-out.';
+  } else if (fanoutBounds.oversizeBound) {
+    fanoutAdvice = 'An oversize finding forced this split; raising verifySliceSize will not reduce this fan-out.';
+  } else if (fanoutBounds.countBound) {
+    fanoutAdvice = 'Raise verifySliceSize to reduce fan-out.';
+  } else {
+    fanoutAdvice = 'The split bound could not be classified; inspect the effective slice size and inline budget.';
+  }
   const fanoutGaps = slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD
-    ? [`verify_fanout: verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
+    ? [`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
       + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
-      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. Raise verifySliceSize to reduce fan-out, `
-      + 'or keep it small deliberately if this run is mitigating a transcription-fidelity failure (issue #25).']
+      + `executor dispatches at ${VERIFY_ATTEMPTS_PER_SLICE} attempts per slice. ${fanoutAdvice}`]
     : [];
-
-  // Materialize each slice's --input JSON on disk BEFORE the executor loop. The
-  // executor reads ${inputPathBase}.slice{i}.json, but the workflow script has no disk
-  // access and the merged findings exist only mid-workflow (the skill CANNOT pre-write
-  // them). One or more artifact-writer dispatches (segmented when the payload is large)
-  // write them by value. A writer GROUP that fails takes only the
-  // slices IT carried to the UNVERIFIED path — never fabricate a verification for a
-  // slice whose input is not provably on disk, and never punish the slices whose input is.
-  const materialized = await materializeVerifySlices(c, inp, slices, policy);
 
   const out = [];
   const gaps = [...fanoutGaps];
   let degradedSlices = 0;
-  const inputProof = { ...emptyInputProof(), slices: slices.length };
+  const inputProof = { ...emptyInputProof(), slices: slices.length, oversize: 0 };
+
+  // Keep oversize findings in original order with planned slices. They are degraded
+  // individually, never dispatched, and do not consume a slice nonce or executor
+  // attempt. The public planner result remains exactly { slices, oversize }.
+  const units = [
+    ...slices.map((slice, i) => ({ kind: 'slice', slice, index: i, position: findings.indexOf(slice[0]) })),
+    ...plan.oversize.map((finding) => ({ kind: 'oversize', finding, position: findings.indexOf(finding) })),
+  ].sort((a, b) => a.position - b.position);
 
   // The output is assembled in SLICE-INDEX order — trusted output and degraded originals
   // alike — because downstream ranking (applyChallenges' stable sort on severity then
   // confidence) breaks ties by array position. Completion order or "trusted first" would
   // make delivery ordering vary run to run for tied findings.
-  for (let i = 0; i < slices.length; i += 1) {
-    const slice = slices[i];
-    const expectedInputChecksum = materialized.expected.get(i);
+  for (const unit of units) {
+    if (unit.kind === 'oversize') {
+      const content = { findings: [projectVerifySliceFinding(unit.finding)], base_branch: baseBranch };
+      const encodedLength = encodeSliceInline(content).length;
+      inputProof.oversize += 1;
+      out.push(...degradedSlice([unit.finding]));
+      gaps.push(verifyDegradeGap(
+        `finding ${unit.finding && unit.finding.id !== undefined ? unit.finding.id : '(missing id)'} has encoded length ${encodedLength}, over VERIFY_INLINE_CHAR_BUDGET=${VERIFY_INLINE_CHAR_BUDGET}`,
+        1,
+        findings.length,
+      ));
+      degradedSlices += 1;
+      continue;
+    }
+    const i = unit.index;
+    const slice = unit.slice;
+    const content = { findings: slice.map(projectVerifySliceFinding), base_branch: baseBranch };
+    const expectedInputChecksum = firstUnsafeNumber(content, `slice${i}`) === null
+      ? fnv1a32(JSON.stringify(content, null, 2))
+      : null;
+    const payload = encodeSliceInline(content);
+    const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
+    if (payload.length !== predictedPayloadLength || predictedPayloadLength > VERIFY_INLINE_CHAR_BUDGET) {
+      throw new Error(`verify inline planner produced an oversized slice ${i} (${payload.length} > ${VERIFY_INLINE_CHAR_BUDGET})`);
+    }
     const degrade = (detail) => {
       out.push(...degradedSlice(slice));
       gaps.push(verifyDegradeGap(detail, slice.length, findings.length));
       degradedSlices += 1;
     };
-
-    // No write proof for this slice's --input file: the executor would read a file that
-    // may not exist, so it is never dispatched. Only this slice degrades.
-    const unwritten = materialized.failed.get(i);
-    if (unwritten !== undefined) {
-      degrade(`slice ${i} (slice-input group ${unwritten.group}): ${unwritten.reason}`);
-      continue;
-    }
 
     // The delta echo is keyed by finding id, so a slice whose own findings have no usable
     // id set cannot be joined no matter how faithfully the executor answers. Checked
@@ -952,17 +1100,20 @@ export async function verifyStage(ctx, input) {
       continue;
     }
 
-    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum });
+    const attempt = await verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids: ids.ids, expectedInputChecksum, inlinePayload: payload });
     if (!attempt.ok) {
       if (attempt.inputFault === 'mismatch') inputProof.mismatched += 1;
       else if (attempt.inputFault === 'missing') inputProof.missing += 1;
       degrade(`slice ${i}: ${attempt.reason}`);
       continue;
     }
-    const recoveryBytes = usableRecoveryBytes(attempt.recovery);
     if (expectedInputChecksum == null) inputProof.unprovable += 1;
-    else if (recoveryBytes) inputProof.recovered += 1;
     else inputProof.proven += 1;
+    if (attempt.retried) {
+      inputProof.retried += 1;
+      if (attempt.inputFault === 'mismatch') inputProof.retriedMismatch += 1;
+      else if (attempt.inputFault === 'missing') inputProof.retriedMissing += 1;
+    }
     // Trusted: this slice's OWN findings, enriched by the script's delta (origin
     // new/surfaced, the surfaced severity downgrade, the factual-verification confidence
     // re-score). Everything the script did not touch — description, evidence,
@@ -972,23 +1123,6 @@ export async function verifyStage(ctx, input) {
     // trustSlice requires the script's elimination stamp on every one of them).
     out.push(...attempt.verified);
     if (attempt.gap) gaps.push(attempt.gap);
-    if (recoveryBytes) {
-      // Degraded-but-disclosed, never invisible: the writer appended bytes after a
-      // complete document and the script recovered from it. Nothing was lost — the
-      // LEADING document is the one the input proof matched — but a tolerance the run
-      // does not state is a tolerance that stops being noticed. Deliberately carries no
-      // UNVERIFIED token and none of the bench checker's degrade sentinels: this slice
-      // degraded nothing (bench/runner/check.py _DEGRADE_RE).
-      //
-      // The closing clause states only what was actually established: "proven against
-      // dispatch" is a claim the unprovable slice has no right to make, and a
-      // disclosure that overstates its evidence is the reporting defect this
-      // pipeline exists to prevent.
-      const provenClause = expectedInputChecksum == null
-        ? 'no cross-runtime proof was computable for this slice; verdicts trusted on the remaining guards'
-        : 'leading document proven against dispatch, verdicts trusted';
-      gaps.push(`verify: RECOVERED — slice ${i}: writer appended trailing bytes ${JSON.stringify(recoveryBytes)} after a complete slice-input document; ${provenClause}`);
-    }
   }
 
   return { findings: out, verified: degradedSlices === 0, gaps, inputProof };
@@ -997,7 +1131,7 @@ export async function verifyStage(ctx, input) {
 // One slice's share of the UNVERIFIED degradation: its ORIGINAL findings re-emitted with
 // origin='unknown' (surfaced-classification skipped). Nothing is dropped and nothing is
 // upgraded. Numeric-string fields are pinned here for the same reason they are pinned on
-// the slice-input path: the trusted path returns the script's re-scored numbers, but this
+// the inline path: the trusted path returns the script's re-scored numbers, but this
 // path re-emits discovery-shaped findings straight through. The discovery schema now
 // declares confidence a NUMBER (FINDING_PROP_TYPES in registry.js), so the string form
 // "85" no longer arrives from a live dispatch; the pin is defence-in-depth for
@@ -1008,51 +1142,37 @@ function degradedSlice(slice) {
   return slice.map((f) => ({ ...pinNumericFields(f), origin: 'unknown' }));
 }
 
-// The slice-input proof ledger. One object, one construction site, so a new path
-// cannot forget a key (issue #69 / #25 req 4-6). Counters are DISJOINT: a trusted slice
-// lands in exactly one of proven / recovered / unprovable, a degraded one in at most one
-// of mismatched / missing (a slice degraded for any other reason is counted in `slices`
-// and nowhere else).
-const emptyInputProof = () => ({ slices: 0, proven: 0, recovered: 0, mismatched: 0, missing: 0, unprovable: 0 });
+// The inline proof ledger. One object, one construction site, so a new path
+// cannot forget a key (issue #69 / #25 req 4-6). `retried` counts slices trusted only
+// on their second inline transcription attempt; `retriedMismatch`/`retriedMissing` are
+// disjoint subsets whose FIRST attempt had that input fault and whose second attempt was
+// trusted. `mismatched`/`missing` count only slices that still failed after the retry.
+// `oversize` counts findings that could not be dispatched within the measured command budget.
+const emptyInputProof = () => ({
+  slices: 0, proven: 0, mismatched: 0, missing: 0, unprovable: 0, oversize: 0,
+  retried: 0, retriedMismatch: 0, retriedMissing: 0,
+});
 
-// A recovery is only USABLE when it names a non-empty `trailing_bytes` string. The
-// schema declares `input_recovery` an object with no top-level `required`, so an absent
-// recovery (`undefined`) is the common legal answer — but WITHIN the object,
-// `trailing_bytes` is schema-required (VERIFY_SCHEMA), so a StructuredOutput answer can
-// still arrive malformed only via a non-string value the schema's own type check missed,
-// or (pre-schema-fix) an empty string. Both the `recovered` counter and the RECOVERED
-// disclosure key on THIS, never on the weaker truthiness of the `input_recovery` object
-// itself — an object with no usable bytes is not a recovery, it is an unusable answer,
-// and treating it as one would fabricate a disclosure claiming bytes that do not exist.
-function usableRecoveryBytes(recovery) {
-  const bytes = recovery && recovery.trailing_bytes;
-  return typeof bytes === 'string' && bytes !== '' ? bytes : null;
-}
-
-// The loud gap for one degraded slice. `detail` names the slice (and, for a write
-// failure, the writer group) and carries the underlying reason, so a reader can tell
+// The loud gap for one degraded slice. `detail` names the slice and carries the
+// underlying reason, so a reader can tell
 // WHICH share of the run lost its classification and why; `k of n` states the blast
 // radius directly, which is the whole point of per-slice degradation — a run that
 // degrades 2 of 16 findings must not read the same as one that degrades all 16.
 //
 // The UNVERIFIED token is load-bearing: tests and the bench checker's degrade scan key
 // on substrings of this string, and the underlying reason is passed through VERBATIM (a
-// write-proof failure's "(no write proof)" is exactly what bench/runner/check.py's
-// _DEGRADE_RE matches — paraphrasing it would silently disable that detection).
+// persist-path failures retain their registered sentinel in the persistence functions;
+// verify failures use the inline-channel reason directly.
 function verifyDegradeGap(detail, k, n) {
   return `verify: UNVERIFIED — ${detail}; ${k} of ${n} finding(s) marked origin=unknown, surfaced-classification skipped`;
 }
 
-// verifySliceWithRetry -> { ok:true, verified, gap } | { ok:false, reason }
+// verifySliceWithRetry -> { ok:true, verified, gap, retried } | { ok:false, reason }
 // One slice, dispatched at most VERIFY_ATTEMPTS_PER_SLICE times: the first executor call
 // and — only if that one came back untrusted — exactly ONE re-dispatch before degrading.
-// Same shape and rationale as writeArtifactsDerived's single retry: the executor is a
-// SAMPLED AGENT, not a function, so a second dispatch is a fresh sample and is a
-// plausible fix for the whole failure set here (a dropped/garbled receipt echo, a
-// truncated result body, a fabricated elimination, a schema-retry exhaustion or timeout
-// throw). That is why this retries uniformly where the persist path classifies: there is
-// no verify failure class for which "our dispatch never reached the script" is provable,
-// so a blanket single retry is both simpler and never less honest than a taxonomy.
+// The executor is a sampled agent, not a function, so a second inline transcription is
+// a fresh sample and a plausible fix for a dropped/garbled receipt echo, a truncated
+// result body, a fabricated elimination, schema-retry exhaustion, or timeout throw.
 //
 // The retry carries a DISTINCT nonce (`${nonce}.${i}.r1`). Re-using the slice nonce
 // would move the exact confusion trustSlice defends against from space (two equal-length
@@ -1064,26 +1184,12 @@ function verifyDegradeGap(detail, k, n) {
 // The nonce is now COMPUTED ONCE and threaded into verifyPrompt/verifyCommand. It used
 // to be derived independently at both sites, which silently required the two formulas to
 // stay identical; an attempt-varying nonce makes that a live bug rather than a latent one.
-async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids, expectedInputChecksum }) {
+async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaShort, ids, expectedInputChecksum, inlinePayload }) {
   const attempt = (sliceNonce, label) =>
-    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum });
+    dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, inlinePayload });
 
   const first = await attempt(`${nonce}.${i}`, `verify-slice-${i}`);
-  if (first.ok) return { ok: true, verified: first.verified, gap: null, recovery: first.recovery };
-
-  // A DETERMINISTIC fault is one a fresh sample cannot fix: the slice-input content
-  // proof compares the file on disk against what this stage dispatched, and a retry
-  // re-reads the same file. Spending the second dispatch would buy the identical answer
-  // and inflate nothing but latency. This only ever REDUCES the dispatch count, so
-  // worstCaseAgentCount's VERIFY_ATTEMPTS_PER_SLICE term and coarsenLimits' matching
-  // lever stay exactly as they are — a bound that is still a bound.
-  if (first.deterministic) {
-    return {
-      ok: false,
-      reason: `${first.reason} — not retried: a re-dispatch reads the same slice-input file, so this fault is deterministic`,
-      inputFault: first.inputFault,
-    };
-  }
+  if (first.ok) return { ok: true, verified: first.verified, gap: null, retried: false };
 
   const second = await attempt(`${nonce}.${i}.r1`, `verify-slice-${i}-retry`);
   if (second.ok) {
@@ -1094,7 +1200,8 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaSho
       ok: true,
       verified: second.verified,
       gap: `verify-slice-retry: slice ${i}'s first executor dispatch was untrusted (${first.reason}); a second dispatch was trusted and this slice's verified findings are from that attempt`,
-      recovery: second.recovery,
+      retried: true,
+      inputFault: first.inputFault,
     };
   }
   return {
@@ -1106,12 +1213,12 @@ async function verifySliceWithRetry(c, inp, i, slice, { model, nonce, headShaSho
 
 // One executor dispatch for one slice. Never throws: a thrown agent() becomes an
 // untrusted result carrying the message, exactly as the pre-retry loop recorded it.
-async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum }) {
+async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, sliceNonce, label, ids, expectedInputChecksum, inlinePayload }) {
   let env;
   try {
     // agent(promptString, opts); the pinned command is embedded in the prompt
     // (verifyPrompt), which is how the executor agent receives it.
-    env = await c.agent(verifyPrompt(inp, i, sliceNonce), {
+    env = await c.agent(verifyPrompt(inp, i, sliceNonce, inlinePayload), {
       label,
       agentType: 'code-gauntlet:executor',
       model,
@@ -1122,11 +1229,9 @@ async function dispatchVerifySlice(c, inp, i, slice, { model, headShaShort, slic
   }
   const trust = trustSlice(env, { nonce: sliceNonce, headShaShort, n: slice.length, ids, expectedInputChecksum });
   if (!trust.ok) {
-    return { ok: false, reason: trust.reason, inputFault: trust.inputFault, deterministic: trust.deterministic };
+    return { ok: false, reason: trust.reason, inputFault: trust.inputFault };
   }
-  // `input_recovery` rides out on the TRUSTED path only: the whole point of disclosing
-  // it is that the leading document was proven against dispatch, so the verdicts stand.
-  return { ok: true, verified: joinVerifyDeltas(slice, env.result.deltas), recovery: env.input_recovery };
+  return { ok: true, verified: joinVerifyDeltas(slice, env.result.deltas) };
 }
 
 // dispatchableIds(slice) -> { ok:true, ids:[...] } | { ok:false, reason }
@@ -1213,13 +1318,12 @@ export function joinVerifyDeltas(slice, deltas) {
 }
 
 // Numeric finding fields that verify_findings.py does arithmetic on (line_start - 1,
-// line comparisons). Pin them to real numbers before the slice-input JSON is written
-// AND again on the join path, mirroring verify_findings._coerce_numeric_fields:
+// line comparisons). Pin them to real numbers before inline encoding AND again on the
+// join path, mirroring verify_findings._coerce_numeric_fields:
 //
-//   1. A clean integer string ("153") becomes a number — a quoted value makes the
+//   1. A clean integer string ("153") becomes a number — a quoted value would make
 //      receipt-path arithmetic raise `unsupported operand type(s) for -: 'str' and
-//      'int'` and degrade the whole slice to UNVERIFIED (the TypeError the live smoke
-//      run hit).
+//      'int'` and degrade the whole slice to UNVERIFIED.
 //   2. A finite non-integral number is half-up rounded to an int. Line fields are NOT
 //      in the delta (the script does not re-decide them), so without this the join
 //      would keep the fractional dispatched value while verification ran against the
@@ -1252,7 +1356,7 @@ function pinNumericFields(finding) {
   return out;
 }
 
-// The slice-input projection (issue #50b): the fields verify_findings.py consults on a
+// The inline slice projection: the fields verify_findings.py consults on a
 // dispatched slice, walked in this fixed order so the serialized key order is
 // deterministic — NOT the order the script reads them in (classify_blame's reads come
 // first there and don't match this order). One list in two runtimes with
@@ -1280,124 +1384,8 @@ export function projectVerifySliceFinding(finding) {
   return pinNumericFields(projected);
 }
 
-// Dispatch the artifact-writer to persist each slice's --input JSON (the shape
-// verify_findings.py --input reads: { findings, base_branch }). Segmented under the
-// shared char budget. Returns { failed, expected } — `failed` a Map from SLICE INDEX to
-// { group, reason } for every slice whose input file is not provably on disk (an empty
-// map means every slice's input was written and proven); `expected` a Map from SLICE
-// INDEX to the slice-input content proof this stage computed over the content it
-// dispatched (string), or null when no cross-runtime proof is computable for that slice.
-//
-// The per-GROUP fan-out goes through parallel() (issue #38, S2) — the groups are
-// independent writes to distinct paths — and each thunk owns its try/catch, so a thrown
-// member can never escape and parallel() never has to null it (the message survives into
-// the reason string). NOTE this is the group loop only; verifyStage's per-SLICE executor
-// loop stays sequential on purpose (each envelope pairs to its slice by order).
-//
-// A failed group takes down only ITS OWN slices (issue #54). This used to return the
-// FIRST failure in group-index order and degrade the entire run, which threw away both
-// the groups that wrote successfully and every other group's failure reason. Failures are
-// still surfaced in a deterministic order — verifyStage walks slices by index and groups
-// are contiguous in that index, so gap order is fixed by construction, not by which
-// parallel member happened to settle first.
-async function materializeVerifySlices(c, inp, slices, policy) {
-  const v = inp.verify || {};
-  const inputPathBase = v.inputPathBase || 'phase4-input';
-  const model = modelFor('code-gauntlet:artifact-writer', policy);
-  const entries = slices.map((slice, i) => ({
-    path: `${inputPathBase}.slice${i}.json`,
-    content: { findings: slice.map(projectVerifySliceFinding), base_branch: v.baseBranch },
-  }));
-  // The slice-input CONTENT proof (issue #25 requirements 4-6). The write proof below
-  // only ever confirms a path came back in the echo — it cannot tell a file holding
-  // this slice's document from a file holding a sibling's, an empty one, or one the
-  // writer paraphrased. verify_findings.py checksums the document it actually PARSED
-  // and reports it in the receipt; this is the other half of that comparison, computed
-  // over the content this stage dispatched.
-  //
-  // A VALUE proof, not a byte proof, and deliberately so: the writer persists compact
-  // JSON (measured on both retained captures from smoke-20260728-144630-a162ecd), so a
-  // byte comparison against the pretty form would fail every real run. Both runtimes
-  // hash a canonical re-serialisation of the same value — the identical pair the
-  // persist path uses, pinned by tests/fixtures/parity/slice_input_proof/.
-  //
-  // null means NO PROOF IS COMPUTABLE: the Python twin refuses a number it cannot spell
-  // identically (firstUnsafeNumber's rule, assemble_artifacts.assert_js_reproducible).
-  // Since issue #50b, the fields pinNumericFields walks (line_start, line_end, confidence)
-  // already had a fractional value rounded inside projectVerifySliceFinding — but that is
-  // not every numeric the slice document can carry: `cross_file_refs` is projected too,
-  // and while the schema types its items as strings, a legacy/checkpoint-resume finding is
-  // off-schema and firstUnsafeNumber walks arrays, so a numeric hiding inside
-  // `cross_file_refs` still reaches this branch unrounded. Likewise an already-integral
-  // pinned field outside JS's safe integer range (e.g. a corrupted line_start) is left
-  // exactly as large as it arrived — pinNumericFields only rounds a FINITE NON-INTEGER
-  // value. Either way the check is skipped rather than failed — every other guard still
-  // applies, and degrading a slice over one unspellable value would repeat the defect
-  // issue #69 closes.
-  const expected = new Map(
-    entries.map((e, i) => [
-      i,
-      firstUnsafeNumber(e.content, `slice${i}`) === null
-        ? fnv1a32(JSON.stringify(e.content, null, 2))
-        : null,
-    ]),
-  );
-  // path -> slice index. Keyed on the PATH (unique per slice by construction) rather than
-  // on a group's position, so attributing a group's failure to its slices cannot be
-  // silently invalidated by a future change to how entries are chunked.
-  const sliceOfPath = new Map(entries.map((e, i) => [e.path, i]));
-  const groups = chunkBySerializedSize(entries, PROMPT_SEGMENT_CHAR_BUDGET);
-  const thunks = groups.map((group, g) => async () => {
-    let result;
-    try {
-      result = await c.agent(verifySliceWriterPrompt(group), {
-        label: `verify-input-writer-${g}`,
-        agentType: 'code-gauntlet:artifact-writer',
-        model,
-        schema: WRITTEN_SCHEMA,
-      });
-    } catch (e) {
-      return { ok: false, reason: `slice-input writer threw (${(e && e.message) || 'unknown'})` };
-    }
-    if (!result) return { ok: false, reason: 'slice-input writer returned null' };
-    // Write-proof: the echoed `written` list must cover every slice-input path this group
-    // dispatched. WRITTEN_SCHEMA declares no `required`, so an empty { written: [] } is
-    // schema-valid — without this a writer that persisted nothing would pass and the
-    // executor would then read slice-input files that were never written. An uncovered
-    // path degrades THIS GROUP's slices to UNVERIFIED (findings kept), never a fabricated
-    // verify. The literal "(no write proof)" is the bench checker's degrade sentinel
-    // (bench/runner/check.py _DEGRADE_RE) — do not paraphrase it.
-    const written = new Set(Array.isArray(result.written) ? result.written : []);
-    const dispatchedPaths = group.map((e) => e.path);
-    if (!dispatchedPaths.every((p) => written.has(p))) {
-      return { ok: false, reason: 'slice-input writer echo did not cover all dispatched slice paths (no write proof)' };
-    }
-    return { ok: true };
-  });
-
-  const results = await c.parallel(thunks);
-  const failed = new Map();
-  for (let g = 0; g < groups.length; g += 1) {
-    const r = results[g];
-    // A null member is unreachable while the thunks above swallow their own throws; it is
-    // still handled so a platform-side null can never be mistaken for a successful write.
-    let reason = null;
-    if (!r) reason = `slice-input writer group ${g} produced no result`;
-    else if (r.ok !== true) reason = r.reason;
-    if (reason === null) continue;
-    for (const e of groups[g]) {
-      const idx = sliceOfPath.get(e.path);
-      if (idx !== undefined) failed.set(idx, { group: g, reason });
-    }
-  }
-  return { failed, expected };
-}
-
-function verifySliceWriterPrompt(entries) {
-  const payload = JSON.stringify(entries);
-  return `Persist each verify slice-input file to disk exactly as given (the workflow has no disk access). For every entry in the payload, write its "content" as JSON to its "path". Return { written } listing the paths you wrote. The payload is the single JSON line after the marker below.\n${WRITER_PAYLOAD_MARKER}${payload}`;
-}
-
+// The inline encoder above is the sole verify-input transport; the executor receives it
+// directly in its command and the Python script writes the destination path.
 // canonicalDeltas(ids, deltas) -> the deltas in a form both runtimes spell identically.
 // Rebuilt from the DISPATCHED id order, one object per id, keys in DELTA_KEYS order,
 // absent values omitted — so the echo's own array order, key order, and any field it
@@ -1465,13 +1453,11 @@ export function deltaContentProof(ids, deltas) {
 //       elimination satisfies (1) and (2) and fails here. It is the same checksum pair the
 //       persist path uses (assemble_artifacts.py <-> fnv1a32/JSON.stringify here), pinned
 //       across runtimes by tests/test_assemble_artifacts.py.
-//   (4) INPUT PROOF (issue #69 / #25 req 4-6) — the receipt's checksum over the document
-//       the SCRIPT parsed must equal the checksum this stage computed over the content it
-//       DISPATCHED. Guards (1)-(3) all grade the executor's answer; this one grades the
-//       QUESTION, which nothing before it could see — a slice-input file on disk that is
-//       not the document this stage dispatched (stale, truncated, a sibling's) can satisfy
-//       every other guard while the script verified the wrong thing. Skipped only when no
-//       cross-runtime proof exists (see materializeVerifySlices).
+//   (4) INPUT PROOF — the receipt's checksum over the document the SCRIPT decoded must
+//       equal the checksum this stage computed over the content it DISPATCHED. Guards
+//       (1)-(3) all grade the executor's answer; this one grades the QUESTION, which
+//       nothing before it could see. The inline token is the sole source, so there is no
+//       file-transcription recovery path.
 //
 // Every failure degrades the WHOLE slice to UNVERIFIED, which is conservative in the
 // direction that matters: every dispatched finding is KEPT (origin=unknown, disclosed in a
@@ -1531,11 +1517,10 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum })
     return { ok: false, reason: `delta content proof mismatch (receipt ${proof}, recomputed ${recomputed}) — the echoed values are not the ones the script wrote` };
   }
 
-  // (4) INPUT PROOF — the receipt's checksum over the document the SCRIPT parsed must
+  // (4) INPUT PROOF — the receipt's checksum over the document the SCRIPT decoded must
   //     equal the checksum this stage computed over the content it DISPATCHED. Guards
   //     (1)-(3) all grade the executor's answer; this one grades the QUESTION, which
-  //     nothing before it could see. Skipped only when no cross-runtime proof exists
-  //     (see materializeVerifySlices).
+  //     nothing before it could see. The inline token is decoded by the script.
   if (expectedInputChecksum != null) {
     const inputProof = typeof r.input_checksum === 'string' ? r.input_checksum.trim() : '';
     if (!inputProof) {
@@ -1544,14 +1529,10 @@ function trustSlice(env, { nonce, headShaShort, n, ids, expectedInputChecksum })
       return { ok: false, reason: 'input content proof missing from receipt', inputFault: 'missing' };
     }
     if (inputProof !== expectedInputChecksum) {
-      // DETERMINISTIC: the file on disk is what it is, and a re-dispatch re-reads the
-      // same bytes, so attempt 2 cannot produce a different answer. verifySliceWithRetry
-      // short-circuits on this flag rather than spending an executor to learn nothing.
       return {
         ok: false,
-        reason: `slice-input content proof mismatch (receipt ${inputProof}, dispatched ${expectedInputChecksum}) — the slice-input file on disk is not the document this stage dispatched`,
+        reason: `slice-input content proof mismatch (receipt ${inputProof}, dispatched ${expectedInputChecksum}) — the document the script decoded is not the document this stage dispatched`,
         inputFault: 'mismatch',
-        deterministic: true,
       };
     }
   }
@@ -1582,8 +1563,8 @@ function shellWord(tok) {
 // AST-safe (CLAUDE.md AST-safe emission — no command substitution, heredocs, env prefix,
 // or shell operators), each shellWord-quoted so a path bearing a space stays ONE argv word
 // (issue #75). Per-slice input/output paths are sha-scoped and index-suffixed; verifyStage
-// materializes the slice inputs via the artifact-writer (see materializeVerifySlices)
-// before dispatch, then the executor reads the slice output.
+// supplies the slice document inline before dispatch, then the executor reads the slice
+// output. The input path is the code-written destination used by verify_findings.py.
 //
 // `sliceNonce` is THREADED IN, never re-derived: it is the same value verifySliceWithRetry
 // hands trustSlice as the expected receipt nonce, so argv and the trust check cannot
@@ -1591,13 +1572,14 @@ function shellWord(tok) {
 // exactly what a second, independently-derived formula here would get wrong. The paths do
 // NOT vary by attempt: a retry re-runs the same script over the same slice input and
 // overwrites the same output.
-function verifyCommand(inp, i, sliceNonce) {
+function verifyCommand(inp, i, sliceNonce, inlinePayload) {
   const v = inp.verify || {};
   const inPath = `${v.inputPathBase || 'phase4-input'}.slice${i}.json`;
   const outPath = `${v.outputPathBase || 'phase4-output'}.slice${i}.json`;
   const parts = [
     'python3', v.scriptPath || 'scripts/verify_findings.py',
     '--input', inPath,
+    '--input-inline', inlinePayload,
     '--output', outPath,
     '--nonce', sliceNonce,
     '--head-sha', inp.headShaShort,
@@ -1612,8 +1594,8 @@ function verifyCommand(inp, i, sliceNonce) {
 // (which returns no truncation notice — CLAUDE.md) still contains everything this prompt
 // names. The large verified/eliminated arrays that follow are for bench and v2 consumers;
 // naming them here as explicitly-not-wanted is cheaper than letting the agent decide.
-function verifyPrompt(inp, i, sliceNonce) {
-  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, and input_checksum when present — never invent an absent one) copied exactly; its top-level "input_recovery" object if the file has one (omit it entirely when the file does not); and every entry of its "result.deltas" array, copied exactly. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce)}`;
+function verifyPrompt(inp, i, sliceNonce, inlinePayload) {
+  return `Run exactly this command, then read the --output file and return, via the schema: its "status"; its "receipt" object with every field it contains (sha, n_in, nonce, deltas_checksum, and input_checksum when present — never invent an absent one) copied exactly; and every entry of its "result.deltas" array, copied exactly. The quoted --input-inline token IS the slice document and must be reproduced character for character with no line breaks. The same file also holds large "verified" and "eliminated" arrays — do NOT return those and do not summarise them. Copy character for character: the deltas carry a checksum and a single altered value costs this slice its verification.\n${verifyCommand(inp, i, sliceNonce, inlinePayload)}`;
 }
 
 // --- Agent-count coarsening -------------------------------------------------
@@ -1651,36 +1633,51 @@ const effectiveBucketSize = (L) => Math.max(1, L.summarizeBucketSize || LIMIT_DE
 const effectiveSliceSize = (L, findings) => Math.max(1, L.verifySliceSize || findings || 1);
 const effectiveBatchSize = (L, findings) => Math.max(1, L.validateBatch || findings || 1);
 
+function findingCount(findings) {
+  return Array.isArray(findings) ? findings.length : Math.max(0, findings || 0);
+}
+
+function verifyTerm(L, findings, baseBranch = 'main') {
+  const count = findingCount(findings);
+  const branch = effectiveVerifyBaseBranch(baseBranch);
+  if (Array.isArray(findings)) {
+    return planVerifySlices(findings, effectiveSliceSize(L, count), VERIFY_INLINE_CHAR_BUDGET, branch).slices.length
+      * VERIFY_ATTEMPTS_PER_SLICE;
+  }
+  return ceilDiv(count, effectiveSliceSize(L, count)) * VERIFY_ATTEMPTS_PER_SLICE;
+}
+
 // Issue #204: the discovery-intake line-span bound (see its call site in discover()).
 // Same accessor pattern as its siblings above — read the ONE LIMIT_DEFAULTS constant
 // rather than restating the literal here.
 const effectiveMaxLineSpan = (L) => Math.max(1, L.maxLineSpan || LIMIT_DEFAULTS.maxLineSpan);
 
-// worstCaseAgentCount(limits, nFiles, nFindings) -> number
+// worstCaseAgentCount(limits, nFiles, findings, baseBranch) -> number
 // summarize buckets (+1 merge) + the 7 discovery agents + verify slices + validate
 // batches + min(nFindings, challengeCap) challengers + 2 (report + writer).
 //
 // The verify term counts VERIFY_ATTEMPTS_PER_SLICE dispatches per slice, because every
-// slice can independently take its one deterministic retry (verifySliceWithRetry) and a
+// slice can independently take its one retry (verifySliceWithRetry) and a
 // worst case that assumes the happy path is not a bound. The remaining terms are still
 // NOMINAL: the report/writer pair can segment, and writeArtifactsDerived has its own
 // single retry, neither of which is counted here. That looseness is covered by the
 // headroom between AGENT_COUNT_GUARD and the platform ceiling; the verify term is the one
 // that scales with finding count, which is why it is the one made exact.
-export function worstCaseAgentCount(limits, nFiles, nFindings) {
+export function worstCaseAgentCount(limits, nFiles, nFindings, baseBranch = 'main') {
   const L = limits || {};
   const files = Math.max(0, nFiles || 0);
-  const findings = Math.max(0, nFindings || 0);
+  const findings = findingCount(nFindings);
   const summarizeCalls = ceilDiv(files, effectiveBucketSize(L)) + 1;
-  const verifyCalls = ceilDiv(findings, effectiveSliceSize(L, findings)) * VERIFY_ATTEMPTS_PER_SLICE;
+  const verifyCalls = verifyTerm(L, nFindings, baseBranch);
   const validateCalls = ceilDiv(findings, effectiveBatchSize(L, findings));
   const challengeCalls = Math.min(findings, effectiveChallengeCap(L, findings));
   return summarizeCalls + AGENTS.length + verifyCalls + validateCalls + challengeCalls + 2;
 }
 
-// coarsenLimits(limits, nFiles, nFindings) -> limits
-// Iteratively pulls the worst-case count below the guard. Each iteration strictly
-// decreases the count:
+// coarsenLimits(limits, nFiles, nFindings, baseBranch) -> limits
+// Iteratively pulls the worst-case count below the guard. A candidate that no longer
+// reduces its term is removed, which is required once the inline budget makes the
+// verify fan-out size-bound.
 //   - When the summarize term alone exceeds SUMMARIZE_TERM_BOUND, widen the bucket
 //     (doubling). Without this, a pathological changed-file count (~>17k) keeps the
 //     summarize term above the guard and no validate/challenge coarsening can converge.
@@ -1691,35 +1688,50 @@ export function worstCaseAgentCount(limits, nFiles, nFindings) {
 // summarizeBucketSize / validateBatch / verifySliceSize rise monotonically while
 // challengeCap falls to CHALLENGE_CAP_FLOOR, so the chosen term is always reducible
 // whenever the count is still >= guard, guaranteeing termination.
-export function coarsenLimits(limits, nFiles, nFindings) {
+export function coarsenLimits(limits, nFiles, nFindings, baseBranch = 'main') {
   const L = { ...(limits || {}) };
   const files = Math.max(0, nFiles || 0);
-  const findings = Math.max(0, nFindings || 0);
+  const findings = findingCount(nFindings);
+  const candidates = new Set(['summarize', 'verify', 'validate', 'challenge']);
 
-  while (worstCaseAgentCount(L, files, findings) >= AGENT_COUNT_GUARD) {
+  while (worstCaseAgentCount(L, files, nFindings, baseBranch) >= AGENT_COUNT_GUARD && candidates.size > 0) {
     const summarizeTerm = ceilDiv(files, effectiveBucketSize(L)) + 1;
-    if (summarizeTerm > SUMMARIZE_TERM_BOUND) {
+    if (summarizeTerm > SUMMARIZE_TERM_BOUND && candidates.has('summarize')) {
       // Double from the EFFECTIVE size (pinning a concrete value): doubling from a raw
       // absent field (|| 1 -> 2) would LOWER the effective bucket below the stage's
       // default of 20 and move the term the wrong way.
+      const before = summarizeTerm;
       L.summarizeBucketSize = effectiveBucketSize(L) * 2;
+      if (ceilDiv(files, effectiveBucketSize(L)) + 1 >= before) candidates.delete('summarize');
       continue;
     }
     // Same VERIFY_ATTEMPTS_PER_SLICE scaling worstCaseAgentCount applies, so the "reduce
     // whichever term is largest" choice is made against each term's real contribution to
-    // the count it is trying to pull down. Doubling verifySliceSize still strictly halves
-    // this term, so the loop's termination argument is unchanged.
-    const verifyTerm = ceilDiv(findings, effectiveSliceSize(L, findings)) * VERIFY_ATTEMPTS_PER_SLICE;
+    // the count it is trying to pull down. With an array of actual findings, doubling
+    // verifySliceSize can stop reducing the term once the inline budget binds; the update
+    // below removes that candidate when its measured term does not change.
+    const currentVerifyTerm = verifyTerm(L, nFindings, baseBranch);
     const validateTerm = ceilDiv(findings, effectiveBatchSize(L, findings));
     const challengeTerm = Math.min(findings, effectiveChallengeCap(L, findings));
-    if (validateTerm >= verifyTerm && validateTerm >= challengeTerm) {
+    const choices = [
+      ['validate', validateTerm],
+      ['verify', currentVerifyTerm],
+      ['challenge', challengeTerm],
+    ].filter(([name]) => candidates.has(name));
+    if (choices.length === 0) break;
+    choices.sort((a, b) => b[1] - a[1]);
+    const [largest] = choices;
+    if (largest[0] === 'validate') {
       L.validateBatch = effectiveBatchSize(L, findings) * 2;
-    } else if (verifyTerm >= validateTerm && verifyTerm >= challengeTerm) {
+      if (ceilDiv(findings, effectiveBatchSize(L, findings)) >= validateTerm) candidates.delete('validate');
+    } else if (largest[0] === 'verify') {
       L.verifySliceSize = effectiveSliceSize(L, findings) * 2;
+      if (verifyTerm(L, nFindings, baseBranch) >= currentVerifyTerm) candidates.delete('verify');
     } else {
       // Halve the EFFECTIVE cap (min(cap, findings)) so C strictly decreases even when
       // the nominal cap already exceeds nFindings — or is absent (= findings).
       L.challengeCap = Math.max(CHALLENGE_CAP_FLOOR, Math.floor(Math.min(effectiveChallengeCap(L, findings), findings) / 2));
+      if (Math.min(findings, effectiveChallengeCap(L, findings)) >= challengeTerm) candidates.delete('challenge');
     }
   }
   return L;
@@ -2069,7 +2081,7 @@ const WRITER_SCHEMA = {
   type: 'object',
   properties: { artifactPaths: { type: 'object', properties: {} } },
 };
-// The verify slice-input writer returns the list of paths it wrote.
+// The persist writer returns the list of paths it wrote.
 const WRITTEN_SCHEMA = {
   type: 'object',
   properties: { written: { type: 'array', items: { type: 'string' } } },
@@ -2537,7 +2549,7 @@ async function attemptDerivedPersist(c, entries, planPath, plan, paths, outputDi
     return fail(`writer agent threw (${(e && e.message) || 'unknown'})`);
   }
   if (!writerOut) return fail('writer returned null');
-  // Write-proof, same threat model as materializeVerifySlices: WRITTEN_SCHEMA declares
+  // Write-proof, same threat model as the persist boundary: WRITTEN_SCHEMA declares
   // no `required`, so an empty { written: [] } is schema-valid and a writer under
   // StructuredOutput retry pressure can return one having written nothing. Without this
   // the assembler would then read primaries that never landed.
@@ -3126,8 +3138,8 @@ export function persistDerivable(inp) {
   return { ok: true };
 }
 
-// The DERIVED writer payload: `[{ path, text }]` — each `text` is written VERBATIM
-// (the verify slice-input shape uses `content` and is written as JSON). Sending the
+// The DERIVED writer payload: `[{ path, text }]` — each `text` is written VERBATIM.
+// Sending the
 // exact string removes every reformatting degree of freedom, which is what makes the
 // content-proof checksum meaningful.
 function finalArtifactsWriterPrompt(entries) {
@@ -3850,7 +3862,7 @@ export async function runWith(ctx, rawArgs) {
   // re-coarsened. At or below benchmark scale the worst case sits far under the guard,
   // so both calls return the limits values unchanged.
   const nChangedFiles = (A.changedFiles || []).length;
-  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0);
+  let limits = coarsenLimits(A.limits || {}, nChangedFiles, 0, A.baseBranch);
   const policy = A.policy || {};
   const contextPath = `${A.outputDir}/code-gauntlet-context-${A.headShaShort}.md`;
   // The context file's own size, measured by the skill right after it writes the file
@@ -4039,7 +4051,7 @@ export async function runWith(ctx, rawArgs) {
 
     // The finding count now exists — re-coarsen so verify slices, validate batches,
     // and the challenge cap keep the remaining worst-case fan-out under the guard.
-    limits = coarsenLimits(limits, nChangedFiles, (mergeOut.findings || []).length);
+    limits = coarsenLimits(limits, nChangedFiles, mergeOut.findings || [], A.baseBranch);
 
     const verifyOut = await runPhase('verify', () => verifyStage(c, {
       findings: mergeOut.findings || [], limits, policy, nonce: A.nonce, headShaShort: A.headShaShort,
@@ -4351,12 +4363,11 @@ export async function runWith(ctx, rawArgs) {
         merged: (mergeOut.findings || []).length,
         merge: compactMethodology(mergeOut.methodology),
         verified: verifyOut.verified,
-        // The slice-input proof ledger (issue #69 / #25 req 4-6). `verified` is one
+        // The inline proof ledger. `verified` is one
         // boolean about the whole stage; this says how many slices were PROVEN to have
         // been verified against the document this run dispatched, and how many were not.
-        // `recovered` counts only PROVEN-and-recovered slices: a slice that is both
-        // unprovable and recovered lands in `unprovable`, not here (the counters are
-        // disjoint by construction — see emptyInputProof's comment).
+        // `retried` counts slices trusted only on their second inline transcription
+        // attempt; `oversize` counts findings degraded before dispatch.
         inputProof: verifyOut.inputProof,
         highConfidence: (challengeOut.findings || []).length,
         unverified: (challengeOut.unverified || []).length,

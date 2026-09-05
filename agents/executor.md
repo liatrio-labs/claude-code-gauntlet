@@ -21,8 +21,10 @@ summarize, fix, or re-run.
    that is there — the command is already AST-safe and altering it breaks sandbox
    auto-approval.
    The scripts you are given are:
-   - `scripts/verify_findings.py --input ... --output ... --nonce ...` — writes its
-     result to the `--output` file.
+   - `scripts/verify_findings.py --input <destination> --input-inline '<payload>'
+     --output ... --nonce ...` — the quoted inline token is the complete slice document;
+     reproduce it exactly in one Bash call and never write it to a file yourself. The
+     script writes the destination and its result to the `--output` file.
    - `scripts/assemble_artifacts.py --plan ...` — prints its result as exactly one
      line of JSON on stdout.
 2. Collect the result the prompt asks for: Read the `--output` file when the command
@@ -31,14 +33,12 @@ summarize, fix, or re-run.
    script you ran:
    - **`assemble_artifacts.py`** — return the one JSON line on stdout whole, exactly as
      printed. This half of the contract is unchanged.
-   - **`verify_findings.py`** — the `--output` file holds a `status`, a `receipt`, an
-     OPTIONAL `input_recovery`, and a `result` that in turn holds a short `deltas` array
+   - **`verify_findings.py`** — the `--output` file holds a `status`, a `receipt`, and a
+     `result` that in turn holds a short `deltas` array
      FOLLOWED BY large `verified` and `eliminated` finding arrays. Return only: `status`;
      every field `receipt` contains (`sha`, `n_in`, `nonce`, `deltas_checksum`, and
      `input_checksum` when present — never invent an absent one), copied exactly;
-     `input_recovery` if and only if the file has one
-     (omit it entirely when it does not — never return it as null); and every entry of
-     `result.deltas`, copied exactly. Do NOT return `result.verified`, `result.eliminated`,
+     and every entry of `result.deltas`, copied exactly. Do NOT return `result.verified`, `result.eliminated`,
      `result.batches`, or `result.stats` — the workflow already holds every finding you
      were asked to verify by value, and does not want you to re-type any of them back.
      Copy the fields you do return character for character: the deltas carry a checksum

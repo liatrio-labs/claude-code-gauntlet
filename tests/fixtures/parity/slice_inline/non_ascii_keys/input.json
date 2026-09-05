@@ -1,0 +1,14 @@
+{
+  "doc": {
+    "findings": [
+      {
+        "id": "keys",
+        "café": {
+          "naïve key": "värde",
+          "nested": ["東京", {"ключ": "значение"}]
+        }
+      }
+    ],
+    "base_branch": "main"
+  }
+}

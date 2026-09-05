@@ -140,7 +140,9 @@ export const LIMIT_DEFAULTS = {
   summarizeBucketSize: 20,
   validateBatch: 25,
   challengeCap: 40,
-  verifySliceSize: 200,
+  // Keep a bad inline transcription's blast radius small. Ten retained mini slice documents
+  // measured 15.7k-42.4k chars for 14-38 findings (~1.1k chars/finding), so 25 findings is about 28k.
+  verifySliceSize: 25,
   maxLineSpan: 100,
 };
 

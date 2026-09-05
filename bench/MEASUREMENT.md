@@ -127,18 +127,19 @@ The prose identity receipt symptom belongs to **G4**, not this floor: G4 checks
 that the code-owned `pipeline_version=… (bundle)` and `plugin_root=… (resolved)`
 lines identify the active plugin, with Workflow `scriptPath` as defense in depth.
 
-**`origin=unknown` from artifact-writer transcription drift.** The writer is a
-sampled agent, not a function (see CLAUDE.md, "The by-value writer is not
-trustworthy"), and a corrupted slice-input file makes `verify_findings.py`
-refuse the slice, degrading every finding in it to `origin=unknown` and
-tripping gate 3. Measured on two consecutive smokes:
+**Current verify input transport.** Verify slices now travel to the executor as a
+percent-encoded `--input-inline` token planned under `VERIFY_INLINE_CHAR_BUDGET`;
+the executor reproduces the token exactly in one Bash call; `verify_findings.py`
+decodes it and writes the destination before running verification. The content
+proof remains as a belt. The artifact-writer
+still handles Persist's artifact paths; its historical slice-input transcription
+failure is retained below as benchmark evidence:
 `smoke-20260727-205454-f99d948` (`receipt nonce mismatch`, plus
 `artifact-content-proof` divergence on all 3 PRs and one assemble refusal) and
 `smoke-20260728-144630-a162ecd` (one stray `}` appended after an otherwise
 complete document, on 2 of 3 PRs — 23 findings lost, all recoverable with
-`raw_decode`; see issue #69). Until that is fixed in the parser, expect gate 3
-to be the tier's least stable gate, and diff the run's `wf_*.json` `gaps`
-against the previous smoke before attributing it to the change under test.
+`raw_decode`; see issue #69). New runs should be diagnosed from the inline-token
+and content-proof gaps rather than by expecting a verify-input writer label.
 
 CI: `.github/workflows/bench-smoke.yml` (`workflow_dispatch`) runs smoke then
 `--check` on the newest run dir; the job fails if either step fails. Bare

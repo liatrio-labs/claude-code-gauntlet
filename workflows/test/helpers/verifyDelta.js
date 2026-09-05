@@ -10,7 +10,8 @@
 // with this helper is the trust/join/degradation LOGIC; that the computation itself
 // matches Python's is pinned separately by the golden fixture in
 // tests/fixtures/parity/verify_deltas/, whose checksum verify_findings.py produced.
-import { deltaContentProof, fnv1a32, parseWriterPayload } from '../../src/stages.js';
+import { deltaContentProof, fnv1a32 } from '../../src/stages.js';
+import { shellSplit } from './shellWords.js';
 
 // The exact string run_verification() stamps on every real elimination. Tests that
 // synthesise an eliminated delta must use it — trustSlice requires a non-empty stamp,
@@ -59,33 +60,75 @@ export function deltaEnvelope(findings, opts = {}) {
   };
 }
 
-// The slice-input content proof (issue #69 / #25 req 4-6) is computed by the workflow
-// over the content it DISPATCHED, so a faithful executor mock must echo the checksum of
-// the bytes the writer was actually handed -- not a value the test invented. This
-// recorder sits on the writer dispatch, remembers each slice's content, and stamps the
-// matching proof onto any executor envelope that does not already declare one. Tests
-// that probe the proof declare `input_checksum` explicitly (a wrong value, or null for
-// "the executor dropped it") and the stamp leaves them alone.
+// The slice-input content proof is computed by the workflow over the content it
+// DISPATCHED, so a faithful executor mock must echo the checksum of the decoded inline
+// document -- not a value the test invented. This recorder parses the command token,
+// remembers each slice's content, and stamps the matching proof onto any executor
+// envelope that does not already declare one. Tests that probe the proof declare
+// `input_checksum` explicitly (a wrong value, or null for "the executor dropped it") and
+// the stamp leaves them alone.
+function decodeInlineString(value) {
+  let out = '';
+  let i = 0;
+  while (i < value.length) {
+    if (value[i] !== '%') {
+      out += value[i];
+      i += 1;
+      continue;
+    }
+    if (value[i + 1] === 'u') {
+      out += String.fromCharCode(Number.parseInt(value.slice(i + 2, i + 6), 16));
+      i += 6;
+      continue;
+    }
+    let bytes = '';
+    while (i < value.length && value[i] === '%' && value[i + 1] !== 'u') {
+      bytes += value.slice(i, i + 3);
+      i += 3;
+    }
+    out += decodeURIComponent(bytes);
+  }
+  return out;
+}
+
+function decodeInlineValue(value) {
+  if (typeof value === 'string') return decodeInlineString(value);
+  if (Array.isArray(value)) return value.map(decodeInlineValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [
+      decodeInlineString(k),
+      decodeInlineValue(v),
+    ]));
+  }
+  return value;
+}
+
+// The slice-input content proof is computed by the workflow over the content it
+// dispatched. This test recorder decodes the command token so happy-path mocks echo
+// the same proof without duplicating the stage planner or projection.
 export function sliceInputRecorder() {
   const byPath = new Map();
-  // A local function, not a method relying on `this` — a caller that destructures
-  // `{ stamp }` off the returned object (rather than always calling `rec.stamp(...)`)
-  // must not silently lose the closure it depends on.
+  const contentFromPrompt = (prompt) => {
+    const argv = shellSplit(prompt.split('\n').pop());
+    const index = argv.indexOf('--input-inline');
+    if (index < 0) return null;
+    return decodeInlineValue(JSON.parse(argv[index + 1]));
+  };
   const checksumFor = (i) => {
     for (const [p, content] of byPath) {
-      if (p.endsWith(`.slice${i}.json`)) return fnv1a32(JSON.stringify(content, null, 2));
+      if (p.endsWith('.slice' + i + '.json')) return fnv1a32(JSON.stringify(content, null, 2));
     }
     return null;
   };
   return {
-    // Serve the writer dispatch faithfully AND remember what it was told to persist.
-    write(prompt) {
-      const entries = parseWriterPayload(prompt) || [];
-      for (const e of entries) byPath.set(e.path, e.content);
-      return { written: entries.map((e) => e.path) };
-    },
     checksumFor,
-    stamp(env, i) {
+    stamp(env, i, prompt) {
+      const content = contentFromPrompt(prompt);
+      if (content) {
+        const argv = shellSplit(prompt.split('\n').pop());
+        const inputPath = argv[argv.indexOf('--input') + 1];
+        byPath.set(inputPath, content);
+      }
       if (env && env.status === 'ok' && env.receipt && !Object.hasOwn(env.receipt, 'input_checksum')) {
         env.receipt.input_checksum = checksumFor(i);
       }
