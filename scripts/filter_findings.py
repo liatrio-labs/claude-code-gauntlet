@@ -530,7 +530,8 @@ def _scope_matches_file(scope, file):
 def config_for_file(config, file):
     """Return a fresh flat view from root plus matching subtree layers."""
     source = config or {}
-    # The args waist guarantees the ignore shape is a list at this boundary.
+    # parse_review_md_text initializes config = {"ignore": []}; the JS args waist
+    # validates this shape on the pipeline path.
     view = {"ignore": list(source.get("ignore", []))}
     for key in REVIEW_SETTING_KEYS:
         if key in source:
@@ -2277,15 +2278,16 @@ def apply_exclusions(findings, exclusion_patterns, config=None):
     if config is None and not exclusion_patterns:
         return findings, []
 
+    has_config = config is not None
+    external_patterns = list(exclusion_patterns or [])
     passed = []
     eliminated = []
 
     for finding in findings:
         patterns = (
-            config_for_file(config, finding.get("file")).get("ignore", [])
-            + list(exclusion_patterns or [])
-            if config is not None
-            else list(exclusion_patterns or [])
+            config_for_file(config, finding.get("file"))["ignore"] + external_patterns
+            if has_config
+            else external_patterns
         )
         title = _as_text(finding.get("title"))
         description = _as_text(finding.get("description"))

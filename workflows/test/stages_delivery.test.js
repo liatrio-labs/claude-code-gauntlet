@@ -315,6 +315,29 @@ test('runWith scopes raw child REVIEW.md settings through filter and persisted d
   assert.deepEqual(out.stats.reviewMdSubtrees, [{ dir: 'api', matched: 1 }]);
 });
 
+test('runWith computes subtree stats from pre-parsed args.reviewConfig scopes', async () => {
+  const args = validArgs({
+    reviewConfig: {
+      ignore: [],
+      scopes: [{ dir: 'api', confidence_threshold: 90, ignore: [] }],
+    },
+    checkpoints: {
+      validate: {
+        findings: [
+          makeFinding('API', { file: 'api/x.py', confidence: 80 }),
+          makeFinding('LEGACY', { file: 'legacy/y.py', confidence: 80 }),
+        ],
+        stats: { batches_dispatched: 0, batches_completed: 0, validated: 2, skipped: 0, adjusted: 0 },
+      },
+    },
+  });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  assert.equal(out.stats.reviewConfigSource, 'preParsed');
+  assert.deepEqual(out.stats.reviewMdSubtrees, [{ dir: 'api', matched: 1 }]);
+});
+
 test('runWith fresh pipeline scopes raw REVIEW.md settings before challenge and delivery', async () => {
   const args = validArgs({
     changedFiles: ['api/x.py', 'legacy/y.py'],

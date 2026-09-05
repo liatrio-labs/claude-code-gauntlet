@@ -163,7 +163,6 @@ function scopeMatchesFile(scope, file) {
 }
 function configForFile(config, file) {
   const source = config || {};
-  // The args waist guarantees the ignore shape is an array at this boundary.
   const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
   for (const key of REVIEW_SETTING_KEYS) {
     if (key in source) view[key] = source[key];
@@ -2235,6 +2234,24 @@ const KNOB_REGISTRY = [
   { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value) },
 ];
 const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
+function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
+  const errors = [];
+  if (separateSlashErrors) {
+    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
+    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
+  } else if (value.startsWith('/') || value.endsWith('/')) {
+    errors.push(`${label} must not have a leading or trailing /`);
+  }
+  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
+  if (REVIEW_MD_PATH_CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
+  const segments = value.split('/');
+  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
+  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
+  if (requireBasename && segments[segments.length - 1] !== 'REVIEW.md') {
+    errors.push(`${label} must end with exactly REVIEW.md`);
+  }
+  return errors;
+}
 const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
 const SCOPE_ANSWERS = ['light', 'full'];
 const RISK_LEVELS = ['low', 'medium', 'high'];
@@ -2628,14 +2645,7 @@ function validateArgs(args) {
           errors.push(`${label}.dir must be a non-empty string`);
           return;
         }
-        if (layer.dir.startsWith('/') || layer.dir.endsWith('/')) {
-          errors.push(`${label}.dir must not have a leading or trailing /`);
-        }
-        if (layer.dir.includes('\\')) errors.push(`${label}.dir must use / separators, not backslashes`);
-        if (REVIEW_MD_PATH_CONTROL_RE.test(layer.dir)) errors.push(`${label}.dir must not contain a control character`);
-        const segments = layer.dir.split('/');
-        if (segments.some((segment) => segment === '')) errors.push(`${label}.dir must not contain an empty path segment`);
-        if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label}.dir must not contain . or .. path segments`);
+        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
       };
       validateLayer(args.reviewConfig, 'reviewConfig', false);
       if (args.reviewConfig.scopes !== undefined) {
@@ -2692,28 +2702,10 @@ function validateArgs(args) {
         if (typeof entry.path !== 'string' || entry.path === '') {
           errors.push(`reviewMd[${i}].path must be a non-empty string`);
         } else {
-          if (REVIEW_MD_PATH_CONTROL_RE.test(entry.path)) {
-            errors.push(`reviewMd[${i}].path must not contain a control character`);
-          }
-          if (entry.path.startsWith('/')) {
-            errors.push(`reviewMd[${i}].path must be repo-relative (must not start with /)`);
-          }
-          if (entry.path.includes('\\')) {
-            errors.push(`reviewMd[${i}].path must use / separators, not backslashes`);
-          }
-          if (entry.path.endsWith('/')) {
-            errors.push(`reviewMd[${i}].path must not have a trailing /`);
-          }
-          const segments = entry.path.split('/');
-          if (segments.some((segment) => segment === '')) {
-            errors.push(`reviewMd[${i}].path must not contain an empty path segment`);
-          }
-          if (segments.some((segment) => segment === '.' || segment === '..')) {
-            errors.push(`reviewMd[${i}].path must not contain . or .. path segments`);
-          }
-          if (segments[segments.length - 1] !== 'REVIEW.md') {
-            errors.push(`reviewMd[${i}].path must end with exactly REVIEW.md`);
-          }
+          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, {
+            separateSlashErrors: true,
+            requireBasename: true,
+          }));
         }
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
