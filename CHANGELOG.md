@@ -2,6 +2,39 @@
 
 <!-- version list -->
 
+## v3.29.0 (2026-09-05)
+
+### Bug Fixes
+
+- **filter**: Address PR #288 review comments after the main rebase
+  ([#288](https://github.com/liatrio-labs/claude-code-gauntlet/pull/288),
+  [`df2170d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df2170dba500c243082ae23d0dd3b4d762b0f28e))
+
+- **filter**: Review round 1 for REVIEW.md subtree scoping
+  ([#288](https://github.com/liatrio-labs/claude-code-gauntlet/pull/288),
+  [`df2170d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df2170dba500c243082ae23d0dd3b4d762b0f28e))
+
+- **filter**: Review round 2 for REVIEW.md subtree scoping
+  ([#288](https://github.com/liatrio-labs/claude-code-gauntlet/pull/288),
+  [`df2170d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df2170dba500c243082ae23d0dd3b4d762b0f28e))
+
+### Chores
+
+- **ci**: Ratchet scripts and JS-branches coverage floors from the #288 CI measurement
+  ([#288](https://github.com/liatrio-labs/claude-code-gauntlet/pull/288),
+  [`df2170d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df2170dba500c243082ae23d0dd3b4d762b0f28e))
+
+### Features
+
+- **filter**: Scope REVIEW.md thresholds and ignores per subtree
+  ([#288](https://github.com/liatrio-labs/claude-code-gauntlet/pull/288),
+  [`df2170d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df2170dba500c243082ae23d0dd3b4d762b0f28e))
+
+- **filter**: Scope REVIEW.md thresholds and ignores per subtree (#196)
+  ([#288](https://github.com/liatrio-labs/claude-code-gauntlet/pull/288),
+  [`df2170d`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/df2170dba500c243082ae23d0dd3b4d762b0f28e))
+
+
 ## v3.28.2 (2026-09-05)
 
 ### Bug Fixes
