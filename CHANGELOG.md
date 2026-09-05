@@ -2,6 +2,25 @@
 
 <!-- version list -->
 
+## v3.28.2 (2026-09-05)
+
+### Bug Fixes
+
+- **build**: Keep pipeline.js under the Workflow tool's 512 KiB script cap
+  ([#293](https://github.com/liatrio-labs/claude-code-gauntlet/pull/293),
+  [`928587a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/928587aa15d7211625e1829ce1756e71b481d3bc))
+
+- **build**: Keep pipeline.js under the Workflow tool's 512 KiB script cap (#292)
+  ([#293](https://github.com/liatrio-labs/claude-code-gauntlet/pull/293),
+  [`928587a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/928587aa15d7211625e1829ce1756e71b481d3bc))
+
+### Testing
+
+- **build**: Pin the strip, size-gate and terminator guards under review mutants
+  ([#293](https://github.com/liatrio-labs/claude-code-gauntlet/pull/293),
+  [`928587a`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/928587aa15d7211625e1829ce1756e71b481d3bc))
+
+
 ## v3.28.1 (2026-09-05)
 
 ### Bug Fixes
