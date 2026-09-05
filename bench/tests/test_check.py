@@ -20,6 +20,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from bench import run  # noqa: E402
 from bench.runner import check, invoke  # noqa: E402
+from scripts.await_workflow import ARTIFACT_BASENAMES  # noqa: E402
 
 PIPELINE = str(REPO_ROOT / "workflows" / "pipeline.js")
 
@@ -202,6 +203,7 @@ def _build_ok_run(
         (pr_dir / "code-gauntlet-report-deadbeef.md").write_text(
             "# Report\n\nAll good.\n", encoding="utf-8"
         )
+        _write_json(pr_dir / "code-gauntlet-post-review-deadbeef.json", {})
         _write_json(
             pr_dir / "code-gauntlet-checkpoint-all-deadbeef.json",
             {"phases": {}, "gaps": []},
@@ -226,6 +228,133 @@ class CheckRunTest(unittest.TestCase):
         self.assertEqual(result["failures"], [])
         self.assertGreaterEqual(result["stats"]["delivered_comments"], 1)
         self.assertGreaterEqual(result["stats"]["workflow_records"], 1)
+        self.assertEqual(result["stats"]["deliverable_artifacts"], 4)
+
+    def test_findings_glob_shares_the_canonical_template(self):
+        self.assertEqual(
+            check._FINDINGS_GLOB,
+            ARTIFACT_BASENAMES[0].format(sha="*"),
+        )
+
+    def test_missing_report_fails_g6(self):
+        _build_ok_run(self.run_dir)
+        (
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
+        ).unlink()
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        g6 = [f for f in result["failures"] if "artifact-completeness" in f]
+        self.assertEqual(
+            g6,
+            [
+                "pr-example-repo-1: artifact-completeness: missing "
+                "code-gauntlet-report-*.md"
+            ],
+        )
+
+    def test_empty_report_fails_g6(self):
+        _build_ok_run(self.run_dir)
+        (
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
+        ).write_bytes(b"")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "code-gauntlet-report-deadbeef.md is empty" in f
+                for f in result["failures"]
+            )
+        )
+
+    def test_two_reports_fail_g6_as_ambiguous(self):
+        _build_ok_run(self.run_dir)
+        (
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-cafef00d.md"
+        ).write_text("# Another report\n", encoding="utf-8")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "2 matches for code-gauntlet-report-*.md" in f
+                and "stale attempt leftovers?" in f
+                for f in result["failures"]
+            )
+        )
+
+    def test_missing_checkpoint_runs_g3_too(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        (pr / "code-gauntlet-checkpoint-all-deadbeef.json").unlink()
+        (pr / "code-gauntlet-report-deadbeef.md").write_text(
+            "# Report\n\nwriter no write proof (partial-artifacts)\n",
+            encoding="utf-8",
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "missing code-gauntlet-checkpoint-all-*.json" in f
+                for f in result["failures"]
+            )
+        )
+        self.assertTrue(any("writer degrade" in f for f in result["failures"]))
+
+    def test_unparseable_post_review_artifact_fails_g6(self):
+        _build_ok_run(self.run_dir)
+        (
+            self.run_dir
+            / "pr-example-repo-1"
+            / "code-gauntlet-post-review-deadbeef.json"
+        ).write_text("{not json", encoding="utf-8")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "code-gauntlet-post-review-deadbeef.json not parseable" in f
+                for f in result["failures"]
+            )
+        )
+
+    def test_archived_report_does_not_count_for_g6(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        report = pr / "code-gauntlet-report-deadbeef.md"
+        archived = pr / "superseded" / report.name
+        archived.parent.mkdir()
+        report.replace(archived)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("missing code-gauntlet-report-*.md" in f for f in result["failures"])
+        )
+
+    def test_report_directory_does_not_satisfy_g6(self):
+        _build_ok_run(self.run_dir)
+        report = self.run_dir / "pr-example-repo-1" / "code-gauntlet-report-deadbeef.md"
+        report.unlink()
+        report.mkdir()
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any("missing code-gauntlet-report-*.md" in f for f in result["failures"])
+        )
+
+    def test_mixed_artifact_shas_fail_g6(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        (pr / "code-gauntlet-report-deadbeef.md").rename(
+            pr / "code-gauntlet-report-cafef00d.md"
+        )
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "mixed SHA values" in f
+                and "code-gauntlet-report-cafef00d.md=cafef00d" in f
+                and "code-gauntlet-findings-deadbeef.json=deadbeef" in f
+                for f in result["failures"]
+            )
+        )
 
     def test_gitlab_payload_happy_path_passes(self):
         _build_ok_run(self.run_dir)
@@ -467,6 +596,46 @@ class CheckRunTest(unittest.TestCase):
         result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
         self.assertTrue(result["ok"], result["failures"])
         self.assertEqual(result["failures"], [])
+
+    def test_real_pipeline_bundle_is_clean_with_empty_gaps(self):
+        _build_ok_run(self.run_dir)
+        pr = self.run_dir / "pr-example-repo-1"
+        self._clean_secondary_carriers(pr)
+        record = _wf_record()
+        record["script"] = (REPO_ROOT / "workflows" / "pipeline.js").read_text(
+            encoding="utf-8"
+        )
+        record["result"] = {"ok": True, "gaps": []}
+        _write_json(pr / "workflows" / "wf_test-0001.json", record)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
+        del record["result"]["gaps"]
+        _write_json(pr / "workflows" / "wf_test-0001.json", record)
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertTrue(result["ok"], result["failures"])
+
+    def test_degrade_regex_finds_both_bundle_sentinels(self):
+        bundle = (REPO_ROOT / "workflows" / "pipeline.js").read_text(encoding="utf-8")
+        matches = {
+            match.group(0).lower() for match in check._DEGRADE_RE.finditer(bundle)
+        }
+        self.assertIn("no write proof", matches)
+        self.assertIn("partial-artifacts", matches)
+
+    def test_workflow_timeout_is_not_in_pipeline_artifacts(self):
+        paths = [
+            path
+            for path in (REPO_ROOT / "workflows" / "src").rglob("*")
+            if path.is_file()
+        ]
+        paths.append(REPO_ROOT / "workflows" / "pipeline.js")
+        offenders = [
+            str(path.relative_to(REPO_ROOT))
+            for path in paths
+            if "workflow-timeout" in path.read_text(encoding="utf-8")
+        ]
+        self.assertEqual(offenders, [])
 
     def test_wf_script_field_bundle_literals_with_genuine_gap_fails_g3(self):
         """The same contaminated ``script`` field, but a genuine degrade in
@@ -763,6 +932,21 @@ class CheckRunTest(unittest.TestCase):
         self.assertTrue(result["ok"], result["failures"])
         self.assertFalse(any("no workflows/wf_" in f for f in result["failures"]))
 
+    def test_g4_archived_only_identity_receipt_does_not_pass(self):
+        _build_ok_run(self.run_dir, include_workflow=False)
+        pr = self.run_dir / "pr-example-repo-1"
+        report = pr / "code-gauntlet-report-deadbeef.md"
+        archived = pr / "superseded" / report.name
+        archived.parent.mkdir()
+        report.replace(archived)
+        _plant_raw_identity(pr)
+        # The raw receipt is deliberately removed: only the archived report carries it.
+        raw = pr / "raw.json"
+        raw.write_text(json.dumps({"result": "Review complete."}), encoding="utf-8")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("no workflows/wf_" in f for f in result["failures"]))
+
     def test_g4_echo_identity_reads_raw_json_with_preamble(self):
         """raw.json may carry stderr/preamble; tolerant parse must still find the receipt."""
         _build_ok_run(self.run_dir)
@@ -1020,6 +1204,93 @@ class SupersedeWorkflowRecordsTest(unittest.TestCase):
         )
 
 
+class SupersedeAttemptArtifactsTest(unittest.TestCase):
+    """#165: archive every prior deliverable before a new attempt."""
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="bench-supersede-artifacts-")
+        self.pr_dir = Path(self.tmp) / "pr-example-repo-1"
+        self.pr_dir.mkdir()
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_moves_deliverables_and_leaves_other_pr_files(self):
+        names = [
+            "code-gauntlet-findings-deadbeef.json",
+            "code-gauntlet-report-deadbeef.md",
+            "code-gauntlet-post-review-deadbeef.json",
+            "code-gauntlet-checkpoint-all-deadbeef.json",
+            "post-review-payload.json",
+            "risk-table-deadbeef.json",
+        ]
+        for name in names:
+            (self.pr_dir / name).write_text("{}", encoding="utf-8")
+        (self.pr_dir / "raw.json").write_text("{}", encoding="utf-8")
+        (self.pr_dir / "diff.patch").write_text("diff", encoding="utf-8")
+        _write_json(self.pr_dir / "workflows" / "wf_old.json", {})
+        (self.pr_dir / "worktree").mkdir()
+
+        moved = invoke.supersede_attempt_artifacts(self.pr_dir)
+        self.assertEqual(moved, sorted(names))
+        for name in names:
+            self.assertTrue((self.pr_dir / "superseded" / name).is_file())
+            self.assertFalse((self.pr_dir / name).exists())
+        for name in ("raw.json", "diff.patch"):
+            self.assertTrue((self.pr_dir / name).is_file())
+        self.assertTrue((self.pr_dir / "workflows" / "wf_old.json").is_file())
+        self.assertTrue((self.pr_dir / "worktree").is_dir())
+
+    def test_collision_suffixes_without_overwrite(self):
+        dest = self.pr_dir / "superseded"
+        dest.mkdir()
+        (dest / "code-gauntlet-report-deadbeef.md").write_text("old", encoding="utf-8")
+        (self.pr_dir / "code-gauntlet-report-deadbeef.md").write_text(
+            "new", encoding="utf-8"
+        )
+        moved = invoke.supersede_attempt_artifacts(self.pr_dir)
+        self.assertEqual(moved, ["code-gauntlet-report-deadbeef.md"])
+        self.assertEqual((dest / "code-gauntlet-report-deadbeef.md").read_text(), "old")
+        self.assertEqual(
+            (dest / "code-gauntlet-report-deadbeef-2.md").read_text(), "new"
+        )
+
+    def test_missing_pr_dir_and_only_raw_are_noops(self):
+        self.assertEqual(
+            invoke.supersede_attempt_artifacts(self.pr_dir / "missing"), []
+        )
+        (self.pr_dir / "raw.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(invoke.supersede_attempt_artifacts(self.pr_dir), [])
+        self.assertFalse((self.pr_dir / "superseded").exists())
+
+    def test_move_error_propagates(self):
+        artifact = self.pr_dir / "code-gauntlet-report-deadbeef.md"
+        artifact.write_text("report", encoding="utf-8")
+        with (
+            patch.object(invoke.shutil, "move", side_effect=OSError("move failed")),
+            self.assertRaisesRegex(OSError, "move failed"),
+        ):
+            invoke.supersede_attempt_artifacts(self.pr_dir)
+
+    def test_check_cannot_use_archived_deliverables(self):
+        _build_ok_run(self.pr_dir.parent)
+        pr = self.pr_dir
+        invoke.supersede_attempt_artifacts(pr)
+        result = check.check_run(self.pr_dir.parent, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        for template in ARTIFACT_BASENAMES:
+            pattern = template.format(sha="*")
+            self.assertTrue(
+                any(
+                    f"artifact-completeness: missing {pattern}" in f
+                    for f in result["failures"]
+                ),
+                pattern,
+            )
+
+
 class CheckAfterSupersedeTest(unittest.TestCase):
     """#85 regression: checker pass requires executing the supersede path.
 
@@ -1107,9 +1378,11 @@ class CheckCliTest(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_check_cli_passes(self):
-        with contextlib.redirect_stdout(io.StringIO()):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
             rc = run.main(["--check", self.run_dir.name])
         self.assertEqual(rc, 0)
+        self.assertIn("deliverable_artifacts=4", output.getvalue())
 
     def test_check_cli_fails_on_gate(self):
         (self.run_dir / "pr-example-repo-1" / "post-review-payload.json").unlink()

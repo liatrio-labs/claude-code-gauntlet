@@ -1659,6 +1659,16 @@ class ResumeTest(RunTestBase):
             json.dumps({"runId": "stale", "scriptPath": "/x/workflows/pipeline.js"}),
             encoding="utf-8",
         )
+        prior_artifacts = {
+            "code-gauntlet-findings-deadbeef.json": "[]",
+            "code-gauntlet-report-deadbeef.md": "# old report\n",
+            "code-gauntlet-post-review-deadbeef.json": "{}",
+            "code-gauntlet-checkpoint-all-deadbeef.json": "{}",
+            "post-review-payload.json": "{}",
+            "risk-table-deadbeef.json": "{}",
+        }
+        for name, contents in prior_artifacts.items():
+            (pr_dir / name).write_text(contents, encoding="utf-8")
         # A sibling ok PR's record must stay put (not in failed() todo).
         ok_url = FIXTURE_URL
         manifest = json.loads((run_dir / "run.json").read_text())
@@ -1682,7 +1692,46 @@ class ResumeTest(RunTestBase):
         self.assertTrue(
             (pr_dir / "workflows" / "superseded" / "wf_stale.json").is_file()
         )
+        for name in prior_artifacts:
+            self.assertTrue((pr_dir / "superseded" / name).is_file(), name)
         self.assertTrue(ok_wf.is_file())
+
+    def test_resume_supersedes_prior_workflow_records_and_deliverables(self):
+        self._install_runner_fakes(invoke_fn=fake_invoke_ok)
+        url = PLAIN_URL
+        run_id = "smoke-resume-supersede"
+        run_dir = self.runs_root / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.json").write_text(
+            json.dumps(
+                {
+                    "tier": "smoke",
+                    "pr_urls": [url],
+                    "anchor": None,
+                    "child_auth": "api",
+                    "tool": "deep-review-v3",
+                }
+            ),
+            encoding="utf-8",
+        )
+        pr = {"url": url, **self.shas[url]}
+        pr_dir = run_dir / run.invoke.pr_dir_name(pr)
+        pr_dir.mkdir(parents=True)
+        (pr_dir / "workflows").mkdir()
+        (pr_dir / "workflows" / "wf_pending.json").write_text("{}", encoding="utf-8")
+        (pr_dir / "code-gauntlet-report-deadbeef.md").write_text(
+            "# old report\n", encoding="utf-8"
+        )
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            run._resume(run_id, run.parse_args(["--resume", run_id]), retry=False)
+
+        self.assertTrue(
+            (pr_dir / "workflows" / "superseded" / "wf_pending.json").is_file()
+        )
+        self.assertTrue(
+            (pr_dir / "superseded" / "code-gauntlet-report-deadbeef.md").is_file()
+        )
 
     def test_resume_skips_completed_prs(self):
         # First pass: everything succeeds.

@@ -44,6 +44,7 @@ __all__ = [
     "script_path_matches_repo",
     "scriptpath_from_record",
     "snapshot_workflow_records",
+    "supersede_attempt_artifacts",
     "supersede_workflow_records",
 ]
 
@@ -401,6 +402,44 @@ def supersede_workflow_records(pr_dir):
     return moved
 
 
+_ATTEMPT_ARTIFACT_PATTERNS = (
+    "code-gauntlet-*",
+    "post-review-payload*.json",
+    "risk-table-*.json",
+)
+
+
+def supersede_attempt_artifacts(pr_dir):
+    """Move current-attempt deliverables into ``{pr_dir}/superseded/``.
+
+    Only regular files that are direct children of ``pr_dir`` are moved. Raw output,
+    diffs, worktrees, workflows, and any existing ``superseded/`` tree stay in place;
+    the path component is the shared marker every consumer uses to ignore archives.
+    Missing ``pr_dir`` is a clean no-op. Collisions get a numeric suffix (never
+    overwrite a forensic record). Move errors propagate so a retry cannot read a
+    mixed old/new artifact set. Returns sorted moved basenames.
+    """
+    pr_dir = Path(pr_dir)
+    if not pr_dir.is_dir():
+        return []
+    artifacts = sorted(
+        path
+        for path in pr_dir.iterdir()
+        if path.is_file()
+        and any(path.match(pattern) for pattern in _ATTEMPT_ARTIFACT_PATTERNS)
+    )
+    if not artifacts:
+        return []
+    dest_dir = pr_dir / "superseded"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    moved = []
+    for path in artifacts:
+        target = _unique_target(dest_dir, path.name)
+        shutil.move(str(path), str(target))
+        moved.append(path.name)
+    return moved
+
+
 def _seed_trust(config_dir, worktree):
     """Merge ``worktree`` into ``.claude.json`` projects as trust-accepted.
 
@@ -750,6 +789,11 @@ def _echo_in_text(text):
     return True
 
 
+def _is_superseded(path):
+    """True when *path* is under an archived prior-attempt tree."""
+    return "superseded" in Path(path).parts
+
+
 def _echo_in_reports(report_dirs):
     """True when any ``*.md`` under any of *report_dirs* carries the full receipt."""
     seen = set()
@@ -760,6 +804,9 @@ def _echo_in_reports(report_dirs):
         if not base.exists():
             continue
         for md in sorted(base.rglob("*.md")):
+            # Archived attempts must not satisfy the current attempt's receipt.
+            if _is_superseded(md):
+                continue
             resolved = md.resolve()
             if resolved in seen:
                 continue
@@ -834,6 +881,9 @@ def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
         if not base.exists():
             continue
         for md in sorted(base.rglob(_CODE_RENDERED_REPORT_GLOB)):
+            # Archived attempts must not satisfy the current attempt's identity receipt.
+            if _is_superseded(md):
+                continue
             resolved = md.resolve()
             if resolved in seen:
                 continue
@@ -959,9 +1009,13 @@ def _find_payload(output_dir):
     if not base.exists():
         return None
     direct = base / "post-review-payload.json"
-    if direct.is_file():
+    if direct.is_file() and not _is_superseded(direct):
         return direct
-    matches = sorted(base.rglob("post-review-payload.json"))
+    matches = sorted(
+        path
+        for path in base.rglob("post-review-payload.json")
+        if not _is_superseded(path)
+    )
     return matches[0] if matches else None
 
 

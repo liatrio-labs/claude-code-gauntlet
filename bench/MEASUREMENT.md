@@ -79,7 +79,7 @@ python3 bench/run.py --check <RUN_ID>
    judged from that parsed array alone; their raw bytes are never scanned,
    because a wf record echoes the whole `workflows/pipeline.js` bundle into its
    `script` field and the bundle's own source contains those sentinels as
-   ordinary substrings (string/template literals and one retained block comment).
+   ordinary substrings.
    When such a
    carrier will not parse, or carries no `gaps`
    at all, it falls back to a raw-text scan with that `script` field blanked
@@ -95,13 +95,16 @@ python3 bench/run.py --check <RUN_ID>
    collected workflow records and falls back to scriptPath-only (not `raw.json`,
    which is only the result envelope — parsed tolerantly for preamble/stderr).
 5. ≥1 delivered comment across the run set
+6. Artifact completeness — findings, report, post-review, and checkpoint-all are
+   each present exactly once, non-empty, and JSON members are parseable
 
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
 
-`--retry-failed` moves each retried PR's prior `workflows/wf_*.json` into
-`workflows/superseded/` before re-invoking, so `--check` gates the current
-attempt only; forensic records stay on disk. Pre-fix run dirs that still hold
+`--retry-failed` moves each retried PR's prior `workflows/wf_*.json` and prior
+attempt deliverables into their respective `superseded/` directories before
+re-invoking, so `--check` gates the current attempt only; forensic records stay on disk.
+Pre-fix run dirs that still hold
 a failed attempt beside a success keep FAILing `--check` until retried under
 this behavior.
 
@@ -122,7 +125,7 @@ the child could complete the review while omitting one knob from its prose, so a
 failure. (Distinct from
 `workflow_backgrounded`, which the runner labels in
 `bench/runner/invoke.py`'s `_workflow_backgrounded` — a status distinct from
-any of `check.py`'s G1–G5 gates.)
+any of `check.py`'s G1–G6 gates.)
 
 The prose identity receipt symptom belongs to **G4**, not this floor: G4 checks
 that the code-owned `pipeline_version=… (bundle)` and `plugin_root=… (resolved)`

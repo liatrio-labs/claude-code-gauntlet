@@ -1000,15 +1000,17 @@ def _resume(run_id, args, retry):
 
     cp = checkpoint.Checkpoint(run_dir)
     todo = cp.failed(urls) if retry else cp.pending(urls)
-    # --retry-failed: archive each todo PR's prior wf_*.json before re-invoke so
-    # workflows/ holds only the new attempt (#85). Meaning is "superseded", not
-    # "retry succeeded" — a second failure still leaves only the latest record.
-    # Passed PRs are not in todo and keep their records untouched.
-    if retry:
-        for url in todo:
-            meta = shas.get(url) or {}
-            pr = {"url": url, **meta}
-            invoke.supersede_workflow_records(run_dir / invoke.pr_dir_name(pr))
+    # Archive every todo PR's prior wf records and deliverables before re-invoke so
+    # the checker gates the current attempt only, for every deliverable, not just wf
+    # records (#85, #165). Meaning is "superseded", not "retry succeeded" — a second
+    # failure still leaves only the latest record. Passed PRs are not in todo and keep
+    # their records untouched.
+    for url in todo:
+        meta = shas.get(url) or {}
+        pr = {"url": url, **meta}
+        pr_dir = run_dir / invoke.pr_dir_name(pr)
+        invoke.supersede_workflow_records(pr_dir)
+        invoke.supersede_attempt_artifacts(pr_dir)
     summary = _run_prs(
         run_dir,
         todo,
@@ -1061,12 +1063,13 @@ def _check_only(run_id):
     stats = result.get("stats") or {}
     print(
         "Check {}: ok={} pr_dirs={} comments={} findings_files={} "
-        "workflow_records={} script_paths={} unknown_origin={}".format(
+        "deliverable_artifacts={} workflow_records={} script_paths={} unknown_origin={}".format(
             run_id,
             result.get("ok"),
             stats.get("pr_dirs"),
             stats.get("delivered_comments"),
             stats.get("findings_files"),
+            stats.get("deliverable_artifacts"),
             stats.get("workflow_records"),
             stats.get("script_paths"),
             stats.get("unknown_origin"),

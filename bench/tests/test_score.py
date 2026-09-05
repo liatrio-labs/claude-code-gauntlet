@@ -624,6 +624,25 @@ class AssembleCandidatesTests(unittest.TestCase):
         self.assertEqual(len(candidates[url]["deep-review"]), 1)
         self.assertEqual(per_pr[url]["candidates"][0]["text"], "c1")
 
+    def test_ignores_nested_payload_under_superseded(self):
+        run_dir = self.tmp / "run"
+        url = "https://github.com/o/r/pull/13"
+        archived = run_dir / "pr-13" / "superseded" / "post-review-payload.json"
+        archived.parent.mkdir(parents=True)
+        write_json(
+            archived,
+            {
+                "platform": "github",
+                "payload": {
+                    "comments": [{"body": "archived", "path": "f.py", "line": 3}]
+                },
+                "skipped": [],
+            },
+        )
+        candidates, per_pr = score._assemble_candidates(run_dir, [(url, "ok")])
+        self.assertEqual(candidates[url]["deep-review"], [])
+        self.assertEqual(per_pr[url]["candidates"], [])
+
 
 class ResolvePrDirTests(unittest.TestCase):
     """FIX 1: pr-dir resolution across the new pr-{owner}-{repo}-{n} name, the legacy
