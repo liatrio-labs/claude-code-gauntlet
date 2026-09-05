@@ -2,6 +2,41 @@
 
 <!-- version list -->
 
+## v3.28.1 (2026-09-05)
+
+### Bug Fixes
+
+- **verify**: Address the code-gauntlet review on PR #287
+  ([#287](https://github.com/liatrio-labs/claude-code-gauntlet/pull/287),
+  [`c07dc2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c07dc2b2d43d6c71957e4f6c12d259ff2eb47460))
+
+- **verify**: Exact slice-length accounting in planVerifySlices
+  ([#287](https://github.com/liatrio-labs/claude-code-gauntlet/pull/287),
+  [`c07dc2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c07dc2b2d43d6c71957e4f6c12d259ff2eb47460))
+
+- **verify**: Hand the slice-input to the executor inline, off the artifact-writer
+  ([#287](https://github.com/liatrio-labs/claude-code-gauntlet/pull/287),
+  [`c07dc2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c07dc2b2d43d6c71957e4f6c12d259ff2eb47460))
+
+- **verify**: Hand the slice-input to the executor inline, off the artifact-writer (#275)
+  ([#287](https://github.com/liatrio-labs/claude-code-gauntlet/pull/287),
+  [`c07dc2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c07dc2b2d43d6c71957e4f6c12d259ff2eb47460))
+
+- **verify**: Round-1 review fixes for the inline slice channel
+  ([#287](https://github.com/liatrio-labs/claude-code-gauntlet/pull/287),
+  [`c07dc2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c07dc2b2d43d6c71957e4f6c12d259ff2eb47460))
+
+- **verify**: Round-2 review fixes and the 50k inline budget
+  ([#287](https://github.com/liatrio-labs/claude-code-gauntlet/pull/287),
+  [`c07dc2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c07dc2b2d43d6c71957e4f6c12d259ff2eb47460))
+
+### Chores
+
+- **verify**: Drop an unused local flagged by Biome
+  ([#287](https://github.com/liatrio-labs/claude-code-gauntlet/pull/287),
+  [`c07dc2b`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/c07dc2b2d43d6c71957e4f6c12d259ff2eb47460))
+
+
 ## v3.28.0 (2026-09-04)
 
 ### Bug Fixes
