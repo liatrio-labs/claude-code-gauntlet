@@ -9,6 +9,9 @@ import { applyValidations } from '../src/applyValidations.js';
 import {
   normalizeFieldNames,
   parseReviewMd,
+  buildReviewConfig,
+  configForFile,
+  applyFilterPipeline,
   applyThresholdFilter,
   applyReachabilityDemotion,
   applyInjectionFilter,
@@ -252,6 +255,14 @@ for (const c of loadCases('filter_findings')) {
       assert.deepEqual(parseReviewMd(c.input.markdown), c.expected.config);
       return;
     }
+    if (fn === 'build_review_config') {
+      assert.deepEqual(buildReviewConfig(c.input.entries), c.expected.config);
+      return;
+    }
+    if (fn === 'config_for_file') {
+      assert.deepEqual(configForFile(c.input.config, c.input.file), c.expected.config);
+      return;
+    }
     if (fn === 'load_exclusions') {
       assert.deepEqual(loadExclusions(c.input.markdown), c.expected.patterns);
       return;
@@ -282,9 +293,26 @@ for (const c of loadCases('filter_findings')) {
       return;
     }
     if (fn === 'apply_exclusions') {
-      const { kept, eliminated } = applyExclusions(c.input.findings, c.input.exclusion_patterns);
+      const { kept, eliminated } = applyExclusions(
+        c.input.findings,
+        c.input.exclusion_patterns,
+        c.input.config ?? null,
+      );
       assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
       assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
+      return;
+    }
+    if (fn === 'apply_filter_pipeline') {
+      const out = applyFilterPipeline(
+        c.input.findings,
+        c.input.config,
+        c.input.exclusion_patterns,
+        c.input.generated_at,
+      );
+      assert.deepEqual(idsOf(out.filtered), idsOf(c.expected.filtered));
+      assert.deepEqual(idsOf(out.eliminated), idsOf(c.expected.eliminated));
+      assert.deepEqual(out.stats, c.expected.stats);
+      assert.equal(out.generated_at, c.expected.generated_at);
       return;
     }
     // --- part 2: disagreement / dimension routing / cross-agent dedup / tag ---

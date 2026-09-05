@@ -1,0 +1,55 @@
+{
+  "eliminated": [
+    {
+      "confidence": 40,
+      "description": "real issue",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 40 < threshold 60",
+      "file": "legacy/y.py",
+      "id": "drop",
+      "line_start": 2,
+      "severity": "high",
+      "title": "Drop"
+    }
+  ],
+  "filtered": [
+    {
+      "confidence": 80,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "real issue",
+      "dimension": "bug",
+      "file": "legacy/x.py",
+      "id": "keep",
+      "line_start": 1,
+      "report_destination": "main",
+      "report_tag": "main",
+      "security_escalation": false,
+      "severity": "high",
+      "title": "Keep"
+    }
+  ],
+  "generated_at": "2026-07-18T00:00:00Z",
+  "stats": {
+    "claude_md_rules_removed": 0,
+    "consensus_boosted": 0,
+    "contested_count": 0,
+    "cross_agent_consolidated": 0,
+    "dimension_routed": 0,
+    "exclusions_removed": 0,
+    "injections_removed": 0,
+    "passed_threshold": 1,
+    "reachability_demoted": 0,
+    "singleton_penalized": 0,
+    "spec_texts_removed": 0,
+    "suggested_fix_codes_removed": 0,
+    "suggestions_removed": 0,
+    "tagged_main": 1,
+    "tagged_suggestion": 0,
+    "test_analyzer_promoted": 0,
+    "total": 2
+  }
+}

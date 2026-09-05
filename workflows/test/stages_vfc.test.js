@@ -161,6 +161,23 @@ test('filter is pure + deterministic: same input -> same output, no ctx', () => 
   assert.ok(!a.filtered.some((f) => f.id === 'F2'));
 });
 
+test('filter stage scopes a child threshold to findings under that directory', () => {
+  const out = filterStage({
+    findings: [
+      { id: 'api', file: 'api/x.py', line_start: 1, title: 'api', description: 'api', severity: 'high', confidence: 80, dimension: 'bug' },
+      { id: 'legacy', file: 'legacy/x.py', line_start: 1, title: 'legacy', description: 'legacy', severity: 'high', confidence: 80, dimension: 'bug' },
+    ],
+    reviewConfig: {
+      ignore: [],
+      scopes: [{ dir: 'api', confidence_threshold: 90, ignore: [] }],
+    },
+    exclusionPatterns: [],
+    generatedAt: '2026-07-18T00:00:00Z',
+  });
+  assert.deepEqual(out.filtered.map((f) => f.id), ['legacy']);
+  assert.deepEqual(out.eliminated.map((f) => f.id), ['api']);
+});
+
 // --- Phase 7: Challenge -----------------------------------------------------
 
 function challengeCtx({ nulls = [], byIdx } = {}) {

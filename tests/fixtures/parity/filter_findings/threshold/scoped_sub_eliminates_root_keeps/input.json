@@ -1,0 +1,8 @@
+{
+  "fn": "apply_threshold_filter",
+  "config": {"confidence_threshold": 60, "ignore": [], "scopes": [{"dir": "api", "confidence_threshold": 90, "ignore": []}]},
+  "findings": [
+    {"id": "api-low", "file": "api/x.py", "line_start": 1, "severity": "high", "confidence": 80, "title": "API issue", "description": "real API issue", "dimension": "bug"},
+    {"id": "legacy-kept", "file": "legacy/x.py", "line_start": 2, "severity": "high", "confidence": 80, "title": "Legacy issue", "description": "real legacy issue", "dimension": "bug"}
+  ]
+}

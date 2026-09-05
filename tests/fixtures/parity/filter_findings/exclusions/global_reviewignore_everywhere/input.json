@@ -1,0 +1,9 @@
+{
+  "fn": "apply_exclusions",
+  "config": {"ignore": [], "scopes": [{"dir": "api", "ignore": ["api-only"]}]},
+  "exclusion_patterns": ["global pattern"],
+  "findings": [
+    {"id": "api-global", "file": "api/x.py", "title": "global pattern", "description": "real"},
+    {"id": "legacy-global", "file": "legacy/x.py", "title": "global pattern", "description": "real"}
+  ]
+}

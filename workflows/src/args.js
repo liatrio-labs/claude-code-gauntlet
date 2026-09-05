@@ -1,4 +1,4 @@
-import { parseReviewMd, loadExclusions } from './filterFindings.js';
+import { loadExclusions, buildReviewConfig, REVIEW_SETTING_KEYS } from './filterFindings.js';
 
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.
@@ -88,6 +88,25 @@ export const KNOB_REGISTRY = [
 // runs earlier in validateArgs, before that local const is declared in source order — can
 // reuse the identical charset without a forward reference.
 const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
+
+function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
+  const errors = [];
+  if (separateSlashErrors) {
+    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
+    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
+  } else if (value.startsWith('/') || value.endsWith('/')) {
+    errors.push(`${label} must not have a leading or trailing /`);
+  }
+  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
+  if (REVIEW_MD_PATH_CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
+  const segments = value.split('/');
+  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
+  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
+  if (requireBasename && segments[segments.length - 1] !== 'REVIEW.md') {
+    errors.push(`${label} must end with exactly REVIEW.md`);
+  }
+  return errors;
+}
 
 // Issue #38 A1 (measured): a dispatch was rejected solely because reviewConfig arrived as a
 // stamped `null` rather than absent — a wasted model round trip. These five top-level
@@ -786,21 +805,66 @@ export function validateArgs(args) {
     errors.push('contextChars requires contextLines — chars alone cannot size a line-offset read plan');
   }
   // Optional reviewConfig (the parsed REVIEW.md shape, see parseReviewMd in
-  // filterFindings.js). Its `ignore` list feeds escapeRegExp in the Filter stage, which
-  // assumes flat strings — a session that assembles entries as {pattern, reason} objects
-  // crashes there AFTER five paid stages (observed live, PR-310 run). Same
-  // present-then-shape-checked pattern as `delivery`: absent is fine, malformed fails loud
-  // at the waist before anything is dispatched.
+  // filterFindings.js). Thresholds and ignore patterns may carry subtree scopes; the
+  // Filter stage resolves the matching layer per finding. Validate every layer here so a
+  // malformed pre-parsed scope cannot fail after paid stages have already dispatched.
   if (args.reviewConfig !== undefined) {
     if (args.reviewConfig === null || typeof args.reviewConfig !== 'object' || Array.isArray(args.reviewConfig)) {
       errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
-    } else if (args.reviewConfig.ignore !== undefined) {
-      if (!Array.isArray(args.reviewConfig.ignore)) {
-        errors.push('reviewConfig.ignore must be an array of flat pattern strings');
-      } else {
-        for (let i = 0; i < args.reviewConfig.ignore.length; i++) {
-          if (typeof args.reviewConfig.ignore[i] !== 'string') {
-            errors.push(`reviewConfig.ignore[${i}] must be a flat pattern string (got ${typeof args.reviewConfig.ignore[i]}) — parseReviewMd emits strings, never objects`);
+    } else {
+      const validateLayer = (layer, label, allowDir) => {
+        for (const key of REVIEW_SETTING_KEYS) {
+          if (!(key in layer)) continue;
+          if (key === 'severity_threshold') {
+            // parseReviewMd's regex alternation emits only these values; this
+            // enum guard is load-bearing for pre-parsed reviewConfig input.
+            if (!['critical', 'high', 'medium', 'low'].includes(layer[key])) {
+              errors.push(`${label}.${key} must be one of critical|high|medium|low when present (pre-parsed REVIEW.md enum)`);
+            }
+          } else if (!Number.isInteger(layer[key]) || layer[key] < 0 || layer[key] > 100) {
+            errors.push(`${label}.${key} must be an integer from 0 through 100 when present`);
+          }
+        }
+        if (layer.ignore !== undefined) {
+          if (!Array.isArray(layer.ignore)) {
+            errors.push(`${label}.ignore must be an array of flat pattern strings`);
+          } else {
+            for (let i = 0; i < layer.ignore.length; i++) {
+              if (typeof layer.ignore[i] !== 'string') {
+                errors.push(`${label}.ignore[${i}] must be a flat pattern string (got ${typeof layer.ignore[i]}) — parseReviewMd emits strings, never objects`);
+              }
+            }
+          }
+        }
+        if (!allowDir) return;
+        if (typeof layer.dir !== 'string' || layer.dir === '') {
+          errors.push(`${label}.dir must be a non-empty string`);
+          return;
+        }
+        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
+      };
+
+      validateLayer(args.reviewConfig, 'reviewConfig', false);
+      if (args.reviewConfig.scopes !== undefined) {
+        if (!Array.isArray(args.reviewConfig.scopes)) {
+          errors.push('reviewConfig.scopes must be an array when present');
+        } else {
+          const seenDirs = new Set();
+          for (let i = 0; i < args.reviewConfig.scopes.length; i++) {
+            const label = `reviewConfig.scopes[${i}]`;
+            const scope = args.reviewConfig.scopes[i];
+            if (!isPlainObject(scope)) {
+              errors.push(`${label} must be a plain object`);
+              continue;
+            }
+            const allowed = new Set(['dir', 'ignore', ...REVIEW_SETTING_KEYS]);
+            const extra = Object.keys(scope).filter((key) => !allowed.has(key)).sort();
+            if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
+            validateLayer(scope, label, true);
+            if (typeof scope.dir === 'string' && scope.dir !== '') {
+              if (seenDirs.has(scope.dir)) errors.push(`${label}.dir duplicates another scope dir: ${scope.dir}`);
+              seenDirs.add(scope.dir);
+            }
           }
         }
       }
@@ -824,9 +888,9 @@ export function validateArgs(args) {
   }
   // Optional reviewMd (issue #24 PR2): the raw, ORDERED discovery of REVIEW.md files —
   // root-first, increasing directory depth — as [{path, text}]. This is the RAW-text
-  // counterpart to the pre-parsed `reviewConfig` above: resolveReviewConfig (below) turns it
-  // into the same shape reviewConfig has always had by calling parseReviewMd per entry and
-  // merging in array order. An empty array is a legal, authoritative "discovery ran and found
+  // counterpart to the pre-parsed `reviewConfig` above: resolveReviewConfig (below) builds
+  // a root layer and optional subtree layers by calling parseReviewMd per entry. An empty
+  // array is a legal, authoritative "discovery ran and found
   // nothing" signal — distinct from the field being absent entirely (see resolveReviewConfig's
   // reviewConfigSource). `path` is repo-relative (must NOT start with '/', the opposite
   // convention from repoRoot/outputDir above, which must) and reuses PATH_CONTROL_RE below via
@@ -850,12 +914,10 @@ export function validateArgs(args) {
         if (typeof entry.path !== 'string' || entry.path === '') {
           errors.push(`reviewMd[${i}].path must be a non-empty string`);
         } else {
-          if (REVIEW_MD_PATH_CONTROL_RE.test(entry.path)) {
-            errors.push(`reviewMd[${i}].path must not contain a control character`);
-          }
-          if (entry.path.startsWith('/')) {
-            errors.push(`reviewMd[${i}].path must be repo-relative (must not start with /)`);
-          }
+          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, {
+            separateSlashErrors: true,
+            requireBasename: true,
+          }));
         }
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
@@ -1120,15 +1182,9 @@ export function validateArgs(args) {
 // refuses a waist that stamps BOTH the raw and pre-parsed form for the same axis, so at most
 // one of each pair is ever present here.
 //
-// reviewMd entries are stably sorted by path depth ascending (root first, ties keep their
-// original relative order) BEFORE merging — "deeper wins" is a code guarantee here, not a
-// promise the caller's discovery order happens to keep. Per
-// skills/code-gauntlet/references/review-md-spec.md: a later (deeper) entry's threshold
-// SETTING overrides an earlier one's when both set it; `ignore` lists ACCUMULATE across every
-// entry, in post-sort order. Absent settings are never defaulted here — parseReviewMd only
-// stamps a key when the text actually set it (see its own doc comment), and this merge
-// preserves that: a setting neither entry set stays `undefined` so applyThresholdFilter's own
-// config-absent 55/70 split (filterFindings.js) still applies.
+// The reviewMd branch delegates layer construction to buildReviewConfig. The root layer is the
+// default; a matching subtree layer overrides present thresholds and appends ignore entries.
+// The builder owns deterministic depth ordering and never fills absent keys.
 //
 // reviewConfigSource and exclusionsSource are two INDEPENDENT provenance signals, one per
 // axis — 'reviewMd' when A.reviewMd was present (even an empty array: discovery ran and found
@@ -1137,11 +1193,6 @@ export function validateArgs(args) {
 // present instead; 'none' when neither form of that axis was supplied. A mixed waist (one axis
 // raw, the other pre-parsed) is legal transition back-compat and reports one label per axis
 // accordingly — the two never need to agree.
-function pathDepth(entry) {
-  const p = (entry && entry.path) || '';
-  return p.split('/').length;
-}
-
 export function resolveReviewConfig(A) {
   const a = A || {};
   const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
@@ -1152,19 +1203,7 @@ export function resolveReviewConfig(A) {
   let reviewConfig;
   let reviewMdEntryCount = 0;
   if (a.reviewMd !== undefined) {
-    const sorted = a.reviewMd
-      .map((entry, index) => ({ entry, index }))
-      .sort((x, y) => (pathDepth(x.entry) - pathDepth(y.entry)) || (x.index - y.index))
-      .map((wrapped) => wrapped.entry);
-    const merged = { ignore: [] };
-    for (const entry of sorted) {
-      const parsed = parseReviewMd(entry && entry.text);
-      if (parsed.confidence_threshold !== undefined) merged.confidence_threshold = parsed.confidence_threshold;
-      if (parsed.security_min_confidence !== undefined) merged.security_min_confidence = parsed.security_min_confidence;
-      if (parsed.severity_threshold !== undefined) merged.severity_threshold = parsed.severity_threshold;
-      merged.ignore.push(...parsed.ignore);
-    }
-    reviewConfig = merged;
+    reviewConfig = buildReviewConfig(a.reviewMd);
     reviewMdEntryCount = a.reviewMd.length;
   } else {
     reviewConfig = a.reviewConfig || {};

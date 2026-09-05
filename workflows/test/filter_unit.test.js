@@ -9,6 +9,9 @@ import {
   lineBucket,
   WS_TRIM_RE,
   applyFilterPipeline,
+  buildReviewConfig,
+  configForFile,
+  scopeMatchesFile,
   applyThresholdFilter,
   applyReachabilityDemotion,
   applyInjectionFilter,
@@ -26,6 +29,153 @@ import {
   CONFUSABLE_FOLD,
   INVISIBLE_STRIP,
 } from '../src/filterFindings.js';
+
+test('REVIEW.md scoped builder and lookup keep settings per matching subtree', () => {
+  const config = buildReviewConfig([
+    { path: 'api/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\nignore:\n  - api-only\n```' },
+    { path: 'REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 60\nignore:\n  - root-only\n```' },
+    { path: 'api/internal/REVIEW.md', text: '```yaml code-gauntlet\nseverity_threshold: high\nignore:\n  - internal-only\n```' },
+    { path: 'web/REVIEW.md', text: '```yaml code-gauntlet\nsecurity_min_confidence: 50\n```' },
+  ]);
+  assert.deepEqual(config, {
+    confidence_threshold: 60,
+    ignore: ['root-only'],
+    scopes: [
+      { dir: 'api', confidence_threshold: 90, ignore: ['api-only'] },
+      { dir: 'web', security_min_confidence: 50, ignore: [] },
+      { dir: 'api/internal', severity_threshold: 'high', ignore: ['internal-only'] },
+    ],
+  });
+  assert.deepEqual(configForFile(config, 'api/internal/x.py'), {
+    confidence_threshold: 90,
+    severity_threshold: 'high',
+    ignore: ['root-only', 'api-only', 'internal-only'],
+  });
+  assert.deepEqual(configForFile(config, 'apiary/x.py'), {
+    confidence_threshold: 60,
+    ignore: ['root-only'],
+  });
+  assert.deepEqual(configForFile(config, 'api'), {
+    confidence_threshold: 60,
+    ignore: ['root-only'],
+  });
+  assert.equal(scopeMatchesFile({ dir: 'API' }, 'api/x.py'), false);
+});
+
+test('configForFile orders matching scopes structurally and never mutates config', () => {
+  const config = {
+    confidence_threshold: 50,
+    ignore: ['root'],
+    scopes: [
+      { dir: 'api/internal', confidence_threshold: 80, ignore: ['deep'] },
+      { dir: 'api', confidence_threshold: 60, ignore: ['shallow'] },
+    ],
+  };
+  const snapshot = JSON.stringify(config);
+  const first = configForFile(config, 'api/internal/x.py');
+  const second = configForFile(config, 'api/internal/y.py');
+  assert.deepEqual(first, { confidence_threshold: 80, ignore: ['root', 'shallow', 'deep'] });
+  assert.deepEqual(second, first);
+  assert.equal(JSON.stringify(config), snapshot);
+  assert.notEqual(first.ignore, config.ignore);
+  assert.notEqual(second.ignore, config.ignore);
+  assert.deepEqual(configForFile(config, 42), { confidence_threshold: 50, ignore: ['root'] });
+});
+
+test('configForFile does not strip a/ or b/ prefixes before matching', () => {
+  const config = {
+    confidence_threshold: 70,
+    ignore: ['root'],
+    scopes: [{ dir: 'api', confidence_threshold: 90, ignore: ['api'] }],
+  };
+  const expected = { confidence_threshold: 70, ignore: ['root'] };
+  assert.deepEqual(configForFile(config, 'a/api/x.py'), expected);
+  assert.deepEqual(configForFile(config, 'b/api/x.py'), expected);
+  assert.deepEqual(configForFile(config, './api/x.py'), expected);
+});
+
+test('scoped thresholds and ignores use each finding file', () => {
+  const config = {
+    confidence_threshold: 60,
+    ignore: ['root-match'],
+    scopes: [{ dir: 'api', confidence_threshold: 90, ignore: ['api-match'] }],
+  };
+  const findings = [
+    cleanFinding({ id: 'api-low', file: 'api/x.py', confidence: 80 }),
+    cleanFinding({ id: 'legacy-low', file: 'legacy/x.py', confidence: 80 }),
+  ];
+  const threshold = applyThresholdFilter(findings, config);
+  assert.deepEqual(threshold.kept.map((f) => f.id), ['legacy-low']);
+  assert.deepEqual(threshold.eliminated.map((f) => f.id), ['api-low']);
+  const exclusions = applyExclusions([
+    cleanFinding({ id: 'api-ignore', file: 'api/x.py', description: 'api-match' }),
+    cleanFinding({ id: 'legacy-root', file: 'legacy/x.py', description: 'root-match' }),
+    cleanFinding({ id: 'legacy-keep', file: 'legacy/x.py', description: 'api-match' }),
+  ], [], config);
+  assert.deepEqual(exclusions.eliminated.map((f) => f.id), ['api-ignore', 'legacy-root']);
+  assert.match(exclusions.eliminated[0].elimination_reason, /api-match/);
+  assert.match(exclusions.eliminated[1].elimination_reason, /root-match/);
+});
+
+test('scoped exclusions run with an empty external list and root wins overlaps', () => {
+  const config = {
+    ignore: ['shared'],
+    scopes: [{ dir: 'api', ignore: ['shared'] }],
+  };
+  const out = applyExclusions([
+    cleanFinding({ id: 'x', file: 'api/x.py', description: 'shared' }),
+  ], [], config);
+  assert.deepEqual(out.kept, []);
+  assert.equal(out.eliminated[0].elimination_reason, 'matched exclusion pattern: "shared"');
+});
+
+test('scoped exclusions name the root pattern when root, subtree, and external patterns overlap', () => {
+  const config = {
+    ignore: ['root-overlap'],
+    scopes: [{ dir: 'api', ignore: ['subtree-overlap'] }],
+  };
+  const out = applyExclusions([
+    cleanFinding({
+      id: 'overlap',
+      file: 'api/x.py',
+      description: 'root-overlap subtree-overlap external-overlap',
+    }),
+  ], ['external-overlap'], config);
+  assert.equal(out.eliminated[0].elimination_reason, 'matched exclusion pattern: "root-overlap"');
+});
+
+test('threshold and exclusion outcomes are order-independent and do not mutate config', () => {
+  const config = {
+    confidence_threshold: 60,
+    ignore: ['root-match'],
+    scopes: [{ dir: 'api', confidence_threshold: 90, ignore: ['api-match'] }],
+  };
+  const snapshot = JSON.parse(JSON.stringify(config));
+  const findings = [
+    cleanFinding({ id: 'api-low', file: 'api/x.py', confidence: 80, description: 'api-match' }),
+    cleanFinding({ id: 'legacy-root', file: 'legacy/x.py', confidence: 80, description: 'root-match' }),
+  ];
+  const outcomes = (ordered) => {
+    const threshold = applyThresholdFilter(ordered, config);
+    const exclusions = applyExclusions(ordered, [], config);
+    return {
+      threshold: {
+        kept: threshold.kept.map((f) => f.id).sort(),
+        eliminated: threshold.eliminated.map((f) => f.id).sort(),
+      },
+      exclusions: {
+        kept: exclusions.kept.map((f) => f.id).sort(),
+        eliminated: exclusions.eliminated.map((f) => f.id).sort(),
+      },
+    };
+  };
+  const forward = outcomes(findings.map((f) => ({ ...f })));
+  const reverse = outcomes(findings.slice().reverse().map((f) => ({ ...f })));
+  assert.deepEqual(forward, reverse);
+  assert.deepEqual(config, snapshot);
+  assert.deepEqual(config.ignore, snapshot.ignore);
+  assert.deepEqual(config.scopes.map((scope) => scope.ignore), snapshot.scopes.map((scope) => scope.ignore));
+});
 
 // suggested_fix_code field-strip matrix (#63/D8) -- mirrors the Python
 // TestApplyInjectionFilter matrix in tests/test_filter_findings.py. No parity

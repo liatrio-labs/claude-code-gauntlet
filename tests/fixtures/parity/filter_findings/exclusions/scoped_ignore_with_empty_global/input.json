@@ -1,0 +1,8 @@
+{
+  "fn": "apply_exclusions",
+  "config": {"ignore": [], "scopes": [{"dir": "api", "ignore": ["subtree-only"]}]},
+  "exclusion_patterns": [],
+  "findings": [
+    {"id": "subtree", "file": "api/x.py", "title": "subtree-only", "description": "real"}
+  ]
+}

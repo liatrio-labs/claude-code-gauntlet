@@ -5,6 +5,8 @@ rollout sequencing, ongoing maintenance, and example templates for common stacks
 
 Source: Research Artifact #19 — "Writing REVIEW.md files that actually improve code quality"
 
+Subdirectory REVIEW.md rules are advisory prose shared with every context-reading agent (summarize, discovery, validate; the file location is provenance); only thresholds and ignore patterns are enforced for that subtree.
+
 ---
 
 ## Prescriptive vs Directional Rules

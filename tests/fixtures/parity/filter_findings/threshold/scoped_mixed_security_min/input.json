@@ -1,0 +1,8 @@
+{
+  "fn": "apply_threshold_filter",
+  "config": {"confidence_threshold": 80, "ignore": [], "scopes": [{"dir": "api", "security_min_confidence": 50, "ignore": []}]},
+  "findings": [
+    {"id": "api-security", "file": "api/x.py", "line_start": 1, "severity": "high", "confidence": 60, "title": "API security", "description": "real API issue", "dimension": "security"},
+    {"id": "api-bug", "file": "api/y.py", "line_start": 2, "severity": "high", "confidence": 60, "title": "API bug", "description": "real API issue", "dimension": "bug"}
+  ]
+}

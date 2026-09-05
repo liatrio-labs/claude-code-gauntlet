@@ -38,6 +38,11 @@ function normalizeFieldNames(findings) {
   return normalizedCount;
 }
 const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+const REVIEW_SETTING_KEYS = [
+  'confidence_threshold',
+  'security_min_confidence',
+  'severity_threshold',
+];
 const DEFAULT_CONFIDENCE_THRESHOLD = 70;
 const DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55;
 const DEFAULT_SECURITY_MIN_CONFIDENCE = 70;
@@ -113,23 +118,85 @@ function parseReviewMd(text) {
   }
   return config;
 }
+function reviewScopeDir(path) {
+  const slash = path.lastIndexOf('/');
+  return slash < 0 ? '' : path.slice(0, slash);
+}
+function reviewScopeDepth(dir) {
+  return dir.split('/').length;
+}
+function mergeReviewLayer(layer, parsed) {
+  for (const key of REVIEW_SETTING_KEYS) {
+    if (parsed[key] !== undefined) layer[key] = parsed[key];
+  }
+  layer.ignore.push(...parsed.ignore);
+}
+function buildReviewConfig(entries) {
+  const root = { ignore: [] };
+  const scopes = [];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    const dir = reviewScopeDir(entry.path);
+    const parsed = parseReviewMd(entry.text);
+    if (dir === '') {
+      mergeReviewLayer(root, parsed);
+      continue;
+    }
+    let scope = scopes.find((candidate) => candidate.dir === dir);
+    if (!scope) {
+      scope = { dir, ignore: [], _index: index };
+      scopes.push(scope);
+    }
+    mergeReviewLayer(scope, parsed);
+  }
+  scopes.sort((a, b) =>
+    (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (a._index - b._index));
+  for (const scope of scopes) delete scope._index;
+  if (scopes.length > 0) root.scopes = scopes;
+  return root;
+}
+function scopeMatchesFile(scope, file) {
+  return typeof file === 'string'
+    && scope && typeof scope.dir === 'string'
+    && scope.dir !== ''
+    && file.startsWith(`${scope.dir}/`);
+}
+function configForFile(config, file) {
+  const source = config || {};
+  const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
+  for (const key of REVIEW_SETTING_KEYS) {
+    if (key in source) view[key] = source[key];
+  }
+  if (!Array.isArray(source.scopes) || typeof file !== 'string') return view;
+  const matching = source.scopes
+    .map((scope, index) => ({ scope, index }))
+    .filter(({ scope }) => scopeMatchesFile(scope, file))
+    .sort(({ scope: a, index: ai }, { scope: b, index: bi }) =>
+      (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (ai - bi));
+  for (const { scope } of matching) {
+    for (const key of REVIEW_SETTING_KEYS) {
+      if (key in scope) view[key] = scope[key];
+    }
+    view.ignore.push(...(scope.ignore === undefined ? [] : scope.ignore));
+  }
+  return view;
+}
 function applyThresholdFilter(findings, config) {
   const kept = [];
   const eliminated = [];
   let contestedCount = 0;
-  const severityThreshold = cfgGet(config, 'severity_threshold', DEFAULT_SEVERITY_THRESHOLD);
-  const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
   for (const finding of findings) {
+    const fileConfig = configForFile(config, finding.file);
     const confidence = asConfidence(pyGet(finding, 'confidence', 0));
     let severity = (asText(pyGet(finding, 'severity', 'low')) || 'low').toLowerCase();
     const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
     const isSecurity = dimensions.includes('security');
     let effectiveThreshold;
     if (isSecurity) {
-      const minConf = cfgGet(config, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
-      effectiveThreshold = Math.min(cfgGet(config, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
+      const minConf = cfgGet(fileConfig, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
+      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
     } else {
-      effectiveThreshold = cfgGet(config, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
+      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
     }
     let isContested = false;
     const originalConfidence = 'original_confidence' in finding ? finding.original_confidence : undefined;
@@ -153,6 +220,8 @@ function applyThresholdFilter(findings, config) {
       continue;
     }
     if (!isContested) {
+      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', DEFAULT_SEVERITY_THRESHOLD);
+      const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
       if (!SEVERITY_ORDER.includes(severity)) severity = 'low';
       const sevIdx = SEVERITY_ORDER.indexOf(severity);
       if (sevIdx > sevThresholdIdx) {
@@ -926,12 +995,13 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const total = findings.length;
   normalizeFieldNames(findings);
   applyReachabilityDemotion(findings);
-  const allExclusions = [...(config.ignore || []), ...(exclusionPatterns || [])];
   const allEliminated = [];
   const { kept: afterThreshold, eliminated: elimThreshold, contestedCount } = applyThresholdFilter(findings, config);
   allEliminated.push(...elimThreshold);
   const passedThreshold = afterThreshold.length;
-  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(afterThreshold, allExclusions);
+  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(
+    afterThreshold, exclusionPatterns, config,
+  );
   allEliminated.push(...elimExclusions);
   const exclusionsRemoved = elimExclusions.length;
   const { kept: afterInjection, eliminated: elimInjection } = applyInjectionFilter(afterExclusions);
@@ -977,17 +1047,23 @@ function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
     generated_at: generatedAt,
   };
 }
-function applyExclusions(findings, exclusionPatterns) {
-  if (!exclusionPatterns || !exclusionPatterns.length) return { kept: findings, eliminated: [] };
+function applyExclusions(findings, exclusionPatterns, config = null) {
+  const hasConfig = config !== null && config !== undefined;
+  if (!hasConfig && (!exclusionPatterns || !exclusionPatterns.length)) {
+    return { kept: findings, eliminated: [] };
+  }
   const kept = [];
   const eliminated = [];
   for (const finding of findings) {
+    const patterns = hasConfig
+      ? [...configForFile(config, finding.file).ignore, ...(exclusionPatterns || [])]
+      : (exclusionPatterns || []);
     const title = asText(finding.title);
     const description = asText(finding.description);
     const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
     const combined = `${title}\n${description}\n${suggestion}`;
     let matchedPattern = null;
-    for (const pattern of exclusionPatterns) {
+    for (const pattern of patterns) {
       const rx = new RegExp(escapeRegExp(pattern), 'i');
       if (rx.test(combined)) {
         matchedPattern = pattern;
@@ -2158,6 +2234,24 @@ const KNOB_REGISTRY = [
   { key: 'review_md', modes: ['interactive'], allowedSources: { interactive: ['discovery'] }, valueRule: (value) => ['present', 'absent'].includes(value) },
 ];
 const REVIEW_MD_PATH_CONTROL_RE = /[\u0000-\u001F\u007F]/;
+function validatePathSegments(value, label, { separateSlashErrors = false, requireBasename = false } = {}) {
+  const errors = [];
+  if (separateSlashErrors) {
+    if (value.startsWith('/')) errors.push(`${label} must be repo-relative (must not start with /)`);
+    if (value.endsWith('/')) errors.push(`${label} must not have a trailing /`);
+  } else if (value.startsWith('/') || value.endsWith('/')) {
+    errors.push(`${label} must not have a leading or trailing /`);
+  }
+  if (value.includes('\\')) errors.push(`${label} must use / separators, not backslashes`);
+  if (REVIEW_MD_PATH_CONTROL_RE.test(value)) errors.push(`${label} must not contain a control character`);
+  const segments = value.split('/');
+  if (segments.some((segment) => segment === '')) errors.push(`${label} must not contain an empty path segment`);
+  if (segments.some((segment) => segment === '.' || segment === '..')) errors.push(`${label} must not contain . or .. path segments`);
+  if (requireBasename && segments[segments.length - 1] !== 'REVIEW.md') {
+    errors.push(`${label} must end with exactly REVIEW.md`);
+  }
+  return errors;
+}
 const NULLABLE_TOP_LEVEL = ['reviewConfig', 'exclusionPatterns', 'reviewMd', 'exclusionsText', 'delivery', 'checkpoints', 'persist', 'scopeAnswer'];
 const SCOPE_ANSWERS = ['light', 'full'];
 const RISK_LEVELS = ['low', 'medium', 'high'];
@@ -2523,13 +2617,57 @@ function validateArgs(args) {
   if (args.reviewConfig !== undefined) {
     if (args.reviewConfig === null || typeof args.reviewConfig !== 'object' || Array.isArray(args.reviewConfig)) {
       errors.push('reviewConfig must be an object (the parseReviewMd output shape) when present');
-    } else if (args.reviewConfig.ignore !== undefined) {
-      if (!Array.isArray(args.reviewConfig.ignore)) {
-        errors.push('reviewConfig.ignore must be an array of flat pattern strings');
-      } else {
-        for (let i = 0; i < args.reviewConfig.ignore.length; i++) {
-          if (typeof args.reviewConfig.ignore[i] !== 'string') {
-            errors.push(`reviewConfig.ignore[${i}] must be a flat pattern string (got ${typeof args.reviewConfig.ignore[i]}) — parseReviewMd emits strings, never objects`);
+    } else {
+      const validateLayer = (layer, label, allowDir) => {
+        for (const key of REVIEW_SETTING_KEYS) {
+          if (!(key in layer)) continue;
+          if (key === 'severity_threshold') {
+            if (!['critical', 'high', 'medium', 'low'].includes(layer[key])) {
+              errors.push(`${label}.${key} must be one of critical|high|medium|low when present (pre-parsed REVIEW.md enum)`);
+            }
+          } else if (!Number.isInteger(layer[key]) || layer[key] < 0 || layer[key] > 100) {
+            errors.push(`${label}.${key} must be an integer from 0 through 100 when present`);
+          }
+        }
+        if (layer.ignore !== undefined) {
+          if (!Array.isArray(layer.ignore)) {
+            errors.push(`${label}.ignore must be an array of flat pattern strings`);
+          } else {
+            for (let i = 0; i < layer.ignore.length; i++) {
+              if (typeof layer.ignore[i] !== 'string') {
+                errors.push(`${label}.ignore[${i}] must be a flat pattern string (got ${typeof layer.ignore[i]}) — parseReviewMd emits strings, never objects`);
+              }
+            }
+          }
+        }
+        if (!allowDir) return;
+        if (typeof layer.dir !== 'string' || layer.dir === '') {
+          errors.push(`${label}.dir must be a non-empty string`);
+          return;
+        }
+        errors.push(...validatePathSegments(`${layer.dir}`, `${label}.dir`));
+      };
+      validateLayer(args.reviewConfig, 'reviewConfig', false);
+      if (args.reviewConfig.scopes !== undefined) {
+        if (!Array.isArray(args.reviewConfig.scopes)) {
+          errors.push('reviewConfig.scopes must be an array when present');
+        } else {
+          const seenDirs = new Set();
+          for (let i = 0; i < args.reviewConfig.scopes.length; i++) {
+            const label = `reviewConfig.scopes[${i}]`;
+            const scope = args.reviewConfig.scopes[i];
+            if (!isPlainObject(scope)) {
+              errors.push(`${label} must be a plain object`);
+              continue;
+            }
+            const allowed = new Set(['dir', 'ignore', ...REVIEW_SETTING_KEYS]);
+            const extra = Object.keys(scope).filter((key) => !allowed.has(key)).sort();
+            if (extra.length > 0) errors.push(`${label} has unexpected key(s): ${extra.join(', ')}`);
+            validateLayer(scope, label, true);
+            if (typeof scope.dir === 'string' && scope.dir !== '') {
+              if (seenDirs.has(scope.dir)) errors.push(`${label}.dir duplicates another scope dir: ${scope.dir}`);
+              seenDirs.add(scope.dir);
+            }
           }
         }
       }
@@ -2564,12 +2702,10 @@ function validateArgs(args) {
         if (typeof entry.path !== 'string' || entry.path === '') {
           errors.push(`reviewMd[${i}].path must be a non-empty string`);
         } else {
-          if (REVIEW_MD_PATH_CONTROL_RE.test(entry.path)) {
-            errors.push(`reviewMd[${i}].path must not contain a control character`);
-          }
-          if (entry.path.startsWith('/')) {
-            errors.push(`reviewMd[${i}].path must be repo-relative (must not start with /)`);
-          }
+          errors.push(...validatePathSegments(entry.path, `reviewMd[${i}].path`, {
+            separateSlashErrors: true,
+            requireBasename: true,
+          }));
         }
         if (typeof entry.text !== 'string') {
           errors.push(`reviewMd[${i}].text must be a string`);
@@ -2760,10 +2896,6 @@ function validateArgs(args) {
   }
   return { ok: errors.length === 0, errors };
 }
-function pathDepth(entry) {
-  const p = (entry && entry.path) || '';
-  return p.split('/').length;
-}
 function resolveReviewConfig(A) {
   const a = A || {};
   const reviewConfigSource = a.reviewMd !== undefined ? 'reviewMd'
@@ -2773,19 +2905,7 @@ function resolveReviewConfig(A) {
   let reviewConfig;
   let reviewMdEntryCount = 0;
   if (a.reviewMd !== undefined) {
-    const sorted = a.reviewMd
-      .map((entry, index) => ({ entry, index }))
-      .sort((x, y) => (pathDepth(x.entry) - pathDepth(y.entry)) || (x.index - y.index))
-      .map((wrapped) => wrapped.entry);
-    const merged = { ignore: [] };
-    for (const entry of sorted) {
-      const parsed = parseReviewMd(entry && entry.text);
-      if (parsed.confidence_threshold !== undefined) merged.confidence_threshold = parsed.confidence_threshold;
-      if (parsed.security_min_confidence !== undefined) merged.security_min_confidence = parsed.security_min_confidence;
-      if (parsed.severity_threshold !== undefined) merged.severity_threshold = parsed.severity_threshold;
-      merged.ignore.push(...parsed.ignore);
-    }
-    reviewConfig = merged;
+    reviewConfig = buildReviewConfig(a.reviewMd);
     reviewMdEntryCount = a.reviewMd.length;
   } else {
     reviewConfig = a.reviewConfig || {};
@@ -4778,6 +4898,13 @@ async function runWith(ctx, rawArgs) {
     }));
     gaps.push(...(validateOut.gaps || []));
     const resolvedReview = resolveReviewConfig(A);
+    const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
+      ? resolvedReview.reviewConfig.scopes
+      : []).map((scope) => ({
+        dir: scope.dir,
+        matched: (validateOut.findings || []).filter((finding) =>
+          scopeMatchesFile(scope, finding.file)).length,
+      }));
     const filterOut = await runPhase('filter', () => filterStage({
       findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
@@ -4894,6 +5021,7 @@ async function runWith(ctx, rawArgs) {
         reviewConfigSource: resolvedReview.reviewConfigSource,
         exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
+        reviewMdSubtrees,
         scope: {
           lightEligible: computeLightEligible(A.riskTable, A.changedLines),
           scopeAnswer: A.scopeAnswer !== undefined ? A.scopeAnswer : null,

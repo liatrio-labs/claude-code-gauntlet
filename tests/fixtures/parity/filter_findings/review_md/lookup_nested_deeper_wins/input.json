@@ -1,0 +1,5 @@
+{
+  "fn": "config_for_file",
+  "config": {"confidence_threshold": 50, "ignore": ["root"], "scopes": [{"dir": "api", "confidence_threshold": 60, "ignore": ["shallow"]}, {"dir": "api/internal", "confidence_threshold": 80, "ignore": ["deep"]}]},
+  "file": "api/internal/x.py"
+}

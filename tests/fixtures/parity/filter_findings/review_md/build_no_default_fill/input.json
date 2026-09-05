@@ -1,0 +1,6 @@
+{
+  "fn": "build_review_config",
+  "entries": [
+    {"path": "REVIEW.md", "text": "No config block here"}
+  ]
+}

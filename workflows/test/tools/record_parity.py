@@ -67,6 +67,10 @@ def _filter_findings(inp):
             t.write(inp["markdown"])
             path = t.name
         return {"config": ff.parse_review_md(path)}
+    if fn == "build_review_config":
+        return {"config": ff.build_review_config(inp["entries"])}
+    if fn == "config_for_file":
+        return {"config": ff.config_for_file(inp["config"], inp["file"])}
     if fn == "load_exclusions":
         # Not in the Task 4 brief's Step 1 skeleton — added because loadExclusions
         # is a Produced part-1 function (brief interfaces list) and the exclusions/
@@ -101,9 +105,16 @@ def _filter_findings(inp):
         return {"kept": kept, "eliminated": eliminated}
     if fn == "apply_exclusions":
         kept, eliminated = ff.apply_exclusions(
-            inp["findings"], inp["exclusion_patterns"]
+            inp["findings"], inp["exclusion_patterns"], inp.get("config")
         )
         return {"kept": kept, "eliminated": eliminated}
+    if fn == "apply_filter_pipeline":
+        return ff.apply_filter_pipeline(
+            inp["findings"],
+            inp["config"],
+            inp["exclusion_patterns"],
+            inp["generated_at"],
+        )
     if fn == "detect_disagreement":
         active, suppressed, boosted_count = ff.detect_disagreement(inp["findings"])
         return {

@@ -1,0 +1,5 @@
+{
+  "fn": "config_for_file",
+  "config": {"confidence_threshold": 60, "ignore": ["root"]},
+  "file": "legacy/x.py"
+}

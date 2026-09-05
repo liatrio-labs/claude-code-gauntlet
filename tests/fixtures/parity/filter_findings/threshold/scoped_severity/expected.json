@@ -1,0 +1,29 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": 90,
+      "description": "real API issue",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "severity 'medium' is below threshold 'high'",
+      "file": "api/x.py",
+      "id": "api-low",
+      "line_start": 1,
+      "severity": "medium",
+      "title": "API issue"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 90,
+      "description": "real legacy issue",
+      "dimension": "bug",
+      "file": "legacy/x.py",
+      "id": "legacy-low",
+      "line_start": 2,
+      "severity": "medium",
+      "title": "Legacy issue"
+    }
+  ]
+}

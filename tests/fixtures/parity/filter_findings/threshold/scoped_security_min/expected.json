@@ -1,0 +1,29 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": 60,
+      "description": "real legacy issue",
+      "dimension": "security",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 60 < threshold 70",
+      "file": "legacy/x.py",
+      "id": "legacy-security",
+      "line_start": 2,
+      "severity": "high",
+      "title": "Legacy issue"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 60,
+      "description": "real API issue",
+      "dimension": "security",
+      "file": "api/x.py",
+      "id": "api-security",
+      "line_start": 1,
+      "severity": "high",
+      "title": "API issue"
+    }
+  ]
+}

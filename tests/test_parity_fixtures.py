@@ -104,6 +104,15 @@ class TestFilterFindingsParity(unittest.TestCase):
                         t.write(inp["markdown"])
                         path = t.name
                     self.assertEqual({"config": ff.parse_review_md(path)}, expected)
+                elif fn == "build_review_config":
+                    self.assertEqual(
+                        {"config": ff.build_review_config(inp["entries"])}, expected
+                    )
+                elif fn == "config_for_file":
+                    self.assertEqual(
+                        {"config": ff.config_for_file(inp["config"], inp["file"])},
+                        expected,
+                    )
                 elif fn == "load_exclusions":
                     with tempfile.NamedTemporaryFile(
                         "w", suffix=".md", delete=False
@@ -139,9 +148,19 @@ class TestFilterFindingsParity(unittest.TestCase):
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
                 elif fn == "apply_exclusions":
                     kept, eliminated = ff.apply_exclusions(
-                        inp["findings"], inp["exclusion_patterns"]
+                        inp["findings"],
+                        inp["exclusion_patterns"],
+                        inp.get("config"),
                     )
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
+                elif fn == "apply_filter_pipeline":
+                    got = ff.apply_filter_pipeline(
+                        inp["findings"],
+                        inp["config"],
+                        inp["exclusion_patterns"],
+                        inp["generated_at"],
+                    )
+                    self.assertEqual(got, expected)
                 elif fn == "detect_disagreement":
                     active, suppressed, boosted_count = ff.detect_disagreement(
                         inp["findings"]
