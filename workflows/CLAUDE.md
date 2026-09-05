@@ -44,7 +44,10 @@ stay off so a later re-evaluation need not re-derive them:
 ## The bundle
 
 - `pipeline.js` is **generated** — never hand-edit it. Source is `src/*.js`, which may use ESM
-  `import`/`export` for tests only; `build.js` strips those and concatenates.
+  `import`/`export` for tests only; `build.js` strips those, drops full-line `//` comments and
+  blank lines that V8 proves inert (a `//` line inside a template literal survives), and
+  concatenates. It fails the build when the bundle exceeds `WORKFLOW_SCRIPT_CAP -
+  BUNDLE_HEADROOM`; the constants and rationale live in `build.js`.
 - Only a single-line `import … from './sibling.js'` is strippable; `build.js` (`unsafeImports`)
   fails on anything else. A `node:`/bare specifier inlines nothing, so stripping it ships an
   undefined reference; a side-effect or multi-line import `strip()` never matches ships verbatim.

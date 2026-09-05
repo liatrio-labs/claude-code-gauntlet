@@ -193,7 +193,11 @@ CODEX_CAP_BYTES = 32_768
 # Raised 21_674 -> 21_803 (2026-09-03, #283): the coverage floor ratchet (scripts
 # 93.5 -> 93.6, JS branches 88.3 -> 88.4) names the #283 PR CI measurement
 # (94.62 / 89.48) in the same paragraph, same shape as the raises above.
-AGENTS_SET_BUDGET_BYTES = 21_803
+# Raised 21_803 -> 21_992 (2026-09-05, #292): workflows/AGENTS.md now tells an author
+# before editing src/ why the bundle has no full-line comments or blank lines and why a
+# rebuild can fail on size. The mechanism is code, but the rule an author needs before
+# editing src/ is read only after the failure; nothing else in the tree tells them.
+AGENTS_SET_BUDGET_BYTES = 21_992
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its
