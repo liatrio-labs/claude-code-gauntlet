@@ -1,0 +1,24 @@
+{
+  "config": {
+    "ignore": [
+      "root"
+    ],
+    "scopes": [
+      {
+        "dir": "web",
+        "ignore": [],
+        "severity_threshold": "critical"
+      },
+      {
+        "confidence_threshold": 70,
+        "dir": "api",
+        "ignore": []
+      },
+      {
+        "confidence_threshold": 80,
+        "dir": "api/internal",
+        "ignore": []
+      }
+    ]
+  }
+}

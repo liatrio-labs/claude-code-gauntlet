@@ -311,12 +311,10 @@ the same directory set `scripts/collect_project_rules.py` walks for AGENTS.md/CL
   `.reviewignore`), unchanged from today.
 
 Do not hand-parse or schema-validate REVIEW.md here — pass the raw text through. The workflow's
-`resolveReviewConfig` (`workflows/src/args.js`) calls `parseReviewMd` per entry, sorts entries
-root-first by path depth (structural, not caller order), and merges: a deeper entry's threshold
-**setting** overrides a shallower one's when both set it, `ignore` lists accumulate across every
-entry. The result is **one flat config applied to every finding in the run** — resolveReviewConfig
-does not implement the per-subtree scoping `references/review-md-spec.md` describes; see that
-file's own note on the gap. In particular, `resolveReviewConfig` never pins a numeric default for
+`resolveReviewConfig` (`workflows/src/args.js`) calls `buildReviewConfig`, preserving a root layer
+and depth-ordered subtree layers. Filter selects the root layer or matching subtree layers per
+`finding.file`: thresholds override and `ignore` entries accumulate from root to the deepest match.
+In particular, `resolveReviewConfig` never pins a numeric default for
 `confidence_threshold` / `security_min_confidence` when REVIEW.md does not set one — the Filter
 stage's own built-in defaults (non-security **55**, security **70**) apply exactly when absent,
 so there is nothing to "get right" by hand here anymore.

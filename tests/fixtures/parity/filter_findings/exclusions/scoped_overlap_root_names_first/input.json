@@ -1,0 +1,8 @@
+{
+  "fn": "apply_exclusions",
+  "config": {"ignore": ["overlap"], "scopes": [{"dir": "api", "ignore": ["overlap"]}]},
+  "exclusion_patterns": ["overlap"],
+  "findings": [
+    {"id": "overlap", "file": "api/x.py", "title": "overlap", "description": "real"}
+  ]
+}

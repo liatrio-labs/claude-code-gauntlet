@@ -1,0 +1,8 @@
+{
+  "fn": "apply_exclusions",
+  "config": {"ignore": [], "scopes": [{"dir": "api", "ignore": ["api-only"]}]},
+  "exclusion_patterns": [],
+  "findings": [
+    {"id": "outside", "file": "legacy/x.py", "title": "api-only", "description": "real"}
+  ]
+}

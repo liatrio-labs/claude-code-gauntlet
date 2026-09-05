@@ -1,0 +1,29 @@
+{
+  "contested_count": 0,
+  "eliminated": [
+    {
+      "confidence": 60,
+      "description": "real API issue",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 60 < threshold 80",
+      "file": "api/y.py",
+      "id": "api-bug",
+      "line_start": 2,
+      "severity": "high",
+      "title": "API bug"
+    }
+  ],
+  "kept": [
+    {
+      "confidence": 60,
+      "description": "real API issue",
+      "dimension": "security",
+      "file": "api/x.py",
+      "id": "api-security",
+      "line_start": 1,
+      "severity": "high",
+      "title": "API security"
+    }
+  ]
+}

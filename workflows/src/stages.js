@@ -19,7 +19,7 @@
 import { DIMENSIONS, AGENTS, AGENT_LABELS, resolvePolicy, FINDING_PROP_TYPES, FINDING_REQUIRED, conditionalSchemaActive } from './registry.js';
 import { merge } from './mergeFindings.js';
 import { applyValidations, pyIntStrict, REACHABILITY_VALUES } from './applyValidations.js';
-import { applyFilterPipeline, SEVERITY_ORDER, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames } from './filterFindings.js';
+import { applyFilterPipeline, SEVERITY_ORDER, applyInjectedProseStrip, applyReplayInjectionScan, normalizeFieldNames, scopeMatchesFile } from './filterFindings.js';
 import { applyChallenges, rankFindings, deepClone } from './applyChallenges.js';
 import { normalizeArgsReport, nullToleranceGap, nullToleranceRejectedKeys, validateArgs, entryArgs, makeArgsRejectEnvelope, SKILL_RECOVERY_LINE, LIMIT_DEFAULTS, resolveReviewConfig, computeLightEligible } from './args.js';
 import { renderReport, coerceReportFindings } from './renderReport.js';
@@ -1875,10 +1875,10 @@ function validatePrompt(inp, batch) {
 // --- Phase 6: Filter --------------------------------------------------------
 
 // filterStage(input) -> applyFilterPipeline envelope. PURE and deterministic: no ctx,
-// no agents (that is the whole point of the JS twin). `reviewConfig` is the parsed
-// REVIEW.md object (thresholds + ignore list) and `exclusionPatterns` the parsed
-// exclusions list, both prepared upstream (parseReviewMd / loadExclusions). generatedAt
-// is threaded from the args waist into the envelope's generated_at — never new Date().
+// no agents (that is the whole point of the JS twin). `reviewConfig` contains the root
+// REVIEW.md layer and optional subtree layers; threshold and ignore selection uses each
+// finding.file. `exclusionPatterns` is the global parsed exclusions list. generatedAt is
+// threaded from the args waist into the envelope's generated_at — never new Date().
 export function filterStage(input) {
   const inp = typeof input === 'string' ? JSON.parse(input) : (input || {});
   const findings = inp.findings || [];
@@ -4070,6 +4070,13 @@ export async function runWith(ctx, rawArgs) {
     // ({findings, reviewConfig, exclusionPatterns, generatedAt}) stays untouched (parity
     // seam, issue #24 req 9).
     const resolvedReview = resolveReviewConfig(A);
+    const reviewMdSubtrees = (Array.isArray(resolvedReview.reviewConfig.scopes)
+      ? resolvedReview.reviewConfig.scopes
+      : []).map((scope) => ({
+        dir: scope.dir,
+        matched: (validateOut.findings || []).filter((finding) =>
+          scopeMatchesFile(scope, finding.file)).length,
+      }));
     const filterOut = await runPhase('filter', () => filterStage({
       findings: validateOut.findings || [], reviewConfig: resolvedReview.reviewConfig,
       exclusionPatterns: resolvedReview.exclusionPatterns, generatedAt: A.generatedAt,
@@ -4381,6 +4388,9 @@ export async function runWith(ctx, rawArgs) {
         reviewConfigSource: resolvedReview.reviewConfigSource,
         exclusionsSource: resolvedReview.exclusionsSource,
         reviewMdEntryCount: resolvedReview.reviewMdEntryCount,
+        // This echo describes THIS run's resolution, not necessarily the resolution that
+        // produced a replayed filter checkpoint; reviewMdEntryCount has the same property.
+        reviewMdSubtrees,
         // Compact scope-decision echo (issue #24 req 3, PR3): names/bools only, so adherence
         // to the derived scope decision is verifiable post-hoc without re-deriving it from
         // riskTable. scopeAnswer is null (never omitted) when the gate was not asked, mirroring

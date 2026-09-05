@@ -49,12 +49,15 @@ from scripts.filter_findings import (
     apply_injection_filter,
     apply_reachability_demotion,
     apply_threshold_filter,
+    build_review_config,
+    config_for_file,
     consolidate_cross_agent,
     detect_disagreement,
     group_by_proximity,
     load_exclusions,
     normalize_field_names,
     parse_review_md,
+    parse_review_md_text,
     tag_findings,
 )
 
@@ -89,6 +92,24 @@ def _make_finding(**kwargs):
 
 
 class TestParseReviewMd(unittest.TestCase):
+    def test_parse_review_md_text_matches_file_parser(self):
+        content = (
+            "```yaml code-gauntlet\n"
+            "confidence_threshold: 82\n"
+            "security_min_confidence: 71\n"
+            "severity_threshold: high\n"
+            "ignore:\n"
+            "  - child-only\n"
+            "```\n"
+        )
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            path = f.name
+        try:
+            self.assertEqual(parse_review_md(path), parse_review_md_text(content))
+        finally:
+            os.unlink(path)
+
     def test_fenced_yaml_block(self):
         content = (
             "# My Review\n\n"
@@ -270,6 +291,64 @@ class TestParseReviewMd(unittest.TestCase):
 
 
 class TestApplyThresholdFilter(unittest.TestCase):
+    def test_scoped_thresholds_are_selected_by_finding_file(self):
+        findings = [
+            _make_finding(id="api", file="api/x.py", confidence=80),
+            _make_finding(id="legacy", file="legacy/x.py", confidence=80),
+        ]
+        config = {
+            "confidence_threshold": 60,
+            "ignore": [],
+            "scopes": [{"dir": "api", "confidence_threshold": 90, "ignore": []}],
+        }
+        passed, eliminated, _ = apply_threshold_filter(findings, config)
+        self.assertEqual([f["id"] for f in passed], ["legacy"])
+        self.assertEqual([f["id"] for f in eliminated], ["api"])
+
+    def test_builder_merges_same_directory_and_orders_layers(self):
+        entries = [
+            {
+                "path": "api/internal/REVIEW.md",
+                "text": "confidence_threshold: 80\nignore:\n  - deep\n",
+            },
+            {
+                "path": "REVIEW.md",
+                "text": "confidence_threshold: 50\nignore:\n  - root\n",
+            },
+            {"path": "api/REVIEW.md", "text": "ignore:\n  - shallow\n"},
+        ]
+        self.assertEqual(
+            build_review_config(entries),
+            {
+                "confidence_threshold": 50,
+                "ignore": ["root"],
+                "scopes": [
+                    {"dir": "api", "ignore": ["shallow"]},
+                    {
+                        "dir": "api/internal",
+                        "confidence_threshold": 80,
+                        "ignore": ["deep"],
+                    },
+                ],
+            },
+        )
+
+    def test_scoped_lookup_is_non_mutating_and_depth_ordered(self):
+        config = {
+            "confidence_threshold": 50,
+            "ignore": ["root"],
+            "scopes": [
+                {"dir": "api/internal", "confidence_threshold": 80, "ignore": ["deep"]},
+                {"dir": "api", "confidence_threshold": 60, "ignore": ["shallow"]},
+            ],
+        }
+        before = json.loads(json.dumps(config))
+        self.assertEqual(
+            config_for_file(config, "api/internal/x.py"),
+            {"confidence_threshold": 80, "ignore": ["root", "shallow", "deep"]},
+        )
+        self.assertEqual(config, before)
+
     def _config(self, confidence=70, severity="low", sec_min=70):
         return {
             "confidence_threshold": confidence,
@@ -3747,6 +3826,24 @@ class TestLoadExclusions(unittest.TestCase):
 
 
 class TestApplyExclusions(unittest.TestCase):
+    def test_scoped_patterns_apply_with_empty_external_list(self):
+        findings = [_make_finding(file="api/x.py", description="child pattern")]
+        config = {"ignore": [], "scopes": [{"dir": "api", "ignore": ["child pattern"]}]}
+        passed, eliminated = apply_exclusions(findings, [], config)
+        self.assertEqual(passed, [])
+        self.assertEqual([f["id"] for f in eliminated], ["test-1"])
+
+    def test_scoped_overlap_uses_root_pattern_before_child_and_external(self):
+        findings = [_make_finding(file="api/x.py", description="overlap")]
+        config = {
+            "ignore": ["overlap"],
+            "scopes": [{"dir": "api", "ignore": ["overlap"]}],
+        }
+        _, eliminated = apply_exclusions(findings, ["overlap"], config)
+        self.assertEqual(
+            eliminated[0]["elimination_reason"], "matched exclusion pattern: 'overlap'"
+        )
+
     def test_empty_patterns_passes_all(self):
         findings = [_make_finding()]
         passed, eliminated = apply_exclusions(findings, [])

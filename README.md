@@ -114,7 +114,7 @@ Code under review is untrusted input throughout: trust-boundary delimiters on th
 
 ## Configuration: REVIEW.md
 
-Code Gauntlet tells you when it doesn't find a `REVIEW.md` — a non-blocking notice, not an offer — and you can scaffold one any time with `/build-review-md`, mirroring your CLAUDE.md locations: a root file for global defaults, subdirectory files for per-area standards (say, stricter security for `src/auth/`). Thresholds override child-to-parent; rules and ignore patterns accumulate.
+Code Gauntlet tells you when it doesn't find a `REVIEW.md` — a non-blocking notice, not an offer — and you can scaffold one any time with `/build-review-md`, mirroring your CLAUDE.md locations: a root file for global defaults, subdirectory files for per-area standards (say, stricter security for `src/auth/`). Root thresholds are defaults, matching child thresholds override them, and matching ignore patterns accumulate; free prose remains shared project guidance.
 
 ````markdown
 ## Rules

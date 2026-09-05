@@ -1,0 +1,13 @@
+{
+  "config": {
+    "confidence_threshold": 70,
+    "ignore": [],
+    "scopes": [
+      {
+        "confidence_threshold": 90,
+        "dir": "src/deep",
+        "ignore": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "fn": "apply_filter_pipeline",
+  "config": {"confidence_threshold": 60, "ignore": [], "scopes": [{"dir": "api", "confidence_threshold": 90, "ignore": []}, {"dir": "web", "ignore": ["web-only"]}]},
+  "exclusion_patterns": [],
+  "generated_at": "2026-07-18T00:00:00Z",
+  "findings": [
+    {"id": "api-drop", "file": "api/x.py", "line_start": 1, "severity": "high", "confidence": 80, "title": "API", "description": "real issue", "dimension": "bug"},
+    {"id": "legacy-keep", "file": "legacy/x.py", "line_start": 2, "severity": "high", "confidence": 80, "title": "Legacy", "description": "real issue", "dimension": "bug"},
+    {"id": "web-drop", "file": "web/x.py", "line_start": 3, "severity": "high", "confidence": 80, "title": "web-only", "description": "real issue", "dimension": "bug"}
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "eliminated": [
+    {
+      "description": "real",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'global pattern'",
+      "file": "api/x.py",
+      "id": "api-global",
+      "title": "global pattern"
+    },
+    {
+      "description": "real",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'global pattern'",
+      "file": "legacy/x.py",
+      "id": "legacy-global",
+      "title": "global pattern"
+    }
+  ],
+  "kept": []
+}

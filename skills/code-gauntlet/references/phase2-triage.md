@@ -144,8 +144,8 @@ Check for `docs/`, `specs/`, `research/` directories and `REVIEW.md`, `CLAUDE.md
 **Tool instructions for REVIEW.md discovery:**
 
 Do not `Glob(pattern: "**/REVIEW.md")` — a repo-wide glob returns REVIEW.md files with no
-relationship to any changed file, which then fold into the single merged config and govern
-findings they were never meant to scope (issue #80). Walk the same directory set step 3 walks
+relationship to any changed file and defeats the discovery walk's cost and precision bound
+(issue #80). Walk the same directory set step 3 walks
 for AGENTS.md/CLAUDE.md/QODO.md instead: the repo root, every changed file's directory, and
 their ancestors up to root. Check each directory in that walk for a `REVIEW.md`. CLAUDE.md
 project-rules discovery is not a `Glob` either — it is resolved by
@@ -155,16 +155,17 @@ Never use `find` from Bash for locating these files.
 
 ### REVIEW.md Detection
 
-Complete this check before proceeding to 2e. REVIEW.md settings cascade to all thresholds, rules, and
-ignore patterns for the entire review.
+Complete this check before proceeding to 2e. REVIEW.md thresholds and ignore patterns apply to the
+root by default and to matching finding subtrees; free prose remains shared context for every agent.
 
 Walk the repo root + changed-file directories + their ancestors (the project-rules directory set) and
 check each for a matching REVIEW.md. **Discovery never blocks and never asks** (issue #35) — report what
 you found as part of the triage announcement and continue. `references/review-md-spec.md` → Discovery is
 the canonical owner of the notice wording; do not restate it here.
 
-Merge configs hierarchically — settings override, rules and patterns accumulate — via the raw
-`args.reviewMd` handoff described in SKILL.md, never by hand-parsing here.
+Merge configs hierarchically — thresholds override and ignore patterns accumulate by matching
+finding subtree, while free prose remains shared — via the raw `args.reviewMd` handoff described
+in SKILL.md, never by hand-parsing here.
 
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): identical behavior, minus the notice — REVIEW.md is
 > read-only headless and `build-review-md` is never invoked. The hierarchical parse still runs. See
@@ -382,7 +383,7 @@ Assemble the args waist the workflow consumes. It is a single JSON object passed
 - `contextLines` / `contextChars` — the shared context file's measured size, from the write step above. **Not provenance — consumed.** `contextReadPlan` turns them into the exact `Read` calls the Summarize/Discover/Validate prompts enumerate, so the agent is told which calls to make instead of having to notice an unannounced truncation. Both optional (absent ⇒ count-free read-to-end wording); `contextChars` requires `contextLines`; both must be positive integers.
 - `changedFilesPath` — `{output_dir}/code-gauntlet-files-{head_sha_short}.json`, the on-disk companion to `changedFiles`. Optional provenance only — the workflow has no disk access and never opens it.
 - `baseBranch` — the base branch name (verify/blame).
-- `reviewMd` — `[{ path, text }, ...]` in discovery order (root-first, increasing depth), the raw text of every REVIEW.md found (2d step 2). Never hand-parsed by the skill: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) calls `parseReviewMd` per entry and merges them (settings override deeper-wins, `ignore` accumulates) before the Filter stage runs. An empty array is a legal, authoritative "discovered nothing."
+- `reviewMd` — `[{ path, text }, ...]` in discovery order (root-first, increasing depth), the raw text of every REVIEW.md found (2d step 2). Never hand-parsed by the skill: the workflow's `resolveReviewConfig` (`workflows/src/args.js`) builds root and subtree layers before the Filter stage selects settings by finding file. An empty array is a legal, authoritative "discovered nothing."
 - `exclusionsText` — the raw text of whatever exclusions source was found (e.g. `.reviewignore`), parsed by `resolveReviewConfig` via `loadExclusions`.
 - `reviewConfig` / `exclusionPatterns` — the LEGACY pre-parsed form. Still accepted for backward compatibility (bench children, older callers), but do not stamp these alongside `reviewMd`/`exclusionsText` for the same axis — the waist rejects a waist that stamps both the raw and pre-parsed form (single authority).
 - `reviewConfigPath` — the REVIEW.md path (or `null`), carried for provenance. Unrelated to the reviewMd/reviewConfig choice above.

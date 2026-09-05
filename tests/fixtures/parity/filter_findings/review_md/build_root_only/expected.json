@@ -1,0 +1,10 @@
+{
+  "config": {
+    "confidence_threshold": 70,
+    "ignore": [
+      "root pattern"
+    ],
+    "security_min_confidence": 65,
+    "severity_threshold": "high"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "config": {
+    "ignore": [],
+    "scopes": [
+      {
+        "confidence_threshold": 60,
+        "dir": "api",
+        "ignore": [
+          "first",
+          "second"
+        ],
+        "security_min_confidence": 80
+      }
+    ]
+  }
+}

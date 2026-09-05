@@ -1,0 +1,10 @@
+{
+  "config": {
+    "confidence_threshold": 80,
+    "ignore": [
+      "root",
+      "shallow",
+      "deep"
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "fn": "build_review_config",
+  "entries": [
+    {"path": "api/REVIEW.md", "text": "```yaml code-gauntlet\nconfidence_threshold: 90\n```"}
+  ]
+}

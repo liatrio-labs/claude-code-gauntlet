@@ -1,0 +1,5 @@
+{
+  "fn": "config_for_file",
+  "config": {"confidence_threshold": 50, "ignore": ["root"], "scopes": [{"dir": "api", "confidence_threshold": 90, "ignore": ["api"]}]},
+  "file": "api"
+}

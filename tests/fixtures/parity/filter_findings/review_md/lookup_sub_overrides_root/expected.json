@@ -1,0 +1,10 @@
+{
+  "config": {
+    "confidence_threshold": 90,
+    "ignore": [
+      "root",
+      "api"
+    ],
+    "severity_threshold": "low"
+  }
+}

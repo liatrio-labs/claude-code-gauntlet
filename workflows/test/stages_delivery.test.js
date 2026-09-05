@@ -289,6 +289,32 @@ test('runWith threads a single-entry args.reviewMd through resolveReviewConfig i
   assert.equal(out.stats.filter.passed_threshold, 1);
 });
 
+test('runWith scopes raw child REVIEW.md settings through filter and persisted delivery', async () => {
+  const args = validArgs({
+    reviewMd: [
+      { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
+      { path: 'api/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
+    ],
+    checkpoints: {
+      validate: {
+        findings: [
+          makeFinding('API', { file: 'api/x.py', confidence: 80 }),
+          makeFinding('LEGACY', { file: 'legacy/y.py', confidence: 80 }),
+        ],
+        stats: { batches_dispatched: 0, batches_completed: 0, validated: 2, skipped: 0, adjusted: 0 },
+      },
+    },
+  });
+  let persisted = null;
+  const out = await runWith(makeCtx(args, { onPersist: (payload) => { persisted = payload; } }), args);
+  assert.equal(out.ok, true);
+  assert.deepEqual(persisted.findings.map((f) => f.id), ['LEGACY']);
+  assert.deepEqual(persisted.postReview.map((f) => f.id), ['LEGACY']);
+  assert.equal(out.stats.filter.total, 2);
+  assert.equal(out.stats.filter.passed_threshold, 1);
+  assert.deepEqual(out.stats.reviewMdSubtrees, [{ dir: 'api', matched: 1 }]);
+});
+
 test('runWith without args.reviewMd reports reviewConfigSource "none" (no config supplied)', async () => {
   const args = validArgs({ checkpoints: { challenge: challengeCheckpoint() } });
   const out = await runWith(makeCtx(args), args);

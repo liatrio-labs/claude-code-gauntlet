@@ -37,6 +37,11 @@ export function normalizeFieldNames(findings) {
 // one there) collided as "already been declared" — a runtime SyntaxError. filterFindings.js
 // is emitted before applyChallenges.js (build.js ORDER), so the export is in scope there.
 export const SEVERITY_ORDER = ['critical', 'high', 'medium', 'low'];
+export const REVIEW_SETTING_KEYS = [
+  'confidence_threshold',
+  'security_min_confidence',
+  'severity_threshold',
+];
 // DEFAULT_CONFIDENCE_THRESHOLD backs the SECURITY branch of applyThresholdFilter's
 // config-absent fallback, so an unconfigured security bar stays min(70,70)=70. As
 // of issue #94 F7, parseReviewMd/parse_review_md no longer pre-fill this into their
@@ -211,6 +216,82 @@ export function parseReviewMd(text) {
   return config;
 }
 
+// A REVIEW.md entry owns the directory containing its final REVIEW.md segment.
+// Keep layer construction separate from file lookup so the resolver preserves the
+// raw discovery shape while the filter can derive a fresh effective view per finding.
+function reviewScopeDir(path) {
+  const slash = path.lastIndexOf('/');
+  return slash < 0 ? '' : path.slice(0, slash);
+}
+
+function reviewScopeDepth(dir) {
+  return dir ? dir.split('/').length : 0;
+}
+
+function mergeReviewLayer(layer, parsed) {
+  for (const key of REVIEW_SETTING_KEYS) {
+    if (parsed[key] !== undefined) layer[key] = parsed[key];
+  }
+  layer.ignore.push(...parsed.ignore);
+}
+
+export function buildReviewConfig(entries) {
+  const root = { ignore: [] };
+  const scopes = [];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    const dir = reviewScopeDir(entry.path);
+    const parsed = parseReviewMd(entry.text);
+    if (dir === '') {
+      mergeReviewLayer(root, parsed);
+      continue;
+    }
+    let scope = scopes.find((candidate) => candidate.dir === dir);
+    if (!scope) {
+      scope = { dir, ignore: [], _index: index };
+      scopes.push(scope);
+    }
+    mergeReviewLayer(scope, parsed);
+  }
+  scopes.sort((a, b) =>
+    (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (a._index - b._index));
+  for (const scope of scopes) delete scope._index;
+  if (scopes.length > 0) root.scopes = scopes;
+  return root;
+}
+
+export function scopeMatchesFile(scope, file) {
+  return typeof file === 'string'
+    && scope && typeof scope.dir === 'string'
+    && scope.dir !== ''
+    && file.startsWith(`${scope.dir}/`);
+}
+
+export function configForFile(config, file) {
+  // Build a flat, non-mutating view: root settings and ignores are followed by
+  // matching subtree layers in structural depth order, so array order cannot
+  // let a shallower layer override a deeper one.
+  const source = config || {};
+  const view = { ignore: [...(Array.isArray(source.ignore) ? source.ignore : [])] };
+  for (const key of REVIEW_SETTING_KEYS) {
+    if (key in source) view[key] = source[key];
+  }
+  if (!Array.isArray(source.scopes) || typeof file !== 'string') return view;
+
+  const matching = source.scopes
+    .map((scope, index) => ({ scope, index }))
+    .filter(({ scope }) => scopeMatchesFile(scope, file))
+    .sort(({ scope: a, index: ai }, { scope: b, index: bi }) =>
+      (reviewScopeDepth(a.dir) - reviewScopeDepth(b.dir)) || (ai - bi));
+  for (const { scope } of matching) {
+    for (const key of REVIEW_SETTING_KEYS) {
+      if (key in scope) view[key] = scope[key];
+    }
+    if (Array.isArray(scope.ignore)) view.ignore.push(...scope.ignore);
+  }
+  return view;
+}
+
 // --- Filter: confidence / severity threshold (with validator contestation) -
 
 // Port of apply_threshold_filter. Security effective threshold is literally
@@ -230,10 +311,8 @@ export function applyThresholdFilter(findings, config) {
   const eliminated = [];
   let contestedCount = 0;
 
-  const severityThreshold = cfgGet(config, 'severity_threshold', DEFAULT_SEVERITY_THRESHOLD);
-  const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
-
   for (const finding of findings) {
+    const fileConfig = configForFile(config, finding.file);
     const confidence = asConfidence(pyGet(finding, 'confidence', 0));
     let severity = (asText(pyGet(finding, 'severity', 'low')) || 'low').toLowerCase();
     const dimensions = finding.dimension ? [String(finding.dimension).toLowerCase()] : [];
@@ -241,12 +320,12 @@ export function applyThresholdFilter(findings, config) {
     const isSecurity = dimensions.includes('security');
     let effectiveThreshold;
     if (isSecurity) {
-      const minConf = cfgGet(config, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
-      effectiveThreshold = Math.min(cfgGet(config, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
+      const minConf = cfgGet(fileConfig, 'security_min_confidence', DEFAULT_SECURITY_MIN_CONFIDENCE);
+      effectiveThreshold = Math.min(cfgGet(fileConfig, 'confidence_threshold', DEFAULT_CONFIDENCE_THRESHOLD), minConf);
     } else {
       // Non-security config-absent fallback is 55 (iter 5), decoupled from the
       // security branch above (which keeps the 70 fallback via DEFAULT_CONFIDENCE_THRESHOLD).
-      effectiveThreshold = cfgGet(config, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
+      effectiveThreshold = cfgGet(fileConfig, 'confidence_threshold', DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD);
     }
 
     // Validator contestation check (V5-09C): strict `> 25`, not `>=` — an
@@ -275,6 +354,8 @@ export function applyThresholdFilter(findings, config) {
     }
 
     if (!isContested) {
+      const severityThreshold = cfgGet(fileConfig, 'severity_threshold', DEFAULT_SEVERITY_THRESHOLD);
+      const sevThresholdIdx = SEVERITY_ORDER.indexOf(severityThreshold);
       if (!SEVERITY_ORDER.includes(severity)) severity = 'low';
       const sevIdx = SEVERITY_ORDER.indexOf(severity);
       if (sevIdx > sevThresholdIdx) {
@@ -1599,10 +1680,10 @@ export function tagFindings(findings) {
 // --- Pipeline composition ----------------------------------------------
 
 // Port of main()'s filter pipeline composition (filter_findings.py:1296-1376),
-// minus argparse/file I/O -- config and exclusionPatterns are passed in
-// directly (already parsed by parseReviewMd/loadExclusions upstream), and
-// generatedAt is injected (never `new Date()`/`Date.now()` -- workflow JS
-// has no wall clock; see the Global Constraints "No wall-clock" rule).
+// minus argparse/file I/O. The root and subtree layers in config are resolved per
+// finding.file by the threshold and exclusion stages; exclusionPatterns remains global.
+// generatedAt is injected (never `new Date()`/`Date.now()` -- workflow JS has no wall
+// clock; see the Global Constraints "No wall-clock" rule).
 export function applyFilterPipeline(findings, config, exclusionPatterns, generatedAt) {
   const total = findings.length;
 
@@ -1610,16 +1691,15 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
 
   applyReachabilityDemotion(findings);
 
-  // Python: `exclusion_patterns = config.get("ignore", []) + load_exclusions(...)`.
-  const allExclusions = [...(config.ignore || []), ...(exclusionPatterns || [])];
-
   const allEliminated = [];
 
   const { kept: afterThreshold, eliminated: elimThreshold, contestedCount } = applyThresholdFilter(findings, config);
   allEliminated.push(...elimThreshold);
   const passedThreshold = afterThreshold.length;
 
-  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(afterThreshold, allExclusions);
+  const { kept: afterExclusions, eliminated: elimExclusions } = applyExclusions(
+    afterThreshold, exclusionPatterns, config,
+  );
   allEliminated.push(...elimExclusions);
   const exclusionsRemoved = elimExclusions.length;
 
@@ -1679,7 +1759,9 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
   };
 }
 
-// Port of apply_exclusions. First pattern (in list order) whose literal,
+// Port of apply_exclusions. The pattern order is root REVIEW.md ignores, matching
+// subtree ignores from shallow to deep, then global exclusionPatterns. First pattern
+// (in list order) whose literal,
 // case-insensitive substring appears in "title\ndescription\nsuggestion" wins.
 // suggestion is included because it is rendered into posted PR/MR comments same
 // as description -- user-authored ignore patterns are the user's kill-switch
@@ -1696,20 +1778,26 @@ export function applyFilterPipeline(findings, config, exclusionPatterns, generat
 // A user kill-switch reaching rendered citation text was declined on the
 // #247 measurement (2026-08-31): the natural CLAUDE.md pattern eliminates 0
 // findings today and widens 12 via model boilerplate, not user repo text.
-export function applyExclusions(findings, exclusionPatterns) {
-  if (!exclusionPatterns || !exclusionPatterns.length) return { kept: findings, eliminated: [] };
+export function applyExclusions(findings, exclusionPatterns, config = null) {
+  const hasConfig = config !== null && config !== undefined;
+  if (!hasConfig && (!exclusionPatterns || !exclusionPatterns.length)) {
+    return { kept: findings, eliminated: [] };
+  }
 
   const kept = [];
   const eliminated = [];
 
   for (const finding of findings) {
+    const patterns = hasConfig
+      ? [...configForFile(config, finding.file).ignore, ...(exclusionPatterns || [])]
+      : (exclusionPatterns || []);
     const title = asText(finding.title);
     const description = asText(finding.description);
     const suggestion = typeof finding.suggestion === 'string' ? finding.suggestion : '';
     const combined = `${title}\n${description}\n${suggestion}`;
 
     let matchedPattern = null;
-    for (const pattern of exclusionPatterns) {
+    for (const pattern of patterns) {
       const rx = new RegExp(escapeRegExp(pattern), 'i');
       if (rx.test(combined)) {
         matchedPattern = pattern;

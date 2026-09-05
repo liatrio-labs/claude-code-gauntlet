@@ -194,20 +194,18 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 |---------|----------|-----------|
 | `confidence_threshold` | **Override** — subdirectory value replaces root | A module may need stricter or looser thresholds |
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
-| `default_delivery` | **Override** — subdirectory value replaces root | Unlikely to vary by directory, but supported for consistency |
+| `default_delivery` | **Root-only** — only the root REVIEW.md text is checked | Headless delivery is a review-wide setting |
 | `rules` (and other free prose) | **Accumulate** — subdirectory content adds to root content | Directory-specific conventions supplement project-wide ones |
 | `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |
 
 In short: **settings override, rules and patterns accumulate.**
 
-**Current implementation note.** This section describes the intended per-file scoping. The
-shipped merge (`resolveReviewConfig`, `workflows/src/args.js`) does not scope by subtree yet: it
-sorts every discovered REVIEW.md root-first by path depth and folds them into **one flat config
-applied to every finding in the run**, not per-file. A deeper entry's setting still overrides a
-shallower one's in that single merged config, and `ignore` still accumulates across all of
-them — so the override/accumulate rules above hold — but a subdirectory REVIEW.md's threshold
-currently governs the whole review, not just files under that subdirectory. The worked example
-below states the intended per-file result; treat it as the target, not the current behavior.
+Thresholds and `ignore` are scoped per subtree by `finding.file`: the root layer is the default,
+and matching directory layers override present thresholds and append their ignore lists. Free
+prose (`## Rules` and other guidance) is folded into the shared context file for every agent and
+is not scoped. Matching uses a byte-exact, case-sensitive `dir/` prefix with no normalization of
+finding paths; a non-matching or non-string file uses the root layer. `.reviewignore` remains
+global, and `default_delivery` remains root-only.
 
 ### Example
 
@@ -225,12 +223,12 @@ repo/
 For a file in `api/`:
 
 - confidence_threshold = **70** (overridden by api/REVIEW.md)
-- rules = **[rule-A, rule-B, rule-C]** (accumulated)
+- rules = **[rule-A, rule-B, rule-C]** (advisory prose, reaches every agent)
 
 For a file in `legacy/`:
 
 - confidence_threshold = **70** (root applies)
-- rules = **[rule-A, rule-B]** (root only)
+- rules = **[rule-A, rule-B]** (advisory prose, reaches every agent)
 
 ### Discovery
 

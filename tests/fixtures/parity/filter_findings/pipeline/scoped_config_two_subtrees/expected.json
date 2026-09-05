@@ -1,0 +1,67 @@
+{
+  "eliminated": [
+    {
+      "confidence": 80,
+      "description": "real issue",
+      "dimension": "bug",
+      "eliminated_by": "threshold",
+      "elimination_reason": "confidence 80 < threshold 90",
+      "file": "api/x.py",
+      "id": "api-drop",
+      "line_start": 1,
+      "severity": "high",
+      "title": "API"
+    },
+    {
+      "confidence": 80,
+      "description": "real issue",
+      "dimension": "bug",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'web-only'",
+      "file": "web/x.py",
+      "id": "web-drop",
+      "line_start": 3,
+      "severity": "high",
+      "title": "web-only"
+    }
+  ],
+  "filtered": [
+    {
+      "confidence": 80,
+      "consensus_boost": 0,
+      "consensus_count": 1,
+      "contradiction": false,
+      "corroborated_by": [],
+      "description": "real issue",
+      "dimension": "bug",
+      "file": "legacy/x.py",
+      "id": "legacy-keep",
+      "line_start": 2,
+      "report_destination": "main",
+      "report_tag": "main",
+      "security_escalation": false,
+      "severity": "high",
+      "title": "Legacy"
+    }
+  ],
+  "generated_at": "2026-07-18T00:00:00Z",
+  "stats": {
+    "claude_md_rules_removed": 0,
+    "consensus_boosted": 0,
+    "contested_count": 0,
+    "cross_agent_consolidated": 0,
+    "dimension_routed": 0,
+    "exclusions_removed": 1,
+    "injections_removed": 0,
+    "passed_threshold": 2,
+    "reachability_demoted": 0,
+    "singleton_penalized": 0,
+    "spec_texts_removed": 0,
+    "suggested_fix_codes_removed": 0,
+    "suggestions_removed": 0,
+    "tagged_main": 1,
+    "tagged_suggestion": 0,
+    "test_analyzer_promoted": 0,
+    "total": 3
+  }
+}

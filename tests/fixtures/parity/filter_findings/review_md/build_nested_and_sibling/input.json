@@ -1,0 +1,9 @@
+{
+  "fn": "build_review_config",
+  "entries": [
+    {"path": "REVIEW.md", "text": "```yaml code-gauntlet\nignore:\n  - root\n```"},
+    {"path": "web/REVIEW.md", "text": "```yaml code-gauntlet\nseverity_threshold: critical\n```"},
+    {"path": "api/internal/REVIEW.md", "text": "```yaml code-gauntlet\nconfidence_threshold: 80\n```"},
+    {"path": "api/REVIEW.md", "text": "```yaml code-gauntlet\nconfidence_threshold: 70\n```"}
+  ]
+}

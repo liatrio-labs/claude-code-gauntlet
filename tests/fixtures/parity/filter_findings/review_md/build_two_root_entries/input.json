@@ -1,0 +1,7 @@
+{
+  "fn": "build_review_config",
+  "entries": [
+    {"path": "REVIEW.md", "text": "```yaml code-gauntlet\nconfidence_threshold: 60\nignore:\n  - first\n```"},
+    {"path": "REVIEW.md", "text": "```yaml code-gauntlet\nsecurity_min_confidence: 80\nignore:\n  - second\n```"}
+  ]
+}

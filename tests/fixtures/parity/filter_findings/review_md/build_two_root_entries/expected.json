@@ -1,0 +1,10 @@
+{
+  "config": {
+    "confidence_threshold": 60,
+    "ignore": [
+      "first",
+      "second"
+    ],
+    "security_min_confidence": 80
+  }
+}

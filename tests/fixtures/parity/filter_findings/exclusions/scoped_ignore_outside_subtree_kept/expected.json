@@ -1,0 +1,11 @@
+{
+  "eliminated": [],
+  "kept": [
+    {
+      "description": "real",
+      "file": "legacy/x.py",
+      "id": "outside",
+      "title": "api-only"
+    }
+  ]
+}

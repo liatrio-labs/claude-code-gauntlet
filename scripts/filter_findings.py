@@ -295,6 +295,11 @@ DEFAULT_CONFIDENCE_THRESHOLD = 70
 DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD = 55
 DEFAULT_SECURITY_MIN_CONFIDENCE = 70
 DEFAULT_SEVERITY_THRESHOLD = "low"  # pass all severities by default
+REVIEW_SETTING_KEYS = (
+    "confidence_threshold",
+    "security_min_confidence",
+    "severity_threshold",
+)
 
 # Contestation: if the validator dropped confidence by more than this amount,
 # the finding is marked as contested and bypasses the threshold check.
@@ -396,31 +401,13 @@ _REVIEW_EXCL_BULLET_RE = re.compile(
 # /generated-from-filter-pattern-registry:_REVIEW_EXCL_BULLET_RE
 
 
-def parse_review_md(path):
-    """
-    Extract confidence_threshold, severity_threshold, and ignore patterns from REVIEW.md.
+def parse_review_md_text(text, warning_path=None):
+    """Parse REVIEW.md text without file I/O or warnings.
 
-    Returns a dict with `ignore` always present (default: []). `confidence_threshold`,
-    `security_min_confidence`, and `severity_threshold` are present ONLY when the
-    corresponding key was actually found in the file (issue #94 adversarial review
-    F7) -- this dict is not pre-filled with DEFAULT_CONFIDENCE_THRESHOLD /
-    DEFAULT_SECURITY_MIN_CONFIDENCE / DEFAULT_SEVERITY_THRESHOLD. A caller reading an
-    absent key must use `.get(key, DEFAULT)` -- apply_threshold_filter already does,
-    and that is what lets its own non-security/security default split (55/70) take
-    effect for a config-absent REVIEW.md, matching the JS pipeline's contract of
-    only stamping keys REVIEW.md actually set.
+    Threshold keys are present only when the text sets them, and ``ignore`` is
+    always present. This is the pure parser used by the scoped config builder.
     """
     config: dict[str, Any] = {"ignore": []}
-
-    try:
-        with open(path) as fh:
-            text = fh.read()
-    except FileNotFoundError:
-        warn(f"REVIEW.md not found at {path!r}; using default thresholds.")
-        return config
-    except OSError as e:
-        warn(f"Could not read REVIEW.md: {e}; using default thresholds.")
-        return config
 
     # Match a YAML-style code-gauntlet config block (patterns in
     # _REVIEW_BLOCK_PATTERNS). Markers are matched case-insensitively but
@@ -435,9 +422,10 @@ def parse_review_md(path):
 
     # Also scan the whole file for bare key: value lines if no block found
     if not block_text:
-        warn(
-            f"REVIEW.md at {path!r}: no code-gauntlet config block found; falling back to whole-file scan."
-        )
+        if warning_path is not None:
+            warn(
+                f"REVIEW.md at {warning_path!r}: no code-gauntlet config block found; falling back to whole-file scan."
+            )
         block_text = text
 
     # Every key regex is anchored to a line start via `(?:^|\n)` (converged with
@@ -482,6 +470,87 @@ def parse_review_md(path):
     return config
 
 
+def parse_review_md(path):
+    """Read and parse one REVIEW.md file, preserving file warnings."""
+    try:
+        with open(path) as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        warn(f"REVIEW.md not found at {path!r}; using default thresholds.")
+        return {"ignore": []}
+    except OSError as e:
+        warn(f"Could not read REVIEW.md: {e}; using default thresholds.")
+        return {"ignore": []}
+
+    return parse_review_md_text(text, warning_path=path)
+
+
+def _merge_review_layer(layer, parsed):
+    for key in REVIEW_SETTING_KEYS:
+        if key in parsed:
+            layer[key] = parsed[key]
+    layer["ignore"].extend(parsed["ignore"])
+
+
+def build_review_config(entries):
+    """Build root and subtree REVIEW.md layers from raw path/text entries."""
+    root = {"ignore": []}
+    scopes = []
+    for index, entry in enumerate(entries):
+        path = entry["path"]
+        slash = path.rfind("/")
+        directory = "" if slash < 0 else path[:slash]
+        parsed = parse_review_md_text(entry["text"])
+        if not directory:
+            _merge_review_layer(root, parsed)
+            continue
+        scope = next((item for item in scopes if item["dir"] == directory), None)
+        if scope is None:
+            scope = {"dir": directory, "ignore": [], "_index": index}
+            scopes.append(scope)
+        _merge_review_layer(scope, parsed)
+    scopes.sort(key=lambda item: (item["dir"].count("/") + 1, item["_index"]))
+    for scope in scopes:
+        del scope["_index"]
+    if scopes:
+        root["scopes"] = scopes
+    return root
+
+
+def _scope_matches_file(scope, file):
+    return (
+        isinstance(file, str)
+        and isinstance(scope, dict)
+        and isinstance(scope.get("dir"), str)
+        and scope["dir"] != ""
+        and file.startswith(scope["dir"] + "/")
+    )
+
+
+def config_for_file(config, file):
+    """Return a fresh flat view from root plus matching subtree layers."""
+    source = config or {}
+    view = {"ignore": list(source.get("ignore", []))}
+    for key in REVIEW_SETTING_KEYS:
+        if key in source:
+            view[key] = source[key]
+    scopes = source.get("scopes")
+    if not isinstance(scopes, list) or not isinstance(file, str):
+        return view
+    matching = [
+        (index, scope)
+        for index, scope in enumerate(scopes)
+        if _scope_matches_file(scope, file)
+    ]
+    matching.sort(key=lambda item: (item[1]["dir"].count("/") + 1, item[0]))
+    for _, scope in matching:
+        for key in REVIEW_SETTING_KEYS:
+            if key in scope:
+                view[key] = scope[key]
+        view["ignore"].extend(scope.get("ignore", []))
+    return view
+
+
 # ---------------------------------------------------------------------------
 # Filter: confidence / severity threshold (with validator contestation)
 # ---------------------------------------------------------------------------
@@ -489,7 +558,7 @@ def parse_review_md(path):
 
 def apply_threshold_filter(findings, config):
     """
-    Remove findings that fall below confidence or severity thresholds.
+    Remove findings that fall below the thresholds selected for each finding file.
 
     A finding passes if:
       - confidence >= config["confidence_threshold"]
@@ -516,11 +585,8 @@ def apply_threshold_filter(findings, config):
     eliminated = []
     contested_count = 0
 
-    sev_threshold_idx = SEVERITY_ORDER.index(
-        config.get("severity_threshold", DEFAULT_SEVERITY_THRESHOLD)
-    )
-
     for finding in findings:
+        file_config = config_for_file(config, finding.get("file"))
         confidence = _as_confidence(finding.get("confidence"))
         severity = (_as_text(finding.get("severity")) or "low").lower()
         dimensions = (
@@ -530,15 +596,15 @@ def apply_threshold_filter(findings, config):
         # Determine effective confidence threshold
         is_security = "security" in dimensions
         if is_security:
-            min_conf = config.get(
+            min_conf = file_config.get(
                 "security_min_confidence", DEFAULT_SECURITY_MIN_CONFIDENCE
             )
             effective_threshold = min(
-                config.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD),
+                file_config.get("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD),
                 min_conf,
             )
         else:
-            effective_threshold = config.get(
+            effective_threshold = file_config.get(
                 "confidence_threshold", DEFAULT_NONSECURITY_CONFIDENCE_THRESHOLD
             )
 
@@ -571,6 +637,9 @@ def apply_threshold_filter(findings, config):
 
         # Check severity (contested findings also bypass severity threshold)
         if not is_contested:
+            sev_threshold_idx = SEVERITY_ORDER.index(
+                file_config.get("severity_threshold", DEFAULT_SEVERITY_THRESHOLD)
+            )
             if severity not in SEVERITY_ORDER:
                 warn(
                     f"Unknown severity {severity!r} on finding {finding.get('id', '?')}; treating as low."
@@ -2180,10 +2249,12 @@ def load_exclusions(path):
     return patterns
 
 
-def apply_exclusions(findings, exclusion_patterns):
+def apply_exclusions(findings, exclusion_patterns, config=None):
     """
     Remove findings whose title, description, or suggestion matches an exclusion
-    pattern. suggestion is included because it is rendered into posted PR/MR
+    pattern. REVIEW.md patterns come from the root and matching subtree layers;
+    external exclusion_patterns are global and run after them. suggestion is
+    included because it is rendered into posted PR/MR
     comments same as description — user-authored ignore patterns are the user's
     kill-switch over everything that gets rendered (#62).
 
@@ -2202,13 +2273,19 @@ def apply_exclusions(findings, exclusion_patterns):
     Returns (passed, eliminated) lists. Each eliminated finding gains
     "eliminated_by" = "exclusion".
     """
-    if not exclusion_patterns:
+    if config is None and not exclusion_patterns:
         return findings, []
 
     passed = []
     eliminated = []
 
     for finding in findings:
+        patterns = (
+            config_for_file(config, finding.get("file")).get("ignore", [])
+            + list(exclusion_patterns or [])
+            if config is not None
+            else list(exclusion_patterns or [])
+        )
         title = _as_text(finding.get("title"))
         description = _as_text(finding.get("description"))
         raw_suggestion = finding.get("suggestion")
@@ -2216,7 +2293,7 @@ def apply_exclusions(findings, exclusion_patterns):
         combined = f"{title}\n{description}\n{suggestion}"
 
         matched_pattern = None
-        for pattern in exclusion_patterns:
+        for pattern in patterns:
             # Deliberately NOT re.ASCII (#211 decision item 1): these are
             # user-authored REVIEW.md ignore patterns over arbitrary-script
             # finding text, not first-party fixed patterns -- re.ASCII here
@@ -2244,6 +2321,74 @@ def apply_exclusions(findings, exclusion_patterns):
 # ---------------------------------------------------------------------------
 # Main flow
 # ---------------------------------------------------------------------------
+
+
+def apply_filter_pipeline(findings, config, exclusion_patterns, generated_at):
+    """Compose the pure filtering stages with one effective config per finding."""
+    total = len(findings)
+    normalize_field_names(findings)
+    apply_reachability_demotion(findings)
+
+    all_eliminated = []
+    findings, elim_threshold, contested_count = apply_threshold_filter(findings, config)
+    all_eliminated.extend(elim_threshold)
+    passed_threshold = len(findings)
+
+    findings, elim_exclusions = apply_exclusions(findings, exclusion_patterns, config)
+    all_eliminated.extend(elim_exclusions)
+    exclusions_removed = len(elim_exclusions)
+
+    findings, elim_injection = apply_injection_filter(findings)
+    all_eliminated.extend(elim_injection)
+    injections_removed = len(elim_injection)
+    prose_fields_removed = {
+        f"{field}s_removed": sum(
+            1 for f in findings if f.get(f"{field}_removed_by") == "injection"
+        )
+        for field in _INJECTION_STRIPPED_PROSE_FIELDS
+    }
+    suggested_fix_codes_removed = sum(
+        1 for f in findings if f.get("suggested_fix_code_removed_by") == "injection"
+    )
+
+    findings, elim_suppressed, consensus_boosted = detect_disagreement(findings)
+    all_eliminated.extend(elim_suppressed)
+    findings, cross_agent_consolidated, tagged_main, tagged_suggestion = tag_findings(
+        findings
+    )
+    promoted_count = sum(
+        1 for f in findings if f.get("promoted_from") == "test-analyzer"
+    )
+    dimension_routed = sum(1 for f in findings if f.get("routed_by") == "dimension")
+    reachability_demoted = sum(
+        1 for f in findings + all_eliminated if f.get("demoted_by") == "reachability"
+    )
+    singleton_penalized = sum(
+        1 for f in findings + all_eliminated if f.get("singleton_penalty")
+    )
+
+    return {
+        "filtered": findings,
+        "eliminated": all_eliminated,
+        "stats": {
+            "total": total,
+            "passed_threshold": passed_threshold,
+            "contested_count": contested_count,
+            "exclusions_removed": exclusions_removed,
+            "injections_removed": injections_removed,
+            **prose_fields_removed,
+            "suggested_fix_codes_removed": suggested_fix_codes_removed,
+            "consensus_boosted": consensus_boosted,
+            "singleton_penalized": singleton_penalized,
+            "dimension_routed": dimension_routed,
+            "reachability_demoted": reachability_demoted,
+            "cross_agent_consolidated": cross_agent_consolidated,
+            "test_analyzer_promoted": promoted_count,
+            "tagged_main": tagged_main,
+            "tagged_suggestion": tagged_suggestion,
+        },
+        "generated_at": generated_at,
+    }
 
 
 def main():
@@ -2297,13 +2442,6 @@ def main():
     else:
         die("findings_json must be a JSON array or an object with a 'findings' key.")
 
-    total = len(findings)
-
-    # ------------------------------------------------------------------
-    # Normalize legacy field names (BF-14)
-    # ------------------------------------------------------------------
-    normalize_field_names(findings)
-
     # ------------------------------------------------------------------
     # Parse REVIEW.md config
     # ------------------------------------------------------------------
@@ -2317,99 +2455,17 @@ def main():
     # ------------------------------------------------------------------
     # Load exclusions
     # ------------------------------------------------------------------
-    exclusion_patterns = config.get("ignore", []) + load_exclusions(args.exclusions_md)
-
-    # ------------------------------------------------------------------
-    # Pipeline: reachability demotion -> threshold -> exclusions -> injection -> disagreement -> tag
-    # ------------------------------------------------------------------
-    all_eliminated = []
-
-    # Step 1: reachability demotion (before threshold so the user's severity rule applies)
-    findings, _ = apply_reachability_demotion(findings)
-
-    # Step 2: threshold filter (with contestation)
-    findings, elim_threshold, contested_count = apply_threshold_filter(findings, config)
-    all_eliminated.extend(elim_threshold)
-    passed_threshold = len(findings)
-
-    # Step 3: exclusion filter (before injection so explicit overrides take priority)
-    findings, elim_exclusions = apply_exclusions(findings, exclusion_patterns)
-    all_eliminated.extend(elim_exclusions)
-    exclusions_removed = len(elim_exclusions)
-
-    # Step 4: injection filter
-    findings, elim_injection = apply_injection_filter(findings)
-    all_eliminated.extend(elim_injection)
-    injections_removed = len(elim_injection)
-    # One `{field}s_removed` stat per _INJECTION_STRIPPED_PROSE_FIELDS entry --
-    # looping the shared list (rather than one hardcoded sum() per field) means
-    # adding a field to the list is the only edit a future extension needs (#213).
-    prose_fields_removed = {
-        f"{field}s_removed": sum(
-            1 for f in findings if f.get(f"{field}_removed_by") == "injection"
-        )
-        for field in _INJECTION_STRIPPED_PROSE_FIELDS
-    }
-    suggested_fix_codes_removed = sum(
-        1 for f in findings if f.get("suggested_fix_code_removed_by") == "injection"
+    exclusion_patterns = load_exclusions(args.exclusions_md)
+    result = apply_filter_pipeline(
+        findings,
+        config,
+        exclusion_patterns,
+        datetime.now(timezone.utc).isoformat(),
     )
-
-    # Step 5: disagreement detection (returns active findings, suppressed, boosted_count)
-    findings, elim_suppressed, consensus_boosted = detect_disagreement(findings)
-    all_eliminated.extend(elim_suppressed)
-
-    # Step 6: tag for output routing (also applies cross-agent consolidation)
-    findings, cross_agent_consolidated, tagged_main, tagged_suggestion = tag_findings(
-        findings
-    )
-
-    # Count promotions (test-analyzer findings promoted to main report)
-    promoted_count = sum(
-        1 for f in findings if f.get("promoted_from") == "test-analyzer"
-    )
-
-    # Count dimension-routed and singleton-penalized findings (BF-15)
-    dimension_routed = sum(1 for f in findings if f.get("routed_by") == "dimension")
-    reachability_demoted = sum(
-        1 for f in findings + all_eliminated if f.get("demoted_by") == "reachability"
-    )
-    singleton_penalized = sum(
-        1 for f in findings + all_eliminated if f.get("singleton_penalty")
-    )
-
-    # ------------------------------------------------------------------
-    # Compose output
-    # ------------------------------------------------------------------
-    result = {
-        "filtered": findings,
-        "eliminated": all_eliminated,
-        "stats": {
-            "total": total,
-            "passed_threshold": passed_threshold,
-            "contested_count": contested_count,
-            "exclusions_removed": exclusions_removed,
-            "injections_removed": injections_removed,
-            # Spliced, not hand-listed: prose_fields_removed's keys/order are exactly
-            # _INJECTION_STRIPPED_PROSE_FIELDS's (dict comprehension, insertion-ordered),
-            # so adding a field to that list is the only edit a future stat needs -- no
-            # second key to add here.
-            **prose_fields_removed,
-            "suggested_fix_codes_removed": suggested_fix_codes_removed,
-            "consensus_boosted": consensus_boosted,
-            "singleton_penalized": singleton_penalized,
-            "dimension_routed": dimension_routed,
-            "reachability_demoted": reachability_demoted,
-            "cross_agent_consolidated": cross_agent_consolidated,
-            "test_analyzer_promoted": promoted_count,
-            "tagged_main": tagged_main,
-            "tagged_suggestion": tagged_suggestion,
-        },
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-    }
 
     summary = [
         f"Output written to {args.output}",
-        f"  {len(findings)} finding(s) passed, {len(all_eliminated)} eliminated.",
+        f"  {len(result['filtered'])} finding(s) passed, {len(result['eliminated'])} eliminated.",
     ]
     try:
         write_result(args.output, result, summary)

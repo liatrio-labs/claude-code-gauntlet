@@ -1265,6 +1265,118 @@ test('validateArgs: reviewConfig alone (no reviewMd) still validates cleanly (re
   assert.deepEqual(validateArgs({ ...good, reviewConfig: { ignore: ['x'] } }), { ok: true, errors: [] });
 });
 
+function assertReviewPathError(path, phrase) {
+  const result = validateArgs({ ...good, reviewMd: [{ path, text: '' }] });
+  assert.equal(result.ok, false, path);
+  assert.ok(result.errors.some((error) => error.includes(phrase)), `${path}: ${phrase}`);
+}
+
+test('validateArgs: reviewMd rejects a backslash path', () => {
+  assertReviewPathError('api\\REVIEW.md', 'must use / separators');
+});
+test('validateArgs: reviewMd rejects a trailing slash', () => {
+  assertReviewPathError('api/REVIEW.md/', 'trailing /');
+});
+test('validateArgs: reviewMd rejects an empty path segment', () => {
+  assertReviewPathError('api//REVIEW.md', 'empty path segment');
+});
+test('validateArgs: reviewMd rejects a dot path segment', () => {
+  assertReviewPathError('api/./REVIEW.md', 'must not contain . or ..');
+});
+test('validateArgs: reviewMd rejects a dot-dot path segment', () => {
+  assertReviewPathError('api/../REVIEW.md', 'must not contain . or ..');
+});
+test('validateArgs: reviewMd rejects a dot-prefix path', () => {
+  assertReviewPathError('./REVIEW.md', 'must not contain . or ..');
+});
+test('validateArgs: reviewMd rejects a wrong basename', () => {
+  assertReviewPathError('api/NOT-REVIEW.md', 'must end with exactly REVIEW.md');
+});
+
+test('validateArgs: reviewConfig validates threshold domains at root and scope', () => {
+  for (const key of ['confidence_threshold', 'security_min_confidence']) {
+    for (const value of [-1, 101, 1.5, '80']) {
+      const result = validateArgs({ ...good, reviewConfig: { ignore: [], [key]: value } });
+      assert.equal(result.ok, false, `${key}=${value}`);
+    }
+  }
+  for (const value of ['urgent', 1]) {
+    const result = validateArgs({ ...good, reviewConfig: { ignore: [], severity_threshold: value } });
+    assert.equal(result.ok, false, `severity=${value}`);
+  }
+  const scoped = validateArgs({ ...good, reviewConfig: {
+    ignore: [], confidence_threshold: 0, security_min_confidence: 100, severity_threshold: 'critical',
+    scopes: [{ dir: 'api', ignore: [], confidence_threshold: 90, security_min_confidence: 80, severity_threshold: 'high' }],
+  } });
+  assert.deepEqual(scoped, { ok: true, errors: [] });
+});
+
+test('validateArgs: reviewConfig rejects an explicitly undefined threshold key', () => {
+  const result = validateArgs({ ...good, reviewConfig: { ignore: [], confidence_threshold: undefined } });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('confidence_threshold must be an integer')));
+});
+
+function assertScopeError(scope, phrase) {
+  const result = validateArgs({ ...good, reviewConfig: { ignore: [], scopes: [scope] } });
+  assert.equal(result.ok, false, JSON.stringify(scope));
+  assert.ok(result.errors.some((error) => error.includes(phrase)), `${JSON.stringify(scope)}: ${phrase}`);
+}
+
+test('validateArgs: reviewConfig scopes require plain objects', () => {
+  assertScopeError(null, 'scopes[0] must be a plain object');
+  assertScopeError([], 'scopes[0] must be a plain object');
+});
+test('validateArgs: reviewConfig scopes must be an array', () => {
+  const result = validateArgs({ ...good, reviewConfig: { ignore: [], scopes: {} } });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes('reviewConfig.scopes must be an array')));
+});
+test('validateArgs: reviewConfig scope dir is non-empty', () => {
+  assertScopeError({ dir: '', ignore: [] }, 'scopes[0].dir must be a non-empty string');
+});
+test('validateArgs: reviewConfig scope dir has no leading slash', () => {
+  assertScopeError({ dir: '/api', ignore: [] }, 'leading or trailing /');
+});
+test('validateArgs: reviewConfig scope dir has no trailing slash', () => {
+  assertScopeError({ dir: 'api/', ignore: [] }, 'leading or trailing /');
+});
+test('validateArgs: reviewConfig scope dir rejects backslashes', () => {
+  assertScopeError({ dir: 'api\\v1', ignore: [] }, 'must use / separators');
+});
+test('validateArgs: reviewConfig scope dir rejects control characters', () => {
+  assertScopeError({ dir: 'api\n', ignore: [] }, 'control character');
+});
+test('validateArgs: reviewConfig scope dir rejects empty segments', () => {
+  assertScopeError({ dir: 'api//v1', ignore: [] }, 'empty path segment');
+});
+test('validateArgs: reviewConfig scope dir rejects dot segments', () => {
+  assertScopeError({ dir: 'api/./v1', ignore: [] }, 'must not contain . or ..');
+});
+test('validateArgs: reviewConfig scope dir rejects dot-dot segments', () => {
+  assertScopeError({ dir: 'api/../v1', ignore: [] }, 'must not contain . or ..');
+});
+test('validateArgs: reviewConfig scope rejects unknown keys', () => {
+  assertScopeError({ dir: 'api', ignore: [], unexpected: true }, 'unexpected key(s)');
+});
+test('validateArgs: reviewConfig scope rejects an invalid threshold value', () => {
+  assertScopeError({ dir: 'api', ignore: [], confidence_threshold: '90' }, 'confidence_threshold must be an integer');
+});
+test('validateArgs: reviewConfig scope rejects an invalid severity enum', () => {
+  assertScopeError({ dir: 'api', ignore: [], severity_threshold: 'urgent' }, 'severity_threshold must be one of');
+});
+test('validateArgs: reviewConfig scope rejects non-string ignores', () => {
+  assertScopeError({ dir: 'api', ignore: [42] }, 'ignore[0] must be a flat pattern string');
+});
+
+test('validateArgs: reviewConfig scopes reject duplicate dirs', () => {
+  const duplicate = validateArgs({ ...good, reviewConfig: {
+    ignore: [], scopes: [{ dir: 'api', ignore: [] }, { dir: 'api', ignore: [] }],
+  } });
+  assert.equal(duplicate.ok, false);
+  assert.ok(duplicate.errors.some((error) => error.includes('scopes[1]')));
+});
+
 // --- resolveReviewConfig (issue #24 PR2) -------------------------------------
 
 test('resolveReviewConfig: absent reviewMd/exclusionsText falls back to reviewConfig/exclusionPatterns unchanged (req 8)', () => {
@@ -1282,6 +1394,7 @@ test('resolveReviewConfig: neither present -> source "none"', () => {
 test('resolveReviewConfig: single reviewMd entry parses correctly', () => {
   const text = '```yaml code-gauntlet\nconfidence_threshold: 80\nignore:\n  - foo.js\n```';
   const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text }] });
+  assert.deepEqual(out.reviewConfig, { confidence_threshold: 80, ignore: ['foo.js'] });
   assert.equal(out.reviewConfig.confidence_threshold, 80);
   assert.deepEqual(out.reviewConfig.ignore, ['foo.js']);
   assert.equal(out.reviewConfigSource, 'reviewMd');
@@ -1291,13 +1404,15 @@ test('resolveReviewConfig: deeper entry overrides an earlier entry\'s threshold 
   const root = '```yaml code-gauntlet\nconfidence_threshold: 70\n```';
   const deep = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
   const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.equal(out.reviewConfig.confidence_threshold, 90);
+  assert.equal(out.reviewConfig.confidence_threshold, 70);
+  assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src', confidence_threshold: 90, ignore: [] }]);
 });
 test('resolveReviewConfig: ignore lists accumulate across entries, in order', () => {
   const root = '```yaml code-gauntlet\nignore:\n  - a.js\n  - b.js\n```';
   const deep = '```yaml code-gauntlet\nignore:\n  - c.js\n```';
   const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.deepEqual(out.reviewConfig.ignore, ['a.js', 'b.js', 'c.js']);
+  assert.deepEqual(out.reviewConfig.ignore, ['a.js', 'b.js']);
+  assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src', ignore: ['c.js'] }]);
 });
 test('resolveReviewConfig: absent settings stay strictly undefined after merge (no default fill)', () => {
   const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: 'no config block here' }] });
@@ -1320,13 +1435,15 @@ test('resolveReviewConfig: deeper entry overrides an earlier entry\'s severity_t
   const root = '```yaml code-gauntlet\nseverity_threshold: low\n```';
   const deep = '```yaml code-gauntlet\nseverity_threshold: high\n```';
   const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.equal(out.reviewConfig.severity_threshold, 'high');
+  assert.equal(out.reviewConfig.severity_threshold, 'low');
+  assert.equal(out.reviewConfig.scopes[0].severity_threshold, 'high');
 });
 test('resolveReviewConfig: deeper entry overrides an earlier entry\'s security_min_confidence setting', () => {
   const root = '```yaml code-gauntlet\nsecurity_min_confidence: 60\n```';
   const deep = '```yaml code-gauntlet\nsecurity_min_confidence: 85\n```';
   const out = resolveReviewConfig({ reviewMd: [{ path: 'REVIEW.md', text: root }, { path: 'src/REVIEW.md', text: deep }] });
-  assert.equal(out.reviewConfig.security_min_confidence, 85);
+  assert.equal(out.reviewConfig.security_min_confidence, 60);
+  assert.equal(out.reviewConfig.scopes[0].security_min_confidence, 85);
 });
 test('resolveReviewConfig: reviewMd + exclusionsText together — reviewConfig from reviewMd, exclusions actually parsed from exclusionsText', () => {
   const text = '```yaml code-gauntlet\nconfidence_threshold: 80\n```';
@@ -1354,11 +1471,12 @@ test('resolveReviewConfig: exclusionsText-only (no reviewMd) echoes reviewConfig
   assert.equal(out.exclusionsSource, 'exclusionsText');
   assert.equal(out.reviewConfig.confidence_threshold, 70);
 });
-test('resolveReviewConfig: reviewMd entries are merged root-first by path depth, regardless of input order', () => {
+test('resolveReviewConfig: reviewMd scopes are depth-ordered regardless of input order', () => {
   const root = '```yaml code-gauntlet\nconfidence_threshold: 70\n```';
   const deep = '```yaml code-gauntlet\nconfidence_threshold: 90\n```';
-  // Deliberately reversed input order (deep before root) — the merge result must still
-  // reflect "deeper wins", proving the sort runs before merge rather than trusting caller order.
+  // Deliberately reversed input order (deep before root) — the root and scope remain
+  // separate, and the scope array is ordered structurally.
   const out = resolveReviewConfig({ reviewMd: [{ path: 'src/deep/REVIEW.md', text: deep }, { path: 'REVIEW.md', text: root }] });
-  assert.equal(out.reviewConfig.confidence_threshold, 90);
+  assert.equal(out.reviewConfig.confidence_threshold, 70);
+  assert.deepEqual(out.reviewConfig.scopes, [{ dir: 'src/deep', confidence_threshold: 90, ignore: [] }]);
 });
