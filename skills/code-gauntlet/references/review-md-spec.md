@@ -179,12 +179,12 @@ ancestors up to root — the same directory set the project-rules pass walks
 (`scripts/collect_project_rules.py`), not a CLAUDE.md-location anchor (issue #80). A
 repository can have:
 
-- A **root** `REVIEW.md` at the repo root (applies to all files by default)
-- **Subdirectory** `REVIEW.md` files in any directory on that walked set (applies to files in that directory tree)
+- A **root** `REVIEW.md` at the repo root (its thresholds and ignore apply to all files by default)
+- **Subdirectory** `REVIEW.md` files in any directory on that walked set (their thresholds and ignore apply to files in that directory tree)
 
-Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different review standards (e.g., stricter security rules for an API directory, different thresholds for a legacy module).
+Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different thresholds or ignore patterns (e.g., stricter security for an API directory or suppressions for a legacy module). Their prose is organizational and advisory: agents see which file supplied it, but every discovered REVIEW.md's prose reaches every agent.
 
-**Placement decision test:** before adding a rule to a subdirectory REVIEW.md, ask "would this rule generate false positives in the other stack?" If yes, it belongs in the subdirectory. If the rule applies cleanly everywhere, it belongs in root. Example: "Never use `async void`" is meaningless in a React frontend — it goes in `backend/REVIEW.md`. "Validate all user input" applies everywhere — it goes in root.
+**Placement decision test:** before adding a rule to a subdirectory REVIEW.md, ask "would this rule generate false positives in the other stack?" If yes, place it there for organizational provenance and advisory context; agents still see the prose globally. If the rule applies cleanly everywhere, place it in root. Thresholds and ignore patterns in that subdirectory file are enforced for its subtree. Example: "Never use `async void`" is meaningless in a React frontend — record it in `backend/REVIEW.md` as advisory prose. "Validate all user input" applies everywhere — record it in root.
 
 ### Inheritance model
 
@@ -193,12 +193,13 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 | Section | Behavior | Rationale |
 |---------|----------|-----------|
 | `confidence_threshold` | **Override** — subdirectory value replaces root | A module may need stricter or looser thresholds |
+| `security_min_confidence` | **Override** — subdirectory value replaces root | A module may need a different security confidence ceiling |
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
 | `default_delivery` | **Root-only** — only the root REVIEW.md text is checked | Headless delivery is a review-wide setting |
-| `rules` (and other free prose) | **Accumulate** — subdirectory content adds to root content | Directory-specific conventions supplement project-wide ones |
-| `ignore` | **Accumulate** — subdirectory patterns add to root patterns | Suppressions are additive |
+| `rules` (and other free prose) | **Global** — every discovered REVIEW.md's prose reaches every agent through the shared context; not scoped | The source file remains visible as provenance for advisory context |
+| `ignore` | **Accumulate per matching subtree** — matching subdirectory patterns add to root patterns for files under that subtree | Suppressions are additive within the governed subtree |
 
-In short: **settings override, rules and patterns accumulate.**
+In short: **thresholds override and ignore patterns accumulate per matching subtree; prose is shared.**
 
 Thresholds and `ignore` are scoped per subtree by `finding.file`: the root layer is the default,
 and matching directory layers override present thresholds and append their ignore lists. Free
@@ -215,20 +216,20 @@ repo/
   CLAUDE.md
   api/
     CLAUDE.md
-    REVIEW.md            # confidence_threshold: 70, rules: [rule-C]
+    REVIEW.md            # confidence_threshold: 80, rules: [rule-C]
   legacy/
     CLAUDE.md            # no REVIEW.md — root config applies
 ```
 
 For a file in `api/`:
 
-- confidence_threshold = **70** (overridden by api/REVIEW.md)
-- rules = **[rule-A, rule-B, rule-C]** (advisory prose, reaches every agent)
+- confidence_threshold = **80** (overridden by api/REVIEW.md)
+- rules = **[rule-A, rule-B, rule-C]** (advisory prose; every discovered REVIEW.md's text reaches every agent)
 
 For a file in `legacy/`:
 
 - confidence_threshold = **70** (root applies)
-- rules = **[rule-A, rule-B]** (advisory prose, reaches every agent)
+- rules = **[rule-A, rule-B, rule-C]** (advisory prose; every discovered REVIEW.md's text reaches every agent)
 
 ### Discovery
 
@@ -385,16 +386,16 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
 ````markdown
 # Review Configuration — [directory name]
 
-<!-- Settings here override root REVIEW.md. Rules and ignore patterns
-     accumulate (add to root), settings (thresholds) replace root.
-     Only create subdirectory configs when this area needs DIFFERENT standards
-     than the root — e.g., stricter security for an API directory. -->
+<!-- Thresholds here override root REVIEW.md and ignore patterns accumulate
+     for this subtree. Prose is advisory and shared with every agent; this
+     file records which REVIEW.md supplied it. Only create subdirectory
+     configs when this area needs different thresholds or suppressions. -->
 
 ## Rules
 
-<!-- Directory-specific rules (these ADD to root REVIEW.md rules).
-     Aim for 5-10 rules covering technology or domain-specific patterns.
-     Don't contradict root rules — extend them. -->
+<!-- Advisory rules recorded here are visible to every agent and are labeled
+     by this file; they do not scope prose to this directory. Aim for 5-10
+     rules covering technology or domain-specific patterns. -->
 
 <!-- Optional config block — same keys as the root template, uncommented only
      if this directory needs a different threshold or suppression list than root. -->

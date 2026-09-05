@@ -1,11 +1,13 @@
 {
-  "eliminated": [],
-  "kept": [
+  "eliminated": [
     {
       "description": "real",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'subtree-only'",
       "file": "api/x.py",
       "id": "subtree",
       "title": "subtree-only"
     }
-  ]
+  ],
+  "kept": []
 }

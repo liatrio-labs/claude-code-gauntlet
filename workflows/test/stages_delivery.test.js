@@ -315,6 +315,57 @@ test('runWith scopes raw child REVIEW.md settings through filter and persisted d
   assert.deepEqual(out.stats.reviewMdSubtrees, [{ dir: 'api', matched: 1 }]);
 });
 
+test('runWith fresh pipeline scopes raw REVIEW.md settings before challenge and delivery', async () => {
+  const args = validArgs({
+    changedFiles: ['api/x.py', 'legacy/y.py'],
+    reviewMd: [
+      { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
+      { path: 'api/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
+    ],
+  });
+  let persisted = null;
+  const ctx = makeCtx(args, {
+    findings: [
+      makeFinding('api-x', { file: 'api/x.py', confidence: 80 }),
+      makeFinding('legacy-y', { file: 'legacy/y.py', confidence: 80 }),
+    ],
+    onPersist: (payload) => { persisted = payload; },
+  });
+  const out = await runWith(ctx, args);
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(persisted.findings.map((f) => f.id), ['legacy-y']);
+  assert.deepEqual(persisted.postReview.map((f) => f.id), ['legacy-y']);
+  assert.equal(out.stats.filter.total, 2);
+  assert.equal(out.stats.filter.passed_threshold, 1);
+  assert.deepEqual(out.stats.reviewMdSubtrees, [{ dir: 'api', matched: 1 }]);
+});
+
+test('runWith echoes unmatched REVIEW.md scopes as zero-match dirs without a root entry', async () => {
+  const args = validArgs({
+    reviewMd: [
+      { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
+      { path: 'docs/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
+      { path: 'API/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
+    ],
+    checkpoints: {
+      validate: {
+        findings: [makeFinding('API', { file: 'api/x.py', confidence: 80 })],
+        stats: { batches_dispatched: 0, batches_completed: 0, validated: 1, skipped: 0, adjusted: 0 },
+      },
+    },
+  });
+  const out = await runWith(makeCtx(args), args);
+
+  assert.equal(out.ok, true);
+  assert.deepEqual(out.stats.reviewMdSubtrees, [
+    { dir: 'docs', matched: 0 },
+    { dir: 'API', matched: 0 },
+  ]);
+  assert.ok(out.stats.reviewMdSubtrees.every((scope) => !scope.dir.endsWith('/REVIEW.md')));
+  assert.ok(!out.stats.reviewMdSubtrees.some((scope) => scope.dir === ''));
+});
+
 test('runWith without args.reviewMd reports reviewConfigSource "none" (no config supplied)', async () => {
   const args = validArgs({ checkpoints: { challenge: challengeCheckpoint() } });
   const out = await runWith(makeCtx(args), args);

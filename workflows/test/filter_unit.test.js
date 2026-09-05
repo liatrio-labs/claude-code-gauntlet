@@ -82,6 +82,17 @@ test('configForFile orders matching scopes structurally and never mutates config
   assert.deepEqual(configForFile(config, 42), { confidence_threshold: 50, ignore: ['root'] });
 });
 
+test('configForFile does not strip a/ or b/ prefixes before matching', () => {
+  const config = {
+    confidence_threshold: 70,
+    ignore: ['root'],
+    scopes: [{ dir: 'api', confidence_threshold: 90, ignore: ['api'] }],
+  };
+  const expected = { confidence_threshold: 70, ignore: ['root'] };
+  assert.deepEqual(configForFile(config, 'a/api/x.py'), expected);
+  assert.deepEqual(configForFile(config, 'b/api/x.py'), expected);
+});
+
 test('scoped thresholds and ignores use each finding file', () => {
   const config = {
     confidence_threshold: 60,
@@ -115,6 +126,54 @@ test('scoped exclusions run with an empty external list and root wins overlaps',
   ], [], config);
   assert.deepEqual(out.kept, []);
   assert.equal(out.eliminated[0].elimination_reason, 'matched exclusion pattern: "shared"');
+});
+
+test('scoped exclusions name the root pattern when root, subtree, and external patterns overlap', () => {
+  const config = {
+    ignore: ['root-overlap'],
+    scopes: [{ dir: 'api', ignore: ['subtree-overlap'] }],
+  };
+  const out = applyExclusions([
+    cleanFinding({
+      id: 'overlap',
+      file: 'api/x.py',
+      description: 'root-overlap subtree-overlap external-overlap',
+    }),
+  ], ['external-overlap'], config);
+  assert.equal(out.eliminated[0].elimination_reason, 'matched exclusion pattern: "root-overlap"');
+});
+
+test('threshold and exclusion outcomes are order-independent and do not mutate config', () => {
+  const config = {
+    confidence_threshold: 60,
+    ignore: ['root-match'],
+    scopes: [{ dir: 'api', confidence_threshold: 90, ignore: ['api-match'] }],
+  };
+  const snapshot = JSON.parse(JSON.stringify(config));
+  const findings = [
+    cleanFinding({ id: 'api-low', file: 'api/x.py', confidence: 80, description: 'api-match' }),
+    cleanFinding({ id: 'legacy-root', file: 'legacy/x.py', confidence: 80, description: 'root-match' }),
+  ];
+  const outcomes = (ordered) => {
+    const threshold = applyThresholdFilter(ordered, config);
+    const exclusions = applyExclusions(ordered, [], config);
+    return {
+      threshold: {
+        kept: threshold.kept.map((f) => f.id).sort(),
+        eliminated: threshold.eliminated.map((f) => f.id).sort(),
+      },
+      exclusions: {
+        kept: exclusions.kept.map((f) => f.id).sort(),
+        eliminated: exclusions.eliminated.map((f) => f.id).sort(),
+      },
+    };
+  };
+  const forward = outcomes(findings.map((f) => ({ ...f })));
+  const reverse = outcomes(findings.slice().reverse().map((f) => ({ ...f })));
+  assert.deepEqual(forward, reverse);
+  assert.deepEqual(config, snapshot);
+  assert.deepEqual(config.ignore, snapshot.ignore);
+  assert.deepEqual(config.scopes.map((scope) => scope.ignore), snapshot.scopes.map((scope) => scope.ignore));
 });
 
 // suggested_fix_code field-strip matrix (#63/D8) -- mirrors the Python

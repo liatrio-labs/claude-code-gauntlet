@@ -1,12 +1,15 @@
 {
-  "eliminated": [],
-  "kept": [
+  "eliminated": [
     {
       "description": "real",
+      "eliminated_by": "exclusion",
+      "elimination_reason": "matched exclusion pattern: 'ignore API'",
       "file": "api/x.py",
       "id": "api-drop",
       "title": "ignore API"
-    },
+    }
+  ],
+  "kept": [
     {
       "description": "real",
       "file": "legacy/x.py",

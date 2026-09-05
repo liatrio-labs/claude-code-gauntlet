@@ -293,7 +293,11 @@ for (const c of loadCases('filter_findings')) {
       return;
     }
     if (fn === 'apply_exclusions') {
-      const { kept, eliminated } = applyExclusions(c.input.findings, c.input.exclusion_patterns);
+      const { kept, eliminated } = applyExclusions(
+        c.input.findings,
+        c.input.exclusion_patterns,
+        c.input.config ?? null,
+      );
       assert.deepEqual(idsOf(kept), idsOf(c.expected.kept));
       assert.deepEqual(idsOf(eliminated), idsOf(c.expected.eliminated));
       return;

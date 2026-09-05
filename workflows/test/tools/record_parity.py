@@ -105,7 +105,7 @@ def _filter_findings(inp):
         return {"kept": kept, "eliminated": eliminated}
     if fn == "apply_exclusions":
         kept, eliminated = ff.apply_exclusions(
-            inp["findings"], inp["exclusion_patterns"]
+            inp["findings"], inp["exclusion_patterns"], inp.get("config")
         )
         return {"kept": kept, "eliminated": eliminated}
     if fn == "apply_filter_pipeline":

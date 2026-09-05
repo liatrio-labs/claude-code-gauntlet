@@ -349,6 +349,67 @@ class TestApplyThresholdFilter(unittest.TestCase):
         )
         self.assertEqual(config, before)
 
+    def test_scoped_lookup_does_not_strip_a_or_b_prefixes(self):
+        config = {
+            "confidence_threshold": 70,
+            "ignore": ["root"],
+            "scopes": [{"dir": "api", "confidence_threshold": 90, "ignore": ["api"]}],
+        }
+        expected = {"confidence_threshold": 70, "ignore": ["root"]}
+        self.assertEqual(config_for_file(config, "a/api/x.py"), expected)
+        self.assertEqual(config_for_file(config, "b/api/x.py"), expected)
+
+    def test_threshold_and_exclusion_outcomes_are_order_independent_and_config_is_immutable(
+        self,
+    ):
+        config = {
+            "confidence_threshold": 60,
+            "ignore": ["root-match"],
+            "scopes": [
+                {"dir": "api", "confidence_threshold": 90, "ignore": ["api-match"]}
+            ],
+        }
+        before = json.loads(json.dumps(config))
+        findings = [
+            _make_finding(
+                id="api-low", file="api/x.py", confidence=80, description="api-match"
+            ),
+            _make_finding(
+                id="legacy-root",
+                file="legacy/x.py",
+                confidence=80,
+                description="root-match",
+            ),
+        ]
+
+        def outcomes(ordered):
+            passed_threshold, eliminated_threshold, _ = apply_threshold_filter(
+                ordered, config
+            )
+            passed_exclusions, eliminated_exclusions = apply_exclusions(
+                ordered, [], config
+            )
+            return {
+                "threshold": {
+                    "kept": sorted(f["id"] for f in passed_threshold),
+                    "eliminated": sorted(f["id"] for f in eliminated_threshold),
+                },
+                "exclusions": {
+                    "kept": sorted(f["id"] for f in passed_exclusions),
+                    "eliminated": sorted(f["id"] for f in eliminated_exclusions),
+                },
+            }
+
+        forward = outcomes([dict(f) for f in findings])
+        reverse = outcomes([dict(f) for f in reversed(findings)])
+        self.assertEqual(forward, reverse)
+        self.assertEqual(config, before)
+        self.assertEqual(config["ignore"], before["ignore"])
+        self.assertEqual(
+            [scope["ignore"] for scope in config["scopes"]],
+            [scope["ignore"] for scope in before["scopes"]],
+        )
+
     def _config(self, confidence=70, severity="low", sec_min=70):
         return {
             "confidence_threshold": confidence,
@@ -3834,14 +3895,20 @@ class TestApplyExclusions(unittest.TestCase):
         self.assertEqual([f["id"] for f in eliminated], ["test-1"])
 
     def test_scoped_overlap_uses_root_pattern_before_child_and_external(self):
-        findings = [_make_finding(file="api/x.py", description="overlap")]
+        findings = [
+            _make_finding(
+                file="api/x.py",
+                description="root-overlap subtree-overlap external-overlap",
+            )
+        ]
         config = {
-            "ignore": ["overlap"],
-            "scopes": [{"dir": "api", "ignore": ["overlap"]}],
+            "ignore": ["root-overlap"],
+            "scopes": [{"dir": "api", "ignore": ["subtree-overlap"]}],
         }
-        _, eliminated = apply_exclusions(findings, ["overlap"], config)
+        _, eliminated = apply_exclusions(findings, ["external-overlap"], config)
         self.assertEqual(
-            eliminated[0]["elimination_reason"], "matched exclusion pattern: 'overlap'"
+            eliminated[0]["elimination_reason"],
+            "matched exclusion pattern: 'root-overlap'",
         )
 
     def test_empty_patterns_passes_all(self):

@@ -1,8 +1,8 @@
 {
   "fn": "apply_exclusions",
-  "config": {"ignore": ["overlap"], "scopes": [{"dir": "api", "ignore": ["overlap"]}]},
-  "exclusion_patterns": ["overlap"],
+  "config": {"ignore": ["root-overlap"], "scopes": [{"dir": "api", "ignore": ["subtree-overlap"]}]},
+  "exclusion_patterns": ["external-overlap"],
   "findings": [
-    {"id": "overlap", "file": "api/x.py", "title": "overlap", "description": "real"}
+    {"id": "overlap", "file": "api/x.py", "title": "root-overlap subtree-overlap external-overlap", "description": "real"}
   ]
 }

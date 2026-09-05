@@ -143,6 +143,8 @@ review by glob pattern — a `## Skip` heading is inert prose, never parsed (`re
 
 Apply the multi-stack decision test: for each technology-specific rule you want to add, ask: **"Would this rule generate false positives when applied to the other stack?"**
 
+Subdirectory rules are advisory prose shared with every agent (the file location is provenance); only thresholds and ignore patterns are enforced for that subtree.
+
 If yes → the rule belongs in a subdirectory REVIEW.md.
 If no → the rule belongs in the root REVIEW.md.
 

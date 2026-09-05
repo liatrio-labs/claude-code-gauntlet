@@ -148,7 +148,9 @@ class TestFilterFindingsParity(unittest.TestCase):
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
                 elif fn == "apply_exclusions":
                     kept, eliminated = ff.apply_exclusions(
-                        inp["findings"], inp["exclusion_patterns"]
+                        inp["findings"],
+                        inp["exclusion_patterns"],
+                        inp.get("config"),
                     )
                     self.assertEqual({"kept": kept, "eliminated": eliminated}, expected)
                 elif fn == "apply_filter_pipeline":
