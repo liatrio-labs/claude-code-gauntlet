@@ -129,8 +129,9 @@ lines identify the active plugin, with Workflow `scriptPath` as defense in depth
 
 **Current verify input transport.** Verify slices now travel to the executor as a
 percent-encoded `--input-inline` token planned under `VERIFY_INLINE_CHAR_BUDGET`;
-the executor decodes the token and writes the destination before running
-`verify_findings.py`. The content proof remains as a belt. The artifact-writer
+the executor reproduces the token exactly in one Bash call; `verify_findings.py`
+decodes it and writes the destination before running verification. The content
+proof remains as a belt. The artifact-writer
 still handles Persist's artifact paths; its historical slice-input transcription
 failure is retained below as benchmark evidence:
 `smoke-20260727-205454-f99d948` (`receipt nonce mismatch`, plus

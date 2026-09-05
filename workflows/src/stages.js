@@ -239,11 +239,13 @@ export function sharedContextLine(inp) {
   return `${prefix} It is ${total} lines, which takes exactly ${plan.length} Read calls of limit=${span}, at offsets 1, ${1 + span}, ${1 + 2 * span}, … stepping by ${span} through line ${total}. ${tail} `;
 }
 
-// planVerifySlices(findings, sliceSize, budget, baseBranch) -> { slices, oversize }.
+// planVerifySlices(findings, sliceSize, budget, baseBranch) -> { slices, oversize, closeReasons }.
 // A projected finding's cost is its encoded object alone. A slice's exact cost is the
 // encoded empty envelope plus those object costs plus one comma for each additional
 // finding. The greedy planner keeps both the finding-count and inline-character bounds
 // in one place, and planner consumers and the dispatch assertion share this accounting.
+// closeReasons is aligned with slices: a terminal slice has no following boundary and is
+// tagged null; every other closed slice names the bound that closed it.
 const effectiveVerifyBaseBranch = (baseBranch) => baseBranch || 'main';
 const verifySliceLengthFromCosts = (envelopeLength, findingCost, findingCount) =>
   envelopeLength + findingCost + Math.max(0, findingCount - 1);
@@ -268,10 +270,14 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main
   const envelopeAllowance = encodeSliceInline({ findings: [], base_branch: branch }).length;
   const slices = [];
   const oversize = [];
+  const closeReasons = [];
   let current = [];
   let currentFindingCost = 0;
-  const flush = () => {
-    if (current.length > 0) slices.push(current);
+  const flush = (reason = null) => {
+    if (current.length > 0) {
+      slices.push(current);
+      closeReasons.push(reason);
+    }
     current = [];
     currentFindingCost = 0;
   };
@@ -280,7 +286,7 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main
     const findingCost = projectedVerifyFindingInlineLength(finding);
     const singleCost = verifySliceLengthFromCosts(envelopeAllowance, findingCost, 1);
     if (singleCost > maxChars) {
-      flush();
+      flush('oversize');
       oversize.push(finding);
       continue;
     }
@@ -290,13 +296,13 @@ export function planVerifySlices(findings, sliceSize, budget, baseBranch = 'main
       current.length + 1,
     );
     if (current.length > 0 && (current.length >= maxFindings || candidateCost > maxChars)) {
-      flush();
+      flush(current.length >= maxFindings ? 'count' : 'budget');
     }
     current.push(finding);
     currentFindingCost += findingCost;
   }
   flush();
-  return { slices, oversize };
+  return { slices, oversize, closeReasons };
 }
 
 // --- Phase 1: Summarize -----------------------------------------------------
@@ -1002,36 +1008,31 @@ export async function verifyStage(ctx, input) {
   const plan = planVerifySlices(findings, sliceSize, VERIFY_INLINE_CHAR_BUDGET, baseBranch);
   const slices = plan.slices;
 
-  // Recompute only the boundaries that closed a planned slice. The public planner result
-  // stays the compact `{ slices, oversize }` contract, while this tells the disclosure which
-  // exact cost bound caused the fan-out. The cost is the empty envelope plus projected
-  // finding-object lengths and one comma per additional finding.
-  const fanoutBounds = (() => {
-    const maxFindings = Math.max(1, sliceSize || findings.length || 1);
-    const maxChars = Math.max(1, VERIFY_INLINE_CHAR_BUDGET);
-    let countBound = false;
-    let budgetBound = false;
-    for (let i = 0; i + 1 < slices.length; i += 1) {
-      const current = slices[i];
-      const next = slices[i + 1][0];
-      const currentCost = predictVerifySliceInlineLength(current, baseBranch);
-      const nextCost = projectedVerifyFindingInlineLength(next);
-      if (current.length >= maxFindings) countBound = true;
-      else if (currentCost + nextCost + 1 > maxChars) budgetBound = true;
-    }
-    return { countBound, budgetBound };
-  })();
+  // The planner records the actual bound that closed each slice. Read those tags directly:
+  // the next planned slice may begin after an oversize finding that was skipped, so its first
+  // finding cannot reliably reconstruct the boundary cause.
+  const fanoutBounds = { countBound: false, budgetBound: false, oversizeBound: false };
+  for (let i = 0; i + 1 < slices.length; i += 1) {
+    if (plan.closeReasons[i] === 'count') fanoutBounds.countBound = true;
+    else if (plan.closeReasons[i] === 'budget') fanoutBounds.budgetBound = true;
+    else if (plan.closeReasons[i] === 'oversize') fanoutBounds.oversizeBound = true;
+  }
 
   // Degrade-and-disclose (issue #72), not abort: a small verifySliceSize is a legitimate
   // transcription-fidelity mitigation, not a mistake to reject, but its dispatch cost is
   // real and otherwise invisible until the run runs long or worstCaseAgentCount rejects it
   // outright. Collected here rather than pushed straight into `gaps` so it lands ahead of
   // any per-slice degrade gap, in the order this stage discovers information.
-  const fanoutAdvice = fanoutBounds.budgetBound
-    ? 'The inline character budget bound this split; raising verifySliceSize will not reduce this fan-out.'
-    : fanoutBounds.countBound
-      ? 'Raise verifySliceSize to reduce fan-out.'
-      : 'The split bound could not be classified; inspect the effective slice size and inline budget.';
+  let fanoutAdvice;
+  if (fanoutBounds.budgetBound) {
+    fanoutAdvice = 'The inline character budget bound this split; raising verifySliceSize will not reduce this fan-out.';
+  } else if (fanoutBounds.oversizeBound) {
+    fanoutAdvice = 'An oversize finding forced this split; raising verifySliceSize will not reduce this fan-out.';
+  } else if (fanoutBounds.countBound) {
+    fanoutAdvice = 'Raise verifySliceSize to reduce fan-out.';
+  } else {
+    fanoutAdvice = 'The split bound could not be classified; inspect the effective slice size and inline budget.';
+  }
   const fanoutGaps = slices.length > VERIFY_FANOUT_DISCLOSE_THRESHOLD
     ? [`verify_fanout: effective verifySliceSize=${sliceSize} splits ${findings.length} finding(s) into ${slices.length} slices `
       + `(above the ${VERIFY_FANOUT_DISCLOSE_THRESHOLD}-slice disclosure threshold) — up to ${slices.length * VERIFY_ATTEMPTS_PER_SLICE} `
@@ -1076,7 +1077,8 @@ export async function verifyStage(ctx, input) {
       ? fnv1a32(JSON.stringify(content, null, 2))
       : null;
     const payload = encodeSliceInline(content);
-    if (payload.length > VERIFY_INLINE_CHAR_BUDGET) {
+    const predictedPayloadLength = predictVerifySliceInlineLength(slice, baseBranch);
+    if (payload.length !== predictedPayloadLength || predictedPayloadLength > VERIFY_INLINE_CHAR_BUDGET) {
       throw new Error(`verify inline planner produced an oversized slice ${i} (${payload.length} > ${VERIFY_INLINE_CHAR_BUDGET})`);
     }
     const degrade = (detail) => {

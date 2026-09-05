@@ -2874,6 +2874,7 @@ class TestSliceInputRecovery(unittest.TestCase):
             out_path = out_file.name
         self.addCleanup(os.unlink, out_path)
         self.receipt_input_path = in_path
+        self.receipt_output_path = out_path
         with (
             patch("sys.stderr", new_callable=io.StringIO),
             patch.object(
@@ -3074,6 +3075,19 @@ class TestSliceInputRecovery(unittest.TestCase):
                         envelope["receipt"]["input_checksum"],
                         fnv1a32(js_stringify_pretty(doc)),
                     )
+
+    def test_receipt_escapes_lone_surrogate_in_delta_id(self):
+        finding = self._receipt_findings()[0]
+        finding["id"] = "bug-\ud800"
+        doc = {"findings": [finding], "base_branch": "main"}
+
+        envelope = self._run_receipt_over(doc)
+
+        self.assertEqual(envelope["status"], "ok")
+        self.assertEqual(envelope["result"]["deltas"][0]["id"], finding["id"])
+        with open(self.receipt_output_path, "rb") as fh:
+            output_bytes = fh.read()
+        self.assertIn(b'"id": "bug-\\ud800"', output_bytes)
 
     def test_a_failing_receipt_input_write_leaves_the_destination_untouched(self):
         import io

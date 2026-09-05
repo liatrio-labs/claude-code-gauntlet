@@ -1230,13 +1230,15 @@ def decode_inline_slice(text):
         _inline_reject(
             "JSON escape sequences are not canonical at $ (offending U+005C)"
         )
+
+    def _reject_non_finite_constant(value):
+        raise ValueError(f"non-finite JSON constant {value}")
+
     try:
         parsed = json.loads(
             text,
             object_pairs_hook=_inline_pairs,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(f"non-finite JSON constant {value}")
-            ),
+            parse_constant=_reject_non_finite_constant,
         )
     except (json.JSONDecodeError, ValueError) as exc:
         _inline_reject(f"invalid JSON at $ ({exc})")
@@ -1247,21 +1249,22 @@ def decode_inline_slice(text):
 
 def _validate_input_shape(data, inline=False):
     reject = _inline_reject if inline else die
+
+    def fail(inline_msg, legacy_msg):
+        reject(inline_msg if inline else legacy_msg)
+
     if not isinstance(data, dict):
-        if inline:
-            reject("root must be an object with a 'findings' key at $")
-        else:
-            reject("Input JSON must be an object with a 'findings' key.")
+        fail(
+            "root must be an object with a 'findings' key at $",
+            "Input JSON must be an object with a 'findings' key.",
+        )
     if "findings" not in data:
-        if inline:
-            reject("missing required 'findings' array at $")
-        else:
-            reject("Input JSON is missing required 'findings' array.")
+        fail(
+            "missing required 'findings' array at $",
+            "Input JSON is missing required 'findings' array.",
+        )
     if not isinstance(data["findings"], list):
-        if inline:
-            reject("'findings' must be an array at $")
-        else:
-            reject("'findings' must be an array.")
+        fail("'findings' must be an array at $", "'findings' must be an array.")
     return data
 
 

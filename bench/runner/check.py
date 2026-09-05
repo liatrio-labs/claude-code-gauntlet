@@ -86,8 +86,10 @@ PIPELINE_REL = Path("workflows") / "pipeline.js"
 #   workflows/wf_*.json  carries the compact return at ``result.gaps``. It also
 #       echoes the whole ~230 KB workflows/pipeline.js bundle into its
 #       ``script`` field, and that bundle's source contains the sentinels as
-#       ordinary substrings ("no write proof" x4 string/template literals;
-#       "partial-artifacts" x6 — 1 string literal + 5 comments) — so a raw
+#       ordinary substrings ("no write proof" x3 string/template literals —
+#       writeArtifacts's four-path gap, writeArtifactsDerived's three-primary gap,
+#       and assemble's derived-path receipt check; "partial-artifacts" x6 — 1
+#       string literal + 5 comments) — so a raw
 #       scan matches on EVERY collected record, degraded or not.
 #       ``workflows/superseded/`` (archived prior attempts; #85) is invisible:
 #       ``_iter_workflow_records`` / degrade globs are non-recursive.

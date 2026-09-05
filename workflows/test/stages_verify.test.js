@@ -353,6 +353,28 @@ test('verify fan-out disclosure names the bound that actually split the slices',
   assert.doesNotMatch(budgetGap, /Raise verifySliceSize to reduce fan-out/);
 });
 
+test('verify fan-out disclosure names an oversize-caused boundary after a skipped finding', async () => {
+  const findings = [
+    ...Array.from({ length: 24 }, (_, i) => ({ id: `A${i}`, origin: 'new' })),
+    { id: 'BIG', origin: 'new', description: 'x'.repeat(50000) },
+    ...Array.from({ length: 125 }, (_, i) => ({ id: `B${i}`, origin: 'new' })),
+  ];
+  const input = baseInput({ findings, limits: { verifySliceSize: 25 } });
+  const ctx = verifyCtx((call, i) => {
+    const dispatched = parsedInlineOf(call).findings;
+    return okEnvelope(dispatched, { nonce: `n-1.${i}`, n_in: dispatched.length });
+  });
+
+  const out = await verifyStage(ctx, input);
+  const plan = planVerifySlices(findings, 25, VERIFY_INLINE_CHAR_BUDGET, 'main');
+  const fanoutGap = out.gaps.find((gap) => gap.startsWith('verify_fanout:'));
+
+  assert.deepEqual(plan.closeReasons, ['oversize', 'count', 'count', 'count', 'count', null]);
+  assert.equal(out.inputProof.oversize, 1);
+  assert.match(fanoutGap, /oversize finding forced this split/);
+  assert.doesNotMatch(fanoutGap, /Raise verifySliceSize to reduce fan-out/);
+});
+
 test('VERIFY_SCHEMA has no input_recovery and extra executor input_recovery is ignored', async () => {
   const input = baseInput();
   const ctx = verifyCtx((_call, i) => ({ ...okEnvelope(input.findings, { nonce: `n-1.${i}` }), input_recovery: { trailing_bytes: '}\n' } }));
@@ -474,4 +496,5 @@ test('planner flushes a preceding slice before isolating an oversize finding', (
   const plan = planVerifySlices(findings, 2, VERIFY_INLINE_CHAR_BUDGET);
   assert.deepEqual(plan.slices.map((slice) => slice.map((finding) => finding.id)), [['A'], ['C']]);
   assert.deepEqual(plan.oversize.map((finding) => finding.id), ['BIG']);
+  assert.deepEqual(plan.closeReasons, ['oversize', null]);
 });
