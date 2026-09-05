@@ -225,7 +225,7 @@ function reviewScopeDir(path) {
 }
 
 function reviewScopeDepth(dir) {
-  return dir ? dir.split('/').length : 0;
+  return dir.split('/').length;
 }
 
 function mergeReviewLayer(layer, parsed) {
@@ -272,7 +272,8 @@ export function configForFile(config, file) {
   // matching subtree layers in structural depth order, so array order cannot
   // let a shallower layer override a deeper one.
   const source = config || {};
-  const view = { ignore: [...(Array.isArray(source.ignore) ? source.ignore : [])] };
+  // The args waist guarantees the ignore shape is an array at this boundary.
+  const view = { ignore: [...(source.ignore === undefined ? [] : source.ignore)] };
   for (const key of REVIEW_SETTING_KEYS) {
     if (key in source) view[key] = source[key];
   }
@@ -287,7 +288,7 @@ export function configForFile(config, file) {
     for (const key of REVIEW_SETTING_KEYS) {
       if (key in scope) view[key] = scope[key];
     }
-    if (Array.isArray(scope.ignore)) view.ignore.push(...scope.ignore);
+    view.ignore.push(...(scope.ignore === undefined ? [] : scope.ignore));
   }
   return view;
 }

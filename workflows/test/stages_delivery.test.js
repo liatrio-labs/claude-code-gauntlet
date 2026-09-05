@@ -347,10 +347,13 @@ test('runWith echoes unmatched REVIEW.md scopes as zero-match dirs without a roo
       { path: 'REVIEW.md', text: '```yaml code-gauntlet\n```' },
       { path: 'docs/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
       { path: 'API/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
+      { path: 'api/REVIEW.md', text: '```yaml code-gauntlet\nconfidence_threshold: 90\n```' },
     ],
     checkpoints: {
       validate: {
-        findings: [makeFinding('API', { file: 'api/x.py', confidence: 80 })],
+        findings: [
+          makeFinding('APIARY', { file: 'apiary/x.py', confidence: 80 }),
+        ],
         stats: { batches_dispatched: 0, batches_completed: 0, validated: 1, skipped: 0, adjusted: 0 },
       },
     },
@@ -361,6 +364,7 @@ test('runWith echoes unmatched REVIEW.md scopes as zero-match dirs without a roo
   assert.deepEqual(out.stats.reviewMdSubtrees, [
     { dir: 'docs', matched: 0 },
     { dir: 'API', matched: 0 },
+    { dir: 'api', matched: 0 },
   ]);
   assert.ok(out.stats.reviewMdSubtrees.every((scope) => !scope.dir.endsWith('/REVIEW.md')));
   assert.ok(!out.stats.reviewMdSubtrees.some((scope) => scope.dir === ''));

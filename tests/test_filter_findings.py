@@ -358,6 +358,7 @@ class TestApplyThresholdFilter(unittest.TestCase):
         expected = {"confidence_threshold": 70, "ignore": ["root"]}
         self.assertEqual(config_for_file(config, "a/api/x.py"), expected)
         self.assertEqual(config_for_file(config, "b/api/x.py"), expected)
+        self.assertEqual(config_for_file(config, "./api/x.py"), expected)
 
     def test_threshold_and_exclusion_outcomes_are_order_independent_and_config_is_immutable(
         self,

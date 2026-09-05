@@ -17,8 +17,9 @@ config block — a fenced ```` ```yaml # code-gauntlet ```` block, or an
 `<!-- code-gauntlet-config -->` comment block — containing plain `key: value` lines in four
 recognized snake_case keys. Everything else in the file (headings, prose, a `## Rules` list) is
 free markdown: it is never parsed, but the whole file's text — this config block included — is
-folded into the shared context every review agent reads, so prose still reaches the agents as
-advisory guidance (see "Rules and other prose" below).
+folded into the shared context read by every context-reading agent (summarize, discovery,
+validate), so prose still reaches those agents as advisory guidance (see "Rules and other prose"
+below).
 
 <!-- code-gauntlet-defaults -->
 Built-in defaults, applied whenever a key is absent from the config block: `confidence_threshold`
@@ -75,8 +76,9 @@ first and uses that one.
 
 `## Rules` (or any other free-text section — a `## Focus` or `## Skip` heading some REVIEW.md files
 still carry from older guidance) is never parsed for structure. Its content is advisory: the whole
-REVIEW.md file is gathered by value and folded into the shared context every review agent reads, so
-a well-written `## Rules` list genuinely steers the agents the same way a CLAUDE.md convention does.
+REVIEW.md file is gathered by value and folded into the shared context read by every
+context-reading agent (summarize, discovery, validate), so a well-written `## Rules` list genuinely
+steers those agents the same way a CLAUDE.md convention does.
 A `## Focus` or `## Skip` heading has no such effect beyond that — code-gauntlet does not read them
 as instructions to gate dimensions or exclude files; they are just more prose an agent may or may
 not act on. Two structural things actually do gate/exclude, and neither is REVIEW.md-configurable:
@@ -87,7 +89,7 @@ not act on. Two structural things actually do gate/exclude, and neither is REVIE
 - **Which findings are suppressed** is the `ignore` list in the config block (see below) — a
   substring match against finding text, not a file-path exclusion.
 
-Rules that all agents should check should be:
+Rules intended for all context-reading agents (summarize, discovery, validate) should be:
 
 - Specific and actionable (not vague guidelines)
 - Objectively verifiable (an agent can determine compliance)
@@ -182,9 +184,9 @@ repository can have:
 - A **root** `REVIEW.md` at the repo root (its thresholds and ignore apply to all files by default)
 - **Subdirectory** `REVIEW.md` files in any directory on that walked set (their thresholds and ignore apply to files in that directory tree)
 
-Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different thresholds or ignore patterns (e.g., stricter security for an API directory or suppressions for a legacy module). Their prose is organizational and advisory: agents see which file supplied it, but every discovered REVIEW.md's prose reaches every agent.
+Subdirectory REVIEW.md files are optional — they're only needed when different parts of the codebase need different thresholds or ignore patterns (e.g., stricter security for an API directory or suppressions for a legacy module). Their prose is organizational and advisory: context-reading agents see which file supplied it, but every discovered REVIEW.md's prose reaches every context-reading agent (summarize, discovery, validate).
 
-**Placement decision test:** before adding a rule to a subdirectory REVIEW.md, ask "would this rule generate false positives in the other stack?" If yes, place it there for organizational provenance and advisory context; agents still see the prose globally. If the rule applies cleanly everywhere, place it in root. Thresholds and ignore patterns in that subdirectory file are enforced for its subtree. Example: "Never use `async void`" is meaningless in a React frontend — record it in `backend/REVIEW.md` as advisory prose. "Validate all user input" applies everywhere — record it in root.
+**Placement decision test:** before adding a rule to a subdirectory REVIEW.md, ask "would this rule generate false positives in the other stack?" If yes, place it there for organizational provenance and advisory context; every context-reading agent (summarize, discovery, validate) still sees the prose globally. If the rule applies cleanly everywhere, place it in root. Thresholds and ignore patterns in that subdirectory file are enforced for its subtree. Example: "Never use `async void`" is meaningless in a React frontend — record it in `backend/REVIEW.md` as advisory prose. "Validate all user input" applies everywhere — record it in root.
 
 ### Inheritance model
 
@@ -196,15 +198,15 @@ When a subdirectory has its own REVIEW.md, its settings combine with the root as
 | `security_min_confidence` | **Override** — subdirectory value replaces root | A module may need a different security confidence ceiling |
 | `severity_threshold` | **Override** — subdirectory value replaces root | Some areas warrant reporting lower-severity issues |
 | `default_delivery` | **Root-only** — only the root REVIEW.md text is checked | Headless delivery is a review-wide setting |
-| `rules` (and other free prose) | **Global** — every discovered REVIEW.md's prose reaches every agent through the shared context; not scoped | The source file remains visible as provenance for advisory context |
+| `rules` (and other free prose) | **Global** — every discovered REVIEW.md's prose reaches every context-reading agent (summarize, discovery, validate) through the shared context; not scoped | The source file remains visible as provenance for advisory context |
 | `ignore` | **Accumulate per matching subtree** — matching subdirectory patterns add to root patterns for files under that subtree | Suppressions are additive within the governed subtree |
 
 In short: **thresholds override and ignore patterns accumulate per matching subtree; prose is shared.**
 
 Thresholds and `ignore` are scoped per subtree by `finding.file`: the root layer is the default,
 and matching directory layers override present thresholds and append their ignore lists. Free
-prose (`## Rules` and other guidance) is folded into the shared context file for every agent and
-is not scoped. Matching uses a byte-exact, case-sensitive `dir/` prefix with no normalization of
+prose (`## Rules` and other guidance) is folded into the shared context file for every
+context-reading agent (summarize, discovery, validate) and is not scoped. Matching uses a byte-exact, case-sensitive `dir/` prefix with no normalization of
 finding paths; a non-matching or non-string file uses the root layer. `.reviewignore` remains
 global, and `default_delivery` remains root-only.
 
@@ -224,12 +226,12 @@ repo/
 For a file in `api/`:
 
 - confidence_threshold = **80** (overridden by api/REVIEW.md)
-- rules = **[rule-A, rule-B, rule-C]** (advisory prose; every discovered REVIEW.md's text reaches every agent)
+- rules = **[rule-A, rule-B, rule-C]** (advisory prose; every discovered REVIEW.md's text reaches every context-reading agent (summarize, discovery, validate))
 
 For a file in `legacy/`:
 
 - confidence_threshold = **70** (root applies)
-- rules = **[rule-A, rule-B, rule-C]** (advisory prose; every discovered REVIEW.md's text reaches every agent)
+- rules = **[rule-A, rule-B, rule-C]** (advisory prose; every discovered REVIEW.md's text reaches every context-reading agent (summarize, discovery, validate))
 
 ### Discovery
 
@@ -264,9 +266,10 @@ question** (issue #35). Emit at most one notice per run, alongside the triage an
 
 - **All locations covered** → say nothing and proceed.
 
-> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): suppress both notices — root config applies,
-> `build-review-md` is never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no
-> REVIEW.md is created. See `references/headless-mode.md`.
+> Headless exception (`CODE_GAUNTLET_HEADLESS=1`): suppress both notices — discovered configs apply
+> exactly as in interactive mode (root defaults plus matching subtree overrides), `build-review-md` is
+> never invoked, and REVIEW.md is read-only. The hierarchical parse still runs; no REVIEW.md is
+> created. See `references/headless-mode.md`.
 
 ---
 
@@ -387,14 +390,15 @@ When the user opts to create a REVIEW.md during Phase 2d, use these templates. T
 # Review Configuration — [directory name]
 
 <!-- Thresholds here override root REVIEW.md and ignore patterns accumulate
-     for this subtree. Prose is advisory and shared with every agent; this
+     for this subtree. Prose is advisory and shared with every context-reading
+     agent (summarize, discovery, validate); this
      file records which REVIEW.md supplied it. Only create subdirectory
      configs when this area needs different thresholds or suppressions. -->
 
 ## Rules
 
-<!-- Advisory rules recorded here are visible to every agent and are labeled
-     by this file; they do not scope prose to this directory. Aim for 5-10
+<!-- Advisory rules recorded here are visible to every context-reading agent
+     (summarize, discovery, validate) and are labeled by this file; they do not scope prose to this directory. Aim for 5-10
      rules covering technology or domain-specific patterns. -->
 
 <!-- Optional config block — same keys as the root template, uncommented only

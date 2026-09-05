@@ -1,4 +1,4 @@
-import { parseReviewMd, loadExclusions, buildReviewConfig, REVIEW_SETTING_KEYS } from './filterFindings.js';
+import { loadExclusions, buildReviewConfig, REVIEW_SETTING_KEYS } from './filterFindings.js';
 
 // args.js — the pipeline args waist: ARGS_VERSION, normalizeArgs, validateArgs.
 // Single producer of the waist shape that bench and the pipeline entry both consume.

@@ -91,6 +91,7 @@ test('configForFile does not strip a/ or b/ prefixes before matching', () => {
   const expected = { confidence_threshold: 70, ignore: ['root'] };
   assert.deepEqual(configForFile(config, 'a/api/x.py'), expected);
   assert.deepEqual(configForFile(config, 'b/api/x.py'), expected);
+  assert.deepEqual(configForFile(config, './api/x.py'), expected);
 });
 
 test('scoped thresholds and ignores use each finding file', () => {

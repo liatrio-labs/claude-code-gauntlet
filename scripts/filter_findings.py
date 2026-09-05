@@ -530,6 +530,7 @@ def _scope_matches_file(scope, file):
 def config_for_file(config, file):
     """Return a fresh flat view from root plus matching subtree layers."""
     source = config or {}
+    # The args waist guarantees the ignore shape is a list at this boundary.
     view = {"ignore": list(source.get("ignore", []))}
     for key in REVIEW_SETTING_KEYS:
         if key in source:
