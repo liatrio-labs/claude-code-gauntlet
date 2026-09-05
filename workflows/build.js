@@ -34,6 +34,7 @@ const isHoisted = (line) => HOIST_META.test(line) || HOIST_VERSION.test(line);
 
 export const WORKFLOW_SCRIPT_CAP = 524_288;
 export const BUNDLE_HEADROOM = 65_536;
+export const BUNDLE_MAX_BYTES = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM;
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 
 // ORDER must name every workflows/src/*.js file exactly once. present() used to
@@ -201,9 +202,8 @@ function canCompile(body) {
   }
 }
 
-// V8 decides whether a candidate line is comment or literal content. NUL is illegal
-// as code but valid content in strings, templates, and comments, so only the `//`
-// opener is replaced for comment candidates and the whole whitespace line for blanks.
+// Probe blank lines with one NUL and comment candidates with two NULs replacing their `//`
+// opener, then drop candidates V8 proves are inert.
 export function stripInertLines(body, moduleName = 'module') {
   try {
     new AsyncFunction(body);
@@ -221,14 +221,20 @@ export function stripInertLines(body, moduleName = 'module') {
   const kept = [];
 
   for (const [index, line] of lines.entries()) {
-    const comment = /^\s*\/\//.exec(line);
+    const comment = /^(\s*)\/\//.exec(line);
     const blank = /^\s*$/.test(line);
     if (!comment && !blank) {
       output.push(line);
       continue;
     }
 
-    const probe = blank ? '\0' : line.slice(0, comment.index) + '\0\0' + line.slice(comment.index + 2);
+    let probe;
+    if (blank) {
+      probe = '\0';
+    } else {
+      const at = comment[1].length;
+      probe = line.slice(0, at) + '\0\0' + line.slice(at + 2);
+    }
     const probed = lines.map((candidate, candidateIndex) =>
       candidateIndex === index ? probe : candidate).join('\n');
     if (canCompile(probed)) {
@@ -248,7 +254,7 @@ export function stripInertLines(body, moduleName = 'module') {
 
 // The Workflow tool caps scripts at WORKFLOW_SCRIPT_CAP. Keep a separate headroom
 // margin so a successful local build cannot approach the external tool's cliff.
-export function checkBundleSize(bundle, maxBytes = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM) {
+export function checkBundleSize(bundle, maxBytes = BUNDLE_MAX_BYTES) {
   const bytes = Buffer.byteLength(bundle, 'utf8');
   if (bytes > maxBytes) {
     throw new Error(
@@ -264,7 +270,7 @@ export function checkBundleSize(bundle, maxBytes = WORKFLOW_SCRIPT_CAP - BUNDLE_
 export function buildFromSources(
   files,
   sources,
-  { dropComments = true, maxBytes = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM } = {},
+  { dropComments = true, maxBytes = BUNDLE_MAX_BYTES } = {},
 ) {
   checkRawLineTerminators(files, sources);
 
@@ -304,10 +310,10 @@ export function buildFromSources(
 
 // The default options keep the committed artifact below the external script limit;
 // dropComments and maxBytes are test controls for the unstripped text and small limits.
-export function build({ dropComments = true, maxBytes = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM } = {}) {
+export function build(options = {}) {
   const files = present();
   const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
-  return buildFromSources(files, sources, { dropComments, maxBytes });
+  return buildFromSources(files, sources, options);
 }
 
 // main-guard: only write when run as `node workflows/build.js`; importing this module

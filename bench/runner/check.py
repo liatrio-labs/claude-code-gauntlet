@@ -44,7 +44,7 @@ _LINE_FIELDS = ("line_start", "line")
 
 _SCRIPT_PATH_RE = re.compile(r'"scriptPath"\s*:\s*"([^"]+)"')
 # Hyphen-only ``partial-artifacts``: the pipeline emits that spelling exclusively
-# (stages.js / pipeline.js gap strings). A former ``partial.artifacts``
+# (stages.js / pipeline.js gap strings and one block comment). A former ``partial.artifacts``
 # alternative treated ``.`` as any character and false-positived on TEXT-carrier
 # prose such as "partial artifacts" (#57). G3 is the *writer* degrade gate — not
 # Phase 8 timeout prose ("deliver whatever partial artifacts exist") whose
@@ -84,7 +84,7 @@ PIPELINE_REL = Path("workflows") / "pipeline.js"
 # authoritative — and only — signal consulted; their raw bytes are never
 # regex-scanned:
 #   workflows/wf_*.json  carries the compact return at ``result.gaps``. It also
-#       echoes the whole ~230 KB workflows/pipeline.js bundle into its
+#       echoes the whole workflows/pipeline.js bundle into its
 #       ``script`` field, and that bundle's source contains the sentinels as
 #       ordinary substrings ("no write proof" x3 string/template literals —
 #       writeArtifacts's four-path gap, writeArtifactsDerived's three-primary gap,

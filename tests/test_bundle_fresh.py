@@ -124,6 +124,11 @@ class TestBundleFresh(unittest.TestCase):
             "the configured build headroom",
         )
         self.assertEqual(
+            headroom,
+            65536,
+            "build.js BUNDLE_HEADROOM is the 64 KiB margin the build fails at before the tool's cap",
+        )
+        self.assertEqual(
             cap,
             524288,
             "Workflow tool schema script.maxLength is 524288 bytes",

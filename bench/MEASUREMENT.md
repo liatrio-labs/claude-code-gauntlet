@@ -79,7 +79,8 @@ python3 bench/run.py --check <RUN_ID>
    judged from that parsed array alone; their raw bytes are never scanned,
    because a wf record echoes the whole `workflows/pipeline.js` bundle into its
    `script` field and the bundle's own source contains those sentinels as
-   ordinary substrings (string/template literals). When such a
+   ordinary substrings (string/template literals and one retained block comment).
+   When such a
    carrier will not parse, or carries no `gaps`
    at all, it falls back to a raw-text scan with that `script` field blanked
    first. Carriers with no `gaps` structure to parse — `raw.json` (a result
