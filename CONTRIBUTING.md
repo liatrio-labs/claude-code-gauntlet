@@ -100,8 +100,10 @@ The review pipeline runs inside Claude Code's workflow runtime, so it carries co
 - **Source lives in `workflows/src/*.js`.** Those modules use ESM `import`/`export` for test time only; the shipped
   artifact has no module system at all.
 - **`workflows/pipeline.js` is generated — never hand-edit it.** `node workflows/build.js` strips the
-  import/export lines and concatenates `workflows/src/*.js` into that single dependency-free bundle. Rebuild after
-  every source change and commit the result.
+  import/export lines, drops parser-proven inert full-line comments and blank lines, concatenates
+  `workflows/src/*.js` into that single dependency-free bundle, and fails when it exceeds the
+  `WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM` size gate. Rebuild after every source change and commit
+  the result.
 - **Only JSON-safe language globals are guaranteed.** Host globals that `node --test` hands you — `structuredClone`,
   `setTimeout`/`queueMicrotask`, `process`, and others — are absent from the workflow runtime sandbox, so a
   reference keeps every local test green and then throws on the first live dispatch. `workflows/AGENTS.md` holds the

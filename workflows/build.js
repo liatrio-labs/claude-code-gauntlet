@@ -32,6 +32,10 @@ const HOIST_META = /^\s*export\s+const\s+meta\b/;
 const HOIST_VERSION = /^\s*const\s+PIPELINE_VERSION\b/;
 const isHoisted = (line) => HOIST_META.test(line) || HOIST_VERSION.test(line);
 
+export const WORKFLOW_SCRIPT_CAP = 524_288;
+export const BUNDLE_HEADROOM = 65_536;
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+
 // ORDER must name every workflows/src/*.js file exactly once. present() used to
 // silently intersect ORDER with disk, so a new module left out of ORDER shipped
 // as an incomplete bundle while unit tests importing ../src/<file>.js stayed green.
@@ -169,9 +173,100 @@ export function checkUnsafeImports(files, sources) {
   }
 }
 
-export function build() {
-  const files = present();
-  const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
+// Raw line terminators would evade every split('\n') pass below. Reject them at the
+// source boundary so imports and comments cannot silently ship unsplit into the bundle.
+export function checkRawLineTerminators(files, sources) {
+  const violations = [];
+  for (const file of files) {
+    const source = sources.get(file);
+    for (const match of source.matchAll(/[\r\u2028\u2029]/g)) {
+      const line = source.slice(0, match.index).split('\n').length;
+      const codePoint = `U+${match[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}`;
+      violations.push(`  src/${file}:${line}: raw ${codePoint}`);
+    }
+  }
+  if (violations.length) {
+    throw new Error(
+      `build.js: raw line terminator(s) are not allowed in workflows/src; use LF only:\n${violations.join('\n')}`,
+    );
+  }
+}
+
+function canCompile(body) {
+  try {
+    new AsyncFunction(body);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// V8 decides whether a candidate line is comment or literal content. NUL is illegal
+// as code but valid content in strings, templates, and comments, so only the `//`
+// opener is replaced for comment candidates and the whole whitespace line for blanks.
+export function stripInertLines(body, moduleName = 'module') {
+  try {
+    new AsyncFunction(body);
+  } catch (error) {
+    throw new Error(
+      `build.js: ${moduleName} is not parseable as an async function body: ${error.message}`,
+    );
+  }
+
+  const hasTrailingNewline = body.endsWith('\n');
+  const lines = body.split('\n');
+  if (hasTrailingNewline) lines.pop();
+  const output = [];
+  const dropped = [];
+  const kept = [];
+
+  for (const [index, line] of lines.entries()) {
+    const comment = /^\s*\/\//.exec(line);
+    const blank = /^\s*$/.test(line);
+    if (!comment && !blank) {
+      output.push(line);
+      continue;
+    }
+
+    const probe = blank ? '\0' : line.slice(0, comment.index) + '\0\0' + line.slice(comment.index + 2);
+    const probed = lines.map((candidate, candidateIndex) =>
+      candidateIndex === index ? probe : candidate).join('\n');
+    if (canCompile(probed)) {
+      output.push(line);
+      kept.push(line);
+    } else {
+      dropped.push(line);
+    }
+  }
+
+  return {
+    text: output.join('\n') + (hasTrailingNewline ? '\n' : ''),
+    dropped,
+    kept,
+  };
+}
+
+// The Workflow tool caps scripts at WORKFLOW_SCRIPT_CAP. Keep a separate headroom
+// margin so a successful local build cannot approach the external tool's cliff.
+export function checkBundleSize(bundle, maxBytes = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM) {
+  const bytes = Buffer.byteLength(bundle, 'utf8');
+  if (bytes > maxBytes) {
+    throw new Error(
+      `build.js: bundle is ${bytes} bytes; limit is ${maxBytes} bytes `
+        + `(Workflow script cap ${WORKFLOW_SCRIPT_CAP} bytes with ${BUNDLE_HEADROOM} bytes of headroom); `
+        + 'the bundle must shrink',
+    );
+  }
+}
+
+// Assemble a supplied source map so source-boundary guards and their throw paths can
+// be tested without adding fixtures to workflows/src/; build() supplies the real map.
+export function buildFromSources(
+  files,
+  sources,
+  { dropComments = true, maxBytes = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM } = {},
+) {
+  checkRawLineTerminators(files, sources);
 
   // 0) Fail on any import strip() cannot safely drop (see unsafeImports).
   checkUnsafeImports(files, sources);
@@ -187,7 +282,9 @@ export function build() {
   // 2) Emit every module body (public consts already hoisted, imports dropped).
   for (const file of files) {
     parts.push(`// --- ${file} ---`);
-    parts.push(strip(sources.get(file)));
+    const body = strip(sources.get(file));
+    const emitted = dropComments ? stripInertLines(body, `src/${file}`).text : body;
+    parts.push(emitted.replace(/\n+$/, ''));
   }
   const bundle = parts.join('\n').replace(/\n+$/, '') + '\n';
 
@@ -201,15 +298,26 @@ export function build() {
       `build.js: top-level identifier collision(s) in the bundle — each name must have a single owner (export from one module, import into the others):\n${detail}`,
     );
   }
+  checkBundleSize(bundle, maxBytes);
   return bundle;
+}
+
+// The default options keep the committed artifact below the external script limit;
+// dropComments and maxBytes are test controls for the unstripped text and small limits.
+export function build({ dropComments = true, maxBytes = WORKFLOW_SCRIPT_CAP - BUNDLE_HEADROOM } = {}) {
+  const files = present();
+  const sources = new Map(files.map((f) => [f, readFileSync(join(SRC, f), 'utf8')]));
+  return buildFromSources(files, sources, { dropComments, maxBytes });
 }
 
 // main-guard: only write when run as `node workflows/build.js`; importing this module
 // (the collision-detector unit test) must not trigger a write.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    writeFileSync(OUT, build());
-    console.log(`built ${OUT}`);
+    const bundle = build();
+    writeFileSync(OUT, bundle);
+    const bytes = Buffer.byteLength(bundle, 'utf8');
+    console.log(`built ${OUT}: ${bytes} bytes (${(bytes / WORKFLOW_SCRIPT_CAP * 100).toFixed(1)}% of cap)`);
   } catch (e) {
     console.error(e.message);
     process.exit(1);

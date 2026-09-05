@@ -44,7 +44,7 @@ _LINE_FIELDS = ("line_start", "line")
 
 _SCRIPT_PATH_RE = re.compile(r'"scriptPath"\s*:\s*"([^"]+)"')
 # Hyphen-only ``partial-artifacts``: the pipeline emits that spelling exclusively
-# (stages.js / pipeline.js gap strings and comments). A former ``partial.artifacts``
+# (stages.js / pipeline.js gap strings). A former ``partial.artifacts``
 # alternative treated ``.`` as any character and false-positived on TEXT-carrier
 # prose such as "partial artifacts" (#57). G3 is the *writer* degrade gate — not
 # Phase 8 timeout prose ("deliver whatever partial artifacts exist") whose
@@ -88,8 +88,8 @@ PIPELINE_REL = Path("workflows") / "pipeline.js"
 #       ``script`` field, and that bundle's source contains the sentinels as
 #       ordinary substrings ("no write proof" x3 string/template literals —
 #       writeArtifacts's four-path gap, writeArtifactsDerived's three-primary gap,
-#       and assemble's derived-path receipt check; "partial-artifacts" x6 — 1
-#       string literal + 5 comments) — so a raw
+#       and assemble's derived-path receipt check; "partial-artifacts" x2 — 1
+#       string literal + 1 block comment) — so a raw
 #       scan matches on EVERY collected record, degraded or not.
 #       ``workflows/superseded/`` (archived prior attempts; #85) is invisible:
 #       ``_iter_workflow_records`` / degrade globs are non-recursive.

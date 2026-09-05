@@ -105,6 +105,30 @@ class TestBundleFresh(unittest.TestCase):
             f"bundle must end with a top-level `return await run(`, got {last!r}",
         )
 
+    def test_bundle_fits_the_workflow_script_cap(self):
+        source = BUILD.read_text()
+        cap_match = re.search(r"export const WORKFLOW_SCRIPT_CAP = (\d[\d_]*);", source)
+        headroom_match = re.search(
+            r"export const BUNDLE_HEADROOM = (\d[\d_]*);", source
+        )
+        self.assertIsNotNone(cap_match, "build.js must define WORKFLOW_SCRIPT_CAP")
+        self.assertIsNotNone(headroom_match, "build.js must define BUNDLE_HEADROOM")
+        assert cap_match is not None
+        assert headroom_match is not None
+        cap = int(cap_match.group(1).replace("_", ""))
+        headroom = int(headroom_match.group(1).replace("_", ""))
+        self.assertLessEqual(
+            len(BUNDLE.read_bytes()),
+            cap - headroom,
+            "pipeline.js must fit the Workflow tool's script.maxLength cap with "
+            "the configured build headroom",
+        )
+        self.assertEqual(
+            cap,
+            524288,
+            "Workflow tool schema script.maxLength is 524288 bytes",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
