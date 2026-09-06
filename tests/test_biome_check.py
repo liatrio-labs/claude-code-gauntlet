@@ -458,6 +458,28 @@ class TestBiomeCheck(unittest.TestCase):
             self.assertTrue((flag_cache / TEST_VERSION / asset).is_file())
             self.assertFalse((env_cache / TEST_VERSION / asset).exists())
 
+    def test_bare_home_fallback_uses_dot_cache(self) -> None:
+        asset = "biome-test"
+        data = b"home binary"
+        pin = _pin_data(TEST_VERSION, asset, hashlib.sha256(data).hexdigest())
+        with tempfile.TemporaryDirectory() as directory:
+            pin_path = Path(directory) / "pin.json"
+            pin_path.write_text(json.dumps(pin), encoding="utf-8")
+            home = Path(directory) / "home"
+            home.mkdir()
+            with patch.object(biome_check, "PIN_FILE", pin_path):
+                code = main(
+                    ["--asset", asset],
+                    fetch=lambda _url: data,
+                    run=lambda _argv, _cwd: 0,
+                    environ={"HOME": str(home)},
+                )
+            self.assertEqual(code, 0)
+            expected = (
+                home / ".cache" / "code-gauntlet" / "biome" / TEST_VERSION / asset
+            )
+            self.assertTrue(expected.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

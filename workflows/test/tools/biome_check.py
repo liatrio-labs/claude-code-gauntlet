@@ -202,6 +202,8 @@ def _ensure_binary(
             _set_executable(destination)
             return destination, True
     except OSError:
+        # An unreadable cache probe is treated like a miss: fall through to a
+        # fresh, verified download rather than trusting a file we could not hash.
         pass
 
     destination.unlink(missing_ok=True)
@@ -270,10 +272,7 @@ def main(
     except BiomeUsageError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    except BiomeCheckError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-    except OSError as exc:
+    except (BiomeCheckError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

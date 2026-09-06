@@ -20,7 +20,8 @@ takes coordinated edits across N files, fix the shape rather than documenting th
 
 ## Tooling boundary (no npm in the tree)
 
-- No `package.json`, lockfile, or `node_modules` is tracked outside the vendored scorer under `bench/vendor/`.
+- No `package.json`, lockfile, or `node_modules` is tracked, except the vendored scorer's own
+  `bench/vendor/code-review-benchmark/uv.lock`.
 - The shipped pipeline runtime (`workflows/src`, `workflows/pipeline.js`) has zero
   dependencies — language globals plus the host-injected `agent`/`parallel`/
   `pipeline`/`args` only. No import survives into the bundle: `build.js` strips

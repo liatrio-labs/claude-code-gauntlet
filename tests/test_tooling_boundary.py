@@ -35,8 +35,8 @@ def violations(paths: Iterable[str]) -> list[str]:
     for path in paths:
         if path == EXEMPT_PATH:
             continue
-        path_parts = Path(path).parts
-        if Path(path).name in FORBIDDEN_BASENAMES or "node_modules" in path_parts:
+        candidate = Path(path)
+        if candidate.name in FORBIDDEN_BASENAMES or "node_modules" in candidate.parts:
             offenders.append(path)
     return offenders
 

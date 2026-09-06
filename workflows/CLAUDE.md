@@ -25,7 +25,7 @@ The v3 review pipeline. `pipeline.js` is invoked by the skill through the `Workf
 
 CI and contributors run the same `python3 workflows/test/tools/biome_check.py`; the operational
 version and per-asset SHA-256 pins live only in `biome-pin.json`.
-To bump, regenerate every row with one command: `gh api repos/biomejs/biome/releases/tags/@biomejs/biome@<new> --jq '.assets[] | {name, digest}'`; update every entry in `biome-pin.json` together and never add package.json / a lockfile for auto-bumps (that reopens #105).
+To bump, regenerate every row with one command: `gh api repos/biomejs/biome/releases/tags/@biomejs/biome@<new> --jq '.assets[] | {name, digest}'`; update every entry in `biome-pin.json` together and never add a package manifest for auto-bumps.
 Formatter is **off**: default `lineWidth: 80` would wrap long `import … from` lines and break
 `build.js`'s single-line import `strip()` regex, failing `tests/test_bundle_fresh.py`.
 `noRestrictedGlobals` applies to `src/` only; `test/**` and `build.js` override it (they
