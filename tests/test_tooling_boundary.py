@@ -78,6 +78,24 @@ class TestToolingBoundary(unittest.TestCase):
         )
 
     def test_every_forbidden_basename_is_detected(self) -> None:
+        # Hand-typed pin: a fixture derived from the tuple under test would stay green
+        # if the tuple lost an entry, so the tuple is first checked against this literal.
+        self.assertEqual(
+            set(FORBIDDEN_BASENAMES),
+            {
+                "package.json",
+                "package-lock.json",
+                "npm-shrinkwrap.json",
+                "yarn.lock",
+                "pnpm-lock.yaml",
+                "bun.lock",
+                "bun.lockb",
+                "uv.lock",
+                "poetry.lock",
+                "Pipfile",
+                "Pipfile.lock",
+            },
+        )
         forbidden_paths = [f"dir/{name}" for name in FORBIDDEN_BASENAMES]
         paths = [*forbidden_paths, "nested/node_modules/package.json"]
         self.assertEqual(violations(paths), paths)
