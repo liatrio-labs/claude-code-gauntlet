@@ -34,6 +34,16 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 FORMS = REPO / ".github" / "ISSUE_TEMPLATE"
 LABELS_DIFF = REPO / ".github" / "labels_diff.py"
+BIOME_ASSETS = {
+    "biome-darwin-arm64",
+    "biome-darwin-x64",
+    "biome-linux-arm64",
+    "biome-linux-arm64-musl",
+    "biome-linux-x64",
+    "biome-linux-x64-musl",
+    "biome-win32-arm64.exe",
+    "biome-win32-x64.exe",
+}
 
 ADVISORY_URL = (
     "https://github.com/liatrio-labs/claude-code-gauntlet/security/advisories/new"
@@ -776,6 +786,7 @@ class TestContributingDocs(unittest.TestCase):
         for command in (
             "python -m pytest tests/ -q",
             "node --test workflows/test/*.test.js",
+            "python3 workflows/test/tools/biome_check.py",
             "pre-commit run --all-files",
             "node workflows/build.js",
         ):
@@ -785,6 +796,30 @@ class TestContributingDocs(unittest.TestCase):
             "bare directory form is not a valid `node --test` target on node 24", text
         )
         self.assertIn("workflows/test/tools/record_parity.py", text)
+
+    def test_contributing_places_biome_command_in_each_relevant_bash_block(self):
+        text = _read("CONTRIBUTING.md")
+        command = "python3 workflows/test/tools/biome_check.py"
+        sections = (
+            (
+                "### Common Commands",
+                "## The v3 workflow pipeline (JS)",
+            ),
+            (
+                "## Testing",
+                "## Branching and Commit Conventions",
+            ),
+        )
+        for heading, next_heading in sections:
+            with self.subTest(heading=heading):
+                section = text.split(f"{heading}\n", 1)[1].split(
+                    f"\n{next_heading}\n", 1
+                )
+                blocks = re.findall(
+                    r"```bash\n(?P<block>.*?)```", section[0], re.DOTALL
+                )
+                self.assertEqual(len(blocks), 1)
+                self.assertIn(command, blocks[0])
 
     def test_contributing_describes_the_v3_js_pipeline_areas(self):
         text = _read("CONTRIBUTING.md")
@@ -796,6 +831,7 @@ class TestContributingDocs(unittest.TestCase):
         text = _read(".github/pull_request_template.md")
         for gate in (
             "node --test workflows/test/*.test.js",
+            "python3 workflows/test/tools/biome_check.py",
             "node workflows/build.js",
             "workflows/test/tools/record_parity.py",
         ):
@@ -916,6 +952,45 @@ class TestContributingDocs(unittest.TestCase):
         )
 
 
+class TestBiomeLintSurface(unittest.TestCase):
+    def test_pin_file_has_all_known_assets_and_valid_digests(self) -> None:
+        pin = json.loads(_read("workflows/biome-pin.json"))
+        self.assertIsInstance(pin, dict)
+        self.assertRegex(pin["version"], r"^\d+\.\d+\.\d+$")
+        self.assertEqual(set(pin["sha256"]), BIOME_ASSETS)
+        for asset, digest in pin["sha256"].items():
+            with self.subTest(asset=asset):
+                self.assertIn(asset, BIOME_ASSETS)
+                self.assertRegex(digest, r"^[0-9a-f]{64}$")
+
+    def test_ci_js_lint_uses_runner_without_another_biome_pin(self) -> None:
+        ci = _read(".github/workflows/ci.yml")
+        js_lint = ci.split("  js-lint:\n", 1)[1].split("\n  workflow-tests:", 1)[0]
+        self.assertIn("python3 workflows/test/tools/biome_check.py", js_lint)
+        for forbidden in (
+            "BIOME_VERSION",
+            "BIOME_SHA256",
+            "sha256sum",
+            "releases/download/@biomejs",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, ci)
+
+    def test_operational_biome_version_lives_only_in_pin_file(self) -> None:
+        version = json.loads(_read("workflows/biome-pin.json"))["version"]
+        paths = (
+            ".github/workflows/ci.yml",
+            "workflows/AGENTS.md",
+            "workflows/CLAUDE.md",
+            "CONTRIBUTING.md",
+            "README.md",
+            ".github/pull_request_template.md",
+        )
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertNotIn(version, _read(path))
+
+
 # Required PR check-run names for ruleset 16049246 (protect-default-branch).
 # Any new always-on PR gate must update THIS tuple and the live ruleset in the
 # same change (see #108 / #102 / #105). GitHub matches check-run names, not
@@ -943,7 +1018,7 @@ LOCAL_COMMAND_FOR_REQUIRED_CHECK = {
     "Run Tests (3.10)": "python -m pytest tests/ -q",
     "Run Tests (3.11)": "python -m pytest tests/ -q",
     "Run Tests (3.12)": "python -m pytest tests/ -q",
-    "Run Workflow JS Lint": None,  # Biome is a checksum-pinned CI download.
+    "Run Workflow JS Lint": "python3 workflows/test/tools/biome_check.py",
     "Run Workflow JS Tests": "node --test workflows/test/*.test.js",
     "Run Bench Self-Tests (3.11)": "python -m pytest bench/tests/ -q",
     "Run Bench Self-Tests (3.12)": "python -m pytest bench/tests/ -q",
