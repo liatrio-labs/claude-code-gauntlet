@@ -25,7 +25,7 @@ assume a language in the reviewed codebase.
 - **Numbers crossing to JS must be JS-reproducible.** Both runtimes refuse non-integer or
   out-of-safe-range values rather than write an artifact whose float spelling differs by language.
 - **Language-agnostic carve-out.** One exception: `render_fix_tasks.py` fills three command strings
-  from a fixed build-system table and degrades to placeholders; it never filters, ranks, or reads
+  from a fixed build-system table and degrades to empty command lists when nothing is detected; it never filters, ranks, or reads
   findings by language.
 - **Always emit exactly one receipt line.** `assemble_artifacts.py`'s, `materialize_artifacts.py`'s
   and `report_patches.py`'s `main()` fall back to a hand-built minimal receipt if the real one

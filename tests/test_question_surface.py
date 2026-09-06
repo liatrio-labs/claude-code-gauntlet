@@ -215,6 +215,21 @@ class TestQuestionSurface(unittest.TestCase):
         self.assertLess(gate, block)
         self.assertLess(block, next_section)
 
+    def test_partial_artifacts_exception_is_between_gate_and_question(self):
+        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+        gate = skill.index("task-board question below")
+        paragraph_end = skill.index("\n", gate)
+        exception = skill.index(
+            "> Partial-artifacts exception: when `artifactPaths.postReview` is null, "
+            "do not present the offer; say that no delivery set was persisted, so no "
+            "tasks can be created."
+        )
+        block = skill.index(
+            'question: "Create fix tasks on the task board from these findings?"'
+        )
+        self.assertGreater(exception, paragraph_end)
+        self.assertLess(exception, block)
+
     def test_every_site_conforms_to_the_schema(self):
         offenders = {}
         for s in sites():

@@ -15,7 +15,7 @@ This script does not create tasks, run a test, read source files, or infer
 which findings are valid.  It only renders the delivered findings and selects
 nearby tracked files as implementation patterns.  Its build-system table is
 language-agnostic: it fills three command strings from fixed root-level config
-precedence and degrades to placeholders when nothing is detected.  It never
+precedence and degrades to empty command lists when nothing is detected.  It never
 filters, ranks, or reads findings by language.
 
 Exit codes
@@ -545,15 +545,12 @@ def build_tasks(findings, root, notes):
 def build_parser():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("post_review", metavar="POST_REVIEW")
-    parser.add_argument("--repo-root", metavar="REPO_ROOT")
+    parser.add_argument("--repo-root", metavar="REPO_ROOT", required=True)
     return parser
 
 
 def main(argv=None):
     args = build_parser().parse_args(sys.argv[1:] if argv is None else argv)
-    if args.repo_root is None:
-        print("ERROR: --repo-root is required", file=sys.stderr)
-        return 1
     root = os.path.realpath(args.repo_root)
     if not os.path.isdir(root):
         print(

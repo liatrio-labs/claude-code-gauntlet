@@ -202,9 +202,8 @@ CODEX_CAP_BYTES = 32_768
 # cannot carry these cross-surface contributor rules.
 # Raised 22_345 -> 22_349 (2026-09-06, #295 review): the tooling-boundary bullet now names the
 # one exempt lockfile exactly, matching the guard test; a broader phrase misstated the rule.
-# Raised 22_349 -> 22_758 (2026-09-06, #296): the language-agnostic carve-out documents the
-# fixed build-system lookup used by render_fix_tasks.py and its boundary against finding logic.
-AGENTS_SET_BUDGET_BYTES = 22_758
+# Raised 22_349 -> 22_824 (2026-09-06, #296): the language-agnostic carve-out for render_fix_tasks.py.
+AGENTS_SET_BUDGET_BYTES = 22_824
 CLAUDE_MD_MAX_BYTES = 856
 
 # Root CLAUDE.md is a pointer, not a document. The line cap is a shape bound and keeps its

@@ -547,8 +547,6 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
 
-> Partial-artifacts exception: when `artifactPaths.postReview` is null, do not present the task-board offer. Tell the user that no delivery set was persisted, so no tasks can be created.
-
 ### Render apply-checked patches — whenever `artifactPaths.findings` is non-null
 
 ```
@@ -598,6 +596,7 @@ Never decorate a machine-parsed block (`references/report-format.md`).
 > **MANDATORY GATE: Do not finish without presenting the single task-board question below (Stage 2 in references/phase8-delivery.md covers what happens after "Yes"). On "Yes" the only creation call is TaskCreate, one task per finding in the delivered payload; Phase 8 never creates issues, pull requests, or branches.**
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped; do not present the offer.
+> Partial-artifacts exception: when `artifactPaths.postReview` is null, do not present the offer; say that no delivery set was persisted, so no tasks can be created.
 
 ```
 AskUserQuestion(

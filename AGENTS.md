@@ -42,7 +42,8 @@ takes coordinated edits across N files, fix the shape rather than documenting th
 - **Language-agnostic.** Scripts must not assume a language in the reviewed codebase. Use
   `--exclude-dir` for non-source directories, never `--include=*.py`-style filters. One
   exception: `render_fix_tasks.py` fills three command strings from a fixed build-system table
-  and degrades to placeholders; it never filters, ranks, or reads findings by language.
+  and degrades to empty command lists when nothing is detected; it never filters, ranks, or reads
+  findings by language.
 
 ## Tests
 

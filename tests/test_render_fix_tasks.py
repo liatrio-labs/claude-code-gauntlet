@@ -3,11 +3,16 @@
 import ast
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+from scripts import generate_contract_requirements as contract_generator
+from scripts import render_fix_tasks as renderer
 
 REPO = Path(__file__).resolve().parents[1]
 SCRIPT = REPO / "scripts" / "render_fix_tasks.py"
@@ -202,24 +207,36 @@ class RenderFixTasksTest(unittest.TestCase):
 
     def test_alias_only_input_matches_canonical_and_canonical_wins(self):
         canonical = self.finding(
-            line_end=12, description="canonical", title="Canonical"
+            line_start=11,
+            line_end=12,
+            description="canonical description",
+            title="Canonical",
         )
         alias = dict(canonical)
         for key in ("line_start", "line_end", "description"):
             alias.pop(key)
-        alias.update({"line": 10, "end_line": 12, "body": "canonical"})
+        alias.update({"line": 11, "end_line": 12, "body": "canonical description"})
         self.write_artifact([canonical])
         canonical_result = self.run_renderer()
         self.write_artifact([alias])
         alias_result = self.run_renderer()
         self.assertEqual(canonical_result.stdout, alias_result.stdout)
 
-        both = dict(alias, line_start=11, line_end=11, description="canonical")
+        both = dict(
+            alias,
+            line_start=11,
+            line_end=12,
+            description="canonical description",
+            line=99,
+            end_line=88,
+            body="alias body",
+        )
         self.write_artifact([both])
         task = self.output(self.run_renderer())[0]
-        self.assertIn("`src/bug.py:11`", task["description"])
-        self.assertIn("canonical", task["description"])
-        self.assertNotIn("body", task["description"])
+        issue, location = task["description"].split("\n\n## Location\n", 1)
+        self.assertEqual(issue, "## Issue\ncanonical description")
+        self.assertTrue(location.startswith("`src/bug.py:11-12`\n\n"))
+        self.assertNotIn("alias body", task["description"])
 
     def test_rejected_paths_degrade_each_finding_and_report_the_count(self):
         outside = Path(self.tmp.name) / "outside.py"
@@ -374,6 +391,34 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertEqual(proof["command"], "cargo test")
         self.assertIn("toolchain candidate package.json rejected", result.stderr)
 
+    def test_invalid_package_candidate_is_absent_for_directory_and_large_file(self):
+        for kind in ("directory", "large"):
+            with self.subTest(kind=kind):
+                package = self.root / "package.json"
+                if kind == "directory":
+                    package.mkdir()
+                else:
+                    package.write_bytes(b"x" * (1024 * 1024 + 1))
+                (self.root / "Cargo.toml").write_text("x", encoding="utf-8")
+                self.write_artifact([self.finding()])
+                result = self.run_renderer()
+                metadata = self.output(result)[0]["metadata"]
+                proof = next(
+                    a for a in metadata["proof_artifacts"] if a["type"] == "test"
+                )
+                self.assertEqual(proof["command"], "cargo test")
+                notes = [
+                    line
+                    for line in result.stderr.splitlines()
+                    if "toolchain candidate package.json rejected" in line
+                ]
+                self.assertEqual(len(notes), 1)
+                if kind == "directory":
+                    package.rmdir()
+                else:
+                    package.unlink()
+                (self.root / "Cargo.toml").unlink()
+
     def git_repo(self):
         subprocess.run(["git", "init"], cwd=self.root, check=True, capture_output=True)
 
@@ -440,6 +485,40 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertEqual(task["metadata"]["scope"]["patterns_to_follow"], [])
         self.assertIn("could not list tracked files", result.stderr)
 
+    def test_sibling_listing_uses_one_exact_root_git_call_per_run(self):
+        root_alias = Path(self.tmp.name) / "repo-alias"
+        os.symlink(self.root, root_alias)
+        findings = [
+            self.finding(file="src/main.py"),
+            self.finding(id="second", file="src/other.py"),
+        ]
+        fake_result = subprocess.CompletedProcess(
+            ["git", "ls-files", "-z"],
+            0,
+            stdout=b"src/main.py\0src/other.py\0src/main_test.py\0",
+            stderr=b"",
+        )
+        calls = []
+
+        def record_run(*args, **kwargs):
+            calls.append((args, kwargs))
+            return fake_result
+
+        with patch.object(renderer.subprocess, "run", side_effect=record_run):
+            renderer.build_tasks(findings, os.path.realpath(root_alias), [])
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0], (["git", "ls-files", "-z"],))
+        self.assertEqual(
+            calls[0][1],
+            {
+                "cwd": os.path.realpath(root_alias),
+                "capture_output": True,
+                "timeout": 10,
+                "check": False,
+            },
+        )
+
     def test_complexity_model_and_unknown_severity_mapping(self):
         severities = ["critical", "high", "medium", "low", "unknown"]
         self.write_artifact(
@@ -502,6 +581,34 @@ class RenderFixTasksTest(unittest.TestCase):
         )
         self.assertIn("1 paths rejected", result.stderr)
 
+    def test_malformed_cross_file_refs_are_ignored_everywhere(self):
+        self.git_repo()
+        for path in ("src/prod.py", "src/prod_test.py"):
+            target = self.root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("x", encoding="utf-8")
+        self.git_add("src/prod.py", "src/prod_test.py")
+        for malformed in ("tests/test_prod.py", ["tests/test_prod.py", 7]):
+            with self.subTest(malformed=malformed):
+                self.write_artifact(
+                    [
+                        self.finding(
+                            dimension="test_coverage",
+                            file="src/prod.py",
+                            cross_file_refs=malformed,
+                            criticality=7,
+                            failure_scenario="No test catches it",
+                        )
+                    ]
+                )
+                task = self.output(self.run_renderer())[0]
+                scope = task["metadata"]["scope"]
+                self.assertEqual(scope["files_to_modify"], [])
+                self.assertEqual(scope["patterns_to_follow"], ["src/prod_test.py"])
+                self.assertEqual(
+                    task["metadata"]["review_context"]["cross_file_refs"], []
+                )
+
     def test_dimension_details_for_cross_file_impact_and_convention(self):
         findings = [
             self.finding(
@@ -523,6 +630,39 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertIn(
             "**Claude md rule:** Use the project rule.", tasks[1]["description"]
         )
+
+    def test_every_generated_detail_field_renders_and_matches_registry(self):
+        identity = contract_generator.load_registry(str(REPO))
+        source = SCRIPT.read_text(encoding="utf-8")
+        marker = "# generated-from-registry-identity:detail_fields"
+        start = source.index("_DETAIL_FIELDS_BY_DIMENSION = {", source.index(marker))
+        end = source.index("# /generated-from-registry-identity:detail_fields", start)
+        actual_fence = source[start:end].rstrip()
+        expected_fence = "\n".join(
+            contract_generator.identity_body(
+                "scripts/render_fix_tasks.py", "detail_fields", identity, str(REPO)
+            )
+        )
+        self.assertEqual(actual_fence, expected_fence)
+
+        for dimension, fields in renderer._DETAIL_FIELDS_BY_DIMENSION.items():
+            for field in fields:
+                with self.subTest(dimension=dimension, field=field):
+                    value = 7 if field == "criticality" else f"{field} value"
+                    self.write_artifact(
+                        [
+                            self.finding(
+                                id=f"{dimension}-{field}",
+                                dimension=dimension,
+                                **{field: value},
+                            )
+                        ]
+                    )
+                    task = self.output(self.run_renderer())[0]
+                    details = task["description"].split("## Details\n", 1)[1]
+                    details = details.split("\n\n## Toolchain", 1)[0]
+                    label = field.replace("_", " ").capitalize()
+                    self.assertEqual(details, f"**{label}:** {value}")
 
     def test_absolute_inside_nul_non_directory_missing_root_and_nonexistent_confined(
         self,
@@ -556,8 +696,13 @@ class RenderFixTasksTest(unittest.TestCase):
             capture_output=True,
             text=True,
         )
-        self.assertEqual(malformed.returncode, 1)
+        self.assertEqual(malformed.returncode, 2)
         self.assertEqual(malformed.stdout, "")
+        self.assertIn("usage:", malformed.stderr)
+        self.assertIn(
+            "error: the following arguments are required: --repo-root",
+            malformed.stderr,
+        )
 
     def test_lone_surrogate_subprocess_round_trips(self):
         self.write_artifact([self.finding(description="bad\ud800", title="surrogate")])
@@ -566,12 +711,20 @@ class RenderFixTasksTest(unittest.TestCase):
         self.assertEqual(tasks[0]["metadata"]["requirements"][0]["text"], "bad\ud800")
         self.assertEqual(tasks[0]["metadata"]["review_context"]["evidence"], "")
 
+    def test_non_string_origin_is_unknown(self):
+        self.write_artifact([self.finding(origin=7)])
+        task = self.output(self.run_renderer())[0]
+        self.assertEqual(
+            task["metadata"]["review_context"]["blame_classification"], "unknown"
+        )
+
     def test_hostile_markdown_is_sanitized_and_evidence_fence_is_long_enough(self):
+        evidence = "payload````\r\n```\r\n<!-- evidence -->"
         finding = self.finding(
             title="Bad\n## forged\r<!-- title -->",
             description="first\r\n## Evidence\n<!-- hidden -->\tend\x01",
             suggestion="fix\n## Category\n<!-- suggestion -->\x02done",
-            evidence="payload``\r\n<!-- evidence -->",
+            evidence=evidence,
         )
         self.write_artifact([finding])
         task = self.output(self.run_renderer())[0]
@@ -589,14 +742,19 @@ class RenderFixTasksTest(unittest.TestCase):
             ),
             1,
         )
-        self.assertNotIn(
-            "<!--", description.replace("payload``\r\n<!-- evidence -->", "")
-        )
+        self.assertNotIn("<!--", description.replace(evidence, ""))
         self.assertNotIn("\x01", description)
         self.assertNotIn("\x02", description)
         self.assertNotIn("\t", description)
         self.assertIn("\\## Evidence", description)
-        self.assertIn("```\npayload``\r\n<!-- evidence -->\n```", description)
+        evidence_block = description.rsplit("## Evidence\n", 1)[1].split(
+            "\n\n## Suggested Fix", 1
+        )[0]
+        fence_lines = evidence_block.splitlines()
+        longest_content_run = max(len(run) for run in re.findall(r"`+", evidence))
+        self.assertGreater(len(fence_lines[0]), longest_content_run)
+        self.assertGreater(len(fence_lines[-1]), longest_content_run)
+        self.assertEqual(fence_lines[1:-1], evidence.splitlines())
         self.assertIn("FIX: Bad ## forged &lt;!-- title -->", task["subject"])
 
     def test_stdout_is_full_json_and_status_is_stderr(self):
