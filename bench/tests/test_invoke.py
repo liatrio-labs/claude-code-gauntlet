@@ -1605,6 +1605,25 @@ class WorkflowFailureTest(unittest.TestCase):
             output_dir or self.output_dir,
         )
 
+    def test_wrapped_record_reads_args_from_the_same_wrapper(self):
+        # scriptPath and args travel together under one wrapper key on some CLI
+        # versions; correlation must read args from where the scriptPath came from.
+        path = self.wf_dir / "wf_wrapped.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "runId": "wf_wrapped",
+                    "input": {
+                        "scriptPath": self.pipeline,
+                        "args": {"outputDir": str(self.output_dir), "nonce": "unit"},
+                    },
+                    "result": {"ok": False, "error": "all-degraded: nothing ran"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(self._failure(), ("all_degraded", "all-degraded: nothing ran"))
+
     def test_success_before_failure_supersedes_in_sorted_order(self):
         self._write("wf_a_ok.json", {"ok": True})
         self._write("wf_z_fail.json", {"ok": False, "error": "pipeline failed"})

@@ -924,11 +924,11 @@ def extract_identity_receipt(raw_text, envelope=None, report_dirs=()):
     return None
 
 
-def scriptpath_from_record(data):
-    """Return the Workflow-tool ``scriptPath`` from a parsed ``wf_*.json`` dict.
+def _record_tool_input(data):
+    """Return the object carrying a Workflow record's tool input, or None.
 
-    Top-level ``scriptPath`` wins; otherwise look under a single wrapper key
-    (``input`` / ``toolInput`` / ``parameters``). Nested paths such as
+    Top-level fields win; otherwise a single wrapper key (``input`` /
+    ``toolInput`` / ``parameters``) holds them. Nested paths such as
     ``args.verify.scriptPath`` are intentionally ignored — a recursive walk
     would false-fail healthy skill runs.
     """
@@ -936,14 +936,20 @@ def scriptpath_from_record(data):
         return None
     sp = data.get("scriptPath")
     if isinstance(sp, str) and sp:
-        return sp
+        return data
     for key in ("input", "toolInput", "parameters"):
         nested = data.get(key)
         if isinstance(nested, dict):
             sp = nested.get("scriptPath")
             if isinstance(sp, str) and sp:
-                return sp
+                return nested
     return None
+
+
+def scriptpath_from_record(data):
+    """Return the Workflow-tool ``scriptPath`` from a parsed ``wf_*.json`` dict."""
+    holder = _record_tool_input(data)
+    return holder.get("scriptPath") if holder is not None else None
 
 
 def script_path_matches_repo(script_path, repo_root, expected_pipeline=None):
@@ -1010,11 +1016,12 @@ def _workflow_failure(
     if records is None:
         records = _iter_new_wf_records(claude_home, baseline)
     for _path, data in records:
-        script_path = scriptpath_from_record(data)
+        holder = _record_tool_input(data)
+        script_path = holder.get("scriptPath") if holder is not None else None
         if not script_path or not script_path_matches_repo(script_path, repo_root):
             continue
 
-        args = data.get("args")
+        args = holder.get("args")
         if isinstance(args, str):
             try:
                 args = json.loads(args)
@@ -1038,18 +1045,15 @@ def _workflow_failure(
             continue
 
         error = result.get("error")
-        if isinstance(error, str) and error:
-            error_text = error
-        else:
-            error_text = str(result.get("failingPhase") or "")
+        error_str = error if isinstance(error, str) else ""
+        error_text = error_str or str(result.get("failingPhase") or "")
         gaps = result.get("gaps") or []
         gap_has_prefix = isinstance(gaps, (list, tuple)) and any(
             isinstance(gap, str) and gap.startswith(ALL_DEGRADED_PREFIX) for gap in gaps
         )
         reason = (
             "all_degraded"
-            if (isinstance(error, str) and error.startswith(ALL_DEGRADED_PREFIX))
-            or gap_has_prefix
+            if error_str.startswith(ALL_DEGRADED_PREFIX) or gap_has_prefix
             else "pipeline_failed"
         )
         failure = (reason, error_text)
