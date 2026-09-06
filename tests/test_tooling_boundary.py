@@ -59,12 +59,28 @@ class TestToolingBoundary(unittest.TestCase):
             "x/y/node_modules/z.js",
             "bun.lockb",
             EXEMPT_PATH,
+            "bench/vendor/other/package.json",
+            "bench/vendor/code-review-benchmark/package-lock.json",
+            "docs/Pipfile.lock",
             "docs/uv.lock",
         ]
         self.assertEqual(
             violations(paths),
-            ["a/package.json", "x/y/node_modules/z.js", "bun.lockb", "docs/uv.lock"],
+            [
+                "a/package.json",
+                "x/y/node_modules/z.js",
+                "bun.lockb",
+                "bench/vendor/other/package.json",
+                "bench/vendor/code-review-benchmark/package-lock.json",
+                "docs/Pipfile.lock",
+                "docs/uv.lock",
+            ],
         )
+
+    def test_every_forbidden_basename_is_detected(self) -> None:
+        forbidden_paths = [f"dir/{name}" for name in FORBIDDEN_BASENAMES]
+        paths = [*forbidden_paths, "nested/node_modules/package.json"]
+        self.assertEqual(violations(paths), paths)
 
     def test_uv_lock_is_ignored_for_local_ci_tooling(self) -> None:
         result = subprocess.run(

@@ -797,6 +797,30 @@ class TestContributingDocs(unittest.TestCase):
         )
         self.assertIn("workflows/test/tools/record_parity.py", text)
 
+    def test_contributing_places_biome_command_in_each_relevant_bash_block(self):
+        text = _read("CONTRIBUTING.md")
+        command = "python3 workflows/test/tools/biome_check.py"
+        sections = (
+            (
+                "### Common Commands",
+                "## The v3 workflow pipeline (JS)",
+            ),
+            (
+                "## Testing",
+                "## Branching and Commit Conventions",
+            ),
+        )
+        for heading, next_heading in sections:
+            with self.subTest(heading=heading):
+                section = text.split(f"{heading}\n", 1)[1].split(
+                    f"\n{next_heading}\n", 1
+                )
+                blocks = re.findall(
+                    r"```bash\n(?P<block>.*?)```", section[0], re.DOTALL
+                )
+                self.assertEqual(len(blocks), 1)
+                self.assertIn(command, blocks[0])
+
     def test_contributing_describes_the_v3_js_pipeline_areas(self):
         text = _read("CONTRIBUTING.md")
         self.assertIn("workflows/src/", text)

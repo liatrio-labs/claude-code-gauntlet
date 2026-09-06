@@ -139,6 +139,13 @@ class TestBiomeCheck(unittest.TestCase):
 
             self.assertEqual(code, 0)
             self.assertEqual(len(fetched), 1)
+            self.assertEqual(
+                fetched,
+                [
+                    f"https://github.com/biomejs/biome/releases/download/"
+                    f"@biomejs/biome@{TEST_VERSION}/{asset}"
+                ],
+            )
             self.assertEqual(final.read_bytes(), expected_data)
             self.assertEqual(stat.S_IMODE(final.stat().st_mode), 0o755)
             self.assertFalse(final.with_name(f"{asset}.part").exists())
@@ -200,6 +207,11 @@ class TestBiomeCheck(unittest.TestCase):
             cache = Path(directory) / "cache"
             pin_path.write_text(json.dumps(pin), encoding="utf-8")
             calls: list[tuple[list[str], Path]] = []
+            fetched: list[str] = []
+
+            def fetch(url: str) -> bytes:
+                fetched.append(url)
+                return data
 
             def record_run(argv: list[str], cwd: Path) -> int:
                 calls.append((argv, cwd))
@@ -208,11 +220,18 @@ class TestBiomeCheck(unittest.TestCase):
             with patch.object(biome_check, "PIN_FILE", pin_path):
                 code = main(
                     ["--asset", asset, "--cache-dir", str(cache)],
-                    fetch=lambda url: data,
+                    fetch=fetch,
                     run=record_run,
                 )
             final = cache.resolve() / TEST_VERSION / asset
             self.assertEqual(code, 0)
+            self.assertEqual(
+                fetched,
+                [
+                    f"https://github.com/biomejs/biome/releases/download/"
+                    f"@biomejs/biome@{TEST_VERSION}/{asset}"
+                ],
+            )
             self.assertEqual(final.read_bytes(), data)
             self.assertEqual(stat.S_IMODE(final.stat().st_mode), 0o755)
             self.assertEqual(
@@ -422,6 +441,22 @@ class TestBiomeCheck(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assertTrue((cache / TEST_VERSION / asset).is_file())
             self.assertFalse((xdg / "code-gauntlet" / "biome").exists())
+
+            flag_cache = Path(directory) / "flag-cache"
+            env_cache = Path(directory) / "flag-env-cache"
+            with patch.object(biome_check, "PIN_FILE", pin_path):
+                code = main(
+                    ["--asset", asset, "--cache-dir", str(flag_cache)],
+                    fetch=lambda _url: data,
+                    run=lambda _argv, _cwd: 0,
+                    environ={
+                        "CODE_GAUNTLET_BIOME_CACHE": str(env_cache),
+                        "XDG_CACHE_HOME": str(xdg),
+                    },
+                )
+            self.assertEqual(code, 0)
+            self.assertTrue((flag_cache / TEST_VERSION / asset).is_file())
+            self.assertFalse((env_cache / TEST_VERSION / asset).exists())
 
 
 if __name__ == "__main__":
