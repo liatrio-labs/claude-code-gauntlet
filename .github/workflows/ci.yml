@@ -175,4 +175,4 @@ jobs:
         if: matrix.python-version == '3.12'
         run: |
           COVERAGE_FILE="$(mktemp -d)/.coverage" python -m pytest bench/tests/ -q \
-            --cov=bench --cov-fail-under=87.7
+            --cov=bench --cov-fail-under=87.9
