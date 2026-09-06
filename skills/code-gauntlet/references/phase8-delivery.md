@@ -185,19 +185,7 @@ See `references/delivery-guide.md` for the findings JSON schema and validation d
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the task board is skipped — present no
 > `AskUserQuestion` and create no tasks. See `references/headless-mode.md`.
 
-```
-AskUserQuestion(
-  questions: [{
-    question: "Create fix tasks on the task board from these findings?",
-    header: "Task Board",
-    multiSelect: false,
-    options: [
-      { label: "Yes — create tasks", description: "One FIX task per delivered finding (F-01, F-02, ...)" },
-      { label: "No — done", description: "Finish the review without creating tasks" }
-    ]
-  }]
-)
-```
+The question itself is the block under the Phase 8 MANDATORY GATE in SKILL.md; it is asked there, verbatim.
 
 "Yes" creates a FIX task for every finding in the delivered set — the `artifactPaths.postReview` entries
 when the user chose "Post to PR", otherwise the same payload's entries as listed in the report. There is

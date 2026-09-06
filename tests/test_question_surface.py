@@ -22,6 +22,11 @@ SKILLS = REPO / "skills"
 # that changes the surface, with the reason in the body.
 EXPECTED_QUESTION_SITES = 9
 
+PINNED_SITES = {
+    "Task Board": "skills/code-gauntlet/SKILL.md",
+    "Delivery": "skills/code-gauntlet/references/phase8-delivery.md",
+}
+
 MAX_HEADER_CHARS = 12
 MIN_OPTIONS = 2
 MAX_OPTIONS = 4
@@ -159,6 +164,56 @@ class TestQuestionSurface(unittest.TestCase):
             "question surface changed: "
             + ", ".join(f"{s['path']}:{s['header']}" for s in found),
         )
+
+    def test_phase8_sites_live_where_pinned(self):
+        found = sites()
+        for header, expected_path in PINNED_SITES.items():
+            matches = [site for site in found if site["header"] == header]
+            with self.subTest(header=header):
+                self.assertEqual(len(matches), 1, f"expected one {header} site")
+                self.assertEqual(matches[0]["path"], expected_path)
+
+    def test_task_board_site_is_pinned_verbatim(self):
+        expected = {
+            "path": "skills/code-gauntlet/SKILL.md",
+            "question": "Create fix tasks on the task board from these findings?",
+            "header": "Task Board",
+            "multiSelect": "false",
+            "options": [
+                (
+                    "Yes — create tasks",
+                    "One FIX task per delivered finding via TaskCreate (FIX-bug-1, FIX-conv-2, ...)",
+                ),
+                ("No — done", "Finish the review without creating tasks"),
+            ],
+        }
+        task_board = next(site for site in sites() if site["header"] == "Task Board")
+        self.assertEqual(task_board, expected)
+
+    def test_task_board_gate_states_the_action_boundary(self):
+        # The gate paragraph is what the orchestrator reads when it asks; the
+        # boundary it states (TaskCreate only, never an outward-facing artifact)
+        # is the mechanism issue #207 pins, so a rewrite that drops it goes red.
+        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+        gate = next(
+            line
+            for line in skill.splitlines()
+            if "MANDATORY GATE" in line and "task-board question" in line
+        )
+        self.assertIn("the only creation call is TaskCreate", gate)
+        self.assertIn("never creates issues, pull requests, or branches", gate)
+
+    def test_task_board_block_sits_at_its_gate(self):
+        # Point of use: the verbatim block follows its gate and precedes the next
+        # section, so the model meets the question where the gate fires.
+        skill = (SKILLS / "code-gauntlet" / "SKILL.md").read_text(encoding="utf-8")
+        gate = skill.index("task-board question below")
+        block = skill.index(
+            'question: "Create fix tasks on the task board from these findings?"'
+        )
+        next_section = skill.index("### Print methodology")
+        self.assertLess(gate, block)
+        self.assertLess(block, next_section)
 
     def test_every_site_conforms_to_the_schema(self):
         offenders = {}
