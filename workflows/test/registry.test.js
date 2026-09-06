@@ -1,7 +1,7 @@
 // registry.test.js — DIMENSIONS registry + resolvePolicy (S5) unit tests.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, STAGE_DEFAULTS, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
+import { DIMENSIONS, AGENTS, AGENT_LABELS, FINDING_PROP_TYPES, FINDING_REQUIRED, STAGE_DEFAULTS, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, resolvePolicy, conditionalSchemaActive } from '../src/registry.js';
 import { intersectRequiredExtra, agentSpecs } from '../src/stages.js';
 
 test('7 unique discovery agents', () => { assert.equal(AGENTS.length, 7); });
@@ -278,11 +278,22 @@ test('requiredWhenDimension is non-empty only on rows whose agentType has multip
 
 test('the live registry: only convention (claude_md_rule) and intent (spec_text) carry a requiredWhenDimension entry', () => {
   const byDim = (dim) => DIMENSIONS.find((d) => d.dimension === dim);
+  assert.deepEqual(byDim('convention').schemaExtra, { rule_source: 'string' });
   assert.deepEqual(byDim('convention').requiredWhenDimension, ['claude_md_rule']);
   assert.deepEqual(byDim('intent').requiredWhenDimension, ['spec_text']);
   for (const dim of ['bug', 'security', 'cross_file_impact', 'test_coverage', 'comment_accuracy', 'type_design', 'simplification']) {
     assert.deepEqual(byDim(dim).requiredWhenDimension, [], `${dim} must carry no requiredWhenDimension entry`);
   }
+});
+
+test('rule-source labels have the registered vocabulary and neutral fallback', () => {
+  assert.deepEqual(RULE_SOURCE_LABELS, {
+    documented_rule: 'Cited rule',
+    code_comment: 'Cited comment',
+    repo_precedent: 'Repo precedent',
+    self_inconsistency: 'Inconsistency',
+  });
+  assert.equal(RULE_SOURCE_LABEL_FALLBACK, 'Cited rule');
 });
 
 test('agentSpecs(): conventions-and-intent carries the sorted conditionalRequired derivation', () => {

@@ -23,8 +23,8 @@ Contract under test:
     never read at all;
   * disclosure is total: every skip carries a reason, and stdout is EXACTLY one
     line of JSON on every path including failure;
-  * "no convention files" is a clean success that still WRITES an empty --out
-    file — Phase 2 reads that path unconditionally, so a missing file must mean
+  * "no convention files" is a clean success that still WRITES a one-line --out
+    fact — Phase 2 reads that path unconditionally, so a missing file must mean
     "the collection step never ran" and nothing else.
 """
 
@@ -54,6 +54,7 @@ from scripts.collect_project_rules import (  # noqa: E402
 )
 
 SCRIPT = os.path.join(REPO_ROOT, "scripts", "collect_project_rules.py")
+EMPTY_RULES_NOTICE = "project rules: none collected (CLAUDE.md, AGENTS.md, QODO.md)\n"
 
 
 class _RepoCase(unittest.TestCase):
@@ -96,9 +97,8 @@ class _RepoCase(unittest.TestCase):
             f"{captured!r}",
         )
         receipt = json.loads(lines[0])
-        # "" for a missing file as well as an empty one; the distinction between
-        # those two states is load-bearing and is asserted explicitly, on
-        # os.path.exists, by test_repo_with_no_convention_files_*.
+        # "" for a missing file; the distinction between missing and a clean
+        # no-source receipt is load-bearing and is asserted explicitly below.
         if os.path.exists(self.out):
             with open(self.out, encoding="utf-8") as handle:
                 body = handle.read()
@@ -206,7 +206,7 @@ class TestSecurityBoundary(_RepoCase):
 
     def test_home_relative_pointer_is_refused(self):
         self.write("CLAUDE.md", "@~/secrets.md\n")
-        _, receipt, _ = self.run_script()
+        _, receipt, body = self.run_script()
         self.assertIn("absolute_path", self.reasons(receipt))
 
     def test_sibling_directory_sharing_the_root_name_prefix_is_refused(self):
@@ -323,10 +323,11 @@ class TestBounds(_RepoCase):
 
         builtins.open = spy
         try:
-            _, receipt, _ = self.run_script("--max-file-bytes", "100")
+            _, receipt, body = self.run_script("--max-file-bytes", "100")
         finally:
             builtins.open = real_open
         self.assertIn("too_large", self.reasons(receipt))
+        self.assertEqual(body, EMPTY_RULES_NOTICE)
         self.assertFalse(
             [p for p in opened if p.endswith("CLAUDE.md")],
             "an over-cap file must never be opened; open() was called on it",
@@ -503,7 +504,10 @@ class TestProvenance(_RepoCase):
 
         os.unlink(os.path.join(self.repo, "CLAUDE.md"))
         _, _, empty_body = self.run_script()
-        self.assertEqual(empty_body, "")
+        self.assertEqual(
+            empty_body,
+            "project rules: none collected (CLAUDE.md, AGENTS.md, QODO.md)\n",
+        )
         self.assertNotIn(caveat, empty_body)
 
     def test_every_source_has_a_provenance_wrapper_and_heading(self):
@@ -669,7 +673,7 @@ class TestFirstClassFileTypes(_RepoCase):
         # checks, but must still be refused at stat-time.
         os.makedirs(os.path.join(self.repo, "CLAUDE.md"))
         _, receipt, body = self.run_script()
-        self.assertEqual(body, "")
+        self.assertEqual(body, EMPTY_RULES_NOTICE)
         self.assertIn("not_regular", self.reasons(receipt))
         self.assertTrue(
             any(
@@ -690,15 +694,31 @@ class TestFirstClassFileTypes(_RepoCase):
 
 class TestDisclosureContract(_RepoCase):
     def test_repo_with_no_convention_files_succeeds_and_writes_an_empty_file(self):
-        # Load-bearing: Phase 2 reads --out unconditionally, so "empty" must mean
-        # "collected, found nothing" and "missing" must mean "never ran".
+        # Load-bearing: Phase 2 reads --out unconditionally, so the one-line fact
+        # means "collected, found nothing" and "missing" means "never ran".
         code, receipt, body = self.run_script()
         self.assertEqual(code, 0)
         self.assertTrue(receipt["ok"])
         self.assertEqual(receipt["sources"], [])
         self.assertTrue(os.path.exists(self.out), "--out must exist even when empty")
-        self.assertEqual(body, "")
+        self.assertEqual(body, EMPTY_RULES_NOTICE)
         self.assertTrue(any("project_rules_absent" in g for g in receipt["gaps"]))
+
+    def test_crash_path_keeps_empty_render_unchanged(self):
+        calls = []
+        real_write = collect_project_rules.write_text_atomic
+
+        def fail_once(path, text):
+            calls.append((path, text))
+            if len(calls) == 1:
+                raise OSError("write failed")
+            return real_write(path, text)
+
+        with mock.patch.object(collect_project_rules, "write_text_atomic", fail_once):
+            code, receipt, body = self.run_script()
+        self.assertEqual(code, 1)
+        self.assertFalse(receipt["ok"])
+        self.assertEqual(body, "")
 
     def test_failure_still_emits_exactly_one_receipt_line(self):
         code, receipt, _ = self.run_script(repo=os.path.join(self.base, "nope"))

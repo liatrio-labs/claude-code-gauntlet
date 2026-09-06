@@ -170,6 +170,41 @@ test('T-EXTRA: every registry-derived report extra renders in fixed order', () =
   }
 });
 
+test('T-RULE-SOURCE: cited headings use the winning claude_md_rule kind and never raw values', () => {
+  const labels = {
+    documented_rule: 'Cited rule',
+    code_comment: 'Cited comment',
+    repo_precedent: 'Repo precedent',
+    self_inconsistency: 'Inconsistency',
+  };
+  for (const [kind, label] of Object.entries(labels)) {
+    const report = rendered({ findings: [finding('RS', {
+      claude_md_rule: 'The cited text.',
+      rule_source: kind,
+    })] });
+    assert.ok(report.includes(`**${label}:**`), `${kind} uses its label`);
+    assert.ok(!report.includes(kind), `${kind} is not rendered raw`);
+  }
+  for (const unknown of ['constructor', 'toString', '__proto__', 'unknown_kind']) {
+    const report = rendered({ findings: [finding('RS', {
+      claude_md_rule: 'The cited text.',
+      rule_source: unknown,
+    })] });
+    assert.ok(report.includes('**Cited rule:**'), `${unknown} uses fallback`);
+    assert.ok(!report.includes(unknown), `${unknown} is not rendered raw`);
+  }
+});
+
+test('T-RULE-SOURCE-FALLBACK: spec_text wins without a claude_md_rule and keeps Cited rule', () => {
+  const report = rendered({ findings: [finding('RS-FALLBACK', {
+    spec_text: 'The specification text.',
+    rule_source: 'repo_precedent',
+  })] });
+  assert.ok(report.includes('**Cited rule:**'));
+  assert.ok(!report.includes('**Repo precedent:**'));
+  assert.ok(!report.includes('repo_precedent'));
+});
+
 test('T-ROUTE: severity wins over suggestion routing', () => {
   const report = rendered({ findings: [finding('R', { severity: 'critical', report_tag: 'suggestion' })] });
   assert.ok(report.includes(`### ${SEVERITY_EMOJI.critical} Critical`));

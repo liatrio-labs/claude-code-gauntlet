@@ -36,11 +36,11 @@ in code that a test can pin, not in an instruction a model is asked to follow.
 Contract
 --------
 ``--out`` receives the assembled markdown, written atomically. It is written on
-every non-crashing path, **including when no convention files exist at all** —
-an empty file means "collected, found nothing", a missing file means "this step
-never ran". Phase 2 depends on that distinction: it reads ``--out``
-unconditionally so a skipped collection fails the write loudly instead of
-silently producing a rules-less context file.
+every non-crashing path. When no sources are collected, it contains one fact:
+``project rules: none collected (CLAUDE.md, AGENTS.md, QODO.md)``. A missing
+file means "this step never ran". Phase 2 depends on that distinction: it reads
+``--out`` unconditionally so a skipped collection fails the write loudly
+instead of silently producing a rules-less context file.
 
 stdout carries EXACTLY one line of JSON — the provenance receipt — on every
 path. Diagnostics go to stderr. An empty stdout must stay distinguishable from
@@ -659,7 +659,10 @@ def main(argv=None):
                 collector.visit(real, "direct", 0, ())
 
         # Written even when empty. A missing file means the step never ran.
-        write_text_atomic(args.out, render(collector.sources))
+        output = render(collector.sources)
+        if not collector.sources:
+            output = "project rules: none collected (CLAUDE.md, AGENTS.md, QODO.md)\n"
+        write_text_atomic(args.out, output)
 
         _emit(
             _receipt(

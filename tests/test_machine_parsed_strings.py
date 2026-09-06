@@ -13,13 +13,21 @@ with no byte-level reader writes `—` and explains itself in the notes.
 """
 
 import re
+import sys
 import unittest
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts import generate_contract_requirements as contract_gen
 
 REPO = Path(__file__).resolve().parents[1]
 REGISTRY = REPO / "docs" / "machine-parsed-strings.md"
 
 _ROW = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]*)\|\s*$")
+_COMPOSITE_ROW = re.compile(
+    r"^\|\s*((?:`[^`]+`\s*/\s*)+`[^`]+`)\s*\|\s*([^|]+)\|\s*([^|]+)\|\s*([^|]*)\|\s*$"
+)
 
 
 NO_PARSER = "—"  # em dash: "nothing reads these bytes", explained in notes
@@ -44,6 +52,27 @@ def parse_registry(text: str) -> list[dict]:
         rows.append(
             {
                 "string": string,
+                "producers": [
+                    _strip_ticks(p) for p in producers.split(",") if p.strip()
+                ],
+                "parsers": [_strip_ticks(p) for p in parsers.split(",") if p.strip()],
+                "notes": notes,
+            }
+        )
+    return rows
+
+
+def parse_composite_rows(text: str) -> list[dict]:
+    """Parse rows whose first cell contains multiple backticked values."""
+    rows = []
+    for line in text.splitlines():
+        m = _COMPOSITE_ROW.match(line)
+        if not m:
+            continue
+        string_cell, producers, parsers, notes = (c.strip() for c in m.groups())
+        rows.append(
+            {
+                "strings": re.findall(r"`([^`]+)`", string_cell),
                 "producers": [
                     _strip_ticks(p) for p in producers.split(",") if p.strip()
                 ],
@@ -134,6 +163,26 @@ class TestMachineParsedStrings(unittest.TestCase):
                         f"{NO_PARSER} without a note explaining it"
                     )
         self.assertEqual(offenders, {}, f"registry shape failures: {offenders}")
+
+    def test_rule_source_vocabulary_row_matches_registry_and_consumers(self):
+        expected = set(contract_gen.load_registry(str(REPO))["ruleSourceLabels"])
+        rows = parse_composite_rows(REGISTRY.read_text(encoding="utf-8"))
+        matches = [row for row in rows if set(row["strings"]) == expected]
+        self.assertEqual(
+            1,
+            len(matches),
+            "machine-parsed string registry must contain one registry-derived rule_source row",
+        )
+        row = matches[0]
+        self.assertEqual(row["producers"], ["agents/conventions-and-intent.md"])
+        self.assertEqual(
+            row["parsers"],
+            [
+                "workflows/src/renderReport.js",
+                "scripts/post_review.py",
+                "bench/runner/citations.py",
+            ],
+        )
 
 
 if __name__ == "__main__":
