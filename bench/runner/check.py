@@ -16,10 +16,14 @@ Gates (aligned with ``bench/MEASUREMENT.md``):
       Without a complete echo receipt, collected workflow records are required
       (scriptPath-only fallback).
   G5  ≥1 delivered inline comment across the run set
-  G6  Artifact completeness — every ARTIFACT_BASENAMES member (findings, report,
-      post-review, checkpoint-all) present exactly once, non-empty, JSON members
-      parseable; catches a timeout that lost only the report while earlier gates
-      stayed green (#165)
+  G6  Artifact completeness — G2 still parses every findings artifact it finds,
+      while G6 requires the four ARTIFACT_BASENAMES members to form one coherent
+      set (exactly one match each, one shared SHA), be non-empty, and have
+      parseable JSON members;
+      catches a timeout that lost only the report while earlier gates stayed green
+      (#165). If the pipeline ever records the timeout into a structured carrier,
+      ``test_workflow_timeout_is_not_in_pipeline_artifacts`` goes red and the G3/G6
+      calculus is redone (#146).
 
 Stdlib-only (CLAUDE.md).
 """
@@ -70,10 +74,23 @@ _SCRIPT_FIELD_OPEN_RE = re.compile(r'"script"\s*:\s*"(?:\\.|[^"\\])*\Z', re.DOTA
 # Expected pipeline entry relative to the plugin/repo root.
 PIPELINE_REL = Path("workflows") / "pipeline.js"
 
-# The bundle source carries both sentinels as ordinary substrings, so a raw scan
-# of a wf record would match on every collected record. docs/machine-parsed-strings.md
-# lists workflows/pipeline.js as a producer of both and tests/test_machine_parsed_strings.py
-# pins their presence, so the premise cannot silently vanish.
+# G3 writer-degrade carrier policy (issue #52):
+# STRUCTURED carriers (``workflows/wf_*.json`` at ``result.gaps``, and the
+# persisted checkpoint's ``gaps``) are judged from the parsed array alone; their
+# raw bytes are never scanned. A wf record echoes the whole ``workflows/pipeline.js``
+# bundle into its ``script`` field, and the bundle carries both sentinels as
+# ordinary substrings. This is registered in ``docs/machine-parsed-strings.md``
+# and pinned by ``tests/test_machine_parsed_strings.py``. A structured carrier
+# that will not parse or has no ``gaps`` falls back to a raw scan with the
+# ``script`` field blanked.
+# TEXT carriers (``raw.json``, whose ``.result`` is model prose and never embeds
+# the bundle -- measured 0/131 in the retained corpus, max 9.5 KB -- and
+# ``code-gauntlet-report-*.md``) are raw-scanned as-is. The superseded archives
+# (``workflows/superseded/`` for wf records, #85; ``pr_dir/superseded/`` for
+# deliverables, #165) are invisible because every G3/G6 glob is non-recursive.
+# G3 is the writer degrade gate. A Phase 8 timeout has no structural artifact
+# signal: the awaiter reports ``workflow-timeout`` on its own stdout, and G6
+# catches a lost deliverable.
 # Do not include bench-only fixture names such as deep-review-report.md.
 _DEGRADE_STRUCTURED = "structured"
 _DEGRADE_TEXT = "text"
@@ -120,8 +137,9 @@ def _artifact_sha(template, path):
 
 
 def _check_artifact_completeness(pr_dir, label):
-    """Return G6 failures for the four terminal artifact templates."""
+    """Return ``(G6 failures, satisfied artifact count)``."""
     failures = []
+    satisfied_count = 0
     matches_by_template = {}
     for template in ARTIFACT_BASENAMES:
         pattern = template.format(sha="*")
@@ -150,10 +168,12 @@ def _check_artifact_completeness(pr_dir, label):
         if template != ARTIFACT_BASENAMES[0] and path.suffix == ".json":
             try:
                 json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError) as exc:
+            except (json.JSONDecodeError, UnicodeError, OSError) as exc:
                 failures.append(
                     f"{label}: artifact-completeness: {path.name} not parseable: {exc}"
                 )
+                continue
+        satisfied_count += 1
 
     exact_matches = [
         (template, matches[0])
@@ -169,26 +189,7 @@ def _check_artifact_completeness(pr_dir, label):
             for template, path in exact_matches
         )
         failures.append(f"{label}: artifact-completeness: mixed SHA values: {names}")
-    return failures
-
-
-def _count_satisfied_artifacts(pr_dir):
-    """Count individually complete G6 members; findings parsing remains G2's job."""
-    count = 0
-    for template in ARTIFACT_BASENAMES:
-        matches = _artifact_matches(pr_dir, template)
-        if len(matches) != 1:
-            continue
-        path = matches[0]
-        try:
-            if path.stat().st_size == 0:
-                continue
-            if template != ARTIFACT_BASENAMES[0] and path.suffix == ".json":
-                json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        count += 1
-    return count
+    return failures, satisfied_count
 
 
 def _iter_workflow_records(pr_dir):
@@ -628,8 +629,9 @@ def check_run(run_dir, *, repo_root=None, plugin_pipeline=None):
                     failures.append(f"{flabel}: origin=unknown (verify/slice degrade)")
 
         # --- G6: every persisted deliverable is present exactly once ---
-        failures.extend(_check_artifact_completeness(pr_dir, label))
-        stats["deliverable_artifacts"] += _count_satisfied_artifacts(pr_dir)
+        g6_failures, satisfied_count = _check_artifact_completeness(pr_dir, label)
+        failures.extend(g6_failures)
+        stats["deliverable_artifacts"] += satisfied_count
 
         # --- G3: writer no-write-proof / partial-artifacts ---
         for hit in _scan_degrade_text(pr_dir):

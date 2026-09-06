@@ -315,6 +315,23 @@ class CheckRunTest(unittest.TestCase):
             )
         )
 
+    def test_invalid_utf8_post_review_artifact_fails_g6(self):
+        _build_ok_run(self.run_dir)
+        (
+            self.run_dir
+            / "pr-example-repo-1"
+            / "code-gauntlet-post-review-deadbeef.json"
+        ).write_bytes(b"\xff")
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                "pr-example-repo-1: artifact-completeness: "
+                "code-gauntlet-post-review-deadbeef.json not parseable:" in f
+                for f in result["failures"]
+            )
+        )
+
     def test_archived_report_does_not_count_for_g6(self):
         _build_ok_run(self.run_dir)
         pr = self.run_dir / "pr-example-repo-1"
