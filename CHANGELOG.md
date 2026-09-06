@@ -2,6 +2,53 @@
 
 <!-- version list -->
 
+## v3.29.3 (2026-09-06)
+
+### Bug Fixes
+
+- **bench**: Classify the pipeline's ok:false return envelope explicitly
+  ([#298](https://github.com/liatrio-labs/claude-code-gauntlet/pull/298),
+  [`034168c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/034168c567443c48900665841475db175ec1e931))
+
+- **bench**: Classify the pipeline's ok:false return envelope explicitly (#190)
+  ([#298](https://github.com/liatrio-labs/claude-code-gauntlet/pull/298),
+  [`034168c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/034168c567443c48900665841475db175ec1e931))
+
+- **bench**: Read a wrapped record's args beside its scriptPath, floor 88.0
+  ([#298](https://github.com/liatrio-labs/claude-code-gauntlet/pull/298),
+  [`034168c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/034168c567443c48900665841475db175ec1e931))
+
+- **skills**: Ask the Task Board question at the Phase 8 gate and name TaskCreate as the only
+  creation call ([#297](https://github.com/liatrio-labs/claude-code-gauntlet/pull/297),
+  [`1f72159`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1f72159fe5236f53d897c6081bf1486cf0b0d2a8))
+
+- **skills**: Ask the Task Board question at the Phase 8 gate and name TaskCreate as the only
+  creation call (#207) ([#297](https://github.com/liatrio-labs/claude-code-gauntlet/pull/297),
+  [`1f72159`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1f72159fe5236f53d897c6081bf1486cf0b0d2a8))
+
+### Chores
+
+- **ci**: Ratchet the bench coverage floor to 87.9
+  ([#298](https://github.com/liatrio-labs/claude-code-gauntlet/pull/298),
+  [`034168c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/034168c567443c48900665841475db175ec1e931))
+
+### Refactoring
+
+- **bench**: Parse each child's Workflow records once per invocation
+  ([#298](https://github.com/liatrio-labs/claude-code-gauntlet/pull/298),
+  [`034168c`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/034168c567443c48900665841475db175ec1e931))
+
+### Testing
+
+- **question-surface**: Compare the Task Board site as a dict
+  ([#297](https://github.com/liatrio-labs/claude-code-gauntlet/pull/297),
+  [`1f72159`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1f72159fe5236f53d897c6081bf1486cf0b0d2a8))
+
+- **question-surface**: Pin the task-board gate boundary and the block's position
+  ([#297](https://github.com/liatrio-labs/claude-code-gauntlet/pull/297),
+  [`1f72159`](https://github.com/liatrio-labs/claude-code-gauntlet/commit/1f72159fe5236f53d897c6081bf1486cf0b0d2a8))
+
+
 ## v3.29.2 (2026-09-06)
 
 ### Bug Fixes
