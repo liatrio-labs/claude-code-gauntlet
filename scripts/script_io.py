@@ -6,6 +6,11 @@ import json
 import sys
 from typing import Any
 
+try:
+    from assemble_artifacts import escape_lone_surrogates
+except ImportError:  # imported as scripts.script_io by the test suite
+    from scripts.assemble_artifacts import escape_lone_surrogates
+
 
 def write_result(
     path: str | None, obj: Any, summary_lines: list[str] | None = None
@@ -18,7 +23,7 @@ def write_result(
 
     Propagates OSError on write failure; callers keep their ``die(...)`` wrap.
     """
-    output_text = json.dumps(obj, indent=2, ensure_ascii=False)
+    output_text = escape_lone_surrogates(json.dumps(obj, indent=2, ensure_ascii=False))
     if path:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(output_text)

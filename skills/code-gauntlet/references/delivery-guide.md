@@ -221,12 +221,12 @@ The `findings` key is reserved/optional — present only when the caller supplie
 
 ### Create FIX tasks
 
-Read `references/fix-task-metadata.md` for the full template. The process is:
-
-1. **Detect toolchain** (Step 2.5) — scan for package.json, Cargo.toml, go.mod, etc.
-2. **Detect patterns_to_follow** (Step 3a) — identify 1-2 nearby files as style references
-3. **TaskCreate** (Step 3b) — structured description with Issue, Location, Evidence, Suggested Fix
-4. **TaskUpdate with metadata** (Step 3c) — full cw-execute-compatible metadata
+The renderer emits one object per delivered finding with `subject`, `description`, and `metadata`.
+The description contains Issue, Location, optional Evidence, optional Suggested Fix, Category, and
+optional Details or Toolchain sections. The metadata contains the task identity, scope, requirements,
+proof artifacts, verification commands, commit template, and review context. Pass `subject` and
+`description` to `TaskCreate`, then pass the returned task ID and `metadata` to `TaskUpdate`.
+Use the renderer command and stop on parse, count, or call failure. Never compose the object by hand.
 
 After creating: "Created N tasks from review findings."
 

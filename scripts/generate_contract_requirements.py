@@ -55,6 +55,7 @@ _IDENTITY_MARKER_RE = re.compile(
 # {rel_path: [symbol, ...]} — the fences this file must carry, exactly once each.
 IDENTITY_FENCES = {
     "scripts/post_review.py": ["constants"],
+    "scripts/render_fix_tasks.py": ["detail_fields"],
     REPORT_FORMAT_REL: [
         "severity_legend",
         "inline_legend",
@@ -557,6 +558,31 @@ def identity_body(rel_path, symbol, identity, repo_root=REPO_ROOT):
             "}",
             f'SEVERITY_EMOJI_FALLBACK = "{identity["severityEmojiFallback"]}"',
         ]
+        return lines
+    if symbol == "detail_fields":
+        citation_fields = {
+            field
+            for field in ("claude_md_rule", "spec_text")
+            if field in identity["canonicalFields"]
+        }
+        lines = ["_DETAIL_FIELDS_BY_DIMENSION = {"]
+        for row in identity["dimensions"]:
+            fields = list(row["extraFields"])
+            fields.extend(
+                field
+                for field in row["requiredWhenDimension"]
+                if field in citation_fields and field not in fields
+            )
+            dimension = row["dimension"]
+            if not fields:
+                lines.append(f'    "{dimension}": (),')
+            elif len(fields) == 1:
+                lines.append(f'    "{dimension}": ("{fields[0]}",),')
+            else:
+                lines.append(f'    "{dimension}": (')
+                lines.extend(f'        "{field}",' for field in fields)
+                lines.append("    ),")
+        lines.append("}")
         return lines
     if symbol == "summary_header":
         return [f"### {mark} {name}"]

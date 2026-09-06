@@ -547,6 +547,8 @@ The compact return always carries a `checkpoints` field alongside `artifactPaths
 >
 > Headless exception (`CODE_GAUNTLET_HEADLESS=1`): the closed/merged markdown-only restriction does not apply — headless delivery follows `CODE_GAUNTLET_DELIVERY` regardless of PR state (posting still obeys `CODE_GAUNTLET_POST_MODE`). See `references/headless-mode.md`.
 
+> Partial-artifacts exception: when `artifactPaths.postReview` is null, do not present the task-board offer. Tell the user that no delivery set was persisted, so no tasks can be created.
+
 ### Render apply-checked patches — whenever `artifactPaths.findings` is non-null
 
 ```
@@ -610,6 +612,8 @@ AskUserQuestion(
   }]
 )
 ```
+
+After the user answers "Yes", run `python3 "{plugin_root}/scripts/render_fix_tasks.py" "<artifactPaths.postReview>" --repo-root "<repoRoot>"`. Parse stdout as a JSON array and assert that its length equals the delivered count. For each object, call `TaskCreate(subject, description)` and then `TaskUpdate(taskId, metadata)`. Stop on any parse, count, or call failure and report it. Never fall back to hand composition.
 
 ### Print methodology
 

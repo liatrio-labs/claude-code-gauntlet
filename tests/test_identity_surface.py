@@ -253,7 +253,16 @@ class TestIdentitySurface(unittest.TestCase):
             r for r in rows if _codepoints(r["string"]) == _codepoints(BRAND_MARK)
         ]
         self.assertEqual(len(marked), 1, "expected exactly one brand-mark row")
-        self.assertEqual(set(marked[0]["producers"]), set(gen.IDENTITY_FENCES))
+        generated_mark_producers = {
+            rel_path
+            for rel_path, symbols in gen.IDENTITY_FENCES.items()
+            if any(
+                BRAND_MARK
+                in "\n".join(gen.identity_body(rel_path, symbol, self.registry))
+                for symbol in symbols
+            )
+        }
+        self.assertEqual(set(marked[0]["producers"]), generated_mark_producers)
 
     def test_the_composed_constants_are_the_generated_identity(self):
         """BRAND_TRAILER / BRAND_SUMMARY_HEADER are hand-composed below the fence.

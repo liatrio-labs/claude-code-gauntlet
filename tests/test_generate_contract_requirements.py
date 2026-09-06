@@ -276,6 +276,34 @@ class TestIdentityFenceGuards(unittest.TestCase):
         "brand": {"mark": "MARK", "name": "NAME"},
         "severityEmoji": {"critical": "C", "low": "L"},
         "severityEmojiFallback": "F",
+        "canonicalFields": ["claude_md_rule", "spec_text"],
+        "dimensions": [
+            {
+                "dimension": "bug",
+                "extraFields": ["hidden_errors"],
+                "requiredWhenDimension": [],
+            },
+            {
+                "dimension": "convention",
+                "extraFields": [],
+                "requiredWhenDimension": ["claude_md_rule"],
+            },
+            {
+                "dimension": "test_coverage",
+                "extraFields": ["criticality", "failure_scenario"],
+                "requiredWhenDimension": [],
+            },
+            {
+                "dimension": "intent",
+                "extraFields": ["spec_text"],
+                "requiredWhenDimension": ["spec_text"],
+            },
+            {
+                "dimension": "comment_accuracy",
+                "extraFields": [],
+                "requiredWhenDimension": [],
+            },
+        ],
     }
 
     # Every declared fence body, hand-typed against the placeholder IDENTITY above.
@@ -294,6 +322,18 @@ class TestIdentityFenceGuards(unittest.TestCase):
             '    "low": "L",\n'
             "}\n"
             'SEVERITY_EMOJI_FALLBACK = "F"'
+        ),
+        ("scripts/render_fix_tasks.py", "detail_fields"): (
+            "_DETAIL_FIELDS_BY_DIMENSION = {\n"
+            '    "bug": ("hidden_errors",),\n'
+            '    "convention": ("claude_md_rule",),\n'
+            '    "test_coverage": (\n'
+            '        "criticality",\n'
+            '        "failure_scenario",\n'
+            "    ),\n"
+            '    "intent": ("spec_text",),\n'
+            '    "comment_accuracy": (),\n'
+            "}"
         ),
         (gen.REPORT_FORMAT_REL, "severity_legend"): (
             "Product mark: MARK (NAME). Severity emoji: C critical, L low.\n"
