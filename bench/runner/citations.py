@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+from scripts.await_workflow import ARTIFACT_BASENAMES
+
 # This is a lower-bound heuristic because agents can phrase the same absence many ways.
 # Each alternative is one absence phrasing; the tuple exists so a test can rebuild the
 # pattern without any one member and prove that member is load-bearing.
@@ -27,8 +29,10 @@ def compile_absence_pattern(alternatives=ABSENCE_PREAMBLE_ALTERNATIVES):
 
 ABSENCE_PREAMBLE_RE = compile_absence_pattern()
 
-_FINDINGS_GLOB = "code-gauntlet-findings-*.json"
-_POST_REVIEW_GLOB = "code-gauntlet-post-review-*.json"
+# Derived from the awaiter's own artifact set, like check.py, so a persist-stage
+# rename fails the template test instead of silently measuring nothing.
+_FINDINGS_GLOB = ARTIFACT_BASENAMES[0].format(sha="*")
+_POST_REVIEW_GLOB = ARTIFACT_BASENAMES[2].format(sha="*")
 
 
 def has_absence_preamble(value) -> bool:

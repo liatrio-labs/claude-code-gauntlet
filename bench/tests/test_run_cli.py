@@ -2160,6 +2160,36 @@ class NaiveCommentValidationTest(RunTestBase):
 
 
 class CheckWatchLineTest(RunTestBase):
+    def _check_with_stats(self, stats):
+        run_dir = self.runs_root / "watch-run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        result = {"ok": True, "failures": [], "stats": stats}
+        stdout = io.StringIO()
+        with (
+            patch("bench.runner.check.check_run", return_value=result),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(run._check_only("watch-run"), 0)
+        return stdout.getvalue()
+
+    def test_check_prints_n_a_when_nothing_is_populated(self):
+        out = self._check_with_stats(
+            {
+                "citation_boilerplate": {
+                    "findings": {"populated": 0, "absence_preamble": 0}
+                }
+            }
+        )
+        self.assertIn(
+            "  citation_boilerplate: preamble=0/0 (rate n/a), convention=0/0", out
+        )
+
+    def test_check_survives_a_missing_citation_block(self):
+        out = self._check_with_stats({})
+        self.assertIn(
+            "  citation_boilerplate: preamble=0/0 (rate n/a), convention=0/0", out
+        )
+
     def test_check_prints_citation_watch_line(self):
         run_dir = self.runs_root / "watch-run"
         run_dir.mkdir(parents=True)
