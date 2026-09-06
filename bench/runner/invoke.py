@@ -376,8 +376,9 @@ def collect_workflow_records(claude_home, pr_dir, baseline=None):
 def supersede_workflow_records(pr_dir):
     """Move current-attempt ``wf_*.json`` into ``{pr_dir}/workflows/superseded/``.
 
-    Called at ``--retry-failed`` start for each PR about to be re-invoked, so
-    the meaning is "this attempt is superseded" — not "the retry succeeded".
+    Called at the start of every ``_resume`` invocation (plain ``--resume`` and
+    ``--retry-failed``) for each PR about to be re-invoked, so the meaning is
+    "this attempt is superseded" — not "the retry succeeded".
     Non-recursive: only direct children of ``workflows/`` move; an existing
     ``superseded/`` tree is left alone. Missing or empty ``workflows/`` is a
     clean no-op. Collisions in ``superseded/`` get a numeric suffix (never

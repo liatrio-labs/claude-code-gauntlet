@@ -101,9 +101,10 @@ python3 bench/run.py --check <RUN_ID>
 Exit code is the smoke verdict. The checker never imports or calls the scorer.
 `--check` applies to skill runs only — naive-anchor runs are refused (exit 2).
 
-`--retry-failed` moves each retried PR's prior `workflows/wf_*.json` and prior
-attempt deliverables into their respective `superseded/` directories before
-re-invoking, so `--check` gates the current attempt only; forensic records stay on disk.
+`--resume` and `--retry-failed` both move each todo PR's prior `workflows/wf_*.json`
+and prior-attempt deliverables into their respective `superseded/` directories
+before re-invoking, so `--check` gates the current attempt only; forensic records
+stay on disk.
 Pre-fix run dirs that still hold
 a failed attempt beside a success keep FAILing `--check` until retried under
 this behavior.
