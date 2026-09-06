@@ -1,0 +1,21 @@
+{"value": "No documented rule exists; ...", "absence_preamble": true}
+{"value": "There are no project rules available ...", "absence_preamble": true}
+{"value": "This repository has no house style; ...", "absence_preamble": true}
+{"value": "No written convention covers this; ...", "absence_preamble": true}
+{"value": "(no CLAUDE.md in this repo)", "absence_preamble": true}
+{"value": "publishes no machine-readable convention file", "absence_preamble": true}
+{"value": "GAP project_rules_absent", "absence_preamble": true}
+{"value": "REVIEW.md checklist item 2 is not satisfied by the new test.", "absence_preamble": false}
+{"value": "CLAUDE.md section 4 requires ...", "absence_preamble": false}
+{"value": "the code does not match CLAUDE.md", "absence_preamble": false}
+{"value": "CONTRIBUTING.md, ... step 3: 'Adhere to common conventions ...'", "absence_preamble": false}
+{"value": "Repo pattern established by app/serializers/user_serializer.rb:105-111 ...", "absence_preamble": false}
+{"value": "No explicit standard governs this generated fixture; compare it with the checked-in examples.", "absence_preamble": true}
+{"value": "There are no codified guidelines for this repository, so the nearest sibling is the reference.", "absence_preamble": true}
+{"value": "No project style guide is published here; follow the local precedent.", "absence_preamble": true}
+{"value": "AGENTS.md: 'no pip dependencies in shipped scripts/'.", "absence_preamble": false}
+{"value": "The missing field is covered by REVIEW.md section 4.", "absence_preamble": false}
+{"value": "No regression was observed after the rules change.", "absence_preamble": false}
+{"value": "CLAUDE.md does not exist in this repository; the sibling handler sets the pattern.", "absence_preamble": true}
+{"value": "AGENTS.md is missing here, so the neighbouring module is the reference.", "absence_preamble": true}
+{"value": "REVIEW.md section 2 is missing a threshold for security findings, so the default applies.", "absence_preamble": true}

@@ -2184,5 +2184,76 @@ class NaiveCommentValidationTest(RunTestBase):
         self.assertFalse((pr_dir / "post-review-payload.json").exists())
 
 
+class CheckWatchLineTest(RunTestBase):
+    def _check_with_stats(self, stats):
+        run_dir = self.runs_root / "watch-run"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        result = {"ok": True, "failures": [], "stats": stats}
+        stdout = io.StringIO()
+        with (
+            patch("bench.runner.check.check_run", return_value=result),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(run._check_only("watch-run"), 0)
+        return stdout.getvalue()
+
+    def test_check_prints_n_a_when_nothing_is_populated(self):
+        out = self._check_with_stats(
+            {
+                "citation_boilerplate": {
+                    "findings": {"populated": 0, "absence_preamble": 0}
+                }
+            }
+        )
+        self.assertIn(
+            "  citation_boilerplate: preamble=0/0 (rate n/a), convention=0/0", out
+        )
+
+    def test_check_survives_a_missing_citation_block(self):
+        out = self._check_with_stats({})
+        self.assertIn(
+            "  citation_boilerplate: preamble=0/0 (rate n/a), convention=0/0", out
+        )
+
+    def test_check_prints_citation_watch_line(self):
+        run_dir = self.runs_root / "watch-run"
+        run_dir.mkdir(parents=True)
+        result = {
+            "ok": True,
+            "failures": [],
+            "stats": {
+                "pr_dirs": 1,
+                "delivered_comments": 1,
+                "findings_files": 1,
+                "deliverable_artifacts": 4,
+                "workflow_records": 1,
+                "script_paths": 1,
+                "unknown_origin": 0,
+                "citation_boilerplate": {
+                    "findings": {
+                        "populated": 2,
+                        "absence_preamble": 1,
+                        "by_dimension": {
+                            "convention": {
+                                "populated": 2,
+                                "absence_preamble": 1,
+                            }
+                        },
+                    }
+                },
+            },
+        }
+        stdout = io.StringIO()
+        with (
+            patch("bench.runner.check.check_run", return_value=result),
+            contextlib.redirect_stdout(stdout),
+        ):
+            self.assertEqual(run._check_only("watch-run"), 0)
+        self.assertIn(
+            "  citation_boilerplate: preamble=1/2 (rate 0.500), convention=1/2",
+            stdout.getvalue(),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

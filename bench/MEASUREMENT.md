@@ -233,6 +233,17 @@ Holdout holdout-20260721-085348-eec15be (recall 0.7407, noise 0.2095):
 ## Watch ledger
 
 ```text
+citation absence preamble (#265) — instrument = `bench/runner/citations.py` (regex
+heuristic, lower bound, sensitivity depends on agent wording; fixture-pinned on 40
+hand-labeled corpus rows); measurement of record 2026-09-05 over local runs:
+pre-#218 era 12/26 (46.2%); post-#218 era (mini-20260901-170531-2cb9104,
+mini-20260903-204424-e8b3af7; every child echoed `conditionalSchema: true`) 7/14
+(50.0%). The two eras draw on different PR mixes and per-PR rates range 0/4 to
+6/6, so the aggregate cannot separate the schema change from composition; on the
+PRs common to both eras the paired rate is flat or worse. Read-out instruction: at
+Smoke B and the wave-end paired mini run `python3 -m bench.runner.citations <run_dir>`
+and record both the preamble rate and the `rule_source` histogram.
+
 code-simplifier malformed StructuredOutput (PR-310 one-off) — not reproduced:
 9 dispatches across the 3 V3.1 measured runs, zero events.
 

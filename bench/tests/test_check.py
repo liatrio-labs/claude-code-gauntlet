@@ -19,7 +19,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from bench import run  # noqa: E402
-from bench.runner import check, invoke  # noqa: E402
+from bench.runner import check, citations, invoke  # noqa: E402
 from scripts.await_workflow import ARTIFACT_BASENAMES  # noqa: E402
 
 PIPELINE = str(REPO_ROOT / "workflows" / "pipeline.js")
@@ -230,10 +230,39 @@ class CheckRunTest(unittest.TestCase):
         self.assertGreaterEqual(result["stats"]["workflow_records"], 1)
         self.assertEqual(result["stats"]["deliverable_artifacts"], 4)
 
+    def test_citation_boilerplate_is_attached_without_gating(self):
+        _build_ok_run(self.run_dir)
+        findings_path = (
+            self.run_dir / "pr-example-repo-1" / "code-gauntlet-findings-deadbeef.json"
+        )
+        findings = json.loads(findings_path.read_text(encoding="utf-8"))
+        findings[0]["dimension"] = "convention"
+        findings[0]["claude_md_rule"] = "No CLAUDE.md exists; use local precedent."
+        _write_json(findings_path, findings)
+
+        result = check.check_run(self.run_dir, repo_root=REPO_ROOT)
+
+        self.assertTrue(result["ok"], result["failures"])
+        self.assertEqual(
+            result["stats"]["citation_boilerplate"]["findings"]["populated"], 1
+        )
+        self.assertEqual(
+            result["stats"]["citation_boilerplate"]["findings"]["absence_preamble"],
+            1,
+        )
+
     def test_findings_glob_shares_the_canonical_template(self):
         self.assertEqual(
             check._FINDINGS_GLOB,
             ARTIFACT_BASENAMES[0].format(sha="*"),
+        )
+        self.assertEqual(
+            citations._FINDINGS_GLOB,
+            ARTIFACT_BASENAMES[0].format(sha="*"),
+        )
+        self.assertEqual(
+            citations._POST_REVIEW_GLOB,
+            ARTIFACT_BASENAMES[2].format(sha="*"),
         )
 
     def test_missing_report_fails_g6(self):
