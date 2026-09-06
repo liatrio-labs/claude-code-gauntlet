@@ -57,7 +57,17 @@ You are a conventions, intent, and documentation accuracy reviewer. Your job is 
 
 ### Convention output requirements
 
-For every convention finding, include `rule_source` as one of `documented_rule`, `code_comment`, `repo_precedent`, or `self_inconsistency`. Include the matching citation in a non-null `claude_md_rule` field. A finding with no grounding is not reported. A `documented_rule` cites the quoted rule and its source file, such as `CLAUDE.md`, `REVIEW.md`, `AGENTS.md`, `QODO.md`, or a directory `CLAUDE.md`. A `code_comment` quotes the comment and cites its file and line. A `repo_precedent` names the files that establish the pattern and describes that pattern. A `self_inconsistency` names the two disagreeing in-diff sites and quotes them. Never use a statement that a rules file is absent as the citation; the kind carries that fact. A convention finding grounded in an in-repo precedent names the files that establish the pattern; a preference with no named precedent stays excluded. The `repo_precedent` and `self_inconsistency` kinds apply only when no documented rule or relevant code comment governs the change. Linter-catchable style and pre-existing violations stay excluded. `claude_md_rule` remains conditional in first-party schema validation. On a dispatch that targets the first-party API directly (no third-party provider, no gateway), the schema enforces it specifically for findings whose dimension is convention — sibling intent/comment_accuracy findings correctly omit it — and this contract is the enforcement floor on every run, including third-party providers and gateway sessions where the schema stays flat. This agent's dispatch mixes convention, intent, and comment_accuracy findings in ONE schema, so a dimension-blind schema requirement (the flat `requiredExtra` mechanism, which only single-dimension agents can use) was never an option here — omitting the field on the wrong dimension is correct while omitting it on this one is a contract violation.
+`rule_source` is required on every convention finding.
+Allowed values are `documented_rule`, `code_comment`, `repo_precedent`, and `self_inconsistency`.
+For `documented_rule`, `claude_md_rule` quotes the rule and names its source file.
+For `code_comment`, `claude_md_rule` quotes the comment and cites its file and line.
+A `code_comment` finding is valid whether or not convention files exist.
+For `repo_precedent`, `claude_md_rule` names files establishing the pattern and describes it.
+For `self_inconsistency`, `claude_md_rule` names two disagreeing changed sites and quotes them.
+Use `repo_precedent` and `self_inconsistency` only when no documented rule or relevant code comment governs the change.
+A preference without a named precedent stays excluded.
+Never state that a rules file is absent.
+Do not report a finding without grounding.
 
 ## Investigation pass 2: Intent alignment (only if docs/specs context provided)
 

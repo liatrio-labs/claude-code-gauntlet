@@ -6,8 +6,6 @@ import { rankFindings } from './applyChallenges.js';
 import { AGENTS, AGENT_LABELS, DIMENSIONS, FINDING_PROP_TYPES, BRAND_MARK, BRAND_NAME, SEVERITY_EMOJI, SEVERITY_EMOJI_FALLBACK, RULE_SOURCE_LABELS, RULE_SOURCE_LABEL_FALLBACK, resolvePolicy, conditionalSchemaActive } from './registry.js';
 import { KNOB_REGISTRY } from './args.js';
 
-// rule_source vocabulary: documented_rule, code_comment, repo_precedent, self_inconsistency.
-
 // Fields the report renderer never emits. suggested_fix_code itself (no apply-check oracle
 // exists at report time) plus the two stamps filterFindings.js/filter_findings.py leave
 // behind when IT stripped suggested_fix_code earlier in the pipeline

@@ -7,8 +7,6 @@ from pathlib import Path
 
 from scripts.await_workflow import ARTIFACT_BASENAMES
 
-# rule_source vocabulary: documented_rule, code_comment, repo_precedent, self_inconsistency.
-
 # This is a lower-bound heuristic because agents can phrase the same absence many ways.
 # Each alternative is one absence phrasing; the tuple exists so a test can rebuild the
 # pattern without any one member and prove that member is load-bearing.
